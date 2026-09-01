@@ -1,4 +1,4 @@
-import { createLinearAgentActivity } from "eve/channels/linear";
+import { createLinearActivity } from "./linear-graphql.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 
 export const LINEAR_SILENCE_ACK_BODY = "Noted — no response needed.";
@@ -14,7 +14,7 @@ export async function postLinearAnsweredAck(agentSessionId: string, organization
 }
 
 export async function postLinearHostAck(agentSessionId: string, body: string, organizationId?: string): Promise<void> {
-  const res = await createLinearAgentActivity({
+  const res = await createLinearActivity({
     credentials: linearCredentialsForOrg(organizationId),
     activity: { agentSessionId, content: { type: "response", body } },
   });

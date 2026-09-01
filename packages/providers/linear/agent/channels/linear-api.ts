@@ -1,8 +1,9 @@
-import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
+import type { LinearChannelCredentials } from "eve/channels/linear";
+import { callLinear, type LinearApi } from "./linear-graphql.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 
 export interface LinearReadOpts {
-  readonly api?: LinearApiOptions;
+  readonly api?: LinearApi;
   readonly credentials?: LinearChannelCredentials;
   readonly organizationId?: string;
   readonly maxComments?: number;
@@ -59,7 +60,7 @@ interface RawIssue {
 
 export async function readLinearIssue(issueRef: string, opts: LinearReadOpts = {}): Promise<LinearIssueRead> {
   const maxComments = opts.maxComments ?? DEFAULT_MAX_COMMENTS;
-  const data = await callLinearGraphQL<{ issue?: RawIssue | null }>({
+  const data = await callLinear<{ issue?: RawIssue | null }>({
     api: opts.api,
     credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query:

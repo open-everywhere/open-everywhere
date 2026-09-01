@@ -1,4 +1,4 @@
-import { callLinearGraphQL } from "eve/channels/linear";
+import { callLinear } from "./linear-graphql.js";
 import {
   registerWorkSearchAdapter,
   type WorkSearchAdapter,
@@ -36,7 +36,7 @@ export const linearWorkSearchAdapter: WorkSearchAdapter = {
     const first = Math.min(Math.max(opts.limit, 1), 50);
     let data: { issueSearch?: { nodes?: IssueSearchNode[] } };
     try {
-      data = await callLinearGraphQL<{ issueSearch?: { nodes?: IssueSearchNode[] } }>({
+      data = await callLinear<{ issueSearch?: { nodes?: IssueSearchNode[] } }>({
         credentials: linearCredentialsForOrg(org),
         query:
           "query OeIssueSearch($term: String!, $first: Int!) { issueSearch(query: $term, first: $first) " +

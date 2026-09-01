@@ -1,9 +1,6 @@
 import {
   linearChannel,
-  callLinearGraphQL,
-  createLinearAgentActivity,
   parseLinearWebhookEvent,
-  type LinearApiOptions,
   type LinearAgentSessionEvent,
   type LinearChannelCredentials,
   type LinearChannel,
@@ -11,6 +8,7 @@ import {
   type LinearSessionContext,
   type LinearInboundResult,
 } from "eve/channels/linear";
+import { callLinear, createLinearActivity, linearChannelApi, type LinearApi } from "./linear-graphql.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
@@ -99,11 +97,11 @@ function teamIdFromRaw(raw: unknown): string | undefined {
 
 export async function enrichTeamPrivacy(
   teamId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
+  opts?: { readonly api?: LinearApi; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<boolean | undefined> {
   if (!teamId) return undefined;
   try {
-    const data = await callLinearGraphQL<{ team?: { private?: boolean } }>({
+    const data = await callLinear<{ team?: { private?: boolean } }>({
       api: opts?.api,
       credentials: opts?.credentials ?? linearCredentialsForOrg(opts?.organizationId),
       query: "query TeamPrivacy($id: String!) { team(id: $id) { private } }",
@@ -118,11 +116,11 @@ export async function enrichTeamPrivacy(
 
 export async function enrichIssueTeam(
   issueId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
+  opts?: { readonly api?: LinearApi; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<{ readonly teamId: string; readonly isPrivate: boolean | undefined } | undefined> {
   if (!issueId) return undefined;
   try {
-    const d = await callLinearGraphQL<{ issue?: { team?: { id?: string; private?: boolean } } }>({
+    const d = await callLinear<{ issue?: { team?: { id?: string; private?: boolean } } }>({
       api: opts?.api,
       credentials: opts?.credentials ?? linearCredentialsForOrg(opts?.organizationId),
       query: "query OeIssueTeam($id: String!) { issue(id: $id) { team { id private } } }",
@@ -142,13 +140,13 @@ const linearGuestCache = new Map<string, { guest: boolean; at: number }>();
 
 export async function enrichUserGuest(
   userId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
+  opts?: { readonly api?: LinearApi; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<boolean | undefined> {
   if (!userId) return undefined;
   const hit = linearGuestCache.get(userId);
   if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.guest;
   try {
-    const d = await callLinearGraphQL<{ user?: { guest?: boolean } }>({
+    const d = await callLinear<{ user?: { guest?: boolean } }>({
       api: opts?.api,
       credentials: opts?.credentials ?? (linearAppForOrg(opts?.organizationId) ? linearCredentialsForOrg(opts?.organizationId) : undefined),
       query: "query OeUserGuest($id: String!) { user(id: $id) { guest } }",
@@ -178,7 +176,7 @@ export function resolveViewer(organizationId?: string): Promise<{ id?: string; n
   const resolved =
     overrideId && overrideName
       ? Promise.resolve({ id: overrideId, name: overrideName })
-      : callLinearGraphQL<{ viewer?: { id?: string; name?: string; displayName?: string } }>({
+      : callLinear<{ viewer?: { id?: string; name?: string; displayName?: string } }>({
           credentials: linearCredentialsForOrg(organizationId),
           query: "query OeViewer { viewer { id name displayName } }",
           queryName: "OeViewer",
@@ -214,7 +212,7 @@ interface EnrichedLinearComment {
 
 async function enrichComment(commentId: string, organizationId?: string): Promise<EnrichedLinearComment | undefined> {
   try {
-    const d = await callLinearGraphQL<{
+    const d = await callLinear<{
       comment?: {
         id?: string;
         body?: string;
@@ -702,7 +700,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       action: "linear.dispatched",
       detail: { addressing: "direct", issueId: c.issueId, agentSessionId },
     });
-    await createLinearAgentActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
+    await createLinearActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
       slog(`mention hand-off activity failed (dispatch already succeeded): ${String(err)}`),
     );
     slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) → addressed direct-mention wake diverted to the unified window`);
@@ -716,13 +714,13 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       action: "linear.mention_divert_failed",
       detail: { agentSessionId, error: String(err).slice(0, 300) },
     }).catch(() => undefined);
-    await createLinearAgentActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
+    await createLinearActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
   }
 }
 
 const pristineByOrg = new Map<string, LinearChannel>();
 function buildPristine(key: string): LinearChannel {
-  const pristine = linearChannel({ credentials: key === "" ? linearAppActorCredentials : linearCredentialsForOrg(key) });
+  const pristine = linearChannel({ api: linearChannelApi(), credentials: key === "" ? linearAppActorCredentials : linearCredentialsForOrg(key) });
   return pristine;
 }
 function pristineFor(organizationId: string | undefined): LinearChannel {
@@ -830,7 +828,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     );
 
     const refuse = async (text: string): Promise<void> => {
-      await createLinearAgentActivity({ credentials: linearCredentialsForOrg(event.organizationId), activity: { agentSessionId, content: { type: "error", body: text } } });
+      await createLinearActivity({ credentials: linearCredentialsForOrg(event.organizationId), activity: { agentSessionId, content: { type: "error", body: text } } });
     };
     if ((await ingressSpendGate({
       bindable: { channel: { kind: "linear" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
@@ -845,6 +843,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 };
 
 const native: LinearChannel = linearChannel({
+  api: linearChannelApi(),
   credentials: { ...linearAppActorCredentials, webhookVerifier: linearWebhookVerifier },
   turnPolicy: "queue",
   onAgentSession: linearOnAgentSession,

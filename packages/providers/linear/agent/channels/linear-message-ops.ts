@@ -1,4 +1,4 @@
-import { callLinearGraphQL } from "eve/channels/linear";
+import { callLinear } from "./linear-graphql.js";
 import type { SurfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { describeLinearError } from "./linear-errors.js";
@@ -16,7 +16,7 @@ export const linearMessageOps: SurfaceMessageOps = {
   async postText(issueId, text, opts) {
     let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
     try {
-      data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
+      data = await callLinear<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
         credentials: linearCredentialsForOrg(undefined),
         query: "mutation OeSurfacePostText($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
         queryName: "OeSurfacePostText",
@@ -34,7 +34,7 @@ export const linearMessageOps: SurfaceMessageOps = {
   async editMessage(issueId, commentId, text) {
     let data: { commentUpdate?: { success?: boolean } };
     try {
-      data = await callLinearGraphQL<{ commentUpdate?: { success?: boolean } }>({
+      data = await callLinear<{ commentUpdate?: { success?: boolean } }>({
         credentials: linearCredentialsForOrg(undefined),
         query: "mutation OeSurfaceEditMessage($id: String!, $input: CommentUpdateInput!) { commentUpdate(id: $id, input: $input) { success } }",
         queryName: "OeSurfaceEditMessage",
@@ -51,7 +51,7 @@ export const linearMessageOps: SurfaceMessageOps = {
   async setReaction(issueId, commentId, emoji, on) {
     try {
       if (on) {
-        const data = await callLinearGraphQL<{ reactionCreate?: { success?: boolean } }>({
+        const data = await callLinear<{ reactionCreate?: { success?: boolean } }>({
           credentials: linearCredentialsForOrg(undefined),
           query: "mutation OeSurfaceReact($input: ReactionCreateInput!) { reactionCreate(input: $input) { success } }",
           queryName: "OeSurfaceReact",
@@ -67,7 +67,7 @@ export const linearMessageOps: SurfaceMessageOps = {
         console.warn(`[open-everywhere:linear] reaction remove skipped for comment ${commentId} — app viewer id unresolved (fail-closed: never guess whose reaction to delete)`);
         return;
       }
-      const lookup = await callLinearGraphQL<{ comment?: { reactions?: { nodes?: CommentReactionNode[] } } }>({
+      const lookup = await callLinear<{ comment?: { reactions?: { nodes?: CommentReactionNode[] } } }>({
         credentials: linearCredentialsForOrg(undefined),
         query: "query OeSurfaceReactionLookup($id: String!) { comment(id: $id) { reactions { nodes { id emoji user { id } } } } }",
         queryName: "OeSurfaceReactionLookup",
@@ -75,7 +75,7 @@ export const linearMessageOps: SurfaceMessageOps = {
       });
       const mine = (lookup.comment?.reactions?.nodes ?? []).find((r) => r.emoji === emoji && r.user?.id === viewer.id);
       if (!mine?.id) return;
-      const del = await callLinearGraphQL<{ reactionDelete?: { success?: boolean } }>({
+      const del = await callLinear<{ reactionDelete?: { success?: boolean } }>({
         credentials: linearCredentialsForOrg(undefined),
         query: "mutation OeSurfaceUnreact($id: String!) { reactionDelete(id: $id) { success } }",
         queryName: "OeSurfaceUnreact",

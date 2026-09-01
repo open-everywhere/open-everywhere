@@ -1,4 +1,5 @@
-import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
+import { LinearApiError } from "eve/channels/linear";
+import { callLinear, createLinearActivity } from "./linear-graphql.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { describeLinearError } from "./linear-errors.js";
 import { postLinearSilenceAck, postLinearAnsweredAck } from "./linear-silence-ack.js";
@@ -38,7 +39,7 @@ type LinearReactTarget = Extract<ReactTarget, { platform: "linear" }>;
 async function dispatchLinearReply(target: LinearTarget, text: string): Promise<string> {
   let res: { id: string; success: boolean };
   try {
-    res = await createLinearAgentActivity({
+    res = await createLinearActivity({
       credentials: linearCredentialsForOrg(target.organizationId),
       activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
     });
@@ -56,7 +57,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
   if (origin.ambient) {
     let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
     try {
-      data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
+      data = await callLinear<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
         credentials: linearCredentialsForOrg(origin.organizationId),
         query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
         queryName: "OeUnifiedAmbientReply",
@@ -74,7 +75,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
   const type = activityTypeFor(intent);
   let res: { id: string; success: boolean };
   try {
-    res = await createLinearAgentActivity({
+    res = await createLinearActivity({
       credentials: linearCredentialsForOrg(origin.organizationId),
       activity: { agentSessionId: origin.agentSessionId, content: { type, body: text } },
     });
@@ -82,7 +83,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
     throw carryLinearFailure(
       err,
       new Error(
-        `unified reply couldn't post to Linear — createLinearAgentActivity(${type}) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
+        `unified reply couldn't post to Linear — createLinearActivity(${type}) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
       ),
     );
   }
@@ -105,7 +106,7 @@ async function liveLinearSilenceAck(origin: LinearOrigin, answered = false): Pro
 async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: string): Promise<string> {
   let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
   try {
-    data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
+    data = await callLinear<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
       credentials: linearCredentialsForOrg(target.organizationId),
       query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
       queryName: "OeAmbientReply",
@@ -125,7 +126,7 @@ const LINEAR_AMBIENT_COMMENT_ID = "comment";
 async function liveLinearEditComment(locus: EditLocus, messageId: string, text: string): Promise<void> {
   let data: { commentUpdate?: { success?: boolean } };
   try {
-    data = await callLinearGraphQL<{ commentUpdate?: { success?: boolean } }>({
+    data = await callLinear<{ commentUpdate?: { success?: boolean } }>({
       credentials: linearCredentialsForOrg(locus.organizationId),
       query: "mutation OeEditReply($id: String!, $input: CommentUpdateInput!) { commentUpdate(id: $id, input: $input) { success } }",
       queryName: "OeEditReply",
@@ -142,7 +143,7 @@ async function liveLinearEditComment(locus: EditLocus, messageId: string, text: 
 async function liveLinearReact(issueId: string, emoji: string, organizationId: string | undefined): Promise<void> {
   let data: { reactionCreate?: { success?: boolean } };
   try {
-    data = await callLinearGraphQL<{ reactionCreate?: { success?: boolean } }>({
+    data = await callLinear<{ reactionCreate?: { success?: boolean } }>({
       credentials: linearCredentialsForOrg(organizationId),
       query: "mutation OeReact($input: ReactionCreateInput!) { reactionCreate(input: $input) { success } }",
       queryName: "OeReact",

@@ -1,4 +1,5 @@
-import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
+import type { LinearChannelCredentials } from "eve/channels/linear";
+import { callLinear, type LinearApi } from "./linear-graphql.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { describeLinearError } from "./linear-errors.js";
 import { assertLinearIssueWriteAllowed } from "./linear-scope.js";
@@ -8,7 +9,7 @@ import { currentTurnOrganization } from "@open-everywhere/core/agent/adapter-api
 import type { BindableContext, Domain, EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearActionOpts {
-  readonly api?: LinearApiOptions;
+  readonly api?: LinearApi;
   readonly credentials?: LinearChannelCredentials;
   readonly organizationId?: string;
 }
@@ -27,7 +28,7 @@ interface WorkflowStateNode {
 async function fetchIssueTeamStates(issueRef: string, opts: LinearActionOpts): Promise<WorkflowStateNode[]> {
   let data: { issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null };
   try {
-    data = await callLinearGraphQL<{ issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null }>({
+    data = await callLinear<{ issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "query OeIssueTeamStates($id: String!) { issue(id: $id) { team { states(first: 100) { nodes { id name } } } } }",
@@ -49,7 +50,7 @@ interface LabelNode {
 async function fetchIssueTeamLabels(issueRef: string, opts: LinearActionOpts): Promise<LabelNode[]> {
   let data: { issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null };
   try {
-    data = await callLinearGraphQL<{ issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null }>({
+    data = await callLinear<{ issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "query OeIssueTeamLabels($id: String!) { issue(id: $id) { team { labels(first: 250) { nodes { id name } } } } }",
@@ -74,7 +75,7 @@ async function resolveLinearUserId(assignee: string, opts: LinearActionOpts): Pr
   if (UUID_RE.test(assignee)) return assignee;
   let data: { users?: { nodes?: UserNode[] } };
   try {
-    data = await callLinearGraphQL<{ users?: { nodes?: UserNode[] } }>({
+    data = await callLinear<{ users?: { nodes?: UserNode[] } }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "query OeFindUser { users(first: 250) { nodes { id email name displayName } } }",
@@ -111,7 +112,7 @@ export async function setLinearIssueState(issueRef: string, stateName: string, o
     throw new Error(`Linear: no state named "${stateName}" on this issue's team — available: ${names.length ? names.join(", ") : "(none found)"}.`);
   }
   try {
-    await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
+    await callLinear<{ issueUpdate?: { success?: boolean } }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "mutation OeSetIssueState($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
@@ -127,7 +128,7 @@ export async function setLinearIssueState(issueRef: string, stateName: string, o
 export async function assignLinearIssue(issueRef: string, assignee: string, opts: LinearActionOpts = {}): Promise<string> {
   const assigneeId = await resolveLinearUserId(assignee, opts);
   try {
-    await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
+    await callLinear<{ issueUpdate?: { success?: boolean } }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "mutation OeAssignIssue($id: String!, $assigneeId: String!) { issueUpdate(id: $id, input: { assigneeId: $assigneeId }) { success } }",
@@ -148,7 +149,7 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
     throw new Error(`Linear: no label named "${label}" on this issue's team — available: ${names.length ? names.join(", ") : "(none found)"}.`);
   }
   try {
-    await callLinearGraphQL<{ issueAddLabel?: { success?: boolean } }>({
+    await callLinear<{ issueAddLabel?: { success?: boolean } }>({
       api: opts.api,
       credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
       query: "mutation OeAddIssueLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",

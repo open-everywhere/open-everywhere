@@ -1,4 +1,5 @@
-import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
+import type { LinearChannelCredentials } from "eve/channels/linear";
+import { callLinear, type LinearApi } from "./linear-graphql.js";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { assertLinearTeamWriteAllowed } from "./linear-scope.js";
 import { linearWorkOrg } from "./linear-work.js";
@@ -12,7 +13,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearCreateOpts {
-  readonly api?: LinearApiOptions;
+  readonly api?: LinearApi;
   readonly credentials?: LinearChannelCredentials;
   readonly organizationId?: string;
 }
@@ -32,7 +33,7 @@ interface TeamNode {
 
 export async function resolveLinearTeamId(target: string, opts: LinearCreateOpts = {}): Promise<string> {
   if (UUID_RE.test(target)) return target;
-  const data = await callLinearGraphQL<{ teams?: { nodes?: TeamNode[] } }>({
+  const data = await callLinear<{ teams?: { nodes?: TeamNode[] } }>({
     api: opts.api,
     credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "query OeFindTeam { teams(first: 250) { nodes { id key name } } }",
@@ -51,7 +52,7 @@ export async function resolveLinearTeamId(target: string, opts: LinearCreateOpts
 
 export async function createLinearIssue(target: string, draft: TicketDraft, opts: LinearCreateOpts = {}): Promise<CreatedTicket> {
   const teamId = await resolveLinearTeamId(target, opts);
-  const data = await callLinearGraphQL<{ issueCreate?: { success?: boolean; issue?: { id?: string; identifier?: string; url?: string } } }>({
+  const data = await callLinear<{ issueCreate?: { success?: boolean; issue?: { id?: string; identifier?: string; url?: string } } }>({
     api: opts.api,
     credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query:
