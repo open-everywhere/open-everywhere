@@ -26,7 +26,7 @@ interface BootEntry {
 const BOOT_ENTRIES: readonly BootEntry[] = [
   {
     module: "agent/agent.js",
-    why: "eve's agent definition — the module the served process loads first. register-config.js is module 15 of the 1,326 it evaluates, so its graph is almost entirely post-registration; it is here for the fourteen that precede it.",
+    why: "eve's agent definition — the module the served process loads first. register-config.js is module 15 of the 1,326 it evaluates, so its graph is almost entirely post-registration; it is here for the fourteen that precede it. That 1,326 is an EVALUATION-order measurement, which is what makes `module 15` meaningful; it is not the resolved count arm 5 reports for this entry.",
     registers: true,
     floor: 400,
   },
@@ -92,11 +92,12 @@ if (childOf.length > 0) {
 
   const probe = installSettingsReadProbe(REPO_ROOT);
 
-  const loaded = new Set<string>();
+  const resolved = new Set<string>();
   registerHooks({
-    load(url, context, next) {
-      loaded.add(url);
-      return next(url, context);
+    resolve(specifier, context, next) {
+      const result = next(specifier, context);
+      resolved.add(result.url);
+      return result;
     },
   });
 
@@ -114,12 +115,12 @@ if (childOf.length > 0) {
 
   for (const fixture of fixtures) await import(pathToFileURL(resolve(REPO_ROOT, fixture)).href);
 
-  const before = loaded.size;
+  const before = resolved.size;
   await import(pathToFileURL(resolve(REPO_ROOT, entry)).href);
 
   const result: ChildResult = {
     entry,
-    modules: loaded.size - before,
+    modules: resolved.size - before,
     registered: !probe.installed(),
     traps: probe.trapCount(),
     selfTest,
@@ -210,7 +211,7 @@ for (const entry of entries) {
   }
   if (result.modules < entry.floor) {
     problems.push(
-      `booting ${entry.module} evaluated ${result.modules} module(s), under its declared floor of ` +
+      `booting ${entry.module} resolved ${result.modules} module(s), under its declared floor of ` +
         `${entry.floor}. This gate only sees the graph an entry walks, so an entry that stopped walking would ` +
         "report zero eager reads while covering nothing. Either that graph really shrank — then lower this " +
         "entry's floor deliberately, in a diff — or the import is no longer reaching what it used to.",
@@ -221,7 +222,7 @@ for (const entry of entries) {
 
 if (listMode) {
   for (const result of results) {
-    console.log(`  ${result.entry}: ${result.modules} module(s) evaluated, ${result.traps} trap(s)`);
+    console.log(`  ${result.entry}: ${result.modules} module(s) resolved, ${result.traps} trap(s)`);
     for (const read of result.reads) console.log(`      ${read.file}:${read.line}  ${read.accessor}()`);
   }
   if (reads.size === 0) console.log("  (no settings read ran before registerSettings on any entry)");
@@ -237,7 +238,7 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `✓ settings-boot-order: ${entries.length} entr(ies) booted, ${totalModules} module(s) evaluated, ` +
+  `✓ settings-boot-order: ${entries.length} entr(ies) booted, ${totalModules} module(s) resolved, ` +
     `${reads.size} settings read(s) before registerSettings() ` +
     `(${EAGER_SETTINGS_READ_ALLOWLIST.size} allowlisted survivor(s)) — no module-level read pins a shipped ` +
     "default on any booted entry.",

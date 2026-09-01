@@ -56,7 +56,7 @@ function main(): void {
   {
     const r = lint();
     ok(r.code === 0, `the tree has no eager settings read on any entry (exit ${r.code}: ${r.out})`);
-    ok(/\d+ module\(s\) evaluated/.test(r.out), "…and the run reports its own coverage");
+    ok(/\d+ module\(s\) resolved/.test(r.out), "…and the run reports its own coverage");
     ok(r.out.includes("0 settings read(s) before registerSettings()"), "…with the read count it measured");
   }
 
@@ -91,9 +91,20 @@ function main(): void {
   }
 
   {
+    const r = lint("--entry", "agent/no-such-module.js");
+    ok(r.code !== 0, `an entry whose boot dies fails the gate (exit ${r.code})`);
+    ok(r.out.includes("produced no result"), "…saying the boot produced no result, not that the tree is clean");
+    ok(r.out.includes("agent/no-such-module.js"), "…and naming the entry that could not boot");
+    ok(
+      !r.out.includes("0 settings read(s) before registerSettings()"),
+      "…and never printing the clean-tree verdict over an entry it failed to walk",
+    );
+  }
+
+  {
     const listed = lint("--list");
     ok(listed.code === 0, `--list runs the gate (exit ${listed.code})`);
-    ok(/module\(s\) evaluated, \d+ trap\(s\)/.test(listed.out), "…and prints what each entry walked");
+    ok(/module\(s\) resolved, \d+ trap\(s\)/.test(listed.out), "…and prints what each entry walked");
     ok(listed.out.includes("no settings read ran before registerSettings"), "…and says so when nothing was found");
 
     const missing = lint("--fixture", "scripts/fixtures/settings-boot-order/not-a-file.ts");
