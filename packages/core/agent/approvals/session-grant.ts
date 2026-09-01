@@ -25,6 +25,30 @@ export function routinePermissionDeclinedMemo(grantKind: string): string {
   return `${ROUTINE_CARD_DECLINED_PREFIX}${grantKind}`;
 }
 
+export function declarationForPermissionKind(kind: string): string | undefined {
+  if (kind === PR_OPEN_KIND) return PR_OPEN_KIND;
+  if (!kind.startsWith(CONNECTOR_TOOL_KIND_PREFIX)) return undefined;
+  const declaration = `${CONNECTOR_TOOL_DECLARATION_PREFIX}${kind.slice(CONNECTOR_TOOL_KIND_PREFIX.length)}`;
+  return routinePermissionKind(declaration) === kind ? declaration : undefined;
+}
+
+export interface RoutinePermissionMemoParts {
+  readonly marker: "asked" | "declined";
+  readonly grantKind: string;
+}
+
+export function routinePermissionMemoParts(kind: string): RoutinePermissionMemoParts | undefined {
+  for (const [prefix, marker] of [
+    [ROUTINE_CARD_ASKED_PREFIX, "asked"],
+    [ROUTINE_CARD_DECLINED_PREFIX, "declined"],
+  ] as const) {
+    if (!kind.startsWith(prefix)) continue;
+    const grantKind = kind.slice(prefix.length);
+    return grantKind.length > 0 ? { marker, grantKind } : undefined;
+  }
+  return undefined;
+}
+
 export function isRoutinePermissionMemoKind(kind: string): boolean {
   return kind.startsWith(ROUTINE_CARD_ASKED_PREFIX) || kind.startsWith(ROUTINE_CARD_DECLINED_PREFIX);
 }

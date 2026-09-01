@@ -8,11 +8,11 @@ import { describeTrigger } from "../routines/routine.js";
 import { describeBound } from "../routines/bound.js";
 import { describeStall } from "../routines/stall.js";
 import { policyRules } from "../routines/policy.js";
-import { listRoutinePermissions } from "../routines/grants.js";
+import { emptyRoutinePermissionView, readRoutinePermissionViews } from "../routines/permission-review.js";
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether one is stuck waiting on a cost-checkpoint confirmation, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, or what rules one has been told to follow.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, the permissions each one ASKED for on a card and did not get, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether one is stuck waiting on a cost-checkpoint confirmation, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, what rules one has been told to follow, or what asked for approval while nobody was around — `permissionAsks` names each refused permission, whether its card is still waiting and in which room, and what to do about it.",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -41,6 +41,16 @@ export default defineTool({
         fires7d: z.number(),
         tokens7d: z.number(),
         permissions: z.array(z.string()),
+        permissionAsks: z.array(
+          z.object({
+            permission: z.string(),
+            declaration: z.string().nullable(),
+            state: z.enum(["waiting", "unreadable", "superseded", "lapsed", "declined"]),
+            askedAt: z.string().nullable(),
+            room: z.string().nullable(),
+            nextStep: z.string(),
+          }),
+        ),
         rules: z.array(
           z.object({
             id: z.string(),
@@ -70,10 +80,10 @@ export default defineTool({
       surfaceKey: p.surfaceKey,
     });
     const nowIso = new Date().toISOString();
-    const permissions = new Map<string, string[]>();
-    for (const r of selected) permissions.set(r.id, await listRoutinePermissions(p.org, r, nowIso));
+    const views = await readRoutinePermissionViews(p.org, selected, nowIso);
     const routines = selected.map((r) => {
       const f = forensics.get(r.id) ?? emptyRoutineForensics();
+      const view = views.get(r.id) ?? emptyRoutinePermissionView();
       return {
         id: r.id,
         trigger: describeTrigger(r.trigger, r.report),
@@ -95,7 +105,8 @@ export default defineTool({
         lastPostedAt: f.lastPostedAt,
         fires7d: f.fires7d,
         tokens7d: f.tokens7d,
-        permissions: permissions.get(r.id) ?? [],
+        permissions: view.permissions,
+        permissionAsks: view.asks,
         rules: policyRules(r).map((x) => ({ id: x.id, rule: x.rule, why: x.why, addedAt: x.addedAt, addedBy: x.addedBy, source: x.source })),
         note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       };
