@@ -103,6 +103,61 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
       continue;
     }
 
+    if (r.kind === "connector-refused") {
+      const declared = ev.usage.some((u) => u.kind === "connector" && u.connector === r.connection);
+      const reasonsSeen = r.reasons.map((x) => `${x.label} ×${x.count}`).join(", ");
+      const opsSeen = r.ops.length > 0 ? r.ops.map((x) => `${x.label} ×${x.count}`).join(", ") : "(no op named — the grant gate refuses before one is)";
+      if (r.ungranted >= MIN_WIDEN_REFUSALS && !declared) {
+        out.push({
+          id: `widen:connector:ungranted:${r.connection}`,
+          direction: "widen",
+          subject: `Connector \`${r.connection}\` — not granted to this scope`,
+          summary:
+            `${r.ungranted} operation(s) on \`${r.connection}\` were refused by the credential gate: the connection is not in this ` +
+            `scope's granted set, and no bundle EFFECTIVE IN THIS SCOPE declares it. The work keeps arriving; the grant does not exist.`,
+          evidence: [
+            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.ungranted} with reason \`ungranted\`.`,
+            `Reasons: ${reasonsSeen}.`,
+            `Ops: ${opsSeen}.`,
+          ],
+          remedy:
+            `Not a mechanical diff, so none is offered — an ungranted connector is in none of the bundles effective in this scope, and the ` +
+            `declaration needs a credential id that no refusal row carries. Add ` +
+            `\`{ name: "${r.connection}", credential: "<id>", contentOrigin: "internal" | "external" }\` to the \`connectors\` array of a ` +
+            `bundle bound to this scope in \`${PERMISSION_CONFIG_FILE}\`; the credential ids come from that connector's catalogue in ` +
+            `\`agent/access/connector-credentials.ts\`. ⚠ A break-glass \`revoke_connector\` produces this same reason code from the ` +
+            `override store, and no config edit defeats it — check the overrides before merging a widening.`,
+        });
+      }
+      if (r.liftableUnattended >= MIN_WIDEN_REFUSALS && declared) {
+        out.push({
+          id: `widen:connector:unattended:${r.connection}`,
+          direction: "widen",
+          subject: `Connector \`${r.connection}\` — write ops on unattended runs`,
+          summary:
+            `${r.liftableUnattended} unattended \`write\`-tier operation(s) on \`${r.connection}\` were refused because an approval card ` +
+            `has nobody to answer it. This scope holds the connector grant; what is missing is a standing permission for the fire.`,
+          evidence: [
+            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.liftableUnattended} with reason \`ask-unattended\` at the \`write\` tier AND a routine behind the turn.`,
+            ...(r.unroutedUnattended > 0
+              ? [
+                  `${r.unroutedUnattended} further \`ask-unattended\`/\`write\` row(s) carried NO routine (a webhook or job wake, \`routine: null\`). They are NOT counted above, because a standing routine permission is not their actuator — there is no routine card to re-arm.`,
+                ]
+              : []),
+            `Reasons: ${reasonsSeen}.`,
+            `Tiers: ${r.tiers.length > 0 ? r.tiers.map((x) => `${x.label} ×${x.count}`).join(", ") : "(none recorded)"}.`,
+            `Ops: ${opsSeen}.`,
+          ],
+          remedy:
+            `This one is NOT a config-file diff, so none is offered. The standing permission is a per-tool routine grant — a human tap on ` +
+            `the routine's own card — not bundle config. Re-arm it with \`edit_routine\`/the creation card. ` +
+            `⚠ Only the \`write\` tier is liftable: a \`destructive\` op and a TAINTED turn are never lifted by any grant ` +
+            `(\`ask-unattended-tainted\` is its own reason code), so any of those rows in the counts above are a control working, not a gap.`,
+        });
+      }
+      continue;
+    }
+
     const unattendedReason = r.reasons.find((x) => x.label === "ask-unattended");
     if (unattendedReason === undefined || unattendedReason.count < MIN_WIDEN_REFUSALS) continue;
     out.push({

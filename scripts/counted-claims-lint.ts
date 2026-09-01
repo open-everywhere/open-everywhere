@@ -10,6 +10,8 @@ import {
 import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
 import { GRANT_REFUND_CAP_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-broker.js";
 import { GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-card.js";
+import { TOOL_CONSEQUENCE } from "@open-everywhere/core/agent/access/consequence.js";
+import { taintToleranceOf } from "@open-everywhere/core/agent/access/approver-chain.js";
 import { COUNTED_CLAIMS, COUNTED_FACT_KEYS, checkCountedClaims, type CountedFacts } from "@open-everywhere/core/agent/docs/counted-claims.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,8 +28,15 @@ function settingsEnvSeams(): string[] {
   return out.sort();
 }
 
+function taintGateSinks(): string[] {
+  return Object.keys(TOOL_CONSEQUENCE)
+    .filter((tool) => taintToleranceOf(tool) === "gate")
+    .sort();
+}
+
 const facts: CountedFacts = {
   "lean-seat-tools": [...LEAN_SEAT_TOOLS],
+  "taint-gate-sinks": taintGateSinks(),
   "worker-only-standing": WORKER_ONLY_TOOLS_STANDING,
   "worker-only-thread": WORKER_ONLY_TOOLS_THREAD,
   "settings-env-seams": settingsEnvSeams(),
@@ -70,5 +79,6 @@ console.log(
   `✓ counted-claims-lint: ${report.checked}/${COUNTED_CLAIMS.length} counted claims hold across ${docs.size} document(s) — ` +
     `lean seat ${factValue("lean-seat-tools")}, worker-only standing ${factValue("worker-only-standing")}, ` +
     `worker-only thread ${factValue("worker-only-thread")}, settings env seams ${factValue("settings-env-seams")}, ` +
-    `grant refund cap ${factValue("grant-refund-cap-per-turn")}, once-grant attempts ${factValue("grant-once-max-attempts-per-turn")}.`,
+    `grant refund cap ${factValue("grant-refund-cap-per-turn")}, once-grant attempts ${factValue("grant-once-max-attempts-per-turn")}, ` +
+    `taint-gate sinks ${factValue("taint-gate-sinks")}.`,
 );

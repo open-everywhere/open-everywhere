@@ -38,6 +38,7 @@ import {
   taintToleranceOf,
   type ApprovalChainRequest,
 } from "../agent/access/approver-chain.js";
+import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -268,9 +269,10 @@ console.log("4 — off: the source-tier table decides nothing and writes no rows
   }
 }
 
-console.log("5 — off: the four gate-tier sinks resolve at their registry baseline:");
+console.log("5 — off: every gate-tier sink resolves at its registry baseline:");
 {
-  const GATE_SINKS = ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const;
+  const GATE_SINKS = Object.keys(TOOL_CONSEQUENCE).filter((t) => taintToleranceOf(t) === "gate").sort();
+  ok(GATE_SINKS.length > 0, "[5] precondition: the derived gate-sink set is non-empty — otherwise every leg below is vacuous");
   const live = (tool: string, unattended = false): ApprovalChainRequest => ({ tool, unattended, principalId: unattended ? undefined : "U1" });
   const lowered = { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] };
 

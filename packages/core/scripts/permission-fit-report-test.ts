@@ -123,6 +123,16 @@ for (const d of [1, 3]) {
     d,
   );
 }
+for (const d of [3, 6]) await seed("connector.refused", { connection: "github", reason: "ungranted" }, d);
+for (const d of [2, 5]) {
+  await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", grant: "connector.op:notion__create_page", routine: "rt_nightly" }, d);
+}
+await seed("connector.refused", { connection: "notion", op: "notion__delete_page", tier: "destructive", reason: "ask-unattended", routine: "rt_nightly" }, 4);
+await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended-tainted", tainted: true, routine: "rt_nightly" }, 4);
+await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: null }, 6);
+for (const d of [2, 7]) await seed("connector.refused", { connection: "linear", reason: "dm_only", mode: "channel" }, d);
+for (const d of [8, 9]) await seed("connector.refused", { connection: "linear", reason: "ungranted" }, d);
+
 await seed("aws.exec", { roleArn: IDLE_ROLE, command: "s3:get-object", exitCode: 0, unattended: true, domain: "finance" }, 2);
 for (let i = 1; i <= 8; i++) await seed("connector.op", { connection: "linear", op: "list_issues" }, i, "other-channel");
 
@@ -141,6 +151,22 @@ const auditBefore = (await readAudit({})).length;
 
   ok(ids.includes("widen:unattended:create_ticket"), "loop 1: the unattended chain denies produce a proposal too");
   ok(res.proposals.find((p) => p.id === "widen:unattended:create_ticket")!.diff === undefined, "loop 1: …with no fabricated config diff, because that actuator is not a bundle edit");
+
+  const ungranted = res.proposals.find((p) => p.id === "widen:connector:ungranted:github");
+  ok(ungranted !== undefined && ungranted.direction === "widen", "⭐ OPE-1291: a repeated `connector.refused`/`ungranted` row surfaces as a widening candidate — the action is in the evidence set AND the reader has a family for it");
+  ok(ungranted!.remedy !== undefined && ungranted!.remedy.includes('{ name: "github", credential: "<id>", contentOrigin: "internal" | "external" }'), "OPE-1291: …naming the connector declaration to add, by slug");
+  ok(ungranted!.remedy!.includes("agent/access/bundles.ts"), "OPE-1291: …in the config file a reviewer edits");
+  ok(ungranted!.diff === undefined, "OPE-1291: …with no fabricated diff — an ungranted connector is in no bundle to render a `before` from, and no row carries a credential id");
+
+  const connUnattended = res.proposals.find((p) => p.id === "widen:connector:unattended:notion");
+  ok(connUnattended !== undefined, "⭐ OPE-1291: two unattended WRITE-tier connector refusals produce the empty-room widening proposal on the credential plane too");
+  ok(connUnattended!.summary.includes("2 unattended"), "⭐ OPE-1291: …counting the two liftable rows ONLY — the destructive row, the tainted row and the `routine: null` row share the connection, and a standing permission is the actuator for none of them");
+  ok(connUnattended!.evidence.some((e) => e.includes("1 further `ask-unattended`/`write` row(s) carried NO routine")), "⭐ OPE-1291: …and the un-routed row is REPORTED rather than dropped — a webhook/job wake refusal is real evidence with a different actuator, so the proposal names it instead of counting it");
+  ok(connUnattended!.diff === undefined, "OPE-1291: …with no config diff, because a standing routine permission is a store row, not bundle config");
+
+  ok(!ids.includes("widen:connector:ungranted:linear"), "⭐ OPE-1291: an `ungranted` cluster on a connector the bundle DOES declare proposes nothing — the current declaration wins over the rows, as it does for an aws allow-list refusal");
+  ok(!ids.some((id) => id.startsWith("widen:connector:") && id.endsWith(":linear")), "⭐ OPE-1291: and `dm_only` is a context wall a grant cannot open, so those refusals propose NOTHING either");
+  ok(connUnattended!.evidence.some((e) => e.includes("ask-unattended ×4, ask-unattended-tainted ×1")), "OPE-1291: …and the WHOLE reason vocabulary rides on the proposal as evidence, so a reader sees all five rows behind a proposal that stands on two");
 
   const idle = res.proposals.find((p) => p.id === `tighten:aws:${IDLE_ROLE}`);
   ok(idle !== undefined && idle.direction === "tighten", "⭐ loop 2 + scoping: the role used only by ANOTHER domain reads as unused here");

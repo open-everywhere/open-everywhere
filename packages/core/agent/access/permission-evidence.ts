@@ -63,7 +63,21 @@ export interface EgressDenialEvidence {
   readonly lastSeen: string;
 }
 
-export type RefusalEvidence = AwsRefusalEvidence | ChainDenyEvidence | EgressDenialEvidence;
+export interface ConnectorRefusalEvidence {
+  readonly kind: "connector-refused";
+  readonly connection: string;
+  readonly refusals: number;
+  readonly reasons: readonly CountedLabel[];
+  readonly ops: readonly CountedLabel[];
+  readonly tiers: readonly CountedLabel[];
+  readonly ungranted: number;
+  readonly liftableUnattended: number;
+  readonly unroutedUnattended: number;
+  readonly firstSeen: string;
+  readonly lastSeen: string;
+}
+
+export type RefusalEvidence = AwsRefusalEvidence | ChainDenyEvidence | EgressDenialEvidence | ConnectorRefusalEvidence;
 
 export interface AwsGrantUsage {
   readonly kind: "aws-role";
@@ -183,6 +197,20 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
   }
   const egress = new Map<string, EgressAcc>();
 
+  interface ConnAcc {
+    connection: string;
+    refusals: number;
+    reasons: Map<string, number>;
+    ops: Map<string, number>;
+    tiers: Map<string, number>;
+    ungranted: number;
+    liftable: number;
+    unrouted: number;
+    first: string;
+    last: string;
+  }
+  const connectorRefused = new Map<string, ConnAcc>();
+
   for (const row of rows) {
     if (!inWindow(row, window)) continue;
     const d = row.detail ?? {};
@@ -222,6 +250,42 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       if (fp !== undefined) acc.fingerprints.add(fp);
       if (row.ts < acc.first) acc.first = row.ts;
       if (row.ts > acc.last) acc.last = row.ts;
+      continue;
+    }
+
+    if (row.action === "connector.refused") {
+      const connection = str(d.connection);
+      if (connection === undefined) continue;
+      let acc = connectorRefused.get(connection);
+      if (acc === undefined) {
+        acc = {
+          connection,
+          refusals: 0,
+          reasons: new Map(),
+          ops: new Map(),
+          tiers: new Map(),
+          ungranted: 0,
+          liftable: 0,
+          unrouted: 0,
+          first: row.ts,
+          last: row.ts,
+        };
+        connectorRefused.set(connection, acc);
+      }
+      acc.refusals++;
+      if (row.ts < acc.first) acc.first = row.ts;
+      if (row.ts > acc.last) acc.last = row.ts;
+      const reason = str(d.reason);
+      bump(acc.reasons, reason ?? "unrecorded");
+      const op = str(d.op);
+      if (op !== undefined) bump(acc.ops, op);
+      const tier = str(d.tier);
+      if (tier !== undefined) bump(acc.tiers, tier);
+      if (reason === "ungranted") acc.ungranted++;
+      if (reason === "ask-unattended" && tier === "write") {
+        if (str(d.routine) !== undefined) acc.liftable++;
+        else acc.unrouted++;
+      }
       continue;
     }
 
@@ -302,7 +366,23 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     }))
     .sort((x, y) => y.denials - x.denials || x.host.localeCompare(y.host));
 
-  return [...awsOut, ...chainOut, ...egressOut];
+  const connectorOut: ConnectorRefusalEvidence[] = [...connectorRefused.values()]
+    .map((c) => ({
+      kind: "connector-refused" as const,
+      connection: c.connection,
+      refusals: c.refusals,
+      reasons: counted(c.reasons),
+      ops: counted(c.ops),
+      tiers: counted(c.tiers),
+      ungranted: c.ungranted,
+      liftableUnattended: c.liftable,
+      unroutedUnattended: c.unrouted,
+      firstSeen: c.first,
+      lastSeen: c.last,
+    }))
+    .sort((x, y) => y.refusals - x.refusals || x.connection.localeCompare(y.connection));
+
+  return [...awsOut, ...chainOut, ...egressOut, ...connectorOut];
 }
 
 export function grantUsageEvidence(

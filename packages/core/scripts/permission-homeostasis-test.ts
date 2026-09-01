@@ -273,6 +273,82 @@ const GRANTS: DeclaredGrants[] = [
 }
 
 {
+  const refused = (days: number, detail: Record<string, unknown>): EvidenceRow => ({
+    ts: ago(days),
+    action: "connector.refused",
+    detail: { ...detail, principalId: "slack/U-ALICE" },
+  });
+
+  const ungrantedRows = [refused(1, { connection: "github", reason: "ungranted" }), refused(4, { connection: "github", reason: "ungranted" })];
+  const ungrantedEv = permissionEvidence(ungrantedRows, GRANTS, W30);
+  const cluster = ungrantedEv.refusals.find((r) => r.kind === "connector-refused");
+  ok(cluster !== undefined && cluster.kind === "connector-refused" && cluster.connection === "github", "connector: rows cluster by CONNECTION");
+  ok(cluster!.kind === "connector-refused" && cluster!.ungranted === 2 && cluster!.refusals === 2, "connector: the `ungranted` rows are counted on their own field, not left in the reason map alone");
+  const ungrantedProposal = proposePermissionChanges(ungrantedEv, "widen").find((p) => p.id === "widen:connector:ungranted:github");
+  ok(ungrantedProposal !== undefined, "🔴 connector: a repeatedly-ungranted connection becomes a WIDENING proposal — the blind spot OPE-1291 closed");
+  ok(ungrantedProposal!.diff === undefined, "connector: no mechanical diff — an ungranted connector is in no bundle to render a `before` from, and no row carries the credential id the declaration needs");
+  ok(/name: "github"/.test(ungrantedProposal!.remedy ?? ""), "…so the remedy names the declaration to add, by slug");
+  ok(/revoke_connector/.test(ungrantedProposal!.remedy ?? ""), "🔴 connector: …and warns that a break-glass revoke produces this SAME reason code, which no config edit defeats");
+
+  const declaredEv = permissionEvidence([refused(1, { connection: "notion", reason: "ungranted" }), refused(4, { connection: "notion", reason: "ungranted" })], GRANTS, W30);
+  ok(
+    !proposePermissionChanges(declaredEv, "widen").some((p) => p.id === "widen:connector:ungranted:notion"),
+    "⭐ connector: an `ungranted` cluster on a DECLARED connector proposes nothing — the current grant wins over the rows, exactly as it does for an aws allow-list refusal",
+  );
+
+  const unattendedRows = [
+    refused(1, { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: "rt_a" }),
+    refused(2, { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: "rt_a" }),
+    refused(3, { connection: "notion", op: "notion__delete_page", tier: "destructive", reason: "ask-unattended", routine: "rt_a" }),
+    refused(4, { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended-tainted", tainted: true, routine: "rt_a" }),
+    refused(5, { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: null }),
+  ];
+  const unattendedEv = permissionEvidence(unattendedRows, GRANTS, W30);
+  const unattendedCluster = unattendedEv.refusals.find((r) => r.kind === "connector-refused")!;
+  ok(unattendedCluster.kind === "connector-refused" && unattendedCluster.refusals === 5, "connector: all five rows land in one cluster");
+  ok(
+    unattendedCluster.kind === "connector-refused" && unattendedCluster.liftableUnattended === 2,
+    "🔴 connector: only the `ask-unattended` × `write` × HAS-A-ROUTINE rows are liftable — the destructive row, the tainted row and the `routine: null` row are counted but never liftable, because no standing permission is their actuator",
+  );
+  ok(unattendedCluster.kind === "connector-refused" && unattendedCluster.unroutedUnattended === 1, "connector: …and the un-routed row is kept on its own field rather than dropped");
+  const unattendedProposal = proposePermissionChanges(unattendedEv, "widen").find((p) => p.id === "widen:connector:unattended:notion");
+  ok(unattendedProposal !== undefined && /2 unattended/.test(unattendedProposal.summary), "🔴 connector: the empty-room refusal proposes on the credential plane too, counting the two liftable rows ONLY");
+  ok(unattendedProposal!.diff === undefined && /edit_routine/.test(unattendedProposal!.remedy ?? ""), "connector: …with no bundle diff — a standing routine permission is a store row, not config");
+  ok(/destructive/.test(unattendedProposal!.remedy ?? ""), "🔴 connector: …and the remedy states that a destructive op and a tainted turn are lifted by NOTHING, so those rows read as a control working");
+
+  const walls = [
+    refused(1, { connection: "notion", reason: "dm_only", mode: "channel" }),
+    refused(2, { connection: "notion", reason: "dm_only", mode: "channel" }),
+    refused(3, { connection: "notion", reason: "audience_floor" }),
+    refused(4, { connection: "notion", reason: "audience_floor" }),
+    refused(5, { connection: "notion", reason: "requestor_unentitled" }),
+    refused(6, { connection: "notion", reason: "requestor_unentitled" }),
+    refused(7, { connection: "notion", reason: "unresolved_surface" }),
+    refused(8, { connection: "notion", reason: "unresolved_surface" }),
+    refused(9, { connection: "notion", reason: "member_plane_write" }),
+    refused(10, { connection: "notion", reason: "member_plane_write" }),
+  ];
+  const wallsEv = permissionEvidence(walls, GRANTS, W30);
+  ok(wallsEv.refusals.filter((r) => r.kind === "connector-refused").length === 1, "walls fixture: the rows are read and clustered — otherwise the assertion below is vacuous");
+  ok(
+    proposePermissionChanges(wallsEv, "widen").filter((p) => p.id.startsWith("widen:connector:")).length === 0,
+    "⭐ connector: ten refusals across five reason codes a grant cannot open — a context wall, both disclosure legs, an unresolvable surface and the member plane — propose NOTHING",
+  );
+
+  ok(
+    permissionEvidence([refused(1, { reason: "ungranted" }), refused(2, { reason: "ungranted" })], GRANTS, W30).refusals.filter((r) => r.kind === "connector-refused").length === 0,
+    "connector: a row with no `connection` is dropped — there is nothing to name in a remedy, and a placeholder bucket would invent one",
+  );
+
+  const privacyEv = permissionEvidence([...ungrantedRows, ...unattendedRows], GRANTS, W30);
+  const privacyProposals = proposePermissionChanges(privacyEv);
+  ok(privacyProposals.length > 0, "connector privacy fixture: the fixture actually produces proposals");
+  const connectorBlob = JSON.stringify(privacyEv) + JSON.stringify(privacyProposals) + renderPermissionProposals(privacyEv, privacyProposals);
+  ok(!connectorBlob.includes("U-ALICE") && !connectorBlob.includes("principalId"), "⭐ connector privacy: the refusal rows carry a principal COLUMN and a principal-shaped detail, and none of it reaches the evidence, the proposals or the report");
+  ok(!connectorBlob.includes("rt_a"), "⭐ connector privacy: the routine GRANT KEY does not reach the output either — only whether one was present is read");
+}
+
+{
   const rows: EvidenceRow[] = [];
   for (let i = 1; i <= 6; i++) rows.push(awsExec(i, "logs:describe-log-groups"));
   rows.push(awsRefused(1, "logs:start-query", ["logs:Describe*"]), awsRefused(2, "logs:start-query", ["logs:Describe*"]));
