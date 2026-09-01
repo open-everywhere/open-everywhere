@@ -78,7 +78,7 @@ for (const op of ALL_OPS) {
   const parts = connectorOpTierParts(UNKNOWN_OP);
   eq(parts.armPresent, false, "no config registered: armPresent is false");
   eq(parts.arm, undefined, "no config registered: no arm answer");
-  eq(parts.armDecided, false, "no config registered: nothing was decided by an arm");
+  eq(parts.armLowered, false, "no config registered: nothing was lowered by an arm");
 }
 
 registerConfig(config());
@@ -94,33 +94,60 @@ for (const op of ALL_OPS) {
 }
 
 registerConfig(config(({ verb }) => (verb === "frobnicate_widget" ? "read" : undefined)));
-eq(effectiveConnectorOpTier(UNKNOWN_OP), "read", "🔴 an arm DECIDES an op the built-in did not recognise — destructive → read");
-eq(effectiveConnectorOpConsequence(UNKNOWN_OP), "open", "…and that reaches the consequence collapse: the op is now OPEN, no card");
+eq(effectiveConnectorOpTier(UNKNOWN_OP), "write", "🔴 an arm answering `read` for an unrecognised op is FLOORED at write — never the open tier");
+eq(effectiveConnectorOpConsequence(UNKNOWN_OP), "gate:member", "🔴 …so the op still takes an approval card: a human sees it at least once");
 {
   const parts = connectorOpTierParts(UNKNOWN_OP);
   eq(parts.base, "destructive", "the built-in's own answer is still reported as the base");
-  eq(parts.arm, "read", "the arm's answer is reported");
-  eq(parts.armDecided, true, "🔴 armDecided marks the ONE rung where the effective tier may sit BELOW the built-in");
+  eq(parts.arm, "read", "🔴 the arm's answer is reported AS GIVEN — the row shows it reaching for the open tier");
+  eq(parts.basis, "unrecognised", "…on the basis that says the built-in abstained");
+  eq(parts.armLowered, true, "…and armLowered marks that the effective tier sits BELOW the built-in");
 }
-eq(effectiveConnectorOpTier(READ_OP), "read", "…the deciding arm leaves a recognised READ alone (it abstains there)");
-eq(effectiveConnectorOpTier(DESTRUCTIVE_OP), "destructive", "…and leaves a recognised DESTRUCTIVE alone");
+eq(effectiveConnectorOpTier(READ_OP), "read", "…the same arm abstains on a recognised READ, which keeps its built-in tier");
+eq(effectiveConnectorOpTier(DESTRUCTIVE_OP), "destructive", "…and on a recognised DESTRUCTIVE");
 
 registerConfig(config(() => "write"));
-eq(effectiveConnectorOpTier(UNKNOWN_OP), "write", "an arm may decide an unrecognised op DOWN to write, not only to read");
+eq(effectiveConnectorOpTier(UNKNOWN_OP), "write", "an arm may lower an unrecognised op to write directly");
+
+const NOUN_COLLISION_OP = "acme__get_delete_marker";
+eq(classifyConnectorOpTier(NOUN_COLLISION_OP), "destructive", "fixture: a noun collision reads as a delete to the built-in");
+eq(classifyConnectorOpTierVerdict(NOUN_COLLISION_OP).basis, "destructive-verb", "fixture: …on a RECOGNISED destructive verb, not an abstention");
 
 registerConfig(config(() => "read"));
-eq(effectiveConnectorOpTier(DESTRUCTIVE_OP), "destructive", "🔴 an everything-is-read arm CANNOT lower delete_page — the built-in recognised the verb");
-eq(effectiveConnectorOpTier(WRITE_OP), "write", "🔴 …nor create_page");
+eq(effectiveConnectorOpTier(NOUN_COLLISION_OP), "write", "🔴 an everything-is-read arm lowers a RECOGNISED destructive — to `write`, and no further");
+eq(effectiveConnectorOpTier(DESTRUCTIVE_OP), "write", "🔴 …including a real delete_page: the floor is a floor, not a judgement about which delete is real");
 eq(effectiveConnectorOpConsequence(DESTRUCTIVE_OP), "gate:member", "…so delete_page still takes a card");
+eq(effectiveConnectorOpTier(WRITE_OP), "write", "an arm answering `read` for a recognised WRITE moves nothing — it is already at the floor");
+eq(effectiveConnectorOpTier(READ_OP), "read", "🔴 …and an arm answering `read` about an already-OPEN op does not RAISE it: the floor clamps lowerings only");
 {
   const parts = connectorOpTierParts(DESTRUCTIVE_OP);
-  eq(parts.arm, "read", "the arm really did answer `read` — the leg above is not a silent no-call");
-  eq(parts.armDecided, false, "…and it was JOINED, not obeyed");
-  eq(parts.tier, "destructive", "…so the verdict stands");
+  eq(parts.arm, "read", "the arm really did answer `read` — the legs above are not a silent no-call");
+  eq(parts.armLowered, true, "…and the lowering is recorded");
+  eq(parts.basis, "destructive-verb", "…on a RECOGNISED basis, which is the bucket the ruling opened");
+  eq(parts.tier, "write", "…landing at the floor");
+}
+{
+  const parts = connectorOpTierParts(READ_OP);
+  eq(parts.arm, "read", "the arm answered `read` for the open op too");
+  eq(parts.armLowered, false, "…and that is NOT a lowering — nothing moved");
 }
 registerConfig(config(() => "destructive"));
 eq(effectiveConnectorOpTier(READ_OP), "destructive", "🔴 negative control: the arm CAN raise a recognised read to destructive");
 eq(effectiveConnectorOpTier(WRITE_OP), "destructive", "…and a recognised write");
+
+for (const armTier of ["read", "write", "destructive", undefined] as const) {
+  registerConfig(config(() => armTier));
+  for (const op of [READ_OP, WRITE_OP, DESTRUCTIVE_OP, UNKNOWN_OP, NOUN_COLLISION_OP] as const) {
+    const eff = effectiveConnectorOpTier(op);
+    ok(
+      eff !== "read" || classifyConnectorOpTier(op) === "read",
+      `🔴 FLOOR: a ${String(armTier)} arm never puts ${op} in the open tier (effective ${eff}, built-in ${classifyConnectorOpTier(op)})`,
+    );
+    ok(eff === "read" || eff === "write" || eff === "destructive", `…and the answer stays in vocabulary for ${op}`);
+  }
+}
+registerConfig(config(() => "read"));
+eq(effectiveConnectorOpTier("__frobnicate"), "write", "🔴 FLOOR: an EMPTY-connection name reaches the arm and is floored like any other");
 
 const STRIPPED_DESTRUCTIVE_OP = "delete__delete_page";
 {
@@ -132,22 +159,18 @@ registerConfig(config(() => "read"));
 {
   const parts = connectorOpTierParts(STRIPPED_DESTRUCTIVE_OP);
   eq(parts.arm, "read", "the everything-is-read arm really did answer on this op — the leg is not a silent no-call");
-  eq(parts.armDecided, false, "🔴 …but it may no longer DECIDE it: the built-in recognised the verb the strip used to eat");
-  eq(parts.tier, "destructive", "…so the arm is JOINED and the op stays destructive");
+  eq(parts.basis, "destructive-verb", "🔴 …and the row says the built-in RECOGNISED the verb the strip used to eat");
+  eq(parts.armLowered, true, "…so the arm's lowering here is the ruling's recognised bucket, not its abstention bucket");
+  eq(parts.tier, "write", "…landing at the floor, like every other lowering");
 }
-eq(
-  effectiveConnectorOpConsequence(STRIPPED_DESTRUCTIVE_OP),
-  "gate:member",
-  "🔴 …and the op takes a card, where the same arm on the pre-OPE-1325 basis would have opened it",
-);
-eq(connectorOpTierParts(UNKNOWN_OP).armDecided, true, "NEGATIVE CONTROL — a truly unrecognised verb is still the arm's to decide");
-eq(effectiveConnectorOpTier(UNKNOWN_OP), "read", "…and that arm still opens it");
+eq(connectorOpTierParts(UNKNOWN_OP).basis, "unrecognised", "NEGATIVE CONTROL — a truly unrecognised verb still reports the abstention basis");
 
 registerConfig(config(() => "read"));
 eq(allowedOnRestrictedJobWake(DESTRUCTIVE_OP), false, "🔴 FLOOR: an everything-is-read arm does NOT admit delete_page to a restricted job wake");
 eq(allowedOnRestrictedJobWake(UNKNOWN_OP), false, "🔴 FLOOR: …nor an UNRECOGNISED op, the very rung the arm may decide");
 eq(allowedOnRestrictedJobWake(WRITE_OP), false, "🔴 FLOOR: …nor a write");
-eq(effectiveConnectorOpTier(UNKNOWN_OP), "read", "…while the GATE plane really does see that arm's `read` — the floor is a separate reading, not a dead arm");
+eq(effectiveConnectorOpTier(UNKNOWN_OP), "write", "…while the GATE plane really does see that arm move the op — the floor is a separate reading, not a dead arm");
+eq(allowedOnRestrictedJobWake(NOUN_COLLISION_OP), false, "🔴 FLOOR: …and an arm-LOWERED recognised destructive is still kept out of a restricted job wake");
 eq(allowedOnRestrictedJobWake(READ_OP), true, "…and a genuine built-in read is still admitted (the floor did not just deny everything)");
 {
   const toolset: Record<string, unknown> = { [READ_OP]: {}, [WRITE_OP]: {}, [DESTRUCTIVE_OP]: {}, [UNKNOWN_OP]: {} };
@@ -204,11 +227,11 @@ for (const bad of [null, 42, {}, [], "open", "toString", "gate:member", ""] as c
       return "read";
     }),
   );
-  eq(effectiveConnectorOpTier("grant__amy__frobnicate"), "destructive", "🔴 a RESERVED name keeps the built-in verdict — the arm cannot open a lent op");
+  eq(effectiveConnectorOpTier("grant__amy__frobnicate"), "destructive", "🔴 a RESERVED name keeps the built-in verdict — the arm cannot move a lent op at all");
   eq(seen.length, 0, "…because the arm is never called for one at all");
   eq(effectiveConnectorOpTier("notion"), "destructive", "an UNPARSEABLE name (no `__`) keeps its fail-closed verdict");
   eq(seen.length, 0, "…and the arm is not called for that either");
-  eq(effectiveConnectorOpTier(UNKNOWN_OP), "read", "…while a real connector op DOES reach the arm — the two legs above are not a dead arm");
+  eq(effectiveConnectorOpTier(UNKNOWN_OP), "write", "…while a real connector op DOES reach the arm — the two legs above are not a dead arm");
   eq(seen.length, 1, "…exactly once");
 }
 
@@ -244,11 +267,11 @@ registerConfig(config(() => "read"));
   eq(
     effectiveConnectorOpTier(UNKNOWN_OP, bundles),
     "destructive",
-    "🔴 a declared raise OVERRIDES an arm that decided the op down — the operator's declaration is last",
+    "🔴 a declared raise OVERRIDES an arm that lowered the op — the operator's declaration is last",
   );
   const parts = connectorOpTierParts(UNKNOWN_OP, bundles);
   eq(parts.arm, "read", "…the arm still answered `read`");
-  eq(parts.armDecided, true, "…and still 'decided' its rung");
+  eq(parts.armLowered, true, "…and still lowered its rung, below the declaration");
   eq(parts.declared, "destructive", "…but the declaration sits above it");
   eq(parts.tier, "destructive", "…and wins");
 }
@@ -296,19 +319,21 @@ await handler(ev(WRITE_OP), ctx);
   eq(row?.detail?.baseOpTier, undefined, "…and stamps no baseOpTier, because nothing moved it");
   eq(row?.detail?.opTierArm, undefined, "…and no arm marker at all");
   eq(row?.detail?.armOpTier, undefined, "…and no arm answer");
-  eq(row?.detail?.opTierArmDecided, undefined, "…and no decided marker");
+  eq(row?.detail?.opTierArmLowered, undefined, "…and no lowered marker");
+  eq(row?.detail?.opTierBasis, undefined, "…and no basis, because nothing needs separating");
 }
 
 registerConfig(config(({ verb }) => (verb === "frobnicate_widget" ? "read" : undefined)));
 await handler(ev(UNKNOWN_OP), ctx);
 {
   const row = await rowFor(UNKNOWN_OP);
-  eq(row?.detail?.opTier, "read", "🔴 the row carries the tier the ARM decided");
+  eq(row?.detail?.opTier, "write", "🔴 the row carries the FLOORED tier the seam settled on");
   eq(row?.detail?.baseOpTier, "destructive", "…with the built-in's own verdict alongside it");
   eq(row?.detail?.opTierArm, true, "…marked as a deployment that registered an arm");
-  eq(row?.detail?.armOpTier, "read", "…with what the arm answered");
-  eq(row?.detail?.opTierArmDecided, true, "🔴 …and the query that matters: this arm DECIDED, it did not raise");
-  eq(row?.detail?.tier, "open", "…and the consequence collapse followed the arm");
+  eq(row?.detail?.armOpTier, "read", "🔴 …and what the arm ASKED FOR, unfloored — so a row shows an arm reaching for the open tier");
+  eq(row?.detail?.opTierArmLowered, true, "🔴 …and the query that matters: this arm lowered the op");
+  eq(row?.detail?.opTierBasis, "unrecognised", "🔴 …in the ruling's ABSTENTION bucket — the built-in recognised no verb");
+  eq(row?.detail?.tier, "gate:member", "…and the consequence collapse still says the op takes a card");
 }
 
 await handler(ev(DESTRUCTIVE_OP), ctx);
@@ -317,16 +342,27 @@ await handler(ev(DESTRUCTIVE_OP), ctx);
   eq(row?.detail?.opTier, "destructive", "an abstaining arm on a recognised op: the built-in tier");
   eq(row?.detail?.opTierArm, true, "…the arm is still recorded as present");
   eq(row?.detail?.armOpTier, undefined, "…but it answered nothing");
-  eq(row?.detail?.opTierArmDecided, undefined, "…and decided nothing");
+  eq(row?.detail?.opTierArmLowered, undefined, "…and lowered nothing");
 }
 
 registerConfig(config(() => "read"));
 await handler(ev(DESTRUCTIVE_OP), ctx);
 {
   const row = await rowFor(DESTRUCTIVE_OP);
-  eq(row?.detail?.opTier, "destructive", "an arm that TRIED to lower a recognised op: the built-in tier stands");
+  eq(row?.detail?.opTier, "write", "an arm that lowered a RECOGNISED destructive: the row carries the floored tier");
+  eq(row?.detail?.baseOpTier, "destructive", "…with the built-in's verdict beside it");
   eq(row?.detail?.armOpTier, "read", "…and the row shows what it asked for");
-  eq(row?.detail?.opTierArmDecided, undefined, "…while recording that it did not decide");
+  eq(row?.detail?.opTierArmLowered, true, "…recording the lowering");
+  eq(row?.detail?.opTierBasis, "destructive-verb", "🔴 …in the ruling's RECOGNISED bucket — separable from the abstention row above");
+}
+
+registerConfig(config(() => "destructive"));
+await handler(ev(READ_OP), ctx);
+{
+  const row = await rowFor(READ_OP);
+  eq(row?.detail?.opTier, "destructive", "an arm that RAISED an open op: the row carries the raise");
+  eq(row?.detail?.opTierArmLowered, undefined, "…and marks no lowering, so the marker is not stamped on every arm row");
+  eq(row?.detail?.opTierBasis, undefined, "…nor a basis");
 }
 
 registerConfig(config());

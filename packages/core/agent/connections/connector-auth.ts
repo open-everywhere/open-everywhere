@@ -485,17 +485,17 @@ export function withUnattendedConnectorFence(
     const seamTier = effectiveConnectorOpTier(ctx.toolName);
     const tier = joinConnectorOpTiers(baseTier, seamTier);
     if (tier === "read") return decision;
-    const armOpened = seamTier === "read";
-    if (!decisionWouldPrompt(decision) && !armOpened) return decision;
-    const armOpenedRefusal = (): ApprovalStatus => ({
+    const seamBelowBuiltIn = tier !== seamTier;
+    if (!decisionWouldPrompt(decision) && !seamBelowBuiltIn) return decision;
+    const loweredRefusal = (): ApprovalStatus => ({
       type: "denied",
       reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier, call(tainted, false)),
     });
-    if (connection === undefined || connection.length === 0) return armOpened ? armOpenedRefusal() : decision;
+    if (connection === undefined || connection.length === 0) return seamBelowBuiltIn ? loweredRefusal() : decision;
     const auth = ctx.session?.auth;
-    if (auth === undefined || auth === null) return armOpened ? armOpenedRefusal() : decision;
+    if (auth === undefined || auth === null) return seamBelowBuiltIn ? loweredRefusal() : decision;
     const facts = await fencedTurnFacts(auth as import("eve/context").SessionAuth, surfaceContext);
-    if (facts === null) return armOpened ? armOpenedRefusal() : decision;
+    if (facts === null) return seamBelowBuiltIn ? loweredRefusal() : decision;
     if (!facts.unattended) return decision;
     const kind = connectorToolPermissionKind(ctx.toolName);
     const nowIso = new Date().toISOString();

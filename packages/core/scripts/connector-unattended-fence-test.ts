@@ -413,7 +413,7 @@ console.log("§14 the permission key is read off the same bag the plane would pi
   );
 }
 
-console.log("§18 an arm cannot stand the unattended fence down:");
+console.log("§18 an arm cannot lift an op on an unattended fire:");
 {
   const armed = (tier: "read" | "write" | "destructive" | undefined) => ({
     loadBundles: () => [],
@@ -426,28 +426,57 @@ console.log("§18 an arm cannot stand the unattended fence down:");
     connectorOpTier: () => tier,
   });
   const UNKNOWN_OP = "notion__frobnicate_widget";
+  const NOUN_COLLISION_OP = "notion__get_delete_marker";
+  ok(classifyConnectorOpTier(NOUN_COLLISION_OP) === "destructive", "fixture: the built-in reads get_delete_marker as a delete");
 
   registerConfig(armed(undefined));
   ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "control: with no arm, an unrecognised op is refused on an unattended fire");
 
   registerConfig(armed("read"));
-  ok(effectiveConnectorOpTier(UNKNOWN_OP) === "read", "the arm really did decide the op down to `read` (the seam moved)");
-  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, UNKNOWN_OP)) === "not-applicable", "…and a HUMAN turn takes the arm's answer: no card, the op runs");
+  ok(effectiveConnectorOpTier(UNKNOWN_OP) === "write", "the arm lowered the unrecognised op to `write` — floored, not opened");
+  ok(effectiveConnectorOpTier(NOUN_COLLISION_OP) === "write", "…and lowered the RECOGNISED destructive to `write` too");
 
-  const decision = await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP);
-  ok(isDenied(decision), "🔴 an everything-is-read arm does NOT open an unrecognised op on an unattended fire — the fence floors on the built-in");
+  const memo = new Set([NOUN_COLLISION_OP]);
+  ok(
+    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "not-applicable",
+    "🔴 an attended human who already approved the arm-lowered op for the session is not asked again",
+  );
+  registerConfig(armed(undefined));
+  ok(
+    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "user-approval",
+    "🔴 NEGATIVE CONTROL: with no arm the SAME memo does not cover it — destructive prompts per call, so the leg above measured the arm",
+  );
+  registerConfig(armed("read"));
+
+  const memoedFire = await ask(connectorApprovalPolicy(), fireAuth(), NOUN_COLLISION_OP, memo);
+  ok(isDenied(memoedFire), "🔴 an unattended fire holding the session memo for an arm-lowered DELETE is REFUSED, not executed");
+  ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the plane's own ask-unattended sentence");
+  ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes("destructive-tier"), "…naming the BUILT-IN's tier, which is the tier the arm could not lower");
+  registerConfig(armed(undefined));
+  ok(
+    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "user-approval",
+    "control: the refusal above is the FIRE and not the memo — the same memo on a human turn is unaffected with no arm",
+  );
+  registerConfig(armed("read"));
+
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "🔴 an everything-is-read arm does NOT open an unrecognised op on an unattended fire");
   ok(rowFor(await refusedRows(), UNKNOWN_OP)?.detail?.["tier"] === "destructive", "…and it is refused at the BUILT-IN's tier, not the arm's");
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), NOUN_COLLISION_OP)), "🔴 …and the arm-LOWERED recognised destructive is refused on the same fire");
+  ok(rowFor(await refusedRows(), NOUN_COLLISION_OP)?.detail?.["tier"] === "destructive", "🔴 …also at the built-in's tier: the JOIN is what this fence gates on, not the seam");
 
   registerConfig(armed("write"));
   ok(effectiveConnectorOpTier(UNKNOWN_OP) === "write", "the arm really did answer `write` for the unrecognised op (the seam moved)");
-  let refusedDeclaration = false;
-  try {
-    declaredPermissionKinds([`tool:${UNKNOWN_OP}`]);
-  } catch {
-    refusedDeclaration = true;
+  ok(effectiveConnectorOpTier(NOUN_COLLISION_OP) === "write", "…and for the recognised destructive");
+  for (const op of [UNKNOWN_OP, NOUN_COLLISION_OP]) {
+    let refusedDeclaration = false;
+    try {
+      declaredPermissionKinds([`tool:${op}`]);
+    } catch {
+      refusedDeclaration = true;
+    }
+    ok(refusedDeclaration, `🔴 the DECLARATION of ${op} is refused at propose time — the static tier, which no arm moves`);
   }
-  ok(refusedDeclaration, "🔴 the DECLARATION of an unrecognised op is refused at propose time — the static tier, which no arm moves");
-  ok(declaredPermissionKinds([`tool:${INVITE_OP}`]).length === 1, "control: a recognised write declares cleanly, so the refusal above is the tier and not the vocabulary");
+  ok(declaredPermissionKinds([`tool:${INVITE_OP}`]).length === 1, "control: a recognised write declares cleanly, so the refusals above are the tier and not the vocabulary");
   await grantDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
@@ -459,65 +488,43 @@ console.log("§18 an arm cannot stand the unattended fence down:");
   ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "🔴 …so arming that declaration lifts nothing, and the fire is still refused");
 
   registerConfig(armed("read"));
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), INVITE_OP)), "a recognised write is still refused under an everything-is-read arm");
-
-  registerConfig(armed(undefined));
-}
-
-console.log("§19 an unreadable bag does not stand the fence down on the arm-opened path:");
-{
-  const armed = (tier: "read" | "write" | "destructive" | undefined) => ({
-    loadBundles: () => [],
-    loadBindings: () => [],
-    pluginRegistry: {},
-    skillContent: {},
-    loadDomains: () => [],
-    loadSilos: () => [],
-    domainsForSurface: () => [],
-    connectorOpTier: () => tier,
-  });
-  const OPENED_OP = "notion__frobnicate_gadget";
-  const openedPolicy = (deps: Parameters<typeof withUnattendedConnectorFence>[1] = {}) =>
-    withUnattendedConnectorFence(fixedPolicy("not-applicable"), deps);
+  ok(effectiveConnectorOpTier(INVITE_OP) === "write", "a recognised write is already at the floor, so an everything-is-read arm leaves it there");
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), INVITE_OP)), "…and it is still refused on an unattended fire with no covering row");
 
   registerConfig(armed("read"));
-  ok(classifyConnectorOpTier(OPENED_OP) === "destructive", "precondition: the BUILT-IN abstains on this verb and falls to its fail-closed destructive");
-  ok(effectiveConnectorOpTier(OPENED_OP) === "read", "precondition: the arm decided it down to `read`, so the seam sits BELOW the built-in");
+  const openedPolicy = (deps: Parameters<typeof withUnattendedConnectorFence>[1] = {}) =>
+    withUnattendedConnectorFence(fixedPolicy("not-applicable"), deps);
   ok(
-    (await connectorOpApproval()(approvalCtx(fireAuth(), OPENED_OP))) === "not-applicable",
-    "🔴 precondition: the WRAPPED policy raises no card for an arm-opened op — so a stand-down returns `not-applicable`, which RUNS the op",
+    (await connectorOpApproval()(approvalCtx(fireAuth(), NOUN_COLLISION_OP, memo))) === "not-applicable",
+    "🔴 precondition: the WRAPPED policy raises no card for a memo'd arm-lowered op — so a stand-down would return `not-applicable`, which RUNS it",
   );
-
-  const noAuth = await ask(connectorApprovalPolicy(), undefined, OPENED_OP);
-  ok(isDenied(noAuth), "🔴 an unattended fire with NO `session.auth` is REFUSED under an everything-is-read arm, not executed");
+  const noAuth = await ask(openedPolicy(), undefined, NOUN_COLLISION_OP);
+  ok(isDenied(noAuth), "🔴 an unattended fire with NO `session.auth` is REFUSED on the arm-lowered path, not executed");
   ok(isDenied(noAuth) && (noAuth.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the approvals plane's own ask-unattended sentence");
-  ok(isDenied(noAuth) && (noAuth.reason ?? "").includes("destructive-tier"), "…naming the BUILT-IN's tier, which is the tier the arm could not lower");
-  ok(isDenied(await ask(connectorApprovalPolicy(), null, OPENED_OP)), "a NULL auth bag refuses on the same path");
-  const poisoned = await ask(openedPolicy({ tainted: () => true }), undefined, OPENED_OP);
-  ok(isDenied(poisoned) && (poisoned.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "a TAINTED arm-opened stand-down refuses with the plane's TAINTED sentence");
+  ok(isDenied(await ask(openedPolicy(), null, NOUN_COLLISION_OP)), "a NULL auth bag refuses on the same path");
+  const poisoned = await ask(openedPolicy({ tainted: () => true }), undefined, NOUN_COLLISION_OP);
+  ok(isDenied(poisoned) && (poisoned.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "a TAINTED arm-lowered stand-down refuses with the plane's TAINTED sentence");
   ok(isDenied(poisoned) && !(poisoned.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…and not the plain one, whose advice a poisoned turn cannot act on");
-  const unbindable = await ask(openedPolicy({ surfaceContext: async () => null }), fireAuth(), OPENED_OP);
+  const unbindable = await ask(openedPolicy({ surfaceContext: async () => null }), fireAuth(), NOUN_COLLISION_OP);
   ok(isDenied(unbindable), "🔴 a surface that will not bind is REFUSED under the same arm — an unprovable turn is not a proven attended one");
-  ok(isDenied(unbindable) && (unbindable.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the same sentence");
-  ok(rowFor(await refusedRows(), OPENED_OP) === undefined, "…and neither refusal writes a `connector.refused` row — there is no readable bag to attribute one to");
-
-  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, OPENED_OP)) === "not-applicable", "a PROVEN attended turn still takes the arm's answer: no card, the op runs");
+  ok(rowFor(await refusedRows(), "grant__U0OWNER__frobnicate") === undefined, "…and no `connector.refused` row is written for a stand-down there is no readable bag to attribute");
+  ok((await ask(openedPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP)) === "not-applicable", "a PROVEN attended turn still takes the arm's answer: the memo stands, no card");
 
   const RESERVED_OP = "grant__U0OWNER__frobnicate";
   const EMPTY_CONNECTION_OP = "__frobnicate";
-  ok(effectiveConnectorOpTier(RESERVED_OP) === "destructive", "a RESERVED-namespace name is never lowered by an arm — the arm is not consulted for a name that parses to NO connection");
-  ok(effectiveConnectorOpTier(EMPTY_CONNECTION_OP) === "read", "🔴 …but an EMPTY connection IS passed to the arm, which lowers it — so this stand-down is arm-openable and the two cases are not alike");
-  ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)), "🔴 an unattended fire on an arm-opened `__<verb>` name is REFUSED, not executed");
-  ok((await ask(openedPolicy(), fireAuth(), RESERVED_OP)) === "not-applicable", "control: the RESERVED name still stands the fence down — no arm opened it, so nothing changed for the credential-grant plane");
+  ok(effectiveConnectorOpTier(RESERVED_OP) === "destructive", "a RESERVED-namespace name is never moved by an arm — the arm is not consulted for a name that parses to NO connection");
+  ok(effectiveConnectorOpTier(EMPTY_CONNECTION_OP) === "write", "🔴 …while an EMPTY connection IS passed to the arm, which lowers it — so this stand-down is arm-reachable and the two cases are not alike");
+  ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)), "🔴 an unattended fire on an arm-lowered `__<verb>` name is REFUSED, not executed");
+  ok((await ask(openedPolicy(), fireAuth(), RESERVED_OP)) === "not-applicable", "control: the RESERVED name still stands the fence down — no arm lowered it, so nothing changed for the credential-grant plane");
 
   registerConfig(armed(undefined));
-  const fenced = withUnattendedConnectorFence(fixedPolicy("user-approval"));
-  ok((await fenced({ toolName: OPENED_OP, approvedTools: new Set<string>(), callId: "c", toolInput: {} } as never)) === "user-approval", "no arm: no session at all → the wrapped decision still stands, verbatim");
-  ok((await ask(fenced, null, OPENED_OP)) === "user-approval", "no arm: a null auth → the wrapped decision still stands, verbatim");
-  ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null }), fireAuth(), OPENED_OP)) === "user-approval", "no arm: a surface that will not bind → the wrapped decision still stands, verbatim");
+  ok((await ask(openedPolicy(), undefined, NOUN_COLLISION_OP)) === "not-applicable", "no arm: a null-ish auth → the wrapped decision still stands, verbatim");
+  ok(
+    (await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null }), fireAuth(), NOUN_COLLISION_OP)) === "user-approval",
+    "no arm: a surface that will not bind → the wrapped decision still stands, verbatim",
+  );
   ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)) === false, "no arm: the `__<verb>` name stands the fence down again — the refusal above was the arm and nothing else");
-  ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null }), HUMAN_AUTH, OPENED_OP)) === "user-approval", "no arm: an attended turn on an unbindable surface still raises its card");
 }
 
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor + the OPE-1336 arm-opened stand-downs)`);
+console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);

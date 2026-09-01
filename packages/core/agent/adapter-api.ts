@@ -160,6 +160,13 @@ export type { DreamCompletion, DreamJudge } from "./memory/dream/judge.js";
 export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dream/mode3.js";
 export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
 export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
+export { connectorOpTierFromCompletion, connectorOpTierPrompt, parseConnectorOpTierAnswer, connectorOpTierCacheKey } from "./access/connector-op-model-arm.js";
+export type {
+  ConnectorOpTierCompletion,
+  ConnectorOpTierQuestion,
+  ModelConnectorOpTierArm,
+  ModelConnectorOpTierArmOptions,
+} from "./access/connector-op-model-arm.js";
 export { stampModelCall, readModelStamp, swapModelStamp, withModelStampScope } from "./model/model-stamp.js";
 export type { BindableContext } from "./identity/binding.js";
 

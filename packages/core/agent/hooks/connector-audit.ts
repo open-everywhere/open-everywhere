@@ -55,7 +55,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
         ...(tiers.tier !== tiers.base ? { baseOpTier: tiers.base } : {}),
         ...(tiers.armPresent ? { opTierArm: true } : {}),
         ...(tiers.arm !== undefined ? { armOpTier: tiers.arm } : {}),
-        ...(tiers.armDecided ? { opTierArmDecided: true } : {}),
+        ...(tiers.armLowered ? { opTierArmLowered: true, opTierBasis: tiers.basis } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(result.isError ? { isError: true } : {}),
       },

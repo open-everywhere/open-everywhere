@@ -16,6 +16,8 @@ export function joinConnectorOpTiers(a: ConnectorOpTier, b: ConnectorOpTier): Co
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
 }
 
+const ARM_TIER_FLOOR: ConnectorOpTier = "write";
+
 const ALL_OPS = "*";
 
 function opKey(op: string): string {
@@ -143,7 +145,7 @@ export interface ConnectorOpTierParts {
   readonly basis: OpTierBasis;
   readonly armPresent: boolean;
   readonly arm?: ConnectorOpTier;
-  readonly armDecided: boolean;
+  readonly armLowered: boolean;
   readonly declared?: ConnectorOpTier;
   readonly tier: ConnectorOpTier;
 }
@@ -151,8 +153,13 @@ export interface ConnectorOpTierParts {
 export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle[]): ConnectorOpTierParts {
   const verdict = classifyConnectorOpTierVerdict(toolName);
   const arm = consumerArmTier(toolName);
-  const armDecided = arm.tier !== undefined && verdict.basis === "unrecognised";
-  const afterArm = arm.tier === undefined ? verdict.tier : armDecided ? arm.tier : joinConnectorOpTiers(verdict.tier, arm.tier);
+  const afterArm =
+    arm.tier === undefined
+      ? verdict.tier
+      : TIER_RANK[arm.tier] >= TIER_RANK[verdict.tier]
+        ? joinConnectorOpTiers(verdict.tier, arm.tier)
+        : joinConnectorOpTiers(arm.tier, ARM_TIER_FLOOR);
+  const armLowered = TIER_RANK[afterArm] < TIER_RANK[verdict.tier];
   const declared = declaredConnectorOpRaise(toolName, bundles);
   const tier = declared === undefined ? afterArm : joinConnectorOpTiers(afterArm, declared);
   return {
@@ -160,7 +167,7 @@ export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle
     basis: verdict.basis,
     armPresent: arm.present,
     ...(arm.tier !== undefined ? { arm: arm.tier } : {}),
-    armDecided,
+    armLowered,
     ...(declared !== undefined ? { declared } : {}),
     tier,
   };
