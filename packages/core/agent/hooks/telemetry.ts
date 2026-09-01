@@ -1,43 +1,12 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { defineState } from "eve/context";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { emitTelemetry, flushTelemetry, maybeHeartbeat, tokensBucket, stepsBucket, latencyBucket } from "../observability/telemetry.js";
-
-interface TurnAccumulator {
-  readonly turnId: string;
-  readonly startedAt: number;
-  steps: number;
-  tokens: number;
-}
-
-const turnSlot = defineState<TurnAccumulator | null>("open-everywhere.telemetry-turn", () => null);
-
-function readTurn(): TurnAccumulator | null {
-  try {
-    return turnSlot.get();
-  } catch {
-    return null;
-  }
-}
-
-function resetTurn(turnId: string, startedAt: number): void {
-  try {
-    turnSlot.update(() => ({ turnId, startedAt, steps: 0, tokens: 0 }));
-  } catch {
-  }
-}
+import { bumpTurnClock, readTurnClock, resetTurnClock } from "../observability/turn-clock.js";
 
 function bumpTurn(usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | undefined): void {
-  try {
-    turnSlot.update((prev) => {
-      const base = prev ?? { turnId: "", startedAt: Date.now(), steps: 0, tokens: 0 };
-      const delta = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) + (usage?.cacheReadTokens ?? 0) + (usage?.cacheWriteTokens ?? 0);
-      return { ...base, steps: base.steps + 1, tokens: base.tokens + delta };
-    });
-  } catch {
-  }
+  bumpTurnClock((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) + (usage?.cacheReadTokens ?? 0) + (usage?.cacheWriteTokens ?? 0));
 }
 
 function isWebhookFire(ctx: BindableContext): boolean {
@@ -72,15 +41,15 @@ function turnKindForTelemetry(ctx: BindableContext): string {
 
 export default defineHook({
   events: {
-    "turn.started": async (event) => {
-      resetTurn(event.data.turnId, Date.now());
+    "turn.started": async (event, ctx: HookContext) => {
+      resetTurnClock(event.data.turnId, Date.now(), (ctx as HookContext | undefined)?.session?.id ?? "");
       maybeHeartbeat();
     },
     "step.completed": async (event) => {
       bumpTurn(event.data?.usage);
     },
     "turn.completed": async (_event, ctx: HookContext) => {
-      const turn = readTurn();
+      const turn = readTurnClock();
       const now = Date.now();
       const startedAt = turn?.startedAt ?? now;
       emitTelemetry("oe.turn.completed", {

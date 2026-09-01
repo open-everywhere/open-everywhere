@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -37,9 +38,12 @@ const {
   TURN_TAIL_RESERVE_SECONDS,
   routineCardKeepsStateClause,
   routineCardWaitBudgetMs,
+  routineCardWaitCeilingSeconds,
   routineCardWaitRefusalClause,
   waitForRoutineCardDecision,
 } = await import("../agent/routines/permission-card-wait.js");
+const { turnElapsedSeconds } = await import("../agent/observability/turn-clock.js");
+const telemetryHook = (await import("../agent/hooks/telemetry.js")).default;
 const { routinePermissionCardLines } = await import("../agent/approvals/routine-permission.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 type Probe = Awaited<ReturnType<typeof routineCardProbe>>;
@@ -47,6 +51,52 @@ type Probe = Awaited<ReturnType<typeof routineCardProbe>>;
 const ORG = "acme";
 const SURFACE = "slack/T1/C_ROOM";
 const store = getOperationalStore();
+
+class FakeSession {
+  private readonly store = new Map<string, unknown>();
+  get<T>(key: { name: string }): T | undefined {
+    return this.store.get(key.name) as T | undefined;
+  }
+  has(key: { name: string }): boolean {
+    return this.store.has(key.name);
+  }
+  require<T>(key: { name: string }): T {
+    if (!this.has(key)) throw new Error(`missing ${key.name}`);
+    return this.get(key) as T;
+  }
+  set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+    const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+    this.store.set(key.name, next);
+    return next;
+  }
+  ensure<T>(key: { name: string }, create: () => T): T {
+    return this.has(key) ? this.require(key) : this.set(key, create());
+  }
+  clearVirtualContext(): void {}
+  setVirtualContext(): void {}
+  *entries(): Generator<readonly [unknown, unknown]> {}
+}
+function eveContextStorage(): AsyncLocalStorage<unknown> {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const key = Symbol.for("eve.context-storage");
+  g[key] ??= new AsyncLocalStorage();
+  return g[key] as AsyncLocalStorage<unknown>;
+}
+async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
+  return eveContextStorage().run(new FakeSession(), fn);
+}
+async function fireTelemetry(type: string, data: unknown, ctx: unknown = {}): Promise<void> {
+  const events = telemetryHook.events as unknown as Record<string, (e: unknown, c: unknown) => unknown>;
+  const handler = events[type];
+  if (typeof handler !== "function") throw new Error(`hooks/telemetry.ts does not bind ${type}`);
+  await handler({ type, data }, ctx);
+}
+async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promise<T>): Promise<T> {
+  return inSession(async () => {
+    await fireTelemetry("turn.started", { turnId }, { session: { id: sessionId } });
+    return fn();
+  });
+}
 
 {
   ok(
@@ -60,6 +110,43 @@ const store = getOperationalStore();
   ok(routineCardWaitBudgetMs(200) === 120_000, "§budget: an over-ceiling value is CLAMPED to the ceiling, never spent");
   ok(routineCardWaitBudgetMs(-5) === 0, "§budget: a negative value disarms rather than waiting forever");
   ok(routineCardWaitBudgetMs(Number.NaN) === 0, "§budget: an unreadable value disarms — the fail-safe direction is the immediate refusal");
+}
+
+{
+  ok(routineCardWaitCeilingSeconds(120) === ROUTINE_CARD_WAIT_CEILING_SECONDS, "§elapsed: at the assumed elapsed the ceiling is the old constant, unchanged");
+  ok(routineCardWaitCeilingSeconds(5) === 235, `§elapsed: a turn 5s in may still afford 300 − 5 − 60 (got ${routineCardWaitCeilingSeconds(5)})`);
+  ok(routineCardWaitCeilingSeconds(240) === 0, "§elapsed: a turn 240s in has exactly nothing left");
+  ok(routineCardWaitCeilingSeconds(250) === -10, "§elapsed: and a turn past that is already over budget — the arithmetic says so rather than clamping to zero");
+
+  ok(routineCardWaitBudgetMs(120, routineCardWaitCeilingSeconds(250)) === 0, "🔴 §elapsed: a turn with no room left waits NOT AT ALL — it refuses immediately instead of dying mid-report");
+  ok(routineCardWaitBudgetMs(120, routineCardWaitCeilingSeconds(240)) === 0, "🔴 §elapsed: and a ceiling of exactly zero disarms too — the boundary is not a one-off wait");
+  ok(routineCardWaitBudgetMs(200, routineCardWaitCeilingSeconds(5)) === 200_000, "🔴 §elapsed: a young turn spends its configured 200s — the assumed ceiling no longer clamps a wait the turn can afford");
+  ok(routineCardWaitBudgetMs(120, routineCardWaitCeilingSeconds(150)) === 90_000, "§elapsed: and a mid-life turn is clamped to what is actually left (300 − 150 − 60)");
+
+  ok(turnElapsedSeconds() === undefined, "🔴 §elapsed: with no turn to measure the read is UNDEFINED, never 0 — a caller must not read it as 'the turn just started'");
+  ok(routineCardWaitCeilingSeconds() === ROUTINE_CARD_WAIT_CEILING_SECONDS, "§elapsed: so the default ceiling is the assumed arm, identical to the pre-OPE-1347 number");
+  ok(routineCardWaitCeilingSeconds(Number.NaN) === ROUTINE_CARD_WAIT_CEILING_SECONDS, "§elapsed: an unreadable elapsed falls back rather than producing a NaN budget");
+  ok(routineCardWaitCeilingSeconds(-3) === ROUTINE_CARD_WAIT_CEILING_SECONDS, "§elapsed: so does a clock that moved backwards — an elapsed nobody observed is never reported as one");
+}
+
+{
+  const started = Date.now();
+  await inSession(async () => {
+    await fireTelemetry("turn.started", { turnId: "t-wired" });
+
+    const elapsed = turnElapsedSeconds();
+    ok(elapsed !== undefined, "🔴 §wired: inside a real turn the elapsed read answers a NUMBER — the hook's slot is reachable from the wait");
+    ok(elapsed! >= 0 && elapsed! < 30, `§wired: and it is this turn's own age, not a stale one (got ${String(elapsed)}s)`);
+    const later = turnElapsedSeconds(started + 200_000);
+    ok(later !== undefined && later >= 199 && later <= 201, `§wired: 200s after the stamp the read says ~200s (got ${String(later)}s)`);
+
+    const ceiling = routineCardWaitCeilingSeconds();
+    ok(ceiling > ROUTINE_CARD_WAIT_CEILING_SECONDS, `🔴 §wired: the DEFAULT ceiling follows the live turn (${ceiling}s), not the ${ROUTINE_CARD_WAIT_CEILING_SECONDS}s fallback`);
+    ok(ceiling >= 235 && ceiling <= 240, `§wired: 300 − (a few seconds) − 60 (got ${ceiling}s)`);
+    ok(routineCardWaitBudgetMs(200) === 200_000, "🔴 §wired: so a 200s wait is spent WHOLE inside a young turn — the clamp that used to cut it to 120 is gone");
+  });
+  ok(turnElapsedSeconds() === undefined, "§wired: and outside the session scope the read is undefined once more");
+  ok(routineCardWaitBudgetMs(200) === 120_000, "§wired: so the same 200s wait is clamped to the fallback ceiling — the two answers are not the same answer");
 }
 
 {
@@ -374,6 +461,41 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   ok(wedges[0]?.decidedBy === "U_CLICKER", "§fire: attributed to the human who clicked, never to the fire");
 }
 
+await inTurn("sess-card", "turn_0", async () => {
+  const idsBefore = new Set((await approvedPrOpenWedges()).map((w) => w.id));
+  const before = idsBefore.size;
+
+  const armAndFire = async (): Promise<string> => {
+    await store.revokeSessionApprovals(ORG, KEY);
+    setWait(0);
+    await fire("someone says yes");
+    setWait(10);
+    const posted = (await cards()).find((r) => r.status === "pending");
+    ok(posted !== undefined, "§redelivery: a fresh card is pending for this delivery");
+    const clicked = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        void resolveApprovalClick({ org: ORG, id: posted!.id, clickerId: "U_CLICKER", decision: "approve" } as never).then(() => resolve());
+      }, 200);
+    });
+    const refusal = await fire("someone says yes");
+    await clicked;
+    return refusal;
+  };
+
+  const firstRefusal = await armAndFire();
+  ok(!firstRefusal.includes("was DENIED by the approver chain"), "§redelivery: the first delivery reached the act");
+  const afterFirst = await approvedPrOpenWedges();
+  ok(afterFirst.length === before + 1, "§redelivery: and minted its wedge row");
+  const wedgeId = afterFirst.find((w) => !idsBefore.has(w.id))?.id;
+  ok(wedgeId !== undefined, "§redelivery: and the new row is identifiable — not one an earlier block left behind");
+
+  const secondRefusal = await armAndFire();
+  ok(!secondRefusal.includes("was DENIED by the approver chain"), "§redelivery: the second delivery reached the act too — the leg is not passing by refusing early");
+  const afterSecond = await approvedPrOpenWedges();
+  ok(afterSecond.length === before + 1, `🔴 §redelivery: STILL THE SAME NUMBER OF WEDGE ROWS — one authorisation in one turn of one session writes one row (got ${afterSecond.length}, was ${before + 1})`);
+  ok(afterSecond.some((w) => w.id === wedgeId), "🔴 §redelivery: and it is the SAME row — the id is derived from the (session, turn) and the decision, not minted per delivery");
+});
+
 {
   await store.revokeSessionApprovals(ORG, KEY);
   ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "absent", "§fire: the slate is clean, so this fire POSTS rather than re-points");
@@ -412,8 +534,8 @@ async function allPendingActionIds(): Promise<string[]> {
   }
 }
 
-async function approvedPrOpenWedges(): Promise<{ decidedBy: string | null }[]> {
-  const out: { decidedBy: string | null }[] = [];
+async function approvedPrOpenWedges(): Promise<{ id: string; decidedBy: string | null }[]> {
+  const out: { id: string; decidedBy: string | null }[] = [];
   for (const id of await allPendingActionIds()) {
     const row = await store.getPendingAction(ORG, id);
     if (row?.kind === "pr.open" && row.status === "approved") out.push(row);

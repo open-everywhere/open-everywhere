@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { requestApproval } = await import("../agent/approvals/flow.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
+const telemetryHook = (await import("../agent/hooks/telemetry.js")).default;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -75,6 +77,56 @@ const baseInput = {
   chain: { unattended: false },
 };
 const argsFor = (domain: string) => ({ org: "test-org", domain, name: "ghost-skill", requestedBy: "U_HUMAN" });
+
+async function allPendingActionRows(): Promise<{ id: string; kind: string; scopeKey: string; status: string }[]> {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(process.env.OE_SQLITE_PATH!, { readOnly: true });
+  try {
+    return db.prepare("SELECT id, kind, scope_key AS scopeKey, status FROM pending_actions").all() as never;
+  } finally {
+    db.close();
+  }
+}
+
+class FakeSession {
+  private readonly state = new Map<string, unknown>();
+  get<T>(key: { name: string }): T | undefined {
+    return this.state.get(key.name) as T | undefined;
+  }
+  has(key: { name: string }): boolean {
+    return this.state.has(key.name);
+  }
+  require<T>(key: { name: string }): T {
+    if (!this.has(key)) throw new Error(`missing ${key.name}`);
+    return this.get(key) as T;
+  }
+  set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+    const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+    this.state.set(key.name, next);
+    return next;
+  }
+  ensure<T>(key: { name: string }, create: () => T): T {
+    return this.has(key) ? this.require(key) : this.set(key, create());
+  }
+  clearVirtualContext(): void {}
+  setVirtualContext(): void {}
+  *entries(): Generator<readonly [unknown, unknown]> {}
+}
+function eveContextStorage(): AsyncLocalStorage<unknown> {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const key = Symbol.for("eve.context-storage");
+  g[key] ??= new AsyncLocalStorage();
+  return g[key] as AsyncLocalStorage<unknown>;
+}
+async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promise<T>): Promise<T> {
+  return eveContextStorage().run(new FakeSession(), async () => {
+    const events = telemetryHook.events as unknown as Record<string, (e: unknown, c: unknown) => unknown>;
+    const started = events["turn.started"];
+    if (typeof started !== "function") throw new Error("hooks/telemetry.ts does not bind turn.started");
+    await started({ type: "turn.started", data: { turnId } }, { session: { id: sessionId } });
+    return fn();
+  });
+}
 
 type Row = { action: string; detail?: Record<string, unknown> };
 async function rowsFor(action: string): Promise<Row[]> {
@@ -307,5 +359,55 @@ const rotateArgs = {
   ok(res.autoApproved === undefined && typeof res.id === "string", "non-tool kind: session.checkpoint still cards even under DENY_ALL — the chain governs tool-proposed kinds only");
 }
 
-console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, the OPE-310 beneficiary-clicker floor, and the OPE-438 taint verdict shift (attended ⇒ card, unattended ⇒ deny naming taint, clean ⇒ unchanged)`);
+{
+  const redeliverInput = {
+    ...baseInput,
+    args: { org: "test-org", domain: "fastlane", name: "ghost-skill-redelivered", requestedBy: "U_HUMAN" },
+    scopeKey: "slack/T1/C_FAST",
+    domain: "fastlane",
+    channelId: "C_FAST",
+  };
+  const inOneTurn = await inTurn("sess-A", "turn_0", async () => {
+    const first = await requestApproval(redeliverInput, { postCard });
+    const again = await requestApproval(redeliverInput, { postCard });
+    ok(first.autoApproved !== undefined, "redelivery: the first delivery auto-approves, as the ALLOW leg above does");
+    ok(again.autoApproved !== undefined, "redelivery: the second delivery still auto-approves and still runs the act — the fix suppresses a ROW, never an execution");
+    ok(again.id === first.id, "🔴 redelivery: and it lands on the SAME wedge id — the id is derived from the turn and the decision, not minted per delivery");
+    return first.id;
+  });
+
+  const inNextTurn = await inTurn("sess-A", "turn_1", async () => {
+    const later = await requestApproval(redeliverInput, { postCard });
+    ok(later.autoApproved !== undefined, "redelivery: a later turn's identical propose auto-approves too");
+    return later.id;
+  });
+  ok(inNextTurn !== inOneTurn, "🔴 redelivery: a LATER TURN mints its OWN wedge row — the fix collapses a redelivery, never two real acts");
+
+  const inOtherSession = await inTurn("sess-B", "turn_0", async () => {
+    const tomorrow = await requestApproval(redeliverInput, { postCard });
+    ok(tomorrow.autoApproved !== undefined, "redelivery: the next fire's identical propose auto-approves too");
+    return tomorrow.id;
+  });
+  ok(
+    inOtherSession !== inOneTurn && inOtherSession !== inNextTurn,
+    "🔴 redelivery: A DIFFERENT SESSION AT THE SAME TURN ORDINAL MINTS ITS OWN ROW — two nightly fires both report `turn_0`, and the key must not fold them",
+  );
+
+  const wedges = (await allPendingActionRows()).filter(
+    (r) => r.kind === "skill.delete" && r.scopeKey === "slack/T1/C_FAST" && r.status === "approved" && [inOneTurn, inNextTurn, inOtherSession].includes(r.id),
+  );
+  ok(wedges.length === 3, `🔴 redelivery: exactly THREE wedge rows for four deliveries across two sessions (got ${wedges.length})`);
+
+  const auto = (await rowsFor("approval.autoapproved")).filter((r) => (r.detail ?? {}).id === inOneTurn);
+  ok(auto.length === 2, `🔴 redelivery: both executions in turn A are audited against its one row (got ${auto.length})`);
+  const marked = auto.filter((r) => (r.detail ?? {}).wedgeRowReused === true);
+  ok(marked.length === 1, "🔴 redelivery: exactly one carries `wedgeRowReused` — the trail states that a row with this id was already there, and nothing more");
+  ok(auto.filter((r) => (r.detail ?? {}).wedgeRowReused === undefined).length === 1, "redelivery: and the first does not — the negative control for the flag");
+  for (const [label, id] of [["the later turn", inNextTurn], ["the other session", inOtherSession]] as const) {
+    const own = (await rowsFor("approval.autoapproved")).filter((r) => (r.detail ?? {}).id === id);
+    ok(own.length === 1 && (own[0]!.detail ?? {}).wedgeRowReused === undefined, `🔴 redelivery: ${label}'s execution is audited against its OWN row and is not marked reused`);
+  }
+}
+
+console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, the OPE-310 beneficiary-clicker floor, the OPE-438 taint verdict shift (attended ⇒ card, unattended ⇒ deny naming taint, clean ⇒ unchanged), and the OPE-1348 one-row-per-authorisation-per-turn wedge`);
 rmSync(tmp, { recursive: true, force: true });

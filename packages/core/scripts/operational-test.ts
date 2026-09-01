@@ -1134,6 +1134,18 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.decidePendingAction("default", "pa-frozen", "expired", "system", "2026-07-20T02:00:00Z")) === true, "pending: the first decide CAS wins");
   ok((await store.decidePendingAction("default", "pa-frozen", "approved", "U_REQ", "2026-07-20T02:00:01Z")) === false, "pending: a second decide on the terminal row loses the CAS");
   ok((await store.getPendingAction("default", "pa-frozen"))?.status === "expired", "pending: the losing CAS left the row untouched");
+
+  const wedge = { ...base, id: "pa-wedge", status: "approved" as const, decidedBy: "chain:custom:x", decidedAt: "2026-07-20T01:00:00Z", postedTo: null };
+  ok((await store.addPendingActionIfAbsent(wedge)) === true, "pending: addPendingActionIfAbsent reports TRUE when it really inserts");
+  ok((await store.getPendingAction("default", "pa-wedge"))?.decidedBy === "chain:custom:x", "pending: and the row is there");
+  ok(
+    (await store.addPendingActionIfAbsent({ ...wedge, decidedBy: "chain:custom:SECOND", decidedAt: "2026-07-20T09:00:00Z" })) === false,
+    "🔴 pending: a second insert on the same id reports FALSE instead of throwing a primary-key violation",
+  );
+  const kept = await store.getPendingAction("default", "pa-wedge");
+  ok(kept?.decidedBy === "chain:custom:x" && kept.decidedAt === "2026-07-20T01:00:00Z", "🔴 pending: and the FIRST row survives untouched — ON CONFLICT DO NOTHING, never an upsert");
+  ok((await store.getPendingAction("acme", "pa-wedge")) === null, "pending: the conflict arm is org-scoped like every other pending read");
+  ok((await store.addPendingActionIfAbsent({ ...wedge, org: "acme" })) === true, "pending: the same id under a DIFFERENT org still inserts — the key is (org, id)");
 }
 
 {

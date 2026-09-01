@@ -21,9 +21,10 @@ const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
-const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
+const { reapSupersededRoutineCards, requestApproval, resolveApprovalClick, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
+const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { addRoutine, updateRoutine } = await import("../agent/routines/store.js");
+const { addRoutine, removeRoutine, updateRoutine } = await import("../agent/routines/store.js");
 const { routineGrantKey } = await import("../agent/routines/routine.js");
 const { ROUTINE_GRANT_NO_EXPIRY, listRoutinePermissions, revokeRoutinePermissions } = await import("../agent/routines/grants.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
@@ -391,6 +392,109 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const blocks = decidedCardBlocks((res as unknown as { row: never }).row, (res as { summaryLines: string[] }).summaryLines, "rejected");
   const context = blocks.text.split("\n").at(-1);
   ok(context === "❌ Rejected by <@U_ADMIN>", `§click: a hookless kind's decided card is byte-identical — no appended outcome clause (got ${String(context)})`);
+}
+
+{
+  const reapRoutine = await addRoutine({ org: ORG, surfaceKey: SURFACE } as never, {
+    id: "r-reap",
+    org: ORG,
+    surfaceKey: SURFACE,
+    target: { channelId: "C_ROOM" },
+    trigger: { kind: "cron", cron: "0 4 * * *" },
+    prompt: "Every morning, open a pull request.",
+    createdBy: "U_OWNER",
+    createdAt: new Date().toISOString(),
+    status: "active",
+  } as never);
+  const reapKey = routineGrantKey(reapRoutine);
+  const fireReap = async (title: string): Promise<void> => {
+    await requestApproval(
+      {
+        org: ORG,
+        kind: "pr.open",
+        args: { org: ORG, scopeKey: SURFACE, repo: "acme/site", head: title, base: "main", title, body: "", headSha: "aaa", requestedBy: "U_OWNER", tainted: false, sessionId: reapKey },
+        scopeKey: SURFACE,
+        domain: null,
+        requestedBy: "U_OWNER",
+        channelId: "C_ELSEWHERE",
+        chain: { unattended: true },
+      } as never,
+      {},
+    ).catch(() => undefined);
+  };
+  const reapCards = async (): Promise<{ id: string; argsJson: string }[]> =>
+    (await store.listPendingActions(ORG)).filter((r) => r.kind === ROUTINE_PERMISSION_KIND && r.argsJson.includes(reapKey)) as never;
+
+  await fireReap("reap me");
+  const card = (await reapCards())[0];
+  ok(card !== undefined, "§reap: the fire posted a card for this generation");
+
+  await reapSupersededRoutineCards(ORG);
+  ok((await reapCards()).length === 1, "🔴 §reap: a CURRENT generation's card survives the reap — it never closes a card a click would still honour");
+  ok((await store.getPendingAction(ORG, card!.id))?.status === "pending", "§reap: and the row itself is untouched, still pending");
+
+  await updateRoutine(ORG, SURFACE, "r-reap", { promptGeneration: 7 });
+  const closed = await sweepExpiredPendings(ORG);
+  ok(closed >= 1, `🔴 §reap: THE SWEEP closes the superseded card — the pass is wired into it, not merely correct on its own (closed ${closed})`);
+  ok((await reapCards()).length === 0, "🔴 §reap: the card is no longer pending — the room stops holding buttons whose every click refuses");
+  const reaped = await store.getPendingAction(ORG, card!.id);
+  ok(reaped?.status === "expired" && reaped.decidedBy === "system", "§reap: the row is EXPIRED, decided by the system rather than by a human who never clicked");
+
+  const expiredRows = await readAudit({ action: "approval.expired" });
+  ok(expiredRows.filter((r) => (r.detail as { id?: string } | undefined)?.id === card!.id).length === 1, "§reap: exactly one approval.expired row names this card");
+  const cause = (expiredRows.find((r) => (r.detail as { id?: string } | undefined)?.id === card!.id)?.detail ?? {}) as { cause?: string; routine?: string };
+  ok(cause.cause === "routine-superseded", `🔴 §reap: the cause is NOT "ttl" — no clock ran out, and an operator has to be able to tell the two apart (got ${String(cause.cause)})`);
+  ok(cause.routine === "r-reap", "§reap: and the row names the routine whose edit closed it");
+
+  const goneRoutine = await addRoutine({ org: ORG, surfaceKey: SURFACE } as never, {
+    id: "r-gone",
+    org: ORG,
+    surfaceKey: SURFACE,
+    target: { channelId: "C_ROOM" },
+    trigger: { kind: "cron", cron: "0 5 * * *" },
+    prompt: "Every evening, open a pull request.",
+    createdBy: "U_OWNER",
+    createdAt: new Date().toISOString(),
+    status: "active",
+  } as never);
+  const goneKey = routineGrantKey(goneRoutine);
+  await requestApproval(
+    {
+      org: ORG,
+      kind: "pr.open",
+      args: { org: ORG, scopeKey: SURFACE, repo: "acme/site", head: "gone", base: "main", title: "gone", body: "", headSha: "ccc", requestedBy: "U_OWNER", tainted: false, sessionId: goneKey },
+      scopeKey: SURFACE,
+      domain: null,
+      requestedBy: "U_OWNER",
+      channelId: "C_ELSEWHERE",
+      chain: { unattended: true },
+    } as never,
+    {},
+  ).catch(() => undefined);
+  const second = (await store.listPendingActions(ORG)).find((r) => r.kind === ROUTINE_PERMISSION_KIND && r.argsJson.includes(goneKey));
+  ok(second !== undefined, "§reap: a fresh card is pending for the delete leg");
+  ok(await removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-gone"), "§reap: the routine is deleted");
+  ok((await reapSupersededRoutineCards(ORG)) >= 1, "§reap: the reap closes the card of a routine that no longer exists");
+  ok((await store.getPendingAction(ORG, second!.id))?.status === "expired", "§reap: that card's own row is expired");
+  const goneDetail = ((await readAudit({ action: "approval.expired" })).find((r) => (r.detail as { id?: string } | undefined)?.id === second!.id)?.detail ??
+    {}) as { cause?: string };
+  ok(goneDetail.cause === "routine-deleted", `§reap: with the cause that says WHICH road — deleted, not edited (got ${String(goneDetail.cause)})`);
+
+  const ordinary = await requestApproval(
+    {
+      org: ORG,
+      kind: "pr.open",
+      args: { org: ORG, scopeKey: SURFACE, repo: "acme/site", head: "bystander", base: "main", title: "bystander", body: "", headSha: "bbb", requestedBy: "U_OWNER", tainted: false },
+      scopeKey: SURFACE,
+      domain: null,
+      requestedBy: "U_OWNER",
+      channelId: "C_ROOM",
+      chain: { unattended: false },
+    } as never,
+    {},
+  );
+  ok((await reapSupersededRoutineCards(ORG)) === 0, "§reap: with no superseded card left there is nothing to close");
+  ok((await store.getPendingAction(ORG, ordinary.id))?.status === "pending", "🔴 §reap: and an ordinary pr.open card is still pending — the reap reads one kind and touches no other");
 }
 
 rmSync(tmp, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
@@ -52,7 +52,7 @@ import "./ticket-create.js";
 import "./chat-post.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
-import "./routine-permission.js";
+import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
 import {
   findLiveRoutinePermissionCardId,
   markRoutinePermissionAsked,
@@ -63,6 +63,7 @@ import {
 } from "../routines/permission-card.js";
 import { routineCardKeepsStateClause, routineCardWaitBudgetMs, routineCardWaitRefusalClause, waitForRoutineCardDecision } from "../routines/permission-card-wait.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
+import { readTurnClock } from "../observability/turn-clock.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 
@@ -193,6 +194,26 @@ export interface RequestApprovalResult {
   readonly autoApproved?: AutoApprovedOutcome;
 }
 
+interface WedgeIdentity {
+  readonly org: string;
+  readonly kind: string;
+  readonly scopeKey: string;
+  readonly channelId: string;
+  readonly threadTs: string | null;
+  readonly argsJson: string;
+  readonly requestedBy: string;
+  readonly decidedBy: string;
+}
+
+function wedgeActionId(identity: WedgeIdentity): string {
+  const turn = readTurnClock();
+  if (turn === undefined || turn === null || turn.turnId.length === 0 || turn.sessionId.length === 0) return randomUUID();
+  const material = JSON.stringify([turn.sessionId, turn.turnId, identity.org, identity.kind, identity.scopeKey, identity.channelId, identity.threadTs, identity.argsJson, identity.requestedBy, identity.decidedBy]);
+  const hex = createHash("sha256").update(material).digest("hex");
+  const variant = ((parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function autoApprovedNote(what: string, autoApproved: AutoApprovedOutcome): string {
   if (autoApproved.grantedBy !== undefined) {
     return (
@@ -304,11 +325,21 @@ export async function requestApproval(
       if (card.armedBy !== undefined) {
         const store = getOperationalStore();
         const decidedAt = new Date().toISOString();
+        const wedgeArgsJson = JSON.stringify(input.args ?? null);
         const wedge: PendingActionRow = {
-          id: randomUUID(),
+          id: wedgeActionId({
+            org: input.org,
+            kind: input.kind,
+            scopeKey: input.scopeKey,
+            channelId: input.channelId,
+            threadTs: input.threadTs ?? null,
+            argsJson: wedgeArgsJson,
+            requestedBy: input.requestedBy,
+            decidedBy: card.armedBy,
+          }),
           org: input.org,
           kind: input.kind,
-          argsJson: JSON.stringify(input.args ?? null),
+          argsJson: wedgeArgsJson,
           scopeKey: input.scopeKey,
           domain: input.domain ?? null,
           requestedBy: input.requestedBy,
@@ -322,13 +353,20 @@ export async function requestApproval(
           decidedBy: card.armedBy,
           decidedAt,
         };
-        await store.addPendingAction(wedge);
+        const minted = await store.addPendingActionIfAbsent(wedge);
         const outcome = await kindDef.execute(input.args, card.armedBy);
         await appendAudit({
           ...whereFromScope(input.org, input.scopeKey),
           principalId: card.armedBy,
           action: "approval.autoapproved",
-          detail: { id: wedge.id, kind: input.kind, scopeKey: input.scopeKey, resolvedBy: "routine-permission-card", transforms: resolution.transforms.map((t) => t.name) },
+          detail: {
+            id: wedge.id,
+            kind: input.kind,
+            scopeKey: input.scopeKey,
+            resolvedBy: "routine-permission-card",
+            transforms: resolution.transforms.map((t) => t.name),
+            ...(minted ? {} : { wedgeRowReused: true }),
+          },
         }).catch(() => undefined);
         emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "autoapproved" });
         return { id: wedge.id, expiresAt: wedge.expiresAt, autoApproved: { outcome, resolvedBy: "routine-permission-card", grantedBy: card.armedBy } };
@@ -353,11 +391,21 @@ export async function requestApproval(
       const store = getOperationalStore();
       const now = new Date();
       const decidedBy = `chain:${resolution.resolvedBy}`;
+      const rowArgsJson = JSON.stringify(input.args ?? null);
       const row: PendingActionRow = {
-        id: randomUUID(),
+        id: wedgeActionId({
+          org: input.org,
+          kind: input.kind,
+          scopeKey: input.scopeKey,
+          channelId: input.channelId,
+          threadTs: input.threadTs ?? null,
+          argsJson: rowArgsJson,
+          requestedBy: input.requestedBy,
+          decidedBy,
+        }),
         org: input.org,
         kind: input.kind,
-        argsJson: JSON.stringify(input.args ?? null),
+        argsJson: rowArgsJson,
         scopeKey: input.scopeKey,
         domain: input.domain ?? null,
         requestedBy: input.requestedBy,
@@ -371,7 +419,7 @@ export async function requestApproval(
         decidedBy,
         decidedAt: now.toISOString(),
       };
-      await store.addPendingAction(row);
+      const minted = await store.addPendingActionIfAbsent(row);
       const outcome = await kindDef.execute(input.args, decidedBy);
       const noticePlatform = resolution.resolvedBy === "judge" ? platformOfScopeKey(input.postedTo) : undefined;
       const noticePoster = judgeLiftNoticePosterFor(noticePlatform);
@@ -387,7 +435,14 @@ export async function requestApproval(
         ...whereFromScope(input.org, input.scopeKey),
         principalId: input.requestedBy,
         action: "approval.autoapproved",
-        detail: { id: row.id, kind: input.kind, scopeKey: input.scopeKey, resolvedBy: resolution.resolvedBy, transforms: resolution.transforms.map((t) => t.name) },
+        detail: {
+          id: row.id,
+          kind: input.kind,
+          scopeKey: input.scopeKey,
+          resolvedBy: resolution.resolvedBy,
+          transforms: resolution.transforms.map((t) => t.name),
+          ...(minted ? {} : { wedgeRowReused: true }),
+        },
       }).catch(() => undefined);
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "autoapproved" });
       return { id: row.id, expiresAt: row.expiresAt, autoApproved: { outcome, resolvedBy: resolution.resolvedBy } };
@@ -886,6 +941,35 @@ export async function sweepExpiredPendings(org: string, now: Date = new Date(), 
       await sweepExpiryFeedback({ ...row, status: "expired", decidedBy: "system", decidedAt: nowIso }, deps);
     } catch (err) {
       console.warn(`[open-everywhere:approvals] sweepExpiredPendings: failed to expire ${row.id}: ${String(err)}`);
+    }
+  }
+  return count + (await reapSupersededRoutineCards(org, now, deps));
+}
+
+export async function reapSupersededRoutineCards(org: string, now: Date = new Date(), deps: SweepFeedbackDeps = {}): Promise<number> {
+  const store = getOperationalStore();
+  const nowIso = now.toISOString();
+  const pending = await store.listPendingActions(org).catch(() => [] as readonly PendingActionRow[]);
+  let count = 0;
+  for (const row of pending) {
+    if (row.kind !== ROUTINE_PERMISSION_KIND) continue;
+    const args = parseRoutinePermissionArgs(row.argsJson);
+    if (!args) continue;
+    try {
+      const state = await routineCardGenerationState(args);
+      if (state.state === "current" || state.state === "unreadable") continue;
+      const won = await store.decidePendingAction(org, row.id, "expired", "system", nowIso);
+      if (!won) continue;
+      await appendAudit({
+        ...whereFromScope(org, row.scopeKey),
+        principalId: "system",
+        action: "approval.expired",
+        detail: { id: row.id, kind: row.kind, cause: state.state === "gone" ? "routine-deleted" : "routine-superseded", routine: args.routineId },
+      });
+      count++;
+      await sweepExpiryFeedback({ ...row, status: "expired", decidedBy: "system", decidedAt: nowIso }, deps);
+    } catch (err) {
+      console.warn(`[open-everywhere:approvals] reapSupersededRoutineCards: failed to expire ${row.id}: ${String(err)}`);
     }
   }
   return count;

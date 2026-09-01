@@ -44,17 +44,51 @@ export function routinePermissionCardLines(args: RoutinePermissionArgs): string[
 }
 
 async function recheckedRoutine(args: RoutinePermissionArgs): Promise<{ ok: true } | { ok: false; why: string }> {
-  const routine = await getRoutine(args.org, args.routineSurfaceKey, args.routineId).catch(() => null);
-  if (!routine) return { ok: false, why: `routine ${args.routineId} no longer exists` };
-  if (routineGrantKey(routine) !== args.grantKey) {
-    return {
-      ok: false,
-      why:
-        `routine ${args.routineId} has been edited since this card was posted ` +
-        `(it is now on generation ${routineGrantGeneration(routine)}), so its new instruction has to ask again`,
-    };
+  const state = await routineCardGenerationState(args);
+  switch (state.state) {
+    case "current":
+      return { ok: true };
+    case "gone":
+      return { ok: false, why: `routine ${args.routineId} no longer exists` };
+    case "superseded":
+      return {
+        ok: false,
+        why:
+          `routine ${args.routineId} has been edited since this card was posted ` +
+          `(it is now on generation ${state.generation}), so its new instruction has to ask again`,
+      };
+    default:
+      return { ok: false, why: `routine ${args.routineId} could not be read` };
   }
-  return { ok: true };
+}
+
+export type RoutineCardGenerationState =
+  | { readonly state: "current" }
+  | { readonly state: "superseded"; readonly generation: number }
+  | { readonly state: "gone" }
+  | { readonly state: "unreadable" };
+
+export async function routineCardGenerationState(args: RoutinePermissionArgs): Promise<RoutineCardGenerationState> {
+  let routine: Awaited<ReturnType<typeof getRoutine>>;
+  try {
+    routine = await getRoutine(args.org, args.routineSurfaceKey, args.routineId);
+  } catch {
+    return { state: "unreadable" };
+  }
+  if (!routine) return { state: "gone" };
+  if (routineGrantKey(routine) !== args.grantKey) return { state: "superseded", generation: routineGrantGeneration(routine) };
+  return { state: "current" };
+}
+
+export function parseRoutinePermissionArgs(argsJson: string): RoutinePermissionArgs | undefined {
+  try {
+    const parsed = JSON.parse(argsJson) as Partial<RoutinePermissionArgs> | null;
+    if (!parsed || typeof parsed.org !== "string" || typeof parsed.routineId !== "string") return undefined;
+    if (typeof parsed.routineSurfaceKey !== "string" || typeof parsed.grantKey !== "string") return undefined;
+    return parsed as RoutinePermissionArgs;
+  } catch {
+    return undefined;
+  }
 }
 
 const routinePermission: ActionKind<RoutinePermissionArgs> = {

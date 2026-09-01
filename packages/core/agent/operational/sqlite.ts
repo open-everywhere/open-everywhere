@@ -2518,6 +2518,35 @@ export const sqliteOperationalStore: OperationalStore = {
       );
   },
 
+  async addPendingActionIfAbsent(row) {
+    const info = getDb()
+      .prepare(
+        `INSERT INTO pending_actions
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, id) DO NOTHING`,
+      )
+      .run(
+        row.org,
+        row.id,
+        row.kind,
+        row.argsJson,
+        row.scopeKey,
+        row.domain,
+        row.requestedBy,
+        row.channelId,
+        row.threadTs,
+        row.messageTs,
+        row.postedTo,
+        row.status,
+        row.createdAt,
+        row.expiresAt,
+        row.decidedBy,
+        row.decidedAt,
+      );
+    return info.changes > 0;
+  },
+
   async getPendingAction(org, id) {
     const row = getDb()
       .prepare(

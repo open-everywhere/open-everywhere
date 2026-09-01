@@ -1,4 +1,5 @@
 import { getSettings } from "../settings/settings.js";
+import { turnElapsedSeconds } from "../observability/turn-clock.js";
 
 export const FUNCTION_WALL_CEILING_SECONDS = 300;
 
@@ -7,6 +8,11 @@ export const ASSUMED_TURN_ELAPSED_SECONDS = 120;
 export const TURN_TAIL_RESERVE_SECONDS = 60;
 
 export const ROUTINE_CARD_WAIT_CEILING_SECONDS = FUNCTION_WALL_CEILING_SECONDS - ASSUMED_TURN_ELAPSED_SECONDS - TURN_TAIL_RESERVE_SECONDS;
+
+export function routineCardWaitCeilingSeconds(elapsedSeconds: number | undefined = turnElapsedSeconds()): number {
+  const elapsed = elapsedSeconds !== undefined && Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0 ? elapsedSeconds : ASSUMED_TURN_ELAPSED_SECONDS;
+  return FUNCTION_WALL_CEILING_SECONDS - elapsed - TURN_TAIL_RESERVE_SECONDS;
+}
 
 export const ROUTINE_CARD_POLL_INTERVAL_MS = 2_000;
 
@@ -35,9 +41,13 @@ export function routineCardWaitSeconds(): number {
   return getSettings().approvals.routineCardWaitSeconds;
 }
 
-export function routineCardWaitBudgetMs(configuredSeconds: number = routineCardWaitSeconds()): number {
+export function routineCardWaitBudgetMs(
+  configuredSeconds: number = routineCardWaitSeconds(),
+  ceilingSeconds: number = routineCardWaitCeilingSeconds(),
+): number {
   if (!Number.isFinite(configuredSeconds) || configuredSeconds <= 0) return 0;
-  return Math.min(configuredSeconds, ROUTINE_CARD_WAIT_CEILING_SECONDS) * 1_000;
+  if (!Number.isFinite(ceilingSeconds) || ceilingSeconds <= 0) return 0;
+  return Math.min(configuredSeconds, ceilingSeconds) * 1_000;
 }
 
 export async function waitForRoutineCardDecision(budgetMs: number, deps: RoutineCardWaitDeps): Promise<RoutineCardWaitOutcome> {

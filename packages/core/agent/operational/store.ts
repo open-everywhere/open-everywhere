@@ -761,6 +761,7 @@ export interface OperationalStore {
   getSlackAttachment(org: string, fileId: string): Promise<SlackAttachmentRow | null>;
 
   addPendingAction(row: PendingActionRow): Promise<void>;
+  addPendingActionIfAbsent(row: PendingActionRow): Promise<boolean>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
   listPendingActions(org: string): Promise<readonly PendingActionRow[]>;
   listExpiredPendingActions(org: string, nowIso: string): Promise<readonly PendingActionRow[]>;

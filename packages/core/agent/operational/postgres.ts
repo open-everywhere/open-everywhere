@@ -2957,6 +2957,34 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       );
     },
 
+    async addPendingActionIfAbsent(row: PendingActionRow) {
+      const { rows } = await client.query(
+        `INSERT INTO pending_actions
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (org_id, id) DO NOTHING RETURNING id`,
+        [
+          row.org,
+          row.id,
+          row.kind,
+          row.argsJson,
+          row.scopeKey,
+          row.domain,
+          row.requestedBy,
+          row.channelId,
+          row.threadTs,
+          row.messageTs,
+          row.postedTo,
+          row.status,
+          row.createdAt,
+          row.expiresAt,
+          row.decidedBy,
+          row.decidedAt,
+        ],
+      );
+      return rows.length > 0;
+    },
+
     async getPendingAction(org, id) {
       const { rows } = await client.query(
         `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
