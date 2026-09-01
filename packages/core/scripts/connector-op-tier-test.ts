@@ -167,21 +167,27 @@ ok(classifyConnectorOpTierVerdict("notion__get_or_create_entity").basis === "wri
 ok(classifyConnectorOpTierVerdict("x__get_delete_marker").basis === "destructive-verb", "…and a destructive token in a compound verb wins the basis outright");
 ok(classifyConnectorOpTierVerdict("search").basis === "read-verb", "an unqualified name is tokenised whole — `search` reads, on a read-verb basis");
 
-for (const [name, tier, basis] of [
-  ["acme__delete_search", "destructive", "destructive-verb"],
-  ["delete__delete_search", "read", "read-verb"],
-  ["delete__delete_page", "destructive", "unrecognised"],
-  ["get__get_frobnicate", "destructive", "unrecognised"],
+for (const [name, tier, basis, was] of [
+  ["acme__delete_search", "destructive", "destructive-verb", "destructive"],
+  ["delete__delete_search", "destructive", "destructive-verb", "read"],
+  ["delete__delete_page", "destructive", "destructive-verb", "destructive"],
+  ["post__post_search", "write", "write-verb", "read"],
+  ["get__get_frobnicate", "destructive", "unrecognised", "destructive"],
+  ["post__post_frobnicate", "destructive", "unrecognised", "destructive"],
+  ["notion__notion-fetch", "read", "read-verb", "read"],
 ] as const) {
   const v = checkedVerdict(name);
   ok(v.tier === tier, `head-prefix strip: ${name} → ${tier}`);
   ok(v.basis === basis, `…on a ${basis} basis (${name})`);
-  ok(oracleTier(name) === tier, `…and the pre-OPE-1060 oracle agrees, so OPE-1321 moved nothing here (${name})`);
+  ok(oracleTier(name) === was, `NEGATIVE CONTROL — the pre-fix classifier called ${name} ${was}`);
+  ok(TIER_RANK[tier] >= TIER_RANK[was], `the row for ${name} does not ask for a DOWNWARD move (${was} → ${tier})`);
 }
 ok(
-  classifyConnectorOpTier("delete__delete_search") === "read" && classifyConnectorOpTier("acme__delete_search") === "destructive",
-  "🔴 the SAME op name classifies read or destructive depending only on the CONNECTION SLUG — the open arm OPE-1325 owns",
+  classifyConnectorOpTier("delete__delete_search") === classifyConnectorOpTier("acme__delete_search"),
+  "🔴 the SAME op name classifies the SAME whatever the CONNECTION SLUG spells — the false-OPEN OPE-1325 closed",
 );
+ok(classifyConnectorOpTier("delete__query") === "read", "an unstripped head is inert — `delete__query` is still a read");
+ok(oracleTier("delete__query") === "read", "…which the pre-fix classifier also said, so this row moved nothing");
 
 for (const falseOpen of [
   "grant__will_read__frobnicate",

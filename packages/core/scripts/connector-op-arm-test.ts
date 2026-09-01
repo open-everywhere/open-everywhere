@@ -122,6 +122,27 @@ registerConfig(config(() => "destructive"));
 eq(effectiveConnectorOpTier(READ_OP), "destructive", "🔴 negative control: the arm CAN raise a recognised read to destructive");
 eq(effectiveConnectorOpTier(WRITE_OP), "destructive", "…and a recognised write");
 
+const STRIPPED_DESTRUCTIVE_OP = "delete__delete_page";
+{
+  const verdict = classifyConnectorOpTierVerdict(STRIPPED_DESTRUCTIVE_OP);
+  eq(verdict.basis, "destructive-verb", "🔴 a head that prefixes a destructive verb no longer leaves the basis `unrecognised`");
+  eq(verdict.tier, "destructive", "…and the built-in tier is destructive, as it already was");
+}
+registerConfig(config(() => "read"));
+{
+  const parts = connectorOpTierParts(STRIPPED_DESTRUCTIVE_OP);
+  eq(parts.arm, "read", "the everything-is-read arm really did answer on this op — the leg is not a silent no-call");
+  eq(parts.armDecided, false, "🔴 …but it may no longer DECIDE it: the built-in recognised the verb the strip used to eat");
+  eq(parts.tier, "destructive", "…so the arm is JOINED and the op stays destructive");
+}
+eq(
+  effectiveConnectorOpConsequence(STRIPPED_DESTRUCTIVE_OP),
+  "gate:member",
+  "🔴 …and the op takes a card, where the same arm on the pre-OPE-1325 basis would have opened it",
+);
+eq(connectorOpTierParts(UNKNOWN_OP).armDecided, true, "NEGATIVE CONTROL — a truly unrecognised verb is still the arm's to decide");
+eq(effectiveConnectorOpTier(UNKNOWN_OP), "read", "…and that arm still opens it");
+
 registerConfig(config(() => "read"));
 eq(allowedOnRestrictedJobWake(DESTRUCTIVE_OP), false, "🔴 FLOOR: an everything-is-read arm does NOT admit delete_page to a restricted job wake");
 eq(allowedOnRestrictedJobWake(UNKNOWN_OP), false, "🔴 FLOOR: …nor an UNRECOGNISED op, the very rung the arm may decide");

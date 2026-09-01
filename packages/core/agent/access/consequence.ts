@@ -55,17 +55,24 @@ export const CONNECTOR_WRITE_VERBS: readonly string[] = [
   "replace", "attach", "link", "unlink", "restore", "archive", "unarchive", "unpublish", "revoke", "cancel",
 ];
 
-function connectorOpVerbTokens(toolName: string): string[] {
+interface ConnectorOpVerbTokens {
+  readonly kept: readonly string[];
+  readonly stripped: readonly string[];
+}
+
+function connectorOpVerbTokens(toolName: string): ConnectorOpVerbTokens {
   const sep = toolName.indexOf("__");
-  if (sep < 0) return toolName.toLowerCase().split(/[_-]/);
+  if (sep < 0) return { kept: toolName.toLowerCase().split(/[_-]/), stripped: [] };
   const parsed = parseQualifiedToolName(toolName);
-  if (parsed === undefined) return [];
-  let verb = parsed.verb.toLowerCase();
+  if (parsed === undefined) return { kept: [], stripped: [] };
+  const verb = parsed.verb.toLowerCase();
   if (sep > 0) {
     const conn = toolName.slice(0, sep).toLowerCase();
-    if (verb.startsWith(`${conn}-`) || verb.startsWith(`${conn}_`)) verb = verb.slice(conn.length + 1);
+    if (verb.startsWith(`${conn}-`) || verb.startsWith(`${conn}_`)) {
+      return { kept: verb.slice(conn.length + 1).split(/[_-]/), stripped: conn.split(/[_-]/) };
+    }
   }
-  return verb.split(/[_-]/);
+  return { kept: verb.split(/[_-]/), stripped: [] };
 }
 
 function connectorPathTokens(toolName: string): string[] {
@@ -77,19 +84,38 @@ function connectorPathTokens(toolName: string): string[] {
 
 export type OpTierBasis = "destructive-verb" | "write-verb" | "read-verb" | "unrecognised";
 
+const VERB_SEGMENT_BASIS: Readonly<Record<ConnectorOpTier, OpTierBasis>> = {
+  destructive: "destructive-verb",
+  write: "write-verb",
+  read: "read-verb",
+};
+
 export interface ConnectorOpTierVerdict {
   readonly tier: ConnectorOpTier;
   readonly basis: OpTierBasis;
 }
 
 export function classifyConnectorOpTierVerdict(toolName: string): ConnectorOpTierVerdict {
+  const { kept, stripped } = connectorOpVerbTokens(toolName);
   let best: ConnectorOpTier | undefined;
-  for (const token of connectorOpVerbTokens(toolName)) {
-    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return { tier: "destructive", basis: "destructive-verb" };
+  for (const token of kept) {
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) {
+      best = "destructive";
+      break;
+    }
     if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
     else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
   }
-  const basis: OpTierBasis = best === "write" ? "write-verb" : best === "read" ? "read-verb" : "unrecognised";
+  if (best !== "destructive") {
+    for (const token of stripped) {
+      if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) {
+        best = "destructive";
+        break;
+      }
+      if (best === "read" && CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
+    }
+  }
+  const basis: OpTierBasis = best === undefined ? "unrecognised" : VERB_SEGMENT_BASIS[best];
   for (const token of connectorPathTokens(toolName)) {
     if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return { tier: "destructive", basis };
     if (best === "read" && CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
