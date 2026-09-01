@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { registerHooks } from "node:module";
+import { createRequire, registerHooks } from "node:module";
 import { spawnSync } from "node:child_process";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
 import {
@@ -46,7 +46,8 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
 
 interface ChildResult {
   readonly entry: string;
-  readonly modules: number;
+  readonly resolutions: number;
+  readonly evaluatedCjs: number;
   readonly registered: boolean;
   readonly traps: number;
   readonly selfTest: string | null;
@@ -101,6 +102,8 @@ if (childOf.length > 0) {
     },
   });
 
+  const childRequire = createRequire(import.meta.url);
+
   const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
   getSettings();
   const selfReads = probe.reads();
@@ -116,11 +119,13 @@ if (childOf.length > 0) {
   for (const fixture of fixtures) await import(pathToFileURL(resolve(REPO_ROOT, fixture)).href);
 
   const before = resolved.size;
+  const beforeCjs = Object.keys(childRequire.cache).length;
   await import(pathToFileURL(resolve(REPO_ROOT, entry)).href);
 
   const result: ChildResult = {
     entry,
-    modules: resolved.size - before,
+    resolutions: resolved.size - before,
+    evaluatedCjs: Object.keys(childRequire.cache).length - beforeCjs,
     registered: !probe.installed(),
     traps: probe.trapCount(),
     selfTest,
@@ -158,7 +163,7 @@ for (const fixture of fixtures) {
 const problems: string[] = [];
 const reads = new Map<string, EagerSettingsRead>();
 const results: ChildResult[] = [];
-let totalModules = 0;
+let totalResolutions = 0;
 
 for (const entry of entries) {
   const args = [TSX, fileURLToPath(import.meta.url), "--child", entry.module];
@@ -182,7 +187,7 @@ for (const entry of entries) {
 
   const result = JSON.parse(line.slice(RESULT_MARKER.length)) as ChildResult;
   results.push(result);
-  totalModules += result.modules;
+  totalResolutions += result.resolutions;
 
   if (result.selfTest !== null) {
     problems.push(`booting ${entry.module}: ${result.selfTest} Every other arm is meaningless until this passes.`);
@@ -209,12 +214,14 @@ for (const entry of entries) {
         "stacks, so the gate is failing OPEN — every eager read would be dropped silently.",
     );
   }
-  if (result.modules < entry.floor) {
+  if (result.resolutions < entry.floor) {
     problems.push(
-      `booting ${entry.module} resolved ${result.modules} module(s), under its declared floor of ` +
-        `${entry.floor}. This gate only sees the graph an entry walks, so an entry that stopped walking would ` +
+      `booting ${entry.module} resolved ${result.resolutions} distinct module URL(s), under its declared floor ` +
+        `of ${entry.floor}. This gate only sees the graph an entry walks, so an entry that stopped walking would ` +
         "report zero eager reads while covering nothing. Either that graph really shrank — then lower this " +
-        "entry's floor deliberately, in a diff — or the import is no longer reaching what it used to.",
+        "entry's floor deliberately, in a diff — or the import is no longer reaching what it used to. " +
+        "This arm counts REACH, not evaluation: it cannot see a graph that still resolves and stopped " +
+        "evaluating (OPE-1350).",
     );
   }
   for (const read of result.reads) reads.set(eagerReadKey(read), read);
@@ -222,7 +229,10 @@ for (const entry of entries) {
 
 if (listMode) {
   for (const result of results) {
-    console.log(`  ${result.entry}: ${result.modules} module(s) resolved, ${result.traps} trap(s)`);
+    console.log(
+      `  ${result.entry}: ${result.resolutions} module URL(s) resolved, ${result.evaluatedCjs} CommonJS module(s) ` +
+        `evaluated, ${result.traps} trap(s)`,
+    );
     for (const read of result.reads) console.log(`      ${read.file}:${read.line}  ${read.accessor}()`);
   }
   if (reads.size === 0) console.log("  (no settings read ran before registerSettings on any entry)");
@@ -238,8 +248,8 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `✓ settings-boot-order: ${entries.length} entr(ies) booted, ${totalModules} module(s) resolved, ` +
-    `${reads.size} settings read(s) before registerSettings() ` +
+  `✓ settings-boot-order: ${entries.length} entr(ies) booted, ${totalResolutions} module URL(s) resolved ` +
+    `(reach, not evaluation — arm ⑤), ${reads.size} settings read(s) before registerSettings() ` +
     `(${EAGER_SETTINGS_READ_ALLOWLIST.size} allowlisted survivor(s)) — no module-level read pins a shipped ` +
     "default on any booted entry.",
 );

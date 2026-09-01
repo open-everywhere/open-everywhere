@@ -23,7 +23,13 @@ import type { ReplyTarget } from "../agent/channels/reply-post.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { fakeMcpServer, settleMcp, type FakeMcpServer } from "./_fake-mcp-server.js";
-import { borrowDeadline, withinBorrowDeadline } from "../agent/connections/grant-mcp-borrow.js";
+import {
+  BORROW_APPROVE_READ_BUDGET_MS,
+  borrowDeadline,
+  readBorrowToolSchema,
+  withinBorrowDeadline,
+  type BorrowConnection,
+} from "../agent/connections/grant-mcp-borrow.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -368,11 +374,48 @@ console.log("6a. one shared deadline across the probe, the mint and the catalogu
 
   const hung = { fetch: (async () => await new Promise<Response>(() => undefined)) as FakeMcpServer["fetch"], mintOwnerToken: async () => "OWNER-TOKEN" };
   const { askId } = await raise({ label: 'Hung page' });
-  const started = Date.now();
-  const stalled = await approveCredentialGrant(stamps, askId, "session", OWNER, NOW + 500, undefined, hung);
+  const operatorLines: string[] = [];
+  const realConsoleLog = console.log;
+  console.log = (...args: unknown[]) => {
+    operatorLines.push(args.map((a) => String(a)).join(" "));
+  };
+  let stalled: Awaited<ReturnType<typeof approveCredentialGrant>>;
+  try {
+    stalled = await approveCredentialGrant(stamps, askId, "session", OWNER, NOW + 500, undefined, hung);
+  } finally {
+    console.log = realConsoleLog;
+  }
   eq(stalled.approved ? "APPROVED" : stalled.reason, "catalogue_unreachable", "a connection that never answers refuses `catalogue_unreachable`");
-  ok(Date.now() - started < 10_000, "…and it does so in seconds, not on the SDK's 60s default — the deadline really bounds the read");
+  ok(operatorLines.length > 0, "the capture saw the flow's operator log at all");
+  ok(
+    operatorLines.some((line) => /tool catalogue could not be read/u.test(line) && /(timed out|approve-time budget)/u.test(line)),
+    `…and the read ended on a TIMEOUT, not on some other error that happened to be quick: ${JSON.stringify(operatorLines)}`,
+  );
   eq((await store.getCredentialGrantAsk(ORG, askId))?.status, "pending", "…leaving the ask pending, so the owner's press is not spent on a hang");
+
+  const CONN: BorrowConnection = { connector: "notion", directUrl: MCP_URL, provider: "notion", providerRef: "notion-ref", url: new URL(MCP_URL) };
+  const healthy = server({ tools: PUBLISHED });
+  const answered = await readBorrowToolSchema(CONN, VENDOR_TOOL, { id: "abc123" }, "OWNER-TOKEN", deps(healthy), borrowDeadline(2_000));
+  ok(answered.found, "THE CONTROL: a healthy budget reads this fixture's catalogue, so the refusal below is the budget's doing");
+  let refusal: unknown;
+  await readBorrowToolSchema(CONN, VENDOR_TOOL, { id: "abc123" }, "OWNER-TOKEN", hung, borrowDeadline(50)).then(
+    () => {
+      refusal = undefined;
+    },
+    (err: unknown) => {
+      refusal = err;
+    },
+  );
+  ok(refusal instanceof Error && /timed out/u.test(refusal.message), `a server that never answers refuses on the timeout: ${String(refusal)}`);
+  const enforced = (refusal as { data?: { timeout?: unknown } } | undefined)?.data?.timeout;
+  ok(
+    typeof enforced === "number" && enforced >= 0 && enforced <= 50,
+    `🔴 …and the bound it enforced is the DEADLINE'S remaining budget, not the SDK's 60000ms default (it enforced ${String(enforced)})`,
+  );
+  ok(
+    BORROW_APPROVE_READ_BUDGET_MS > 0 && BORROW_APPROVE_READ_BUDGET_MS <= 5_000,
+    `…and the budget the flow itself starts is seconds, not that default (it is ${String(BORROW_APPROVE_READ_BUDGET_MS)}ms)`,
+  );
 }
 
 console.log("6b. the card cannot hide a fixed argument behind a padded one:");

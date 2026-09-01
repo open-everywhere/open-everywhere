@@ -56,8 +56,9 @@ function main(): void {
   {
     const r = lint();
     ok(r.code === 0, `the tree has no eager settings read on any entry (exit ${r.code}: ${r.out})`);
-    ok(/\d+ module\(s\) resolved/.test(r.out), "…and the run reports its own coverage");
+    ok(/\d+ module URL\(s\) resolved/.test(r.out), "…and the run reports its own coverage");
     ok(r.out.includes("0 settings read(s) before registerSettings()"), "…with the read count it measured");
+    ok(r.out.includes("(reach, not evaluation — arm ⑤)"), "…and the green line disclaims what the count is not");
   }
 
   {
@@ -74,8 +75,9 @@ function main(): void {
     const r = lint("--entry", LAZY_FIXTURE, "--floor", "100000");
     ok(r.code !== 0, `an entry that never registers settings fails the gate (exit ${r.code})`);
     ok(r.out.includes("never reached registerSettings()"), "…arm ③ says the registration point is missing");
-    ok(r.out.includes("under its declared floor of"), "…and arm ⑤ says the graph it walked is under its floor");
+    ok(r.out.includes("under its declared floor"), "…and arm ⑤ says the graph it walked is under its floor");
     ok(r.out.includes(LAZY_FIXTURE), "…both naming the entry, since the floor is now per entry");
+    ok(r.out.includes("counts REACH, not evaluation"), "…and arm ⑤'s red names what its count cannot see");
 
     const bad = lint("--entry", LAZY_FIXTURE, "--floor", "lots");
     ok(bad.code !== 0, "--floor takes a whole number");
@@ -104,8 +106,14 @@ function main(): void {
   {
     const listed = lint("--list");
     ok(listed.code === 0, `--list runs the gate (exit ${listed.code})`);
-    ok(/module\(s\) resolved, \d+ trap\(s\)/.test(listed.out), "…and prints what each entry walked");
+    ok(/module URL\(s\) resolved, \d+ CommonJS module\(s\) evaluated, \d+ trap\(s\)/.test(listed.out), "…and prints what each entry walked");
     ok(listed.out.includes("no settings read ran before registerSettings"), "…and says so when nothing was found");
+    const evaluated = [...listed.out.matchAll(/(\d+) CommonJS module\(s\) evaluated/g)].map((m) => Number(m[1]));
+    ok(evaluated.length === 3, `every booted entry reports its CommonJS evaluation count (saw ${evaluated.length})`);
+    ok(
+      evaluated.every((n) => n > 0),
+      `…and each is a real count, not a zero standing in for one (saw ${JSON.stringify(evaluated)})`,
+    );
 
     const missing = lint("--fixture", "scripts/fixtures/settings-boot-order/not-a-file.ts");
     ok(missing.code !== 0, "a --fixture path that does not exist is refused");
@@ -113,6 +121,18 @@ function main(): void {
 
     const bare = lint("--fixture");
     ok(bare.code !== 0, "a bare --fixture with no path is refused");
+  }
+
+  {
+    const child = lint("--child", LAZY_FIXTURE);
+    ok(child.code === 0, `the child boots a lone fixture entry (exit ${child.code}: ${child.out})`);
+    const line = child.out.split("\n").find((l) => l.startsWith("OE_BOOT_ORDER_RESULT "));
+    ok(line !== undefined, "…and reports on its marker line");
+    const report = JSON.parse(line!.slice("OE_BOOT_ORDER_RESULT ".length)) as Record<string, unknown>;
+    ok(typeof report.resolutions === "number", "the resolve-hook count is reported as `resolutions`");
+    ok(typeof report.evaluatedCjs === "number", "…and the CommonJS evaluation count as `evaluatedCjs`");
+    ok(!("modules" in report), "…and neither is reported under the old `modules` name");
+    ok((report.resolutions as number) > 0, "a fixture entry still resolves its own graph");
   }
 
   {
