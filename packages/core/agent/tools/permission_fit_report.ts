@@ -28,6 +28,8 @@ const EVIDENCE_ACTIONS = [
   "aws.refused",
   "connector.op",
   "connector.refused",
+  "connector.unattended_lift",
+  "routine.permission_granted",
   "approval.chain",
   "egress.denied",
 ] as const;

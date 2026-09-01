@@ -5,6 +5,7 @@ import {
   entryCoversCommand,
   type AwsGrantUsage,
   type ConnectorGrantUsage,
+  type ConnectorRefusalEvidence,
   type PermissionEvidence,
 } from "./permission-evidence.js";
 
@@ -138,10 +139,15 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
             `${r.liftableUnattended} unattended \`write\`-tier operation(s) on \`${r.connection}\` were refused because an approval card ` +
             `has nobody to answer it. This scope holds the connector grant; what is missing is a standing permission for the fire.`,
           evidence: [
-            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.liftableUnattended} with reason \`ask-unattended\` at the \`write\` tier AND a routine behind the turn.`,
+            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.liftableUnattended} with reason \`ask-unattended\` at the \`write\` tier, a routine behind the turn AND no later row granting the permission.`,
             ...(r.unroutedUnattended > 0
               ? [
                   `${r.unroutedUnattended} further \`ask-unattended\`/\`write\` row(s) carried NO routine (a webhook or job wake, \`routine: null\`). They are NOT counted above, because a standing routine permission is not their actuator — there is no routine card to re-arm.`,
+                ]
+              : []),
+            ...(r.grantedSinceUnattended > 0
+              ? [
+                  `${r.grantedSinceUnattended} further \`ask-unattended\`/\`write\` row(s) were followed by the permission ARRIVING — a \`connector.unattended_lift\` on the same op under the same routine grant key, so the refusal was already answered (usually: the grant was there and a transient store read said otherwise). They are NOT counted above, and this proposal stands only on what is still unarmed.`,
                 ]
               : []),
             `Reasons: ${reasonsSeen}.`,
@@ -229,22 +235,44 @@ function tightenAws(u: AwsGrantUsage): PermissionProposal | undefined {
   return undefined;
 }
 
-function tightenConnector(u: ConnectorGrantUsage): PermissionProposal | undefined {
+function tightenConnector(u: ConnectorGrantUsage, refused: ConnectorRefusalEvidence | undefined): PermissionProposal | undefined {
   if (u.uses > 0) return undefined;
   const after = u.bundleConnectors.filter((c) => c !== u.connector);
+  const reached = refused !== undefined && refused.refusals > 0;
   return {
     id: `tighten:connector:${u.bundle}:${u.connector}`,
     direction: "tighten",
-    subject: `Connector \`${u.connector}\` — unused`,
-    summary: `Bundle \`${u.bundle}\` grants \`${u.connector}\` and no operation on it was recorded in the window, while other connectors were used.`,
-    evidence: [`0 \`connector.op\` rows for \`${u.connector}\` in the window.`],
+    subject: reached ? `Connector \`${u.connector}\` — unused, but REFUSED ${refused.refusals}×` : `Connector \`${u.connector}\` — unused`,
+    summary: reached
+      ? `Bundle \`${u.bundle}\` grants \`${u.connector}\` and no operation on it SUCCEEDED in the window, while other connectors were used — ` +
+        `but ${refused.refusals} operation(s) on it were REFUSED in the same window. This connection is being reached for, not sitting idle, so ` +
+        `read the refusal reasons below before removing the grant.`
+      : `Bundle \`${u.bundle}\` grants \`${u.connector}\` and no operation on it was recorded in the window, while other connectors were used.`,
+    evidence: reached
+      ? [
+          `0 \`connector.op\` rows for \`${u.connector}\` in the window — a refused op writes \`connector.refused\`, never \`connector.op\`, so a wholly-refused connection reads as an idle one on this counter alone.`,
+          `${refused.refusals} \`connector.refused\` row(s) for \`${u.connector}\`, ${refused.firstSeen} → ${refused.lastSeen}.`,
+          `Reasons: ${refused.reasons.map((x) => `${x.label} ×${x.count}`).join(", ")}.`,
+        ]
+      : [`0 \`connector.op\` rows for \`${u.connector}\` in the window.`],
     diff: diff([u.bundle], "connectors", u.bundleConnectors, after),
+    ...(reached
+      ? {
+          remedy:
+            `Removing the grant is still a defensible call — a connection refused by a context wall and never otherwise used may be a grant nobody should hold. ` +
+            `But decide it against the reasons above, not against the zero: a WIDTH reason (\`ungranted\`, or \`ask-unattended\` at the \`write\` tier) means the work is asking for MORE ` +
+            `access to this connection, so removing the grant answers the opposite question from the one being asked. A context wall (\`dm_only\`, the disclosure legs, the member plane) ` +
+            `is a control no grant can open, so those refusals say nothing about whether the grant is wanted.`,
+        }
+      : {}),
   };
 }
 
 function tightenProposals(ev: PermissionEvidence): PermissionProposal[] {
   const out: PermissionProposal[] = [];
   if (ev.window.days < MIN_TIGHTEN_WINDOW_DAYS) return out;
+  const refusedByConnection = new Map<string, ConnectorRefusalEvidence>();
+  for (const r of ev.refusals) if (r.kind === "connector-refused") refusedByConnection.set(r.connection, r);
   for (const u of ev.usage) {
     if (u.kind === "aws-role") {
       if (ev.activity.awsExec < MIN_TIGHTEN_OBSERVATIONS) continue;
@@ -252,7 +280,7 @@ function tightenProposals(ev: PermissionEvidence): PermissionProposal[] {
       if (p !== undefined) out.push(p);
     } else {
       if (ev.activity.connectorOps < MIN_TIGHTEN_OBSERVATIONS) continue;
-      const p = tightenConnector(u);
+      const p = tightenConnector(u, refusedByConnection.get(u.connector));
       if (p !== undefined) out.push(p);
     }
   }

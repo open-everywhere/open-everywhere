@@ -13,7 +13,8 @@ import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/se
 import { shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
 import { bindFrom } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
-import standDown from "@open-everywhere/core/agent/tools/stand_down.js";
+import standDown, { STAND_DOWN_ACTION } from "@open-everywhere/core/agent/tools/stand_down.js";
+import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import {
   dispatchTurn,
   authForRelayMessage,
@@ -229,4 +230,60 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(row !== null && row.stopped === true, "…and the channel row is still marked, exactly as LEG 6 already proved");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal)`);
+{
+  const freshCtx = windowCtx("slack", { team_id: "T_S", channel_id: "C_NEW", thread_ts: "2100.7", channel_type: "channel", user_id: "US" }, "US");
+  const b = bindFrom(freshCtx);
+  ok(b.mode === "channel" && b.threadTs === "2100.7", "🔴 precondition: a real ANCHOR is present and the mode is not DM — neither existing refusal arm can fire here");
+  const p = resolvePartition(freshCtx);
+  ok((await store.getEngagement(p.org, p.surfaceKey, "2100.7")) === null, "🔴 precondition: the registry holds NO row for this conversation — the state `markStopped` answers false on");
+
+  let message = "";
+  try {
+    await runStandDown(freshCtx, "asked me to stop following");
+    ok(false, "stand_down must refuse when the mark landed on nothing");
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  ok(message.includes("nothing was marked"), "🔴 OPE-1333: the unenrolled case states that nothing was marked, exactly as the anchorless arm does");
+  ok(message.includes("could NOT stop following"), "🔴 OPE-1333: …and tells the model to report a FAILED stop — the §3 honest-absence rule this case used to escape");
+  ok(/never enrolled/.test(message), "🔴 OPE-1333: the copy names the FIRST cause a false answer can mean — the conversation was never enrolled");
+  ok(/could not be written/.test(message), "🔴 OPE-1333: …and the SECOND — a store read that threw answers false too, and naming only the first would diagnose an outage as an unenrolled thread");
+  ok(/@mention/.test(message), "OPE-1333: …while still offering the one remedy a person in the room can act on");
+  ok(!/\bstanding down\b|\bwon't be woken\b/i.test(message), "🔴 NEGATIVE CONTROL: the success note's compliance phrasing appears nowhere in the refusal for the model to echo");
+  ok((message.match(/\./g) ?? []).length === 1 && message.trimEnd().endsWith("."), "the unenrolled error stays ONE sentence, like the other two arms");
+
+  ok((await store.getEngagement(p.org, p.surfaceKey, "2100.7")) === null, "🔴 OPE-1333: …and the refusal INSERTED no row — the verb still never creates engagement, it only reports that it could not mark one");
+}
+
+{
+  const freshCtx = windowCtx("slack", { team_id: "T_S", channel_id: "C_NEW2", thread_ts: "2200.4", channel_type: "channel", user_id: "US" }, "US");
+  const p = resolvePartition(freshCtx);
+  await store.markEngaged(p.org, p.surfaceKey, "2200.4", "2026-08-16T10:00:00Z", { participating: true });
+  const res = await runStandDown(freshCtx, "asked me to stop following");
+  ok(res.standingDown === true, "⭐ NEGATIVE CONTROL: the same ctx succeeds once an @mention has enrolled the conversation — the refusal is about the ROW, not the surface");
+  const row = await store.getEngagement(p.org, p.surfaceKey, "2200.4");
+  ok(row !== null && row.stopped === true, "…and the mark lands, so the honest-refusal guard costs the working path nothing");
+}
+
+{
+  const unengagedCtx = windowCtx("discord", { guild_id: "G1", channel_id: "TH_NEVER", channel_type: "11", user_id: "U1" }, "U1");
+  ok(bindFrom(unengagedCtx).engagementKey === "TH_NEVER", "precondition: the Discord binding publishes an anchor for a channel the gateway never engaged");
+  const p = resolvePartition(unengagedCtx);
+  ok((await store.getEngagement(p.org, p.surfaceKey, "TH_NEVER")) === null, "precondition: …and the registry holds no row for it");
+
+  let threw = false;
+  try {
+    await runStandDown(unengagedCtx, "asked me to stop following");
+  } catch {
+    threw = true;
+  }
+  ok(threw, "🔴 OPE-1333: Discord refuses the unenrolled conversation too — the guard reads the store's answer, not the platform");
+
+  const trail = (await readAudit({ org: p.org, action: STAND_DOWN_ACTION })).filter(
+    (r) => (r.detail as Record<string, unknown> | undefined)?.anchor === "TH_NEVER",
+  );
+  ok(trail.length === 1, "OPE-1333: the refused attempt still wrote its audit row — the trail records what was tried, not only what worked");
+  ok((trail[0]!.detail as Record<string, unknown>).marked === false, "🔴 OPE-1333: …stamped `marked: false`, which is the field the refusal is derived from");
+}
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal)`);

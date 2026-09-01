@@ -73,6 +73,7 @@ export interface ConnectorRefusalEvidence {
   readonly ungranted: number;
   readonly liftableUnattended: number;
   readonly unroutedUnattended: number;
+  readonly grantedSinceUnattended: number;
   readonly firstSeen: string;
   readonly lastSeen: string;
 }
@@ -206,10 +207,24 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     ungranted: number;
     liftable: number;
     unrouted: number;
+    grantedSince: number;
     first: string;
     last: string;
   }
   const connectorRefused = new Map<string, ConnAcc>();
+
+  const grantedAt = new Map<string, string>();
+  for (const row of rows) {
+    if (!inWindow(row, window)) continue;
+    if (row.action !== "routine.permission_granted" && row.action !== "connector.unattended_lift") continue;
+    const d = row.detail ?? {};
+    const routineKey = row.action === "routine.permission_granted" ? str(d.key) : str(d.routine);
+    const grantKind = str(d.grant);
+    if (routineKey === undefined || grantKind === undefined) continue;
+    const joinKey = `${routineKey}\u0000${grantKind}`;
+    const prior = grantedAt.get(joinKey);
+    if (prior === undefined || row.ts > prior) grantedAt.set(joinKey, row.ts);
+  }
 
   for (const row of rows) {
     if (!inWindow(row, window)) continue;
@@ -267,6 +282,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
           ungranted: 0,
           liftable: 0,
           unrouted: 0,
+          grantedSince: 0,
           first: row.ts,
           last: row.ts,
         };
@@ -283,8 +299,12 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       if (tier !== undefined) bump(acc.tiers, tier);
       if (reason === "ungranted") acc.ungranted++;
       if (reason === "ask-unattended" && tier === "write") {
-        if (str(d.routine) !== undefined) acc.liftable++;
-        else acc.unrouted++;
+        const routineKey = str(d.routine);
+        const grantKind = str(d.grant);
+        const arrived = routineKey === undefined || grantKind === undefined ? undefined : grantedAt.get(`${routineKey}\u0000${grantKind}`);
+        if (routineKey === undefined) acc.unrouted++;
+        else if (arrived !== undefined && arrived > row.ts) acc.grantedSince++;
+        else acc.liftable++;
       }
       continue;
     }
@@ -377,6 +397,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       ungranted: c.ungranted,
       liftableUnattended: c.liftable,
       unroutedUnattended: c.unrouted,
+      grantedSinceUnattended: c.grantedSince,
       firstSeen: c.first,
       lastSeen: c.last,
     }))

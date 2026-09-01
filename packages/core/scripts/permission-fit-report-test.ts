@@ -125,13 +125,23 @@ for (const d of [1, 3]) {
 }
 for (const d of [3, 6]) await seed("connector.refused", { connection: "github", reason: "ungranted" }, d);
 for (const d of [2, 5]) {
-  await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", grant: "connector.op:notion__create_page", routine: "rt_nightly" }, d);
+  await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", grant: "connector.tool:notion__create_page", routine: "oe-routine:rt_nightly:g1" }, d);
 }
-await seed("connector.refused", { connection: "notion", op: "notion__delete_page", tier: "destructive", reason: "ask-unattended", routine: "rt_nightly" }, 4);
-await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended-tainted", tainted: true, routine: "rt_nightly" }, 4);
+await seed("connector.refused", { connection: "notion", op: "notion__delete_page", tier: "destructive", reason: "ask-unattended", routine: "oe-routine:rt_nightly:g1" }, 4);
+await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended-tainted", tainted: true, routine: "oe-routine:rt_nightly:g1" }, 4);
 await seed("connector.refused", { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: null }, 6);
 for (const d of [2, 7]) await seed("connector.refused", { connection: "linear", reason: "dm_only", mode: "channel" }, d);
 for (const d of [8, 9]) await seed("connector.refused", { connection: "linear", reason: "ungranted" }, d);
+
+const RT_WEEKLY = "oe-routine:rt_weekly:g2";
+for (const d of [9, 8, 7]) {
+  await seed("connector.refused", { connection: "linear", op: "linear__create_issue", tier: "write", reason: "ask-unattended", grant: "connector.tool:linear__create_issue", routine: RT_WEEKLY }, d);
+}
+await seed("routine.permission_granted", { routine: "rt_weekly", grant: "connector.tool:linear__create_issue", declaration: "tool:linear__create_issue", key: RT_WEEKLY }, 6);
+for (const d of [5, 4]) {
+  await seed("connector.refused", { connection: "linear", op: "linear__update_issue", tier: "write", reason: "ask-unattended", grant: "connector.tool:linear__update_issue", routine: RT_WEEKLY }, d);
+}
+await seed("connector.unattended_lift", { connection: "linear", op: "linear__update_issue", tier: "write", grant: "connector.tool:linear__update_issue", routine: RT_WEEKLY }, 3);
 
 await seed("aws.exec", { roleArn: IDLE_ROLE, command: "s3:get-object", exitCode: 0, unattended: true, domain: "finance" }, 2);
 for (let i = 1; i <= 8; i++) await seed("connector.op", { connection: "linear", op: "list_issues" }, i, "other-channel");
@@ -168,10 +178,29 @@ const auditBefore = (await readAudit({})).length;
   ok(!ids.some((id) => id.startsWith("widen:connector:") && id.endsWith(":linear")), "⭐ OPE-1291: and `dm_only` is a context wall a grant cannot open, so those refusals propose NOTHING either");
   ok(connUnattended!.evidence.some((e) => e.includes("ask-unattended ×4, ask-unattended-tainted ×1")), "OPE-1291: …and the WHOLE reason vocabulary rides on the proposal as evidence, so a reader sees all five rows behind a proposal that stands on two");
 
+  ok(
+    !ids.includes("widen:connector:unattended:linear"),
+    "🔴 OPE-1349: five answered empty-room refusals on `linear` raise NO 'arm this grant' proposal — both arrival actions (`routine.permission_granted` and `connector.unattended_lift`) are in EVIDENCE_ACTIONS, and dropping either one would put its group back over the floor and re-raise this",
+  );
+  ok(
+    connUnattended!.summary.includes("2 unattended") && !connUnattended!.evidence.some((e) => e.includes("permission ARRIVING")),
+    "⭐ OPE-1349 negative control: `notion`'s two empty-room refusals were never answered, so they still propose in the SAME run — the suppression is per (routine grant key × grant kind), not a switch that silenced the family",
+  );
+
   const idle = res.proposals.find((p) => p.id === `tighten:aws:${IDLE_ROLE}`);
   ok(idle !== undefined && idle.direction === "tighten", "⭐ loop 2 + scoping: the role used only by ANOTHER domain reads as unused here");
   const linear = res.proposals.find((p) => p.id === "tighten:connector:ops-tools:linear");
   ok(linear !== undefined, "⭐ loop 2 + scoping: the connector exercised only on another surface reads as unused here");
+
+  ok(
+    linear!.subject.includes("REFUSED 9×"),
+    "🔴 OPE-1340: `linear` has zero `connector.op` rows because every attempt was REFUSED, so the tightening proposal is ANNOTATED with the count rather than suppressed or left to read as disuse",
+  );
+  ok(linear!.summary.includes("being reached for, not sitting idle"), "OPE-1340: …and the summary names which of the two opposite states this zero is");
+  ok(linear!.evidence.some((e) => /ask-unattended ×5, dm_only ×2, ungranted ×2/.test(e)), "OPE-1340: the whole reason breakdown rides on the tightening proposal — the reviewer decides against the reasons, not the zero");
+  ok(linear!.diff !== undefined && linear!.diff.includes('-  "linear",'), "⭐ OPE-1340: the removal diff is unchanged — the ruling annotates the proposal, it never changes the verdict");
+  ok(idle!.subject.includes("unused") && !/REFUSED/.test(idle!.subject), "⭐ OPE-1340 negative control: the AWS role that is genuinely idle carries no refusal annotation — the annotation is per-connection evidence, not boilerplate");
+
   ok(ids.includes(`tighten:aws:${ROLE}`), "loop 2: the busy role's unexercised `s3:GetObject` entry is also proposed for narrowing");
 
   ok(res.report.includes("The actuator is a reviewed pull request"), "the report states the proposal-only rule in its own bytes");

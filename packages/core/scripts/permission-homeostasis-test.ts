@@ -7,8 +7,10 @@ import {
   makeWindow,
   permissionEvidence,
   refusalEvidence,
+  type ConnectorRefusalEvidence,
   type DeclaredGrants,
   type EvidenceRow,
+  type PermissionEvidence,
 } from "../agent/access/permission-evidence.js";
 import { proposePermissionChanges, renderPermissionProposals } from "../agent/access/permission-proposal.js";
 
@@ -207,6 +209,36 @@ const GRANTS: DeclaredGrants[] = [
   const conn = proposals.filter((p) => p.id.startsWith("tighten:connector"));
   ok(conn.length === 1 && conn[0]!.id === "tighten:connector:ops-tools:linear", "tighten: the granted connector with zero ops is proposed for removal");
   ok(conn[0]!.diff!.before.join(",") === "notion,linear" && conn[0]!.diff!.after.join(",") === "notion", "tighten: the diff rewrites the bundle's whole `connectors` array");
+  ok(!/REFUSED/.test(conn[0]!.subject) && conn[0]!.remedy === undefined, "⭐ tighten: a GENUINELY idle connector — zero ops and zero refusals — carries no refusal annotation and no caveat");
+  ok(conn[0]!.evidence.length === 1, "tighten: …and exactly one evidence line, the zero itself");
+}
+
+{
+  const refusedRow = (days: number, connection: string, reason: string): EvidenceRow => ({
+    ts: ago(days),
+    action: "connector.refused",
+    detail: { connection, reason, mode: "channel", principalId: "slack/U-ALICE" },
+  });
+  const rows: EvidenceRow[] = [];
+  for (let i = 1; i <= 6; i++) rows.push(connectorOp(i, "notion", "search"));
+  rows.push(refusedRow(2, "linear", "dm_only"), refusedRow(5, "linear", "dm_only"), refusedRow(8, "linear", "audience_floor"));
+
+  const ev = permissionEvidence(rows, GRANTS, W30);
+  const proposals = proposePermissionChanges(ev, "tighten");
+  const linear = proposals.find((p) => p.id === "tighten:connector:ops-tools:linear");
+  ok(linear !== undefined, "🔴 OPE-1340: the refused connector is STILL proposed for tightening — the ruling is annotate, not suppress");
+  ok(/REFUSED 3×/.test(linear!.subject), "🔴 OPE-1340: …and the subject line itself carries the refusal count, so a reader skimming subjects cannot miss it");
+  ok(/being reached for, not sitting idle/.test(linear!.summary), "🔴 OPE-1340: the summary says which of the two opposite states this zero is");
+  ok(linear!.evidence.some((e) => /3 `connector.refused` row\(s\) for `linear`/.test(e)), "OPE-1340: the refusal count rides as evidence with its window");
+  ok(linear!.evidence.some((e) => /dm_only ×2, audience_floor ×1/.test(e)), "OPE-1340: …with the whole reason breakdown, which is what the reviewer actually decides on");
+  ok(linear!.evidence.some((e) => /never `connector\.op`/.test(e)), "OPE-1340: …and the zero itself is explained rather than left to imply disuse");
+  ok(/defensible call/.test(linear!.remedy ?? ""), "OPE-1340: the remedy keeps removal on the table — a wholly-walled connector may genuinely be a grant to drop");
+  ok(linear!.diff!.after.join(",") === "notion", "OPE-1340: the removal diff is unchanged — annotation changes the words, never the verdict");
+
+  ok(!proposals.some((p) => p.id === "tighten:connector:ops-tools:notion"), "⭐ OPE-1340: the connector that WAS exercised is still not proposed — the annotation never widens what tightening proposes");
+
+  const report = renderPermissionProposals(ev, proposals);
+  ok(report.includes("REFUSED 3×") && report.includes("dm_only ×2"), "OPE-1340: the annotation reaches the rendered report, not only the structured proposal");
 }
 
 {
@@ -346,6 +378,96 @@ const GRANTS: DeclaredGrants[] = [
   const connectorBlob = JSON.stringify(privacyEv) + JSON.stringify(privacyProposals) + renderPermissionProposals(privacyEv, privacyProposals);
   ok(!connectorBlob.includes("U-ALICE") && !connectorBlob.includes("principalId"), "⭐ connector privacy: the refusal rows carry a principal COLUMN and a principal-shaped detail, and none of it reaches the evidence, the proposals or the report");
   ok(!connectorBlob.includes("rt_a"), "⭐ connector privacy: the routine GRANT KEY does not reach the output either — only whether one was present is read");
+}
+
+{
+  const KEY = "oe-routine:rt_nightly:g3";
+  const KIND = "connector.tool:notion__create_page";
+  const emptyRoom = (days: number, routine: string | null = KEY, grant = KIND): EvidenceRow => ({
+    ts: ago(days),
+    action: "connector.refused",
+    detail: { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", grant, routine, principalId: "slack/U-ALICE" },
+  });
+  const granted = (days: number, key = KEY, grant = KIND): EvidenceRow => ({
+    ts: ago(days),
+    action: "routine.permission_granted",
+    detail: { routine: "rt_nightly", grant, declaration: "tool:notion__create_page", key, principalId: "slack/U-ALICE" },
+  });
+  const lifted = (days: number, key = KEY, grant = KIND): EvidenceRow => ({
+    ts: ago(days),
+    action: "connector.unattended_lift",
+    detail: { connection: "notion", op: "notion__create_page", tier: "write", grant, routine: key, principalId: "slack/U-ALICE" },
+  });
+  const REFUSALS = [emptyRoom(5), emptyRoom(4), emptyRoom(3)];
+  const clusterOf = (rows: readonly EvidenceRow[]): { ev: PermissionEvidence; c: ConnectorRefusalEvidence } => {
+    const ev = permissionEvidence(rows, GRANTS, W30);
+    return { ev, c: ev.refusals.find((r) => r.kind === "connector-refused") as ConnectorRefusalEvidence };
+  };
+
+  {
+    const { ev, c } = clusterOf(REFUSALS);
+    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ arrival NEGATIVE CONTROL: three empty-room refusals and no grant row ⇒ all three liftable");
+    ok(proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ arrival NEGATIVE CONTROL: …and the proposal is raised");
+  }
+
+  {
+    const { ev, c } = clusterOf([...REFUSALS, granted(2)]);
+    ok(c.refusals === 3, "arrival: the grant row is NOT counted as a refusal — it is read for its stamp alone");
+    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1349: a `routine.permission_granted` row after the refusals moves every one of them off the liftable count");
+    ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "🔴 OPE-1349: …so the 'arm this grant' proposal STOPS — the ask has been answered");
+  }
+
+  {
+    const { ev, c } = clusterOf([...REFUSALS, lifted(1)]);
+    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1349: a `connector.unattended_lift` on the same op under the same routine grant suppresses it too");
+    ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "OPE-1349: …with the same effect on the proposal");
+  }
+
+  {
+    const { ev, c } = clusterOf([granted(9), ...REFUSALS]);
+    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a grant row stamped BEFORE the refusals suppresses nothing — it demonstrably did not stop them");
+    ok(proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ OPE-1349: …and the proposal survives, which is the failure mode a bare presence check would have caused");
+  }
+
+  {
+    const { ev, c } = clusterOf([...REFUSALS, granted(4)]);
+    ok(c.liftableUnattended === 2 && c.grantedSinceUnattended === 1, "OPE-1349: an arrival mid-cluster answers only the refusals it post-dates (strictly — the same-stamp row is not answered)");
+    const p = proposePermissionChanges(ev, "widen").find((x) => x.id === "widen:connector:unattended:notion");
+    ok(p !== undefined && /2 unattended/.test(p.summary), "OPE-1349: the surviving proposal counts only the still-unarmed rows");
+    ok(p!.evidence.some((e) => /1 further .*permission ARRIVING/.test(e)), "OPE-1349: …and the answered row is REPORTED rather than dropped — the reader sees all three rows behind a proposal that stands on two");
+  }
+
+  {
+    const { c } = clusterOf([...REFUSALS, granted(1, KEY, "connector.tool:notion__delete_page")]);
+    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a grant for a DIFFERENT tool under the same routine suppresses nothing — the standing permission is per-tool");
+    const otherRoutine = clusterOf([...REFUSALS, granted(1, "oe-routine:rt_other:g1")]);
+    ok(otherRoutine.c.liftableUnattended === 3, "⭐ OPE-1349: a grant under a DIFFERENT routine key suppresses nothing either — an edit mints a new key, and a new key is a new question");
+  }
+
+  {
+    const unjoinable: EvidenceRow[] = [5, 4, 3].map((days) => ({
+      ts: ago(days),
+      action: "connector.refused",
+      detail: { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: KEY },
+    }));
+    const { c } = clusterOf([...unjoinable, granted(1)]);
+    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a refusal row with no `grant` kind is never suppressed — an unjoinable row fails towards a redundant proposal, never towards a dropped need");
+  }
+
+  {
+    const ev = permissionEvidence([...REFUSALS, granted(2), lifted(1)], GRANTS, W30);
+    const proposals = proposePermissionChanges(ev);
+    const blob = JSON.stringify(ev) + JSON.stringify(proposals) + renderPermissionProposals(ev, proposals);
+    ok(!blob.includes(KEY) && !blob.includes("rt_nightly"), "⭐ arrival privacy: the routine grant key rides on both arrival actions and reaches NONE of the evidence, the proposals or the report");
+    ok(!blob.includes("U-ALICE") && !blob.includes("principalId"), "⭐ arrival privacy: no principal either");
+  }
+
+  {
+    const forward = [...REFUSALS, granted(2)];
+    const a = clusterOf(forward).c;
+    const b = clusterOf([...forward].reverse()).c;
+    ok(JSON.stringify(a) === JSON.stringify(b), "OPE-1349: the arrival is read in its own pass, so row ORDER in the array changes nothing");
+  }
 }
 
 {

@@ -49,6 +49,11 @@ export default defineTool({
       action: STAND_DOWN_ACTION,
       detail: { surfaceKey: partition.surfaceKey, anchor, marked, reason: input.reason ?? null },
     }).catch(() => undefined);
+    if (!marked) {
+      throw new Error(
+        "stand_down: nothing was marked, so this stop did not take — reply that you could NOT stop following here, because either this conversation was never enrolled, which an @mention fixes, or the registry could not be written to just now.",
+      );
+    }
     return {
       standingDown: true,
       note:
