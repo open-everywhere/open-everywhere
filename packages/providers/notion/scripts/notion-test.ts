@@ -288,7 +288,7 @@ function baseDeps(
   const raw = commentEvent();
   let dispatched = false;
   const out = await handleNotionDelivery(raw, null, baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatched = true; }, { signingKeys: [{ credentialId: "channel-key", secret: undefined }], allowUnverified: true }));
-  ok(out.action === "dispatched" && dispatched, "no secret + OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK -> accepted + dispatched");
+  ok(out.action === "dispatched" && dispatched, "no secret + webhooks.allowUnverifiedNotion -> accepted + dispatched");
 }
 
 {

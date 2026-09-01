@@ -175,7 +175,7 @@ ok(!noSecret.ok && noSecret.rejection.status === 401 && noSecret.rejection.reaso
 
 ok(
   (await gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true })).ok,
-  "unset secret + OE_ALLOW_UNVERIFIED_WEBHOOK escape hatch -> accepted",
+  "unset secret + the webhooks.allowUnverified escape hatch -> accepted",
 );
 ok(
   !(await gateWebhookDelivery({
@@ -202,7 +202,7 @@ ok(
     "🔴 the escape hatch is NOT honoured for a `db`-homed hook — no resolvable key there means the vault read failed or nobody armed it, not a laptop without a secret (401, not 200)",
   );
   ok(
-    !dbHatch.ok && !dbHatch.rejection.reason.includes("OE_ALLOW_UNVERIFIED_WEBHOOK"),
+    !dbHatch.ok && !dbHatch.rejection.reason.includes("allowUnverified"),
     "…and the refusal does not point the operator at a lever that no longer moves for this home",
   );
   ok(!dbHatch.ok && /rotate_webhook/.test(dbHatch.rejection.reason), "…it names the act that WOULD fix it instead — issuing the secret, which needs no redeploy");
@@ -600,6 +600,78 @@ await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07"
   ok(/new Response\(REPLAYED_DELIVERY_CALLER_BODY,/.test(replayBranch), "🔴 the live 409 answers the caller with the CONSTANT");
   ok(!/new Response\(rejection\.reason/.test(replayBranch), "🔴 …and never echoes the rejection reason back to the caller");
   ok(/auditRejection\(id, gated, rejection\)/.test(replayBranch), "…while the audit row still receives the full rejection object");
+}
+
+{
+  console.log("\nOPE-1153 — the unverified-acceptance wall is a setting, and the route reads it:");
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { overrideSettingsForTest, resetSettingsForTest, SETTINGS } = await import("../agent/settings/settings.js");
+
+  ok(SETTINGS.webhooks.allowUnverified.shipped === false, "the wall SHIPS UP — `webhooks.allowUnverified` defaults to false");
+  ok(SETTINGS.webhooks.allowUnverifiedGithub.shipped === false, "…and so does `webhooks.allowUnverifiedGithub`");
+  ok(SETTINGS.webhooks.allowUnverifiedNotion.shipped === false, "…and so does `webhooks.allowUnverifiedNotion`");
+
+  const { getSettings } = await import("../agent/settings/settings.js");
+  resetSettingsForTest();
+  const disarming: NodeJS.ProcessEnv = {
+    OE_ALLOW_UNVERIFIED_WEBHOOK: "1",
+    OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK: "1",
+    OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK: "1",
+  };
+  const underDisarm = getSettings(disarming).webhooks;
+  ok(
+    underDisarm.allowUnverified === false && underDisarm.allowUnverifiedGithub === false && underDisarm.allowUnverifiedNotion === false,
+    "🔴 the three retired variable names move NOTHING — all three walls stay up against an environment that sets every one of them to \"1\"",
+  );
+
+  const wallHook: FusedWebhookHook = defineWebhook({
+    id: "unverified-wall",
+    source: OE_STANDARD_WEBHOOK_SCHEME,
+    secretRef: "UNVERIFIED_WALL_WEBHOOK_SECRET_NEVER_SET",
+    broker: "env",
+    target: "slack/T1/C1",
+    readableBy: [{ level: "domain", domain: "eng" }],
+    instruction: "Prove the wall.",
+  });
+  registerConfig({
+    loadWebhooks: () => [wallHook],
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const { default: webhooksChannel } = await import("../agent/channels/webhooks.js");
+  const route = webhooksChannel.routes[0] as { handler: (req: Request, args: unknown) => Promise<Response> };
+
+  async function postUnsigned(): Promise<number> {
+    const pending: Promise<unknown>[] = [];
+    const res = await route.handler(
+      new Request("http://localhost/webhooks/unverified-wall", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note: "unsigned" }),
+      }),
+      { to: undefined, waitUntil: (p: Promise<unknown>) => void pending.push(p), params: { id: "unverified-wall" } } as never,
+    );
+    await Promise.allSettled(pending);
+    return res.status;
+  }
+
+  resetSettingsForTest();
+  ok((await postUnsigned()) === 401, "🔴 SHIPPED: the real route REFUSES an unsigned delivery with no resolvable key (401) — the wall is up out of the box");
+
+  overrideSettingsForTest({ webhooks: { allowUnverified: true } });
+  ok(
+    (await postUnsigned()) === 200,
+    "🔴 REACHABILITY: turning `webhooks.allowUnverified` on in CODE lowers it (200) — the route really consults the setting, and no test above proves that",
+  );
+
+  resetSettingsForTest();
+  ok((await postUnsigned()) === 401, "negative control: dropping the override puts the wall straight back up (401)");
 }
 
 rmSync(dir, { recursive: true, force: true });

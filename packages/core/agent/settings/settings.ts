@@ -130,6 +130,11 @@ export interface AgentSettings {
     readonly nameDropExclude: readonly string[];
     readonly slackDmDriver: string;
   };
+  readonly webhooks: {
+    readonly allowUnverified: boolean;
+    readonly allowUnverifiedGithub: boolean;
+    readonly allowUnverifiedNotion: boolean;
+  };
   readonly window: {
     readonly topology: boolean;
   };
@@ -667,6 +672,26 @@ export const SETTINGS = {
       format: (v) => (v === "" ? "(none)" : v),
     } satisfies SettingSpec<string>,
   },
+  webhooks: {
+    allowUnverified: {
+      path: "webhooks.allowUnverified",
+      shipped: false,
+      summary:
+        "Accept a delivery whose DECLARED hook has no secret configured. Off (shipped) refuses it. On, the acceptance is stamped `unverified: true` in the fire's audit row. It never bypasses signature verification once a secret IS set, never waives VERIFIER RESOLUTION (an unregistered `source` is still a 401), and is never honoured for a hook whose secret this deployment itself holds (`broker: \"db\"`) — a missing key there means nobody minted it or the vault read failed, not a laptop without a value. Local development only.",
+    } satisfies SettingSpec<boolean>,
+    allowUnverifiedGithub: {
+      path: "webhooks.allowUnverifiedGithub",
+      shipped: false,
+      summary:
+        "Accept a GitHub delivery when `GITHUB_WEBHOOK_SECRET` is unset. Off (shipped) rejects the whole route with a 401, which is the fail-closed posture a deployment wants. On, the event fan-out and the ambient-supervisor leg run for a delivery whose only proof is possession of the URL. It changes nothing once the secret IS set — a bad signature still 401s. Local development only.",
+    } satisfies SettingSpec<boolean>,
+    allowUnverifiedNotion: {
+      path: "webhooks.allowUnverifiedNotion",
+      shipped: false,
+      summary:
+        "Accept a Notion delivery when no verification token is configured. Off (shipped) rejects it. On, the delivery reaches the ambient supervisor but identifies NO SIGNER, so a page a domain reaches only through a `containers` claim is still refused, and the delivery deliberately never enters the routine-trigger plane — an acceptance proved only by possession of the URL must not start member-authored work. Local development only.",
+    } satisfies SettingSpec<boolean>,
+  },
   window: {
     topology: {
       path: "window.topology",
@@ -897,6 +922,11 @@ export function getSettings(
       nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude, env),
       nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude, env),
       slackDmDriver: resolve(SETTINGS.wake.slackDmDriver, o.wake?.slackDmDriver, env),
+    },
+    webhooks: {
+      allowUnverified: resolve(SETTINGS.webhooks.allowUnverified, o.webhooks?.allowUnverified, env),
+      allowUnverifiedGithub: resolve(SETTINGS.webhooks.allowUnverifiedGithub, o.webhooks?.allowUnverifiedGithub, env),
+      allowUnverifiedNotion: resolve(SETTINGS.webhooks.allowUnverifiedNotion, o.webhooks?.allowUnverifiedNotion, env),
     },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),

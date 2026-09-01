@@ -197,7 +197,8 @@ await inSession(async () => {
 }
 
 {
-  process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK = "1";
+  const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+  overrideSettingsForTest({ webhooks: { allowUnverifiedNotion: true } });
   delete process.env.NOTION_WEBHOOK_SECRET;
   const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
   const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
@@ -283,6 +284,7 @@ await inSession(async () => {
 
   } finally {
     globalThis.fetch = realFetch;
+    overrideSettingsForTest({ webhooks: { allowUnverifiedNotion: false } });
   }
 }
 

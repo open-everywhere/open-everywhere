@@ -392,7 +392,7 @@ function normalize(body: string): NormalizedEvent | null {
     dispatch: async () => {},
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
-  ok(hatch.action !== "rejected", "the OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK hatch still ACCEPTS the delivery for the supervisor path");
+  ok(hatch.action !== "rejected", "the webhooks.allowUnverifiedNotion hatch still ACCEPTS the delivery for the supervisor path");
   ok(hatch.verified === false, "🔴 …but it is NOT `verified`, so notion.ts never hands it to admitTrigger — a dev hatch cannot fire a routine");
 
   const rejected = await handleNotionDelivery(body, "sha256=deadbeef", {

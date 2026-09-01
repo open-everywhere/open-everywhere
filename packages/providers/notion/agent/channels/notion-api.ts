@@ -71,7 +71,7 @@ export function gateNotionDelivery(
   if (!secret) {
     return allowUnverified
       ? null
-      : "NOTION_WEBHOOK_SECRET is not set — rejecting unverified delivery (set the verification token, or OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK=1 for local dev)";
+      : "NOTION_WEBHOOK_SECRET is not set — rejecting unverified delivery (set the verification token, or turn on webhooks.allowUnverifiedNotion in agent/settings/settings.ts for local dev)";
   }
   return verifyNotionSignature(secret, rawBody, signatureHeader) ? null : "invalid signature";
 }

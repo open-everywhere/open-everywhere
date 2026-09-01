@@ -40,6 +40,7 @@ import {
   getOperationalStore,
   postOnce,
   gateGithubDelivery,
+  getSettings,
   fanOutGitHubDelivery,
   resolveExternalPolicy,
   externalPolicyOverrideFor,
@@ -553,7 +554,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       process.env.GITHUB_WEBHOOK_SECRET,
       body,
       req.headers.get("x-hub-signature-256"),
-      process.env.OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK === "1",
+      getSettings().webhooks.allowUnverifiedGithub,
     );
     if (rejection) {
       log(`webhook rejected: ${rejection}`);

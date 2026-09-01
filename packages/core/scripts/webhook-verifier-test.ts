@@ -93,7 +93,7 @@ ok(standardWebhookVerifier.provider === undefined, "core's own verifier declares
 
 {
   const outcome = await gateWebhookDelivery(gateArgs({ hook: { ...hook, source: "stripe" }, allowUnverified: true, secretValues: [] }));
-  ok(!outcome.ok && outcome.rejection.status === 401, "OE_ALLOW_UNVERIFIED_WEBHOOK does NOT waive verifier resolution — an unknown source is still 401");
+  ok(!outcome.ok && outcome.rejection.status === 401, "webhooks.allowUnverified does NOT waive verifier resolution — an unknown source is still 401");
   ok((await failureOf(outcome)).includes("no verifier registered"), "…and the reason is the resolution refusal, not the missing-secret one");
   const waived = await gateWebhookDelivery(gateArgs({ allowUnverified: true, secretValues: [] }));
   ok(waived.ok && waived.keyIndex === null, "the hatch still waives the missing-KEY case (keyIndex null — nothing verified it)");

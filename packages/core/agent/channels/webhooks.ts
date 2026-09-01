@@ -1,5 +1,6 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
+import { getSettings } from "../settings/settings.js";
 import { configHookDisclosure, configHookPosture, findWebhook, isFusedHook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import "../webhooks/oe-standard-webhook.js";
@@ -50,7 +51,7 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, to: Ro
   });
   if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);
   if (unverified)
-    log(`WARN "${hook.id}": accepted UNVERIFIED (OE_ALLOW_UNVERIFIED_WEBHOOK=1, no resolvable secret) — nothing authenticated this sender but the URL`);
+    log(`WARN "${hook.id}": accepted UNVERIFIED (webhooks.allowUnverified is on, no resolvable secret) — nothing authenticated this sender but the URL`);
   log(
     `"${hook.id}" (${configHookPosture(hook)}): ${result ? (result.fired ? "fired" : `declined (${result.reason})`) : "emit-only"}` +
       `${emitted ? `; routines matched ${emitted.matched}, fired ${emitted.fired}` : ""}`,
@@ -128,7 +129,7 @@ export default defineChannel({
         bodyBytes,
         headers: req.headers,
         nowMs: Date.now(),
-        allowUnverified: process.env.OE_ALLOW_UNVERIFIED_WEBHOOK === "1",
+        allowUnverified: getSettings().webhooks.allowUnverified,
         maxBodyBytes,
       });
       if (!outcome.ok) {

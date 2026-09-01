@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { githubCommentIsMachine, parseGitHubStopComment, routeGitHubStopComment, type GitHubStopDeps } from "../agent/channels/github-stop.js";
 import { bindGitHub, buildGitHubAuth, githubConversationKey } from "../agent/channels/github-identity.js";
-import { isStopDirective, type CancelAnchoredTurnInput, type CancelResult } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  isStopDirective,
+  overrideSettingsForTest,
+  type CancelAnchoredTurnInput,
+  type CancelResult,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -132,7 +137,7 @@ function recordingDeps(): { deps: GitHubStopDeps; calls: CancelAnchoredTurnInput
 }
 
 {
-  process.env.OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK = "1";
+  overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: true } });
   const channel = (await import("../agent/channels/github.js")).default;
   type WebhookHandler = (req: Request, args: unknown) => Promise<Response>;
   const route = channel.routes.find((r) => r.transport !== "websocket" && r.method === "POST" && r.path === "/eve/v1/github") as
@@ -174,7 +179,7 @@ function recordingDeps(): { deps: GitHubStopDeps; calls: CancelAnchoredTurnInput
   } finally {
     console.log = realLog;
     console.error = realError;
-    delete process.env.OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK;
+    overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: false } });
   }
   ok(stopRun === 1, "🔴 REACHABILITY: the real webhook route runs the stop leg on a bare `stop` comment");
   ok(ordinaryRun === 0, "negative control: an ordinary comment runs NO stop leg");

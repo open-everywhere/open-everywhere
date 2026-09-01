@@ -116,7 +116,7 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
       hook.broker !== "env"
         ?
           `${currentRef} did not resolve through the "${hook.broker}" broker — rejecting unverified delivery (issue this hook a signing secret with rotate_webhook, which stores one and shows it once)`
-        : `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
+        : `${currentRef} is not set — rejecting unverified delivery (set the secret, or turn on webhooks.allowUnverified in agent/settings/settings.ts for local dev)`,
     );
   }
 

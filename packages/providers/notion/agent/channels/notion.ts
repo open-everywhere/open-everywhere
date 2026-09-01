@@ -8,6 +8,7 @@ import {
   finalMessageActionForTurn,
   completeSupervisorTurn,
   getConfig,
+  getSettings,
   ambientSupervisorEnabled,
   engagementTierFor,
   resolveExternalPolicy,
@@ -323,7 +324,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
 
       const outcome = await handleNotionDelivery(rawBody, signature, {
         signingKeys,
-        allowUnverified: process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK === "1",
+        allowUnverified: getSettings().webhooks.allowUnverifiedNotion,
         credentialFor,
         credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, notionDomains()),
         domains: notionDomains(),
