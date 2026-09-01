@@ -24,16 +24,22 @@ process.env.OE_GITHUB_APP_PRIVATE_KEY = privateKey as string;
 process.env.OE_GITHUB_APP_SLUG = "oe-test-app";
 process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
 
+const MINTED_TOKEN = "ghs_899";
+
+let passThroughFetch: typeof fetch = (async () =>
+  new Response("github-message-ops-test: this request is not this suite's and was not dialled", { status: 503 })) as unknown as typeof fetch;
+
 function stubGitHubFetch(onCall: (url: string, init?: RequestInit) => Response): { calls: { url: string; method: string; body: string }[] } {
   const calls: { url: string; method: string; body: string }[] = [];
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/access_tokens")) {
       return new Response(
-        JSON.stringify({ token: "ghs_899", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }),
+        JSON.stringify({ token: MINTED_TOKEN, expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }),
         { status: 201 },
       );
     }
+    if (new Headers(init?.headers ?? {}).get("authorization") !== `Bearer ${MINTED_TOKEN}`) return await passThroughFetch(input, init);
     calls.push({ url, method: String(init?.method), body: String(init?.body ?? "") });
     return onCall(url, init);
   }) as unknown as typeof fetch;
@@ -77,6 +83,30 @@ try {
     }
     ok(threw, "postText: a malformed channelId (not owner/repo#number) refuses");
     ok(message.includes("not-a-conversation-id"), "…and names the bad id in the refusal");
+  }
+
+  {
+    _resetGitHubInstallationTokenCache();
+    const foreign: string[] = [];
+    const restorePassThrough = passThroughFetch;
+    passThroughFetch = (async (input: string | URL) => {
+      foreign.push(String(input));
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const { calls } = stubGitHubFetch(() => new Response(JSON.stringify({ id: 4244 }), { status: 201 }));
+      await githubMessageOps.postText("acme/payments-api#55", "the call under test");
+      await globalThis.fetch("https://api.github.com/repos/other/repo/issues/9/comments", {
+        method: "POST",
+        headers: { authorization: "Bearer another-legs-token" },
+        body: "{}",
+      });
+      ok(calls.length === 1, "🔴 a FOREIGN in-shard request landing inside the stub window is NOT counted — this is the flake OPE-1326 measured");
+      ok(calls[0]!.url.includes("/repos/acme/payments-api/"), "…and the one call recorded is the ops' own");
+      ok(foreign.length === 1 && foreign[0]!.includes("/repos/other/repo/"), "…while the foreign request was DELEGATED onward, not answered from this suite's fixture");
+    } finally {
+      passThroughFetch = restorePassThrough;
+    }
   }
 
   {

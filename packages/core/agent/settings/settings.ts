@@ -255,7 +255,7 @@ export const SETTINGS = {
       path: "connectors.userPrincipal",
       shipped: false,
       summary:
-        "The per-user credential path (A1): a DM surface with a `user-oauth` credential bound resolves the OAuth subject to the calling human instead of the app principal.",
+        "The per-user credential path (A1): a DM surface with a `user-oauth` credential bound resolves the OAuth subject to the calling human instead of the app principal. Arming it REQUIRES `connectors.opTiering`: the member-plane deny of a personal-credential write is computed only on the tiering branch, so settings load refuses `userPrincipal` on with `opTiering` off rather than ship a posture where a declared `connector.tool:` row can lift an unattended personal-credential write.",
     } satisfies SettingSpec<boolean>,
     linkSetVault: {
       path: "connectors.linkSetVault",
@@ -680,6 +680,19 @@ function validatorAccepts(spec: SettingSpec<unknown>, value: unknown): boolean {
   }
 }
 
+function connectorPlaneCouplingProblem(overrides: AgentSettingsOverrides): string | undefined {
+  const userPrincipal = overrides.connectors?.userPrincipal ?? SETTINGS.connectors.userPrincipal.shipped;
+  const opTiering = overrides.connectors?.opTiering ?? SETTINGS.connectors.opTiering.shipped;
+  if (userPrincipal !== true || opTiering === true) return undefined;
+  return (
+    "connectors.userPrincipal: armed without connectors.opTiering. The per-user credential path resolves a personal " +
+    "credential in a DM, and every member-plane deny of a personal-credential write is computed only on the " +
+    "connectors.opTiering branch — so this posture lets a declared `connector.tool:` row lift an unattended " +
+    "personal-credential write that the tiering-on path denies outright. Arm connectors.opTiering as well, or leave " +
+    "connectors.userPrincipal off"
+  );
+}
+
 export function defineSettings(overrides: AgentSettingsOverrides): AgentSettingsOverrides {
   const problems: string[] = [];
   for (const [group, values] of Object.entries(overrides) as Array<[string, Record<string, unknown> | undefined]>) {
@@ -706,6 +719,8 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
       if (problem !== undefined) problems.push(`${spec.path}: ${problem} (got ${JSON.stringify(value)})`);
     }
   }
+  const coupling = connectorPlaneCouplingProblem(overrides);
+  if (coupling !== undefined) problems.push(coupling);
   if (problems.length > 0) {
     throw new Error(
       `open-everywhere: invalid agent settings (agent/settings/settings.ts) —\n  • ${problems.join("\n  • ")}\n` +

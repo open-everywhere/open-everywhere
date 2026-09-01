@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, registerScript, waitFor, type ScriptedHandle } from "../harness";
+import { disposeLater, bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, registerScript, setEnvForRunningAgent, waitFor, type ScriptedHandle } from "../harness";
 
 const TARGET_TOOL = "spawn_thread_session";
 
@@ -13,7 +13,7 @@ async function driveTurn(text: string, messageId: string) {
 }
 
 test("a standing session re-derives its tool roster when the deployment id changes, and NOT on a settings change alone", async () => {
-  process.env.VERCEL_DEPLOYMENT_ID = "it-ope676-dep-a";
+  setEnvForRunningAgent("VERCEL_DEPLOYMENT_ID", "it-ope676-dep-a");
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
 
@@ -29,7 +29,7 @@ test("a standing session re-derives its tool roster when the deployment id chang
   expect(turn2.sessionId).toBe(turn1.sessionId);
   expect(turn2.tools).toContain(TARGET_TOOL);
 
-  process.env.VERCEL_DEPLOYMENT_ID = "it-ope676-dep-b";
+  setEnvForRunningAgent("VERCEL_DEPLOYMENT_ID", "it-ope676-dep-b");
 
   const turn3 = await driveTurn("ope676 turn three", "ope676-t3");
   expect(turn3.sessionId).toBe(turn1.sessionId);

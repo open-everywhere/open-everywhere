@@ -13,11 +13,18 @@ export const BORROW_APPROVE_READ_BUDGET_MS = 2_000;
 
 export interface BorrowDeadline {
   remainingMs(): number;
+  markSpent(): void;
 }
 
 export function borrowDeadline(budgetMs: number = BORROW_APPROVE_READ_BUDGET_MS, nowMs: number = Date.now()): BorrowDeadline {
   const endsAt = nowMs + budgetMs;
-  return { remainingMs: () => Math.max(0, endsAt - Date.now()) };
+  let spent = false;
+  return {
+    remainingMs: () => (spent ? 0 : Math.max(0, endsAt - Date.now())),
+    markSpent: () => {
+      spent = true;
+    },
+  };
 }
 
 export async function withinBorrowDeadline<T>(deadline: BorrowDeadline, what: string, leg: () => Promise<T>): Promise<T> {
@@ -28,7 +35,10 @@ export async function withinBorrowDeadline<T>(deadline: BorrowDeadline, what: st
     return await Promise.race([
       leg(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`granted call: ${what} did not answer within the approve-time budget (connections/grant-mcp-borrow.ts).`)), left);
+        timer = setTimeout(() => {
+          deadline.markSpent();
+          reject(new Error(`granted call: ${what} did not answer within the approve-time budget (connections/grant-mcp-borrow.ts).`));
+        }, left);
       }),
     ]);
   } finally {

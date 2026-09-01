@@ -38,6 +38,24 @@ export function disposeLater<T extends { dispose(): void }>(handle: T): T {
 }
 
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+
+const PRISTINE_ENV_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, "env");
+
+export function setEnvForRunningAgent(name: string, value: string): void {
+  try {
+    process.env[name] = value;
+    return;
+  } catch (err) {
+    if (PRISTINE_ENV_DESCRIPTOR === undefined) throw err;
+  }
+  const sandboxDescriptor = Object.getOwnPropertyDescriptor(process, "env");
+  Object.defineProperty(process, "env", PRISTINE_ENV_DESCRIPTOR);
+  try {
+    process.env[name] = value;
+  } finally {
+    if (sandboxDescriptor !== undefined) Object.defineProperty(process, "env", sandboxDescriptor);
+  }
+}
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 export { PENDING_WORK_FRAME } from "@open-everywhere/core/agent/channels/turn-delivery.js";
 import { PENDING_WORK_FRAME as OE_PENDING_WORK_FRAME, withPendingWorkFrame } from "@open-everywhere/core/agent/channels/turn-delivery.js";

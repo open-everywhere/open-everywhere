@@ -225,6 +225,24 @@ console.log("5 — a bad override fails the boot, not a turn:");
   refuses(() => defineSettings({ approvals: { judgeMode: "ENFORCE" } } as never), 'must be "off", "shadow" or "enforce"', "[5] 🔴 …and a mis-cased judge mode likewise — the old parser answered `off` here, which was fail-safe but silent");
   refuses(() => defineSettings({ taint: { mode: "disabled" } } as never), 'must be "on" or "off"', "[5] …and taint.mode keeps the validator it has always had");
 
+  refuses(
+    () => defineSettings({ connectors: { userPrincipal: true } }),
+    "armed without connectors.opTiering",
+    "[5] 🔴 userPrincipal declared ALONE is refused — opTiering ships OFF, so the resolved posture is the holed one",
+  );
+  refuses(
+    () => defineSettings({ connectors: { userPrincipal: true, opTiering: false } }),
+    "armed without connectors.opTiering",
+    "[5] …and declaring opTiering FALSE beside it is refused the same way — an explicit off is still off",
+  );
+  eq(
+    defineSettings({ connectors: { userPrincipal: true, opTiering: true } }).connectors?.userPrincipal,
+    true,
+    "[5] 🔴 BOTH ARMED is accepted — this is the posture agent/settings/settings.ts commits, so the rule must not refuse it",
+  );
+  eq(defineSettings({ connectors: { opTiering: true } }).connectors?.opTiering, true, "[5] …opTiering alone is accepted: tiering without the per-user path holes nothing");
+  eq(defineSettings({ connectors: { userPrincipal: false } }).connectors?.userPrincipal, false, "[5] …and userPrincipal explicitly OFF is accepted whatever opTiering says");
+
   ok(
     defineSettings({ bash: { timeoutMs: 0 } }).bash?.timeoutMs === 0,
     "[5] bash.timeoutMs accepts 0 — that is the documented 'disable the timeout' value, not an out-of-range one",
