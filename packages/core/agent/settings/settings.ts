@@ -24,6 +24,7 @@ export interface AgentSettings {
     readonly ttlHours: number;
     readonly sessionTtlHours: number;
     readonly checkpointTtlHours: number;
+    readonly routineCardWaitSeconds: number;
   };
   readonly audit: {
     readonly silences: boolean;
@@ -204,6 +205,15 @@ export const SETTINGS = {
       summary:
         "TTL for the session-checkpoint continue/asked memos, in hours. Also a GC bound, not the death mechanism.",
       format: (v) => `${v} h`,
+    } satisfies SettingSpec<number>,
+    routineCardWaitSeconds: {
+      path: "approvals.routineCardWaitSeconds",
+      shipped: 0,
+      validate: (v) =>
+        Number.isInteger(v) && v >= 0 && v <= 300 ? undefined : "must be a whole number of seconds between 0 and 300",
+      summary:
+        "How long an unattended routine fire's refusal WAITS for its permission card to be answered before it declines for that run. 0 (shipped) waits not at all: the refusal is immediate and the card decides only FUTURE runs. Armed, the refusing tool call polls the card's own pending row, and an approval inside the window lets that run proceed. THE BUDGET, and why 120 is the recommended armed value: the deployed function's wall ceiling is 300 s (measured, platform default, no app pin); the turn has already spent time reaching the refusal, and there is no readable turn-start stamp at that seam, so 120 s is assumed; the model still has to be told and the run's report posted, so 60 s is reserved — 300 − 120 − 60 = 120, and the wait is CLAMPED to that whatever this value says. 🔴 A deadline never decides the card: it stays pending and clickable, and approving it still arms every later run.",
+      format: (v) => (v === 0 ? "0 (no wait — the refusal is immediate)" : `${v} s`),
     } satisfies SettingSpec<number>,
   },
   audit: {
@@ -782,6 +792,7 @@ export function getSettings(
       ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours, env),
       sessionTtlHours: resolve(SETTINGS.approvals.sessionTtlHours, o.approvals?.sessionTtlHours, env),
       checkpointTtlHours: resolve(SETTINGS.approvals.checkpointTtlHours, o.approvals?.checkpointTtlHours, env),
+      routineCardWaitSeconds: resolve(SETTINGS.approvals.routineCardWaitSeconds, o.approvals?.routineCardWaitSeconds, env),
     },
     audit: {
       silences: resolve(SETTINGS.audit.silences, o.audit?.silences, env),

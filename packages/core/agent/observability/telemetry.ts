@@ -55,8 +55,21 @@ export const FEATURE_VALUES = Object.freeze([
   "memory_admin",
   "spend_cap_hit",
   "spend_checkpoint",
+  "routine_permission_card_wait",
 ] as const);
-export const OUTCOME_VALUES = Object.freeze(["ok", "failed", "declined", "approved", "rejected", "expired", "unverified"] as const);
+export const OUTCOME_VALUES = Object.freeze([
+  "ok",
+  "failed",
+  "declined",
+  "approved",
+  "rejected",
+  "expired",
+  "unverified",
+  "deadline",
+  "stale",
+  "gone",
+  "unreadable",
+] as const);
 
 export function tokensBucket(total: number): string {
   if (total < 1_000) return "<1k";

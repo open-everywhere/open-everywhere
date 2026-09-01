@@ -5,6 +5,7 @@ import {
   type RoutinePermissionArgs,
 } from "../approvals/routine-permission.js";
 import { routinePermissionAskedMemo, routinePermissionDeclinedMemo } from "../approvals/session-grant.js";
+import type { RoutineCardProbe } from "./permission-card-wait.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "./grants.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { listAllRoutines, getRoutine } from "./store.js";
@@ -76,7 +77,7 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
     if (!parts) return { state: "n/a" };
 
     const state = await readRoutinePermissionCardState(offer.org, offer.grantKey, declarable.grantKind, offer.nowIso);
-    if (state !== "absent") return { state };
+    if (state !== "absent") return { state, grantKind: declarable.grantKind };
 
     const routine = await routineForGrantKey(offer.org, offer.scopeKey, parts.routineId);
     if (!routine) return { state: "n/a" };
@@ -125,6 +126,36 @@ function readChannelId(target: unknown): string | undefined {
   if (typeof target !== "object" || target === null) return undefined;
   const id = (target as { channelId?: unknown }).channelId;
   return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+export async function findLiveRoutinePermissionCardId(org: string, grantKey: string, grantKind: string): Promise<string | undefined> {
+  try {
+    const rows = await getOperationalStore().listPendingActions(org);
+    for (const row of rows) {
+      if (row.kind !== ROUTINE_PERMISSION_KIND) continue;
+      const args = JSON.parse(row.argsJson) as Partial<RoutinePermissionArgs> | null;
+      if (args?.grantKey === grantKey && args.grantKind === grantKind) return row.id;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function routineCardProbe(org: string, cardId: string, grantKey: string, grantKind: string): Promise<RoutineCardProbe> {
+  const store = getOperationalStore();
+  const row = await store.getPendingAction(org, cardId);
+  if (!row) return { status: "gone", armed: false };
+  if (row.status !== "approved") return { status: row.status, armed: false };
+  const grant = await store.getSessionApproval(org, grantKey, grantKind, new Date().toISOString());
+  return { status: "approved", armed: grant !== null };
+}
+
+export async function routineCardGrantedBy(org: string, grantKey: string, grantKind: string): Promise<string | undefined> {
+  const grant = await getOperationalStore()
+    .getSessionApproval(org, grantKey, grantKind, new Date().toISOString())
+    .catch(() => null);
+  return grant?.grantedBy;
 }
 
 export async function markRoutinePermissionAsked(

@@ -5,6 +5,7 @@ import { registerActionKind, whereFromScope } from "./actions.js";
 import { getRoutine } from "../routines/store.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
 import { routineGrantGeneration, routineGrantKey } from "../routines/routine.js";
+import { routineCardWaitSeconds } from "../routines/permission-card-wait.js";
 import { routinePermissionDeclinedMemo } from "./session-grant.js";
 import type { ActionKind } from "./types.js";
 
@@ -29,9 +30,12 @@ function clip(s: string): string {
 }
 
 export function routinePermissionCardLines(args: RoutinePermissionArgs): string[] {
+  const waitArmed = routineCardWaitSeconds() > 0;
   return [
     `Let routine ${args.routineId} use \`${args.declaration}\` on its own, from now on?`,
-    "It asked for this while running unattended, so the run was refused and has already finished. This decides FUTURE runs.",
+    waitArmed
+      ? "It asked for this while running unattended, and was refused. This decides FUTURE runs — and any run still waiting on this card when you answer."
+      : "It asked for this while running unattended, so the run was refused and has already finished. This decides FUTURE runs.",
     "🔑 approving writes the same standing permission the routine's creation card would have declared — it is revoked the moment the routine's instruction is edited, and `revoke_routine_permissions` withdraws it at any time.",
     "⛔ declining is remembered: this routine stops asking for this permission until its instruction is edited.",
     `Routine says:\n> ${clip(args.prompt)}`,
@@ -80,7 +84,9 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
       detail: { routine: args.routineId, grant: args.grantKind, declaration: args.declaration, key: args.grantKey },
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "routine_permission_card", "oe.outcome": "granted" });
-    return `routine ${args.routineId} may now use \`${args.declaration}\` on its own — from its next run, until its instruction is edited`;
+    return routineCardWaitSeconds() > 0
+      ? `routine ${args.routineId} may now use \`${args.declaration}\` on its own — from now on, including any run still waiting on this card, until its instruction is edited`
+      : `routine ${args.routineId} may now use \`${args.declaration}\` on its own — from its next run, until its instruction is edited`;
   },
   async declined(args, decidedBy) {
     const recheck = await recheckedRoutine(args);

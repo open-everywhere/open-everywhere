@@ -54,10 +54,14 @@ import "./chat-dm.js";
 import "./session-checkpoint.js";
 import "./routine-permission.js";
 import {
+  findLiveRoutinePermissionCardId,
   markRoutinePermissionAsked,
   planRoutinePermissionCard,
+  routineCardGrantedBy,
+  routineCardProbe,
   routinePermissionRefusalClause,
 } from "../routines/permission-card.js";
+import { routineCardKeepsStateClause, routineCardWaitBudgetMs, routineCardWaitRefusalClause, waitForRoutineCardDecision } from "../routines/permission-card-wait.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
@@ -173,6 +177,13 @@ export function judgeLiftNoticePosterFor(platform: string | undefined): JudgeLif
 export interface AutoApprovedOutcome {
   readonly outcome: string;
   readonly resolvedBy: string;
+  readonly grantedBy?: string;
+}
+
+interface RoutinePermissionRefusal {
+  readonly clause: string;
+  readonly armedBy?: string;
+  readonly waited?: boolean;
 }
 
 export interface RequestApprovalResult {
@@ -183,6 +194,12 @@ export interface RequestApprovalResult {
 }
 
 export function autoApprovedNote(what: string, autoApproved: AutoApprovedOutcome): string {
+  if (autoApproved.grantedBy !== undefined) {
+    return (
+      `done — ${what}: this run was refused, a permission card went to the routine's room, and <@${autoApproved.grantedBy}> approved it while the run was still waiting — ` +
+      `so it ran, and every later run of this instruction may do it without asking. ${autoApproved.outcome}. Tell the user.`
+    );
+  }
   return (
     `done — ${what}: the approver chain auto-approved this (${autoApproved.resolvedBy}), so no card was posted and it has ALREADY run — ` +
     `${autoApproved.outcome}. Tell the user; there is no card for them to see.`
@@ -270,28 +287,65 @@ export async function requestApproval(
       .catch(() => undefined);
 
     if (resolution.verdict === "deny") {
-      emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });
+      const denied = (): void => emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });
       const reason = resolution.transforms.find((t) => t.to === "deny")?.reason;
       if (resolution.resolvedBy === "judge") {
+        denied();
         throw new Error(
           `"${input.kind}" was DENIED by the approval judge — nothing was proposed and no card was posted. ` +
             `The judge's reasoning is recorded in the audit log (approval.judge.verdict); if this looks wrong, a person can propose the action themselves, and the operator can review this verb's defer flip.`,
         );
       }
       const taintedDeny = resolution.tainted && reason === "ask-unattended";
-      const cardClause =
+      const card: RoutinePermissionRefusal =
         reason === "ask-unattended"
           ? await offerRoutinePermissionCard(input, { tainted: resolution.tainted, deps })
-          : "";
+          : { clause: "" };
+      if (card.armedBy !== undefined) {
+        const store = getOperationalStore();
+        const decidedAt = new Date().toISOString();
+        const wedge: PendingActionRow = {
+          id: randomUUID(),
+          org: input.org,
+          kind: input.kind,
+          argsJson: JSON.stringify(input.args ?? null),
+          scopeKey: input.scopeKey,
+          domain: input.domain ?? null,
+          requestedBy: input.requestedBy,
+          channelId: input.channelId,
+          threadTs: input.threadTs ?? null,
+          messageTs: null,
+          postedTo: input.postedTo ?? null,
+          status: "approved",
+          createdAt: decidedAt,
+          expiresAt: decidedAt,
+          decidedBy: card.armedBy,
+          decidedAt,
+        };
+        await store.addPendingAction(wedge);
+        const outcome = await kindDef.execute(input.args, card.armedBy);
+        await appendAudit({
+          ...whereFromScope(input.org, input.scopeKey),
+          principalId: card.armedBy,
+          action: "approval.autoapproved",
+          detail: { id: wedge.id, kind: input.kind, scopeKey: input.scopeKey, resolvedBy: "routine-permission-card", transforms: resolution.transforms.map((t) => t.name) },
+        }).catch(() => undefined);
+        emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "autoapproved" });
+        return { id: wedge.id, expiresAt: wedge.expiresAt, autoApproved: { outcome, resolvedBy: "routine-permission-card", grantedBy: card.armedBy } };
+      }
+      denied();
       throw new Error(
         `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
           `nothing was proposed and no card was posted. ${
             taintedDeny
               ? "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external."
               : reason === "ask-unattended"
-                ? "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
+                ? card.waited === true
+                  ?
+                    "Arm the permission on the routine's creation card, or ask a person to do this."
+                  : "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
                 : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
-          }${cardClause}`,
+          }${card.clause}`,
       );
     }
 
@@ -435,10 +489,11 @@ export async function requestApproval(
 async function offerRoutinePermissionCard(
   input: RequestApprovalInput,
   ctx: { readonly tainted: boolean; readonly deps: RequestApprovalDeps },
-): Promise<string> {
+): Promise<RoutinePermissionRefusal> {
   try {
+    const budgetMs = routineCardWaitBudgetMs();
     const grantKey = sessionIdFromFrozenArgs(JSON.stringify(input.args ?? null));
-    if (grantKey === undefined) return "";
+    if (grantKey === undefined) return { clause: "" };
     const plan = await planRoutinePermissionCard({
       org: input.org,
       actionKind: input.kind,
@@ -450,16 +505,22 @@ async function offerRoutinePermissionCard(
       nowIso: new Date().toISOString(),
     });
     if (plan.state !== "absent" || !plan.card || plan.askedMemoKind === undefined) {
-      return routinePermissionRefusalClause(plan.state, false);
+      const clause = routinePermissionRefusalClause(plan.state, false);
+      if (budgetMs <= 0 || plan.state !== "live" || plan.grantKind === undefined) return { clause };
+      const cardId = await findLiveRoutinePermissionCardId(input.org, grantKey, plan.grantKind);
+      if (cardId === undefined) return { clause };
+      return await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
     }
-    if (!hasApprovalCardPath(plan.platform ?? "")) return "";
+    if (!hasApprovalCardPath(plan.platform ?? "")) return { clause: "" };
     const hadCardSignal = peekCardPostedThisTurn();
     const poster = cardPosterFor(plan.platform ?? "");
+    let cardId: string | undefined;
     try {
-      await requestApproval(plan.card, {
+      const posted = await requestApproval(plan.card, {
         ...(ctx.deps.post ? { post: ctx.deps.post } : {}),
         ...(poster ? { postCard: poster } : {}),
       });
+      cardId = posted.id;
     } finally {
       if (!hadCardSignal) consumeCardPostedThisTurn();
     }
@@ -470,10 +531,32 @@ async function offerRoutinePermissionCard(
       input.requestedBy,
       new Date().toISOString(),
     );
-    return routinePermissionRefusalClause("absent", true);
+    const clause = routinePermissionRefusalClause("absent", true);
+    if (budgetMs <= 0 || plan.grantKind === undefined) return { clause };
+    return await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
   } catch {
-    return "";
+    return { clause: "" };
   }
+}
+
+async function settleRoutineCardWait(
+  org: string,
+  ctx: { readonly cardId: string; readonly grantKey: string; readonly grantKind: string },
+  cardClause: string,
+  budgetMs: number,
+): Promise<RoutinePermissionRefusal> {
+  const outcome = await waitForRoutineCardDecision(budgetMs, {
+    probe: () => routineCardProbe(org, ctx.cardId, ctx.grantKey, ctx.grantKind),
+    sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    nowMs: () => Date.now(),
+  });
+  emitTelemetry("oe.feature.used", { "oe.feature": "routine_permission_card_wait", "oe.outcome": outcome });
+  if (outcome === "approved") {
+    const armedBy = await routineCardGrantedBy(org, ctx.grantKey, ctx.grantKind);
+    if (armedBy !== undefined) return { clause: cardClause, armedBy, waited: true };
+  }
+  const waitClause = routineCardWaitRefusalClause(outcome, Math.round(budgetMs / 1_000));
+  return { clause: (routineCardKeepsStateClause(outcome) ? cardClause : "") + waitClause, waited: true };
 }
 
 export function approvalPostDeps(platform: string): RequestApprovalDeps {
