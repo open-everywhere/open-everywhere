@@ -1,4 +1,5 @@
 import { describeFilter, storedFilter } from "./event-model.js";
+import { ROUTINE_GRANT_PREFIX } from "./grant-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
 
 export type RoutineTrigger =
@@ -95,7 +96,7 @@ export function nextPromptGeneration(r: Pick<Routine, "promptGeneration">): numb
   return routineGrantGeneration(r) + 1;
 }
 
-export const ROUTINE_GRANT_PREFIX = "oe-routine:";
+export { ROUTINE_GRANT_PREFIX };
 
 export function routineGrantKey(r: Pick<Routine, "id" | "promptGeneration">): string {
   return `${ROUTINE_GRANT_PREFIX}${r.id}:g${routineGrantGeneration(r)}`;

@@ -29,7 +29,8 @@ const { routineGrantKey } = await import("../agent/routines/routine.js");
 const { ROUTINE_GRANT_NO_EXPIRY } = await import("../agent/routines/grants.js");
 const { ROUTINE_PERMISSION_KIND } = await import("../agent/approvals/routine-permission.js");
 const { routinePermissionAskedMemo } = await import("../agent/approvals/session-grant.js");
-const { readRoutinePermissionCardState, findLiveRoutinePermissionCardId, routineCardProbe } = await import("../agent/routines/permission-card.js");
+const { consumeRoutineRunPermissionRefusals } = await import("../agent/approvals/card-signal.js");
+const { readRoutinePermissionCardState, routineCardProbe } = await import("../agent/routines/permission-card.js");
 const { overrideSettingsForTest } = await import("../agent/settings/settings.js");
 const {
   ROUTINE_CARD_WAIT_CEILING_SECONDS,
@@ -383,7 +384,7 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   ok(Date.now() - started < 1_000, "§fire: and it refuses immediately — a disarmed wait costs the turn no time");
   const rows = await cards();
   ok(rows.length === 1 && rows[0]!.status === "pending", "§fire: the card is posted and pending");
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "live", "§fire: and the ask-memo is written");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "live", "§fire: and the ask-memo is written");
 }
 
 {
@@ -428,7 +429,7 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   ok(!refusal.includes("nobody has decided it yet"), "🔴 §fire: the refusal does not say nobody decided the card AND report who decided it");
   ok(!refusal.includes("is already waiting"), "§fire: the whole pre-wait state sentence is dropped, not just its tail");
   ok((await store.getSessionApproval(ORG, KEY, "pr.open", new Date().toISOString())) === null, "§fire: a decline arms nothing");
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "declined", "§fire: and the durable decline is written, so later fires refuse quietly");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "declined", "§fire: and the durable decline is written, so later fires refuse quietly");
 }
 
 {
@@ -459,6 +460,53 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   const wedges = await approvedPrOpenWedges();
   ok(wedges.length === 1, "🔴 §fire: the decided WEDGE row is in the store — the run reached the act rather than throwing the refusal");
   ok(wedges[0]?.decidedBy === "U_CLICKER", "§fire: attributed to the human who clicked, never to the fire");
+}
+
+{
+  await store.revokeSessionApprovals(ORG, KEY);
+  for (const row of await cards()) {
+    await store.decidePendingAction(ORG, row.id, "expired", "system", new Date().toISOString());
+  }
+
+  setWait(1);
+  const lost = await inTurn("s-ledger", "turn_1", async () => {
+    await fire("deadline, nobody home");
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(lost.length === 1, "⭐ §runledger: a run whose card timed out REPORTS the loss");
+  ok(lost[0]?.permission === "open pull requests" && lost[0]?.cardKnown === true, "⭐ §runledger: naming the permission, with the card's fate established");
+
+  setWait(10);
+  const armedCard = (await cards()).find((r) => r.status === "pending")!;
+  ok(armedCard !== undefined, "§runledger: the deadline left its card pending for this leg to answer");
+  const clicked = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      void resolveApprovalClick({ org: ORG, id: armedCard.id, clickerId: "U_CLICKER", decision: "approve" } as never).then(() => resolve());
+    }, 200);
+  });
+  const proceeded = await inTurn("s-ledger", "turn_2", async () => {
+    await fire("someone says yes in time");
+    return consumeRoutineRunPermissionRefusals();
+  });
+  await clicked;
+  ok((await store.getSessionApproval(ORG, KEY, "pr.open", new Date().toISOString())) !== null, "§runledger: the click really armed the grant, so this run really did proceed");
+  ok(proceeded.length === 0, "🔴 §runledger: and its report claims NO loss — a run that got the permission mid-run was not refused");
+
+  await store.revokeSessionApprovals(ORG, KEY);
+  for (const row of await cards()) {
+    await store.decidePendingAction(ORG, row.id, "expired", "system", new Date().toISOString());
+  }
+  setWait(0);
+  const [sameTurn, nextTurn] = await inSession(async () => {
+    await fireTelemetry("turn.started", { turnId: "turn_3" }, { session: { id: "s-stale" } });
+    await fire("refused, and this fire posts nothing");
+    const mine = consumeRoutineRunPermissionRefusals();
+    await fire("refused again, still posting nothing");
+    await fireTelemetry("turn.started", { turnId: "turn_4" }, { session: { id: "s-stale" } });
+    return [mine, consumeRoutineRunPermissionRefusals()] as const;
+  });
+  ok(sameTurn.length === 1, "⭐ §runledger: the turn that was refused reads its own ledger — the control that makes the next assertion mean something");
+  ok(nextTurn.length === 0, "🔴 §runledger: a LATER turn of the same session reads nothing — one fire's losses can never ride another fire's report");
 }
 
 await inTurn("sess-card", "turn_0", async () => {
@@ -498,7 +546,7 @@ await inTurn("sess-card", "turn_0", async () => {
 
 {
   await store.revokeSessionApprovals(ORG, KEY);
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "absent", "§fire: the slate is clean, so this fire POSTS rather than re-points");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "absent", "§fire: the slate is clean, so this fire POSTS rather than re-points");
   const before = (await cards()).length;
   setWait(1);
   const started = Date.now();

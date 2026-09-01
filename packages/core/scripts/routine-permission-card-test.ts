@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -21,7 +22,10 @@ const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
-const { reapSupersededRoutineCards, requestApproval, resolveApprovalClick, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
+const { registerCardPoster, reapSupersededRoutineCards, requestApproval, resolveApprovalClick, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
+const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
+const { consumeRoutineRunPermissionRefusals, noteRoutineRunPermissionRefusal } = await import("../agent/approvals/card-signal.js");
+const { RUN_REFUSAL_HEADING, withRunRefusalBlock } = await import("../agent/routines/report.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { addRoutine, removeRoutine, updateRoutine } = await import("../agent/routines/store.js");
@@ -38,6 +42,40 @@ const {
   routineGrantKeyParts,
   routinePermissionRefusalClause,
 } = await import("../agent/routines/permission-card.js");
+
+class FakeSession {
+  private readonly slots = new Map<string, unknown>();
+  get<T>(key: { name: string }): T | undefined {
+    return this.slots.get(key.name) as T | undefined;
+  }
+  has(key: { name: string }): boolean {
+    return this.slots.has(key.name);
+  }
+  require<T>(key: { name: string }): T {
+    if (!this.has(key)) throw new Error(`missing ${key.name}`);
+    return this.get(key) as T;
+  }
+  set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+    const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+    this.slots.set(key.name, next);
+    return next;
+  }
+  ensure<T>(key: { name: string }, create: () => T): T {
+    return this.has(key) ? this.require(key) : this.set(key, create());
+  }
+  clearVirtualContext(): void {}
+  setVirtualContext(): void {}
+  *entries(): Generator<readonly [unknown, unknown]> {}
+}
+function eveContextStorage(): AsyncLocalStorage<unknown> {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const key = Symbol.for("eve.context-storage");
+  g[key] ??= new AsyncLocalStorage();
+  return g[key] as AsyncLocalStorage<unknown>;
+}
+async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
+  return eveContextStorage().run(new FakeSession(), fn);
+}
 
 const ORG = "acme";
 const SURFACE = "slack/T1/C_ROOM";
@@ -92,15 +130,17 @@ const KEY = routineGrantKey(routine);
 
 {
   const now = () => new Date().toISOString();
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())) === "absent", "§state: nothing written yet reads as absent");
+  const stateOf = async (key: string, kind: string): Promise<string> => (await readRoutinePermissionCardState(ORG, key, kind, now())).state;
+  ok((await stateOf(KEY, "pr.open")) === "absent", "§state: nothing written yet reads as absent");
   await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())) === "live", "§state: an ask-memo reads as a live card");
-  ok((await readRoutinePermissionCardState(ORG, KEY, "connector.tool:notion__share_page", now())) === "absent", "§state: the memo is PER PERMISSION — one tool's card says nothing about another's");
+  ok((await stateOf(KEY, "pr.open")) === "lapsed", "🔴 §state: an ask-memo with NO pending row reads as LAPSED, never live — the memo outlives the card, so it cannot assert one is waiting");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())).cardId === undefined, "§state: and a lapsed read names no card, because it found none");
+  ok((await stateOf(KEY, "connector.tool:notion__share_page")) === "absent", "§state: the memo is PER PERMISSION — one tool's card says nothing about another's");
   await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())) === "declined", "§state: a decline WINS over a live ask — a declined permission never re-cards");
-  ok((await readRoutinePermissionCardState(ORG, "oe-routine:r-nightly:g2", "pr.open", now())) === "absent", "§state: the rows are generation-scoped — the next generation starts clean");
+  ok((await stateOf(KEY, "pr.open")) === "declined", "§state: a decline WINS over a live ask — a declined permission never re-cards");
+  ok((await stateOf("oe-routine:r-nightly:g2", "pr.open")) === "absent", "§state: the rows are generation-scoped — the next generation starts clean");
   await store.revokeSessionApprovals(ORG, KEY);
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())) === "absent", "§state: revoking the routine's rows clears both memos");
+  ok((await stateOf(KEY, "pr.open")) === "absent", "§state: revoking the routine's rows clears both memos");
 }
 
 const baseOffer = {
@@ -160,7 +200,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(rows[0]?.channelId === "C_ROOM", "§refusal: it landed in the ROUTINE's room, not the room the refused proposal named");
   ok(rows[0]?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§refusal: the card row carries no clock expiry");
   ok(first.includes("is now waiting in the routine's own room"), "§refusal: the refusal tells the model a card was posted");
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "live", "§refusal: the ask-memo is written after the post");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "live", "§refusal: the ask-memo is written after the post");
 
   const second = await refuse(proposal);
   ok(second.includes("ask-unattended"), "§refusal: the second fire is refused too");
@@ -208,7 +248,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     "§click: and the decided card RENDERS it — a hook whose result were discarded would promise durability nobody could read",
   );
   ok(
-    (await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "declined",
+    (await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "declined",
     "§click: rejecting the card writes the DURABLE decline through the real click path — later fires refuse quietly",
   );
   ok(
@@ -231,9 +271,19 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   );
   await updateRoutine(ORG, SURFACE, "r-nightly", { promptGeneration: 1 });
   ok(
-    (await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())) === "live",
-    "§click: the stale decline wrote no decline row, so the live generation is free to ask again",
+    (await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "lapsed",
+    "🔴 §click: an answered card whose answer stuck to NOTHING leaves the memo and no row — lapsed, never live",
   );
+  const afterLapse = await planRoutinePermissionCard({ ...baseOffer, actionKind: "pr.open" });
+  ok(afterLapse.state === "lapsed" && afterLapse.card !== undefined, "🔴 §click: and the planner posts a FRESH card over a lapsed one — OPE-1290's rule that a card posts once the old row is really gone");
+  const relapsed = await refuse(proposal);
+  ok(relapsed.includes("is now waiting in the routine's own room"), "§click: so the next real fire announces a new card rather than pointing at the dead one");
+  ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === 1, "§click: exactly one — the fresh card, with nothing left of the answered one");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "live", "§click: and THAT state is live, because a pending row now says so");
+  await store.revokeSessionApprovals(ORG, KEY);
+  for (const row of await cardsFor(ROUTINE_PERMISSION_KIND)) {
+    await store.decidePendingAction(ORG, row.id, "expired", "system", new Date().toISOString());
+  }
 }
 
 {
@@ -301,7 +351,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(!threw.includes("routine's own room"), "§room: and the refusal claims no card");
   ok((await store.listPendingActions(ORG)).length === before, "§room: no card row is minted for a platform with no approval-card path");
   ok(
-    (await readRoutinePermissionCardState(ORG, teamsKey, "pr.open", new Date().toISOString())) === "absent",
+    (await readRoutinePermissionCardState(ORG, teamsKey, "pr.open", new Date().toISOString())).state === "absent",
     "§room: and no ask-memo is written, so nothing is silently suppressed",
   );
 }
@@ -328,7 +378,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(!threw.includes("routine's own room"), "§silent: and the refusal claims no card");
   ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === before, "§silent: no card row is minted, so an edit_routine grant is still the way in");
   ok(
-    (await readRoutinePermissionCardState(ORG, silentKey, "pr.open", new Date().toISOString())) === "absent",
+    (await readRoutinePermissionCardState(ORG, silentKey, "pr.open", new Date().toISOString())).state === "absent",
     "§silent: and no ask-memo is written",
   );
 }
@@ -342,7 +392,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const markerRevoke = await revokeRoutinePermissions(ORG, routine);
   ok(markerRevoke.grants === 0, "§readers: revoking counts NO grants, so the tool cannot report authority that was never held");
   ok(markerRevoke.rows === 2, `§readers: but it reports the rows it deleted, so a call that destroyed a human's durable decline still audits (got ${markerRevoke.rows})`);
-  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())) === "absent", "§readers: the revoke still clears the markers — a revoke is a clean slate and the routine may ask again");
+  ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())).state === "absent", "§readers: the revoke still clears the markers — a revoke is a clean slate and the routine may ask again");
 
   await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: "pr.open", grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
   await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
@@ -351,6 +401,157 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const mixedRevoke = await revokeRoutinePermissions(ORG, routine);
   ok(mixedRevoke.grants === 1, "§readers: the reported count is the GRANT, not the grant plus its bookkeeping");
   ok(mixedRevoke.rows === 2, "§readers: while the deleted-row count sees both — two numbers, two questions");
+}
+
+{
+  const DISCORD_SURFACE = "discord/G1/C_DISCORD";
+  const PERMALINK = "https://discord.test/channels/G1/C_DISCORD/999";
+  routineDispatch.registerRoutineDispatch("discord", {
+    resolveTarget: (r) => {
+      const channelId = (r.target as { channelId?: string } | undefined)?.channelId;
+      if (!channelId) return null;
+      return {
+        channel: {} as never,
+        target: { channelId },
+        mode: "channel",
+        attributes: {},
+        origin: { platform: "discord", channelId, guildId: "G1" },
+      };
+    },
+  });
+  registerCardPoster("discord", async () => undefined);
+  let asked: { channelId: string; messageId: string; workspace?: string } | undefined;
+  registerSurfaceMessageOps({
+    platform: "discord",
+    postText: async () => undefined,
+    editMessage: async () => undefined,
+    permalink: async (ref: { channelId: string; messageId: string; workspace?: string }) => {
+      asked = ref;
+      return PERMALINK;
+    },
+  } as never);
+
+  const dRoutine = await addRoutine({ org: ORG, surfaceKey: DISCORD_SURFACE } as never, {
+    id: "r-discord",
+    org: ORG,
+    surfaceKey: DISCORD_SURFACE,
+    target: { channelId: "C_DISCORD" },
+    trigger: { kind: "cron", cron: "0 4 * * *" },
+    prompt: "Every morning, open a pull request that bumps the changelog.",
+    createdBy: "U_OWNER",
+    createdAt: new Date().toISOString(),
+    status: "active",
+  } as never);
+  const dKey = routineGrantKey(dRoutine);
+
+  const posted = await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey }, scopeKey: DISCORD_SURFACE });
+  ok(posted.includes("is now waiting in the routine's own room"), "§pointer: the discord fire posts a card and says so");
+  ok(posted.includes(PERMALINK), "🔴 §pointer: and the refusal carries the PERMALINK to it — the pointer OPE-1290 asked for");
+  ok(asked?.channelId === "C_DISCORD", "§pointer: the reference is addressed at the card's OWN channel, read back off its row");
+  ok(asked?.workspace === "G1", "§pointer: with the workspace segment off `postedTo`, which is what a permalink needs beside the ids");
+  ok(typeof asked?.messageId === "string" && (asked?.messageId.length ?? 0) > 0, "§pointer: and the message id `setPendingActionMessage` wrote — never an invented one");
+
+  const again = await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "second" }, scopeKey: DISCORD_SURFACE });
+  ok(again.includes("is already waiting"), "§pointer: the second fire re-points at the live card");
+  ok(again.includes(PERMALINK), "🔴 §pointer: and carries the permalink too — the `live` arm resolves it off the row the state was derived from");
+
+  await store.revokeSessionApprovals(ORG, KEY);
+  for (const row of await cardsFor(ROUTINE_PERMISSION_KIND)) {
+    if (row.channelId === "C_ROOM") await store.decidePendingAction(ORG, row.id, "expired", "system", new Date().toISOString());
+  }
+  const slackPost = await refuse(proposal);
+  ok(slackPost.includes("is now waiting in the routine's own room"), "§pointer: the slack fire still names the room");
+  ok(!slackPost.includes("http"), "🔴 §pointer: and quotes NO url — a surface whose lookup failed degrades to the room, never to a guess");
+  ok(
+    slackPost.includes("A permission card for this is now waiting in the routine's own room \u2014 approving it lets future runs do this without asking."),
+    "§pointer: byte-for-byte the pre-OPE-1356 sentence, so the fallback is a fallback and not a rewrite",
+  );
+
+  ok(routinePermissionRefusalClause("live", false, "https://x.test/1").endsWith(": https://x.test/1."), "§pointer: the clause appends the url it is given");
+  ok(!routinePermissionRefusalClause("live", false, "").includes(":"), "§pointer: an EMPTY permalink is an absent one — never a bare colon");
+  ok(!routinePermissionRefusalClause("live", false).includes("http"), "§pointer: and no permalink means no url");
+  ok(routinePermissionRefusalClause("declined", false, "https://x.test/1").includes("already declined"), "§pointer: a declined state carries no pointer — there is no card to open");
+  ok(!routinePermissionRefusalClause("declined", false, "https://x.test/1").includes("http"), "§pointer: and quotes none");
+  ok(routinePermissionRefusalClause("unreadable", false).includes("could not be read"), "§pointer: an unreadable card store SAYS so, and claims nothing about a card");
+  const unreadable = routinePermissionRefusalClause("unreadable", false);
+  ok(!unreadable.includes("is already waiting") && !unreadable.includes("is now waiting"), "🔴 §pointer: and never ASSERTS one is waiting — the claim a failed read could not earn");
+  ok(!unreadable.includes("http"), "§pointer: an unreadable state quotes no url either");
+}
+
+{
+  const DISCORD_SURFACE = "discord/G1/C_DISCORD";
+  const PERMALINK = "https://discord.test/channels/G1/C_DISCORD/999";
+  await store.revokeSessionApprovals(ORG, "oe-routine:r-discord:g1");
+  for (const row of await cardsFor(ROUTINE_PERMISSION_KIND)) {
+    await store.decidePendingAction(ORG, row.id, "expired", "system", new Date().toISOString());
+  }
+
+  const quiet = await inSession(async () => {
+    await refuse({ ...proposal, args: { ...proposal.args, sessionId: "slack:T1:C1:77" }, channelId: "C_OTHER" });
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(quiet.length === 0, "§runreport: a fire with no routine key loses no permission, so the run's ledger stays empty");
+
+  const dKey = "oe-routine:r-discord:g1";
+  const first = await inSession(async () => {
+    await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey }, scopeKey: DISCORD_SURFACE });
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(first.length === 1, "🔴 §runreport: the real refusal path RECORDS the loss on this run's ledger");
+  ok(first[0]?.permission === "open pull requests", "§runreport: named in the same plain language list_routines uses for a live grant");
+  ok(first[0]?.card === PERMALINK, "🔴 §runreport: with a POINTER to the still-open card, which is what makes the line actionable");
+
+  const drained = await inSession(async () => consumeRoutineRunPermissionRefusals());
+  ok(drained.length === 0, "§runreport: the ledger is read-and-reset, so a second post in the same turn does not repeat the block");
+
+  const twice = await inSession(async () => {
+    await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "a" }, scopeKey: DISCORD_SURFACE });
+    await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "b" }, scopeKey: DISCORD_SURFACE });
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(twice.length === 1, "§runreport: one line per PERMISSION — a run that hit the same gate twice says it once");
+
+  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  const declinedRun = await inSession(async () => {
+    await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "c" }, scopeKey: DISCORD_SURFACE });
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(declinedRun.length === 1 && declinedRun[0]?.card === null, "🔴 §runreport: a previously DECLINED permission is still listed, with a null pointer — the run could not do it either");
+  await store.revokeSessionApprovals(ORG, dKey);
+
+  await store.revokeSessionApprovals(ORG, dKey);
+  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  const blindCardsBefore = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
+  const realList = store.listPendingActions.bind(store);
+  (store as { listPendingActions: unknown }).listPendingActions = async (): Promise<never> => {
+    throw new Error("card store is down");
+  };
+  let blind: readonly { permission: string; card: string | null; cardKnown: boolean }[];
+  try {
+    blind = await inSession(async () => {
+      await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "d" }, scopeKey: DISCORD_SURFACE });
+      return consumeRoutineRunPermissionRefusals();
+    });
+  } finally {
+    (store as { listPendingActions: unknown }).listPendingActions = realList;
+  }
+  const blindCards = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
+  ok(blind.length === 1 && blind[0]?.cardKnown === false, "🔴 §runreport: a run whose card store could not be read records the loss with the card's fate UNKNOWN");
+  ok(blindCards === blindCardsBefore, "🔴 §runreport: and an UNREADABLE card store posts NO second card — the whole reason `unreadable` is kept apart from `lapsed`");
+  ok(withRunRefusalBlock("body", blind).includes("could not be read"), "🔴 §runreport: and renders that, never the 'no card is waiting' line that would send its owner to an edit");
+  ok(!withRunRefusalBlock("body", blind).includes("no card is waiting"), "🔴 §runreport: …explicitly not that line");
+  ok(declinedRun[0]?.cardKnown === true, "§runreport: while a DECLINE knows there is no card, so it says so — the negative control for the arm above");
+
+  noteRoutineRunPermissionRefusal({ permission: "open pull requests", card: null, cardKnown: true });
+  ok(consumeRoutineRunPermissionRefusals().length === 0, "§runreport: fail-soft outside a session — the ledger never blocks or changes a refusal");
+
+  ok(withRunRefusalBlock("body", []) === "body", "🔴 §runreport: an empty ledger is the IDENTITY function — every ordinary reply is untouched");
+  const rendered = withRunRefusalBlock("body", [{ permission: "open pull requests", card: PERMALINK, cardKnown: true }, { permission: "use Notion", card: null, cardKnown: true }]);
+  ok(rendered.startsWith("body\n\n"), "§runreport: the block is a SUFFIX under a blank line — the answer comes first, the footnote after");
+  ok(rendered.includes(RUN_REFUSAL_HEADING), "§runreport: under the host-authored heading, so a reader knows it did not come from the model");
+  ok(rendered.includes(`\u2022 open pull requests \u2014 its card is waiting at ${PERMALINK}`), "§runreport: a permission with an open card points at it");
+  ok(rendered.includes("use Notion \u2014 no card is waiting for it"), "§runreport: and one without says so rather than rendering an empty pointer");
+  await store.revokeSessionApprovals(ORG, dKey);
 }
 
 {

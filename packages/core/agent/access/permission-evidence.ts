@@ -1,4 +1,5 @@
 import { awsCommandVerdict, cliOpToIamAction } from "./aws-screen.js";
+import { routineGrantKeyIdentity } from "../routines/grant-key.js";
 
 export interface EvidenceRow {
   readonly ts: string;
@@ -138,6 +139,12 @@ function bump(m: Map<string, number>, key: string): void {
   m.set(key, (m.get(key) ?? 0) + 1);
 }
 
+function arrivalJoinKey(routineKey: string | undefined, grantKind: string | undefined): string | undefined {
+  if (routineKey === undefined || grantKind === undefined) return undefined;
+  const routine = routineGrantKeyIdentity(routineKey);
+  return routine === undefined ? undefined : `${routine}\u0000${grantKind}`;
+}
+
 export function argvOfCommandLabel(label: string): readonly string[] {
   const sep = label.indexOf(":");
   if (sep < 0) return [label];
@@ -220,8 +227,8 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     const d = row.detail ?? {};
     const routineKey = row.action === "routine.permission_granted" ? str(d.key) : str(d.routine);
     const grantKind = str(d.grant);
-    if (routineKey === undefined || grantKind === undefined) continue;
-    const joinKey = `${routineKey}\u0000${grantKind}`;
+    const joinKey = arrivalJoinKey(routineKey, grantKind);
+    if (joinKey === undefined) continue;
     const prior = grantedAt.get(joinKey);
     if (prior === undefined || row.ts > prior) grantedAt.set(joinKey, row.ts);
   }
@@ -301,7 +308,8 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       if (reason === "ask-unattended" && tier === "write") {
         const routineKey = str(d.routine);
         const grantKind = str(d.grant);
-        const arrived = routineKey === undefined || grantKind === undefined ? undefined : grantedAt.get(`${routineKey}\u0000${grantKind}`);
+        const joinKey = arrivalJoinKey(routineKey, grantKind);
+        const arrived = joinKey === undefined ? undefined : grantedAt.get(joinKey);
         if (routineKey === undefined) acc.unrouted++;
         else if (arrived !== undefined && arrived > row.ts) acc.grantedSince++;
         else acc.liftable++;

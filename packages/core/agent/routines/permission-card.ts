@@ -8,21 +8,24 @@ import { routinePermissionAskedMemo, routinePermissionDeclinedMemo } from "../ap
 import type { RoutineCardProbe } from "./permission-card-wait.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "./grants.js";
 import { getOperationalStore } from "../operational/provider.js";
+import type { PendingActionRow } from "../approvals/types.js";
+import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { listAllRoutines, getRoutine } from "./store.js";
-import { ROUTINE_GRANT_PREFIX, isSilentRoutine, routineReportSurfaceKey, type Routine } from "./routine.js";
+import { isSilentRoutine, routineReportSurfaceKey, type Routine } from "./routine.js";
+import { routineGrantKeyParts } from "./grant-key.js";
 import { resolveRoutineTarget } from "../schedules/routine-dispatch.js";
 
-export type RoutinePermissionCardState = "declined" | "live" | "absent" | "n/a";
+export type RoutinePermissionCardState = "declined" | "live" | "lapsed" | "unreadable" | "absent" | "n/a";
 
-export function routineGrantKeyParts(key: string): { routineId: string; generation: number } | undefined {
-  if (!key.startsWith(ROUTINE_GRANT_PREFIX)) return undefined;
-  const m = /^oe-routine:([^:]+):g([1-9][0-9]*)$/.exec(key);
-  if (!m || m[1] === undefined || m[2] === undefined) return undefined;
-  return { routineId: m[1], generation: Number(m[2]) };
-}
+export { routineGrantKeyParts };
 
 export function declarableRoutinePermission(actionKind: string): { grantKind: string; declaration: string } | undefined {
   return actionKind === "pr.open" ? { grantKind: "pr.open", declaration: "pr.open" } : undefined;
+}
+
+export interface RoutinePermissionCardRead {
+  readonly state: RoutinePermissionCardState;
+  readonly cardId?: string;
 }
 
 export async function readRoutinePermissionCardState(
@@ -30,16 +33,20 @@ export async function readRoutinePermissionCardState(
   grantKey: string,
   grantKind: string,
   nowIso: string,
-): Promise<RoutinePermissionCardState> {
+): Promise<RoutinePermissionCardRead> {
   const store = getOperationalStore();
+  let asked: unknown;
   try {
     const declined = await store.getSessionApproval(org, grantKey, routinePermissionDeclinedMemo(grantKind), nowIso);
-    if (declined) return "declined";
-    const asked = await store.getSessionApproval(org, grantKey, routinePermissionAskedMemo(grantKind), nowIso);
-    return asked ? "live" : "absent";
+    if (declined) return { state: "declined" };
+    asked = await store.getSessionApproval(org, grantKey, routinePermissionAskedMemo(grantKind), nowIso);
   } catch {
-    return "n/a";
+    return { state: "n/a" };
   }
+  if (!asked) return { state: "absent" };
+  const probe = await probeRoutinePermissionCard(org, grantKey, grantKind);
+  if (!probe.read) return { state: "unreadable" };
+  return probe.cardId === undefined ? { state: "lapsed" } : { state: "live", cardId: probe.cardId };
 }
 
 export interface RoutinePermissionOffer {
@@ -56,6 +63,7 @@ export interface RoutinePermissionOffer {
 export interface RoutinePermissionPlan {
   readonly state: RoutinePermissionCardState;
   readonly card?: RequestApprovalInput;
+  readonly cardId?: string;
   readonly platform?: string;
   readonly askedMemoKind?: string;
   readonly grantKind?: string;
@@ -76,8 +84,10 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
     const parts = routineGrantKeyParts(offer.grantKey);
     if (!parts) return { state: "n/a" };
 
-    const state = await readRoutinePermissionCardState(offer.org, offer.grantKey, declarable.grantKind, offer.nowIso);
-    if (state !== "absent") return { state, grantKind: declarable.grantKind };
+    const read = await readRoutinePermissionCardState(offer.org, offer.grantKey, declarable.grantKind, offer.nowIso);
+    if (read.state !== "absent" && read.state !== "lapsed") {
+      return { state: read.state, grantKind: declarable.grantKind, ...(read.cardId !== undefined ? { cardId: read.cardId } : {}) };
+    }
 
     const routine = await routineForGrantKey(offer.org, offer.scopeKey, parts.routineId);
     if (!routine) return { state: "n/a" };
@@ -99,7 +109,7 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
       prompt: routine.prompt,
     };
     return {
-      state: "absent",
+      state: read.state,
       platform,
       grantKind: declarable.grantKind,
       askedMemoKind: routinePermissionAskedMemo(declarable.grantKind),
@@ -128,17 +138,51 @@ function readChannelId(target: unknown): string | undefined {
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
-export async function findLiveRoutinePermissionCardId(org: string, grantKey: string, grantKind: string): Promise<string | undefined> {
+async function probeRoutinePermissionCard(
+  org: string,
+  grantKey: string,
+  grantKind: string,
+): Promise<{ read: boolean; cardId?: string }> {
+  let rows: readonly PendingActionRow[];
   try {
-    const rows = await getOperationalStore().listPendingActions(org);
-    for (const row of rows) {
-      if (row.kind !== ROUTINE_PERMISSION_KIND) continue;
-      const args = JSON.parse(row.argsJson) as Partial<RoutinePermissionArgs> | null;
-      if (args?.grantKey === grantKey && args.grantKind === grantKind) return row.id;
-    }
-    return undefined;
+    rows = await getOperationalStore().listPendingActions(org);
   } catch {
-    return undefined;
+    return { read: false };
+  }
+  for (const row of rows) {
+    if (row.kind !== ROUTINE_PERMISSION_KIND) continue;
+    let args: Partial<RoutinePermissionArgs> | null;
+    try {
+      args = JSON.parse(row.argsJson) as Partial<RoutinePermissionArgs> | null;
+    } catch {
+      return { read: false };
+    }
+    if (args?.grantKey === grantKey && args.grantKind === grantKind) return { read: true, cardId: row.id };
+  }
+  return { read: true };
+}
+
+export interface RoutineCardPointer {
+  readonly permalink?: string;
+  readonly room?: string;
+}
+
+export async function routinePermissionCardPointer(org: string, cardId: string): Promise<RoutineCardPointer> {
+  try {
+    const row = await getOperationalStore().getPendingAction(org, cardId);
+    if (!row || row.postedTo === null) return {};
+    const room = row.postedTo;
+    if (row.messageTs === null) return { room };
+    const [platform, workspace] = room.split("/");
+    if (platform === undefined || platform.length === 0) return { room };
+    const permalink = await resolveMessagePermalink(platform, {
+      channelId: row.channelId,
+      messageId: row.messageTs,
+      ...(workspace !== undefined && workspace.length > 0 ? { workspace } : {}),
+    });
+    return { room, ...(permalink !== undefined && permalink.length > 0 ? { permalink } : {}) };
+  } catch {
+    return {};
   }
 }
 
@@ -177,15 +221,19 @@ export async function markRoutinePermissionAsked(
     .catch(() => undefined);
 }
 
-export function routinePermissionRefusalClause(state: RoutinePermissionCardState, posted: boolean): string {
+export function routinePermissionRefusalClause(state: RoutinePermissionCardState, posted: boolean, permalink?: string): string {
+  const at = permalink !== undefined && permalink.length > 0 ? `: ${permalink}` : "";
   switch (state) {
     case "declined":
       return " A person already declined this permission for this routine, so no card was posted — it will not be asked again until the routine's instruction is edited.";
     case "live":
-      return " A permission card for this is already waiting in the routine's own room; nobody has decided it yet.";
+      return ` A permission card for this is already waiting in the routine's own room; nobody has decided it yet${at}.`;
+    case "unreadable":
+      return " This routine has already asked for this permission. Whether its card is still waiting in the routine's own room could not be read just now.";
     case "absent":
+    case "lapsed":
       return posted
-        ? " A permission card for this is now waiting in the routine's own room — approving it lets future runs do this without asking."
+        ? ` A permission card for this is now waiting in the routine's own room — approving it lets future runs do this without asking${at}.`
         : "";
     default:
       return "";

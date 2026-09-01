@@ -199,6 +199,27 @@ const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
   ok((await viewOf(lapsed)).asks[0]!.state === "lapsed", "§unreadable: with the store answering again, the same rows read as lapsed — the state tracks the READ, not the routine");
 }
 
+{
+  const real = store.listSessionApprovals.bind(store);
+  (store as { listSessionApprovals: unknown }).listSessionApprovals = async (): Promise<never> => {
+    throw new Error("grant store is down");
+  };
+  let broken: View;
+  try {
+    broken = await viewOf(lapsed);
+  } finally {
+    (store as { listSessionApprovals: unknown }).listSessionApprovals = real;
+  }
+  ok(broken.permissionsUnreadable === true, "🔴 §grantsunreadable: a failed grant read SAYS so, so an empty permission set reads as unknown rather than none");
+  ok(broken.permissions.length === 0, "§grantsunreadable: and still invents no grant — the direction that matters is unchanged");
+  ok(broken.asks.length === 0, "§grantsunreadable: every marker on the key was on the same unread rows, so no ask is asserted either");
+
+  const healthy = await viewOf(lapsed);
+  ok(healthy.permissionsUnreadable === false, "🔴 §grantsunreadable: with the store answering, the flag is false — it tracks the READ, not the routine");
+  ok(healthy.asks.length === 1 && healthy.asks[0]!.state === "lapsed", "§grantsunreadable: and the rows read exactly as they did before");
+  ok(emptyRoutinePermissionView().permissionsUnreadable === false, "§grantsunreadable: a caller that never asked has not had a read FAIL");
+}
+
 const edited = await makeRoutine("r-edited", SURFACE, "C1");
 {
   await refuse(routineGrantKey(edited), SURFACE);
@@ -219,7 +240,7 @@ const edited = await makeRoutine("r-edited", SURFACE, "C1");
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1", principalType: "slack-user" } } },
   } as never;
   const out = (await listRoutinesTool.execute({ includeDisabled: true } as never, ctx)) as {
-    routines: { id: string; permissions: string[]; permissionAsks: { state: string; permission: string; room: string | null; nextStep: string }[] }[];
+    routines: { id: string; permissions: string[]; permissionsUnreadable: boolean; permissionAsks: { state: string; permission: string; room: string | null; nextStep: string }[] }[];
   };
   const seen = new Map(out.routines.map((r) => [r.id, r]));
   ok(seen.get("r-elsewhere") === undefined, "§tool: the listing is still surface-scoped — the other room's routine is not in it");
@@ -231,6 +252,22 @@ const edited = await makeRoutine("r-edited", SURFACE, "C1");
   ok(seen.get("r-nightly")?.permissionAsks.length === 0, "§tool: an armed routine reports no outstanding ask");
   ok(seen.get("r-nightly")?.permissions.includes("open pull requests") === true, "§tool: …and the standing set it did get is unchanged by any of this");
   ok(seen.get("r-nightly")?.permissions.length === 1, "§tool: the standing set carries no card marker");
+  ok(seen.get("r-nightly")?.permissionsUnreadable === false, "§tool: and says the grant read SUCCEEDED, so an empty set elsewhere in this listing means none rather than unknown");
+
+  const realGrants = store.listSessionApprovals.bind(store);
+  (store as { listSessionApprovals: unknown }).listSessionApprovals = async (): Promise<never> => {
+    throw new Error("grant store is down");
+  };
+  let dark: typeof out;
+  try {
+    dark = (await listRoutinesTool.execute({ includeDisabled: true } as never, ctx)) as typeof out;
+  } finally {
+    (store as { listSessionApprovals: unknown }).listSessionApprovals = realGrants;
+  }
+  const darkSeen = new Map(dark.routines.map((r) => [r.id, r]));
+  ok(darkSeen.get("r-nightly")?.permissionsUnreadable === true, "🔴 §tool: a failed grant read reaches the tool's output as `permissionsUnreadable`");
+  ok(darkSeen.get("r-nightly")?.permissions.length === 0, "§tool: beside the empty set it now qualifies — which read as `holds nothing` before OPE-1360");
+  ok(dark.routines.length === out.routines.length, "§tool: and the listing itself still answers — the schedule view never fails on a grant-store blip");
 }
 
 rmSync(tmp, { recursive: true, force: true });

@@ -14,6 +14,8 @@ import {
 import { refuseIfShouldFold } from "../channels/reply-fold.js";
 import { tailWindow } from "../channels/session-tail-record.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
+import { withRunRefusalBlock } from "../routines/report.js";
+import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, markWakeRepliedThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
@@ -119,7 +121,7 @@ export const unifiedReplyEntry = defineTool({
         force: input.force === true,
       });
 
-      const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
+      const framed = withRunRefusalBlock(withPendingWorkFrame(input.text, owingTask !== undefined), consumeRoutineRunPermissionRefusals());
 
       const id = await postUnifiedReply(
         origin,

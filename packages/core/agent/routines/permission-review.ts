@@ -8,7 +8,7 @@ import {
   routinePermissionMemoParts,
 } from "../approvals/session-grant.js";
 import { routineGrantKey, routineReportSurfaceKey, type Routine } from "./routine.js";
-import { routineGrantKeyParts } from "./permission-card.js";
+import { routineGrantKeyParts } from "./grant-key.js";
 
 type ReviewedRoutine = Pick<Routine, "id" | "promptGeneration" | "surfaceKey" | "report">;
 
@@ -31,10 +31,11 @@ export interface RoutinePermissionAsk {
 export interface RoutinePermissionView {
   readonly permissions: string[];
   readonly asks: RoutinePermissionAsk[];
+  readonly permissionsUnreadable: boolean;
 }
 
 export function emptyRoutinePermissionView(): RoutinePermissionView {
-  return { permissions: [], asks: [] };
+  return { permissions: [], asks: [], permissionsUnreadable: false };
 }
 
 export async function readRoutinePermissionViews(
@@ -91,13 +92,14 @@ async function readOneView(
   const liveKey = routineGrantKey(routine);
   const rows = await getOperationalStore()
     .listSessionApprovals(org, liveKey, nowIso)
-    .catch(() => []);
+    .catch(() => undefined);
+  const permissionsUnreadable = rows === undefined;
 
   const permissions: string[] = [];
   const granted = new Set<string>();
   const asked = new Set<string>();
   const declined = new Set<string>();
-  for (const row of rows) {
+  for (const row of rows ?? []) {
     if (!isRoutinePermissionMemoKind(row.kind)) {
       granted.add(row.kind);
       permissions.push(describeGrantKind(row.kind));
@@ -139,7 +141,7 @@ async function readOneView(
   for (const [grantKind, card] of superseded) push(grantKind, "superseded", card);
 
   asks.sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || (a.askedAt ?? "").localeCompare(b.askedAt ?? ""));
-  return { permissions, asks };
+  return { permissions, asks, permissionsUnreadable };
 }
 
 const STATE_ORDER: Record<RoutinePermissionAskState, number> = { waiting: 0, unreadable: 1, superseded: 2, lapsed: 3, declined: 4 };
@@ -153,7 +155,7 @@ function nextStepFor(state: RoutinePermissionAskState, room: string): string {
     case "superseded":
       return `The card in ${room} was posted under an earlier instruction, so answering it records nothing. The next run that needs the permission posts a fresh card.`;
     case "lapsed":
-      return `No card is waiting and nothing was recorded, so later runs still report one as waiting in ${room}. Declare the permission with \`edit_routine\` to arm it, which also resets the ask.`;
+      return `No card is waiting and nothing was recorded. The next run that needs the permission posts a fresh card in ${room}. Declare the permission with \`edit_routine\` to arm it outright, which also resets the ask.`;
     case "unreadable":
       return `This routine asked for it, and the card store could not be read — so whether a card is still waiting in ${room} is unknown. Look there before deciding anything, and ask again once the store answers.`;
   }

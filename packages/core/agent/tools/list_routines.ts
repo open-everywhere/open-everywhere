@@ -12,7 +12,7 @@ import { emptyRoutinePermissionView, readRoutinePermissionViews } from "../routi
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, the permissions each one ASKED for on a card and did not get, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether one is stuck waiting on a cost-checkpoint confirmation, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, what rules one has been told to follow, or what asked for approval while nobody was around — `permissionAsks` names each refused permission, whether its card is still waiting and in which room, and what to do about it.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, the permissions each one ASKED for on a card and did not get, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether one is stuck waiting on a cost-checkpoint confirmation, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, what rules one has been told to follow, or what asked for approval while nobody was around — `permissionAsks` names each refused permission, whether its card is still waiting and in which room, and what to do about it. `permissionsUnreadable` marks a routine whose grant store could not be read, whose empty permission set therefore means \"unknown\" rather than \"none\".",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -51,6 +51,7 @@ export default defineTool({
             nextStep: z.string(),
           }),
         ),
+        permissionsUnreadable: z.boolean(),
         rules: z.array(
           z.object({
             id: z.string(),
@@ -107,6 +108,7 @@ export default defineTool({
         tokens7d: f.tokens7d,
         permissions: view.permissions,
         permissionAsks: view.asks,
+        permissionsUnreadable: view.permissionsUnreadable,
         rules: policyRules(r).map((x) => ({ id: x.id, rule: x.rule, why: x.why, addedAt: x.addedAt, addedBy: x.addedBy, source: x.source })),
         note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       };

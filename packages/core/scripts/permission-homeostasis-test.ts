@@ -441,7 +441,24 @@ const GRANTS: DeclaredGrants[] = [
     const { c } = clusterOf([...REFUSALS, granted(1, KEY, "connector.tool:notion__delete_page")]);
     ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a grant for a DIFFERENT tool under the same routine suppresses nothing — the standing permission is per-tool");
     const otherRoutine = clusterOf([...REFUSALS, granted(1, "oe-routine:rt_other:g1")]);
-    ok(otherRoutine.c.liftableUnattended === 3, "⭐ OPE-1349: a grant under a DIFFERENT routine key suppresses nothing either — an edit mints a new key, and a new key is a new question");
+    ok(otherRoutine.c.liftableUnattended === 3, "⭐ OPE-1349: a grant under a DIFFERENT ROUTINE suppresses nothing either — another routine's authority is another question");
+  }
+
+  {
+    const NEXT_GEN = "oe-routine:rt_nightly:g4";
+    const { ev, c } = clusterOf([...REFUSALS, granted(1, NEXT_GEN)]);
+    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1361: a click on a NEWER generation of the same routine answers the older generation's refusals");
+    ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "🔴 OPE-1361: …so the proposal a human already actioned STOPS being re-proposed");
+
+    const byLift = clusterOf([...REFUSALS, lifted(1, NEXT_GEN)]);
+    ok(byLift.c.liftableUnattended === 0 && byLift.c.grantedSinceUnattended === 3, "🔴 OPE-1361: a `connector.unattended_lift` under the new generation answers them too — the arm that fires without the card");
+
+    const revoked = clusterOf([granted(9, "oe-routine:rt_nightly:g2"), ...REFUSALS]);
+    ok(revoked.c.liftableUnattended === 3 && revoked.c.grantedSinceUnattended === 0, "⭐ OPE-1361: an arrival on an EARLIER generation, stamped before the refusals, suppresses nothing — a revoked permission is still a live want");
+    ok(proposePermissionChanges(revoked.ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ OPE-1361: …and its proposal survives");
+
+    const notAKey = clusterOf([...REFUSALS.map((r) => ({ ...r, detail: { ...r.detail, routine: "slack:T1:C1:9" } })), granted(1, "slack:T1:C1:9")]);
+    ok(notAKey.c.liftableUnattended === 3 && notAKey.c.grantedSinceUnattended === 0, "⭐ OPE-1361: a `routine` value that is not a routine grant key joins to nothing — one redundant proposal, never a dropped need");
   }
 
   {

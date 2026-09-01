@@ -25,3 +25,18 @@ export function silentRoutineThisTurn(): boolean {
     return false;
   }
 }
+
+import type { RoutineRunPermissionRefusal } from "../approvals/card-signal.js";
+
+export const RUN_REFUSAL_HEADING = "This run asked for permissions it does not have:";
+
+export function withRunRefusalBlock(text: string, refused: readonly RoutineRunPermissionRefusal[]): string {
+  if (refused.length === 0) return text;
+  const lines = refused.map((r) => `• ${r.permission} — ${pointerPhrase(r)}`);
+  return `${text}\n\n${RUN_REFUSAL_HEADING}\n${lines.join("\n")}`;
+}
+
+function pointerPhrase(r: RoutineRunPermissionRefusal): string {
+  if (r.card !== null) return `its card is waiting at ${r.card}`;
+  return r.cardKnown ? "no card is waiting for it" : "whether a card is waiting for it could not be read";
+}

@@ -147,7 +147,7 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
               : []),
             ...(r.grantedSinceUnattended > 0
               ? [
-                  `${r.grantedSinceUnattended} further \`ask-unattended\`/\`write\` row(s) were followed by the permission ARRIVING — a \`connector.unattended_lift\` on the same op under the same routine grant key, so the refusal was already answered (usually: the grant was there and a transient store read said otherwise). They are NOT counted above, and this proposal stands only on what is still unarmed.`,
+                  `${r.grantedSinceUnattended} further \`ask-unattended\`/\`write\` row(s) were followed by the permission ARRIVING — a \`connector.unattended_lift\` on the same op under the same ROUTINE, whatever generation of its instruction, so the refusal was already answered (the grant has since been armed, or it was there all along and a transient store read said otherwise). They are NOT counted above, and this proposal stands only on what is still unarmed.`,
                 ]
               : []),
             `Reasons: ${reasonsSeen}.`,

@@ -29,8 +29,13 @@ import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type Cl
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
-import { sessionGrantKind } from "./session-grant.js";
-import { consumeCardPostedThisTurn, markCardPostedThisTurn, peekCardPostedThisTurn } from "./card-signal.js";
+import { describeGrantKind, sessionGrantKind } from "./session-grant.js";
+import {
+  consumeCardPostedThisTurn,
+  markCardPostedThisTurn,
+  noteRoutineRunPermissionRefusal,
+  peekCardPostedThisTurn,
+} from "./card-signal.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
@@ -54,12 +59,14 @@ import "./chat-dm.js";
 import "./session-checkpoint.js";
 import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
 import {
-  findLiveRoutinePermissionCardId,
   markRoutinePermissionAsked,
   planRoutinePermissionCard,
   routineCardGrantedBy,
   routineCardProbe,
+  routinePermissionCardPointer,
   routinePermissionRefusalClause,
+  type RoutineCardPointer,
+  type RoutinePermissionCardState,
 } from "../routines/permission-card.js";
 import { routineCardKeepsStateClause, routineCardWaitBudgetMs, routineCardWaitRefusalClause, waitForRoutineCardDecision } from "../routines/permission-card-wait.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
@@ -559,12 +566,15 @@ async function offerRoutinePermissionCard(
       tainted: ctx.tainted,
       nowIso: new Date().toISOString(),
     });
-    if (plan.state !== "absent" || !plan.card || plan.askedMemoKind === undefined) {
-      const clause = routinePermissionRefusalClause(plan.state, false);
-      if (budgetMs <= 0 || plan.state !== "live" || plan.grantKind === undefined) return { clause };
-      const cardId = await findLiveRoutinePermissionCardId(input.org, grantKey, plan.grantKind);
-      if (cardId === undefined) return { clause };
-      return await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+    if (!plan.card || plan.askedMemoKind === undefined) {
+      const at = plan.cardId ? await routinePermissionCardPointer(input.org, plan.cardId) : {};
+      const clause = routinePermissionRefusalClause(plan.state, false, at.permalink);
+      if (budgetMs <= 0 || plan.cardId === undefined || plan.grantKind === undefined) {
+        noteRunRefusal(plan.state, plan.grantKind, at);
+        return { clause };
+      }
+      const settled = await settleRoutineCardWait(input.org, { cardId: plan.cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+      return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
     }
     if (!hasApprovalCardPath(plan.platform ?? "")) return { clause: "" };
     const hadCardSignal = peekCardPostedThisTurn();
@@ -586,12 +596,36 @@ async function offerRoutinePermissionCard(
       input.requestedBy,
       new Date().toISOString(),
     );
-    const clause = routinePermissionRefusalClause("absent", true);
-    if (budgetMs <= 0 || plan.grantKind === undefined) return { clause };
-    return await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+    const at = cardId ? await routinePermissionCardPointer(input.org, cardId) : {};
+    const clause = routinePermissionRefusalClause(plan.state, true, at.permalink);
+    if (budgetMs <= 0 || plan.grantKind === undefined) {
+      noteRunRefusal(plan.state, plan.grantKind, at);
+      return { clause };
+    }
+    const settled = await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+    return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
   } catch {
     return { clause: "" };
   }
+}
+
+function noteUnlessArmed(
+  settled: RoutinePermissionRefusal,
+  state: RoutinePermissionCardState,
+  grantKind: string | undefined,
+  at: RoutineCardPointer,
+): RoutinePermissionRefusal {
+  if (settled.armedBy === undefined) noteRunRefusal(state, grantKind, at);
+  return settled;
+}
+
+function noteRunRefusal(state: RoutinePermissionCardState, grantKind: string | undefined, at: RoutineCardPointer): void {
+  if (grantKind === undefined) return;
+  noteRoutineRunPermissionRefusal({
+    permission: describeGrantKind(grantKind),
+    card: at.permalink ?? at.room ?? null,
+    cardKnown: state !== "unreadable",
+  });
 }
 
 async function settleRoutineCardWait(
