@@ -353,8 +353,13 @@ async function f(ctx) {
   const at = (needle: string) => attended.find((a) => a.file.endsWith(needle));
   ok(at("tools/create_ticket.ts")?.expr === ATTENDEDNESS_DERIVATION, "real-r5: create_ticket — one of the seven that hand-rolled it — now derives through the shared function");
   ok(at("tools/rotate_webhook.ts")?.expr === ATTENDEDNESS_DERIVATION, "real-r5: rotate_webhook — one of the fourteen that passed NO bag — now derives it too");
-  ok(at("spend/checkpoint.ts")?.exempt === true && (at("spend/checkpoint.ts")?.exemptReason ?? "").length >= 12, "real-r5: the ONE exempt site is the non-tool checkpoint kind, and it states why");
-  ok(attended.filter((a) => a.exempt).length === 2, "real-r5: exactly two exemptions exist — the non-tool checkpoint and requestApproval's own default site. A third is a decision, not a detail");
+  ok(at("spend/checkpoint.ts")?.exempt === true && (at("spend/checkpoint.ts")?.exemptReason ?? "").length >= 12, "real-r5: the non-tool checkpoint kind is exempt, and it states why");
+  const flowExempt = attended.filter((a) => a.file.endsWith("approvals/flow.ts") && a.exempt);
+  ok(
+    flowExempt.length === 2 && flowExempt.every((a) => (a.exemptReason ?? "").length >= 12),
+    "real-r5: flow.ts carries TWO exempt sites — its own fail-closed default and the routine permission card's propose — and both state why",
+  );
+  ok(attended.filter((a) => a.exempt).length === 3, "real-r5: exactly three exemptions exist — the non-tool checkpoint, the routine permission card, and requestApproval's own default site. A fourth is a decision, not a detail");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).length === 2, "real-r5: 🔴 BOTH slash-command propose sites are seen — they call through an injected alias, and a checker blind to that reported the file clean while both shipped with no bag");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).every((a) => a.expr === ATTENDEDNESS_DERIVATION_BINDING), "real-r5: …and both derive through the binding-taking twin, which is the only spelling available to a caller with no ctx");
 }

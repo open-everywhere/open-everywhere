@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
-import { describeGrantKind, routinePermissionKind } from "../approvals/session-grant.js";
+import { describeGrantKind, isRoutinePermissionMemoKind, routinePermissionKind } from "../approvals/session-grant.js";
 import { routineGrantKey, type Routine } from "./routine.js";
 
 type GrantedRoutine = Pick<Routine, "id" | "promptGeneration">;
@@ -112,13 +112,22 @@ export async function grantDeclaredRoutinePermissions(input: {
   return written;
 }
 
-export async function listRoutinePermissions(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
+async function liveGrantKinds(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
   const rows = await getOperationalStore()
     .listSessionApprovals(org, routineGrantKey(routine), nowIso)
     .catch(() => []);
-  return rows.map((r) => describeGrantKind(r.kind));
+  return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k));
 }
 
-export async function revokeRoutinePermissions(org: string, routine: GrantedRoutine): Promise<number> {
-  return getOperationalStore().revokeSessionApprovals(org, routineGrantKey(routine));
+export async function listRoutinePermissions(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
+  return (await liveGrantKinds(org, routine, nowIso)).map(describeGrantKind);
+}
+
+export async function revokeRoutinePermissions(
+  org: string,
+  routine: GrantedRoutine,
+): Promise<{ grants: number; rows: number }> {
+  const grants = (await liveGrantKinds(org, routine, new Date().toISOString())).length;
+  const rows = await getOperationalStore().revokeSessionApprovals(org, routineGrantKey(routine));
+  return { grants, rows };
 }

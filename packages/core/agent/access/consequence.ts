@@ -426,6 +426,11 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     reason:
       "the SOFT session cost checkpoint (OPE-62): past a configured per-session spend threshold, consequential work pauses on a card until a human confirms continuing. Raised by the spend path, not by a verb — which is precisely why it needs pinning here: the tier is a real decision (a member may unblock their own session's spend, an admin bar would make an ordinary long task need an admin) and nothing else in the tree records that it was made",
   },
+  "routine.permission": {
+    tier: "gate:member",
+    reason:
+      "the ROUTINE PERMISSION CARD (OPE-1290): an unattended fire is refused a gated action, and one card in the routine's own room asks its owner whether FUTURE runs may do it. Raised by the refusal path, not by a verb, so it needs pinning here. The tier is the real decision and it is member on purpose — this card writes exactly the standing row a `create_routine` card's declared permission writes (routines/grants.ts), so an admin bar here would make the same grant need two different humans depending on which moment it was asked at",
+  },
 };
 
 export function checkActionKindRegistry(

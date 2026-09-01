@@ -14,6 +14,21 @@ export function connectorToolPermissionKind(tool: string): string {
   return `${CONNECTOR_TOOL_KIND_PREFIX}${tool}`;
 }
 
+const ROUTINE_CARD_ASKED_PREFIX = "routine.permission.asked:";
+const ROUTINE_CARD_DECLINED_PREFIX = "routine.permission.declined:";
+
+export function routinePermissionAskedMemo(grantKind: string): string {
+  return `${ROUTINE_CARD_ASKED_PREFIX}${grantKind}`;
+}
+
+export function routinePermissionDeclinedMemo(grantKind: string): string {
+  return `${ROUTINE_CARD_DECLINED_PREFIX}${grantKind}`;
+}
+
+export function isRoutinePermissionMemoKind(kind: string): boolean {
+  return kind.startsWith(ROUTINE_CARD_ASKED_PREFIX) || kind.startsWith(ROUTINE_CARD_DECLINED_PREFIX);
+}
+
 export function sessionGrantKind(row: Pick<PendingActionRow, "kind" | "argsJson">): string | null {
   if (row.kind === PR_OPEN_KIND) return PR_OPEN_KIND;
   return null;

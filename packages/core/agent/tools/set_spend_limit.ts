@@ -17,14 +17,8 @@ import { friendlyScopeLabel } from "../approvals/scope-label.js";
 export const LEVELS = CAP_LEVELS;
 export type Level = CapLevel;
 
-export function approvalPostDeps(platform: string): RequestApprovalDeps {
-  const poster = cardPosterFor(platform);
-  return poster ? { postCard: poster } : {};
-}
-
-export function hasApprovalCardPath(platform: string): boolean {
-  return platform === "slack" || cardPosterFor(platform) !== undefined;
-}
+import { approvalPostDeps, hasApprovalCardPath } from "../approvals/flow.js";
+export { approvalPostDeps, hasApprovalCardPath };
 
 export function requireCardPathHere(tool: string, platform: string): void {
   if (hasApprovalCardPath(platform)) return;

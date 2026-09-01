@@ -39,8 +39,8 @@ export default defineTool({
     }
 
     const held = await listRoutinePermissions(p.org, routine, new Date().toISOString());
-    const revoked = await revokeRoutinePermissions(p.org, routine);
-    if (revoked > 0) {
+    const { grants: revoked, rows } = await revokeRoutinePermissions(p.org, routine);
+    if (rows > 0) {
       await appendAudit({
         org: p.org,
         platform: p.platform,
@@ -48,7 +48,7 @@ export default defineTool({
         surface: p.surface,
         principalId: requestedBy,
         action: "routine.grants_revoked",
-        detail: { id, revokedBy: requestedBy, count: revoked, permissions: held },
+        detail: { id, revokedBy: requestedBy, count: revoked, rows, permissions: held },
       });
     }
 
@@ -61,7 +61,9 @@ export default defineTool({
       message:
         revoked > 0
           ? `routine ${id} no longer has standing permission to ${held.join(" · ")} — it keeps running (${trigger}) and will post an approval card for each of those from now on.`
-          : `routine ${id} had no standing permissions — it already asks a human before every gated action. It keeps running (${trigger}).`,
+          : rows > 0
+            ? `routine ${id} had no standing permissions — it already asks a human before every gated action. This did clear its permission-card record, so it may ask again on its next fire. It keeps running (${trigger}).`
+            : `routine ${id} had no standing permissions — it already asks a human before every gated action. It keeps running (${trigger}).`,
     };
   },
 });

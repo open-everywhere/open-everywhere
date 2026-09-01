@@ -88,7 +88,8 @@ export function decidedCardBlocks(row: PendingActionRow, summaryLines: readonly 
     row.status === "approved"
       ? `✅ Approved by <@${row.decidedBy}> · ${outcomeLine}`
       : row.status === "rejected"
-        ? `❌ Rejected by <@${row.decidedBy}>`
+        ?
+          `❌ Rejected by <@${row.decidedBy}>${outcomeLine === "rejected" ? "" : ` · ${outcomeLine}`}`
         : "⏰ Expired";
   const blocks: SlackBlock[] = [headerBlock(row.kind), summarySection(summaryLines), contextBlock(decidedContext)];
   return { blocks, text: `Approval requested: ${row.kind}\n${summaryLines.join(" · ")}\n${decidedContext}` };

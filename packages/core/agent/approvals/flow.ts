@@ -30,7 +30,7 @@ import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclos
 import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { sessionGrantKind } from "./session-grant.js";
-import { markCardPostedThisTurn } from "./card-signal.js";
+import { consumeCardPostedThisTurn, markCardPostedThisTurn, peekCardPostedThisTurn } from "./card-signal.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
@@ -52,6 +52,13 @@ import "./ticket-create.js";
 import "./chat-post.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
+import "./routine-permission.js";
+import {
+  markRoutinePermissionAsked,
+  planRoutinePermissionCard,
+  routinePermissionRefusalClause,
+} from "../routines/permission-card.js";
+import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 
@@ -134,6 +141,7 @@ export interface RequestApprovalInput {
     readonly unattended: boolean;
     readonly tainted?: boolean;
   };
+  readonly noClockExpiry?: true;
 }
 
 export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]) => Promise<string | undefined>;
@@ -271,6 +279,10 @@ export async function requestApproval(
         );
       }
       const taintedDeny = resolution.tainted && reason === "ask-unattended";
+      const cardClause =
+        reason === "ask-unattended"
+          ? await offerRoutinePermissionCard(input, { tainted: resolution.tainted, deps })
+          : "";
       throw new Error(
         `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
           `nothing was proposed and no card was posted. ${
@@ -279,7 +291,7 @@ export async function requestApproval(
               : reason === "ask-unattended"
                 ? "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
                 : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
-          }`,
+          }${cardClause}`,
       );
     }
 
@@ -353,7 +365,7 @@ export async function requestApproval(
   const store = getOperationalStore();
 
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + approvalTtlHours() * 3_600_000).toISOString();
+  const expiresAt = input.noClockExpiry ? ROUTINE_GRANT_NO_EXPIRY : new Date(now.getTime() + approvalTtlHours() * 3_600_000).toISOString();
   const argsJson = JSON.stringify(input.args ?? null);
 
   const nowIso = now.toISOString();
@@ -418,6 +430,59 @@ export async function requestApproval(
   emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "ok" });
 
   return { id: row.id, expiresAt };
+}
+
+async function offerRoutinePermissionCard(
+  input: RequestApprovalInput,
+  ctx: { readonly tainted: boolean; readonly deps: RequestApprovalDeps },
+): Promise<string> {
+  try {
+    const grantKey = sessionIdFromFrozenArgs(JSON.stringify(input.args ?? null));
+    if (grantKey === undefined) return "";
+    const plan = await planRoutinePermissionCard({
+      org: input.org,
+      actionKind: input.kind,
+      grantKey,
+      scopeKey: input.scopeKey,
+      domain: input.domain ?? null,
+      requestedBy: input.requestedBy,
+      tainted: ctx.tainted,
+      nowIso: new Date().toISOString(),
+    });
+    if (plan.state !== "absent" || !plan.card || plan.askedMemoKind === undefined) {
+      return routinePermissionRefusalClause(plan.state, false);
+    }
+    if (!hasApprovalCardPath(plan.platform ?? "")) return "";
+    const hadCardSignal = peekCardPostedThisTurn();
+    const poster = cardPosterFor(plan.platform ?? "");
+    try {
+      await requestApproval(plan.card, {
+        ...(ctx.deps.post ? { post: ctx.deps.post } : {}),
+        ...(poster ? { postCard: poster } : {}),
+      });
+    } finally {
+      if (!hadCardSignal) consumeCardPostedThisTurn();
+    }
+    await markRoutinePermissionAsked(
+      input.org,
+      grantKey,
+      plan.askedMemoKind,
+      input.requestedBy,
+      new Date().toISOString(),
+    );
+    return routinePermissionRefusalClause("absent", true);
+  } catch {
+    return "";
+  }
+}
+
+export function approvalPostDeps(platform: string): RequestApprovalDeps {
+  const poster = cardPosterFor(platform);
+  return poster ? { postCard: poster } : {};
+}
+
+export function hasApprovalCardPath(platform: string): boolean {
+  return platform === "slack" || cardPosterFor(platform) !== undefined;
 }
 
 export function isOrgAdminOnlySpendCap(row: PendingActionRow): boolean {
@@ -510,7 +575,11 @@ async function postThreadNote(post: PostFn, channelId: string, threadTs: string 
 
 function decisionNoticeText(summaryLines: string[], outcomeLine: string, clickerId: string, status: PendingStatus): string {
   const what = summaryLines[0] ?? "the requested change";
-  if (status === "rejected") return `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. Propose again if it's still needed.`;
+  if (status === "rejected") {
+    return outcomeLine === "rejected"
+      ? `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. Propose again if it's still needed.`
+      : `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. ${outcomeLine}.`;
+  }
   if (status === "expired") return `⌛ Approval EXPIRED without a decision — "${what}" was NOT applied. Propose again if it's still needed.`;
   return `✅ Approval APPROVED by <@${clickerId}> — "${what}": ${outcomeLine}`;
 }
@@ -650,7 +719,13 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   if (status === "rejected") {
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind, ...venue } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected", executed: "none" };
+    let outcomeLine = "rejected";
+    if (kindDef.declined) {
+      outcomeLine = await kindDef
+        .declined(JSON.parse(row.argsJson) as unknown, input.clickerId)
+        .catch((err: unknown) => `rejected — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine, executed: "none" };
   }
 
   if (input.decision === "approve_session") {

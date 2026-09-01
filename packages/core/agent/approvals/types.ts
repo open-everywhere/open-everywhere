@@ -27,4 +27,5 @@ export interface ActionKind<A = unknown> {
   readonly beneficiaryClicker?: true;
   summarize(args: A): string[];
   execute(args: A, decidedBy: string): Promise<string>;
+  declined?(args: A, decidedBy: string): Promise<string>;
 }

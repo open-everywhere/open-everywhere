@@ -105,7 +105,8 @@ export function decidedDiscordCard(row: PendingActionRow, summaryLines: readonly
     row.status === "approved"
       ? `✅ Approved by <@${row.decidedBy}> · ${outcomeLine}`
       : row.status === "rejected"
-        ? `❌ Rejected by <@${row.decidedBy}>`
+        ?
+          `❌ Rejected by <@${row.decidedBy}>${outcomeLine === "rejected" ? "" : ` · ${outcomeLine}`}`
         : "⏰ Expired";
   return { content: cardBody(row, summaryLines, decidedContext), components: [] };
 }

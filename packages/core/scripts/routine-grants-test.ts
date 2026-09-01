@@ -248,12 +248,13 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ok((await listRoutinePermissions(ORG, live, NOW)).length === 2, "the routine holds a standing set");
 
   const revoked = await revokeRoutinePermissions(ORG, live);
-  ok(revoked === 2, "revoking withdraws every grant under the key");
+  ok(revoked.grants === 2 && revoked.rows === 2, "revoking withdraws every grant under the key");
   ok((await listRoutinePermissions(ORG, live, NOW)).length === 0, "…and the standing set is empty afterwards");
   const still = await getRoutine(ORG, live.surfaceKey, live.id);
   ok(still !== null && still.status === "active" && still.prompt === live.prompt, "the ROUTINE is untouched — revoking authority is not cancelling the work");
   ok(routineGrantGeneration(still!) === 1, "…and its generation is unchanged, so a durable job's seat is NOT rotated by a revoke");
-  ok((await revokeRoutinePermissions(ORG, live)) === 0, "revoking twice is a no-op");
+  const twice = await revokeRoutinePermissions(ORG, live);
+  ok(twice.grants === 0 && twice.rows === 0, "revoking twice is a no-op on both counts");
 }
 
 {
