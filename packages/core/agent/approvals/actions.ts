@@ -49,6 +49,10 @@ export function whereFromScope(org: string, scopeKey: string): { org: string; pl
   }
 }
 
+export function orgWideWhere(org: string): { org: string; platform: string; workspace: string } {
+  return { org, platform: "org", workspace: org };
+}
+
 function fmtCap(tokens: number | null): string {
   return tokens === null ? "none (uncapped)" : `${tokens.toLocaleString()} tokens/mo`;
 }

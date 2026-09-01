@@ -49,6 +49,27 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "directory_groups_plan",
 ] as const;
 
+const judgeOperatorScopeSchema = z
+  .object({
+    org: z.string().min(1),
+    domain: z.string().min(1).optional(),
+    orgWide: z.literal(true).optional(),
+  })
+  .refine((a) => (a.domain === undefined) !== (a.orgWide === undefined), {
+    message:
+      'name exactly one address: "domain" for one domain, or "orgWide": true for the domain-less consults — never both, never neither.',
+  });
+
+type JudgeOperatorScopeArgs = z.infer<typeof judgeOperatorScopeSchema>;
+
+function judgeOperatorScopeRequest(a: JudgeOperatorScopeArgs): { org: string; domain?: string } {
+  return a.domain === undefined ? { org: a.org } : { org: a.org, domain: a.domain };
+}
+
+function judgeOperatorAddress(a: JudgeOperatorScopeArgs): { domain: string } | { orgWide: true } {
+  return a.domain === undefined ? { orgWide: true } : { domain: a.domain };
+}
+
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
   "provider-default",
   "none",
@@ -307,18 +328,19 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
   server.registerTool(
     "disarm_approval_judge",
     {
-      title: "Disarm the approval judge for a domain (break-glass)",
+      title: "Disarm the approval judge for a domain or org-wide (break-glass)",
       description:
-        "Turn the LLM approval judge OFF for one domain, now. The judge lifts explicitly defer-flipped gated verbs without a card (agent/access/approval-judge.ts), and an operator is the only thing that disarms it — no volume of human overrules does. Effect: every defer-flipped verb in the domain falls back to its last-resort approval card, which is the pre-judge behaviour — the degrade never widens access. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-disarm\"). It LASTS UNTIL AN OPERATOR RE-ARMS with `rearm_approval_judge`; no clock lifts it. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
-      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+        "Turn the LLM approval judge OFF for one address, now. The judge lifts explicitly defer-flipped gated verbs without a card (agent/access/approval-judge.ts), and an operator is the only thing that disarms it — no volume of human overrules does. Name EXACTLY ONE address: `domain` for one domain, or `orgWide: true` for the DOMAIN-LESS consults. 🔴 KNOW THE BLAST RADIUS OF `orgWide`: it covers every defer-flipped propose that carries no domain, which today means `pr.open` and `routine.create` always, `spend.set` on every user-level cap and on any scope no domain claims, and `memory.purge` / `access.request` from any surface with no domain (a DM, for one). It is NOT a wildcard: it reaches no domained consult, and there is deliberately no \"disarm everywhere at once\" switch. Effect: every defer-flipped verb at that address falls back to its last-resort approval card, which is the pre-judge behaviour — the degrade never widens access. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-disarm\"). It LASTS UNTIL AN OPERATOR RE-ARMS with `rearm_approval_judge`; no clock lifts it. `domain` requires a role covering the domain (a domain:<name> role, or org-wide \"admin\"); `orgWide` is an unscoped ask and requires \"admin\".",
+      inputSchema: judgeOperatorScopeSchema,
     },
     async (a) => {
-      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      const denial = scopeDenial(roles, judgeOperatorScopeRequest(a));
       if (denial) return errorResult(denial);
+      const address = judgeOperatorAddress(a);
       try {
-        await disarmApprovalJudge({ org: a.org, domain: a.domain, principalId: actor });
-        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_disarm", detail: { domain: a.domain } });
-        return jsonResult({ ok: true, org: a.org, domain: a.domain, disarmed: true });
+        await disarmApprovalJudge({ org: a.org, principalId: actor, ...address });
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_disarm", detail: { ...address } });
+        return jsonResult({ ok: true, org: a.org, ...address, disarmed: true });
       } catch (e) {
         return errorResult(`disarm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -328,18 +350,19 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
   server.registerTool(
     "rearm_approval_judge",
     {
-      title: "Re-arm the approval judge for a domain",
+      title: "Re-arm the approval judge for a domain or org-wide",
       description:
-        "Turn the LLM approval judge back ON for one domain, now — the symmetric partner of `disarm_approval_judge` and the only thing that cancels a disarm. Effect: defer-flipped verbs in the domain are judged again, exactly as before the disarm; a domain that was never disarmed is already armed and this call changes nothing. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-rearm\"). The ledger is APPEND-ONLY: this cancels the operator's disarm and erases nothing — every human overrule stays in the trail, and overrules drive no automatic behaviour to suppress. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
-      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+        "Turn the LLM approval judge back ON for one address, now — the symmetric partner of `disarm_approval_judge` and the only thing that cancels a disarm. Name EXACTLY ONE address, the same two the disarm takes: `domain`, or `orgWide: true` for the DOMAIN-LESS consults. Effect: defer-flipped verbs at that address are judged again, exactly as before the disarm; an address that was never disarmed is already armed and this call changes nothing. 🔴 THIS DIRECTION IS PERMISSIVE, so know the blast radius of `orgWide` before using it: it restores card-free auto-approval on every defer-flipped propose that carries no domain — `pr.open` and `routine.create` always, `spend.set` on every user-level cap and on any scope no domain claims, and `memory.purge` / `access.request` from any surface with no domain. 🔴 The two addresses are a strict partition: an org-wide re-arm restores the domain-less consults ONLY, and never a domain another operator disarmed. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-rearm\"). The ledger is APPEND-ONLY: this cancels the operator's disarm and erases nothing — every human overrule stays in the trail, and overrules drive no automatic behaviour to suppress. `domain` requires a role covering the domain (a domain:<name> role, or org-wide \"admin\"); `orgWide` is an unscoped ask and requires \"admin\".",
+      inputSchema: judgeOperatorScopeSchema,
     },
     async (a) => {
-      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      const denial = scopeDenial(roles, judgeOperatorScopeRequest(a));
       if (denial) return errorResult(denial);
+      const address = judgeOperatorAddress(a);
       try {
-        await rearmApprovalJudge({ org: a.org, domain: a.domain, principalId: actor });
-        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_rearm", detail: { domain: a.domain } });
-        return jsonResult({ ok: true, org: a.org, domain: a.domain, rearmed: true });
+        await rearmApprovalJudge({ org: a.org, principalId: actor, ...address });
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_rearm", detail: { ...address } });
+        return jsonResult({ ok: true, org: a.org, ...address, rearmed: true });
       } catch (e) {
         return errorResult(`rearm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
       }

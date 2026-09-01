@@ -400,6 +400,7 @@ export async function recordApprovalJudgeContradiction(
     readonly id?: string;
     readonly kind?: string;
     readonly domain?: string;
+    readonly orgWide?: true;
     readonly tool?: string;
     readonly judgeVerdict?: string;
     readonly humanAction?: string;
@@ -418,14 +419,27 @@ export async function recordApprovalJudgeContradiction(
 }
 
 export async function approvalJudgeAdminDisarmed(domain: string | undefined): Promise<boolean> {
-  if (domain === undefined) return false;
   const limit = testLedgerReadLimit ?? LEDGER_READ_LIMIT;
   try {
     const rows = await readAudit({ action: "approval.judge.contradicted", limit });
-    const latest = rows.find((r) => {
-      const d = r.detail as { domain?: unknown; humanAction?: unknown } | undefined;
-      if (d?.domain !== domain) return false;
-      return d?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM || d?.humanAction === APPROVAL_JUDGE_ADMIN_REARM;
+    const operator = rows.filter((r) => {
+      const a = (r.detail as { humanAction?: unknown } | undefined)?.humanAction;
+      return a === APPROVAL_JUDGE_ADMIN_DISARM || a === APPROVAL_JUDGE_ADMIN_REARM;
+    });
+    const names = (d: { domain?: unknown; orgWide?: unknown } | undefined): boolean =>
+      domain === undefined ? d?.orgWide === true : d?.domain === domain;
+
+    if (operator.some((r) => {
+      const d = r.detail as { domain?: unknown; orgWide?: unknown } | undefined;
+      return d?.orgWide === true && typeof d.domain === "string" && names(d);
+    })) {
+      return true;
+    }
+
+    const latest = operator.find((r) => {
+      const d = r.detail as { domain?: unknown; orgWide?: unknown } | undefined;
+      if ((d?.orgWide === true) === (typeof d?.domain === "string")) return false;
+      return names(d);
     });
     if (latest !== undefined) {
       return (latest.detail as { humanAction?: unknown } | undefined)?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM;

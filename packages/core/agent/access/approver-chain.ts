@@ -337,7 +337,10 @@ export async function resolveApproverChain(
       judgeRun = {
         verdict: "defer",
         source: "admin-disarm",
-        reasoning: `judge disarmed for this domain by an operator (${APPROVAL_JUDGE_ADMIN_DISARM}) — re-arm with the control plane's rearm_approval_judge`,
+        reasoning:
+          req.domain === undefined
+            ? `judge disarmed org-wide for domain-less actions by an operator (${APPROVAL_JUDGE_ADMIN_DISARM}) — re-arm with the control plane's rearm_approval_judge with orgWide: true`
+            : `judge disarmed for this domain by an operator (${APPROVAL_JUDGE_ADMIN_DISARM}) — re-arm with the control plane's rearm_approval_judge`,
         cacheKey: judgeVerdictCacheKey(req.tool),
         cacheHit: false,
         passes: 0,

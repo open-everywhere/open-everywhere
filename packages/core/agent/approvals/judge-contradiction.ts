@@ -6,7 +6,7 @@ import {
   APPROVAL_JUDGE_ADMIN_REARM,
   recordApprovalJudgeContradiction,
 } from "../access/approval-judge.js";
-import { whereFromScope } from "./actions.js";
+import { orgWideWhere, whereFromScope } from "./actions.js";
 import type { PendingActionRow } from "./types.js";
 import type { DecisionVenueDetail } from "./flow.js";
 
@@ -80,19 +80,28 @@ export function judgeContradictionNotice(outcome: ContradictJudgeAllowOutcome): 
   }
 }
 
-export interface DisarmApprovalJudgeInput {
+export type JudgeOperatorScope = { readonly domain: string; readonly orgWide?: never } | { readonly domain?: never; readonly orgWide: true };
+
+export type DisarmApprovalJudgeInput = {
   readonly org: string;
-  readonly domain: string;
   readonly principalId: string;
-}
+} & JudgeOperatorScope;
 
 export type RearmApprovalJudgeInput = DisarmApprovalJudgeInput;
 
+function operatorWhere(input: DisarmApprovalJudgeInput): { org: string; platform: string; workspace: string; surface?: string } {
+  return input.domain === undefined ? orgWideWhere(input.org) : whereFromScope(input.org, input.domain);
+}
+
+function operatorAddress(input: DisarmApprovalJudgeInput): { domain: string } | { orgWide: true } {
+  return input.domain === undefined ? { orgWide: true } : { domain: input.domain };
+}
+
 export async function disarmApprovalJudge(input: DisarmApprovalJudgeInput): Promise<void> {
   await recordApprovalJudgeContradiction(
-    { ...whereFromScope(input.org, input.domain), principalId: input.principalId },
+    { ...operatorWhere(input), principalId: input.principalId },
     {
-      domain: input.domain,
+      ...operatorAddress(input),
       judgeVerdict: "allow",
       humanAction: APPROVAL_JUDGE_ADMIN_DISARM,
       route: "control",
@@ -102,9 +111,9 @@ export async function disarmApprovalJudge(input: DisarmApprovalJudgeInput): Prom
 
 export async function rearmApprovalJudge(input: RearmApprovalJudgeInput): Promise<void> {
   await recordApprovalJudgeContradiction(
-    { ...whereFromScope(input.org, input.domain), principalId: input.principalId },
+    { ...operatorWhere(input), principalId: input.principalId },
     {
-      domain: input.domain,
+      ...operatorAddress(input),
       humanAction: APPROVAL_JUDGE_ADMIN_REARM,
       route: "control",
     },

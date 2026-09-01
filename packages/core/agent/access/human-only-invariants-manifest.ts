@@ -22,7 +22,12 @@ export const PROTECTED_HUMAN_ONLY_EXPORTS: readonly ProtectedHumanOnlyExportGrou
       "judgement in the honest record. 🔴 The module holds BOTH directions since OPE-1102: an " +
       "overrule and a disarm are restrictive (the judge stops lifting, cards come back), but a " +
       "RE-ARM is permissive — a tool-written one would cancel an operator's break-glass disarm and " +
-      "restore card-free auto-approval for the domain. So this guards audit integrity AND an " +
+      "restore card-free auto-approval for the domain. Since OPE-1130 a re-arm also carries an " +
+      "ORG-WIDE address (`orgWide: true`), which restores every defer-flipped propose that carries " +
+      "no domain — `pr.open` and `routine.create` always, plus user-level `spend.set` and any " +
+      "`memory.purge`/`access.request` from a domain-less surface. A tool that could write that " +
+      "row would re-arm the judge over its own highest-volume rows in one act, without naming a " +
+      "single domain. So this guards audit integrity AND an " +
       "escalation path. Only a human's click or the RBAC-gated control plane may write one.",
   },
   {

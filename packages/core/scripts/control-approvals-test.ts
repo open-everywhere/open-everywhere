@@ -233,8 +233,58 @@ await client.connect(clientT);
 
   const rearmProvenance = (await readAudit({ action: "admin.approval.judge_rearm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
   ok("a control-plane provenance row names the re-arm door and the operator", rearmProvenance.length === 1 && rearmProvenance[0]!.principalId === "admin@example.com" && (rearmProvenance[0]!.detail ?? {}).domain === "eng");
+
+  const rbacServer = buildControlServer({ includeWrites: true, actor: "eng-op", roles: ["domain:eng"] });
+  const [c7, s7] = InMemoryTransport.createLinkedPair();
+  await rbacServer.connect(s7);
+  const engOnly = new Client({ name: "orgwide-rbac", version: "0" });
+  await engOnly.connect(c7);
+
+  const rowsBeforeOrgWide = (await contradictions()).length;
+  ok("the org plane reads ARMED before anyone acts on it", (await approvalJudgeAdminDisarmed(undefined)) === false);
+
+  const orgWideRefused = await engOnly.callTool({ name: "disarm_approval_judge", arguments: { org: "default", orgWide: true } });
+  ok("🔴 a domain:eng role CANNOT disarm the judge org-wide — the org-wide form is an unscoped ask and needs \"admin\"", orgWideRefused.isError === true);
+  ok("the refused org-wide disarm wrote no ledger row", (await contradictions()).length === rowsBeforeOrgWide);
+  ok("🔴 the refused org-wide disarm left the domain-less plane ARMED", (await approvalJudgeAdminDisarmed(undefined)) === false);
+  const engCovered = await callJson(engOnly, "disarm_approval_judge", { org: "default", domain: "eng" });
+  ok("RBAC control: the same domain:eng role CAN disarm its own domain over this door", engCovered.ok === true && engCovered.domain === "eng");
+  await callJson(client, "rearm_approval_judge", { org: "default", domain: "eng" });
+
+  const orgWideRearmRefused = await engOnly.callTool({ name: "rearm_approval_judge", arguments: { org: "default", orgWide: true } });
+  ok("🔴 a domain:eng role CANNOT re-arm the judge org-wide either — the control is not one-way", orgWideRearmRefused.isError === true);
+
+  const errText = (res: Awaited<ReturnType<typeof client.callTool>>): string =>
+    (res.content as { type: string; text: string }[] | undefined)?.map((c) => c.text ?? "").join(" ") ?? "";
+  const namesTheRule = (res: Awaited<ReturnType<typeof client.callTool>>): boolean =>
+    res.isError === true && errText(res).includes("exactly one address");
+
+  const rowsBeforeMalformed = (await contradictions()).length;
+  const bothAddresses = await client.callTool({ name: "disarm_approval_judge", arguments: { org: "default", domain: "eng", orgWide: true } });
+  ok("🔴 naming BOTH `domain` and `orgWide` is REFUSED BY THE SCHEMA — an ambiguous address never reaches the handler", namesTheRule(bothAddresses));
+  const noAddress = await client.callTool({ name: "disarm_approval_judge", arguments: { org: "default" } });
+  ok("🔴 naming NEITHER address is refused too — there is no bare, address-less disarm", namesTheRule(noAddress));
+  const bothRearm = await client.callTool({ name: "rearm_approval_judge", arguments: { org: "default", domain: "eng", orgWide: true } });
+  ok("🔴 the re-arm takes the SAME schema — the two verbs cannot drift into accepting different addresses", namesTheRule(bothRearm));
+  ok("no malformed call wrote a ledger row", (await contradictions()).length === rowsBeforeMalformed);
+  ok("🔴 no malformed call moved the org plane", (await approvalJudgeAdminDisarmed(undefined)) === false);
+  await engOnly.close();
+
+  const orgDisarm = await callJson(client, "disarm_approval_judge", { org: "default", orgWide: true });
+  ok("an org admin's org-wide disarm reports success on the org address", orgDisarm.ok === true && orgDisarm.orgWide === true && orgDisarm.disarmed === true);
+  ok("🔴 the org-wide result names NO domain — the two addresses are different populations", orgDisarm.domain === undefined);
+  ok("🔴 the domain-less plane is now DISARMED — break-glass reaches `pr.open` and `create_routine`", (await approvalJudgeAdminDisarmed(undefined)) === true);
+  ok("🔴 a DOMAIN is left armed by it — `orgWide` is not a wildcard over the per-domain rules", (await approvalJudgeAdminDisarmed("eng")) === false);
+  const orgLedgerRow = (await contradictions()).find((r) => (r.detail ?? {}).orgWide === true && (r.detail ?? {}).humanAction === "admin-disarm")!;
+  ok("the org-wide ledger row carries the explicit marker, names no domain, and names who acted", orgLedgerRow !== undefined && (orgLedgerRow.detail ?? {}).domain === undefined && orgLedgerRow.principalId === "admin@example.com");
+  const orgProvenance = (await readAudit({ action: "admin.approval.judge_disarm" })) as { detail?: Record<string, unknown> }[];
+  ok("the provenance row carries the org marker too, not a domain", orgProvenance.some((r) => (r.detail ?? {}).orgWide === true && (r.detail ?? {}).domain === undefined));
+
+  const orgRearm = await callJson(client, "rearm_approval_judge", { org: "default", orgWide: true });
+  ok("an org admin's org-wide re-arm reports success on the org address", orgRearm.ok === true && orgRearm.orgWide === true && orgRearm.rearmed === true);
+  ok("🔴 the domain-less plane is ARMED again", (await approvalJudgeAdminDisarmed(undefined)) === false);
 }
 
 await client.close();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only)\n`);
+console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only; both also take the ORG-WIDE address, which needs \"admin\", governs the domain-less consults only, and is exclusive with \`domain\` in the schema)\n`);
