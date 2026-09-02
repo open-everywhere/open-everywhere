@@ -13,6 +13,7 @@ import { GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "@open-everywhere/core/agent/ac
 import { TOOL_CONSEQUENCE } from "@open-everywhere/core/agent/access/consequence.js";
 import { taintToleranceOf } from "@open-everywhere/core/agent/access/approver-chain.js";
 import { COUNTED_CLAIMS, COUNTED_FACT_KEYS, checkCountedClaims, type CountedFacts } from "@open-everywhere/core/agent/docs/counted-claims.js";
+import { ENV_READ_ALLOWLIST } from "./env-read-allowlist.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -34,12 +35,20 @@ function taintGateSinks(): string[] {
     .sort();
 }
 
+function envPendingMigration(): string[] {
+  return [...ENV_READ_ALLOWLIST.entries()]
+    .filter(([, entry]) => entry.klass === "pending-migration")
+    .map(([name]) => name)
+    .sort();
+}
+
 const facts: CountedFacts = {
   "lean-seat-tools": [...LEAN_SEAT_TOOLS],
   "taint-gate-sinks": taintGateSinks(),
   "worker-only-standing": WORKER_ONLY_TOOLS_STANDING,
   "worker-only-thread": WORKER_ONLY_TOOLS_THREAD,
   "settings-env-seams": settingsEnvSeams(),
+  "env-pending-migration": envPendingMigration(),
   "grant-refund-cap-per-turn": GRANT_REFUND_CAP_PER_TURN,
   "grant-once-max-attempts-per-turn": GRANT_ONCE_MAX_ATTEMPTS_PER_TURN,
 };
@@ -80,5 +89,5 @@ console.log(
     `lean seat ${factValue("lean-seat-tools")}, worker-only standing ${factValue("worker-only-standing")}, ` +
     `worker-only thread ${factValue("worker-only-thread")}, settings env seams ${factValue("settings-env-seams")}, ` +
     `grant refund cap ${factValue("grant-refund-cap-per-turn")}, once-grant attempts ${factValue("grant-once-max-attempts-per-turn")}, ` +
-    `taint-gate sinks ${factValue("taint-gate-sinks")}.`,
+    `taint-gate sinks ${factValue("taint-gate-sinks")}, env knobs pending migration ${factValue("env-pending-migration")}.`,
 );

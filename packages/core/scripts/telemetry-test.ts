@@ -5,6 +5,8 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   EVENT_SCHEMA,
+  FEATURE_VALUES,
+  OUTCOME_VALUES,
   tokensBucket,
   stepsBucket,
   latencyBucket,
@@ -258,8 +260,13 @@ function throwingFetch(): typeof fetch {
     return text.slice(openIdx);
   }
 
-  function scanEmitTelemetryCalls(source: string): { eventName: string; keys: string[] }[] {
-    const found: { eventName: string; keys: string[] }[] = [];
+  function literalValuesFor(attr: string, callArgs: string): string[] {
+    const re = new RegExp(`"${attr}"\\s*:\\s*"([^"]*)"`, "g");
+    return [...callArgs.matchAll(re)].map((m) => m[1]);
+  }
+
+  function scanEmitTelemetryCalls(source: string): { eventName: string; keys: string[]; features: string[]; outcomes: string[] }[] {
+    const found: { eventName: string; keys: string[]; features: string[]; outcomes: string[] }[] = [];
     const callRe = /emitTelemetry\(/g;
     let m: RegExpExecArray | null;
     while ((m = callRe.exec(source))) {
@@ -271,7 +278,7 @@ function throwingFetch(): typeof fetch {
       const eventName = eventMatch[1];
       const rest = inner.slice((eventMatch.index ?? 0) + eventMatch[0].length);
       const keys = [...rest.matchAll(/"([a-zA-Z0-9_.]+)"\s*:/g)].map((mm) => mm[1]);
-      found.push({ eventName, keys });
+      found.push({ eventName, keys, features: literalValuesFor("oe.feature", rest), outcomes: literalValuesFor("oe.outcome", rest) });
     }
     return found;
   }
@@ -281,6 +288,8 @@ function throwingFetch(): typeof fetch {
   ok(files.length > 0, "vocabulary scan: found source files to scan (the roots resolved)");
 
   let sitesScanned = 0;
+  const seenFeatures = new Set<string>();
+  const seenOutcomes = new Set<string>();
   for (const file of files) {
     const source = fs.readFileSync(file, "utf8");
     for (const site of scanEmitTelemetryCalls(source)) {
@@ -291,9 +300,115 @@ function throwingFetch(): typeof fetch {
       for (const key of site.keys) {
         ok(allowed.includes(key), `vocabulary scan: ${path.relative(repoRoot, file)}'s "${site.eventName}" attribute "${key}" is inside its closed vocabulary`);
       }
+      for (const value of site.features) {
+        ok(
+          (FEATURE_VALUES as readonly string[]).includes(value),
+          `vocabulary scan: ${path.relative(repoRoot, file)} emits oe.feature="${value}", which is not in FEATURE_VALUES — ` +
+            `add it to agent/observability/telemetry.ts and to the docs/deploy/telemetry.md row, or emit a declared value`,
+        );
+        seenFeatures.add(value);
+      }
+      for (const value of site.outcomes) {
+        ok(
+          (OUTCOME_VALUES as readonly string[]).includes(value),
+          `vocabulary scan: ${path.relative(repoRoot, file)} emits oe.outcome="${value}", which is not in OUTCOME_VALUES — ` +
+            `add it to agent/observability/telemetry.ts and to the docs/deploy/telemetry.md row, or emit a declared value`,
+        );
+        seenOutcomes.add(value);
+      }
     }
   }
   ok(sitesScanned > 0, "vocabulary scan: found at least one real emitTelemetry(...) call site to check");
+  ok(seenFeatures.size > 0 && seenOutcomes.size > 0, "vocabulary scan: the value scan actually captured literal oe.feature/oe.outcome values");
+
+  const DYNAMIC_ONLY_OUTCOMES: Record<string, { readonly sites: readonly string[]; readonly why: string }> = {
+    noop: { sites: ["approvals/routine-cancel.ts", "approvals/skill-delete.ts"], why: 'the `cancelled/deleted ? "ok" : "noop"` ternaries' },
+    deadline: { sites: ["routines/permission-card-wait.ts"], why: "the routine permission card wait's auto-decline arm" },
+    stale: { sites: ["routines/permission-card-wait.ts"], why: "an approval that armed nothing" },
+    gone: { sites: ["routines/permission-card-wait.ts"], why: "a card that stopped being answerable" },
+    unreadable: { sites: ["routines/permission-card-wait.ts"], why: "a window whose last look at the card failed" },
+    unknown: { sites: ["approvals/judge-contradiction.ts"], why: "a contradictJudgeAllow outcome" },
+    "not-judge-lift": { sites: ["approvals/judge-contradiction.ts"], why: "a contradictJudgeAllow outcome" },
+    "already-recorded": { sites: ["approvals/judge-contradiction.ts"], why: "a contradictJudgeAllow outcome" },
+    recorded: { sites: ["approvals/judge-contradiction.ts"], why: "a contradictJudgeAllow outcome" },
+  };
+  for (const value of FEATURE_VALUES) {
+    ok(seenFeatures.has(value), `vocabulary reverse arm: FEATURE_VALUES declares "${value}", which no call site emits — delete it or emit it`);
+  }
+  for (const value of OUTCOME_VALUES) {
+    ok(
+      seenOutcomes.has(value) || DYNAMIC_ONLY_OUTCOMES[value] !== undefined,
+      `vocabulary reverse arm: OUTCOME_VALUES declares "${value}", which no call site emits as a literal — delete it, ` +
+        `or add it to DYNAMIC_ONLY_OUTCOMES naming the site that produces it`,
+    );
+  }
+  for (const [value, excuse] of Object.entries(DYNAMIC_ONLY_OUTCOMES)) {
+    ok((OUTCOME_VALUES as readonly string[]).includes(value), `vocabulary reverse arm: DYNAMIC_ONLY_OUTCOMES excuses "${value}", which OUTCOME_VALUES does not declare`);
+    ok(
+      !seenOutcomes.has(value),
+      `vocabulary reverse arm: "${value}" IS emitted as a literal, so its DYNAMIC_ONLY_OUTCOMES excuse is dead weight — delete the excuse`,
+    );
+    ok(excuse.sites.length > 0, `vocabulary reverse arm: the excuse for "${value}" names at least one producing site`);
+    for (const site of excuse.sites) {
+      const sitePath = path.join(repoRoot, "packages/core/agent", site);
+      ok(fs.existsSync(sitePath), `vocabulary reverse arm: "${value}" is excused by ${site}, which does not exist — the producer moved or went away`);
+      if (fs.existsSync(sitePath)) {
+        ok(
+          fs.readFileSync(sitePath, "utf8").includes(`"${value}"`),
+          `vocabulary reverse arm: "${value}" is excused by ${site}, which no longer contains it — delete the value from ` +
+            `OUTCOME_VALUES, the operator doc row and this excuse, or point the excuse at the site that produces it now`,
+        );
+      }
+    }
+  }
+
+  {
+    const foreignSource = [
+      'emitTelemetry("oe.feature.used", { "oe.feature": "totally_foreign_feature", "oe.outcome": "totally_foreign_outcome" });',
+      'emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });',
+    ].join("\n");
+    const scanned = scanEmitTelemetryCalls(foreignSource);
+    ok(scanned.length === 2, `scanner red: the fixture's two call sites are both found (got ${scanned.length})`);
+    ok(scanned[0]?.features.includes("totally_foreign_feature"), "scanner red: the foreign oe.feature literal is read off the call site");
+    ok(scanned[0]?.outcomes.includes("totally_foreign_outcome"), "scanner red: the foreign oe.outcome literal is read off the call site");
+    ok(
+      !(FEATURE_VALUES as readonly string[]).includes("totally_foreign_feature") &&
+        !(OUTCOME_VALUES as readonly string[]).includes("totally_foreign_outcome"),
+      "scanner red: the fixture's values are genuinely outside the declared vocabulary — the membership check REJECTS them",
+    );
+    ok(
+      (FEATURE_VALUES as readonly string[]).includes(scanned[1]?.features[0] ?? "") &&
+        (OUTCOME_VALUES as readonly string[]).includes(scanned[1]?.outcomes[0] ?? ""),
+      "scanner red: a declared pair on the same fixture is accepted",
+    );
+  }
+
+  const telemetryDoc = fs.readFileSync(path.join(repoRoot, "docs/deploy/telemetry.md"), "utf8");
+  const featureRow = /`oe\.feature` \(bounded enum: ([^)]+)\)/.exec(telemetryDoc);
+  const outcomeRow = /`oe\.outcome` \(bounded enum: ([^)]+)\)/.exec(telemetryDoc);
+  ok(featureRow !== null, "doc row: docs/deploy/telemetry.md still states the oe.feature enum in the shape this test reads");
+  ok(outcomeRow !== null, "doc row: docs/deploy/telemetry.md still states the oe.outcome enum in the shape this test reads");
+  ok(
+    [...telemetryDoc.matchAll(/`oe\.feature` \(bounded enum:/g)].length === 1,
+    "doc row: the oe.feature enum is stated exactly once in docs/deploy/telemetry.md",
+  );
+  ok(
+    [...telemetryDoc.matchAll(/`oe\.outcome` \(bounded enum:/g)].length === 1,
+    "doc row: the oe.outcome enum is stated exactly once in docs/deploy/telemetry.md",
+  );
+  const docListed = (capture: string): string[] => [...capture.matchAll(/`([a-z_-]+)`/g)].map((m) => m[1]).sort();
+  if (featureRow) {
+    ok(
+      docListed(featureRow[1]).join(",") === [...FEATURE_VALUES].sort().join(","),
+      `doc row: the oe.feature enum in docs/deploy/telemetry.md must equal FEATURE_VALUES — doc has [${docListed(featureRow[1]).join(", ")}]`,
+    );
+  }
+  if (outcomeRow) {
+    ok(
+      docListed(outcomeRow[1]).join(",") === [...OUTCOME_VALUES].sort().join(","),
+      `doc row: the oe.outcome enum in docs/deploy/telemetry.md must equal OUTCOME_VALUES — doc has [${docListed(outcomeRow[1]).join(", ")}]`,
+    );
+  }
 
   clearTelemetryEnv();
   __resetTelemetryForTest();

@@ -18,6 +18,7 @@ export const COUNTED_FACT_KEYS = [
   "grant-refund-cap-per-turn",
   "grant-once-max-attempts-per-turn",
   "taint-gate-sinks",
+  "env-pending-migration",
 ] as const;
 
 export const COUNTED_CLAIMS: readonly CountedClaim[] = [
@@ -125,6 +126,13 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     fact: "taint-gate-sinks",
     kind: "count",
     pattern: String.raw`predicate answers gate for (\d+) rows of\n\s*// TOOL_CONSEQUENCE today`,
+  },
+  {
+    id: "config-as-code/env-pending-migration",
+    doc: "docs/how-it-works/config-as-code.md",
+    fact: "env-pending-migration",
+    kind: "count",
+    pattern: String.raw`the honest backlog: \*\*(\d+) behaviour knobs\*\*`,
   },
 ];
 

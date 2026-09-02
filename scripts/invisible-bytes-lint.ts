@@ -95,4 +95,42 @@ if (hits.length > 0) {
   process.exit(1);
 }
 
-console.log(`OK invisible-bytes-lint: no raw NUL / LINE SEPARATOR / PARAGRAPH SEPARATOR bytes found across ${files.length} git-tracked .ts/.md file(s).`);
+const trackedAndIgnored = execFileSync("git", ["ls-files", "-ci", "--exclude-standard"], { cwd: root, encoding: "utf8" })
+  .split("\n")
+  .map((l) => l.trim())
+  .filter((l) => l.length > 0);
+
+if (trackedAndIgnored.length > 0) {
+  console.error(`FAIL invisible-bytes-lint: ${trackedAndIgnored.length} tracked path(s) are also gitignored:`);
+  for (const path of trackedAndIgnored) console.error(`  - ${path}`);
+  console.error(
+    "\n  Why this is a hard error: a .gitignore entry does not untrack a blob git already has, so the\n" +
+      "  ignore reads as protection while the file keeps riding every commit (OPE-1364 -- the ruling on\n" +
+      "  .oe-run-note.md was inert for exactly this reason). Fix it with `git rm --cached <path>` and\n" +
+      "  commit that; do NOT relax the .gitignore entry to make this lint green.",
+  );
+  process.exit(1);
+}
+
+const RUN_NOTE = ".oe-run-note.md";
+const trackedRunNote = execFileSync("git", ["ls-files", "--", RUN_NOTE], { cwd: root, encoding: "utf8" }).trim();
+if (trackedRunNote.length > 0) {
+  console.error(
+    `FAIL invisible-bytes-lint: ${RUN_NOTE} is tracked.\n\n` +
+      "  It is a per-run scratch channel, never product (OPE-1327, OPE-1364). Tracked, it conflicts\n" +
+      "  between every pair of runs that write a note. Fix it with `git rm --cached .oe-run-note.md`\n" +
+      "  and keep the .gitignore entry; do NOT delete the .gitignore entry to get past this.",
+  );
+  process.exit(1);
+}
+
+const trackedCount = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" }).split("\n").filter((l) => l.trim().length > 0).length;
+if (trackedCount === 0) {
+  console.error(`FAIL invisible-bytes-lint: \`git ls-files\` reported an EMPTY tracked tree for ${root}. The tree checks above cannot be trusted.`);
+  process.exit(1);
+}
+
+console.log(
+  `OK invisible-bytes-lint: no raw NUL / LINE SEPARATOR / PARAGRAPH SEPARATOR bytes found across ${files.length} git-tracked .ts/.md file(s); ` +
+    `no tracked path is gitignored, and ${RUN_NOTE} is untracked, across ${trackedCount} tracked path(s).`,
+);
