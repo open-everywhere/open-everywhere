@@ -168,4 +168,122 @@ function recorder() {
   eq(stub.requests.length, 2, "tightened policy: exactly two requests left the host");
 }
 
+const { discordCreateMessage, openDiscordDm, triggerDiscordTyping, setDiscordReaction, createDiscordThread } = await import(
+  "@open-everywhere/provider-discord/agent/channels/discord-gateway.js"
+);
+
+async function withGateway(body: () => Promise<void>): Promise<string[]> {
+  const priorToken = process.env.DISCORD_BOT_TOKEN;
+  process.env.DISCORD_BOT_TOKEN = "not-a-real-bot-token";
+  const lines: string[] = [];
+  const priorLog = console.log;
+  console.log = (...args: unknown[]) => void lines.push(args.map(String).join(" "));
+  try {
+    await body();
+  } finally {
+    console.log = priorLog;
+    if (priorToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = priorToken;
+  }
+  return lines;
+}
+
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 0.5 }), okJson({ id: "posted-1" })]);
+  const clock = recorder();
+  let got: string | null = null;
+  await withGateway(async () => {
+    got = await discordCreateMessage("111222333", "the completion", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(got, "posted-1", "🔴 gateway 11a: the completion post-back now SURVIVES a 429 and returns the new message id");
+  eq(clock.slept, [500], "gateway 11a: it honoured Discord's body retry_after, not the 1 s fallback");
+  eq(stub.requests.length, 2, "gateway 11a: refused once, then accepted");
+}
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 0.5 }), rateLimited({ bodyRetryAfter: 0.5 }), rateLimited({ bodyRetryAfter: 0.5 }), rateLimited({ bodyRetryAfter: 0.5 })]);
+  const clock = recorder();
+  let got: string | null = "unset";
+  const lines = await withGateway(async () => {
+    got = await discordCreateMessage("111222333", "the completion", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(got, null, "gateway 11b: an exhausted post-back still returns null — it NEVER throws into the completion handler");
+  eq(stub.requests.length, 4, "gateway 11b: four attempts under the shared default, then it gives up");
+  ok(
+    lines.some((l) => /rate limited/.test(l) && /gave up after 4 attempts/.test(l)),
+    "🔴 gateway 11b: the exhaustion is LOGGED BY NAME before being swallowed — otherwise the completion drops in silence",
+  );
+  ok(!lines.some((l) => l.includes("not-a-real-bot-token")), "🔴 gateway 11b: no line carries the bot token");
+}
+{
+  const stub = stubFetch([okJson({ message: "server error" }, 500)]);
+  const clock = recorder();
+  let got: string | null = "unset";
+  await withGateway(async () => {
+    got = await discordCreateMessage("111222333", "the completion", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(stub.requests.length, 1, "🔴 gateway 11c: a 500 is sent EXACTLY once — the backoff did not widen to non-429 failures");
+  eq(clock.slept, [], "gateway 11c: …and is never slept on");
+  eq(got, null, "gateway 11c: …and still returns null, as it did before");
+}
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 0.25 }), okJson({ id: "dm-1" })]);
+  const clock = recorder();
+  let got: string | null = null;
+  await withGateway(async () => {
+    got = await openDiscordDm("444555666", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(got, "dm-1", "gateway 11d: open-DM survives a 429 and returns the DM channel id");
+  eq(clock.slept, [250], "gateway 11d: it honoured the body retry_after");
+
+  const dead = stubFetch([rateLimited({ bodyRetryAfter: 0.25 }), rateLimited({ bodyRetryAfter: 0.25 })]);
+  const clock2 = recorder();
+  let out: string | null = "unset";
+  const lines = await withGateway(async () => {
+    out = await openDiscordDm("444555666", { fetch: dead.fetchLike, retry: { sleep: clock2.sleep, maxAttempts: 2 } });
+  });
+  eq(out, null, "gateway 11d: an exhausted open-DM still returns null — the external-sender notice degrades, never throws");
+  ok(
+    lines.some((l) => /open-DM rate limited/.test(l)),
+    "🔴 gateway 11d: the exhaustion is NAMED in the log — this catch was bare before OPE-1311, so the drop was silent",
+  );
+}
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 9 }), rateLimited({ bodyRetryAfter: 9 }), rateLimited({ bodyRetryAfter: 9 }), rateLimited({ bodyRetryAfter: 9 })]);
+  const clock = recorder();
+  const lines = await withGateway(async () => {
+    await triggerDiscordTyping("111222333", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(clock.slept, [2000], "🔴 gateway 11e: typing waits the CAPPED 2 s once — not the 9 s the vendor named, and not three times");
+  eq(stub.requests.length, 2, "🔴 gateway 11e: typing makes exactly TWO attempts — the affordance policy, not the shared four");
+  ok(lines.some((l) => /typing trigger rate limited/.test(l)), "gateway 11e: the give-up is named in the log");
+}
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 9 }), rateLimited({ bodyRetryAfter: 9 })]);
+  const clock = recorder();
+  const lines = await withGateway(async () => {
+    await setDiscordReaction("111222333", "999", "👀", "PUT", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(clock.slept, [2000], "gateway 11f: the reaction waits the capped 2 s");
+  eq(stub.requests.length, 2, "gateway 11f: …across exactly two attempts");
+  ok(lines.some((l) => /reaction PUT rate limited/.test(l)), "gateway 11f: the give-up names the action");
+
+  const good = stubFetch([rateLimited({ bodyRetryAfter: 0.5 }), new Response(null, { status: 204 })]);
+  const clock2 = recorder();
+  await withGateway(async () => {
+    await setDiscordReaction("111222333", "999", "👀", "PUT", { fetch: good.fetchLike, retry: { sleep: clock2.sleep } });
+  });
+  eq(good.requests.length, 2, "gateway 11f: a reaction refused once is re-sent and accepted");
+  ok(good.requests[1]?.url.includes("%F0%9F%91%80"), "gateway 11f: the retry re-sends the SAME percent-encoded emoji route");
+}
+{
+  const stub = stubFetch([rateLimited({ bodyRetryAfter: 4 }), okJson({ id: "thread-1" })]);
+  const clock = recorder();
+  let got: string | null = null;
+  await withGateway(async () => {
+    got = await createDiscordThread("111222333", "999", "a thread name", { fetch: stub.fetchLike, retry: { sleep: clock.sleep } });
+  });
+  eq(got, "thread-1", "gateway 11g: the thread open survives a 429 and returns the new thread id");
+  eq(clock.slept, [4000], "🔴 gateway 11g: it waited the full 4 s — the thread open keeps the SHARED policy, NOT the 2 s affordance cap");
+}
+
 console.log(`  ${n} assertions passed`);

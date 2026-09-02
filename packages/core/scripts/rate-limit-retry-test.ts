@@ -3,6 +3,7 @@ import {
   DEFAULT_CAP_MS,
   DEFAULT_FALLBACK_MS,
   RateLimitExhaustedError,
+  isRateLimitedForbidden,
   parseRetryAfterMs,
   withRetryAfter,
   withRetryAfterLoose,
@@ -318,4 +319,104 @@ function recorder() {
   eq(clock.slept, [250], "override 9e: an ASYNC override is awaited, and its value wins");
 }
 
-console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter, the retryAfterMs body override)`);
+function forbidden(retryAfter?: string): Response {
+  const headers = new Headers();
+  if (retryAfter !== undefined) headers.set("retry-after", retryAfter);
+  return new Response('{"message":"Forbidden"}', { status: 403, headers });
+}
+
+{
+  const { send, state } = scripted([forbidden("3"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  const res = await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+  eq(state.calls, 1, "🔴 403 10a: with NO opt-in, a 403 bearing Retry-After is sent EXACTLY once — the contract for every other provider is unchanged");
+  eq(clock.slept, [], "403 10a: …and it is never slept on");
+  eq(res.status, 403, "403 10a: …and the 403 comes back untouched for the caller to refuse");
+}
+{
+  const { send, state } = scripted([forbidden("3"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "notion", operation: "pages.create", sleep: clock.sleep, retryForbiddenWithRetryAfter: false });
+  eq(state.calls, 1, "403 10b: an explicit `false` opt-in is the same as no opt-in — one request");
+  eq(clock.slept, [], "403 10b: …and no sleep");
+}
+{
+  const { send, state } = scripted([forbidden("3"), new Response('{"id":"c1"}', { status: 201 })]);
+  const clock = recorder();
+  const res = await withRetryAfter(send, {
+    surface: "github",
+    operation: "issues.createComment",
+    sleep: clock.sleep,
+    retryForbiddenWithRetryAfter: true,
+  });
+  eq(clock.slept, [3000], "🔴 403 10c: the opted-in seam honours the 403's Retry-After (3 s) — the behaviour OPE-1256 adds");
+  eq(state.calls, 2, "403 10c: the write is repeated once, then accepted");
+  eq(res.status, 201, "403 10c: the caller receives the eventual success");
+}
+{
+  const { send, state } = scripted([forbidden(), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  const res = await withRetryAfter(send, {
+    surface: "github",
+    operation: "issues.createComment",
+    sleep: clock.sleep,
+    retryForbiddenWithRetryAfter: true,
+  });
+  eq(state.calls, 1, "🔴 403 10d: a BARE 403 is a permission refusal — sent EXACTLY once even on the opted-in seam");
+  eq(clock.slept, [], "🔴 403 10d: …and never slept on, so a genuine denial can never become a hot loop");
+  eq(res.status, 403, "403 10d: …and it comes back untouched");
+}
+{
+  for (const bad of ["", "  ", "soon", "-5", "3.5"]) {
+    const { send, state } = scripted([forbidden(bad), new Response("{}", { status: 200 })]);
+    const clock = recorder();
+    const res = await withRetryAfter(send, { surface: "github", operation: "o", sleep: clock.sleep, retryForbiddenWithRetryAfter: true });
+    eq(state.calls, 1, `🔴 403 10e: a 403 whose Retry-After (${JSON.stringify(bad)}) does not parse stays a refusal — one request`);
+    eq(clock.slept, [], `403 10e: …and no fallback wait is taken for ${JSON.stringify(bad)}`);
+    eq(res.status, 403, `403 10e: …and the 403 is returned for ${JSON.stringify(bad)}`);
+  }
+}
+{
+  const { send, state } = scripted([forbidden("1")]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, {
+      surface: "github",
+      operation: "issues.createComment",
+      sleep: clock.sleep,
+      maxAttempts: 3,
+      retryForbiddenWithRetryAfter: true,
+    });
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "403 10f: an exhausted 403 sequence throws the NAMED failure, never a silent drop");
+  eq((caught as RateLimitExhaustedError).refusalStatus, 403, "🔴 403 10f: `refusalStatus` carries the spelling the vendor actually sent");
+  eq((caught as RateLimitExhaustedError).status, 429, "🔴 403 10f: `status` stays 429 — the error MEANS rate limited, so it must not route into the permission-denied arm");
+  eq((caught as RateLimitExhaustedError).attempts, 3, "403 10f: it gave up after the bounded attempts");
+  eq(state.calls, 3, "403 10f: …which is exactly the number of requests sent");
+}
+{
+  const { send } = scripted([rateLimited("1")]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, { surface: "slack", operation: "o", sleep: clock.sleep, maxAttempts: 2 });
+  } catch (err) {
+    caught = err;
+  }
+  eq((caught as RateLimitExhaustedError).refusalStatus, 429, "403 10g: a 429 exhaustion still reports refusalStatus 429");
+}
+{
+  const at = Date.UTC(2026, 0, 1, 0, 0, 0);
+  ok(isRateLimitedForbidden(forbidden("5"), at), "403 10h: a 403 with delta-seconds IS a rate-limit refusal");
+  ok(isRateLimitedForbidden(forbidden("Thu, 01 Jan 2026 00:00:30 GMT"), at), "403 10h: …and an HTTP-date form is too");
+  ok(!isRateLimitedForbidden(forbidden(), at), "🔴 403 10h: a bare 403 is NOT");
+  ok(!isRateLimitedForbidden(forbidden("later"), at), "🔴 403 10h: nor is one whose header does not parse");
+  ok(!isRateLimitedForbidden(rateLimited("5"), at), "403 10h: a 429 is not routed through this predicate — it is already a refusal by status");
+  ok(!isRateLimitedForbidden(new Response("{}", { status: 401, headers: new Headers({ "retry-after": "5" }) }), at), "🔴 403 10h: a 401 bearing Retry-After is NOT admitted — the opt-in widens to 403 and nothing else");
+  ok(!isRateLimitedForbidden(new Response("{}", { status: 500, headers: new Headers({ "retry-after": "5" }) }), at), "🔴 403 10h: nor is a 500 bearing Retry-After");
+}
+
+console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter, the retryAfterMs body override, the per-seam 403 opt-in)`);

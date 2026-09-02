@@ -65,8 +65,14 @@ function rpcOf(init: RequestInit | undefined): McpRequest | undefined {
   }
 }
 
-function installVendorMcpStub(): { readonly calls: readonly { url: string; init: RequestInit | undefined }[]; uninstall(): void } {
-  return installHostFetchStub("https://mcp.notion.com", (_url, init) => {
+function installVendorMcpStub(): {
+  readonly calls: readonly { url: string; init: RequestInit | undefined }[];
+  uninstall(): void;
+  refuseNextCalls(n: number, retryAfter: string): void;
+} {
+  let refusalsLeft = 0;
+  let refusalRetryAfter = "1";
+  const stub = installHostFetchStub("https://mcp.notion.com", (_url, init) => {
     const httpMethod = (init?.method ?? "GET").toUpperCase();
     if (httpMethod === "GET") return new Response(null, { status: 405 });
     if (httpMethod === "DELETE") return new Response(null, { status: 200 });
@@ -96,9 +102,25 @@ function installVendorMcpStub(): { readonly calls: readonly { url: string; init:
         ],
       });
     }
-    if (rpc.method === "tools/call") return json({ content: [{ text: VENDOR_BODY_MARKER, type: "text" }] });
+    if (rpc.method === "tools/call") {
+      if (refusalsLeft > 0) {
+        refusalsLeft -= 1;
+        return new Response(JSON.stringify({ message: "You have exceeded a rate limit." }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": refusalRetryAfter },
+        });
+      }
+      return json({ content: [{ text: VENDOR_BODY_MARKER, type: "text" }] });
+    }
     return undefined;
   });
+  return {
+    ...stub,
+    refuseNextCalls: (n: number, retryAfter: string) => {
+      refusalsLeft = n;
+      refusalRetryAfter = retryAfter;
+    },
+  };
 }
 
 function vendorRequests(
@@ -325,4 +347,28 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   );
   expect(JSON.stringify(postDeploy.output), "the grant stopped working after turn 3's refusal, so that refusal spent it").toContain(VENDOR_BODY_MARKER);
   expect(vendorRequests(vendor, "tools/call"), "the post-deploy granted call never reached the vendor").toHaveLength(beforeRedeploy + 1);
+
+  const beforeRateLimited = vendorRequests(vendor, "tools/call").length;
+  vendor.refuseNextCalls(1, "1");
+  const turn5 = await driveTurn({
+    text: "ope1136 turn five",
+    messageId: "ope1136-t5",
+    steps: [{ calls: [{ tool: grantTool, input: { id: GRANTED_PAGE_ID }, id: "ope1338-rate-limited-call" }] }, { say: "the rate limit was waited out" }],
+  });
+  const rateLimited = await waitFor(
+    () => turn5.requests.flatMap((r) => r.toolResults).find((t) => t.id === "ope1338-rate-limited-call"),
+    "the rate-limited granted call's result to reach the model",
+  );
+  expect(
+    rateLimited.isError,
+    `a 429 the backoff should have waited out was reported to the model as an error: ${JSON.stringify(rateLimited.output)}`,
+  ).toBeFalsy();
+  expect(
+    JSON.stringify(rateLimited.output),
+    "🔴 the borrow did not survive the vendor's 429 — it still fails on the first refusal, which is what burns a once-mode grant",
+  ).toContain(VENDOR_BODY_MARKER);
+  expect(
+    vendorRequests(vendor, "tools/call"),
+    "the rate-limited call did not reach the vendor twice, so no retry was sent",
+  ).toHaveLength(beforeRateLimited + 2);
 });

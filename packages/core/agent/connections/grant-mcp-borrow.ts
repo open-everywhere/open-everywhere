@@ -5,6 +5,7 @@ import { findConnectorCredential, vercelConnectorOf } from "../access/connector-
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
 import { CREDENTIAL_GRANT_ROLES } from "../access/credential-grant.js";
 import { fenceMcpBorrowFetch } from "../access/mcp-call-fence.js";
+import { withRetryAfter, type RetryPolicy } from "../channels/rate-limit-retry.js";
 import type { GrantJsonObject } from "../operational/credential-grant-rows.js";
 import { connectorTransportSpec, type ConnectorTransportSpec } from "./connector-transport.js";
 import { requireUserAuthFlow, userAuthFlowProvider, type UserAuthSubject } from "./user-auth-flow.js";
@@ -52,6 +53,7 @@ export interface GrantBorrowDeps {
   readonly connectorSpec?: (connector: string) => ConnectorTransportSpec | undefined;
   readonly mintOwnerToken?: (provider: string, providerRef: string, vaultSubject: string) => Promise<string>;
   readonly fetch?: FetchLike;
+  readonly retry?: RetryPolicy;
 }
 
 export interface BorrowConnection {
@@ -119,6 +121,19 @@ export function grantBorrowFetch(row: { readonly mcpTool?: string; readonly froz
   return fenceMcpBorrowFetch({ frozenArgs: row.frozenArgs ?? {}, host: url.host, tool: row.mcpTool ?? "" }, base);
 }
 
+export function borrowRetryFetch(connector: string, base: FetchLike, deps: GrantBorrowDeps = {}, deadline?: BorrowDeadline): FetchLike {
+  return (url, init) => {
+    if ((init?.method ?? "GET").toUpperCase() === "DELETE") return base(url, init);
+    const budget = deadline?.remainingMs();
+    return withRetryAfter(async () => await base(url, init), {
+      surface: "grant-borrow",
+      operation: `POST /mcp (${connector})`,
+      ...deps.retry,
+      ...(budget === undefined ? {} : { totalBudgetMs: budget }),
+    });
+  };
+}
+
 export async function withBorrowClient<T>(
   conn: BorrowConnection,
   pin: { readonly mcpTool: string; readonly frozenArgs?: GrantJsonObject },
@@ -127,7 +142,7 @@ export async function withBorrowClient<T>(
   body: (client: Client) => Promise<T>,
   deadline?: BorrowDeadline,
 ): Promise<T> {
-  const base = deps.fetch ?? (globalThis.fetch as FetchLike);
+  const base = borrowRetryFetch(conn.connector, deps.fetch ?? (globalThis.fetch as FetchLike), deps, deadline);
   const fenced = grantBorrowFetch(pin, conn.directUrl, base);
   const transport = new StreamableHTTPClientTransport(conn.url, {
     fetch: fenced,

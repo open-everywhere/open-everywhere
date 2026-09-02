@@ -1,5 +1,12 @@
 export const RATE_LIMITED_STATUS = 429;
 
+export const FORBIDDEN_STATUS = 403;
+
+export function isRateLimitedForbidden(res: RetryableResponse, nowMs: number): boolean {
+  if (res.status !== FORBIDDEN_STATUS) return false;
+  return parseRetryAfterMs(res.headers.get("retry-after"), nowMs) !== undefined;
+}
+
 export const DEFAULT_MAX_ATTEMPTS = 4;
 
 export const DEFAULT_CAP_MS = 30_000;
@@ -10,12 +17,13 @@ export const DEFAULT_FALLBACK_MS = 1_000;
 
 export class RateLimitExhaustedError extends Error {
   readonly status = RATE_LIMITED_STATUS;
+  readonly refusalStatus: number;
   readonly surface: string;
   readonly operation: string;
   readonly attempts: number;
   readonly waitedMs: number;
 
-  constructor(init: { surface: string; operation: string; attempts: number; waitedMs: number }) {
+  constructor(init: { surface: string; operation: string; attempts: number; waitedMs: number; refusalStatus?: number }) {
     super(
       `${init.surface} ${init.operation} stayed rate limited after ${init.attempts} attempts ` +
         `(waited ${init.waitedMs} ms across the honoured Retry-After delays).`,
@@ -25,6 +33,7 @@ export class RateLimitExhaustedError extends Error {
     this.operation = init.operation;
     this.attempts = init.attempts;
     this.waitedMs = init.waitedMs;
+    this.refusalStatus = init.refusalStatus ?? RATE_LIMITED_STATUS;
   }
 }
 
@@ -55,6 +64,7 @@ export interface RateLimitRetryOptions {
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
   readonly retryAfterMs?: (res: RetryableResponse) => number | undefined | Promise<number | undefined>;
+  readonly retryForbiddenWithRetryAfter?: boolean;
 }
 
 export type RetryPolicy = Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
@@ -74,7 +84,9 @@ export async function withRetryAfter<T extends RetryableResponse>(send: () => Pr
   let waitedMs = 0;
   for (let attempt = 1; ; attempt += 1) {
     const res = await send();
-    if (res.status !== RATE_LIMITED_STATUS) return res;
+    const rateLimited =
+      res.status === RATE_LIMITED_STATUS || ((opts.retryForbiddenWithRetryAfter ?? false) && isRateLimitedForbidden(res, now()));
+    if (!rateLimited) return res;
     let named = opts.retryAfterMs ? await opts.retryAfterMs(res) : undefined;
     if (named === undefined || !Number.isFinite(named) || named < 0) {
       named = parseRetryAfterMs(res.headers.get("retry-after"), now());
@@ -82,7 +94,13 @@ export async function withRetryAfter<T extends RetryableResponse>(send: () => Pr
     void res.body?.cancel().catch(() => undefined);
     const delayMs = Math.min(capMs, named ?? fallbackMs);
     if (attempt >= maxAttempts || waitedMs + delayMs > totalBudgetMs) {
-      throw new RateLimitExhaustedError({ surface: opts.surface, operation: opts.operation, attempts: attempt, waitedMs });
+      throw new RateLimitExhaustedError({
+        surface: opts.surface,
+        operation: opts.operation,
+        attempts: attempt,
+        waitedMs,
+        refusalStatus: res.status,
+      });
     }
     waitedMs += delayMs;
     await sleep(delayMs);

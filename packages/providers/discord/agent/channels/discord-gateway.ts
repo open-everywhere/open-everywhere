@@ -2,6 +2,8 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { threadParentChannelId } from "./discord-channel-info.js";
 import { splitForDiscord } from "./discord-post.js";
+import { discordFetch, type DiscordFetchDeps } from "./discord-rest.js";
+import { RateLimitExhaustedError, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   finalMessageAction,
   nameDropPattern,
@@ -424,7 +426,9 @@ function botAuthHeaders(token: string): Record<string, string> {
   return { authorization: `Bot ${token}`, "content-type": "application/json" };
 }
 
-async function discordCreateMessage(channelId: string, content: string): Promise<string | null> {
+const AFFORDANCE_RETRY: RetryPolicy = { maxAttempts: 2, capMs: 2_000, totalBudgetMs: 2_000 };
+
+export async function discordCreateMessage(channelId: string, content: string, deps: DiscordFetchDeps = {}): Promise<string | null> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     log(`DISCORD_BOT_TOKEN is not set — cannot post to channel ${channelId}`);
@@ -435,11 +439,16 @@ async function discordCreateMessage(channelId: string, content: string): Promise
     return null;
   }
   try {
-    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-      method: "POST",
-      headers: botAuthHeaders(token),
-      body: JSON.stringify({ content }),
-    });
+    const res = await discordFetch(
+      "POST /channels/{id}/messages",
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      {
+        method: "POST",
+        headers: botAuthHeaders(token),
+        body: JSON.stringify({ content }),
+      },
+      deps,
+    );
     if (!res.ok) {
       log(`Discord create-message failed (${res.status}) for channel ${channelId}`);
       return null;
@@ -447,24 +456,36 @@ async function discordCreateMessage(channelId: string, content: string): Promise
     const body = (await res.json()) as unknown;
     return isObject(body) ? (str(body["id"]) ?? null) : null;
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      log(`Discord create-message rate limited for channel ${channelId}: gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+      return null;
+    }
     log(`Discord create-message error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
     return null;
   }
 }
 
-async function openDiscordDm(userId: string): Promise<string | null> {
+export async function openDiscordDm(userId: string, deps: DiscordFetchDeps = {}): Promise<string | null> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return null;
   try {
-    const res = await fetch("https://discord.com/api/v10/users/@me/channels", {
-      method: "POST",
-      headers: { ...botAuthHeaders(token), "content-type": "application/json" },
-      body: JSON.stringify({ recipient_id: userId }),
-    });
+    const res = await discordFetch(
+      "POST /users/@me/channels",
+      "https://discord.com/api/v10/users/@me/channels",
+      {
+        method: "POST",
+        headers: { ...botAuthHeaders(token), "content-type": "application/json" },
+        body: JSON.stringify({ recipient_id: userId }),
+      },
+      deps,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as { id?: unknown };
     return typeof body.id === "string" ? body.id : null;
-  } catch {
+  } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      log(`Discord open-DM rate limited for user ${userId}: gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+    }
     return null;
   }
 }
@@ -539,43 +560,56 @@ export function typingGateFeed(
   return true;
 }
 
-async function triggerDiscordTyping(channelId: string): Promise<void> {
+export async function triggerDiscordTyping(channelId: string, deps: DiscordFetchDeps = {}): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token || !channelId) return;
   try {
-    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/typing`, {
-      method: "POST",
-      headers: { authorization: `Bot ${token}` },
-    });
+    const res = await discordFetch(
+      "POST /channels/{id}/typing",
+      `https://discord.com/api/v10/channels/${channelId}/typing`,
+      { method: "POST", headers: { authorization: `Bot ${token}` } },
+      { ...deps, retry: { ...deps.retry, ...AFFORDANCE_RETRY } },
+    );
     if (!res.ok) {
       log(`Discord typing trigger failed (${res.status}) for channel ${channelId}`);
     }
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      log(`Discord typing trigger rate limited for channel ${channelId}: gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+      return;
+    }
     log(`Discord typing trigger error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
   }
 }
 
 const EYES_EMOJI = "👀";
 
-async function setDiscordReaction(
+export async function setDiscordReaction(
   channelId: string,
   messageId: string,
   emoji: string,
   action: "PUT" | "DELETE",
+  deps: DiscordFetchDeps = {},
 ): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return;
   if (!channelId || !messageId) return;
   const encoded = encodeURIComponent(emoji);
   try {
-    const res = await fetch(
+    const res = await discordFetch(
+      `${action} /channels/{id}/messages/{id}/reactions/{emoji}/@me`,
       `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/reactions/${encoded}/@me`,
       { method: action, headers: { authorization: `Bot ${token}` } },
+      { ...deps, retry: { ...deps.retry, ...AFFORDANCE_RETRY } },
     );
     if (!res.ok && !(action === "DELETE" && res.status === 404)) {
       log(`Discord reaction ${action} failed (${res.status}) for message ${messageId} in channel ${channelId}`);
     }
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      log(`Discord reaction ${action} rate limited for channel ${channelId}: gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+      return;
+    }
     log(`Discord reaction ${action} error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
   }
 }
@@ -607,7 +641,12 @@ export function deriveThreadName(content: string, botName?: string): string {
   return (lastSpace >= 80 ? hard.slice(0, lastSpace) : hard).trim();
 }
 
-async function createDiscordThread(channelId: string, messageId: string, name: string): Promise<string | null> {
+export async function createDiscordThread(
+  channelId: string,
+  messageId: string,
+  name: string,
+  deps: DiscordFetchDeps = {},
+): Promise<string | null> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     log(`DISCORD_BOT_TOKEN is not set — cannot create thread on channel ${channelId}`);
@@ -618,14 +657,19 @@ async function createDiscordThread(channelId: string, messageId: string, name: s
     return null;
   }
   try {
-    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/threads`, {
-      method: "POST",
-      headers: {
-        authorization: `Bot ${token}`,
-        "content-type": "application/json",
+    const res = await discordFetch(
+      "POST /channels/{id}/messages/{id}/threads",
+      `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/threads`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bot ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name, auto_archive_duration: 1440 }),
       },
-      body: JSON.stringify({ name, auto_archive_duration: 1440 }),
-    });
+      deps,
+    );
     if (!res.ok) {
       log(`Discord create-thread failed (${res.status}) for channel ${channelId} — falling back to inline`);
       return null;
@@ -638,6 +682,10 @@ async function createDiscordThread(channelId: string, messageId: string, name: s
     }
     return id;
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      log(`Discord create-thread rate limited for channel ${channelId}: gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms) — falling back to inline`);
+      return null;
+    }
     log(`Discord create-thread error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
     return null;
   }

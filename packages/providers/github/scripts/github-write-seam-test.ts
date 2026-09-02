@@ -57,6 +57,10 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
   ok(/export async function githubWrite\(/.test(seamCode), "§1 the funnel `githubWrite` is still exported from the seam");
   ok(/withRetryAfter\(send,\s*\{/.test(seamCode), "🔴 §1 the funnel still dispatches through `withRetryAfter` — remove it and every GitHub write silently loses its backoff");
   ok(/surface:\s*"github"/.test(seamCode), "§1 the retry names the github surface, so `RateLimitExhaustedError` says which vendor refused");
+  ok(
+    /retryForbiddenWithRetryAfter:\s*true/.test(seamCode),
+    "🔴 §1 the funnel still sets `retryForbiddenWithRetryAfter` — this seam is the ONLY place in the repo that opts into GitHub's 403 spelling of a rate-limit refusal (OPE-1256). Drop the flag and the whole delivered behaviour is gone with every other suite still green.",
+  );
 }
 
 {

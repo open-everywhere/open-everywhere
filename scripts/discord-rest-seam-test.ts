@@ -17,7 +17,11 @@ console.log("discord rest seam (OPE-1236):");
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "packages", "providers", "discord");
 const SEAM_REL = "agent/channels/discord-rest.ts";
-const COVERED_WRITE_FILES = ["agent/channels/discord-post.ts", "agent/channels/discord-message-ops.ts"] as const;
+const COVERED_WRITE_FILES = [
+  "agent/channels/discord-post.ts",
+  "agent/channels/discord-message-ops.ts",
+  "agent/channels/discord-gateway.ts",
+] as const;
 
 const BARE_FETCH = /(?<![.\w])fetch\s*\(/;
 
@@ -67,11 +71,15 @@ const seamCode = stripComments(readFileSync(join(PKG_ROOT, SEAM_REL), "utf8"));
   }
   eq(routed["agent/channels/discord-post.ts"], 7, "§2 discord-post.ts routes all 7 of its calls through the seam — a lost route reds");
   eq(routed["agent/channels/discord-message-ops.ts"], 3, "§2 discord-message-ops.ts routes all 3 of its calls through the seam");
+  eq(
+    routed["agent/channels/discord-gateway.ts"],
+    5,
+    "🔴 §2 discord-gateway.ts routes ALL FIVE of its writes through the seam (OPE-1311) — the completion post-back, open-DM, typing, the reaction and the thread open. A lost route reds here.",
+  );
 }
 
 {
   const KNOWN_UNCOVERED: ReadonlyArray<{ file: string; why: string }> = [
-    { file: "agent/channels/discord-gateway.ts", why: "the gateway's OWN private create-message/open-dm/typing/reaction/thread writes (the completion post-back), a separate write path" },
     { file: "agent/channels/discord-read.ts", why: "the channel read transport" },
     { file: "agent/channels/discord-backscroll.ts", why: "the backscroll read transport" },
     { file: "agent/channels/discord-directory.ts", why: "the directory read transport" },

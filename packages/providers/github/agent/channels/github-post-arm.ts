@@ -107,7 +107,7 @@ export async function githubWrite(
       },
       body: JSON.stringify(input.body),
     });
-  return withRetryAfter(send, { ...deps.retry, surface: "github", operation: input.operation });
+  return withRetryAfter(send, { ...deps.retry, surface: "github", operation: input.operation, retryForbiddenWithRetryAfter: true });
 }
 
 export async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {

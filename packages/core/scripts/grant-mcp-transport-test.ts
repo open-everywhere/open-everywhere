@@ -7,7 +7,7 @@ import { resetRegisteredConnectorCredentials, setRegisteredConnectorCredentials,
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import type { GrantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
-import { grantBorrowFetch } from "../agent/connections/grant-mcp-borrow.js";
+import { borrowDeadline, borrowRetryFetch, grantBorrowFetch } from "../agent/connections/grant-mcp-borrow.js";
 import type { ConnectorTransportSpec } from "../agent/connections/connector-transport.js";
 import type { CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 
@@ -76,8 +76,16 @@ interface SeenRequest {
   readonly body: Record<string, unknown> | undefined;
 }
 
-function fakeMcpServer(opts: { readonly toolResult?: unknown } = {}): { readonly fetch: FetchLike; readonly seen: SeenRequest[] } {
+function fakeMcpServer(
+  opts: {
+    readonly toolResult?: unknown;
+    readonly refuseCalls?: number;
+    readonly refusalStatus?: number;
+    readonly refusalRetryAfter?: string;
+  } = {},
+): { readonly fetch: FetchLike; readonly seen: SeenRequest[] } {
   const seen: SeenRequest[] = [];
+  let refused = 0;
   const json = (body: unknown, extra: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), { headers: { "content-type": "application/json", ...extra }, status: 200 });
   const fetch: FetchLike = async (url, init) => {
@@ -111,6 +119,12 @@ function fakeMcpServer(opts: { readonly toolResult?: unknown } = {}): { readonly
     }
     if (rpc["method"] === "notifications/initialized") return new Response(null, { status: 202 });
     if (rpc["method"] === "tools/call") {
+      if (refused < (opts.refuseCalls ?? 0)) {
+        refused += 1;
+        const headers = new Headers({ "content-type": "application/json" });
+        if (opts.refusalRetryAfter !== undefined) headers.set("retry-after", opts.refusalRetryAfter);
+        return new Response(JSON.stringify({ message: "rate limited" }), { headers, status: opts.refusalStatus ?? 429 });
+      }
       return json({ id, jsonrpc: "2.0", result: opts.toolResult ?? { content: [{ text: "the page body", type: "text" }] } });
     }
     return json({ error: { code: -32601, message: "method not found" }, id, jsonrpc: "2.0" });
@@ -343,6 +357,136 @@ console.log("6. every absence refuses by name:");
   );
   n++;
   eq(server.seen.length, 0, "no absence ever dialled the vendor");
+}
+
+console.log("7. a rate-limited borrow is retried, below the burn:");
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const server = fakeMcpServer({ refuseCalls: 1, refusalRetryAfter: "2" });
+  const minted: string[] = [];
+  const slept: number[] = [];
+  const result = (await grantMcpTransport({
+    connectorSpec: () => SPEC,
+    fetch: server.fetch,
+    mintOwnerToken: async (_provider, _ref, subject) => {
+      minted.push(subject);
+      return "OWNER-TOKEN";
+    },
+    retry: { sleep: async (ms: number) => void slept.push(ms) },
+  })({ input: { page_id: "OWNER-PAGE" }, mcpTool: "notion-fetch" }, grantRow(), OWNER)) as { content: unknown };
+  await settle();
+
+  eq(result.content, [{ text: "the page body", type: "text" }], "🔴 429: a borrow refused once now SURVIVES and returns the vendor's result — it used to fail on the first refusal");
+  eq(slept, [2000], "429: the vendor's Retry-After (2 s) is honoured, not the 1 s fallback");
+  eq(server.seen.filter((r) => (r.body?.["method"] as string | undefined) === "tools/call").length, 2, "429: the tools/call is re-sent exactly once");
+  eq(minted, [OWNER_SUBJECT], "🔴 429: the owner's token was minted ONCE — the retry did NOT re-enter the transport, so it cannot re-take the grant's single-use CAS");
+  ok(
+    server.seen.filter((r) => (r.body?.["method"] as string | undefined) === "tools/call").every((r) => r.redirect === "error"),
+    "🔴 429: BOTH attempts carry redirect:\"error\" — the retry re-sends through the fenced wrapper, so the backoff sits below the fence and not around it",
+  );
+}
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const server = fakeMcpServer({ refuseCalls: 3, refusalRetryAfter: "2", refusalStatus: 500 });
+  const slept: number[] = [];
+  await assert.rejects(
+    grantMcpTransport({
+      connectorSpec: () => SPEC,
+      fetch: server.fetch,
+      mintOwnerToken: async () => "OWNER-TOKEN",
+      retry: { sleep: async (ms: number) => void slept.push(ms) },
+    })({ input: { page_id: "OWNER-PAGE" }, mcpTool: "notion-fetch" }, grantRow(), OWNER),
+    "a 500 from the vendor still fails the borrow — it is not retried into a success",
+  );
+  n++;
+  await settle();
+  eq(slept, [], "🔴 500 negative control: a non-429 vendor failure is NEVER slept on");
+  eq(server.seen.filter((r) => (r.body?.["method"] as string | undefined) === "tools/call").length, 1, "🔴 500 negative control: …and the tools/call is sent EXACTLY once");
+}
+{
+  let nowMs = 10_000;
+  const deadline = borrowDeadline(2_000, nowMs);
+  const realNow = Date.now;
+  Date.now = () => nowMs;
+  try {
+    const slept: number[] = [];
+    const wrapped = borrowRetryFetch(
+      "notion",
+      async () =>
+        new Response(JSON.stringify({ message: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        }),
+      { retry: { sleep: async (ms: number) => void (slept.push(ms), (nowMs += ms)) } },
+      deadline,
+    );
+    await assert.rejects(wrapped("https://mcp.notion.com/mcp", { method: "POST" }), /rate limited/u, "the first request exhausts its slice of the budget");
+    n++;
+    eq(slept, [1000, 1000], "deadline: the first request spends the WHOLE 2 s budget across two honoured waits");
+    const before = slept.length;
+    await assert.rejects(wrapped("https://mcp.notion.com/mcp", { method: "POST" }), /rate limited/u, "the second request also refuses");
+    n++;
+    eq(
+      slept.length,
+      before,
+      "🔴 deadline: the SECOND request slept ZERO times — it read what was LEFT of the shared budget, not a fresh copy of it. A wrapper that captured the budget once would sleep again here.",
+    );
+  } finally {
+    Date.now = realNow;
+  }
+}
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const seen: { method: string; n: number }[] = [];
+  const inner = fakeMcpServer();
+  const slept: number[] = [];
+  const rateLimitDeletes: FetchLike = async (url, init) => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method === "DELETE") {
+      seen.push({ method, n: seen.filter((s) => s.method === "DELETE").length + 1 });
+      return new Response(JSON.stringify({ message: "rate limited" }), {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "30" },
+      });
+    }
+    return await inner.fetch(url, init);
+  };
+  const result = (await grantMcpTransport({
+    connectorSpec: () => SPEC,
+    fetch: rateLimitDeletes,
+    mintOwnerToken: async () => "OWNER-TOKEN",
+    retry: { sleep: async (ms: number) => void slept.push(ms) },
+  })({ input: { page_id: "OWNER-PAGE" }, mcpTool: "notion-fetch" }, grantRow(), OWNER)) as { content: unknown };
+  await settle();
+
+  eq(result.content, [{ text: "the page body", type: "text" }], "teardown: a rate-limited DELETE never changes the borrow's result");
+  eq(seen.filter((s) => s.method === "DELETE").length, 1, "🔴 teardown: a 429 on the session DELETE is sent EXACTLY once — the backoff deliberately skips it");
+  eq(slept, [], "🔴 teardown: …and nothing is slept on, so a rate-limited teardown cannot stall the turn after its result is in hand");
+}
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const server = fakeMcpServer({ refuseCalls: 99, refusalRetryAfter: "1" });
+  const slept: number[] = [];
+  let caught: unknown;
+  try {
+    await grantMcpTransport({
+      connectorSpec: () => SPEC,
+      fetch: server.fetch,
+      mintOwnerToken: async () => "OWNER-TOKEN",
+      retry: { maxAttempts: 3, sleep: async (ms: number) => void slept.push(ms) },
+    })({ input: { page_id: "OWNER-PAGE" }, mcpTool: "notion-fetch" }, grantRow(), OWNER);
+  } catch (err) {
+    caught = err;
+  }
+  await settle();
+  ok(caught !== undefined, "exhaustion: a borrow the vendor keeps refusing fails rather than answering empty");
+  ok(
+    /rate limited/u.test(String((caught as Error).message)),
+    "🔴 exhaustion: the failure NAMES the rate limit — `grant-borrow POST /mcp (notion)` — so an exhausted borrow is never a silent drop",
+  );
+  ok(!String((caught as Error).message).includes("OWNER-TOKEN"), "🔴 exhaustion: the message carries NO owner token");
+  eq(slept, [1000, 1000], "exhaustion: two waits under a three-attempt bound");
+  eq(server.seen.filter((r) => (r.body?.["method"] as string | undefined) === "tools/call").length, 3, "exhaustion: exactly three attempts left the host");
 }
 
 resetRegisteredConnectorCredentials();
