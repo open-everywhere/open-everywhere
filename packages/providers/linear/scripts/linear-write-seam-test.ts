@@ -25,9 +25,42 @@ function stripComments(source: string): string {
 
 const BARE_FETCH = /(?<![.\w])fetch\s*\(/;
 const OWN_TRANSPORT = /globalThis\.fetch/;
-const EVE_TRANSPORT = /\b(?:callLinearGraphQL|createLinearAgentActivity|updateLinearAgentSession|createLinearAgentSessionOnIssue|createLinearAgentSessionOnComment|listLinearAgentSessionActivities)\b/;
-const CHANNEL_CONFIG = /linearChannel\(\{/g;
-const CHANNEL_CONFIG_WITH_API = /linearChannel\(\{[^}]*?\bapi:\s*linearChannelApi\(/gs;
+const EVE_LINEAR_DIR = join(PKG_ROOT, "..", "..", "..", "node_modules", "eve", "dist", "src", "public", "channels", "linear");
+
+function eveTransportNames(): string[] {
+  const read = (file: string): string => {
+    try {
+      return readFileSync(join(EVE_LINEAR_DIR, file), "utf8");
+    } catch (err) {
+      throw new Error(
+        `linear-write-seam: cannot read eve's ${file} at ${EVE_LINEAR_DIR} — an eve bump moved or renamed it. ` +
+          "Find the new home of eve's Linear transport declarations and update EVE_LINEAR_DIR (and the " +
+          "eve-upgrade-check skill's checklist). Do NOT fall back to a hand-written list.",
+        { cause: err },
+      );
+    }
+  };
+  const declared = new Set([...read("api.d.ts").matchAll(/export declare function ([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]));
+  const reExportedFromApi = /export \{([^}]*)\} from "[^"]*channels\/linear\/api\.js";/.exec(read("index.d.ts"));
+  if (reExportedFromApi === null) {
+    throw new Error(`linear-write-seam: eve's index.d.ts no longer re-exports from channels/linear/api.js — read ${EVE_LINEAR_DIR}/index.d.ts and update this derivation.`);
+  }
+  const exposed = reExportedFromApi[1]
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !part.startsWith("type "));
+  const names = exposed.filter((name) => declared.has(name)).sort();
+  if (names.length === 0) {
+    throw new Error(`linear-write-seam: derived ZERO HTTP-issuing eve exports from ${EVE_LINEAR_DIR} — §2 would then match nothing and pass over every offender.`);
+  }
+  return names;
+}
+
+const EVE_TRANSPORT_NAMES = eveTransportNames();
+const EVE_TRANSPORT = new RegExp(`\\b(?:${EVE_TRANSPORT_NAMES.join("|")})\\b`);
+const CHANNEL_CONFIG = /linearChannel\(\s*\{/g;
+const CHANNEL_CONFIG_WITH_API = /linearChannel\(\s*\{[^}]*?\bapi:\s*linearChannelApi\(/gs;
+const CHANNEL_CONFIG_INDIRECT = /linearChannel\((?!\s*\{)/g;
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -50,10 +83,12 @@ function tsFiles(dir: string): string[] {
   ok(OWN_TRANSPORT.test(stripComments("const base = globalThis.fetch;")), "§0 the own-transport matcher DOES match a module reaching for the global");
   ok(!OWN_TRANSPORT.test(stripComments("// globalThis.fetch is what this module wraps\n")), "§0 …and prose about it is not a transport");
 
-  ok(EVE_TRANSPORT.test(stripComments('import { callLinearGraphQL } from "eve/channels/linear";')), "§0 the eve-transport matcher DOES match a direct import");
-  ok(EVE_TRANSPORT.test(stripComments("await createLinearAgentActivity({});")), "§0 …and a direct call");
-  for (const name of ["updateLinearAgentSession", "createLinearAgentSessionOnIssue", "createLinearAgentSessionOnComment", "listLinearAgentSessionActivities"]) {
-    ok(EVE_TRANSPORT.test(stripComments(`import { ${name} } from "eve/channels/linear";`)), `§0 …and eve's \`${name}\`, which no file calls today`);
+  ok(EVE_TRANSPORT_NAMES.includes("callLinearGraphQL"), `§0 the derived eve-transport inventory names the query transport the seam wraps (derived: ${EVE_TRANSPORT_NAMES.join(", ")})`);
+  ok(EVE_TRANSPORT_NAMES.includes("createLinearAgentActivity"), "§0 …and the Agent-Activity transport the mention route's terminal answer rides");
+  ok(!EVE_TRANSPORT_NAMES.includes("LinearApiError"), "🔴 §0 …and NOT eve's error class — it issues no request, and matching it would flag `catch (e) { if (e instanceof LinearApiError) }` in every honest file");
+  for (const name of EVE_TRANSPORT_NAMES) {
+    ok(EVE_TRANSPORT.test(stripComments(`import { ${name} } from "eve/channels/linear";`)), `§0 the eve-transport matcher DOES match a direct import of eve's \`${name}\``);
+    ok(EVE_TRANSPORT.test(stripComments(`await ${name}({});`)), `§0 …and a direct call to it`);
   }
   ok(!EVE_TRANSPORT.test(stripComments("await callLinear({});")), "🔴 §0 …and does NOT match the OE seam that wraps it — otherwise §2 would flag every call site and prove nothing");
   ok(!EVE_TRANSPORT.test(stripComments("await createLinearActivity({});")), "§0 …nor the activity wrapper");
@@ -65,6 +100,14 @@ function tsFiles(dir: string): string[] {
   eq(oneConfig.match(CHANNEL_CONFIG_WITH_API)?.length, undefined, "🔴 §0 …and does NOT count an UNWIRED one as wired — otherwise §4 would pass over the exact defect it exists to catch");
   eq(wiredConfig.match(CHANNEL_CONFIG_WITH_API)?.length, 1, "§0 …while a wired one is counted");
   eq("const c = linearChannel({ api: somethingElse(), credentials: x });".match(CHANNEL_CONFIG_WITH_API)?.length, undefined, "§0 …and an `api` that is not the seam's does not count");
+  eq("const c = linearChannel( { api: linearChannelApi(), credentials: x });".match(CHANNEL_CONFIG_WITH_API)?.length, 1, "§0 …and whitespace before the literal does not hide a wired config");
+
+  const indirectConfig = "const cfg = { credentials: x };\nconst c = linearChannel(cfg);";
+  eq(indirectConfig.match(CHANNEL_CONFIG)?.length, undefined, "🔴 §0 the literal matcher genuinely CANNOT see an indirect config — this is the hole, stated");
+  eq(indirectConfig.match(CHANNEL_CONFIG_INDIRECT)?.length, 1, "🔴 §0 …and the indirect matcher DOES see it, which is what closes the hole");
+  eq("const c = linearChannel({ api: linearChannelApi() });".match(CHANNEL_CONFIG_INDIRECT)?.length, undefined, "🔴 §0 NEGATIVE CONTROL: an inline literal is NOT an indirect config — otherwise §4 would red on every honest call site");
+  eq("const c = linearChannel(  { api: linearChannelApi() });".match(CHANNEL_CONFIG_INDIRECT)?.length, undefined, "§0 …with whitespace either");
+  eq("const c = linearChannel(buildConfig(org));".match(CHANNEL_CONFIG_INDIRECT)?.length, 1, "§0 …and a config returned by a call is indirect too");
 }
 
 const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
@@ -91,7 +134,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
   eq(
     offenders,
     [],
-    `🔴 §2 only \`${SEAM_REL}\` may name eve's Linear transport — a file naming any of eve's six HTTP-issuing \`eve/channels/linear\` exports directly has NO 429 backoff, and one of the four this package never calls would make its request from inside eve where no other section can see it. Route it through \`callLinear\` / \`createLinearActivity\`, or widen the seam. Found ${offenders.length}: ${offenders.join(", ")}`,
+    `🔴 §2 only \`${SEAM_REL}\` may name eve's Linear transport — a file naming any of eve's HTTP-issuing \`eve/channels/linear\` exports directly has NO 429 backoff, and one this package never calls would make its request from inside eve where no other section can see it. Route it through \`callLinear\` / \`createLinearActivity\`, or widen the seam. Watched (derived from eve): ${EVE_TRANSPORT_NAMES.join(", ")}. Found ${offenders.length}: ${offenders.join(", ")}`,
   );
 }
 
@@ -127,6 +170,16 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
 }
 
 {
+  const indirect: string[] = [];
+  for (const file of AGENT_FILES) {
+    if ((stripComments(readFileSync(file, "utf8")).match(CHANNEL_CONFIG_INDIRECT)?.length ?? 0) > 0) indirect.push(relative(PKG_ROOT, file));
+  }
+  eq(
+    indirect,
+    [],
+    `🔴 §4 every \`linearChannel(…)\` call must pass its config as an INLINE object literal — this gate reads the \`api:\` out of the literal and can read nothing else, so a config built elsewhere and passed by name would carry no 429 backoff with every assertion here still green. Found ${indirect.length}: ${indirect.join(", ")}`,
+  );
+
   for (const file of AGENT_FILES) {
     const src = stripComments(readFileSync(file, "utf8"));
     const configs = src.match(CHANNEL_CONFIG)?.length ?? 0;

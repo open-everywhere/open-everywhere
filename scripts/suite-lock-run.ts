@@ -168,6 +168,22 @@ export function releaseLock(lockDir: string): void {
   }
 }
 
+export const SIGKILL_EXIT_CODE = 137;
+
+export function classifyExit(code: number | null, signal: NodeJS.Signals | null, command: string): number {
+  if (signal === "SIGKILL" || code === SIGKILL_EXIT_CODE) {
+    console.error(
+      `suite-lock-run: 🔴 KILLED (SIGKILL / exit ${SIGKILL_EXIT_CODE}) — \`${command}\` produced no verdict of its own. ` +
+        "On a memory-capped box this is the kernel's OOM killer, not a product failure: the integration tier boots one " +
+        "agent host per worker, and two hosts peak above a cloud sandbox's memory cgroup (OPE-1369). Do NOT hunt the " +
+        "last test that printed — it is simply the file that was running. Re-run at OE_IT_CI_MAX_WORKERS=1, or shard " +
+        "the files across several one-worker runs, and confirm with `dmesg | grep -i oom`.",
+    );
+    return SIGKILL_EXIT_CODE;
+  }
+  return code ?? (signal ? 1 : 0);
+}
+
 export async function runLocked(
   cmd: string,
   args: string[],
@@ -182,7 +198,7 @@ export async function runLocked(
     return await new Promise<number>((resolve, reject) => {
       const child = spawn(cmd, args, { stdio: "inherit", shell: process.platform === "win32" });
       child.on("error", reject);
-      child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+      child.on("exit", (code, signal) => resolve(classifyExit(code, signal, [cmd, ...args].join(" "))));
     });
   } finally {
     if (acquired) releaseLock(options.lockDir);

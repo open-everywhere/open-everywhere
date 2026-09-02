@@ -1,11 +1,11 @@
 import { callLinearGraphQL, createLinearAgentActivity, type LinearApiOptions, type LinearFetch } from "eve/channels/linear";
-import { withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+import { withRetryAfter, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const LINEAR_SURFACE = "linear";
 
 export const LINEAR_ACTIVITY_OPERATION = "AgentActivityCreate";
 
-export type LinearRetryPolicy = Omit<RateLimitRetryOptions, "surface" | "operation">;
+export type LinearRetryPolicy = RetryPolicy;
 
 export interface LinearApi extends LinearApiOptions {
   readonly retry?: LinearRetryPolicy;
@@ -52,5 +52,5 @@ export function linearChannelApi(api?: LinearApi): LinearApiOptions {
   const retry = api?.retry;
   const fetchWithRetry: LinearFetch = (input, init) =>
     withRetryAfter(() => baseFetch(api)(input, init), { ...retry, surface: LINEAR_SURFACE, operation: linearChannelOperation(init?.body) });
-  return { fetch: fetchWithRetry };
+  return api?.apiBaseUrl === undefined ? { fetch: fetchWithRetry } : { apiBaseUrl: api.apiBaseUrl, fetch: fetchWithRetry };
 }

@@ -9,6 +9,7 @@ import {
   LINEAR_ACTIVITY_OPERATION,
   LINEAR_CHANNEL_OPERATION,
   type LinearApi,
+  type LinearRetryPolicy,
 } from "../agent/channels/linear-graphql.js";
 import { createLinearIssue } from "../agent/channels/linear-create.js";
 import { setLinearIssueState } from "../agent/channels/linear-actions.js";
@@ -257,6 +258,20 @@ const CREATED = { issueCreate: { success: true, issue: { id: "uuid-1", identifie
   eq(err.surface, "linear", "§11b …on the linear surface");
   eq(stub.requests.length, 4, "§11b …after the same bounded attempts");
   eq(clock.slept, [1000, 1000, 1000], "§11b …honouring the same Retry-After delays");
+}
+{
+  const base = "https://linear.test.invalid/graphql";
+  eq(linearChannelApi({ apiBaseUrl: base, fetch: stubFetch([]).fetchFn }).apiBaseUrl, base, "🔴 §11c linearChannelApi forwards apiBaseUrl, the way retryingApi does");
+  eq(linearChannelApi({ fetch: stubFetch([]).fetchFn }).apiBaseUrl, undefined, "§11c NEGATIVE CONTROL: a caller that names no base still gets none — the key is absent, never an empty string eve would send to");
+  eq(linearChannelApi().apiBaseUrl, undefined, "§11c …and neither does the live no-argument call every channel config makes");
+  ok(typeof linearChannelApi({ apiBaseUrl: base }).fetch === "function", "§11c …and the retrying fetch is still installed alongside the base");
+}
+{
+  const tunable: LinearRetryPolicy = { maxAttempts: 2, capMs: 10, fallbackMs: 10, totalBudgetMs: 10, sleep: async () => {}, now: () => 0 };
+  ok(tunable.maxAttempts === 2, "§11d every knob core calls tunable is still accepted by the Linear seam");
+  const bodyReader: LinearRetryPolicy = { retryAfterMs: () => 0 };
+  const forbidden: LinearRetryPolicy = { retryForbiddenWithRetryAfter: true };
+  ok(bodyReader !== undefined && forbidden !== undefined, "🔴 §11d …and the two funnel-fixed fields are REFUSED (the @ts-expect-error rows above are the assertion — typecheck:all reds if either becomes settable)");
 }
 
 {

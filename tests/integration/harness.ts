@@ -8,6 +8,7 @@ import { afterEach } from "vitest";
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
+import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { createStateDir } from "./state-dir";
 
 import {
@@ -231,7 +232,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_MEMORY_DIR = join(state, "memory");
 
   rmSync(join(ROOT, ".eve", ".workflow-data"), { recursive: true, force: true });
-  process.env.OE_SANDBOX_BACKEND = "justbash";
+  process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
 
   const reserved = await reserveEphemeralPort();
   process.env.PORT = String(reserved.port);

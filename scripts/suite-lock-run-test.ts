@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireLock, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
+import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
@@ -134,6 +134,33 @@ async function main(): Promise<void> {
     const code = await runLocked(process.execPath, ["-e", "process.exit(7)"], { manual: false, lockDir, maxWaitMs: 20_000 });
     assert.equal(code, 7, "the wrapper's own exit code must be the wrapped command's exit code");
     assert.equal(existsSync(lockDir), false, "the lock must be released even after a failing command");
+  });
+
+  await check("a wrapped command killed by SIGKILL exits 137 and says so", async () => {
+    const lockDir = join(scratch, "lock-killed");
+    let code = 0;
+    const lines = await captureStderr(async () => {
+      code = await runLocked(process.execPath, ["-e", "process.kill(process.pid, 'SIGKILL')"], { manual: false, lockDir, maxWaitMs: 20_000 });
+    });
+    assert.equal(code, SIGKILL_EXIT_CODE, "a SIGKILLed command must exit 137, so the kill is legible in an EXIT= line");
+    const killLine = lines.find((l) => l.includes("KILLED"));
+    assert.ok(killLine, `expected one line naming the kill, got ${JSON.stringify(lines)}`);
+    assert.ok(/OOM/.test(killLine), "the line must name the OOM killer — that is the cause a reader would otherwise reach dmesg for");
+    assert.ok(/OE_IT_CI_MAX_WORKERS=1/.test(killLine), "…and must name the remedy, not just the diagnosis");
+    assert.equal(existsSync(lockDir), false, "the lock must be released even after the command was killed");
+  });
+
+  await check("classifyExit leaves an ordinary exit and a non-KILL signal alone", async () => {
+    const quiet = await captureStderr(async () => {
+      assert.equal(classifyExit(7, null, "node -e"), 7, "a real failing exit code passes through unchanged");
+      assert.equal(classifyExit(0, null, "node -e"), 0, "a success stays a success");
+      assert.equal(classifyExit(null, "SIGTERM", "node -e"), 1, "a non-KILL signal keeps the old flat 1");
+    });
+    assert.deepEqual(quiet, [], "🔴 none of those may print the OOM line — an OOM notice on an ordinary red is how a real failure gets excused");
+    const noisy = await captureStderr(async () => {
+      assert.equal(classifyExit(SIGKILL_EXIT_CODE, null, "node -e"), SIGKILL_EXIT_CODE, "a shell-reported 137 is classified too, not only a raw signal");
+    });
+    assert.equal(noisy.length, 1, `a shell-reported 137 must also print the notice, got ${JSON.stringify(noisy)}`);
   });
 
   await check("acquireLock throws a named timeout instead of hanging when the lock is held", async () => {

@@ -1,0 +1,3 @@
+export const GLOBAL_SETUP_PID_ENV = "OE_IT_GLOBAL_SETUP_PID";
+
+export const INTEGRATION_SANDBOX_BACKEND = "justbash";

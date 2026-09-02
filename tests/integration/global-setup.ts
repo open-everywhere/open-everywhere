@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sweepStaleForkAppRoots } from "./fork-app-root";
+import { GLOBAL_SETUP_PID_ENV, INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { sweepStaleSandboxSessions } from "./sandbox-session-sweep";
 import { createStateDir, sweepAbandonedStateDirs } from "./state-dir";
 import { sweepAbandonedFixtureDirs } from "./temp-dir-fixtures";
 
 export default async function globalSetup(): Promise<void> {
   const root = process.cwd();
+  process.env[GLOBAL_SETUP_PID_ENV] = String(process.pid);
+  process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
   const swept = sweepStaleForkAppRoots();
   if (swept > 0) console.log(`integration global-setup: removed ${swept} abandoned fork app root(s).`);
   const sweptState = sweepAbandonedStateDirs();
@@ -42,7 +45,6 @@ export default async function globalSetup(): Promise<void> {
 }
 
 async function prewarmJustBashTemplate(root: string): Promise<void> {
-  process.env.OE_SANDBOX_BACKEND = "justbash";
   const state = createStateDir();
   const restoreStateEnv = pinStateEnvForPrewarm(state);
   delete process.env.NODE_ENV;
