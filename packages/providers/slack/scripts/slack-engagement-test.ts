@@ -1208,6 +1208,100 @@ registerConfig({
   ok(out.woke && calls.length === 1, "[OPE-571] NEGATIVE: unresolved/empty settings ⇒ today's display-name-only behaviour, unchanged");
 
   {
+    const baseConfig = getConfig();
+    const armed = (answer: () => string | undefined) => {
+      const seen: Array<{ surface: string; text: string; channelId?: string; authorId?: string }> = [];
+      registerConfig({ ...baseConfig, decideWake: (input) => { seen.push(input); return answer() as never; } });
+      return seen;
+    };
+    const nonNameDrop = { text: "the august invoice looks wrong" };
+
+    calls.length = 0;
+    latched.length = 0;
+    infoCalls = 0;
+    let seen = armed(() => "wake");
+    out = await routeNameDropEvent(topLevel(nonNameDrop), deps(true, true));
+    ok(out.woke && calls.length === 1, "🔴 [OPE-1367] a registered arm ADDS a wake on a message the name-drop did not match — and the turn runs");
+    ok(infoCalls === 1, "🔴 [OPE-1367] …and the arm rung is what pays the conversations.info call the no-arm path skips");
+    ok(/wake arm added a wake/.test(out.reason), "[OPE-1367] …and the outcome names the arm, not the built-in's 'no name' reason");
+    ok(calls[0].message.includes("the august invoice looks wrong"), "[OPE-1367] …the wake carries the triggering message, exactly like a name-drop wake");
+    ok(seen.length === 1 && seen[0].surface === "slack", "[OPE-1367] …the arm was consulted once, told which surface it was answering about");
+    ok(seen[0].text === "the august invoice looks wrong", "[OPE-1367] …and handed the AUTHORED text (the field Slack declares)");
+    ok(seen[0].channelId === "C_TXN" && seen[0].authorId === "U1", "[OPE-1367] …plus the channel and author ids Slack declares");
+
+    calls.length = 0;
+    seen = armed(() => "abstain");
+    const forwarded = topLevel({ text: "thoughts on this?", attachments: [{ is_share: true, text: "the august invoice looks wrong" }] });
+    ok(forwarded.text.includes("the august invoice looks wrong"), "[OPE-1367] control: the merged body really does carry the forwarded quote");
+    await routeNameDropEvent(forwarded, deps(true, true));
+    ok(seen.length === 1 && seen[0].text === "thoughts on this?", "🔴 [OPE-1367] the arm is handed the AUTHORED text only — a forward's quote is not in it");
+
+    calls.length = 0;
+    seen = armed(() => "abstain");
+    out = await routeNameDropEvent(topLevel(), deps(true, true));
+    ok(out.woke && calls.length === 1, "🔴 [OPE-1367] an always-abstaining arm CANNOT suppress a name-drop wake");
+    ok(seen.length === 0, "🔴 [OPE-1367] …and the arm was never CALLED on a name-drop: suppression is unreachable, not refused");
+
+    for (const [label, answer] of [
+      ["throws", () => { throw new Error("arm exploded"); }],
+      ["returns garbage", () => ({ verdict: "wake" }) as never],
+      ["returns a typo'd verdict", () => "Wake"],
+    ] as const) {
+      calls.length = 0;
+      const warn = console.warn;
+      console.warn = () => {};
+      try {
+        armed(answer as () => string | undefined);
+        out = await routeNameDropEvent(topLevel(nonNameDrop), deps(true, true));
+      } finally {
+        console.warn = warn;
+      }
+      ok(!out.woke && calls.length === 0, `🔴 [OPE-1367] an arm that ${label} leaves the built-in answer — no wake`);
+    }
+
+    for (const [label, ev, d] of [
+      ["a disabled domain", topLevel(nonNameDrop), deps(false, true)],
+      ["an unconfirmed-external channel", topLevel(nonNameDrop), deps(true, false)],
+      ["a DM", topLevel({ ...nonNameDrop, channel_type: "im" }), deps(true, true)],
+      ["a group DM", topLevel({ ...nonNameDrop, channel_type: "mpim" }), deps(true, true)],
+      ["a bot author", topLevel({ ...nonNameDrop, bot_id: "B_OTHER" }), deps(true, true)],
+      ["a message subtype", topLevel({ ...nonNameDrop, subtype: "message_changed" }), deps(true, true)],
+    ] as const) {
+      calls.length = 0;
+      seen = armed(() => "wake");
+      out = await routeNameDropEvent(ev, d);
+      ok(!out.woke && calls.length === 0, `🔴 [OPE-1367] ${label} stays dropped — an arm cannot overturn a POLICY drop`);
+      ok(seen.length === 0, `🔴 [OPE-1367] …and the arm was never called for ${label}`);
+    }
+
+    calls.length = 0;
+    seen = armed(() => "wake");
+    out = await routeNameDropEvent(topLevel(nonNameDrop), { ...deps(true, true), displayName: async () => undefined });
+    ok(!out.woke && calls.length === 0, "🔴 [OPE-1367] an unresolved display name stays fail-soft — no wake, even with a wake-hungry arm");
+    ok(seen.length === 0, "🔴 [OPE-1367] …and the arm was never called there");
+
+    calls.length = 0;
+    seen = armed(() => "wake");
+    out = await routeNameDropEvent(topLevel(nonNameDrop), { ...deps(true, true), displayName: async () => "   " });
+    ok(!out.woke && calls.length === 0, "🔴 [OPE-1367] a WHITESPACE-ONLY display name is fail-soft too — no wake");
+    ok(seen.length === 0, "🔴 [OPE-1367] …and the arm was never called there either");
+
+    registerConfig(baseConfig);
+    calls.length = 0;
+    infoCalls = 0;
+    out = await routeNameDropEvent(topLevel(nonNameDrop), deps(true, true));
+    ok(!out.woke && calls.length === 0 && infoCalls === 0, "🔴 [OPE-1367] NEGATIVE: with NO arm registered the same message is dropped before any API call");
+    ok(/does not say the agent's name/.test(out.reason), "[OPE-1367] …for the built-in's own reason");
+    calls.length = 0;
+    out = await routeNameDropEvent(topLevel(), deps(true, true));
+    ok(out.woke && calls.length === 1, "[OPE-1367] NEGATIVE: …and a plain name-drop still wakes with no arm registered");
+    calls.length = 0;
+    latched.length = 0;
+    infoCalls = 0;
+    step = 0;
+  }
+
+  {
     const contextCalls: Array<{ channelId: string; ts: string; threadTs?: string }> = [];
     const withBackscroll = (result: WakeBackscrollLines | null): NameDropRouteDeps => ({
       ...deps(true, true),

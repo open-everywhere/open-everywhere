@@ -89,6 +89,8 @@ import { registerSlackAttachment } from "./slack-attachments.js";
 import {
   nameDropPattern,
   wakeNameDropTokens,
+  wakeAfterArm,
+  wakeArmOffered,
   shouldRotate,
   buildIngestedReaction,
   ingestReaction,
@@ -889,6 +891,11 @@ export function shouldNameDropWake(input: NameDropInput): ReplyDecision {
   return { deliver: true, reason: "name-dropped in an enabled internal channel — judged wake" };
 }
 
+export function nameDropAbstained(input: NameDropInput): boolean {
+  if (input.textMatchesName) return false;
+  return shouldNameDropWake({ ...input, textMatchesName: true }).deliver;
+}
+
 export function renderNameDropMessage(
   ev: ParsedMessageEvent,
   name: string,
@@ -959,9 +966,16 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     textMatchesName: matched !== undefined,
   };
   const pre = shouldNameDropWake({ ...base, domainEnabled: true, channelConfirmedInternal: true });
+  const nameResolved = Boolean(name);
   if (!pre.deliver) {
-    auditIfBotAuthorDrop(ev, "engagement", pre.reason);
-    return { ...pre, woke: false };
+    const armMayRun =
+      nameResolved &&
+      wakeArmOffered("slack") &&
+      nameDropAbstained({ ...base, domainEnabled: true, channelConfirmedInternal: true });
+    if (!armMayRun) {
+      auditIfBotAuthorDrop(ev, "engagement", pre.reason);
+      return { ...pre, woke: false };
+    }
   }
 
   const p = resolvePartition(bindableFor(ev));
@@ -969,8 +983,20 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   if (!enabled) return { ...shouldNameDropWake({ ...base, domainEnabled: false, channelConfirmedInternal: true }), woke: false };
 
   const internal = await deps.confirmInternal(ev.channelId);
-  const decision = shouldNameDropWake({ ...base, domainEnabled: true, channelConfirmedInternal: internal });
-  if (!decision.deliver) return { ...decision, woke: false };
+  const resolved = { ...base, domainEnabled: true, channelConfirmedInternal: internal };
+  const decision = shouldNameDropWake(resolved);
+  const abstained = nameResolved && nameDropAbstained(resolved);
+  if (!decision.deliver && abstained && wakeArmOffered("slack") && tenantFenceDeclined(ev, "routeNameDropEvent")) {
+    return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
+  }
+  const wake = await wakeAfterArm(
+    { wakes: decision.deliver, abstained },
+    { surface: "slack", text: ev.authoredText, channelId: ev.channelId, authorId: ev.userId },
+  );
+  if (!wake) return { ...decision, woke: false };
+  const outcome: ReplyDecision = decision.deliver
+    ? decision
+    : { deliver: true, reason: "wake arm added a wake where the name-drop abstained" };
 
   const rootTs = ev.threadTs ?? ev.ts;
 
@@ -1041,7 +1067,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     ...(rendered.context ? { context: rendered.context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
   });
-  return { ...decision, woke: true };
+  return { ...outcome, woke: true };
 }
 
 let botDisplayNamePromise: Promise<string | undefined> | undefined;

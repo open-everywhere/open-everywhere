@@ -486,6 +486,23 @@ export { unifiedSupervisorToken, standingSeatRegistryKey, dmWindowRegistryKey } 
 
 export { nameDropWakeEnabled } from "./memory/domain.js";
 
+export {
+  wakeAfterArm,
+  wakeArmOffered,
+  wakeArmTimeoutMs,
+  WAKE_ARM_SURFACE_CONTRACT,
+  WAKE_ARM_MAX_TEXT_CHARS,
+} from "./channels/wake-arm.js";
+export type {
+  WakeArmAnswer,
+  WakeArmField,
+  WakeArmInput,
+  WakeArmMessage,
+  WakeArmSurface,
+  WakeArmSurfaceDeclaration,
+  BuiltInWakeAnswer,
+} from "./channels/wake-arm.js";
+
 export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";

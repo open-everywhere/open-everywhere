@@ -1,6 +1,7 @@
 import type { Bundle, Binding } from "./bundle.js";
 import type { ConnectorOpTier } from "./consequence.js";
 import type { ResultReduceSeam } from "./result-reduce.js";
+import type { WakeArmAnswer, WakeArmInput } from "../channels/wake-arm.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
 import type { NetworkAccessBinding } from "./network-access.js";
 import type { AgentsFile } from "../memory/agents-codemod.js";
@@ -65,6 +66,8 @@ export interface AppConfig {
     limit: number,
     ctx: { readonly source: ResultReduceSeam; readonly toolName?: string },
   ): string | undefined | Promise<string | undefined>;
+
+  decideWake?(input: WakeArmInput): WakeArmAnswer | undefined | Promise<WakeArmAnswer | undefined>;
 }
 
 let registered: AppConfig | null = null;

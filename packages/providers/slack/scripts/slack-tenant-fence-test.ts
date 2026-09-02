@@ -141,7 +141,14 @@ async function dropRows(ts: string) {
     const scoped = end > 0 ? body.slice(0, end) : body;
     ok(/tenantFenceDeclined\(ev, "/.test(scoped), `${route} consults the fence before dispatching a turn`);
     ok(scoped.indexOf("tenantFenceDeclined(") < scoped.indexOf("await slackWakeSpendGate("), `…and above ${route}'s spend gate, for the same reason the mention door does`);
+    if (scoped.includes("await wakeAfterArm(")) {
+      ok(
+        scoped.indexOf("tenantFenceDeclined(") < scoped.indexOf("await wakeAfterArm("),
+        `…and above ${route}'s wake-arm consult — an unadmitted tenant's text never reaches a consumer's arm`,
+      );
+    }
   }
+  ok(/await wakeAfterArm\(/.test(engagementDoor), "control: the engagement door really does host a wake-arm consult for the ordering check to constrain");
   ok(/auditJoinWakeDropped\(ev, p, UNADMITTED_TENANT_DROP_REASON\)/.test(engagementDoor), "the channel-JOIN door carries it too — an intro is a model turn, and being invited from a foreign workspace is exactly the delivery to refuse");
 
   const engagementCode = stripComments(engagementDoor);
