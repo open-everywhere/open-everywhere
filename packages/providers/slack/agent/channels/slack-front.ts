@@ -645,7 +645,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       }
       if (decision.dmKind === "mpim") {
         const { userId: dmBotUserId } = await getBotIdentity();
-        if (dmBotUserId && dev.text.includes(`<@${dmBotUserId}>`)) return OK();
+        if (dmBotUserId && dev.authoredText.includes(`<@${dmBotUserId}>`)) return OK();
       }
       persistAttachments(dev);
       if (!(await notYetSeen(decision.env, dev))) return OK();
@@ -817,7 +817,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     persistAttachments(ev);
 
     const { userId: botUserId } = await getBotIdentity();
-    if (botUserId && ev.text.includes(`<@${botUserId}>`)) return OK();
+    if (botUserId && ev.authoredText.includes(`<@${botUserId}>`)) return OK();
 
     if (!(await notYetSeen(decision.env, ev))) return OK();
 

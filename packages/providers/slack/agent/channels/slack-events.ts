@@ -121,6 +121,7 @@ export interface ParsedMessageEvent {
   readonly subtype?: string;
   readonly channelType?: string;
   readonly text: string;
+  readonly authoredText: string;
   readonly previousText?: string;
   readonly isAppMention: boolean;
   readonly attachments?: readonly WakeAttachment[];
@@ -142,6 +143,197 @@ export function parseSlackFiles(files: unknown): WakeAttachment[] {
   return out;
 }
 
+function slackTextObject(value: unknown): string {
+  if (typeof value !== "object" || value === null) return "";
+  const t = (value as Record<string, unknown>)["text"];
+  return typeof t === "string" ? t : "";
+}
+
+function normalizeComparable(s: string): string {
+  return s.replace(/\s+/gu, " ").trim();
+}
+
+function containsAsPhrase(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return false;
+  const wordChar = /[\p{L}\p{N}_]/u;
+  for (let from = 0; ; ) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) return false;
+    const before = at > 0 ? haystack[at - 1] : undefined;
+    const after = at + needle.length < haystack.length ? haystack[at + needle.length] : undefined;
+    if ((before === undefined || !wordChar.test(before)) && (after === undefined || !wordChar.test(after))) return true;
+    from = at + 1;
+  }
+}
+
+function richTextInlineToPlain(elements: unknown): string {
+  if (!Array.isArray(elements)) return "";
+  const out: string[] = [];
+  for (const el of elements) {
+    if (typeof el !== "object" || el === null) continue;
+    const o = el as Record<string, unknown>;
+    const str = (k: string): string | undefined => (typeof o[k] === "string" ? (o[k] as string) : undefined);
+    switch (o["type"]) {
+      case "text": { const t = str("text"); if (t) out.push(t); break; }
+      case "link": {
+        const url = str("url"); const label = str("text");
+        if (url && label) out.push(`<${url}|${label}>`);
+        else if (label) out.push(label);
+        else if (url) out.push(url);
+        break;
+      }
+      case "emoji": { const n = str("name"); if (n) out.push(`:${n}:`); break; }
+      case "user": { const id = str("user_id"); if (id) out.push(`<@${id}>`); break; }
+      case "channel": { const id = str("channel_id"); if (id) out.push(`<#${id}>`); break; }
+      case "usergroup": { const id = str("usergroup_id"); if (id) out.push(`<!subteam^${id}>`); break; }
+      case "broadcast": { const r = str("range"); if (r) out.push(`<!${r}>`); break; }
+      case "date": { const f = str("fallback"); if (f) out.push(f); break; }
+      default: break;
+    }
+  }
+  return out.join("");
+}
+
+function richTextToPlain(elements: unknown): string {
+  if (!Array.isArray(elements)) return "";
+  const parts: string[] = [];
+  const add = (s: string): void => { if (s.length > 0) parts.push(s); };
+  for (const el of elements) {
+    if (typeof el !== "object" || el === null) continue;
+    const o = el as Record<string, unknown>;
+    switch (o["type"]) {
+      case "rich_text_section":
+      case "rich_text_preformatted":
+      case "rich_text_quote":
+        add(richTextInlineToPlain(o["elements"]));
+        break;
+      case "rich_text_list":
+        if (Array.isArray(o["elements"])) {
+          for (const item of o["elements"]) {
+            if (typeof item !== "object" || item === null) continue;
+            add(richTextInlineToPlain((item as Record<string, unknown>)["elements"]));
+          }
+        }
+        break;
+      default: break;
+    }
+  }
+  return parts.join("\n");
+}
+
+function extractSlackBlockLines(blocks: unknown): string[] {
+  if (!Array.isArray(blocks)) return [];
+  const out: string[] = [];
+  const add = (s: string): void => { if (s.length > 0) out.push(s); };
+  for (const b of blocks) {
+    if (typeof b !== "object" || b === null) continue;
+    const o = b as Record<string, unknown>;
+    switch (o["type"]) {
+      case "section":
+        add(slackTextObject(o["text"]));
+        if (Array.isArray(o["fields"])) for (const f of o["fields"]) add(slackTextObject(f));
+        break;
+      case "header":
+        add(slackTextObject(o["text"]));
+        break;
+      case "context":
+        if (Array.isArray(o["elements"])) {
+          for (const el of o["elements"]) {
+            if (typeof el !== "object" || el === null) continue;
+            const e = el as Record<string, unknown>;
+            if (e["type"] === "image") { if (typeof e["alt_text"] === "string") add(e["alt_text"]); continue; }
+            add(slackTextObject(e));
+          }
+        }
+        break;
+      case "markdown":
+        if (typeof o["text"] === "string") add(o["text"]);
+        break;
+      case "rich_text":
+        add(richTextToPlain(o["elements"]));
+        break;
+      case "image":
+        if (typeof o["alt_text"] === "string") add(o["alt_text"]);
+        break;
+      default: break;
+    }
+  }
+  return out;
+}
+
+function extractSlackMessageUnfurlLines(messageBlocks: unknown): string[] {
+  if (!Array.isArray(messageBlocks)) return [];
+  const out: string[] = [];
+  for (const mb of messageBlocks) {
+    if (typeof mb !== "object" || mb === null) continue;
+    const message = (mb as Record<string, unknown>)["message"];
+    if (typeof message !== "object" || message === null) continue;
+    const m = message as Record<string, unknown>;
+    const lines = extractSlackBlockLines(m["blocks"]);
+    if (lines.length > 0) out.push(...lines);
+    else if (typeof m["text"] === "string" && m["text"].length > 0) out.push(m["text"]);
+  }
+  return out;
+}
+
+function hasSharedMessageAttachment(o: Record<string, unknown>): boolean {
+  const lines = extractSlackMessageUnfurlLines(o["message_blocks"]);
+  return o["is_share"] === true || o["is_msg_unfurl"] === true || o["is_reply_unfurl"] === true || lines.length > 0;
+}
+
+function extractSlackAttachmentLines(attachments: unknown): string[] {
+  if (!Array.isArray(attachments)) return [];
+  const out: string[] = [];
+  for (const a of attachments) {
+    if (typeof a !== "object" || a === null) continue;
+    const o = a as Record<string, unknown>;
+    if (!hasSharedMessageAttachment(o)) continue;
+    const lines: string[] = [];
+    const add = (v: unknown): void => { if (typeof v === "string" && v.length > 0) lines.push(v); };
+    add(o["pretext"]);
+    add(o["title"]);
+    add(o["text"]);
+    if (Array.isArray(o["fields"])) {
+      for (const f of o["fields"]) {
+        if (typeof f !== "object" || f === null) continue;
+        const fo = f as Record<string, unknown>;
+        const title = typeof fo["title"] === "string" ? fo["title"].trim() : "";
+        const value = typeof fo["value"] === "string" ? fo["value"].trim() : "";
+        if (title && value) lines.push(`${title}: ${value}`);
+        else if (value) lines.push(value);
+        else if (title) lines.push(title);
+      }
+    }
+    add(o["footer"]);
+    lines.push(...extractSlackBlockLines(o["blocks"]));
+    lines.push(...extractSlackMessageUnfurlLines(o["message_blocks"]));
+    if (lines.length === 0) add(o["fallback"]);
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const key = normalizeComparable(line);
+      if (key.length === 0 || seen.has(key)) continue;
+      seen.add(key);
+      out.push(line);
+    }
+  }
+  return out;
+}
+
+export function resolveSlackInboundText(text: string, inner: Record<string, unknown>): string {
+  try {
+    const lines = extractSlackAttachmentLines(inner["attachments"]);
+    if (lines.length === 0) return text;
+    const outer = normalizeComparable(text);
+    const kept = lines.filter((line) => !containsAsPhrase(outer, normalizeComparable(line)));
+    if (kept.length === 0) return text;
+    const quoted = kept.join("\n");
+    return text.trim().length === 0 ? quoted : `${text}\n${quoted}`;
+  } catch (err) {
+    console.warn(`[open-everywhere:slack-events] inbound attachment extraction failed; delivering the author's text alone: ${String(err)}`);
+    return text;
+  }
+}
+
 export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEvent | null {
   if (envelope?.type !== "event_callback") return null;
   const e = envelope.event as (Record<string, unknown> & { type?: string }) | undefined;
@@ -158,7 +350,8 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const ts = typeof e.ts === "string" ? e.ts : "";
   if (!channelId || !ts) return null;
   const threadTs = typeof inner.thread_ts === "string" ? inner.thread_ts : undefined;
-  const text = typeof inner.text === "string" ? inner.text : "";
+  const authoredText = typeof inner.text === "string" ? inner.text : "";
+  const text = resolveSlackInboundText(authoredText, inner);
   const teamId = envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined);
   const attachments = parseSlackFiles(inner.files);
   for (const a of attachments) {
@@ -174,6 +367,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     subtype,
     channelType: typeof e.channel_type === "string" ? e.channel_type : undefined,
     text,
+    authoredText,
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
     isAppMention: e.type === "app_mention",
     attachments,
@@ -755,7 +949,7 @@ export interface NameDropRouteDeps {
 
 export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropRouteDeps): Promise<RouteOutcome> {
   const name = (await deps.displayName())?.trim();
-  const matched = name ? matchWakeTriggers(ev.text, buildWakeTriggers(name)) : undefined;
+  const matched = name ? matchWakeTriggers(ev.authoredText, buildWakeTriggers(name)) : undefined;
   const base = {
     inThread: Boolean(ev.threadTs),
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
