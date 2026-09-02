@@ -217,6 +217,10 @@ for (const eveDir of copies) {
     src.includes("__oeThrowEmptyResponseUnlessTerminal(") && !src.includes("throw new EmptyModelResponseError;"),
     `copies: ${where} carries the empty-step terminal guard (OPE-762, __oeThrowEmptyResponseUnlessTerminal) on BOTH throw sites — an unpatched copy reissues the model call with "Your previous reply was empty and was not delivered" after every correctly-silent turn, so the seat replies to the wake it just declined`,
   );
+  ok(
+    src.includes("__oeProjectModelMessages(normalizeModelMessages("),
+    `copies: ${where} carries the model-message projection seam (OPE-1396, part 6) WRAPPING normalizeModelMessages — this is the only seam that hands OE the list the model actually reads, so an unpatched copy takes OPE-593's \`[Agents]\` subtraction off the model call and the seat learns a live worker \`agentId\` from the listing`,
+  );
   const compactionFile = join(eveDir, COMPACTION);
   ok(
     existsSync(compactionFile),

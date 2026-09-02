@@ -9,7 +9,6 @@ import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
-import { suppressAgentsListing } from "../access/worker-continuation.js";
 import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
 
 const loggedOnce = new Set<string>();
@@ -270,7 +269,6 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   deps: RoutingDeps<TModel>,
   event?: unknown,
 ): Promise<TModel> {
-  suppressAgentsListing((ctx as { messages?: unknown }).messages);
   const boundary = noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);

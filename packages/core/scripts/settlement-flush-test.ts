@@ -668,7 +668,13 @@ console.log("10. the blocking arm's batch rule — a partial dispatch batch emit
   const { AGENT_HANDLES_STATE_KEY } = (await import(evePath("harness/handles/state-key.js"))) as { AGENT_HANDLES_STATE_KEY: string };
 
   const NAME = "worker";
-  const call = (id: string): unknown => ({ kind: "subagent-call", callId: id, subagentName: NAME, input: {} });
+  const call = (id: string): unknown => ({
+    callId: id,
+    description: "delegate",
+    input: {},
+    toolName: NAME,
+    target: { kind: "subagent-call", nodeId: "node", subagentName: NAME },
+  });
   const handle = (id: string): unknown => ({
     phase: "running",
     identity: { id: `ag_${NAME}:${id}`, name: NAME, nodeId: "node" },

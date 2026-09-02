@@ -1,7 +1,7 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readAudit } from "../agent/audit/audit.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -201,4 +201,105 @@ const ORG = "acme";
   ok(lint.includes("runtime-rotation.ts"), "…and still names the module the constant lives in");
 }
 
-console.log(`✓ runtime-rotation: ${n} assertions passed (OPE-599 pre-dispatch heal: claim, permanence, chain rung, eight live call sites)`);
+{
+  const retirementVerb = /\.reset\(/;
+  const CREDENTIAL_CACHE_RESETS = ["teamsGraphToken", "installationToken", "linearAppActorToken"] as const;
+  const sourceRoots = [
+    "agent",
+    "packages/core/agent",
+    "packages/adapters/agent",
+    ...["discord", "github", "linear", "notion", "slack", "teams"].map((p) => `packages/providers/${p}/agent`),
+  ];
+  let scanned = 0;
+  const scanFile = (abs: string): boolean => {
+    const src = readFileSync(abs, "utf8");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(new RegExp(`\\b(?:${CREDENTIAL_CACHE_RESETS.join("|")})\\.reset\\(`, "g"), "");
+    return retirementVerb.test(code);
+  };
+  const walk = (dir: string, into: string[]): void => {
+    for (const e of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name !== "docs" && e.name !== "node_modules") walk(rel, into);
+        continue;
+      }
+      if (!e.name.endsWith(".ts") || e.name.endsWith(".d.ts")) continue;
+      scanned++;
+      if (scanFile(join(REPO_ROOT, rel))) into.push(rel);
+    }
+  };
+  const offenders: string[] = [];
+  for (const root of sourceRoots) walk(root, offenders);
+  eq(
+    offenders,
+    [],
+    `🔴 no OE source calls eve's session retirement verb — a rotation abandons the outgoing generation instead (found: ${offenders.join(", ") || "none"})`,
+  );
+
+  ok(scanned > 200, `NEGATIVE CONTROL: the walk actually read the trees (${scanned} source files scanned)`);
+  for (const root of sourceRoots) {
+    ok(
+      existsSync(join(REPO_ROOT, root)),
+      `NEGATIVE CONTROL: the scanned root \`${root}\` exists — a renamed tree must red here, not vanish from the scan`,
+    );
+  }
+  {
+    const scratchDir = join(REPO_ROOT, "node_modules", ".oe-scratch");
+    mkdirSync(scratchDir, { recursive: true });
+
+    const probeAbs = join(scratchDir, "retirement-probe.ts");
+    writeFileSync(
+      probeAbs,
+      ['// a comment mentioning .reset() must NOT count', 'export async function p(s: { reset: (o: { reason: string }) => Promise<void> }): Promise<void> {', '  await s.reset({ reason: "rotate" });', "}", ""].join("\n"),
+    );
+    try {
+      ok(scanFile(probeAbs), "NEGATIVE CONTROL: a planted `.reset({…})` IS seen through the real comment-stripper");
+    } finally {
+      unlinkSync(probeAbs);
+    }
+    const commentOnlyAbs = join(scratchDir, "retirement-probe-comment.ts");
+    writeFileSync(commentOnlyAbs, ["// this file only mentions .reset() in a comment", "export const q = 1;", ""].join("\n"));
+    try {
+      ok(!scanFile(commentOnlyAbs), "NEGATIVE CONTROL: …while a comment-only mention is not — the scan reads code, not prose");
+    } finally {
+      unlinkSync(commentOnlyAbs);
+    }
+  }
+  const rawSources: string[] = [];
+  const collect = (dir: string): void => {
+    for (const e of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name !== "docs" && e.name !== "node_modules") collect(rel);
+        continue;
+      }
+      if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) rawSources.push(readFileSync(join(REPO_ROOT, rel), "utf8"));
+    }
+  };
+  for (const root of sourceRoots) collect(root);
+  for (const name of CREDENTIAL_CACHE_RESETS) {
+    ok(
+      rawSources.some((s) => s.includes(`${name}.reset(`)),
+      `NEGATIVE CONTROL: \`${name}.reset()\` still exists in the tree — a dead exclusion silently widens this tripwire`,
+    );
+  }
+
+  const unified = readFileSync(join(REPO_ROOT, "packages/core/agent/channels/unified.ts"), "utf8");
+  const slack = readFileSync(join(REPO_ROOT, "packages/providers/slack/agent/channels/slack.ts"), "utf8");
+  ok(
+    !/^\s*(?:async )?"session\.completed"/m.test(unified),
+    "🔴 the `unified` channel declares NO `session.completed` adapter handler — a retired unified seat runs nothing",
+  );
+  ok(
+    /^\s*"session\.completed":/m.test(slack),
+    "NEGATIVE CONTROL: the `slack` channel DOES declare one (👀 removal + syncPinnedStatus) — the check above measures a real asymmetry",
+  );
+}
+
+console.log(
+  `✓ runtime-rotation: ${n} assertions passed (OPE-599 pre-dispatch heal: claim, permanence, chain rung, eight live call sites; ` +
+    `OPE-1373: rotation abandons rather than retires, so eve 0.48.0's terminal emit is unreachable)`,
+);

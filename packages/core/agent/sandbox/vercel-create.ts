@@ -5,7 +5,7 @@ export const DEFAULT_SANDBOX_REGION = "iad1";
 export const SANDBOX_REGION_PASSTHROUGH_SUPPORTED = false;
 
 export const SANDBOX_REGION_GAP =
-  "eve 0.47.2 creates every Vercel sandbox through its own vendored @vercel/sandbox, whose " +
+  "eve 0.48.0 creates every Vercel sandbox through its own vendored @vercel/sandbox, whose " +
   "Sandbox.create enumerates the fields it forwards and has no `region` among them — a region " +
   "set here would be DROPPED SILENTLY and the sandbox would run in the default region. The same " +
   "eve vendors a newer copy that does forward a region (@vercel/sandbox-delete), but loads it only " +

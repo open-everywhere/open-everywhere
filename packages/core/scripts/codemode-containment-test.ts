@@ -40,10 +40,12 @@ function walkTs(dir: string): string[] {
     `no source calls experimental_workflow(...) (found: ${activators.map((f) => f.split("/agent/")[1]).join(", ") || "none"})`,
   );
 
-  const rtaFiles = files.filter((f) => /\bruntimeAction\b/.test(readFileSync(f, "utf8")));
+  const rtaFiles = files.filter((f) =>
+    /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch/.test(readFileSync(f, "utf8")),
+  );
   ok(
     rtaFiles.length === 0,
-    `no agent source references runtimeAction (found: ${rtaFiles.map((f) => f.split("/agent/")[1]).join(", ") || "none"})`,
+    `no agent source declares a runtime-action / dispatch tool (found: ${rtaFiles.map((f) => f.split("/agent/")[1]).join(", ") || "none"})`,
   );
 }
 
@@ -60,19 +62,57 @@ function walkTs(dir: string): string[] {
   const gatedConnectorOp = { name: "read_notion_page", description: "gated connector read", inputSchema: {}, execute: gatedExecute };
 
   const rtaExecute = async (): Promise<unknown> => ({ ran: "inline" });
-  const runtimeActionTool = { name: "spawn", description: "delegation", inputSchema: {}, execute: rtaExecute, runtimeAction: { kind: "spawn" } };
+  const dispatchTool = (name: string, target: Record<string, unknown>): Record<string, unknown> => ({
+    name,
+    description: "delegation",
+    inputSchema: {},
+    execute: rtaExecute,
+    behavior: { availability: [], handling: { kind: "dispatch", target } },
+  });
+  const delegation = dispatchTool("spawn", { kind: "subagent-call", nodeId: "node", subagentName: "spawn" });
 
   const mixed = new Map<string, unknown>([
     ["read_notion_page", gatedConnectorOp],
-    ["spawn", runtimeActionTool],
+    ["spawn", delegation],
   ]);
   const host = wf.buildWorkflowHostTools({ tools: mixed });
 
   ok(!("read_notion_page" in host), "sandbox host tools EXCLUDE the gated connector op (unreachable from code-mode)");
-  ok("spawn" in host, "sandbox host tools include the runtime-action delegation tool (the only exposed class)");
+  ok("spawn" in host, "sandbox host tools include the delegation tool (the only exposed class)");
   ok(
     host.spawn?.execute !== rtaExecute,
-    "even the exposed runtime-action tool's execute is WRAPPED (interrupts back to the host gate — the original execute never runs inline in the sandbox)",
+    "even the exposed delegation tool's execute is WRAPPED (interrupts back to the host gate — the original execute never runs inline in the sandbox)",
+  );
+
+  for (const [label, target] of [
+    ["task-cancel", { kind: "task-cancel" }],
+    ["task-update", { kind: "task-update" }],
+    ["workflow-tool-call", { kind: "workflow-tool-call", workflowId: "w1" }],
+  ] as const) {
+    const only = new Map<string, unknown>([["ctl", dispatchTool("ctl", target as unknown as Record<string, unknown>)]]);
+    ok(
+      Object.keys(wf.buildWorkflowHostTools({ tools: only })).length === 0,
+      `a \`${label}\` dispatch tool is NOT exposed to the sandbox (only agent-call targets are)`,
+    );
+  }
+  for (const [label, target] of [
+    ["subagent-call", { kind: "subagent-call", nodeId: "n", subagentName: "s" }],
+    ["self-agent-call", { kind: "self-agent-call", nodeId: "n", subagentName: "s" }],
+    ["remote-agent-call", { kind: "remote-agent-call", nodeId: "n", remoteAgentName: "r" }],
+  ] as const) {
+    const only = new Map<string, unknown>([["d", dispatchTool("d", target as unknown as Record<string, unknown>)]]);
+    ok(
+      Object.keys(wf.buildWorkflowHostTools({ tools: only })).length === 1,
+      `NEGATIVE CONTROL: a \`${label}\` dispatch tool IS exposed — the exclusions above are the filter, not an empty fixture`,
+    );
+  }
+
+  const bg = new Map<string, unknown>([
+    ["bg", { ...dispatchTool("bg", { kind: "subagent-call", nodeId: "n", subagentName: "bg" }), execution: "background" }],
+  ]);
+  ok(
+    "bg" in wf.buildWorkflowHostTools({ tools: bg }),
+    "a BACKGROUND delegation tool is still exposed to the sandbox (the host filter ignores `execution`)",
   );
 
   const nonRtaOnly = new Map<string, unknown>([
@@ -82,18 +122,18 @@ function walkTs(dir: string): string[] {
   const emptyHost = wf.buildWorkflowHostTools({ tools: nonRtaOnly });
   ok(
     Object.keys(emptyHost).length === 0,
-    "a tool-set with no runtime-action tools yields an EMPTY sandbox host set (⇒ Workflow tool never registered)",
+    "a tool-set with no delegation tools yields an EMPTY sandbox host set (⇒ Workflow tool never registered)",
   );
 }
 
 {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
-  const cmUrl = pathToFileURL(join(eveRoot, "dist/src/compiled/experimental-ai-sdk-code-mode/index.js")).href;
-  const { runCodeMode } = (await import(cmUrl)) as {
-    runCodeMode: (input: { js: string; tools: Record<string, unknown>; options?: unknown }) => Promise<unknown>;
+  const cmUrl = pathToFileURL(join(eveRoot, "dist/src/compiled/@ai-sdk/code-mode/index.js")).href;
+  const { experimental_runCodeMode: runCodeMode } = (await import(cmUrl)) as {
+    experimental_runCodeMode: (input: { js: string; tools: Record<string, unknown>; options?: unknown }) => Promise<unknown>;
   };
-  ok(typeof runCodeMode === "function", "eve still exposes the code-mode runtime (runCodeMode)");
+  ok(typeof runCodeMode === "function", "eve still exposes the code-mode runtime (experimental_runCodeMode)");
 
   const benign = await runCodeMode({ js: "return 1 + 2;", tools: {} });
   ok(benign === 3, "code-mode sandbox executes a benign program (harness is live)");
@@ -123,6 +163,6 @@ function walkTs(dir: string): string[] {
 
 console.log(
   `\n✓ codemode-containment: ${n} assertions passed ` +
-    `(OE posture: no workflow.ts / no experimental_workflow / zero runtimeAction · eve pin: sandbox exposes only wrapped runtime-action tools · ` +
+    `(OE posture: no workflow.ts / no experimental_workflow / zero delegation tools · eve pin: sandbox exposes only wrapped agent-call delegation tools · ` +
     `live: benign runs, fetch fail-closed, connector op unreachable)\n`,
 );

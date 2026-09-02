@@ -4,7 +4,6 @@ import { isSubagentChildContext, type BindableContext } from "@open-everywhere/c
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { backstopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
-import { suppressAgentsListing } from "@open-everywhere/core/agent/access/worker-continuation.js";
 import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
@@ -52,7 +51,6 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
 
   stampModelCall(SCRIPTED_MODEL_ID);
 
-  suppressAgentsListing((ctx as { messages?: unknown } | undefined)?.messages);
   const boundary = noteTurnStep(bindable, event);
   if (boundary.tier === "hard") {
     reportStepBoundary(bindable, boundary);

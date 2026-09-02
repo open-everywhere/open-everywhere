@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 
 import { asSchema } from "ai";
 
@@ -50,7 +52,7 @@ const messages: unknown[] = [
   agentsNote,
 ];
 const removed = suppressAgentsListing(messages);
-eq(removed, 1, "🔴 §1 the listing is removed — this is the whole model-context half of the refusal posture");
+eq(removed, 1, "🔴 §1 the listing is removed — this is the model-context half of the refusal posture");
 eq(messages.length, 3, "…and exactly one message went");
 ok(!messages.includes(agentsNote), "…and it was THAT message");
 eq(
@@ -75,6 +77,31 @@ eq(nearMisses.length, 5, "…the array is untouched");
 
 eq(suppressAgentsListing(undefined), 0, "§1 no messages ⇒ 0, never a throw (the resolver turns a throw into a failed model call)");
 eq(suppressAgentsListing("[Agents]"), 0, "§1 a non-array ⇒ 0");
+
+{
+  const hook = (globalThis as Record<string, unknown>)["__oeModelMessageProjection"];
+  ok(typeof hook === "function", "🔴 §1b the part-6 hook IS installed on globalThis by importing the module — an uninstalled hook is a silent passthrough and the seat sees the listing");
+  eq(hook, suppressAgentsListing, "🔴 §1b …and it is exactly `suppressAgentsListing`, not some other projector");
+
+  const viaHook: unknown[] = [{ role: "user", content: "hello" }, { ...agentsNote }];
+  (hook as (m: unknown) => unknown)(viaHook);
+  eq(viaHook.length, 1, "🔴 §1b calling the hook the way the patch calls it removes the listing IN PLACE");
+  eq((viaHook[0] as { content?: unknown }).content, "hello", "…and leaves the real message");
+
+  const untouched: unknown[] = [{ role: "user", content: "[Agents] are what we call the workers" }];
+  (hook as (m: unknown) => unknown)(untouched);
+  eq(untouched.length, 1, "🔴 §1b NEGATIVE CONTROL: the hook keeps a near-miss — it subtracts eve's render, not every message");
+
+  const toolLoop = readFileSync(join(eveRoot, "dist/src/harness/tool-loop.js"), "utf8");
+  ok(
+    toolLoop.includes("__oeProjectModelMessages(normalizeModelMessages("),
+    "🔴 §1b the installed eve carries part 6, wrapping `normalizeModelMessages` — the seam that hands OE the list the model actually reads",
+  );
+  ok(
+    toolLoop.includes("globalThis.__oeModelMessageProjection"),
+    "🔴 §1b …and part 6's helper reads the SAME globalThis key this module installs — a key rename on either side is a silent passthrough",
+  );
+}
 
 const persistentToolset = () => ({ agent: { inputSchema: persistentSchema() }, bash: { inputSchema: plainSchema() } });
 

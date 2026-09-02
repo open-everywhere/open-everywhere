@@ -97,7 +97,7 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
   ok(entry.includes("terminateChildSessionsStep"), "PIN 5: eve's reaper is still called from the session workflow entry and nowhere a hook can reach");
   ok(
     entry.includes("sessionTimeoutMs===!1?void 0:"),
-    "PIN 5 🔴: `sessionTimeoutMs: false` still yields NO deadline — so `finalizeExpiredSession`, and the reaper behind it, never runs",
+    "PIN 5 🔴: `sessionTimeoutMs: false` still yields NO deadline — so no OE session ever reaches the `expired` arm",
   );
 
   const agentSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "agent", "agent.ts"), "utf8");
@@ -109,21 +109,48 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
 
 {
   const entry = read("execution/workflow-entry.js");
+  const finalizer = read("execution/finalize-terminal-session.js");
+  const finalization = read("execution/workflow-entry-finalization.js");
+
   ok(
-    /function finalizeExpiredSession\([A-Za-z_$]+\)\{return await terminateChildSessionsStep\([^)]*\),await emitTerminalSessionCompletionStep\(/.test(entry),
-    "PIN 6 🔴: session expiry still reaps AND emits a terminal completion — the event OPE-281 refuses to re-arm",
+    /await terminateChildSessionsStep\([^)]*\),await emitTerminalSessionCompletionStep\([^)]*\),[A-Za-z_$]{1,2}\.terminalState\.terminalEmitted=!0,[A-Za-z_$]{1,2}\.notifyCaller&&/.test(finalizer),
+    "PIN 6 🔴: the shared finalizer reaps, then emits the terminal completion UNCONDITIONALLY, and only then consults `notifyCaller`",
   );
   ok(
-    entry.split("emitTerminalSessionCompletionStep(").length - 1 === 1,
-    "PIN 6 🔴: the terminal-completion emit still has exactly ONE call site — so expiry is the only exit that fires it",
+    /[A-Za-z_$]{1,2}\.kind===`result`\?[A-Za-z_$]{1,2}\.result:await finalizeTerminalSession\(/.test(entry),
+    "PIN 6 🔴: the driver routes every non-`result` exit into `finalizeTerminalSession`",
+  );
+  for (const arm of ["expired", "reset", "closed"]) {
+    ok(
+      new RegExp(`\\.kind===\`${arm}\`\\)return\\{kind:\`terminal\`,notifyCaller:!(0|1),`).test(entry),
+      `PIN 6 🔴: the \`${arm}\` arm returns a \`terminal\` kind — it reaches the shared finalizer`,
+    );
+  }
+  ok(
+    !entry.includes("emitTerminalSessionCompletionStep"),
+    "PIN 6: the terminal-completion emit no longer has a call site in `workflow-entry.js`",
+  );
+  ok(
+    (finalization.match(/finalizeExpiredSession/g) ?? []).length === 2,
+    "PIN 6: `finalizeExpiredSession` is dead — its only occurrences are its own declaration and its export",
   );
 }
 
 {
   const entry = read("execution/workflow-entry.js");
+  const finalization = read("execution/workflow-entry-finalization.js");
   ok(
-    /`reset`\)return await terminateChildSessionsStep\(\{serializedContext:[^)]*\}\),\{kind:`result`,result:\{output:``\}\}/.test(entry),
-    "PIN 7 🔴: the `reset` arm is still exactly `terminateChildSessionsStep` then an EMPTY result — the reaper with no terminal-completion emit",
+    /\.kind===`reset`\)return\{kind:`terminal`,notifyCaller:!1,/.test(entry),
+    "PIN 7 🔴: the `reset` arm retires with `notifyCaller: false` — which pin 6 proves does NOT suppress the terminal completion",
+  );
+  ok(
+    /\.kind===`expired`\)return\{kind:`terminal`,notifyCaller:!0,/.test(entry),
+    "PIN 7: …while `expired` carries `notifyCaller: true` through the same finalizer — the flag is read, not hardcoded",
+  );
+  ok(
+    /async function finalizeDone\([A-Za-z_$]{1,2}\)\{[^]*?await terminateChildSessionsStep\(/.test(finalization) &&
+      !/async function finalizeDone\([A-Za-z_$]{1,2}\)\{[^]*?emitTerminalSessionCompletionStep\(/.test(finalization),
+    "PIN 7 🔴: `finalizeDone` is the only reaper left with NO terminal emit — and it fires only on the session's own `done`, so OE cannot drive it",
   );
 }
 

@@ -97,3 +97,11 @@ export function refuseAgentContinuation(toolset: Record<string, unknown>): boole
   tool.inputSchema = replacement;
   return true;
 }
+
+const MODEL_MESSAGE_HOOK_KEY = "__oeModelMessageProjection";
+
+export function installAgentsListingProjectionHook(): void {
+  (globalThis as Record<string, unknown>)[MODEL_MESSAGE_HOOK_KEY] = suppressAgentsListing;
+}
+
+installAgentsListingProjectionHook();
