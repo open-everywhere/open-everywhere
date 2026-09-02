@@ -9,6 +9,7 @@ import {
 import type { SessionContext } from "eve/context";
 import { once, type ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
+import { offerRoutinePermissionCardFor } from "../approvals/routine-permission-offer.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { routineGrantKeyStamped } from "../routines/routine.js";
 import type { ApprovalPolicy } from "eve/tools/approval";
@@ -420,6 +421,7 @@ interface FencedTurnFacts {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceKey: string;
   readonly principalId?: string;
   readonly grantKey?: string;
 }
@@ -439,6 +441,7 @@ async function fencedTurnFacts(
       org: partition.org,
       platform: partition.platform,
       workspace: partition.workspace,
+      surfaceKey: partition.surfaceKey,
       ...(partition.surface === undefined ? {} : { surface: partition.surface }),
       ...(binding.principalId === undefined ? {} : { principalId: binding.principalId }),
       ...(grantKey === undefined ? {} : { grantKey }),
@@ -541,7 +544,21 @@ export function withUnattendedConnectorFence(
         }),
       undefined,
     );
-    return { type: "denied", reason: unattendedConnectorRefusalMessage(connection, ctx.toolName, tier, poisoned) };
+    const routineKey = facts.grantKey;
+    const requestedBy = facts.principalId;
+    const card =
+      tier === "write" && routineKey !== undefined && requestedBy !== undefined
+        ? await offerRoutinePermissionCardFor({
+            org: facts.org,
+            declaration: `tool:${ctx.toolName}`,
+            grantKey: routineKey,
+            scopeKey: facts.surfaceKey,
+            requestedBy,
+            tainted: poisoned,
+            waitBudgetMs: 0,
+          })
+        : { clause: "" };
+    return { type: "denied", reason: unattendedConnectorRefusalMessage(connection, ctx.toolName, tier, poisoned) + card.clause };
   };
 }
 

@@ -14,6 +14,9 @@ delete process.env.DATABASE_URL;
 
 const problems: string[] = [];
 
+const { routinePermissionCardOffererRegistered } = await import("@open-everywhere/core/agent/approvals/routine-permission-offer.js");
+const cardOffererBeforeBoot = routinePermissionCardOffererRegistered();
+
 function tsFilesUnder(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules") continue;
@@ -343,6 +346,21 @@ for (const [rel, mod] of loaded) {
   }
 }
 
+{
+  if (cardOffererBeforeBoot) {
+    problems.push(
+      "CARD SEAM (negative control): the routine permission card offerer was already registered BEFORE the agent " +
+        "tree loaded. This gate then proves nothing about that tree — find what else fills the slot.",
+    );
+  } else if (!routinePermissionCardOffererRegistered()) {
+    problems.push(
+      "CARD SEAM: nothing in the agent tree reaches approvals/flow.ts, so nothing fills the routine permission card " +
+        "offerer. An unattended CONNECTOR refusal would then post NO card and say nothing about it — the routine's " +
+        "owner is told to arm a declaration with no way to click it.",
+    );
+  }
+}
+
 rmSync(scratch, { recursive: true, force: true });
 
 if (problems.length > 0) {
@@ -354,6 +372,7 @@ if (problems.length > 0) {
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
     `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; scripted model inert; ` +
-    `turn-model selection carries the primary window + gateway options; compaction resolves without a reference`,
+    `turn-model selection carries the primary window + gateway options; compaction resolves without a reference; ` +
+    `the routine permission card offerer is registered by the agent tree`,
 );
 process.exit(0);

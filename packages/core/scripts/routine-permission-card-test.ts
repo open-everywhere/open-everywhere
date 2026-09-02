@@ -126,6 +126,16 @@ const KEY = routineGrantKey(routine);
   ok(declarableRoutinePermission("skill.create") === undefined, "§vocabulary: an injection-gate kind is NOT declarable, so it is never carded");
   ok(declarableRoutinePermission("memory.purge") === undefined, "§vocabulary: memory.purge is not declarable");
   ok(declarableRoutinePermission("spend.set") === undefined, "§vocabulary: a spend verb is not declarable");
+  ok(
+    declarableRoutinePermission("tool:notion__create_page")?.grantKind === "connector.tool:notion__create_page",
+    "§vocabulary: a WRITE-tier connector tool is declarable, and its grant kind is the per-tool kind the fence's lift arm reads",
+  );
+  ok(
+    declarableRoutinePermission("tool:notion__delete_page") === undefined,
+    "🔴 §vocabulary: a DELETE-tier connector tool is NOT declarable — the planner applies routines/grants.ts's own tier test, so a card is refused here even before the fence's guard",
+  );
+  ok(declarableRoutinePermission("tool:notion") === undefined, "§vocabulary: a connection-shaped declaration names no tool, so it is not declarable");
+  ok(declarableRoutinePermission("tool:grant__notion__read") === undefined, "§vocabulary: the RESERVED grant namespace belongs to the credential-grant plane, not this one");
 }
 
 {
@@ -145,7 +155,7 @@ const KEY = routineGrantKey(routine);
 
 const baseOffer = {
   org: ORG,
-  actionKind: "pr.open",
+  declaration: "pr.open",
   grantKey: KEY,
   scopeKey: SURFACE,
   domain: null,
@@ -166,7 +176,7 @@ const baseOffer = {
   ok((plan.card?.summaryLines ?? []).join(" ").includes("declining is remembered"), "§plan: the card says out loud that a decline is durable");
 
   ok((await planRoutinePermissionCard({ ...baseOffer, tainted: true })).state === "n/a", "§plan: a TAINTED turn plans nothing — no standing grant is ever asked for off fetched content");
-  ok((await planRoutinePermissionCard({ ...baseOffer, actionKind: "skill.create" })).state === "n/a", "§plan: a non-declarable kind plans nothing");
+  ok((await planRoutinePermissionCard({ ...baseOffer, declaration: "skill.create" })).state === "n/a", "§plan: a non-declarable kind plans nothing");
   ok((await planRoutinePermissionCard({ ...baseOffer, grantKey: "slack:T1:C1:9" })).state === "n/a", "§plan: a non-routine grant key plans nothing");
   ok((await planRoutinePermissionCard({ ...baseOffer, grantKey: "oe-routine:r-missing:g1" })).state === "n/a", "§plan: a key naming no stored routine plans nothing rather than guessing a room");
   ok((await planRoutinePermissionCard({ ...baseOffer, org: "other-org" })).state === "n/a", "§plan: the routine lookup is org-scoped");
@@ -252,7 +262,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     "§click: rejecting the card writes the DURABLE decline through the real click path — later fires refuse quietly",
   );
   ok(
-    (await planRoutinePermissionCard({ ...baseOffer, actionKind: "pr.open" })).state === "declined",
+    (await planRoutinePermissionCard({ ...baseOffer, declaration: "pr.open" })).state === "declined",
     "§click: and the planner will not post a fresh card over a declined one",
   );
 
@@ -274,7 +284,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     (await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "lapsed",
     "🔴 §click: an answered card whose answer stuck to NOTHING leaves the memo and no row — lapsed, never live",
   );
-  const afterLapse = await planRoutinePermissionCard({ ...baseOffer, actionKind: "pr.open" });
+  const afterLapse = await planRoutinePermissionCard({ ...baseOffer, declaration: "pr.open" });
   ok(afterLapse.state === "lapsed" && afterLapse.card !== undefined, "🔴 §click: and the planner posts a FRESH card over a lapsed one — OPE-1290's rule that a card posts once the old row is really gone");
   const relapsed = await refuse(proposal);
   ok(relapsed.includes("is now waiting in the routine's own room"), "§click: so the next real fire announces a new card rather than pointing at the dead one");

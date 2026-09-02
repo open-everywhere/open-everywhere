@@ -4,9 +4,9 @@ import {
   routinePermissionCardLines,
   type RoutinePermissionArgs,
 } from "../approvals/routine-permission.js";
-import { routinePermissionAskedMemo, routinePermissionDeclinedMemo } from "../approvals/session-grant.js";
+import { routinePermissionAskedMemo, routinePermissionDeclinedMemo, routinePermissionKind } from "../approvals/session-grant.js";
 import type { RoutineCardProbe } from "./permission-card-wait.js";
-import { ROUTINE_GRANT_NO_EXPIRY } from "./grants.js";
+import { ROUTINE_GRANT_NO_EXPIRY, namesUnliftableTool } from "./grants.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
@@ -19,8 +19,10 @@ export type RoutinePermissionCardState = "declined" | "live" | "lapsed" | "unrea
 
 export { routineGrantKeyParts };
 
-export function declarableRoutinePermission(actionKind: string): { grantKind: string; declaration: string } | undefined {
-  return actionKind === "pr.open" ? { grantKind: "pr.open", declaration: "pr.open" } : undefined;
+export function declarableRoutinePermission(declaration: string): { grantKind: string; declaration: string } | undefined {
+  const grantKind = routinePermissionKind(declaration);
+  if (grantKind === null || namesUnliftableTool(declaration)) return undefined;
+  return { grantKind, declaration };
 }
 
 export interface RoutinePermissionCardRead {
@@ -51,7 +53,7 @@ export async function readRoutinePermissionCardState(
 
 export interface RoutinePermissionOffer {
   readonly org: string;
-  readonly actionKind: string;
+  readonly declaration: string;
   readonly grantKey: string;
   readonly scopeKey: string;
   readonly domain?: string | null;
@@ -79,7 +81,7 @@ async function routineForGrantKey(org: string, scopeKey: string, routineId: stri
 export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): Promise<RoutinePermissionPlan> {
   try {
     if (offer.tainted) return { state: "n/a" };
-    const declarable = declarableRoutinePermission(offer.actionKind);
+    const declarable = declarableRoutinePermission(offer.declaration);
     if (!declarable) return { state: "n/a" };
     const parts = routineGrantKeyParts(offer.grantKey);
     if (!parts) return { state: "n/a" };

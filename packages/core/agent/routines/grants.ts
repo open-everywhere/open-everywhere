@@ -40,7 +40,7 @@ function declaredToolName(declared: string): string {
   return declared.slice("tool:".length);
 }
 
-function namesUnliftableTool(trimmed: string): boolean {
+export function namesUnliftableTool(trimmed: string): boolean {
   if (trimmed === PR_OPEN_DECLARATION) return false;
   return classifyConnectorOpTier(declaredToolName(trimmed)) === "destructive";
 }

@@ -69,6 +69,11 @@ import {
   type RoutinePermissionCardState,
 } from "../routines/permission-card.js";
 import { routineCardKeepsStateClause, routineCardWaitBudgetMs, routineCardWaitRefusalClause, waitForRoutineCardDecision } from "../routines/permission-card-wait.js";
+import {
+  registerRoutinePermissionCardOfferer,
+  type RoutinePermissionCardOffer,
+  type RoutinePermissionCardResult,
+} from "./routine-permission-offer.js";
 import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
 import { readTurnClock } from "../observability/turn-clock.js";
 
@@ -188,8 +193,7 @@ export interface AutoApprovedOutcome {
   readonly grantedBy?: string;
 }
 
-interface RoutinePermissionRefusal {
-  readonly clause: string;
+interface RoutinePermissionCardOutcome extends RoutinePermissionCardResult {
   readonly armedBy?: string;
   readonly waited?: boolean;
 }
@@ -325,9 +329,9 @@ export async function requestApproval(
         );
       }
       const taintedDeny = resolution.tainted && reason === "ask-unattended";
-      const card: RoutinePermissionRefusal =
+      const card: RoutinePermissionCardOutcome =
         reason === "ask-unattended"
-          ? await offerRoutinePermissionCard(input, { tainted: resolution.tainted, deps })
+          ? await offerRoutinePermissionCardForProposal(input, { tainted: resolution.tainted, deps })
           : { clause: "" };
       if (card.armedBy !== undefined) {
         const store = getOperationalStore();
@@ -548,32 +552,52 @@ export async function requestApproval(
   return { id: row.id, expiresAt };
 }
 
-async function offerRoutinePermissionCard(
+async function offerRoutinePermissionCardForProposal(
   input: RequestApprovalInput,
   ctx: { readonly tainted: boolean; readonly deps: RequestApprovalDeps },
-): Promise<RoutinePermissionRefusal> {
-  try {
-    const budgetMs = routineCardWaitBudgetMs();
-    const grantKey = sessionIdFromFrozenArgs(JSON.stringify(input.args ?? null));
-    if (grantKey === undefined) return { clause: "" };
-    const plan = await planRoutinePermissionCard({
+): Promise<RoutinePermissionCardOutcome> {
+  const grantKey = sessionIdFromFrozenArgs(JSON.stringify(input.args ?? null));
+  if (grantKey === undefined) return { clause: "" };
+  return await offerRoutinePermissionCard(
+    {
       org: input.org,
-      actionKind: input.kind,
+      declaration: input.kind,
       grantKey,
       scopeKey: input.scopeKey,
       domain: input.domain ?? null,
       requestedBy: input.requestedBy,
       tainted: ctx.tainted,
+      waitBudgetMs: routineCardWaitBudgetMs(),
+    },
+    ctx.deps,
+  );
+}
+
+async function offerRoutinePermissionCard(
+  offer: RoutinePermissionCardOffer,
+  deps: RequestApprovalDeps,
+): Promise<RoutinePermissionCardOutcome> {
+  try {
+    const budgetMs = offer.waitBudgetMs;
+    const grantKey = offer.grantKey;
+    const plan = await planRoutinePermissionCard({
+      org: offer.org,
+      declaration: offer.declaration,
+      grantKey,
+      scopeKey: offer.scopeKey,
+      domain: offer.domain ?? null,
+      requestedBy: offer.requestedBy,
+      tainted: offer.tainted,
       nowIso: new Date().toISOString(),
     });
     if (!plan.card || plan.askedMemoKind === undefined) {
-      const at = plan.cardId ? await routinePermissionCardPointer(input.org, plan.cardId) : {};
+      const at = plan.cardId ? await routinePermissionCardPointer(offer.org, plan.cardId) : {};
       const clause = routinePermissionRefusalClause(plan.state, false, at.permalink);
       if (budgetMs <= 0 || plan.cardId === undefined || plan.grantKind === undefined) {
         noteRunRefusal(plan.state, plan.grantKind, at);
         return { clause };
       }
-      const settled = await settleRoutineCardWait(input.org, { cardId: plan.cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+      const settled = await settleRoutineCardWait(offer.org, { cardId: plan.cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
       return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
     }
     if (!hasApprovalCardPath(plan.platform ?? "")) return { clause: "" };
@@ -582,7 +606,7 @@ async function offerRoutinePermissionCard(
     let cardId: string | undefined;
     try {
       const posted = await requestApproval(plan.card, {
-        ...(ctx.deps.post ? { post: ctx.deps.post } : {}),
+        ...(deps.post ? { post: deps.post } : {}),
         ...(poster ? { postCard: poster } : {}),
       });
       cardId = posted.id;
@@ -590,31 +614,33 @@ async function offerRoutinePermissionCard(
       if (!hadCardSignal) consumeCardPostedThisTurn();
     }
     await markRoutinePermissionAsked(
-      input.org,
+      offer.org,
       grantKey,
       plan.askedMemoKind,
-      input.requestedBy,
+      offer.requestedBy,
       new Date().toISOString(),
     );
-    const at = cardId ? await routinePermissionCardPointer(input.org, cardId) : {};
+    const at = cardId ? await routinePermissionCardPointer(offer.org, cardId) : {};
     const clause = routinePermissionRefusalClause(plan.state, true, at.permalink);
     if (budgetMs <= 0 || plan.grantKind === undefined) {
       noteRunRefusal(plan.state, plan.grantKind, at);
       return { clause };
     }
-    const settled = await settleRoutineCardWait(input.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
+    const settled = await settleRoutineCardWait(offer.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
     return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
   } catch {
     return { clause: "" };
   }
 }
 
+registerRoutinePermissionCardOfferer(async (offer) => ({ clause: (await offerRoutinePermissionCard(offer, {})).clause }));
+
 function noteUnlessArmed(
-  settled: RoutinePermissionRefusal,
+  settled: RoutinePermissionCardOutcome,
   state: RoutinePermissionCardState,
   grantKind: string | undefined,
   at: RoutineCardPointer,
-): RoutinePermissionRefusal {
+): RoutinePermissionCardOutcome {
   if (settled.armedBy === undefined) noteRunRefusal(state, grantKind, at);
   return settled;
 }
@@ -633,7 +659,7 @@ async function settleRoutineCardWait(
   ctx: { readonly cardId: string; readonly grantKey: string; readonly grantKind: string },
   cardClause: string,
   budgetMs: number,
-): Promise<RoutinePermissionRefusal> {
+): Promise<RoutinePermissionCardOutcome> {
   const outcome = await waitForRoutineCardDecision(budgetMs, {
     probe: () => routineCardProbe(org, ctx.cardId, ctx.grantKey, ctx.grantKind),
     sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
