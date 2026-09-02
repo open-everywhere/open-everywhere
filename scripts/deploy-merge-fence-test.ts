@@ -8,7 +8,7 @@ import { GITHUB_API_PAGE_SIZE, type GithubApiFetchLike } from "./deploy/ci-gate-
 import { judgeDcoSignoff, parsePullRequestCommits, signOffTrailers } from "./deploy/dco-lib.js";
 import { type Env, type Exec, realExec } from "./deploy/lib.js";
 import { extractBaseFence, FENCE_DRIVER_PATH, FENCE_MODULE_DIR, parsePullRequestSubject, realSpawnDriver, runMergeFence, type SpawnDriver } from "./deploy/merge-fence-lib.js";
-import { ruleFor } from "./upgrade-fence/judge.js";
+import { OVERRIDE_REMEDY, ruleFor } from "./upgrade-fence/judge.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,8 +35,6 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   const good = parsePullRequestSubject(prRecord());
   if (!good.ok) fail(`1: a well-formed pull-request record must parse — got: ${good.reason}`);
   else {
-    if (good.subject.authorType !== "Bot") fail("1: the author TYPE must survive the parse — it is the fence's non-forgeable arming signal");
-    if (good.subject.authorLogin !== "open-everywhere[bot]") fail("1: the author LOGIN must survive the parse — it arms the fence on its own when `type` is absent");
     if (good.subject.baseSha !== "2222222222222222222222222222222222222222") fail("1: the BASE sha must survive the parse — it is the ref the fence is executed from");
   }
 
@@ -45,17 +43,16 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
     ["no number", { ...prRecord(), number: undefined }],
     ["no head.sha", { ...prRecord(), head: {} }],
     ["no base.sha", { ...prRecord(), base: { ref: "main" } }],
-    ["no author at all", { ...prRecord(), user: {} }],
   ];
   for (const [label, body] of required) {
     const parsed = parsePullRequestSubject(body);
     if (parsed.ok) fail(`1: a record with ${label} must REFUSE — a fact the fence cannot read is never a default`);
   }
 
-  const loginOnly = parsePullRequestSubject({ ...prRecord(), user: { login: "open-everywhere[bot]" } });
-  if (!loginOnly.ok) fail("1: a record carrying only `user.login` must still parse — the `[bot]` suffix arms the fence on its own");
-  const typeOnly = parsePullRequestSubject({ ...prRecord(), user: { type: "Bot" } });
-  if (!typeOnly.ok) fail("1: a record carrying only `user.type` must still parse");
+  const noAuthor = parsePullRequestSubject({ ...prRecord(), user: {} });
+  if (!noAuthor.ok) fail(`1: a record with no author must still parse — the fence decides on the changed-file list alone. Got: ${noAuthor.reason}`);
+  const noUserKey = parsePullRequestSubject({ ...prRecord(), user: undefined });
+  if (!noUserKey.ok) fail(`1: a record with no \`user\` key at all must still parse. Got: ${noUserKey.reason}`);
 }
 
 {
@@ -144,7 +141,7 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   const live = { head: { sha: headSha }, base: { sha: headSha, ref: "main" } };
 
   const refused = await judge(["package.json", "packages/core/agent/approvals/session-grant.ts"], prRecord(live));
-  if (refused.verdict !== "refuse") fail(`3: an agent-authored pull request touching the approvals plane must REFUSE the merge — got ${refused.verdict}`);
+  if (refused.verdict !== "refuse") fail(`3: a pull request touching the approvals plane must REFUSE the merge — got ${refused.verdict}`);
   if (refused.fence !== "refuse") fail(`3: the rung must report the FENCE's verdict, not just its own — got fence=${refused.fence}`);
   if (!refused.detail.includes("REFUSED")) fail(`3: the refusal must carry the base-ref driver's own report — got:\n${refused.detail}`);
   if (!refused.detail.includes("core-approvals-plane")) fail(`3: the report must name the rule that fired, so a reader can find the manifest entry — got:\n${refused.detail}`);
@@ -158,12 +155,31 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   }
 
   const clean = await judge(["package.json", "docs/README.md"], prRecord(live));
-  if (clean.verdict !== "clear") fail(`3: a clean agent-authored diff must CLEAR the merge — got ${clean.verdict}: ${clean.message}\n${clean.detail}`);
+  if (clean.verdict !== "clear") fail(`3: a clean diff must CLEAR the merge — got ${clean.verdict}: ${clean.message}\n${clean.detail}`);
   if (clean.fence !== "pass") fail(`3: a clean diff must report fence=pass — got ${clean.fence}`);
 
-  const warned = await judge(["agent/access/bundles.ts"], prRecord({ ...live, user: { login: "example-owner", type: "User" }, body: "hand-written config change" }));
-  if (warned.verdict !== "clear") fail(`3: a person's protected-path change must WARN, not block — got ${warned.verdict}: ${warned.message}`);
-  if (warned.fence !== "warn") fail(`3: a person's protected-path change must report fence=warn — got ${warned.fence}\n${warned.detail}`);
+  const personAuthored = await judge(
+    ["agent/access/bundles.ts"],
+    prRecord({ ...live, user: { login: "example-owner", type: "User" }, body: "hand-written config change" }),
+  );
+  if (personAuthored.verdict !== "refuse") {
+    fail(`3: a PERSON-authored protected-path change must REFUSE the merge (OPE-1315) — got ${personAuthored.verdict}: ${personAuthored.message}\n${personAuthored.detail}`);
+  }
+  if (personAuthored.fence !== "refuse") fail(`3: it must be the FENCE that refuses, not another rung — got fence=${personAuthored.fence}\n${personAuthored.detail}`);
+  if (!personAuthored.message.includes(OVERRIDE_REMEDY)) {
+    fail(`3: the refusal must name the remedy the ruling gives, "${OVERRIDE_REMEDY}" — got: ${personAuthored.message}`);
+  }
+  if (!personAuthored.detail.includes("deployment-access-config")) {
+    fail(`3: the report must name the rule that fired so a reader can find the manifest entry — got:\n${personAuthored.detail}`);
+  }
+
+  if (!personAuthored.detail.includes(OVERRIDE_REMEDY)) {
+    fail(`3: the base-ref driver's own report must still print the remedy phrase — got:\n${personAuthored.detail}`);
+  }
+
+  const personClean = await judge(["package.json", "docs/README.md"], prRecord({ ...live, user: { login: "example-owner", type: "User" }, body: "hand-written config change" }));
+  if (personClean.verdict !== "clear") fail(`3: a person's clean diff must still CLEAR — got ${personClean.verdict}: ${personClean.message}\n${personClean.detail}`);
+  if (personClean.fence !== "pass") fail(`3: a person's clean diff must report fence=pass — got ${personClean.fence}`);
 
   const unsignedCommit = signedCommit({ commit: { message: "OPE-999: bump eve\n\nno trailer here" } });
 
@@ -224,6 +240,57 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   });
   if (neverRan.verdict !== "refuse") fail("3: a fence driver that never spawned must REFUSE even on exit 0 — a spawn failure is a config fault, never data");
   if (!neverRan.message.includes("never ran")) fail(`3: the refusal must name the spawn failure, not a verdict — got: ${neverRan.message}`);
+
+  const couldNotJudge = await runMergeFence({
+    prNumber: 417,
+    expectedHeadSha: headSha,
+    exec: execStub,
+    fetchImpl: fetchStub(prRecord(live)),
+    env: baseEnv,
+    spawn: async () => ({ code: 1, stdout: "", stderr: "✗ upgrade-diff-fence: could not list the pull request's files: GitHub truncates at 3000", spawnError: undefined }),
+    cwd: ROOT,
+  });
+  if (couldNotJudge.verdict !== "refuse") fail("3: a fence that could not judge must REFUSE — a rung that cannot see the diff never clears a merge");
+  if (couldNotJudge.fence !== "unknown") fail(`3: a driver that printed no REFUSED reached no verdict — fence must read "unknown", got ${couldNotJudge.fence}`);
+  if (couldNotJudge.message.includes(OVERRIDE_REMEDY)) {
+    fail(`3: a fence that COULD NOT JUDGE must not name the review-and-override — there is no protected-path finding to review. Got: ${couldNotJudge.message}`);
+  }
+  if (!couldNotJudge.message.includes("COULD NOT JUDGE")) fail(`3: the refusal must say the fence could not judge, so the remedy is to fix the fault — got: ${couldNotJudge.message}`);
+
+  const errorBodySaysRefused = await runMergeFence({
+    prNumber: 417,
+    expectedHeadSha: headSha,
+    exec: execStub,
+    fetchImpl: fetchStub(prRecord(live)),
+    env: baseEnv,
+    spawn: async () => ({
+      code: 1,
+      stdout: "",
+      stderr: '\u2717 upgrade-diff-fence: could not list the pull request\'s files: GET https://api.test/repos/acme/oe/pulls/417/files failed: 403 {"message":"Access REFUSED by policy"}',
+    }),
+    cwd: ROOT,
+  });
+  if (errorBodySaysRefused.fence !== "unknown") {
+    fail(`3: an API ERROR BODY containing "REFUSED" is not the fence's verdict — got fence=${errorBodySaysRefused.fence}`);
+  }
+  if (errorBodySaysRefused.message.includes(OVERRIDE_REMEDY)) {
+    fail(`3: a fault whose error body happens to say REFUSED must not advertise the override — got: ${errorBodySaysRefused.message}`);
+  }
+  if (!errorBodySaysRefused.message.includes("COULD NOT JUDGE")) {
+    fail(`3: an unreadable file listing is a could-not-judge, whatever the API body says — got: ${errorBodySaysRefused.message}`);
+  }
+
+  const realRefusal = await runMergeFence({
+    prNumber: 417,
+    expectedHeadSha: headSha,
+    exec: execStub,
+    fetchImpl: fetchStub(prRecord(live)),
+    env: baseEnv,
+    spawn: async () => ({ code: 1, stdout: "✗ REFUSED: protected path — requires orchestrator review-and-override.\n", stderr: "" }),
+    cwd: ROOT,
+  });
+  if (realRefusal.fence !== "refuse") fail(`3: a report carrying REFUSED is the fence's own verdict — got fence=${realRefusal.fence}`);
+  if (!realRefusal.message.includes(OVERRIDE_REMEDY)) fail(`3: a real protected-path refusal MUST name the override — got: ${realRefusal.message}`);
 
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
@@ -395,8 +462,8 @@ if (problems.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ deploy:merge-fence: the pre-merge rung extracts the BASE ref's fence byte-for-byte and really spawns it — an agent-authored " +
-    "protected-path diff refuses the merge, a clean one clears, a person's warns; no credential, an unreadable pull request, a " +
+  "✓ deploy:merge-fence: the pre-merge rung extracts the BASE ref's fence byte-for-byte and really spawns it — a " +
+    "protected-path diff refuses the merge whoever authored it, a clean one clears; no credential, an unreadable pull request, a " +
     "head-sha disagreement, an already-merged pull request and a driver that never started all refuse; the DCO rung refuses a pull " +
     "request whose commit carries no `Signed-off-by:` trailer and clears the same diff once it does; and the builder's self-merge " +
     "conditions name the rung and its sign-off convention",

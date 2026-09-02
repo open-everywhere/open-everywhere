@@ -3,12 +3,7 @@ import { formatUpgradeFenceReport, judgeUpgradeDiff } from "./upgrade-fence/judg
 import { listPullRequestFiles } from "./upgrade-fence/pr-files.js";
 
 interface PullRequestEvent {
-  readonly pull_request?: {
-    readonly number?: number;
-    readonly title?: string;
-    readonly body?: string | null;
-    readonly user?: { readonly login?: string; readonly type?: string };
-  };
+  readonly pull_request?: { readonly number?: number };
 }
 
 function fail(message: string): never {
@@ -45,19 +40,12 @@ const changedFiles = await listPullRequestFiles({ repo, number: pr.number, token
   fail(`could not list the pull request's files: ${err.message}`),
 );
 
-const result = judgeUpgradeDiff({
-  changedFiles,
-  authorType: pr.user?.type ?? "",
-  authorLogin: pr.user?.login ?? "",
-  title: pr.title ?? "",
-  body: pr.body ?? "",
-});
+const result = judgeUpgradeDiff({ changedFiles });
 
 for (const line of formatUpgradeFenceReport(result, changedFiles.length)) console.log(line);
 
 for (const hit of result.hits) {
-  const level = result.verdict === "refuse" ? "error" : "warning";
-  console.log(`::${level} file=${hit.file}::upgrade diff fence (${hit.rule.id}): ${hit.rule.why}`);
+  console.log(`::error file=${hit.file}::upgrade diff fence (${hit.rule.id}): ${hit.rule.why}`);
 }
 
 process.exit(result.verdict === "refuse" ? 1 : 0);

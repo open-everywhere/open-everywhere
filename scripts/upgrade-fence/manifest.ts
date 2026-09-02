@@ -39,8 +39,8 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
     paths: ["agent/access/"],
     why:
       "The operator's own hand-written access config — bundles, grants, credential bindings, network access. " +
-      "A per-binding capability expansion (OPE-1024) is deliberately reachable ONLY from a hand-written config " +
-      "pull request; an upgrade that edits this file would be exactly the path that property forbids.",
+      "A per-binding capability expansion (OPE-1024) is a guardrail change, not an upgrade; an upgrade that " +
+      "edits this file is exactly the path that property forbids.",
   },
   {
     id: "merge-gate-surface",
@@ -92,8 +92,6 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
       "protected but the driver that reads it is not, and a neutered driver reports a clean scan.",
   },
 ];
-
-export const UPGRADE_MARKER_RE = /^[ \t]*oe-upgrade:[ \t]*\S/im;
 
 export function checkManifestPaths(root: string): string[] {
   const missing: string[] = [];

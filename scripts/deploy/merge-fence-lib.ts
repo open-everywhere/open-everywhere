@@ -14,6 +14,8 @@ import {
 import { runDcoRung } from "./dco-lib.js";
 import { type Env, type Exec, realExec } from "./lib.js";
 
+const OVERRIDE_REMEDY = "protected path — requires orchestrator review-and-override";
+
 export const FENCE_DRIVER_PATH = "scripts/upgrade-diff-fence.ts";
 
 export const FENCE_MODULE_DIR = "scripts/upgrade-fence";
@@ -36,8 +38,6 @@ export type FenceSubject = {
   headSha: string;
   baseSha: string;
   baseRef: string;
-  authorLogin: string;
-  authorType: string;
   merged: boolean;
   mergeCommitSha?: string;
 };
@@ -72,16 +72,6 @@ export function parsePullRequestSubject(body: unknown): SubjectParse {
     };
   }
 
-  const user = record(pr.user);
-  const authorLogin = user ? (str(user.login) ?? "") : "";
-  const authorType = user ? (str(user.type) ?? "") : "";
-  if (!authorLogin && !authorType) {
-    return {
-      ok: false,
-      reason: `pull request #${number} carries no \`user.login\` and no \`user.type\` — the bot-author signal is the fence's only non-forgeable arming signal, so an absent author is a refusal`,
-    };
-  }
-
   return {
     ok: true,
     subject: {
@@ -89,8 +79,6 @@ export function parsePullRequestSubject(body: unknown): SubjectParse {
       headSha,
       baseSha,
       baseRef: base ? (str(base.ref) ?? "") : "",
-      authorLogin,
-      authorType,
       merged: pr.merged === true,
       ...(str(pr.merge_commit_sha) ? { mergeCommitSha: str(pr.merge_commit_sha) as string } : {}),
     },
@@ -162,7 +150,7 @@ export async function extractBaseFence(input: { baseSha: string; exec?: Exec; tm
 
 export type MergeFenceDecision = {
   verdict: "clear" | "refuse";
-  fence: "pass" | "warn" | "refuse" | "unknown";
+  fence: "pass" | "refuse" | "unknown";
   dco: "pass" | "refuse" | "unreadable" | "unknown";
   message: string;
   detail: string;
@@ -278,23 +266,25 @@ export async function runMergeFence(input: {
     return refuse(`the fence driver never ran (${ran.spawnError}) — a fence that could not start must never read as a pass.`, report, subject);
   }
   if (ran.code !== 0) {
+    const judged = report.includes("✗ REFUSED:");
     return {
       verdict: "refuse",
       subject,
-      fence: report.includes("REFUSED") ? "refuse" : "unknown",
+      fence: judged ? "refuse" : "unknown",
       dco: "unknown",
       message:
         `the base-ref fence exited ${ran.code} for pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, base ${subject.baseSha.slice(0, 12)}). ` +
-        "DO NOT MERGE. A guardrail change goes in its own hand-written pull request, opened by a person.",
+        (judged
+          ? `DO NOT MERGE — ${OVERRIDE_REMEDY}. The fence does not read who authored this pull request (OPE-1315): ` +
+            "every diff that touches a protected path refuses here, and the merge needs the orchestrator to review those files and override this rung explicitly."
+          : "DO NOT MERGE — the fence COULD NOT JUDGE this diff, so it reached no verdict about a protected path. " +
+            "There is nothing here for a reviewer to review and no override to grant: fix the fault named in the report below, then re-run this rung."),
       detail: report,
     };
   }
 
-  const warned = report.includes("::warning file=");
-  const fence = warned ? "warn" : "pass";
-  const fenceMessage = warned
-    ? `the base-ref fence WARNS on pull request #${subject.number}: it changes a protected path, and it reads as person-authored so the fence does not refuse it. Review those files as a guardrail change.`
-    : `the base-ref fence passes pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, judged with the fence at base ${subject.baseRef || "?"}@${subject.baseSha.slice(0, 12)}).`;
+  const fence = "pass" as const;
+  const fenceMessage = `the base-ref fence passes pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, judged with the fence at base ${subject.baseRef || "?"}@${subject.baseSha.slice(0, 12)}).`;
 
   const dcoRun = await runDcoRung({ prNumber: subject.number, exec, fetchImpl, env });
   if (!dcoRun.ok) {

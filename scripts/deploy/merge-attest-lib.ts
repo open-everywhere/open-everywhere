@@ -68,10 +68,7 @@ export function planFenceAttestation(input: { decision: MergeFenceDecision; targ
       state: "success",
       description,
       sha: head,
-      note:
-        decision.fence === "warn"
-          ? "the fence WARNS: this diff changes a protected path and reads as person-authored. Review those files as a guardrail change."
-          : "the fence passes.",
+      note: "the fence passes.",
     };
   }
 

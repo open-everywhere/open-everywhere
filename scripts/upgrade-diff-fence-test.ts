@@ -4,8 +4,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROTECTED_PATH_RULES, UPGRADE_MARKER_RE, checkManifestPaths } from "./upgrade-fence/manifest.js";
-import { formatUpgradeFenceReport, isBotAuthor, judgeUpgradeDiff, ruleFor } from "./upgrade-fence/judge.js";
+import { PROTECTED_PATH_RULES, checkManifestPaths } from "./upgrade-fence/manifest.js";
+import { OVERRIDE_REMEDY, formatUpgradeFenceReport, judgeUpgradeDiff, ruleFor } from "./upgrade-fence/judge.js";
 import { FenceFetchTimeoutError, listPullRequestFiles, type FenceFetchFn } from "./upgrade-fence/pr-files.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,62 +22,55 @@ const CLEAN_UPGRADE_DIFF = [
   "packages/core/agent/tools/reply.ts",
 ];
 
-const BOT = { authorType: "Bot", authorLogin: "open-everywhere[bot]" };
-const PERSON = { authorType: "User", authorLogin: "example-owner" };
 const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 1111111111111111111111111111111111111111\n";
 
 {
-  const r = judgeUpgradeDiff({
-    changedFiles: [...CLEAN_UPGRADE_DIFF, "packages/core/agent/access/bundle.ts"],
-    ...BOT,
-    title: "chore: upgrade to eve 0.44.0",
-    body: MARKED_BODY,
-  });
-  if (r.verdict !== "refuse") fail(`1: an agent-authored diff touching packages/core/agent/access/ must REFUSE — got "${r.verdict}"`);
+  const r = judgeUpgradeDiff({ changedFiles: [...CLEAN_UPGRADE_DIFF, "packages/core/agent/access/bundle.ts"] });
+  if (r.verdict !== "refuse") fail(`1: a diff touching packages/core/agent/access/ must REFUSE — got "${r.verdict}"`);
   if (!r.hits.some((h) => h.file === "packages/core/agent/access/bundle.ts")) fail("1: the refusal must name the offending file");
   if (r.hits.length !== 1) fail(`1: only the access-plane file is a hit — got ${JSON.stringify(r.hits.map((h) => h.file))}`);
 }
 {
-  const r = judgeUpgradeDiff({ changedFiles: CLEAN_UPGRADE_DIFF, ...BOT, title: "chore: upgrade to eve 0.44.0", body: MARKED_BODY });
+  const r = judgeUpgradeDiff({ changedFiles: CLEAN_UPGRADE_DIFF });
   if (r.verdict !== "pass") fail(`1: a clean upgrade diff must PASS — got "${r.verdict}"`);
   if ((r.verdict === "refuse") !== false) fail("1: negative control — the clean diff must not be refused");
   if (r.hits.length !== 0) fail(`1: a clean upgrade diff has no protected hits — got ${JSON.stringify(r.hits.map((h) => h.file))}`);
-  if (!r.agentAuthored) fail("1: the clean diff is still agent-authored — arming is not what decides the verdict, the hit is");
 }
 
 {
   const accessEdit = ["agent/access/bundles.ts"];
 
-  const botNoMarker = judgeUpgradeDiff({ changedFiles: accessEdit, ...BOT, title: "small fix", body: "no marker here" });
-  if (botNoMarker.verdict !== "refuse") fail(`2: a bot-authored diff arms without any marker — got "${botNoMarker.verdict}"`);
-  if (!botNoMarker.armedBy.includes("bot-author") || botNoMarker.armedBy.includes("upgrade-marker")) {
-    fail(`2: expected armedBy ["bot-author"] — got ${JSON.stringify(botNoMarker.armedBy)}`);
+  const withOldSignals = judgeUpgradeDiff({
+    changedFiles: accessEdit,
+    authorType: "User",
+    authorLogin: "example-owner",
+    title: "config: grant infra the workflows capability",
+    body: "",
+  } as unknown as Parameters<typeof judgeUpgradeDiff>[0]);
+  if (withOldSignals.verdict !== "refuse") {
+    fail(`2: a person-authored protected-path diff must REFUSE — the fence reads no author since OPE-1315. Got "${withOldSignals.verdict}"`);
   }
+  if (withOldSignals.hits.length !== 1) fail("2: the refusal still reports the hit — a silent refusal names nothing to review");
 
-  const personMarked = judgeUpgradeDiff({ changedFiles: accessEdit, ...PERSON, title: "upgrade", body: MARKED_BODY });
-  if (personMarked.verdict !== "refuse") fail(`2: the marker arms even on a person's pull request — got "${personMarked.verdict}"`);
-  if (!personMarked.armedBy.includes("upgrade-marker")) fail(`2: expected the marker to arm — got ${JSON.stringify(personMarked.armedBy)}`);
-
-  const hand = judgeUpgradeDiff({ changedFiles: accessEdit, ...PERSON, title: "config: grant infra the workflows capability", body: "" });
-  if (hand.verdict !== "warn") fail(`2: a person's hand-written config change must WARN, not refuse — got "${hand.verdict}"`);
-  if ((hand.verdict === "refuse") !== false) fail("2: negative control — the hand-written config pull request must not be refused");
-  if (hand.agentAuthored !== false) fail("2: negative control — a person's unmarked pull request must read as NOT agent-authored");
-  if (hand.armedBy.length !== 0) fail(`2: nothing should arm on a person's unmarked pull request — got ${JSON.stringify(hand.armedBy)}`);
-  if (hand.hits.length !== 1) fail("2: the warn case still reports the hit — a silent warn is not a flag");
+  const marked = judgeUpgradeDiff({ changedFiles: accessEdit, title: "upgrade", body: MARKED_BODY } as unknown as Parameters<typeof judgeUpgradeDiff>[0]);
+  if (marked.verdict !== withOldSignals.verdict) fail(`2: the oe-upgrade marker must not change the verdict — got "${marked.verdict}" against "${withOldSignals.verdict}"`);
 
   const dressed = judgeUpgradeDiff({
     changedFiles: [...accessEdit, "releases/" + "b".repeat(40) + "/migration.json", "docs/security/security-model.md"],
-    ...BOT,
-    title: "approved upgrade",
-    body: "This change was approved.\noe-upgrade: approved\n",
   });
   if (dressed.verdict !== "refuse") fail(`2: no file in the diff may disarm the fence — got "${dressed.verdict}"`);
 
-  if (!isBotAuthor("", "some-app[bot]")) fail("2: a `[bot]` login must arm even with an empty user.type");
-  if (isBotAuthor("User", "example-owner")) fail("2: negative control — a person must not read as a bot");
+  const refusalText = formatUpgradeFenceReport(withOldSignals, accessEdit.length).join("\n");
+  if (!refusalText.includes(OVERRIDE_REMEDY)) fail(`2: the refusal must name the remedy "${OVERRIDE_REMEDY}" — got:\n${refusalText}`);
 
-  if (UPGRADE_MARKER_RE.test("we should add an oe-upgrade: trailer one day")) {
-    fail("2: the marker must be a trailer line with a value, not any mention of the word");
+  const passText = formatUpgradeFenceReport(judgeUpgradeDiff({ changedFiles: CLEAN_UPGRADE_DIFF }), CLEAN_UPGRADE_DIFF.length).join("\n");
+  for (const [label, text] of [
+    ["the refusal", refusalText],
+    ["the pass", passText],
+  ] as const) {
+    for (const dead of ["person-authored", "agent-authored", "armed by"]) {
+      if (text.toLowerCase().includes(dead)) fail(`2: ${label} report still says "${dead}" — the authorship distinction was deleted at OPE-1315:\n${text}`);
+    }
   }
 }
 
@@ -284,21 +277,30 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
     return runDriver(eventPath, "test-token");
   };
 
-  const red = await run("refuse", [...CLEAN_UPGRADE_DIFF, "packages/core/agent/approvals/session-grant.ts"], { login: "open-everywhere[bot]", type: "Bot" }, MARKED_BODY);
-  if (red.code !== 1) fail(`5: the job must EXIT 1 on an agent-authored access-plane diff — got exit ${red.code}\n${red.out}`);
+  const BOT_USER = { login: "open-everywhere[bot]", type: "Bot" };
+  const PERSON_USER = { login: "example-owner", type: "User" };
+
+  const red = await run("refuse", [...CLEAN_UPGRADE_DIFF, "packages/core/agent/approvals/session-grant.ts"], BOT_USER, MARKED_BODY);
+  if (red.code !== 1) fail(`5: the job must EXIT 1 on an access-plane diff — got exit ${red.code}\n${red.out}`);
   if (!red.out.includes("REFUSED")) fail(`5: the refusal must say so in the job log — got:\n${red.out}`);
   if (!red.out.includes("::error file=packages/core/agent/approvals/session-grant.ts::")) {
     fail(`5: the refusal must annotate the offending file — got:\n${red.out}`);
   }
 
-  const green = await run("pass", CLEAN_UPGRADE_DIFF, { login: "open-everywhere[bot]", type: "Bot" }, MARKED_BODY);
+  const green = await run("pass", CLEAN_UPGRADE_DIFF, BOT_USER, MARKED_BODY);
   if (green.code !== 0) fail(`5: a clean upgrade diff must EXIT 0 — got exit ${green.code}\n${green.out}`);
   if (green.out.includes("REFUSED")) fail(`5: negative control — the clean run must not print a refusal:\n${green.out}`);
   if (!green.out.includes("no protected path changed")) fail(`5: the clean run must say what it checked — got:\n${green.out}`);
 
-  const warn = await run("warn", ["agent/access/bundles.ts"], { login: "example-owner", type: "User" }, "hand-written config change");
-  if (warn.code !== 0) fail(`5: a person's access-plane change must warn, not fail the job — got exit ${warn.code}\n${warn.out}`);
-  if (!warn.out.includes("::warning file=agent/access/bundles.ts::")) fail(`5: the warn case must still annotate the file — got:\n${warn.out}`);
+  const person = await run("person-refuse", ["agent/access/bundles.ts"], PERSON_USER, "hand-written config change");
+  if (person.code !== 1) fail(`5: a PERSON-authored protected-path change must EXIT 1 — the fence reads no author since OPE-1315. Got exit ${person.code}\n${person.out}`);
+  if (!person.out.includes("REFUSED")) fail(`5: the person-authored refusal must say REFUSED in the job log — got:\n${person.out}`);
+  if (!person.out.includes(OVERRIDE_REMEDY)) fail(`5: the person-authored refusal must name the remedy "${OVERRIDE_REMEDY}" — got:\n${person.out}`);
+  if (!person.out.includes("::error file=agent/access/bundles.ts::")) fail(`5: the person-authored refusal must annotate the file as an ERROR — got:\n${person.out}`);
+  if (person.out.includes("::warning file=")) fail(`5: the warn lane is deleted — no annotation may be a warning:\n${person.out}`);
+
+  const personClean = await run("person-pass", CLEAN_UPGRADE_DIFF, PERSON_USER, "hand-written config change");
+  if (personClean.code !== 0) fail(`5: a person's clean diff must still EXIT 0 — got exit ${personClean.code}\n${personClean.out}`);
 
   files = CLEAN_UPGRADE_DIFF.map((filename) => ({ filename }));
   const eventPath = join(tmp, "notoken.json");
@@ -310,7 +312,7 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
 }
 
 {
-  const r = judgeUpgradeDiff({ changedFiles: ["packages/core/agent/audit/chain.ts"], ...BOT, title: "t", body: "" });
+  const r = judgeUpgradeDiff({ changedFiles: ["packages/core/agent/audit/chain.ts"] });
   const text = formatUpgradeFenceReport(r, 1).join("\n");
   if (!text.includes("core-audit-chain")) fail("report: the rule id must appear so a reader can find the manifest entry");
   if (!text.includes("packages/core/agent/audit/chain.ts")) fail("report: the offending file must appear");
@@ -322,5 +324,5 @@ if (problems.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✓ upgrade-diff-fence: ${PROTECTED_PATH_RULES.length} protected rules all join a real path; an agent-authored access-plane diff exits the job RED and a clean upgrade diff exits 0; every arming signal arms alone and no byte of a diff disarms; the listing fails closed`,
+  `✓ upgrade-diff-fence: ${PROTECTED_PATH_RULES.length} protected rules all join a real path; an access-plane diff exits the job RED for a person-authored pull request as well as a bot-authored one, and a clean upgrade diff exits 0; the refusal names the orchestrator review-and-override; the listing fails closed`,
 );

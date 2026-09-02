@@ -44,7 +44,7 @@ const OTHER_TREE = "5555555555555555555555555555555555555555";
 const ENV: Env = { GH_TOKEN: "t0ken", GITHUB_REPOSITORY: "acme/open-everywhere" };
 
 function subject(overrides: Partial<FenceSubject> = {}): FenceSubject {
-  return { number: 421, headSha: HEAD, baseSha: BASE, baseRef: "main", authorLogin: "example-owner", authorType: "User", merged: false, ...overrides };
+  return { number: 421, headSha: HEAD, baseSha: BASE, baseRef: "main", merged: false, ...overrides };
 }
 
 function decision(overrides: Partial<MergeFenceDecision> = {}): MergeFenceDecision {
@@ -97,13 +97,24 @@ check("a fence PASS posts success under oe/upgrade-fence, with the endpoint and 
   assert.match(field(plan.invocation.args, "description") ?? "", /base 222222222222/);
 });
 
-check("a fence WARN is still success — a person-authored guardrail diff is annotated, never refused", () => {
-  const plan = planFenceAttestation({ decision: decision({ fence: "warn" }) });
-  assert.equal(plan.kind, "post");
-  if (plan.kind !== "post") return;
-  assert.equal(plan.state, "success");
-  assert.match(plan.description, /warn/);
-  assert.match(plan.note, /guardrail change/);
+check("the warn lane's note is gone — a `warn` fence no longer reads as an approved guardrail change (OPE-1315)", () => {
+  const asWarn = planFenceAttestation({ decision: decision({ fence: "warn" as unknown as MergeFenceDecision["fence"] }) });
+  assert.equal(asWarn.kind, "post");
+  if (asWarn.kind !== "post") return;
+  assert.equal(asWarn.note, "the fence passes.", "the warn lane's guardrail-change note is deleted with the lane");
+  assert.doesNotMatch(asWarn.note, /guardrail change/, "no note may still send a reader to review a protected path as approved");
+
+  const passed = planFenceAttestation({ decision: decision({ fence: "pass" }) });
+  assert.equal(passed.kind, "post");
+  if (passed.kind !== "post") return;
+  assert.equal(passed.state, "success");
+  assert.equal(passed.note, "the fence passes.");
+  assert.doesNotMatch(passed.description, /warn/, "a genuine pass must not describe itself as a warn");
+
+  const refused = planFenceAttestation({ decision: decision({ verdict: "refuse", fence: "refuse", message: "protected path — requires orchestrator review-and-override" }) });
+  assert.equal(refused.kind, "post");
+  if (refused.kind !== "post") return;
+  assert.equal(refused.state, "failure");
 });
 
 check("a fence REFUSAL posts failure — the status blocks the merge", () => {
