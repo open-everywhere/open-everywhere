@@ -21,7 +21,7 @@ import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { approvalPreviewFor } from "../agent/access/approval-preview.js";
 import { canDelegateFromSeat } from "../agent/access/delegation-mount.js";
 import { FIRE_UNATTENDED_ATTR } from "../agent/identity/binding.js";
-import { grantToolName, isGrantToolName } from "../agent/operational/credential-grant-rows.js";
+import { grantBorrowToolName, isGrantToolName } from "../agent/operational/credential-grant-rows.js";
 import { parseQualifiedToolName } from "../agent/access/consequence.js";
 
 let n = 0;
@@ -42,7 +42,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
 
 const TASK_FAMILY = ["task_cancel", "task_update"] as const;
 
-const GRANT_TOOL = grantToolName("rowan", "read_page");
+const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
 
 const GRANT_DECOYS = [
   "grant__rowan",
@@ -148,10 +148,13 @@ ok(allowedOnLeanSeat(GRANT_TOOL), `a mounted grant tool (${GRANT_TOOL}) IS held 
 ok(allowedOnLeanSeat(GRANT_TOOL, true), "…on a DM seat too — a grant's grantee is the CHAT, and the arm is seat-independent (unlike DM_SEAT_CARVE_IN)");
 ok(!LEAN_SEAT_TOOLS.has(GRANT_TOOL), "…and NOT by a name row: grant names are minted per grant row, so the rule matches the SHAPE");
 ok(
-  allowedOnLeanSeat(grantToolName("someone_else", "read_issue")),
-  "…the arm is a namespace rule, not a fixture: a different owner and a different verb are held too",
+  allowedOnLeanSeat(grantBorrowToolName("someone_else", "linear", "read_issue")),
+  "…the arm is a namespace rule, not a fixture: a different owner, connector and tool are held too",
 );
-ok(allowedOnLeanSeat(grantToolName("rowan", "create_page")), "the arm is TIER-BLIND — it admits a name, and the grant row's tier plus the approval card gate the call");
+ok(
+  allowedOnLeanSeat(grantBorrowToolName("rowan", "notion", "create_page")),
+  "the arm is TIER-BLIND — it admits a name, and the grant row's tier plus the approval card gate the call",
+);
 
 ok(
   !allowedOnLeanSeat("post_message") && !allowedOnLeanSeat("dm_person"),
@@ -159,14 +162,14 @@ ok(
 );
 
 for (const decoy of GRANT_DECOYS) {
-  ok(!isGrantToolName(decoy), `isGrantToolName refuses "${decoy}" — the match is the structural inverse of grantToolName, never a prefix test`);
+  ok(!isGrantToolName(decoy), `isGrantToolName refuses "${decoy}" — the match is structural, never a prefix test`);
   ok(!allowedOnLeanSeat(decoy), `…and the lean roster still DENIES "${decoy}" — default-deny survives the new arm`);
   ok(!allowedOnLeanSeat(decoy, true), `…on a DM seat as well as a channel seat ("${decoy}")`);
 }
 ok(!allowedOnLeanSeat("grant"), "the bare namespace word is not a tool name and is denied");
 ok(!allowedOnLeanSeat("some_tool_nobody_declared"), "…and an ordinary unknown name is STILL denied after the namespace arm landed");
 
-for (const name of [GRANT_TOOL, grantToolName("a_b", "c_d")]) {
+for (const name of [GRANT_TOOL, grantBorrowToolName("a_b", "c_d", "e_f")]) {
   const parsed = parseQualifiedToolName(name);
   ok(parsed?.namespace === "grant", `S0 parses "${name}" as the reserved grant namespace — the roster admits no name S0 cannot read`);
   ok((parsed?.verb.length ?? 0) > 0, `…and yields a verb for "${name}", so the name has a statable tier`);

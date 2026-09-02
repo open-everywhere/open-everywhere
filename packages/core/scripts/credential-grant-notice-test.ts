@@ -16,7 +16,6 @@ import {
   postGrantRoomNotice,
   withGrantRoomContext,
 } from "../agent/access/credential-grant-notice.js";
-import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
@@ -95,7 +94,6 @@ const slackArmMembers = {
 } as const;
 registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage, platform: "slack" });
 
-_resetGrantableVerbsForTest();
 _resetDynamicVariantsForTest();
 
 const sent: string[] = [];

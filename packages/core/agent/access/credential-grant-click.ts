@@ -5,7 +5,7 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { approveCredentialGrant, declineCredentialGrant, type ApproveGrantOutcome, type GrantAuditStamps } from "./credential-grant-flow.js";
 import { parseGrantCardActionId, type GrantCardAnswer } from "./credential-grant-card.js";
-import { grantToolName, type CredentialGrantMode } from "../operational/credential-grant-rows.js";
+import { type CredentialGrantMode } from "../operational/credential-grant-rows.js";
 
 export const GRANT_CARD_CLICK_ACTION = "grant.card_click";
 
@@ -55,7 +55,7 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
       return { outcome: "failed", text: approveFailureText(approved.reason, approved.prompted === true) };
     }
     await noteClick(input, "approved");
-    const named = `\`${approved.grant.toolName ?? composedName(approved.grant)}\``;
+    const named = approved.grant.toolName === undefined ? "the granted tool" : `\`${approved.grant.toolName}\``;
     return {
       outcome: "approved",
       text:
@@ -87,14 +87,6 @@ function approveFailureText(reason: GrantApproveFailure["reason"], prompted: boo
     case "not_pending_or_expired":
     case "mint_refused":
       return "That could not be granted. Nothing changed, and nothing was granted. Ask them to raise it again.";
-  }
-}
-
-function composedName(grant: { readonly ownerSlug: string; readonly verb: string }): string {
-  try {
-    return grantToolName(grant.ownerSlug, grant.verb);
-  } catch {
-    return grant.verb;
   }
 }
 

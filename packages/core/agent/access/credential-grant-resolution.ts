@@ -1,7 +1,7 @@
 import { postArm } from "../channels/post-arms.js";
 import { GRANT_MODE_WORDS, grantModeIsBroader, type GrantApproveGate } from "./credential-grant-card.js";
 import { postReply, type ReplyTarget } from "../channels/reply-post.js";
-import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import { credentialGrantDisclosureLine, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
 function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
@@ -32,7 +32,7 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
   const what = `\`${ask.verb}\` on \`${ask.resource}\``;
   switch (resolution.kind) {
     case "approved": {
-      const toolName = resolution.grant.toolName ?? composedGrantToolName(resolution.grant);
+      const toolName = resolution.grant.toolName;
       if (toolName === undefined) {
         return [
           `${ask.ownerSlug} approved the credential grant for ${what} (${GRANT_MODE_WORDS[resolution.grant.mode]}).`,
@@ -71,14 +71,6 @@ function breadthLines(ask: CredentialGrantAskRow, grant: CredentialGrantRow, ask
   return [
     `${ask.ownerSlug} granted MORE than was asked: the request was for ${GRANT_MODE_WORDS[askedMode]}, and the grant is for ${GRANT_MODE_WORDS[grant.mode]}.`,
   ];
-}
-
-function composedGrantToolName(grant: CredentialGrantRow): string | undefined {
-  try {
-    return grantToolName(grant.ownerSlug, grant.verb);
-  } catch {
-    return undefined;
-  }
 }
 
 export type GrantNoticeOutcome = "sent" | "no_target" | "failed";

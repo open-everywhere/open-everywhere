@@ -11,13 +11,11 @@ delete process.env.OE_PLATFORM;
 import {
   _resetGrantBorrowTransportsForTest,
   _resetGrantRoomNoticeForTest,
-  _resetGrantTransportsForTest,
   borrowScopeDigest,
   registerGrantBorrowTransport,
   runGrantedCall,
   type GrantBorrowCall,
 } from "../agent/access/credential-grant-broker.js";
-import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
 import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
@@ -63,8 +61,6 @@ const seatCtx = (sessionId: string): unknown => ({
 
 const ORG = resolvePartition(seatCtx("probe") as never).org;
 
-_resetGrantableVerbsForTest();
-_resetGrantTransportsForTest();
 _resetGrantBorrowTransportsForTest();
 _resetGrantRoomNoticeForTest();
 _resetDynamicVariantsForTest();

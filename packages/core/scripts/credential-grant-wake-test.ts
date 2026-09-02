@@ -7,12 +7,12 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  _resetGrantTransportsForTest,
-  registerGrantTransport,
+  _resetGrantBorrowTransportsForTest,
+  registerGrantBorrowTransport,
   runGrantedCall,
   type GrantCallContext,
 } from "../agent/access/credential-grant-broker.js";
-import { _resetGrantableVerbsForTest, registerGrantableVerb } from "../agent/access/credential-grant.js";
+import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { currentJobWakePosture, markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -52,19 +52,10 @@ function inSession<T>(fn: () => T): T {
 }
 
 const sent: string[] = [];
-_resetGrantTransportsForTest();
-_resetGrantableVerbsForTest();
-registerGrantableVerb({
-  compose: (g) => ({ method: "GET", url: `https://api.notion.com/v1/blocks/${g.resource}/children` }),
-  connector: "notion",
-  describe: () => "read one page",
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
-registerGrantTransport("notion", async (request) => {
-  sent.push(request.url);
+_resetGrantBorrowTransportsForTest();
+selectConnectorTransport({ connector: "notion", directUrl: "https://mcp.notion.com/mcp", provider: "notion" });
+registerGrantBorrowTransport("notion", async (call) => {
+  sent.push(call.mcpTool);
   return { blocks: [] };
 });
 
@@ -87,12 +78,16 @@ const row = (id: string, mode: "once" | "session", status: CredentialGrantRow["s
   ownerPrincipalId: OWNER,
   ownerSlug: "rowan",
   purpose: "draft the Q3 summary",
+  frozenArgs: { page: "abc123" },
+  inputSchema: { properties: { page: { const: "abc123", type: "string" } }, required: ["page"], type: "object" },
+  mcpTool: "notion-fetch",
   requesterPrincipalId: REQUESTER,
-  resource: "notion:page/abc123",
+  resource: "Launch page — notion-fetch({page:abc123})",
   scopeKey: SCOPE,
   status,
   tier: "read",
-  verb: "read_page",
+  toolName: "grant__rowan_notion__notion_fetch_launch_page",
+  verb: "notion_fetch",
 });
 
 await store.addCredentialGrant(ORG, row("g-wake-once", "once"));
@@ -114,7 +109,7 @@ console.log("1. an unattended wake carrying a STAMPED requester still refuses, o
     return runGrantedCall("g-wake-once", {}, ctx());
   });
   eq(refused.ok ? "OK" : refused.refused, "unattended_wake", "🔴 the broker refuses by its OWN named gate, not by the OPE-675 attribution arm");
-  eq(sent.length, 0, "…no vendor request was composed or sent");
+  eq(sent.length, 0, "…no vendor call was sent");
   eq((await store.getCredentialGrant(ORG, "g-wake-once"))?.status, "active", "…and the once-mode grant is NOT burned: the refusal runs before the burn");
   ok(
     !refused.ok && refused.refused === "unattended_wake" && refused.message !== credentialGrantRefusalMessage(row("g-wake-once", "once"), "unverified_requester"),
@@ -169,7 +164,7 @@ console.log("4. NEGATIVE CONTROL — an escalated wake on the SAME job session s
   });
   eq(result.ok, true, "🔴 the granted call COMPLETES where a person is present — the arm narrows the wake, never the grant");
   eq(sent.length, 1, "…and the registered transport was reached exactly once");
-  ok(sent[0]?.includes("abc123") === true, "…with the composed request the grant's own resource names");
+  eq(sent[0], "notion-fetch", "…dialling the vendor tool the grant row itself names, in the vendor's own bytes");
 }
 
 console.log("5. NEGATIVE CONTROL — the unverified_requester refusal is untouched:");

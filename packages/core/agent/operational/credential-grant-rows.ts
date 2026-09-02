@@ -85,12 +85,6 @@ function grantNameSlug(raw: string): string | undefined {
   return slug.length > 0 && isGrantNameSegment(slug) ? slug : undefined;
 }
 
-export function grantToolName(ownerSlug: string, verb: string): string {
-  if (!isGrantNameSegment(ownerSlug)) throw new Error(`grantToolName: illegal owner segment "${ownerSlug}" (a segment may not contain "__")`);
-  if (!isGrantNameSegment(verb)) throw new Error(`grantToolName: illegal verb segment "${verb}" (a segment may not contain "__")`);
-  return `${CREDENTIAL_GRANT_NAMESPACE}__${ownerSlug}__${verb}`;
-}
-
 export function isGrantToolName(name: string): boolean {
   const segments = name.split("__");
   if (segments.length !== 3) return false;
@@ -172,17 +166,16 @@ export function grantBorrowColumnsProblem(row: {
   readonly toolName?: string;
   readonly inputSchema?: GrantJsonObject;
 }): string | undefined {
+  if (row.inputSchema !== undefined && row.mcpTool === undefined) return "a schema snapshot was written without the vendor tool it snapshots";
   const present = [
     ["mcpTool", row.mcpTool !== undefined],
     ["frozenArgs", row.frozenArgs !== undefined],
     ["toolName", row.toolName !== undefined],
   ] as const;
-  const named = present.filter(([, has]) => has);
-  if (named.length > 0 && named.length < present.length) {
-    const missing = present.filter(([, has]) => !has).map(([name]) => name);
-    return `a borrow names ${named.map(([name]) => name).join(", ")} but not ${missing.join(", ")} — the three are decided together at the ask and must be written together`;
+  const missing = present.filter(([, has]) => !has).map(([name]) => name);
+  if (missing.length > 0) {
+    return `the row names ${missing.join(", ")} nowhere — a grant lends one vendor MCP tool, and mcpTool, frozenArgs and toolName are decided together at the ask and must be written together`;
   }
-  if (row.inputSchema !== undefined && row.mcpTool === undefined) return "a schema snapshot was written without the vendor tool it snapshots";
   return undefined;
 }
 
@@ -218,6 +211,7 @@ export type CredentialGrantRefusal =
   | "expired"
   | "burned"
   | "out_of_scope"
+  | "no_lent_tool"
   | "no_transport"
   | "owner_unresolvable"
   | "unverified_requester"
@@ -251,8 +245,10 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
       return `Refused: this was a one-shot grant and it is already spent. ${what} admitted exactly one call. Do not retry — ask again if it is still needed.`;
     case "out_of_scope":
       return `Refused: this grant was approved for a different conversation. ${what} is spendable only where its owner approved it.`;
+    case "no_lent_tool":
+      return `Refused: this grant names no vendor tool to run, so ${what} can never be spent. Do not retry — ask again so a fresh grant is minted.`;
     case "no_transport":
-      return `Refused: this deployment carries no ${row.verb} transport for the granted connector, so the composed request cannot be sent. The grant itself is valid.`;
+      return `Refused: this deployment carries no transport for the granted connector, so the call cannot be sent. The grant itself is valid.`;
     case "owner_unresolvable":
       return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":

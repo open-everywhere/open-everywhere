@@ -38,7 +38,6 @@ import {
   grantAuditResource,
   grantBorrowResourceLabel,
   grantFrozenArgsDigest,
-  grantToolName,
   grantToolSlug,
   quotedPurpose,
   type CredentialGrantAskRow,
@@ -180,15 +179,8 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
 async function takenGrantToolNames(org: string, scopeKey: string, nowIso: string): Promise<readonly string[]> {
   const store = getOperationalStore();
   const names: string[] = [];
-  const claim = (row: Pick<CredentialGrantRow, "ownerSlug" | "verb"> & { readonly toolName?: string }): void => {
-    if (row.toolName !== undefined) {
-      names.push(row.toolName);
-      return;
-    }
-    try {
-      names.push(grantToolName(row.ownerSlug, row.verb));
-    } catch {
-    }
+  const claim = (row: { readonly toolName?: string }): void => {
+    if (row.toolName !== undefined) names.push(row.toolName);
   };
   for (const row of await store.credentialGrantsForScope(org, scopeKey)) claim(row);
   for (const ask of await store.pendingCredentialGrantAsksForScope(org, scopeKey, nowIso)) claim(ask);

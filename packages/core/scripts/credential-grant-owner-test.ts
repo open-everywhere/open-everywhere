@@ -7,12 +7,13 @@ import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { rawVaultSubject, sharedVaultSubject } from "../agent/identity/oauth-vault-share.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import {
-  _resetGrantTransportsForTest,
-  registerGrantTransport,
+  _resetGrantBorrowTransportsForTest,
+  registerGrantBorrowTransport,
   runGrantedCall,
   type GrantCallContext,
 } from "../agent/access/credential-grant-broker.js";
-import { _resetGrantableVerbsForTest, credentialGrantMintVerdict, registerGrantableVerb } from "../agent/access/credential-grant.js";
+import { credentialGrantMintVerdict } from "../agent/access/credential-grant.js";
+import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { credentialGrantRefusalMessage, type CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 import type { GrantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 
@@ -57,24 +58,15 @@ console.log("2. an owner nobody can resolve derives NOTHING:");
   eq(await grantOwnerSubject(ORG, "notion", ""), undefined, "…nor is an empty string");
   eq(await grantOwnerSubject(ORG, "notion", "slack/dev/U-owner"), undefined, "…nor is the \"nobody said\" tenant sentinel, which is not a workspace id");
   ok(
-    credentialGrantRefusalMessage({ ownerSlug: "rowan", resource: "notion:page/abc", verb: "read_page" }, "owner_unresolvable").includes("rowan"),
+    credentialGrantRefusalMessage({ ownerSlug: "rowan", resource: "Launch page", verb: "notion_fetch" }, "owner_unresolvable").includes("rowan"),
     "the refusal copy names the owner it could not resolve",
   );
 }
 
 console.log("3. the same fact refuses at the MINT, one refusal instead of a dead grant:");
 {
-  _resetGrantableVerbsForTest();
-  registerGrantableVerb({
-    compose: (g) => ({ method: "GET", url: `https://api.notion.com/v1/blocks/${g.resource}/children` }),
-    connector: "notion",
-    describe: () => "read one page",
-    inputSchema: { properties: {}, type: "object" },
-    resourceKind: "page",
-    tier: "read",
-    verb: "read_page",
-  });
   const mintInput = (ownerPrincipalId: string) => ({
+    borrow: { mcpTool: "notion-fetch", rowId: "aaaabbbb-cccc-dddd-eeee-ffff00001111", takenToolNames: [], targetLabel: "Launch page" },
     connector: "notion",
     domainGrantsConnector: true,
     liveAsk: undefined,
@@ -82,8 +74,6 @@ console.log("3. the same fact refuses at the MINT, one refusal instead of a dead
     ownerHandle: "Rowan Hale",
     ownerPrincipalId,
     requesterPrincipalId: `slack/${WS}/U-req`,
-    resource: "notion:page/abc123",
-    verb: "read_page",
   });
   const bad = credentialGrantMintVerdict(mintInput("slack:U-owner"));
   eq(bad.ok ? "OK" : bad.reason, "unresolvable_owner", "an ask naming an unresolvable owner refuses at the mint");
@@ -126,8 +116,9 @@ console.log("5. the broker hands the owner subject to the transport, and refuses
 {
   const NOW = Date.parse("2026-01-29T18:22:00.000Z");
   const seen: GrantOwnerSubject[] = [];
-  _resetGrantTransportsForTest();
-  registerGrantTransport("notion", async (_request, _grant, owner) => {
+  _resetGrantBorrowTransportsForTest();
+  selectConnectorTransport({ connector: "notion", directUrl: "https://mcp.notion.com/mcp", provider: "notion" });
+  registerGrantBorrowTransport("notion", async (_call, _grant, owner) => {
     seen.push(owner);
     return { blocks: [] };
   });
@@ -150,12 +141,16 @@ console.log("5. the broker hands the owner subject to the transport, and refuses
     ownerPrincipalId,
     ownerSlug: "rowan",
     purpose: "draft the Q3 summary",
+    frozenArgs: { page: "abc123" },
+    inputSchema: { properties: { page: { const: "abc123", type: "string" } }, required: ["page"], type: "object" },
+    mcpTool: "notion-fetch",
     requesterPrincipalId: `slack/${WS}/U-req`,
-    resource: "notion:page/abc123",
+    resource: "Launch page — notion-fetch({page:abc123})",
     scopeKey: "session-1074",
     status: "active",
     tier: "read",
-    verb: "read_page",
+    toolName: "grant__rowan_notion__notion_fetch_launch_page",
+    verb: "notion_fetch",
   });
   await store.addCredentialGrant(ORG, row("g-good", `slack/${WS}/U-owner`, "session"));
   await store.addCredentialGrant(ORG, row("g-bad", "slack:U-owner", "once"));

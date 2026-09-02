@@ -11,7 +11,6 @@ import { GRANT_CARD_CLICK_ACTION, handleGrantCardClick, resolveGrantCardClick } 
 import { grantCardActionId, grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "../agent/access/credential-grant-card.js";
 import { resolveGrantOwner } from "../agent/access/credential-grant-ask.js";
 import { askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
-import { _resetGrantableVerbsForTest, parseGrantResource, registerGrantableVerb } from "../agent/access/credential-grant.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
@@ -46,17 +45,6 @@ const OWNER = `slack/${WS}/U-owner`;
 const REQ = `slack/${WS}/U-req`;
 const ROOM: ReplyTarget = { channelId: "C-ROOM", platform: "slack", threadTs: "1769361952.935000" };
 const stamps = { org: ORG, platform: "slack", surface: "slack/T1/C-ROOM", workspace: WS };
-
-_resetGrantableVerbsForTest();
-registerGrantableVerb({
-  compose: (grant) => ({ method: "GET", url: `https://api.notion.com/v1/blocks/${parseGrantResource(grant.resource)?.id ?? ""}/children` }),
-  connector: "notion",
-  describe: (grant) => `read ${grant.resource}`,
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
 
 _resetAccountDisplayNamesForTest();
 registerAccountDisplayName("slack", async (nativeId) => (nativeId === "U-owner" ? { handle: "rowan", name: "Rowan Hale" } : undefined));

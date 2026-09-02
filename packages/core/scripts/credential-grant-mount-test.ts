@@ -13,14 +13,12 @@ delete process.env.OE_PLATFORM;
 import {
   _resetGrantBorrowTransportsForTest,
   _resetGrantRoomNoticeForTest,
-  _resetGrantTransportsForTest,
   borrowScopeDigest,
   GRANT_REFUND_CAP_PER_TURN,
   registerGrantBorrowTransport,
   registerGrantRoomNotice,
   runGrantedCall,
 } from "../agent/access/credential-grant-broker.js";
-import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
@@ -65,8 +63,6 @@ registerPostArm({
   platform: "slack",
 });
 
-_resetGrantableVerbsForTest();
-_resetGrantTransportsForTest();
 _resetGrantBorrowTransportsForTest();
 _resetGrantRoomNoticeForTest();
 _resetDynamicVariantsForTest();

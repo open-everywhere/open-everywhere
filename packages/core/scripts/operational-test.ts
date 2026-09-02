@@ -1214,12 +1214,16 @@ const store = makeOperationalPostgresStore(client);
     ownerPrincipalId: "slack/W1/U-owner",
     ownerSlug: "rowan_hale",
     purpose: "draft the Q3 summary",
+    frozenArgs: { page: "abc123" },
+    inputSchema: { properties: { page: { const: "abc123", type: "string" } }, required: ["page"], type: "object" },
+    mcpTool: "notion-fetch",
     requesterPrincipalId: "slack/W1/U-req",
-    resource: "notion:page/abc123",
+    resource: "Launch page — notion-fetch({page:abc123})",
     scopeKey: "session-1",
     status: "active",
     tier: "read",
-    verb: "read_page",
+    toolName: "grant__rowan_hale_notion__notion_fetch_launch_page",
+    verb: "notion_fetch",
   });
   const CAP = 3;
   await store.addCredentialGrant("default", grant("pg-claim"));

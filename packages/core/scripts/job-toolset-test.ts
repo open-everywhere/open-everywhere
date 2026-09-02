@@ -32,7 +32,9 @@ import {
   WINDOW_UNGATED_TOOLS,
 } from "../agent/access/window-gate-manifest.js";
 import { TRIGGERED_FIRE_GRAIN } from "../agent/routines/fire-window.js";
-import { grantToolName } from "../agent/operational/credential-grant-rows.js";
+import { grantBorrowToolName } from "../agent/operational/credential-grant-rows.js";
+
+const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
@@ -134,8 +136,14 @@ ok(
 );
 ok(!allowedOnRestrictedJobWake("some_tool_nobody_declared"), "DEFAULT DENY: an unknown name is withheld, so the restriction cannot rot open as tools are added");
 
-ok(!allowedOnRestrictedJobWake(grantToolName("rowan", "read_page")), "🔴 OPE-1091: a restricted job wake WITHHOLDS a granted READ — a fire is nobody's ask, so it spends nobody's credential");
-ok(!allowedOnRestrictedJobWake(grantToolName("rowan", "create_page")), "…and a granted WRITE (which the connector arm already refused — the fail direction is unchanged for it)");
+ok(
+  !allowedOnRestrictedJobWake(grantBorrowToolName("rowan", "notion", "notion_fetch_report")),
+  "🔴 OPE-1091: a restricted job wake WITHHOLDS a granted READ — a fire is nobody's ask, so it spends nobody's credential",
+);
+ok(
+  !allowedOnRestrictedJobWake(grantBorrowToolName("rowan", "notion", "create_page")),
+  "…and a granted WRITE (which the connector arm already refused — the fail direction is unchanged for it)",
+);
 ok(!allowedOnRestrictedJobWake("grant__a__b__c"), "…and a malformed reserved name, which has no readable verb at all");
 ok(
   !allowedOnRestrictedJobWake("grant__Rowan__read_page"),
@@ -189,7 +197,7 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
     "notion__delete_block",
     "browser_navigate",
     "final_output",
-    grantToolName("rowan", "read_page"),
+    GRANT_TOOL,
   ];
   const out: Record<string, { description: string; execute: () => unknown }> = {};
   for (const name of names) out[name] = { description: `${name} tool`, execute: () => ({ ok: true }) };
@@ -242,7 +250,7 @@ inSession(() => {
   ok(!("purge_memory" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "projectToolSet withholds the consequential names on an un-escalated job wake");
   ok("reply" in toolset && "record_job_state" in toolset && "complete_job" in toolset && "read_channel" in toolset, "projectToolSet keeps the job kit");
   ok("notion__search" in toolset && !("notion__create_page" in toolset), "connector reads survive the seam, connector writes do not");
-  ok(!(grantToolName("rowan", "read_page") in toolset), "🔴 OPE-1091: projectToolSet REMOVES this chat's mounted grant on a restricted job wake — absence, so the model never sees a credential it may not spend");
+  ok(!(GRANT_TOOL in toolset), "🔴 OPE-1091: projectToolSet REMOVES this chat's mounted grant on a restricted job wake — absence, so the model never sees a credential it may not spend");
 });
 
 inSession(() => {
@@ -256,7 +264,7 @@ inSession(() => {
   eq(removedBy(before, toolset), ["task_update"], "an ESCALATED job wake keeps the full toolset apart from the child-only `task_update` — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
   ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
-  ok(grantToolName("rowan", "read_page") in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
+  ok(GRANT_TOOL in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
 });
 
 inSession(() => {

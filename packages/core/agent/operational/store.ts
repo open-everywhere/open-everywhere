@@ -849,7 +849,6 @@ export interface OperationalStore {
   addCredentialGrant(org: string, row: CredentialGrantRow): Promise<void>;
   getCredentialGrant(org: string, id: string): Promise<CredentialGrantRow | null>;
   credentialGrantsForScope(org: string, scopeKey: string): Promise<readonly CredentialGrantRow[]>;
-  liveCredentialGrant(org: string, ownerPrincipalId: string, verb: string, scopeKey: string, nowIso: string): Promise<CredentialGrantRow | null>;
   liveBorrowCredentialGrant(
     org: string,
     ownerPrincipalId: string,

@@ -37,11 +37,14 @@ function askRow(id: string, patch: Partial<CredentialGrantAskRow>): CredentialGr
     ownerSlug: "dana",
     purpose: "read the launch checklist",
     requestedMode: "once",
+    frozenArgs: { page: "ope1112" },
+    mcpTool: "notion-fetch",
     requesterPrincipalId: "discord/G1/U-ope1112-req",
-    resource: "notion:page/ope1112",
+    resource: "Launch checklist — notion-fetch({page:ope1112})",
     scopeKey: `session-${id}`,
     status: "pending",
-    verb: "read_page",
+    toolName: "grant__dana_notion__notion_fetch_launch_checklist",
+    verb: "notion_fetch",
     ...patch,
   };
 }
@@ -128,7 +131,7 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
 
   const lapseNotice = posts.find((p) => p.channelId === LAPSED_ROOM);
   expect(lapseNotice, `no lapse notice reached the requester's pinned conversation (posts: ${JSON.stringify(posts.map((p) => p.channelId))})`).toBeDefined();
-  expect(lapseNotice?.content).toContain("read_page");
+  expect(lapseNotice?.content).toContain("notion_fetch");
   expect(lapseNotice?.content).toContain("expired");
   expect(lapseNotice?.content, "the lapse notice must NOT read as a decline — nobody answered").toContain("did not decline");
   expect(posts.some((p) => p.channelId === ANSWERED_ROOM), "NEGATIVE CONTROL: the answered ask's room hears NOTHING — its owner already answered, and that answer was posted when they clicked").toBe(false);

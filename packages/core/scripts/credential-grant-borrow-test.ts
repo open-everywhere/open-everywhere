@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,14 +8,7 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-borrow-")
 delete process.env.OE_PLATFORM;
 
 import { classifyConnectorOpTier, parseQualifiedToolName } from "../agent/access/consequence.js";
-import {
-  _resetGrantableVerbsForTest,
-  credentialGrantFromAsk,
-  credentialGrantMintVerdict,
-  grantMintRefusalMessage,
-  registerGrantableVerb,
-  type GrantMintInput,
-} from "../agent/access/credential-grant.js";
+import { credentialGrantFromAsk, credentialGrantMintVerdict, grantMintRefusalMessage, type GrantMintInput } from "../agent/access/credential-grant.js";
 import {
   grantBorrowRowSuffix,
   grantBorrowToolName,
@@ -193,28 +187,15 @@ ok(!isGrantNameSegment("Notion"), "…and refuses an uppercase one");
 
 console.log("3. the tier pinned on a borrow:");
 
-_resetGrantableVerbsForTest();
-registerGrantableVerb({
-  compose: () => ({ method: "GET", url: "https://api.notion.com/v1/blocks/x/children" }),
-  connector: "notion",
-  describe: () => "read a page",
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
-
 const baseBorrow: GrantMintInput = {
+  borrow: { mcpTool: "notion-fetch", rowId: ROW_ID, takenToolNames: [], targetLabel: "Quarterly report" },
   connector: "notion",
   domainGrantsConnector: true,
   liveAsk: undefined,
   liveGrant: undefined,
-  borrow: { mcpTool: "notion-fetch", rowId: ROW_ID, takenToolNames: [], targetLabel: "Quarterly report" },
   ownerHandle: "Rowan Hale",
   ownerPrincipalId: "slack/W1/U-owner",
   requesterPrincipalId: "slack/W1/U-req",
-  resource: "not-an-address",
-  verb: "frobnicate",
 };
 
 {
@@ -233,7 +214,7 @@ let readOps = 0;
 let refusedOps = 0;
 for (const op of OPS) {
   const dmTier = classifyConnectorOpTier(`notion__${op}`);
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: op } });
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, mcpTool: op } });
   if (dmTier === "read") {
     readOps++;
     ok(verdict.ok, `"${op}" classifies read in a DM, so it mints as a borrow`);
@@ -247,9 +228,9 @@ ok(readOps >= 3 && refusedOps >= 3, "the op table exercises both arms — neithe
 eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISED vendor op fails closed to destructive, so it can never be borrowed by accident");
 
 {
-  const unrecognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "notion-frobnicate" } });
+  const unrecognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, mcpTool: "notion-frobnicate" } });
   ok(!unrecognised.ok && unrecognised.reason === "write_verb_out_of_slice", "the mint REFUSES a vendor tool whose own classification is not read, so the head is never unrecognised");
-  const recognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "notion-fetch" } });
+  const recognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, mcpTool: "notion-fetch" } });
   ok(recognised.ok, "…while a read tool mints, so the refusal above is discriminating rather than universal");
   eq(
     classifyConnectorOpTier(recognised.ok ? recognised.toolName : ""),
@@ -259,7 +240,7 @@ eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISE
 }
 
 {
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "!!!" } });
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, mcpTool: "!!!" } });
   ok(!verdict.ok && verdict.reason === "illegal_tool_name", "a tool name with no legal characters is refused BY NAME rather than throwing out of a pure verdict");
   ok(grantMintRefusalMessage("notion", "illegal_tool_name").length > 40, "…and its refusal copy names the boundary rather than saying no");
 }
@@ -280,7 +261,7 @@ eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISE
 {
   const verdict = credentialGrantMintVerdict({
     ...baseBorrow,
-    borrow: { ...baseBorrow.borrow!, takenToolNames: ["grant__rowan_long_notion__notion_fetch_quarterly_report"] },
+    borrow: { ...baseBorrow.borrow, takenToolNames: ["grant__rowan_hale_notion__notion_fetch_quarterly_report"] },
   });
   eq(
     verdict.ok ? verdict.toolName : "",
@@ -291,16 +272,16 @@ eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISE
 {
   const verdict = credentialGrantMintVerdict({
     ...baseBorrow,
-    borrow: { ...baseBorrow.borrow!, takenToolNames: ["grant__rowan_long_notion__notion_fetch_quarterly_report"], targetLabel: "Team OKRs" },
+    borrow: { ...baseBorrow.borrow, takenToolNames: ["grant__rowan_hale_notion__notion_fetch_quarterly_report"], targetLabel: "Team OKRs" },
   });
   eq(verdict.ok ? verdict.toolName : "", "grant__rowan_hale_notion__notion_fetch_team_okrs", "…while a second grant of the same tool on a DIFFERENT target keeps a meaning-carrying name");
 }
 {
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, targetLabel: "!!!" } });
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, targetLabel: "!!!" } });
   eq(verdict.ok ? verdict.toolName : "", "grant__rowan_hale_notion__notion_fetch", "an unslugifiable target label is NOT a refusal — the name falls back to the tool slug alone");
 }
 {
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, rowId: "----" } });
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow, rowId: "----" } });
   ok(!verdict.ok && verdict.reason === "illegal_tool_name", "a row id the collision suffix cannot be drawn from refuses BY NAME rather than throwing out of a pure verdict");
 }
 {
@@ -308,19 +289,8 @@ eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISE
   ok(!verdict.ok && verdict.reason === "illegal_tool_name", `an owner handle that pushes the name past ${String(GRANT_TOOL_NAME_MAX)} characters refuses rather than mounting an over-long name`);
 }
 {
-  const verdict = credentialGrantMintVerdict({
-    connector: "notion",
-    domainGrantsConnector: true,
-    liveAsk: undefined,
-    liveGrant: undefined,
-    ownerHandle: "Rowan Hale",
-    ownerPrincipalId: "slack/W1/U-owner",
-    requesterPrincipalId: "slack/W1/U-req",
-    resource: "notion:page/abc123",
-    verb: "read_page",
-  });
-  ok(verdict.ok, "with no mcpTool the REGISTRY path runs, unchanged");
-  eq(verdict.ok ? verdict.toolName : "", "grant__rowan_long__read_page", "…and still mints grant__<owner>__<verb>");
+  const verdict = credentialGrantMintVerdict(baseBorrow);
+  ok(verdict.ok && verdict.toolName.split("__")[1] === "rowan_hale_notion", "every name the mint composes carries the connector in the middle segment — the borrow grammar and no other");
 }
 
 console.log("4. the JSON columns and the frozen-args digest:");
@@ -416,7 +386,9 @@ function grantRow(id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
   };
 }
 
-async function backendLegs(store: OperationalStore, label: string): Promise<void> {
+type NullBorrowColumns = (grantId: string) => Promise<void>;
+
+async function backendLegs(store: OperationalStore, label: string, nullBorrowColumns: NullBorrowColumns): Promise<void> {
   await store.addCredentialGrantAsk(ORG, askRow("ask-full"));
   const ask = await store.getCredentialGrantAsk(ORG, "ask-full");
   eq(ask?.mcpTool, "notion-fetch", `${label}: the ask's vendor tool name round-trips in the vendor's EXACT bytes, hyphen and all`);
@@ -435,16 +407,35 @@ async function backendLegs(store: OperationalStore, label: string): Promise<void
   const empty = await store.getCredentialGrant(ORG, "g-empty");
   eq(empty?.frozenArgs, {}, `${label}: a borrow that froze NOTHING reads back as {} — not as absent`);
 
-  await store.addCredentialGrant(
-    ORG,
-    { ...grantRow("g-legacy", { scopeKey: "session-legacy" }), frozenArgs: undefined, inputSchema: undefined, mcpTool: undefined, toolName: undefined },
+  await rejects(
+    async () =>
+      await store.addCredentialGrant(ORG, {
+        ...grantRow("g-legacy", { scopeKey: "session-legacy" }),
+        frozenArgs: undefined,
+        inputSchema: undefined,
+        mcpTool: undefined,
+        toolName: undefined,
+      }),
+    `${label}: 🔴 a grant naming no vendor tool is refused at the insert — the verb-registry row shape is no longer legal`,
   );
-  const legacy = await store.getCredentialGrant(ORG, "g-legacy");
-  eq(legacy?.mcpTool, undefined, `${label}: a registry-path row names NO vendor tool, and absence survives the round trip`);
-  eq(legacy?.frozenArgs, undefined, `${label}: …and no frozen arguments — absent, never {}`);
-  eq(legacy?.toolName, undefined, `${label}: …and no pinned mounted name`);
-  eq(legacy?.inputSchema, undefined, `${label}: …and no schema snapshot`);
-  ok(legacy?.verb === "read_page" && legacy.resource === "notion:page/page-A", `${label}: …while every column it DOES carry is unchanged`);
+  eq(await store.getCredentialGrant(ORG, "g-legacy"), null, `${label}: …and the refused insert wrote nothing`);
+
+  await store.addCredentialGrant(ORG, grantRow("g-persisted-legacy", { scopeKey: "session-legacy" }));
+  await nullBorrowColumns("g-persisted-legacy");
+  const persisted = await store.getCredentialGrant(ORG, "g-persisted-legacy");
+  ok(persisted !== null, `${label}: 🔴 a row an older build persisted still READS — a throwing reader would take down every caller of the scope read`);
+  eq(persisted?.mcpTool, undefined, `${label}: …and names no vendor tool`);
+  eq(persisted?.frozenArgs, undefined, `${label}: …and no frozen arguments — absent, never {}`);
+  eq(persisted?.toolName, undefined, `${label}: …and no pinned mounted name`);
+  eq(persisted?.inputSchema, undefined, `${label}: …and no schema snapshot`);
+  ok(
+    persisted?.verb === "read_page" && persisted.status === "active",
+    `${label}: …while every column it DOES carry is unchanged, so the assertions above are not reading a row that failed to write`,
+  );
+  ok(
+    (await store.credentialGrantsForScope(ORG, "session-legacy")).some((r) => r.id === "g-persisted-legacy"),
+    `${label}: …and the SCOPE read returns it too — the mount's own read is the one a throw would break`,
+  );
 
   const key = grantFrozenArgsDigest(FROZEN);
   const found = await store.liveBorrowCredentialGrant(ORG, "slack/W1/U-owner", "notion", "notion-fetch", key, "session-borrow", iso(NOW));
@@ -492,10 +483,12 @@ async function backendLegs(store: OperationalStore, label: string): Promise<void
     () => store.addCredentialGrantAsk(ORG, { ...askRow("ask-half"), mcpTool: undefined }),
     `${label}: …and an ASK that froze arguments for no named tool`,
   );
-  await rejects(
+  await assert.rejects(
     () => store.addCredentialGrant(ORG, { ...grantRow("g-schema-only", { scopeKey: "session-half" }), frozenArgs: undefined, mcpTool: undefined, toolName: undefined }),
-    `${label}: …and a schema snapshot with no vendor tool to snapshot`,
+    /schema snapshot/u,
+    `${label}: …and a schema snapshot with no vendor tool to snapshot, refused under THAT name rather than the generic missing-columns one`,
   );
+  n++;
   eq(
     (await store.liveBorrowCredentialGrant(ORG, "slack/W1/U-owner", "notion", "notion-fetch", grantFrozenArgsDigest({}), "session-empty", iso(NOW)))?.id,
     "g-empty",
@@ -546,11 +539,19 @@ async function backendLegs(store: OperationalStore, label: string): Promise<void
   );
 }
 
-await backendLegs(sqliteOperationalStore, "sqlite");
+const NULL_BORROW_COLUMNS = "UPDATE credential_grant SET mcp_tool = NULL, frozen_args = NULL, tool_name = NULL, input_schema = NULL WHERE id =";
+
+await backendLegs(sqliteOperationalStore, "sqlite", async (grantId) => {
+  const db = new DatabaseSync(process.env.OE_SQLITE_PATH ?? "");
+  db.prepare(`${NULL_BORROW_COLUMNS} ?`).run(grantId);
+  db.close();
+});
 
 const pg = await openTestPg();
 await initOperationalSchema(pg.client);
-await backendLegs(makeOperationalPostgresStore(pg.client), "postgres");
+await backendLegs(makeOperationalPostgresStore(pg.client), "postgres", async (grantId) => {
+  await pg.client.query(`${NULL_BORROW_COLUMNS} $1`, [grantId]);
+});
 await closeAllTestPg();
 
 console.log("6. the ask's borrow columns reach the grant:");
@@ -576,9 +577,9 @@ console.log("6. the ask's borrow columns reach the grant:");
     { ...askRow("ask-legacy"), frozenArgs: undefined, mcpTool: undefined, toolName: undefined },
     { expiresAt: iso(NOW + 60 * 60_000), grantId: "g-carry-legacy", mode: "once", nowIso: iso(NOW), ownerSlug: "rowan_hale", tier: "read" },
   );
-  eq(legacy.mcpTool, undefined, "a registry-path ask mints a grant naming no vendor tool — the carry adds nothing that was not decided");
-  eq(legacy.frozenArgs, undefined, "…and no frozen arguments");
-  eq(legacy.toolName, undefined, "…and no pinned mounted name, so the mount still composes one from ownerSlug and verb");
+  eq(legacy.mcpTool, undefined, "the carry copies an ABSENT vendor tool as absent — it never invents one");
+  eq(legacy.frozenArgs, undefined, "…and absent frozen arguments stay absent, never {}");
+  eq(legacy.toolName, undefined, "…and no pinned mounted name is composed in its place");
   eq(legacy.inputSchema, undefined, "…and no schema snapshot");
 }
 

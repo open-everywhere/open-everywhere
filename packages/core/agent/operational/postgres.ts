@@ -372,8 +372,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      owner_platform         text NOT NULL,   -- where the owner's card is delivered
      owner_native_id        text NOT NULL,   -- the bare platform id the DM arm addresses
      connector              text NOT NULL,
-     verb                   text NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
-     resource               text NOT NULL,   -- ARN-like: notion:page/<id>
+     verb                   text NOT NULL,   -- the vendor tool SLUGIFIED, as a name segment; a label, never the wire name
+     resource               text NOT NULL,   -- the host-composed DISPLAY LABEL, holding model-authored text and the frozen VALUES
      mcp_tool               text,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
      frozen_args            text,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
      tool_name              text,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
@@ -3414,16 +3414,6 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async credentialGrantsForScope(org, scopeKey) {
       const { rows } = await client.query(`${GRANT_SELECT} WHERE org_id = $1 AND scope_key = $2 ORDER BY created_at DESC`, [org, scopeKey]);
       return (rows as GrantPgRow[]).map(grantFromPgRow);
-    },
-
-    async liveCredentialGrant(org, ownerPrincipalId, verb, scopeKey, nowIso) {
-      const { rows } = await client.query(
-        `${GRANT_SELECT} WHERE org_id = $1 AND owner_principal_id = $2 AND verb = $3 AND scope_key = $4
-           AND status = 'active' AND expires_at > $5 ORDER BY created_at DESC LIMIT 1`,
-        [org, ownerPrincipalId, verb, scopeKey, nowIso],
-      );
-      const r = (rows as GrantPgRow[])[0];
-      return r ? grantFromPgRow(r) : null;
     },
 
     async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {

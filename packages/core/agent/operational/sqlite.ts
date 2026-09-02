@@ -451,8 +451,8 @@ function getDb(): DatabaseSync {
       owner_platform         TEXT NOT NULL,   -- where the owner's card is delivered
       owner_native_id        TEXT NOT NULL,   -- the bare platform id the DM arm addresses
       connector              TEXT NOT NULL,
-      verb                   TEXT NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
-      resource               TEXT NOT NULL,   -- ARN-like: notion:page/<id>
+      verb                   TEXT NOT NULL,   -- the vendor tool SLUGIFIED, as a name segment; a label, never the wire name
+      resource               TEXT NOT NULL,   -- the host-composed DISPLAY LABEL, holding model-authored text and the frozen VALUES
       mcp_tool               TEXT,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
       frozen_args            TEXT,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
       tool_name              TEXT,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
@@ -2960,16 +2960,6 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND scope_key = ? ORDER BY created_at DESC`)
       .all(org, scopeKey) as GrantSqliteRow[];
     return rows.map(grantFromSqliteRow);
-  },
-
-  async liveCredentialGrant(org, ownerPrincipalId, verb, scopeKey, nowIso) {
-    const row = getDb()
-      .prepare(
-        `${GRANT_SQLITE_SELECT} WHERE org_id = ? AND owner_principal_id = ? AND verb = ? AND scope_key = ?
-           AND status = 'active' AND expires_at > ? ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(org, ownerPrincipalId, verb, scopeKey, nowIso) as GrantSqliteRow | undefined;
-    return row ? grantFromSqliteRow(row) : null;
   },
 
   async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {

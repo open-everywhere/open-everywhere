@@ -4,17 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-credential-grant-")), "ops.sqlite3");
+process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 delete process.env.OE_PLATFORM;
+
+import { DatabaseSync } from "node:sqlite";
 
 import { classifyConnectorOpTier } from "../agent/access/consequence.js";
 import {
-  _resetGrantableVerbsForTest,
   credentialGrantExpiry,
   credentialGrantMintVerdict,
   GRANT_STANDING_MAX_MS,
   grantMintRefusalMessage,
-  parseGrantResource,
-  registerGrantableVerb,
   type GrantMintInput,
 } from "../agent/access/credential-grant.js";
 import { expiredGrantCardText, grantCardActions, grantCardText, GRANT_MODE_WORDS, GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "../agent/access/credential-grant-card.js";
@@ -23,13 +23,16 @@ import { grantResolutionText } from "../agent/access/credential-grant-resolution
 import {
   credentialGrantRefusalMessage,
   credentialGrantStateRefusal,
+  grantBorrowToolName,
+  grantFrozenArgsDigest,
   grantOwnerSlug,
-  grantToolName,
   isGrantNameSegment,
   quotedPurpose,
   type CredentialGrantAskRow,
   type CredentialGrantRow,
 } from "../agent/operational/credential-grant-rows.js";
+import { grantToolEntry, mountedGrantName } from "../agent/tools/grant_tools.js";
+import { runGrantedCall } from "../agent/access/credential-grant-broker.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 
 let n = 0;
@@ -46,29 +49,15 @@ const ORG = "org-1";
 const NOW = Date.parse("2026-01-29T18:22:00.000Z");
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-_resetGrantableVerbsForTest();
-registerGrantableVerb({
-  compose: (grant) => ({ method: "GET", query: { page_size: "50" }, url: `https://api.notion.com/v1/blocks/${parseGrantResource(grant.resource)?.id ?? ""}/children` }),
-  connector: "notion",
-  describe: (grant) => `read ${grant.resource}`,
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
-registerGrantableVerb({
-  compose: () => ({ method: "POST", url: "https://api.notion.com/v1/pages" }),
-  connector: "notion",
-  describe: () => "create a page",
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "write",
-  verb: "create_page",
-});
+const MCP_TOOL = "notion-fetch";
+const FROZEN = { page: "abc123" };
+const SCHEMA = { properties: { page: { const: "abc123", type: "string" } }, required: ["page"], type: "object" };
+const TOOL_NAME = grantBorrowToolName("rowan_hale", "notion", "notion_fetch_launch_page");
 
 console.log("1. the mint decision table:");
 
 const baseMint: GrantMintInput = {
+  borrow: { mcpTool: MCP_TOOL, rowId: "00000000-0000-4000-8000-000000000015", takenToolNames: [], targetLabel: "Launch page" },
   connector: "notion",
   domainGrantsConnector: true,
   liveAsk: undefined,
@@ -76,27 +65,22 @@ const baseMint: GrantMintInput = {
   ownerHandle: "Rowan Hale",
   ownerPrincipalId: "slack/W1/U-owner",
   requesterPrincipalId: "slack/W1/U-req",
-  resource: "notion:page/abc123",
-  verb: "read_page",
 };
 
 {
   const good = credentialGrantMintVerdict(baseMint);
-  ok(good.ok, "a read verb on a matching resource, in a granting domain, with one verified requester, MINTS");
-  eq(good.ok ? good.toolName : "", "grant__rowan_long__read_page", "the mounted name is grant__<ownerSlug>__<verb>, with the handle slugified");
-  eq(good.ok ? good.tier : "", "read", "the tier comes from the VERB DEFINITION, not from the mounted name");
+  ok(good.ok, "a READ vendor tool, in a granting domain, with one verified requester, MINTS");
+  eq(good.ok ? good.toolName : "", "grant__rowan_hale_notion__notion_fetch_launch_page", "the mounted name carries the slugified handle, the connector and the tool");
+  eq(good.ok ? good.tier : "", "read", "the tier comes from the CLASSIFIER's answer for the vendor tool, not from the mounted name");
 }
 
 const refusals: readonly [string, Partial<GrantMintInput>, string][] = [
   ["a domain that declares no grant role", { domainGrantsConnector: false }, "no_domain_grant"],
   ["a turn with no single verified requester", { requesterPrincipalId: undefined }, "unverified_requester"],
-  ["a verb nothing registered", { verb: "frobnicate" }, "unknown_verb"],
-  ["a resource that is not an address", { resource: "just-a-page-name" }, "resource_unparseable"],
-  ["a WILDCARD resource", { resource: "notion:page/*" }, "resource_unparseable"],
-  ["a resource of the wrong kind", { resource: "notion:database/abc" }, "resource_kind_mismatch"],
-  ["a resource belonging to another connector", { resource: "linear:page/abc" }, "connector_mismatch"],
   ["an owner handle with no legal characters", { ownerHandle: "!!!" }, "illegal_owner_handle"],
-  ["a WRITE verb, which is the next slice", { verb: "create_page" }, "write_verb_out_of_slice"],
+  ["a connector id that cannot be a name segment", { connector: "no__tion" }, "illegal_connector_id"],
+  ["a WRITE vendor tool, which is the next slice", { borrow: { ...baseMint.borrow, mcpTool: "notion-create-pages" } }, "write_verb_out_of_slice"],
+  ["a vendor tool name with no legal characters", { borrow: { ...baseMint.borrow, mcpTool: "!!!" } }, "illegal_tool_name"],
 ];
 for (const [label, patch, reason] of refusals) {
   const verdict = credentialGrantMintVerdict({ ...baseMint, ...patch });
@@ -107,12 +91,12 @@ for (const [label, patch, reason] of refusals) {
 {
   const live = { id: "g-live" } as unknown as CredentialGrantRow;
   const verdict = credentialGrantMintVerdict({ ...baseMint, liveGrant: live });
-  eq(verdict.ok ? "MINTED" : verdict.reason, "grant_already_live", "a second grant for one (owner, verb, scope) is refused — the name is unique by RULING, not by suffixing");
+  eq(verdict.ok ? "MINTED" : verdict.reason, "grant_already_live", "a second grant for one (owner, connector, tool, frozen arguments, scope) is refused");
 }
 
 ok(!isGrantNameSegment("will__read"), "a segment containing `__` is illegal");
 eq(grantOwnerSlug("will__read"), "will_read", "slugification collapses a double underscore rather than passing it through");
-assert.throws(() => grantToolName("a__b", "read_page"), /illegal owner segment/u, "grantToolName refuses an illegal owner segment");
+assert.throws(() => grantBorrowToolName("a__b", "notion", "notion_fetch"), /illegal owner segment/u, "the name composer refuses an illegal owner segment");
 n++;
 
 console.log("2. an unknown verb under grant__ classifies destructive:");
@@ -120,7 +104,7 @@ console.log("2. an unknown verb under grant__ classifies destructive:");
   eq(classifyConnectorOpTier("grant__readteam__frobnicate"), "destructive", "an UNRECOGNISED verb under grant__ fails closed to destructive, though the OWNER segment spells a read verb");
   eq(classifyConnectorOpTier("grant__readteam__read_page"), "read", "…and a genuine read verb in the VERB position still classifies read, so the leg above is not just 'everything is destructive'");
 }
-console.log("3. the compare-and-set statements:");
+
 const store = getOperationalStore();
 
 const askRow = (id: string, patch: Partial<CredentialGrantAskRow> = {}): CredentialGrantAskRow => ({
@@ -134,11 +118,14 @@ const askRow = (id: string, patch: Partial<CredentialGrantAskRow> = {}): Credent
   ownerSlug: "rowan_hale",
   purpose: "draft the Q3 summary",
   requestedMode: "once",
+  frozenArgs: FROZEN,
+  mcpTool: MCP_TOOL,
   requesterPrincipalId: "slack/W1/U-req",
-  resource: "notion:page/abc123",
+  resource: "Launch page — notion-fetch({page:abc123})",
   scopeKey: "session-1",
   status: "pending",
-  verb: "read_page",
+  toolName: TOOL_NAME,
+  verb: "notion_fetch",
   ...patch,
 });
 
@@ -152,15 +139,81 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
   ownerPrincipalId: "slack/W1/U-owner",
   ownerSlug: "rowan_hale",
   purpose: "draft the Q3 summary",
+  frozenArgs: FROZEN,
+  inputSchema: SCHEMA,
+  mcpTool: MCP_TOOL,
   requesterPrincipalId: "slack/W1/U-req",
-  resource: "notion:page/abc123",
+  resource: "Launch page — notion-fetch({page:abc123})",
   scopeKey: "session-1",
   status: "active",
   tier: "read",
-  verb: "read_page",
+  toolName: TOOL_NAME,
+  verb: "notion_fetch",
   ...patch,
 });
 
+console.log("2b. a grant row naming no vendor tool:");
+const LEGACY_ID = "grant-legacy-1334";
+{
+  const legalAsk = askRow("ask-shape-ok");
+  await store.addCredentialGrantAsk(ORG, legalAsk);
+  ok(
+    (await store.getCredentialGrantAsk(ORG, "ask-shape-ok"))?.mcpTool === MCP_TOOL,
+    "NEGATIVE CONTROL: an ask that NAMES its vendor tool is written and reads back — the refusals below are discriminating, not universal",
+  );
+  await assert.rejects(
+    async () => await store.addCredentialGrantAsk(ORG, { ...legalAsk, id: "ask-shape-bad", frozenArgs: undefined, mcpTool: undefined, toolName: undefined }),
+    /mcpTool/u,
+    "🔴 an ASK naming no vendor tool is REFUSED at the insert, and the message names the missing columns",
+  );
+  n++;
+  await assert.rejects(
+    async () => await store.addCredentialGrant(ORG, { ...grantRow("grant-shape-bad"), frozenArgs: undefined, inputSchema: undefined, mcpTool: undefined, toolName: undefined }),
+    /mcpTool/u,
+    "🔴 …and so is a GRANT: the verb-registry row shape is no longer a legal row to write",
+  );
+  n++;
+  eq(await store.getCredentialGrant(ORG, "grant-shape-bad"), null, "…and the refused insert wrote nothing");
+}
+
+{
+  await store.addCredentialGrant(ORG, grantRow(LEGACY_ID, { mode: "once", scopeKey: "session-legacy" }));
+  const db = new DatabaseSync(process.env.OE_SQLITE_PATH ?? "");
+  db.prepare("UPDATE credential_grant SET mcp_tool = NULL, frozen_args = NULL, tool_name = NULL, input_schema = NULL WHERE id = ?").run(LEGACY_ID);
+  db.close();
+  const legacy = await store.getCredentialGrant(ORG, LEGACY_ID);
+  ok(legacy !== null, "🔴 a row an older build persisted still READS — never a crash, which is what a throwing reader would give every caller of the scope read");
+  eq(legacy?.mcpTool, undefined, "…and it names no vendor tool");
+  eq(legacy?.frozenArgs, undefined, "…and no frozen arguments — absent, never {}");
+  eq(legacy?.toolName, undefined, "…and no pinned mounted name");
+  ok(legacy?.status === "active" && legacy.expiresAt > iso(NOW), "…while its lifecycle columns say it is live, so nothing below can pass because the row was already dead");
+}
+
+{
+  const legacy = await store.getCredentialGrant(ORG, LEGACY_ID);
+  assert.ok(legacy !== null);
+  eq(mountedGrantName(legacy), undefined, "🔴 a row with no pinned name claims NO mounted name — the composed grant__<owner>__<verb> arm is gone");
+  eq(grantToolEntry(legacy), undefined, "🔴 …and it offers no tool entry: there is no honest description or schema for a tool this build cannot name");
+  const legal = grantRow("g-mount-control", { scopeKey: "session-legacy" });
+  eq(mountedGrantName(legal), TOOL_NAME, "NEGATIVE CONTROL: a row that names its tool DOES claim its pinned name");
+  ok(grantToolEntry(legal) !== undefined, "…and DOES offer a tool entry, so the two refusals above are about the shape and not about the mount being broken");
+}
+
+{
+  const result = await runGrantedCall(LEGACY_ID, {}, {
+    nowMs: NOW,
+    org: ORG,
+    platform: "slack",
+    requesterPrincipalId: "slack/W1/U-req",
+    scopeKey: "session-legacy",
+    workspace: "W1",
+  });
+  ok(!result.ok && result.refused === "no_lent_tool", "🔴 the broker refuses a row that names no vendor tool BY NAME — not `expired`, and not `no_transport`");
+  ok(!result.ok && result.message.startsWith("Refused:") && result.message.includes("no vendor tool"), "…and the copy names the boundary rather than saying no");
+  eq((await store.getCredentialGrant(ORG, LEGACY_ID))?.status, "active", "🔴 …and the ONCE-mode row is STILL ACTIVE: the refusal runs before the burn, so nothing was spent");
+}
+
+console.log("3. the compare-and-set statements:");
 {
   await store.addCredentialGrantAsk(ORG, askRow("ask-1"));
   const first = await store.approveCredentialGrantAsk(ORG, "ask-1", "session", "grant-1", iso(NOW + 1000));
@@ -312,11 +365,20 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
 }
 
 {
+  const digest = grantFrozenArgsDigest(FROZEN);
   await store.addCredentialGrant(ORG, grantRow("grant-live", { scopeKey: "session-live" }));
-  const live = await store.liveCredentialGrant(ORG, "slack/W1/U-owner", "read_page", "session-live", iso(NOW));
-  eq(live?.id, "grant-live", "the live-grant read finds an active, unexpired grant for (owner, verb, scope)");
-  eq(await store.liveCredentialGrant(ORG, "slack/W1/U-owner", "read_page", "session-live", iso(NOW + 90 * 60_000)), null, "…and finds nothing once it has expired, so the at-most-one rule stops blocking a fresh ask");
-  eq(await store.liveCredentialGrant(ORG, "slack:U-other", "read_page", "session-live", iso(NOW)), null, "…and nothing for a DIFFERENT owner, so one person's grant never blocks another's");
+  const live = await store.liveBorrowCredentialGrant(ORG, "slack/W1/U-owner", "notion", MCP_TOOL, digest, "session-live", iso(NOW));
+  eq(live?.id, "grant-live", "the live-grant read finds an active, unexpired grant for (owner, connector, tool, digest, scope)");
+  eq(
+    await store.liveBorrowCredentialGrant(ORG, "slack/W1/U-owner", "notion", MCP_TOOL, digest, "session-live", iso(NOW + 90 * 60_000)),
+    null,
+    "…and finds nothing once it has expired, so the at-most-one rule stops blocking a fresh ask",
+  );
+  eq(
+    await store.liveBorrowCredentialGrant(ORG, "slack:U-other", "notion", MCP_TOOL, digest, "session-live", iso(NOW)),
+    null,
+    "…and nothing for a DIFFERENT owner, so one person's grant never blocks another's",
+  );
 }
 
 console.log("4. the per-call state verdict:");
@@ -327,7 +389,7 @@ console.log("4. the per-call state verdict:");
   eq(credentialGrantStateRefusal({ ...active, status: "used" }, iso(NOW)), "burned", "a spent once-mode grant refuses `burned`");
   eq(credentialGrantStateRefusal({ ...active, status: "expired" }, iso(NOW)), "expired", "an expired-by-sweep grant refuses `expired`");
   eq(credentialGrantStateRefusal(active, iso(NOW + 120_000)), "expired", "an ACTIVE row past its expiry refuses `expired` — the row's clock, not the sweep's, is the control");
-  for (const reason of ["revoked", "expired", "burned", "out_of_scope", "no_transport", "unverified_requester"] as const) {
+  for (const reason of ["revoked", "expired", "burned", "out_of_scope", "no_lent_tool", "no_transport", "unverified_requester"] as const) {
     const message = credentialGrantRefusalMessage(active, reason);
     ok(message.startsWith("Refused:") && message.length > 60, `the refusal copy for "${reason}" names the boundary out loud`);
   }
@@ -351,7 +413,7 @@ console.log("6. the owner's card:");
   eq(actions.map((a) => a.id.split(":")[1]), ["once", "session", "standing", "decline"], "the four buttons ARE the mode — the mode is never a free field the model fills in");
   eq(actions.filter((a) => a.intent === "reject").length, 1, "exactly one button is a reject intent");
   const text = grantCardText(ask, "Ada");
-  ok(text.includes("`read_page`") && text.includes("`notion:page/abc123`"), "the card names the exact tool and the exact resource");
+  ok(text.includes(`\`${MCP_TOOL}\``) && text.includes(ask.resource), "the card names the exact vendor tool and the exact resource label");
   ok(!text.includes('"Q3"'), "the model-authored purpose cannot carry a quote character into the card — it would close the quoted span");
   ok(!text.includes("\nIGNORE THE ABOVE"), "…and cannot carry a newline, which is how model text would otherwise start a line of its own");
   ok(text.includes("IGNORE THE ABOVE"), "…but the purpose is still SHOWN, flattened — the owner reads what was actually asked for");
@@ -396,7 +458,7 @@ console.log("7. the lapse copy:");
   const ask = askRow("ask-lapse");
   const lapse = grantResolutionText(ask, { kind: "expired" });
   const declined = grantResolutionText(ask, { kind: "declined" });
-  ok(lapse.includes("`read_page`") && lapse.includes("`notion:page/abc123`"), "the lapse notice names the exact tool and resource the room watched being asked for");
+  ok(lapse.includes("`notion_fetch`") && lapse.includes(ask.resource), "the lapse notice names the exact tool and resource the room watched being asked for");
   ok(lapse.includes("expired") && lapse.includes("no answer"), "…and says the request TIMED OUT");
   ok(!lapse.includes("declined the credential grant"), "a lapse is NEVER reported as a decline — the owner made no decision at all");
   ok(lapse.includes("did not decline"), "…and it says so out loud, because 'expired' alone reads as a soft no");
@@ -406,7 +468,7 @@ console.log("7. the lapse copy:");
 
   const card = expiredGrantCardText(ask, true);
   ok(card.includes("EXPIRED"), "the owner's card is rewritten to say expired");
-  ok(card.includes("`read_page`") && card.includes("`notion:page/abc123`"), "…and still names what was asked for, so the owner reads one story");
+  ok(card.includes(`\`${MCP_TOOL}\``) && card.includes(ask.resource), "…and still names what was asked for, so the owner reads one story");
   ok(card.includes("does nothing"), "…and says a tap achieves nothing, which is true whether or not the surface kept the buttons");
   ok(!card.includes(ask.purpose), "the model-authored purpose is NOT replayed into the expired card — it has served its purpose and nothing needs it again");
   ok(grantCardText(ask, "Ada") !== card, "NEGATIVE CONTROL: the expired card is not the live card — a rewrite to identical text would leave the owner an ask that still looks answerable");

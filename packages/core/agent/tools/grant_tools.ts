@@ -3,12 +3,10 @@ import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { registerDynamicVariant, type ReplayableToolEntry } from "../access/window-gated.js";
 import { GRANT_REFUND_CAP_PER_TURN, runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
-import { grantableVerb } from "../access/credential-grant.js";
 import { installGrantBorrowTransports } from "../connections/grant-mcp-transport.js";
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import {
   credentialGrantDisclosureLine,
-  grantToolName,
   grantToolSlug,
   isGrantToolName,
   quotedPurpose,
@@ -49,12 +47,6 @@ interface GrantToolOffer {
   readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
-function verbOffer(grant: CredentialGrantRow): GrantToolOffer | undefined {
-  const definition = grantableVerb(grant.verb);
-  if (definition === undefined) return undefined;
-  return { description: definition.describe(grant), inputSchema: definition.inputSchema };
-}
-
 function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer | undefined {
   if (grant.inputSchema === undefined) return undefined;
   const frozenKeys = Object.keys(grant.frozenArgs ?? {}).sort();
@@ -79,7 +71,9 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer
 }
 
 export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
-  const offer = grant.mcpTool === undefined ? verbOffer(grant) : borrowOffer(grant, grant.mcpTool);
+  const mcpTool = grant.mcpTool;
+  if (mcpTool === undefined) return undefined;
+  const offer = borrowOffer(grant, mcpTool);
   if (offer === undefined) return undefined;
   return defineTool({
     description: offer.description,
@@ -130,15 +124,9 @@ function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | 
 }
 
 export function mountedGrantName(grant: CredentialGrantRow): string | undefined {
-  if (grant.toolName !== undefined) {
-    if (!isGrantToolName(grant.toolName)) return undefined;
-    return grant.mcpTool !== undefined && borrowNameFitsRow(grant, grant.mcpTool, grant.toolName) ? grant.toolName : undefined;
-  }
-  try {
-    return grantToolName(grant.ownerSlug, grant.verb);
-  } catch {
-    return undefined;
-  }
+  if (grant.toolName === undefined) return undefined;
+  if (!isGrantToolName(grant.toolName)) return undefined;
+  return grant.mcpTool !== undefined && borrowNameFitsRow(grant, grant.mcpTool, grant.toolName) ? grant.toolName : undefined;
 }
 
 function borrowNameFitsRow(grant: CredentialGrantRow, mcpTool: string, name: string): boolean {

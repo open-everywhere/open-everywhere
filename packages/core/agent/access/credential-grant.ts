@@ -2,7 +2,6 @@ import { classifyConnectorOpTier } from "./consequence.js";
 import {
   grantOwnerSlug,
   grantTargetSlug,
-  grantToolName,
   grantToolSlug,
   isGrantNameSegment,
   nextGrantBorrowToolName,
@@ -67,69 +66,9 @@ export function credentialGrantDeclarationProblems(domain: GrantBoundDomain): re
   return bad;
 }
 
-export interface GrantResource {
-  readonly connector: string;
-  readonly kind: string;
-  readonly id: string;
-}
-
-export function parseGrantResource(address: string): GrantResource | undefined {
-  const m = /^([a-z0-9-]+):([a-z0-9_-]+)\/(.+)$/u.exec(address);
-  if (!m) return undefined;
-  const id = m[3];
-  if (id.includes("*") || id.trim().length === 0) return undefined;
-  return { connector: m[1], kind: m[2], id };
-}
-
-export interface GrantedRequest {
-  readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-  readonly url: string;
-  readonly query?: Readonly<Record<string, string>>;
-  readonly body?: unknown;
-}
-
-export interface GrantableVerb {
-  readonly connector: string;
-  readonly verb: string;
-  readonly resourceKind: string;
-  readonly tier: "read" | "write" | "destructive";
-  readonly inputSchema: Readonly<Record<string, unknown>>;
-  describe(grant: CredentialGrantRow): string;
-  compose(grant: CredentialGrantRow, input: Readonly<Record<string, unknown>>): GrantedRequest;
-}
-
-const GRANTABLE_VERBS = new Map<string, GrantableVerb>();
-
-export function registerGrantableVerb(definition: GrantableVerb): void {
-  if (!isGrantNameSegment(definition.verb)) {
-    throw new Error(`registerGrantableVerb: "${definition.verb}" is not a legal tool-name segment (a segment may not contain "__")`);
-  }
-  const held = GRANTABLE_VERBS.get(definition.verb);
-  if (held !== undefined && held.connector !== definition.connector) {
-    throw new Error(`registerGrantableVerb: "${definition.verb}" is already registered for connector "${held.connector}" — verb ids are globally unique`);
-  }
-  GRANTABLE_VERBS.set(definition.verb, definition);
-}
-
-export function grantableVerb(verb: string): GrantableVerb | undefined {
-  return GRANTABLE_VERBS.get(verb);
-}
-
-export function registeredGrantableVerbs(): readonly string[] {
-  return [...GRANTABLE_VERBS.keys()].sort();
-}
-
-export function _resetGrantableVerbsForTest(): void {
-  GRANTABLE_VERBS.clear();
-}
-
 export type GrantMintRefusal =
   | "no_domain_grant"
   | "unverified_requester"
-  | "unknown_verb"
-  | "resource_unparseable"
-  | "resource_kind_mismatch"
-  | "connector_mismatch"
   | "illegal_owner_handle"
   | "unresolvable_owner"
   | "grant_already_live"
@@ -151,9 +90,7 @@ export interface GrantMintInput {
   readonly ownerPrincipalId: string;
   readonly ownerHandle: string;
   readonly connector: string;
-  readonly verb?: string;
-  readonly resource?: string;
-  readonly borrow?: GrantBorrowMintInput;
+  readonly borrow: GrantBorrowMintInput;
   readonly liveGrant: CredentialGrantRow | undefined;
   readonly liveAsk: CredentialGrantAskRow | undefined;
 }
@@ -166,7 +103,7 @@ export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerd
   if (!input.domainGrantsConnector) return { ok: false, reason: "no_domain_grant" };
   if (input.requesterPrincipalId === undefined) return { ok: false, reason: "unverified_requester" };
   if (!isQualifiedPrincipalKey(input.ownerPrincipalId)) return { ok: false, reason: "unresolvable_owner" };
-  const shape = input.borrow === undefined ? verbShape(input) : borrowShape(input.connector, input.borrow);
+  const shape = borrowShape(input.connector, input.borrow);
   if (!shape.ok) return shape;
   const ownerSlug = grantOwnerSlug(input.ownerHandle);
   if (ownerSlug === undefined) return { ok: false, reason: "illegal_owner_handle" };
@@ -180,19 +117,6 @@ export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerd
 type GrantMintShape =
   | { readonly ok: true; readonly tier: "read" | "write" | "destructive"; name(ownerSlug: string): string | undefined }
   | { readonly ok: false; readonly reason: GrantMintRefusal };
-
-function verbShape(input: GrantMintInput): GrantMintShape {
-  const verb = input.verb ?? "";
-  const definition = grantableVerb(verb);
-  if (definition === undefined) return { ok: false, reason: "unknown_verb" };
-  if (definition.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
-  const resource = parseGrantResource(input.resource ?? "");
-  if (resource === undefined) return { ok: false, reason: "resource_unparseable" };
-  if (resource.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
-  if (resource.kind !== definition.resourceKind) return { ok: false, reason: "resource_kind_mismatch" };
-  if (definition.tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
-  return { name: (ownerSlug) => tryCompose(() => grantToolName(ownerSlug, verb)), ok: true, tier: definition.tier };
-}
 
 function borrowShape(connector: string, borrow: GrantBorrowMintInput): GrantMintShape {
   if (!isGrantNameSegment(connector)) return { ok: false, reason: "illegal_connector_id" };
@@ -222,22 +146,14 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
       return `This room's domain does not admit credential grants for ${connector}. An operator declares the grant role on the domain before anyone can ask.`;
     case "unverified_requester":
       return "This turn names no single verified requester, so there is nobody to record as having asked. Ask again in a turn that carries one verified author.";
-    case "unknown_verb":
-      return `That verb is not a registered grantable verb for ${connector}. A grant names a reviewed verb, never a raw vendor permission.`;
-    case "resource_unparseable":
-      return "The resource must be a single explicit address such as `notion:page/<id>`. Wildcards are not admitted — a grant names its resource or it is not a grant.";
-    case "resource_kind_mismatch":
-      return "The resource address names a different kind of thing than that verb grants over.";
-    case "connector_mismatch":
-      return `The verb and the resource must both belong to ${connector}.`;
     case "illegal_owner_handle":
       return "That owner's handle carries no characters a tool name can hold, so the grant could not be named. Link the account to a readable handle first.";
     case "unresolvable_owner":
       return "That owner is not named in a form this deployment can resolve a credential for, so nothing could ever be spent under the grant. Ask again naming the owner by their linked account.";
     case "grant_already_live":
-      return "A live grant for that owner, verb and conversation already exists. Use it, or ask the owner to revoke it before asking again.";
+      return "A live grant for that owner, that tool with those fixed arguments, and this conversation already exists. Use it, or ask the owner to revoke it before asking again.";
     case "ask_already_pending":
-      return "You already asked that person for that verb on that resource, and they have not answered yet. Do not ask again — they were sent one card, and asking again would page them a second time for the same decision. Tell the room the ask is still with them, and carry on with something else.";
+      return "You already asked that person for that tool on that resource, and they have not answered yet. Do not ask again — they were sent one card, and asking again would page them a second time for the same decision. Tell the room the ask is still with them, and carry on with something else.";
     case "write_verb_out_of_slice":
       return "That call mutates. Credential grants admit read operations today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
     case "illegal_tool_name":

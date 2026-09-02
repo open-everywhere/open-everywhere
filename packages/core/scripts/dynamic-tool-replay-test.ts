@@ -21,7 +21,6 @@ import { defineBinding, defineBundle } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import type { BindableContext } from "../agent/identity/binding.js";
-import { registerGrantableVerb } from "../agent/access/credential-grant.js";
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
 
@@ -129,16 +128,6 @@ const CASES: readonly ToolCase[] = [
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
 const RESOLVE_TIME_ONLY_SLUGS: ReadonlySet<string> = new Set(["grant_tools"]);
-
-registerGrantableVerb({
-  compose: () => ({ method: "GET", url: "https://api.notion.com/v1/blocks/x/children" }),
-  connector: "notion",
-  describe: () => "read one page",
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
 
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
 
