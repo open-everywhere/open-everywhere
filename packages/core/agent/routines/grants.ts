@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
-import { describeGrantKind, isRoutinePermissionMemoKind, routinePermissionKind } from "../approvals/session-grant.js";
+import { describeGrantKind, isLegacyConnectorGrantKind, isRoutinePermissionMemoKind, routinePermissionKind } from "../approvals/session-grant.js";
 import { routineGrantKey, type Routine } from "./routine.js";
 
 type GrantedRoutine = Pick<Routine, "id" | "promptGeneration">;
@@ -116,7 +116,7 @@ async function liveGrantKinds(org: string, routine: GrantedRoutine, nowIso: stri
   const rows = await getOperationalStore()
     .listSessionApprovals(org, routineGrantKey(routine), nowIso)
     .catch(() => []);
-  return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k));
+  return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k) && !isLegacyConnectorGrantKind(k));
 }
 
 export async function listRoutinePermissions(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
@@ -130,4 +130,8 @@ export async function revokeRoutinePermissions(
   const grants = (await liveGrantKinds(org, routine, new Date().toISOString())).length;
   const rows = await getOperationalStore().revokeSessionApprovals(org, routineGrantKey(routine));
   return { grants, rows };
+}
+
+export async function sweepLegacyConnectorGrants(org: string): Promise<number> {
+  return await getOperationalStore().sweepLegacyConnectorGrants(org);
 }

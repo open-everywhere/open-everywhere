@@ -6,6 +6,7 @@ import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proac
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
+import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_GRANT_PREFIX } from "../approvals/session-grant.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -2617,6 +2618,14 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async revokeSessionApprovals(org, sessionId) {
     return Number(getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
+  },
+
+  async sweepLegacyConnectorGrants(org) {
+    return Number(
+      getDb()
+        .prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id LIKE ? AND kind LIKE ?")
+        .run(org, `${ROUTINE_GRANT_PREFIX}%`, `${CONNECTOR_OP_KIND_PREFIX}%`).changes,
+    );
   },
 
   async putLinkSet(org, row) {

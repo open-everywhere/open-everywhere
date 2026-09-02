@@ -2,7 +2,7 @@ import type { PendingActionRow } from "./types.js";
 
 const PR_OPEN_KIND = "pr.open";
 
-const CONNECTOR_OP_KIND_PREFIX = "connector.op:";
+export const CONNECTOR_OP_KIND_PREFIX = "connector.op:";
 
 export function connectorSessionKind(connector: string): string {
   return `${CONNECTOR_OP_KIND_PREFIX}${connector}`;
@@ -53,12 +53,16 @@ export function isRoutinePermissionMemoKind(kind: string): boolean {
   return kind.startsWith(ROUTINE_CARD_ASKED_PREFIX) || kind.startsWith(ROUTINE_CARD_DECLINED_PREFIX);
 }
 
+export function isLegacyConnectorGrantKind(kind: string): boolean {
+  return kind.startsWith(CONNECTOR_OP_KIND_PREFIX);
+}
+
 export function sessionGrantKind(row: Pick<PendingActionRow, "kind" | "argsJson">): string | null {
   if (row.kind === PR_OPEN_KIND) return PR_OPEN_KIND;
   return null;
 }
 
-const ROUTINE_GRANT_PREFIX = "oe-routine:";
+export const ROUTINE_GRANT_PREFIX = "oe-routine:";
 
 export function grantLifetime(memoSessionId: string | undefined): "routine" | "session" {
   return memoSessionId !== undefined && memoSessionId.startsWith(ROUTINE_GRANT_PREFIX) ? "routine" : "session";

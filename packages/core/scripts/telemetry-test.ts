@@ -209,6 +209,10 @@ function throwingFetch(): typeof fetch {
     );
   }
 
+  const calls0 = (captured: readonly { body: unknown }[]): { key: string; value: unknown }[] | undefined =>
+    (captured[0]?.body as { resourceLogs?: { scopeLogs: { logRecords: { attributes?: { key: string; value: unknown }[] }[] }[] }[] } | undefined)
+      ?.resourceLogs?.[0]?.scopeLogs[0]?.logRecords[0]?.attributes;
+
   clearTelemetryEnv();
   const { calls, impl } = fakeFetch();
   __resetTelemetryForTest({ fetchImpl: impl });
@@ -224,6 +228,47 @@ function throwingFetch(): typeof fetch {
     .scopeLogs[0].logRecords[0].attributes ?? []).map((a) => a.key);
   ok(!sentKeys.includes("oe.surfaceKey"), "vocabulary: the out-of-schema attribute never reached the wire");
   ok(sentKeys.includes("oe.feature") && sentKeys.includes("oe.outcome"), "vocabulary: the allowed attributes still reached the wire");
+
+  {
+    clearTelemetryEnv();
+    const { calls: valueCalls, impl: valueImpl } = fakeFetch();
+    __resetTelemetryForTest({ fetchImpl: valueImpl });
+    __setInstanceForTest({ id: "instance-values", ephemeral: false });
+
+    const undeclared: string = "err_ENOTFOUND";
+    emitTelemetry("oe.feature.used", { "oe.feature": "skill_created", "oe.outcome": undeclared });
+    ok(__queueLengthForTest() === 1, "values: the EVENT still sends — a slip loses one attribute, not a whole count");
+    await flushTelemetry();
+    const attrs = (calls0(valueCalls) ?? []).reduce<Record<string, string>>((acc, a) => {
+      acc[a.key] = JSON.stringify(a.value);
+      return acc;
+    }, {});
+    ok(attrs["oe.outcome"] === undefined, "values: an undeclared oe.outcome never reaches the wire");
+    ok(attrs["oe.feature"] !== undefined, "values: …while the declared oe.feature on the same event still does");
+
+    const declared: string = "failed";
+    __resetTelemetryForTest({ fetchImpl: valueImpl });
+    __setInstanceForTest({ id: "instance-values", ephemeral: false });
+    emitTelemetry("oe.feature.used", { "oe.feature": "skill_created", "oe.outcome": declared });
+    await flushTelemetry();
+    const okAttrs = (calls0(valueCalls.slice(1)) ?? []).reduce<Record<string, string>>((acc, a) => {
+      acc[a.key] = JSON.stringify(a.value);
+      return acc;
+    }, {});
+    ok(okAttrs["oe.outcome"] !== undefined, "values: negative control — a DECLARED value passed by variable still reaches the wire");
+
+    const undeclaredFeature: string = "made_up_feature";
+    __resetTelemetryForTest({ fetchImpl: valueImpl });
+    __setInstanceForTest({ id: "instance-values", ephemeral: false });
+    emitTelemetry("oe.feature.used", { "oe.feature": undeclaredFeature, "oe.outcome": "ok" });
+    await flushTelemetry();
+    const featureAttrs = (calls0(valueCalls.slice(2)) ?? []).reduce<Record<string, string>>((acc, a) => {
+      acc[a.key] = JSON.stringify(a.value);
+      return acc;
+    }, {});
+    ok(featureAttrs["oe.feature"] === undefined, "values: an undeclared oe.feature is refused the same way");
+    ok(featureAttrs["oe.outcome"] !== undefined, "values: …and its event still carries the declared outcome");
+  }
 
   const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
   const scanRoots = [

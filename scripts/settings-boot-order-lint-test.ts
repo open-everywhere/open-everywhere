@@ -53,22 +53,32 @@ function main(): void {
     ok(r.code === 0, `a module-level read that supplies its own overrides is silent (exit ${r.code}: ${r.out})`);
   }
 
+  const fullGate = lint("--list");
   {
-    const r = lint();
+    const r = fullGate;
     ok(r.code === 0, `the tree has no eager settings read on any entry (exit ${r.code}: ${r.out})`);
     ok(/\d+ module URL\(s\) resolved/.test(r.out), "…and the run reports its own coverage");
-    ok(r.out.includes("0 settings read(s) before registerSettings()"), "…with the read count it measured");
-    ok(r.out.includes("(reach, not evaluation — arm ⑤)"), "…and the green line disclaims what the count is not");
+    ok(/\d+ settings read\(s\) before registerSettings\(\)/.test(r.out), "…with the read count it measured");
+    ok(r.out.includes("module URL(s) resolved (reach)"), "…the green line names the reach count as reach");
+    ok(/\d+ script\(s\) evaluated \(arm ⑤\)/.test(r.out), "…and the evaluation count beside it");
+    const evaluatedTotal = Number(/(\d+) script\(s\) evaluated \(arm ⑤\)/.exec(r.out)?.[1] ?? "0");
+    ok(evaluatedTotal > 0, `…and the evaluation count is a real measurement, not a zero (saw ${evaluatedTotal})`);
   }
 
   {
-    const r = lint("--list");
+    const r = fullGate;
     ok(r.out.includes("agent/agent.js:"), "the default entry list boots the agent definition");
     ok(r.out.includes("agent/sandbox/sandbox.js:"), "…and the sandbox definition, whose pre-register imports nothing else reaches");
     ok(
       r.out.includes("agent/instrumentation.js:"),
       "…and the instrumentation entry, which never registers at all, so its whole graph is pre-registration",
     );
+    for (const slot of ["agent/tools:", "agent/hooks:", "agent/channels:"]) {
+      ok(r.out.includes(slot), `the entry list boots the ${slot.slice(0, -1)} slot root`);
+    }
+    ok(/agent\/tools: (\d+) module\(s\) imported/.test(r.out), "…and a slot-root child reports how many modules it imported");
+    const imported = Number(/agent\/tools: (\d+) module\(s\) imported/.exec(r.out)?.[1] ?? "0");
+    ok(imported > 1, `…which is the directory, not a single module (saw ${imported})`);
   }
 
   {
@@ -77,10 +87,26 @@ function main(): void {
     ok(r.out.includes("never reached registerSettings()"), "…arm ③ says the registration point is missing");
     ok(r.out.includes("under its declared floor"), "…and arm ⑤ says the graph it walked is under its floor");
     ok(r.out.includes(LAZY_FIXTURE), "…both naming the entry, since the floor is now per entry");
-    ok(r.out.includes("counts REACH, not evaluation"), "…and arm ⑤'s red names what its count cannot see");
+    ok(r.out.includes("This arm counts REACH"), "…and arm ⑤'s reach red says which count it is");
 
     const bad = lint("--entry", LAZY_FIXTURE, "--floor", "lots");
     ok(bad.code !== 0, "--floor takes a whole number");
+  }
+
+  {
+    const r = lint("--entry", LAZY_FIXTURE, "--eval-floor", "100000");
+    ok(r.code !== 0, `an entry under its evaluation floor fails the gate (exit ${r.code})`);
+    ok(r.out.includes("under its declared evaluation floor"), "…arm ⑤ says which floor it missed");
+    ok(!r.out.includes("under its declared floor of"), "…and the REACH half stays green, so the two halves are separable");
+
+    const child = lint("--child", LAZY_FIXTURE);
+    const line = child.out.split("\n").find((l) => l.startsWith("OE_BOOT_ORDER_RESULT "));
+    const report = JSON.parse(line!.slice("OE_BOOT_ORDER_RESULT ".length)) as Record<string, unknown>;
+    ok(typeof report.evaluated === "number", "the child reports a whole-graph evaluation count");
+    ok((report.evaluated as number) > 0, `…and it is a real count for a fixture that does evaluate (saw ${report.evaluated})`);
+
+    const bad = lint("--entry", LAZY_FIXTURE, "--eval-floor", "lots");
+    ok(bad.code !== 0, "--eval-floor takes a whole number");
   }
 
   {
@@ -104,16 +130,19 @@ function main(): void {
   }
 
   {
-    const listed = lint("--list");
+    const listed = fullGate;
     ok(listed.code === 0, `--list runs the gate (exit ${listed.code})`);
-    ok(/module URL\(s\) resolved, \d+ CommonJS module\(s\) evaluated, \d+ trap\(s\)/.test(listed.out), "…and prints what each entry walked");
-    ok(listed.out.includes("no settings read ran before registerSettings"), "…and says so when nothing was found");
-    const evaluated = [...listed.out.matchAll(/(\d+) CommonJS module\(s\) evaluated/g)].map((m) => Number(m[1]));
-    ok(evaluated.length === 3, `every booted entry reports its CommonJS evaluation count (saw ${evaluated.length})`);
+    ok(
+      /module\(s\) imported, \d+ module URL\(s\) resolved, \d+ script\(s\) evaluated, \d+ trap\(s\)/.test(listed.out),
+      "…and prints what each entry walked",
+    );
+    const evaluated = [...listed.out.matchAll(/(\d+) script\(s\) evaluated, \d+ trap\(s\)/g)].map((m) => Number(m[1]));
+    ok(evaluated.length === 6, `every booted entry reports its evaluation count (saw ${evaluated.length})`);
     ok(
       evaluated.every((n) => n > 0),
       `…and each is a real count, not a zero standing in for one (saw ${JSON.stringify(evaluated)})`,
     );
+    ok(listed.out.includes("windowGated()"), "…and a slot-root boot's excused reads are listed, not hidden");
 
     const missing = lint("--fixture", "scripts/fixtures/settings-boot-order/not-a-file.ts");
     ok(missing.code !== 0, "a --fixture path that does not exist is refused");
@@ -130,9 +159,31 @@ function main(): void {
     ok(line !== undefined, "…and reports on its marker line");
     const report = JSON.parse(line!.slice("OE_BOOT_ORDER_RESULT ".length)) as Record<string, unknown>;
     ok(typeof report.resolutions === "number", "the resolve-hook count is reported as `resolutions`");
-    ok(typeof report.evaluatedCjs === "number", "…and the CommonJS evaluation count as `evaluatedCjs`");
+    ok(typeof report.evaluated === "number", "…and the whole-graph evaluation count as `evaluated`");
     ok(!("modules" in report), "…and neither is reported under the old `modules` name");
+    ok(!("evaluatedCjs" in report), "…nor the CommonJS-only count the whole-graph one replaced");
     ok((report.resolutions as number) > 0, "a fixture entry still resolves its own graph");
+  }
+
+  {
+    const r = lint("--entry", "packages/core/agent/tools/checkout_repo.js", "--registers", "false");
+    ok(r.code !== 0, `the excused read still reds when it is NOT the slot-root entry (exit ${r.code})`);
+    ok(r.out.includes("checkout_repo.ts"), "…naming the module that performed it");
+    ok(r.out.includes("windowGated"), "…and the accessor, which is exactly the key the slot-root entry excuses");
+  }
+
+  {
+    const r = lint("--entry", "agent/no-such-slot-root", "--slot-root");
+    ok(r.code !== 0, `an absent slot root fails the gate (exit ${r.code})`);
+    ok(r.out.includes("does not exist"), "…saying the directory is not there");
+    ok(r.out.includes("npm run oe:build"), "…and naming the command that materialises it");
+    ok(
+      !r.out.includes("settings read(s) before registerSettings()"),
+      "…and never printing the clean-tree verdict over a slot root it never walked",
+    );
+
+    const asModule = lint("--entry", "agent/no-such-slot-root");
+    ok(asModule.out.includes("produced no result"), "an undeclared entry that cannot boot is still the dead-boot red");
   }
 
   {

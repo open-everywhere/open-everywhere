@@ -11,7 +11,7 @@ import {
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
-import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson } from "../agent/channels/github-read.js";
+import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson, walkRetry, READ_WALK_BUDGET_MS } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 
 process.env.GITHUB_TOKEN = "gh-test-token";
@@ -250,6 +250,87 @@ eq(reviewThreadLines(REVIEW_COMMENTS, "12345"), [], "a root nothing replies to r
   eq((caught as RateLimitExhaustedError).surface, "github", "§7 exhaustion: the surface names github");
   eq((caught as RateLimitExhaustedError).operation, "issues.comments.list", "§7 exhaustion: the operation is the vendor route name");
   eq(slept, [1000, 1000, 1000], "§7 exhaustion: three waits under the shared default");
+}
+
+const MAX_REVIEW_PAGES_EXPECTED = 5;
+{
+  const at = (t: number) => (): number => t;
+  eq(walkRetry(1_000, { now: at(400) }).totalBudgetMs, 600, "§8 a call inside a walk takes what is LEFT of the deadline");
+  eq(walkRetry(1_000, { now: at(1_000) }).totalBudgetMs, 0, "§8 at the deadline the budget is zero, not the shared default");
+  eq(walkRetry(1_000, { now: at(9_999) }).totalBudgetMs, 0, "§8 past the deadline it clamps to zero rather than going negative");
+}
+{
+  const headers = new Headers();
+  headers.set("retry-after", "1");
+  const limited: PrFetchFn = (async () => ({ ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) })) as unknown as PrFetchFn;
+  const slept: number[] = [];
+  await assert.rejects(
+    () => getJson(limited, "https://api.github.com/x", "gh-test-token", "issues.get", { totalBudgetMs: 0, sleep: async (ms) => void slept.push(ms) }),
+    RateLimitExhaustedError,
+    "§8 a spent budget refuses at once",
+  );
+  passed++;
+  eq(slept, [], "§8 …and waits for nothing on the way — the budget is a real ceiling, not a counter");
+}
+{
+  const fullPage = (n: number): unknown[] =>
+    Array.from({ length: 100 }, (_, i) => ({ id: n * 1000 + i, body: `r${i}`, user: { login: "bob", type: "User" }, created_at: `s${i}` }));
+  const headers = new Headers();
+  headers.set("retry-after", "30");
+  const walkOf = (): { seam: { now: () => number; sleep: (ms: number) => Promise<void> }; slept: number[] } => {
+    let clock = 0;
+    const slept: number[] = [];
+    return {
+      slept,
+      seam: {
+        now: () => clock,
+        sleep: async (ms: number) => {
+          slept.push(ms);
+          clock += ms;
+        },
+      },
+    };
+  };
+  const limitedOnce = (): PrFetchFn => {
+    const seen = new Set<string>();
+    let page = 0;
+    return (async (url: string) => {
+      if (url.includes("/issues/")) return { ok: true, status: 200, text: async () => "", json: async () => ISSUE_7 };
+      if (!seen.has(url)) {
+        seen.add(url);
+        return { ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) };
+      }
+      page++;
+      return { ok: true, status: 200, text: async () => "", json: async () => fullPage(page) };
+    }) as unknown as PrFetchFn;
+  };
+
+  const bounded = walkOf();
+  let caught: unknown;
+  try {
+    await githubReadAdapter.readThread(githubTurn({ pr: 12, kind: "review_thread", review: 1000 }), "acme/api#12", "1000", 100, limitedOnce(), bounded.seam);
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "§8 the walk gives up once its SHARED budget is spent");
+  ok(
+    bounded.slept.reduce((a, b) => a + b, 0) <= READ_WALK_BUDGET_MS,
+    `§8 …having waited no more than the whole read's budget (waited ${bounded.slept.reduce((a, b) => a + b, 0)}ms of ${READ_WALK_BUDGET_MS}ms)`,
+  );
+  ok(bounded.slept.length < MAX_REVIEW_PAGES_EXPECTED, `§8 …so it never paid a 30 s wait on every page (paid ${bounded.slept.length})`);
+
+  const unbounded = walkOf();
+  const frozen = { now: () => 0, sleep: async (ms: number) => void unbounded.slept.push(ms) };
+  const out = await githubReadAdapter.readThread(
+    githubTurn({ pr: 12, kind: "review_thread", review: 1000 }),
+    "acme/api#12",
+    "1000",
+    100,
+    limitedOnce(),
+    frozen,
+  );
+  eq(unbounded.slept.length, MAX_REVIEW_PAGES_EXPECTED, "§8 negative control: with a never-shrinking budget every page pays its own 30 s wait");
+  ok(out.possiblyIncomplete === true, "§8 negative control: …and the walk completes, hitting its page ceiling");
 }
 
 console.log(`✓ github-read: ${passed} assertions passed`);

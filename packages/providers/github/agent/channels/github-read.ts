@@ -21,6 +21,22 @@ const MAX_REVIEW_PAGES = 5;
 
 const API_BASE = "https://api.github.com";
 
+export const READ_WALK_BUDGET_MS = 60_000;
+
+export interface ReadWalkSeam {
+  readonly now?: () => number;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+export function walkRetry(deadlineMs: number, seam: ReadWalkSeam = {}): RetryPolicy {
+  const now = seam.now ?? Date.now;
+  return {
+    totalBudgetMs: Math.max(0, deadlineMs - now()),
+    ...(seam.sleep ? { sleep: seam.sleep } : {}),
+    ...(seam.now ? { now: seam.now } : {}),
+  };
+}
+
 export interface GitHubContainer {
   readonly owner: string;
   readonly repo: string;
@@ -107,8 +123,8 @@ async function admitContainer(ctx: BindableContext, channel: string): Promise<Gi
   return target;
 }
 
-async function fetchIssue(fetchFn: PrFetchFn, token: string, target: GitHubContainer): Promise<RawIssue> {
-  return await getJson<RawIssue>(fetchFn, `${API_BASE}/repos/${target.repoFull}/issues/${target.number}`, token, "issues.get");
+async function fetchIssue(fetchFn: PrFetchFn, token: string, target: GitHubContainer, retry?: RetryPolicy): Promise<RawIssue> {
+  return await getJson<RawIssue>(fetchFn, `${API_BASE}/repos/${target.repoFull}/issues/${target.number}`, token, "issues.get", retry);
 }
 
 async function fetchRecentComments(
@@ -117,20 +133,26 @@ async function fetchRecentComments(
   target: GitHubContainer,
   total: number,
   limit: number,
+  retry?: () => RetryPolicy,
 ): Promise<RawComment[]> {
   const url = (page: number): string =>
     `${API_BASE}/repos/${target.repoFull}/issues/${target.number}/comments?per_page=${GITHUB_MAX_PAGE}&page=${page}`;
   const lastPage = Math.max(1, Math.ceil(total / GITHUB_MAX_PAGE));
-  let out = await getJson<RawComment[]>(fetchFn, url(lastPage), token, "issues.comments.list");
+  let out = await getJson<RawComment[]>(fetchFn, url(lastPage), token, "issues.comments.list", retry?.());
   if (!Array.isArray(out)) return [];
   if (out.length < limit && lastPage > 1) {
-    const previous = await getJson<RawComment[]>(fetchFn, url(lastPage - 1), token, "issues.comments.list");
+    const previous = await getJson<RawComment[]>(fetchFn, url(lastPage - 1), token, "issues.comments.list", retry?.());
     if (Array.isArray(previous)) out = [...previous, ...out];
   }
   return out.slice(-limit);
 }
 
-async function fetchReviewComments(fetchFn: PrFetchFn, token: string, target: GitHubContainer): Promise<{ comments: RawComment[]; mightBeTruncated: boolean }> {
+async function fetchReviewComments(
+  fetchFn: PrFetchFn,
+  token: string,
+  target: GitHubContainer,
+  retry?: () => RetryPolicy,
+): Promise<{ comments: RawComment[]; mightBeTruncated: boolean }> {
   const out: RawComment[] = [];
   let mightBeTruncated = false;
   for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
@@ -139,6 +161,7 @@ async function fetchReviewComments(fetchFn: PrFetchFn, token: string, target: Gi
       `${API_BASE}/repos/${target.repoFull}/pulls/${target.number}/comments?per_page=${GITHUB_MAX_PAGE}&page=${page}`,
       token,
       "pulls.comments.list",
+      retry?.(),
     );
     if (!Array.isArray(batch) || batch.length === 0) {
       mightBeTruncated = false;
@@ -172,14 +195,16 @@ export const githubReadAdapter = {
     channel: string,
     limit?: number,
     fetchFn: PrFetchFn = liveGithubFetch,
+    walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);
     const effective = Math.min(limit ?? GITHUB_CHANNEL_DEFAULT_LIMIT, GITHUB_MAX_PAGE);
     const token = await resolveConversationReadToken(target.repoFull);
-    const issue = await fetchIssue(fetchFn, token, target);
+    const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
+    const issue = await fetchIssue(fetchFn, token, target, walkRetry(deadline, walk));
     const total = typeof issue.comments === "number" && issue.comments > 0 ? issue.comments : 0;
     const wanted = Math.max(1, effective - 1);
-    const comments = total === 0 ? [] : await fetchRecentComments(fetchFn, token, target, total, wanted);
+    const comments = total === 0 ? [] : await fetchRecentComments(fetchFn, token, target, total, wanted, () => walkRetry(deadline, walk));
     const possiblyIncomplete = total > wanted;
     return {
       lines: [openingLine(issue), ...comments.map((c) => commentLine(c))],
@@ -193,10 +218,12 @@ export const githubReadAdapter = {
     threadTs: string,
     limit?: number,
     fetchFn: PrFetchFn = liveGithubFetch,
+    walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);
     const token = await resolveConversationReadToken(target.repoFull);
-    const { comments, mightBeTruncated } = await fetchReviewComments(fetchFn, token, target);
+    const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
+    const { comments, mightBeTruncated } = await fetchReviewComments(fetchFn, token, target, () => walkRetry(deadline, walk));
     const threadAll = reviewThreadLines(comments, threadTs);
     const lines = threadAll.slice(-(limit ?? GITHUB_THREAD_DEFAULT_LIMIT));
     const callerTrimmed = lines.length < threadAll.length;

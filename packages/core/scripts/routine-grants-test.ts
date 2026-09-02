@@ -18,6 +18,7 @@ import {
   grantDeclaredRoutinePermissions,
   listRoutinePermissions,
   revokeRoutinePermissions,
+  sweepLegacyConnectorGrants,
   unarmedDeclarations,
 } from "../agent/routines/grants.js";
 import {
@@ -341,6 +342,33 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const clean = await click(["pr.open", "tool:notion__share_page"], false);
   ok(clean.includes("standing permission to"), "a fully armable card reports its standing set");
   ok(!clean.includes("NOT armed"), "…and says nothing about anything being unarmed");
+}
+
+{
+  const store = getOperationalStore();
+  const swept = { ...ROUTINE, id: "r-sweep001" };
+  const key = routineGrantKey(swept);
+  const row = (sessionId: string, kind: string) => ({ org: ORG, sessionId, kind, grantedBy: "U", createdAt: NOW, expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+
+  await store.setSessionApproval(row(key, "connector.op:notion"));
+  await store.setSessionApproval(row(key, "connector.op:linear"));
+  await store.setSessionApproval(row(key, connectorToolPermissionKind("notion__share_page")));
+  await store.setSessionApproval(row("some-session-token", "connector.op:notion"));
+
+  const held = await listRoutinePermissions(ORG, swept, NOW);
+  ok(held.length === 1, `an inert connector.op: row is not one of the routine's permissions (saw ${JSON.stringify(held)})`);
+  ok(
+    !held.some((line) => line.includes("legacy row that lifts no tool")),
+    "…so a human is never told a routine holds a permission that lifts nothing",
+  );
+
+  const removed = await sweepLegacyConnectorGrants(ORG);
+  ok(removed === 2, `the sweep removes exactly the inert routine rows (removed ${removed})`);
+  ok((await store.listSessionApprovals(ORG, key, NOW)).map((r) => r.kind).join(",") === connectorToolPermissionKind("notion__share_page"), "…and the LIVE per-tool grant under the same key survives");
+  ok((await store.listSessionApprovals(ORG, "some-session-token", NOW)).length === 1, "…and a legacy-shaped row under a NON-routine key is not this defect, so it survives too");
+
+  const again = await sweepLegacyConnectorGrants(ORG);
+  ok(again === 0, "sweeping twice removes nothing — the one-shot is idempotent");
 }
 
 console.log(`✓ routine-grants: ${passed} assertions passed`);

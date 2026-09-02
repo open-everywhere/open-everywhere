@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createRequire, registerHooks } from "node:module";
+import { registerHooks } from "node:module";
+import { Session } from "node:inspector/promises";
 import { spawnSync } from "node:child_process";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
 import {
@@ -21,7 +22,19 @@ interface BootEntry {
   readonly why: string;
   readonly registers: boolean;
   readonly floor: number;
+  readonly evalFloor: number;
+  readonly slotRoot?: true;
+  readonly excused?: ReadonlyMap<string, string>;
 }
+
+const WINDOW_GATE_LOOKUPS: ReadonlyMap<string, string> = new Map([
+  ["packages/core/agent/tools/checkout_repo.ts::windowGated", "the un-tabled-name throw; the row is re-read per session"],
+  ["packages/core/agent/tools/create_skill.ts::windowGated", "the un-tabled-name throw; the row is re-read per session"],
+  ["packages/core/agent/tools/delete_skill.ts::windowGated", "the un-tabled-name throw; the row is re-read per session"],
+  ["packages/core/agent/tools/open_pull_request.ts::windowGated", "the un-tabled-name throw; the row is re-read per session"],
+  ["packages/core/agent/tools/post_file.ts::windowGated", "the un-tabled-name throw; the row is re-read per session"],
+  ["packages/core/agent/tools/sandbox_tools.ts::windowGatedKit", "the un-tabled-name throw, once per kit entry; every row is re-read per session"],
+]);
 
 const BOOT_ENTRIES: readonly BootEntry[] = [
   {
@@ -29,25 +42,55 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
     why: "eve's agent definition — the module the served process loads first. register-config.js is module 15 of the 1,326 it evaluates, so its graph is almost entirely post-registration; it is here for the fourteen that precede it. That 1,326 is an EVALUATION-order measurement, which is what makes `module 15` meaningful; it is not the resolved count arm 5 reports for this entry.",
     registers: true,
     floor: 400,
+    evalFloor: 400,
   },
   {
     module: "agent/sandbox/sandbox.js",
     why: "eve's sandbox definition. Fifteen imports evaluate BEFORE its register-config.js import on line 19 — the adapters browser/sandbox subgraph, self-host-egress, egress-denial-poller — and no other entry reaches them pre-registration.",
     registers: true,
     floor: 300,
+    evalFloor: 300,
   },
   {
     module: "agent/instrumentation.js",
     why: "eve's instrumentation entry, read at server startup. Six lines that re-export the adapters instrumentation module, which reaches core's adapter-api.js barrel. It never imports register-config.js, so NOTHING in that graph is ever post-registration.",
     registers: false,
     floor: 300,
+    evalFloor: 300,
+  },
+  {
+    module: "agent/tools",
+    why: "eve's tool slot root. eve mounts a tool by SCANNING this directory, so a tool no singleton root statically imports still evaluates in the served process — and in no other child here.",
+    registers: false,
+    slotRoot: true,
+    floor: 300,
+    evalFloor: 300,
+    excused: WINDOW_GATE_LOOKUPS,
+  },
+  {
+    module: "agent/hooks",
+    why: "eve's hook slot root. Same scan-mounted shape as tools/, and its modules carry the event bindings — the code most likely to want a setting at module level.",
+    registers: false,
+    slotRoot: true,
+    floor: 300,
+    evalFloor: 300,
+  },
+  {
+    module: "agent/channels",
+    why: "eve's channel slot root. Same scan-mounted shape; the surface-facing read and write seams mount from here.",
+    registers: false,
+    slotRoot: true,
+    floor: 300,
+    evalFloor: 300,
   },
 ];
 
 interface ChildResult {
   readonly entry: string;
   readonly resolutions: number;
-  readonly evaluatedCjs: number;
+  readonly evaluated: number | null;
+  readonly evaluationNote: string | null;
+  readonly imported: number;
   readonly registered: boolean;
   readonly traps: number;
   readonly selfTest: string | null;
@@ -55,6 +98,14 @@ interface ChildResult {
 }
 
 const RESULT_MARKER = "OE_BOOT_ORDER_RESULT ";
+
+function slotRootModules(target: string): string[] {
+  if (!existsSync(target) || !statSync(target).isDirectory()) return [target];
+  return readdirSync(target)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith("-test.ts") && !name.endsWith(".d.ts"))
+    .sort()
+    .map((name) => join(target, name));
+}
 
 const argv = process.argv.slice(2);
 
@@ -84,6 +135,12 @@ if (floorFlag.some((v) => !/^\d+$/.test(v))) {
   console.error("✗ settings-boot-order: --floor takes a whole number.");
   process.exit(1);
 }
+const evalFloorFlag = flagValues("--eval-floor");
+if (evalFloorFlag.some((v) => !/^\d+$/.test(v))) {
+  console.error("✗ settings-boot-order: --eval-floor takes a whole number.");
+  process.exit(1);
+}
+const slotRootFlag = argv.includes("--slot-root");
 const fixtures = flagValues("--fixture");
 const childOf = flagValues("--child");
 const entryOverrides = flagValues("--entry");
@@ -102,7 +159,28 @@ if (childOf.length > 0) {
     },
   });
 
-  const childRequire = createRequire(import.meta.url);
+  let profiler: Session | null = null;
+  let evaluationNote: string | null = null;
+  try {
+    const session = new Session();
+    session.connect();
+    await session.post("Profiler.enable");
+    await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+    profiler = session;
+  } catch (err) {
+    evaluationNote = `the V8 profiler would not start: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  const evaluatedScripts = async (): Promise<Set<string>> => {
+    const out = new Set<string>();
+    if (profiler === null) return out;
+    const { result } = await profiler.post("Profiler.takePreciseCoverage");
+    for (const script of result) {
+      if (script.url === "" || script.url.startsWith("node:")) continue;
+      if (script.functions.some((fn) => fn.ranges.some((range) => range.count > 0))) out.add(script.url);
+    }
+    return out;
+  };
 
   const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
   getSettings();
@@ -119,13 +197,17 @@ if (childOf.length > 0) {
   for (const fixture of fixtures) await import(pathToFileURL(resolve(REPO_ROOT, fixture)).href);
 
   const before = resolved.size;
-  const beforeCjs = Object.keys(childRequire.cache).length;
-  await import(pathToFileURL(resolve(REPO_ROOT, entry)).href);
+  const beforeEvaluated = await evaluatedScripts();
+  const targets = slotRootModules(resolve(REPO_ROOT, entry));
+  for (const target of targets) await import(pathToFileURL(target).href);
+  const afterEvaluated = await evaluatedScripts();
 
   const result: ChildResult = {
     entry,
     resolutions: resolved.size - before,
-    evaluatedCjs: Object.keys(childRequire.cache).length - beforeCjs,
+    evaluated: profiler === null ? null : [...afterEvaluated].filter((url) => !beforeEvaluated.has(url)).length,
+    evaluationNote,
+    imported: targets.length,
     registered: !probe.installed(),
     traps: probe.trapCount(),
     selfTest,
@@ -149,7 +231,9 @@ const entries: readonly BootEntry[] =
         module,
         why: "named on the command line with --entry",
         registers: registersFlag[0] !== "false",
+        ...(slotRootFlag ? { slotRoot: true as const } : {}),
         floor: floorFlag.length > 0 ? Number(floorFlag[0]) : 1,
+        evalFloor: evalFloorFlag.length > 0 ? Number(evalFloorFlag[0]) : 1,
       }))
     : BOOT_ENTRIES;
 
@@ -164,8 +248,18 @@ const problems: string[] = [];
 const reads = new Map<string, EagerSettingsRead>();
 const results: ChildResult[] = [];
 let totalResolutions = 0;
+let totalEvaluated = 0;
+let eagerReadCount = 0;
 
 for (const entry of entries) {
+  if (entry.slotRoot === true && !existsSync(resolve(REPO_ROOT, entry.module))) {
+    problems.push(
+      `the slot root ${entry.module} does not exist. \`oe build\` materialises it from roster.config.ts — run ` +
+        "`npm run oe:build` (the test chain's pre-step does) and run this gate again. An absent slot root is " +
+        "not a pass: every module eve mounts from it would go unwatched.",
+    );
+    continue;
+  }
   const args = [TSX, fileURLToPath(import.meta.url), "--child", entry.module];
   for (const fixture of fixtures) args.push("--fixture", fixture);
   const run = spawnSync(process.execPath, args, {
@@ -188,6 +282,7 @@ for (const entry of entries) {
   const result = JSON.parse(line.slice(RESULT_MARKER.length)) as ChildResult;
   results.push(result);
   totalResolutions += result.resolutions;
+  totalEvaluated += result.evaluated ?? 0;
 
   if (result.selfTest !== null) {
     problems.push(`booting ${entry.module}: ${result.selfTest} Every other arm is meaningless until this passes.`);
@@ -220,9 +315,30 @@ for (const entry of entries) {
         `of ${entry.floor}. This gate only sees the graph an entry walks, so an entry that stopped walking would ` +
         "report zero eager reads while covering nothing. Either that graph really shrank — then lower this " +
         "entry's floor deliberately, in a diff — or the import is no longer reaching what it used to. " +
-        "This arm counts REACH, not evaluation: it cannot see a graph that still resolves and stopped " +
-        "evaluating (OPE-1350).",
+        "This arm counts REACH: the evaluation half below is what sees a graph that still resolves " +
+        "and stopped evaluating (OPE-1350, OPE-1353).",
     );
+  }
+  if (result.evaluated === null) {
+    problems.push(
+      `booting ${entry.module} could not count evaluated scripts — ${result.evaluationNote ?? "no reason reported"}. ` +
+        "Arm ⑤'s evaluation half is what proves the graph arm ② watches actually RAN, so a child that " +
+        "cannot measure it is not a pass. Do not read this as a zero.",
+    );
+  } else if (result.evaluated < entry.evalFloor) {
+    problems.push(
+      `booting ${entry.module} evaluated ${result.evaluated} script(s), under its declared evaluation floor of ` +
+        `${entry.evalFloor}. This is the arm the resolve count could not carry: a graph refactored to resolve ` +
+        "eagerly and import() lazily after registration keeps its resolve count up while little of it runs " +
+        "pre-registration, and arm ② then watches almost nothing. Either that graph really stopped evaluating " +
+        "— then lower this entry's evalFloor deliberately, in a diff — or the import is no longer running what " +
+        "it used to.",
+    );
+  }
+  if (entry.excused !== undefined) {
+    for (const problem of auditEagerReads(result.reads, entry.excused)) problems.push(`booting ${entry.module}: ${problem}`);
+    eagerReadCount += result.reads.length;
+    continue;
   }
   for (const read of result.reads) reads.set(eagerReadKey(read), read);
 }
@@ -230,8 +346,8 @@ for (const entry of entries) {
 if (listMode) {
   for (const result of results) {
     console.log(
-      `  ${result.entry}: ${result.resolutions} module URL(s) resolved, ${result.evaluatedCjs} CommonJS module(s) ` +
-        `evaluated, ${result.traps} trap(s)`,
+      `  ${result.entry}: ${result.imported} module(s) imported, ${result.resolutions} module URL(s) resolved, ` +
+        `${result.evaluated ?? "no"} script(s) evaluated, ${result.traps} trap(s)`,
     );
     for (const read of result.reads) console.log(`      ${read.file}:${read.line}  ${read.accessor}()`);
   }
@@ -249,8 +365,8 @@ if (problems.length > 0) {
 
 console.log(
   `✓ settings-boot-order: ${entries.length} entr(ies) booted, ${totalResolutions} module URL(s) resolved ` +
-    `(reach, not evaluation — arm ⑤), ${reads.size} settings read(s) before registerSettings() ` +
-    `(${EAGER_SETTINGS_READ_ALLOWLIST.size} allowlisted survivor(s)) — no module-level read pins a shipped ` +
-    "default on any booted entry.",
+    `(reach) and ${totalEvaluated} script(s) evaluated (arm ⑤), ${reads.size + eagerReadCount} settings read(s) before ` +
+    `registerSettings() (${EAGER_SETTINGS_READ_ALLOWLIST.size} allowlisted survivor(s), ${eagerReadCount} excused on a ` +
+    "slot-root boot) — no module-level read pins a shipped default on any booted entry.",
 );
 process.exit(0);

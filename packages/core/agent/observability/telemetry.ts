@@ -91,6 +91,11 @@ export const OUTCOME_VALUES = Object.freeze([
   "recorded",
 ] as const);
 
+const CLOSED_ATTR_VALUES: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
+  "oe.feature": new Set<string>(FEATURE_VALUES),
+  "oe.outcome": new Set<string>(OUTCOME_VALUES),
+});
+
 export function tokensBucket(total: number): string {
   if (total < 1_000) return "<1k";
   if (total < 10_000) return "1-10k";
@@ -440,8 +445,16 @@ export function emitTelemetry(eventName: string, attrs: TelemetryAttrs = {}): vo
     }
     const filtered: Record<string, TelemetryAttrValue> = {};
     for (const [key, value] of Object.entries(attrs)) {
-      if (allowed.includes(key)) filtered[key] = value;
-      else warnOnce(`event "${eventName}" attribute "${key}" is outside its closed vocabulary — dropped`);
+      if (!allowed.includes(key)) {
+        warnOnce(`event "${eventName}" attribute "${key}" is outside its closed vocabulary — dropped`);
+        continue;
+      }
+      const closed = CLOSED_ATTR_VALUES[key];
+      if (closed !== undefined && !closed.has(value as string)) {
+        warnOnce(`event "${eventName}" attribute "${key}" carries undeclared value ${JSON.stringify(value)} — dropped (the vocabulary is closed)`);
+        continue;
+      }
+      filtered[key] = value;
     }
 
     const cfg = readTelemetryConfig();
