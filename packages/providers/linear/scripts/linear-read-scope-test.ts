@@ -237,8 +237,8 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   ok(commentAgeAtRead(undefined, READ_AT) === undefined && commentAgeAtRead("2026-03-16T19:53:54.000Z", undefined) === undefined, "a missing timestamp gets no age");
   ok(commentAgeAtRead("not-a-date", READ_AT) === undefined, "an unparseable timestamp gets no age");
 
-  const render = (o: Record<string, unknown>): string =>
-    (readLinearIssueEntry as unknown as { toModelOutput: (o: unknown) => { value: string } }).toModelOutput({
+  const render = async (o: Record<string, unknown>): Promise<string> =>
+    (await (readLinearIssueEntry as unknown as { toModelOutput: (o: unknown) => Promise<{ value: string }> }).toModelOutput({
       issue: "SOAK-14",
       identifier: "SOAK-14",
       title: "Implement throttle retry ladder",
@@ -248,9 +248,9 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
       description: "",
       text: "  - openeverywhere at 2026-03-16T19:53:54.000Z (27 minutes before this read): the move is pending human approval.",
       ...o,
-    }).value;
+    })).value;
 
-  const dated = render({ readAt: READ_AT });
+  const dated = await render({ readAt: READ_AT });
   ok(dated.includes(`Read live at ${READ_AT}`), "the render dates the read");
   ok(dated.includes("the fields above are the issue's state at that moment"), "…and says the state is what is CURRENT");
   ok(dated.includes("HISTORY"), "…and names the comment block history");
@@ -258,7 +258,7 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   ok(dated.includes("[Todo]") && dated.includes("(27 minutes before this read)"), "…so the live state and the comment's age sit in the same render");
   ok(dated.includes("oldest first"), "…and the comment order is stated, not assumed");
 
-  const undatedOut = render({});
+  const undatedOut = await render({});
   ok(!undatedOut.includes("Read live at"), "an output with no readAt claims no read time");
   ok(!undatedOut.includes("HISTORY"), "…and makes no claim it cannot date");
   ok(undatedOut.includes("[Todo]"), "…while still rendering the issue");
@@ -292,12 +292,12 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
     const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
     const entry = readLinearIssueEntry as unknown as {
       execute: (i: unknown, c: unknown) => Promise<{ readAt?: string; text: string }>;
-      toModelOutput: (o: unknown) => { value: string };
+      toModelOutput: (o: unknown) => Promise<{ value: string }>;
     };
     const out = await entry.execute({ issue: ISSUE_OWN }, turn);
     ok(typeof out.readAt === "string" && Number.isFinite(Date.parse(out.readAt!)), "execute stamps the read with a parseable time");
     ok(out.text.includes("(27 minutes before this read)"), "execute ages every comment against that read time");
-    const rendered = entry.toModelOutput(out).value;
+    const rendered = (await entry.toModelOutput(out)).value;
     ok(rendered.includes(`Read live at ${out.readAt}`), "…and the model sees the read time on the output it gets");
     ok(rendered.includes("[Todo]") && rendered.includes("(27 minutes before this read)"), "…beside the live state and the comment's age — the pair soak run 3 could not tell apart");
   } finally {

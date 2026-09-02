@@ -1,6 +1,7 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { randomBytes } from "node:crypto";
-import { capResult } from "./result-cap.js";
+import { capResult, maxResultChars } from "./result-cap.js";
+import { reduceResultBody } from "./result-reduce.js";
 import { noteToolResultLoop } from "./loop-breaker.js";
 import { decideIngestion } from "./taint-enforcement.js";
 import type { IngestionSource } from "./taint-tiers.js";
@@ -74,11 +75,15 @@ export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): stri
   return wrapUntrusted(content, opts);
 }
 
-export function ingestUntrustedModelOutput(
+export async function ingestUntrustedModelOutput(
   content: string,
   opts: UntrustedOpts = {},
-): { type: "text"; value: string } {
-  const wrapped = ingestUntrusted(content, opts);
+): Promise<{ type: "text"; value: string }> {
+  const body = await reduceResultBody(content, maxResultChars(), {
+    source: "untrusted-result",
+    ...(opts.ingestion?.label !== undefined ? { toolName: opts.ingestion.label } : {}),
+  });
+  const wrapped = ingestUntrusted(body, opts);
   const nudge = noteToolResultLoop(opts.source, content);
   return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
 }

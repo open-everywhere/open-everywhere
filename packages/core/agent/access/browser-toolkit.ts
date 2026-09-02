@@ -60,7 +60,7 @@ function browserDomainOf(output: unknown): string | undefined {
   return m ? host(m[0]) : undefined;
 }
 
-export function browserContentModelOutput(name: string, output: unknown): { type: "text"; value: string } {
+export function browserContentModelOutput(name: string, output: unknown): Promise<{ type: "text"; value: string }> {
   const op = name.startsWith("browser_") ? name.slice("browser_".length) : name;
   const domain = browserDomainOf(output);
   const text = typeof output === "string" ? output : JSON.stringify(output ?? null);

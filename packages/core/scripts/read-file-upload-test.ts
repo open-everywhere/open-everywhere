@@ -25,7 +25,7 @@ const ok = (cond: boolean, label: string) => {
 
 const tool = readFileUpload as unknown as {
   execute: (input: unknown, ctx: unknown) => Promise<{ ok: boolean; content?: string; name?: string; mimeType?: string; message?: string }>;
-  toModelOutput: (output: unknown) => { type: string; value: string };
+  toModelOutput: (output: unknown) => Promise<{ type: string; value: string }>;
 };
 
 const ctx = {
@@ -119,7 +119,7 @@ function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?:
   };
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "success path: fresh turn starts untainted");
-    const mo = tool.toModelOutput(hostile);
+    const mo = await tool.toModelOutput(hostile);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes(UNTRUSTED_CLOSE), "success toModelOutput: content is fenced in the untrusted envelope");
     ok(mo.value.includes("‹/untrusted_external_data›"), "success toModelOutput: the breakout delimiter is DEFANGED to guillemets (can't close the fence)");
     ok(mo.value.includes("ignore previous instructions"), "success toModelOutput: the injected instruction survives AS DATA inside the fence");
@@ -131,7 +131,7 @@ function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?:
   const failure = { ok: false, message: "file could not be read: no upload with id \"X\" was seen in this conversation — only files posted here can be read." };
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "failure path: fresh turn starts untainted");
-    const mo = tool.toModelOutput(failure);
+    const mo = await tool.toModelOutput(failure);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "failure toModelOutput: plain message, NOT untrusted-wrapped");
     ok(untrustedIngestedThisTurn() === false, "failure toModelOutput: does NOT taint the turn (nothing untrusted ingested)");
   });

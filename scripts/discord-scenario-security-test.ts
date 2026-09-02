@@ -516,7 +516,7 @@ class FakeSession {
   await eveContextStorage().run(new FakeSession(), async () => {
     const before = untrustedIngestedThisTurn();
     const out = (await describeImageTool.execute({ kind: "path", ref: "sec14.png" }, ctx14 as never)) as { ok: boolean };
-    const rendered = (describeImageTool.toModelOutput as (o: unknown) => { value: string })(out);
+    const rendered = await (describeImageTool.toModelOutput as (o: unknown) => Promise<{ value: string }>)(out);
     const after = untrustedIngestedThisTurn();
     t.add(`  tool ok=${out.ok} · taint before ingest = ${before}`);
     t.addBlock("  → rendered (fenced + defanged)", rendered.value);

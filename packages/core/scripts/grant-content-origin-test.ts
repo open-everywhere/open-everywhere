@@ -46,7 +46,7 @@ interface BuiltTool {
 }
 interface Replayed {
   name: string;
-  toModelOutput?: (output: unknown) => { type: string; value: string };
+  toModelOutput?: (output: unknown) => Promise<{ type: string; value: string }>;
 }
 interface DurableRow {
   readonly name: string;
@@ -161,11 +161,11 @@ console.log("1. baseline: the connector wrap is the floor, and it names the wron
 console.log("2. the grant variant's own projection:");
 const entry = grantToolEntry(GRANT);
 ok(entry !== undefined && typeof (entry as ReplayableToolEntry).toModelOutput === "function", "every grant entry authors a toModelOutput — the mount wires it, not the test");
-const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => { type: string; value: string };
+const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => Promise<{ type: string; value: string }>;
 
 {
   const rendered = await inTurn(async () => {
-    const out = project(OK_OUTPUT);
+    const out = await project(OK_OUTPUT);
     ok(untrustedIngestedThisTurn() === true, "a granted read MARKS the turn — vendor bytes under the owner's credential are external content, and no reviewed config declares otherwise");
     return String(out.value);
   });
@@ -179,7 +179,7 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
 
 {
   const rendered = await inTurn(async () => {
-    const out = project(REFUSED_OUTPUT);
+    const out = await project(REFUSED_OUTPUT);
     ok(untrustedIngestedThisTurn() === false, "🔴 a REFUSAL does not taint the turn — the broker sent nothing, so no external byte exists to mark");
     return String(out.value);
   });
@@ -190,7 +190,7 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
 
 {
   await inTurn(async () => {
-    const rendered = String(project({ ok: false, refused: "revoked" }).value);
+    const rendered = String((await project({ ok: false, refused: "revoked" })).value);
     ok(untrustedIngestedThisTurn() === true, "NEGATIVE CONTROL: an unrecognised output shape falls to the TAINTING arm — over-taint is noise, under-taint is a breach");
     ok(rendered.startsWith(`${UNTRUSTED_OPEN} `), "…and is fenced");
   });
@@ -281,8 +281,8 @@ console.log("4. eve replays THIS grant's projection from the persisted closure:"
   const replayedThis = lifecycle.replayDynamicSessionTools([rowThis], [])[0]!;
   const replayedOther = lifecycle.replayDynamicSessionTools([rowOther], [])[0]!;
   ok(typeof replayedThis.toModelOutput === "function", "🔴 eve REBUILDS the authored projection onto the replayed grant tool — the envelope is reachable, not merely correct");
-  const renderedThis = await inTurn(async () => String(replayedThis.toModelOutput!(OK_OUTPUT).value));
-  const renderedOther = await inTurn(async () => String(replayedOther.toModelOutput!(OK_OUTPUT).value));
+  const renderedThis = await inTurn(async () => String((await replayedThis.toModelOutput!(OK_OUTPUT)).value));
+  const renderedOther = await inTurn(async () => String((await replayedOther.toModelOutput!(OK_OUTPUT)).value));
   eq(firstSource(renderedThis), GRANT_SOURCE, "the replayed tool marks THIS grant's origin");
   eq(
     firstSource(renderedOther),

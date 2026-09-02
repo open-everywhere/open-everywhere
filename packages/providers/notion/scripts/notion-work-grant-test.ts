@@ -403,12 +403,12 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     ok(typeof out.readAt === "string" && Number.isFinite(Date.parse(out.readAt)), "execute stamps the read with a parseable readAt");
     ok(out.text.includes("(27 minutes before this read)"), "execute ages the comment against that read time");
 
-    const toModelOutput = (readNotionCommentsEntry as unknown as { toModelOutput: (o: unknown) => { value: string } }).toModelOutput;
-    const rendered = toModelOutput(out);
+    const toModelOutput = (readNotionCommentsEntry as unknown as { toModelOutput: (o: unknown) => Promise<{ value: string }> }).toModelOutput;
+    const rendered = await toModelOutput(out);
     ok(rendered.value.includes(`Read live at ${out.readAt}`), "…and the model sees the read time on the output it gets");
     ok(rendered.value.includes("HISTORY") && rendered.value.includes("(27 minutes before this read)"), "…beside the per-comment age, the pair OPE-1012 exists to keep apart");
 
-    const undated = toModelOutput({ ...out, readAt: undefined });
+    const undated = await toModelOutput({ ...out, readAt: undefined });
     ok(!undated.value.includes("Read live at"), "negative control: an output with no readAt claims no read time");
     ok(!undated.value.includes("HISTORY"), "…and makes no claim it cannot date");
     ok(undated.value.includes("pending human approval"), "…while still rendering the comment");

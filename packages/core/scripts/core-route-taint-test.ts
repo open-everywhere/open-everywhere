@@ -113,17 +113,17 @@ console.log("2. browser_<op>:");
 }
 
 console.log("3-4. read_webhook_history + list_recent_events:");
-type Projector = { toModelOutput: (output: never) => { type: string; value: string } };
+type Projector = { toModelOutput: (output: never) => Promise<{ type: string; value: string }> };
 {
   const history = readWebhookHistory as unknown as Projector;
   await inTurn(async () => {
     assertClean("read_webhook_history [fresh turn]");
-    const v = history.toModelOutput({ ok: true, history: `delivery 1\n${INJECTION}`, message: "" } as never).value;
+    const v = (await history.toModelOutput({ ok: true, history: `delivery 1\n${INJECTION}`, message: "" } as never)).value;
     ok(v.includes(UNTRUSTED_OPEN) && v.includes(INJECTION), "read_webhook_history: the rendered deliveries are fenced");
     assertMarked("read_webhook_history", "webhook");
   });
   await inTurn(async () => {
-    const v = history.toModelOutput({ ok: false, history: "", message: 'no webhook with the source handle "nope".' } as never).value;
+    const v = (await history.toModelOutput({ ok: false, history: "", message: 'no webhook with the source handle "nope".' } as never)).value;
     ok(!v.includes(UNTRUSTED_OPEN), "read_webhook_history: the refusal is NOT fenced — it is OE's own sentence");
     assertClean("read_webhook_history [refusal]");
   });
@@ -131,12 +131,12 @@ type Projector = { toModelOutput: (output: never) => { type: string; value: stri
   const events = listRecentEvents as unknown as Projector;
   await inTurn(async () => {
     assertClean("list_recent_events [fresh turn]");
-    const v = events.toModelOutput({ ok: true, events: `event 1\n${INJECTION}`, message: "" } as never).value;
+    const v = (await events.toModelOutput({ ok: true, events: `event 1\n${INJECTION}`, message: "" } as never)).value;
     ok(v.includes(UNTRUSTED_OPEN) && v.includes(INJECTION), "list_recent_events: the replayed captures are fenced");
     assertMarked("list_recent_events", "webhook");
   });
   await inTurn(async () => {
-    const v = events.toModelOutput({ ok: false, events: "", message: "nothing captured for that hook." } as never).value;
+    const v = (await events.toModelOutput({ ok: false, events: "", message: "nothing captured for that hook." } as never)).value;
     ok(!v.includes(UNTRUSTED_OPEN), "list_recent_events: the refusal is NOT fenced");
     assertClean("list_recent_events [refusal]");
   });

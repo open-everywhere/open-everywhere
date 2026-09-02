@@ -808,7 +808,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(rendered.split(UNTRUSTED_CLOSE).length - 1 === 4, "pr render: every fence is closed");
 
   const getPrFeedback = (await import("../agent/tools/get_pr_feedback.js")).getPrFeedbackEntry as unknown as { toModelOutput: (o: unknown) => { type: string; value: string } };
-  const projected = getPrFeedback.toModelOutput(digest);
+  const projected = await getPrFeedback.toModelOutput(digest);
   ok(projected.type === "text" && normalizeFenceNonce(projected.value) === renderedN, "get_pr_feedback.toModelOutput renders through renderPrFeedbackForModel");
 }
 

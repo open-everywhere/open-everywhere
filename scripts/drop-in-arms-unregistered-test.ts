@@ -27,6 +27,7 @@ ok(config.loadBundles().length > 0, "control: …and it carries real bundles, so
 const ARM_SLOTS: readonly (readonly [string, string])[] = [
   ["auditScrub", "the audit-scrub seam (packages/core/agent/audit/tool-action.ts)"],
   ["connectorOpTier", "the connector-op tiering seam (packages/core/agent/access/connector-op-gating.ts)"],
+  ["reduceResult", "the result-reducing seam (packages/core/agent/access/result-reduce.ts)"],
 ];
 
 const APP_CONFIG_MEMBERS: readonly string[] = [
@@ -44,6 +45,7 @@ const APP_CONFIG_MEMBERS: readonly string[] = [
   "loadGroups",
   "auditScrub",
   "connectorOpTier",
+  "reduceResult",
 ];
 
 function appConfigOptionalMembers(): readonly string[] {

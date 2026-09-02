@@ -24,14 +24,14 @@ installGrantUseNotices();
 
 installGrantBorrowTransports();
 
-function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => { type: "text"; value: string } {
+function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => Promise<{ type: "text"; value: string }> {
   const source = `granted ${grant.verb} as ${grant.ownerSlug} — ${grant.connector} ${grant.resource}`;
   const label = `grant:${grant.connector}:${grant.verb}`;
-  return (output: unknown) => {
+  return async (output: unknown) => {
     const row = typeof output === "object" && output !== null ? (output as Record<string, unknown>) : undefined;
     if (row?.ok === false && typeof row.message === "string") return hostAuthoredModelOutput(row.message, { source });
     const body = row?.ok === true ? row.result : output;
-    const fenced = ingestUntrustedModelOutput(typeof body === "string" ? body : JSON.stringify(body ?? null), {
+    const fenced = await ingestUntrustedModelOutput(typeof body === "string" ? body : JSON.stringify(body ?? null), {
       ingestion: { kind: "connector", label },
       source,
     });

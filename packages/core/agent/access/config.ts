@@ -1,5 +1,6 @@
 import type { Bundle, Binding } from "./bundle.js";
 import type { ConnectorOpTier } from "./consequence.js";
+import type { ResultReduceSeam } from "./result-reduce.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
 import type { NetworkAccessBinding } from "./network-access.js";
 import type { AgentsFile } from "../memory/agents-codemod.js";
@@ -58,6 +59,12 @@ export interface AppConfig {
   auditScrub?(text: string): string;
 
   connectorOpTier?(op: { readonly connection: string; readonly verb: string; readonly toolName: string }): ConnectorOpTier | undefined;
+
+  reduceResult?(
+    body: string,
+    limit: number,
+    ctx: { readonly source: ResultReduceSeam; readonly toolName?: string },
+  ): string | undefined | Promise<string | undefined>;
 }
 
 let registered: AppConfig | null = null;

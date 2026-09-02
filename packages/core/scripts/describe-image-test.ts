@@ -22,7 +22,7 @@ const ok = (cond: boolean, label: string) => {
 
 const tool = describeImage as unknown as {
   execute: (input: unknown, ctx: unknown) => Promise<{ ok: boolean; description?: string; ocrText?: string; message?: string }>;
-  toModelOutput: (output: unknown) => { type: string; value: string };
+  toModelOutput: (output: unknown) => Promise<{ type: string; value: string }>;
 };
 
 const ctx = {
@@ -93,7 +93,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(out.description === undefined, "ZDR fail-closed: no fabricated description field on failure");
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "fresh turn starts untainted");
-    const mo = tool.toModelOutput(out);
+    const mo = await tool.toModelOutput(out);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "failure toModelOutput: plain message, NOT untrusted-wrapped");
     ok(untrustedIngestedThisTurn() === false, "failure toModelOutput: does NOT taint the turn (nothing untrusted was ingested)");
   });
@@ -114,7 +114,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
 
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "success path: fresh turn starts untainted");
-    const mo = tool.toModelOutput(out);
+    const mo = await tool.toModelOutput(out);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes(UNTRUSTED_CLOSE), "success toModelOutput: description+OCR are fenced in the untrusted envelope");
     ok(mo.value.includes("‹/untrusted_external_data›"), "success toModelOutput: the OCR's breakout delimiter is DEFANGED to guillemets (can't close the fence)");
     ok(mo.value.includes("ignore previous instructions"), "success toModelOutput: the injected instruction survives AS DATA inside the fence");
@@ -168,7 +168,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
 
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "path: fresh turn starts untainted");
-    const mo = tool.toModelOutput(okOut);
+    const mo = await tool.toModelOutput(okOut);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes("‹/untrusted_external_data›"), "path success toModelOutput: description+OCR fenced, the OCR breakout defanged");
     ok(untrustedIngestedThisTurn() === true, "path success toModelOutput: TAINTS the turn (a rendered page is untrusted content — P0-4)");
   });
@@ -238,7 +238,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(empty.ok === false && /no image source was given/.test(empty.message ?? ""), "arg shape: NO source → an explicit ok:false naming the contract (a readable tool result, not an invisible rejection)");
 
   await eveContextStorage().run(new FakeSession(), async () => {
-    const mo = tool.toModelOutput(empty);
+    const mo = await tool.toModelOutput(empty);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "arg shape: a bad-source refusal renders as OUR OWN plain message (no untrusted envelope)");
     ok(untrustedIngestedThisTurn() === false, "arg shape: a bad-source refusal ingests nothing, so it does NOT taint the turn");
   });

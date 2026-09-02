@@ -35,7 +35,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> =>
   eveContextStorage().run(new FakeSession(), fn) as Promise<T>;
 
-type Projector = { toModelOutput: (output: never) => { type: string; value: string } };
+type Projector = { toModelOutput: (output: never) => Promise<{ type: string; value: string }> };
 const page = readNotionPageEntry as unknown as Projector;
 const comments = readNotionCommentsEntry as unknown as Projector;
 
@@ -61,25 +61,25 @@ const pageOut = (workspaceTrust?: "internal" | "public") => ({
 
 await inTurn(async () => {
   assertClean("read_notion_page [fresh turn]");
-  const v = page.toModelOutput(pageOut("public") as never).value;
+  const v = (await page.toModelOutput(pageOut("public") as never)).value;
   ok(v.includes(UNTRUSTED_OPEN) && v.includes(INJECTION), "read_notion_page/public: the page body is fenced with the injection intact as data");
   ok(v.includes("Notion page p-1"), "read_notion_page/public: the host header rides inside the fence");
   assertMarked("read_notion_page/public");
 });
 
 await inTurn(async () => {
-  const v = page.toModelOutput(pageOut("internal") as never).value;
+  const v = (await page.toModelOutput(pageOut("internal") as never)).value;
   ok(v.includes(UNTRUSTED_OPEN) && v.includes(INJECTION), "read_notion_page/internal: STILL fenced — the wrap is unconditional, only the mark is the table's call");
   assertClean("read_notion_page/internal");
 });
 
 await inTurn(async () => {
-  page.toModelOutput(pageOut() as never);
+  await page.toModelOutput(pageOut() as never);
   assertMarked("read_notion_page/undeclared");
 });
 
 await inTurn(async () => {
-  page.toModelOutput({ page: "p-2", blocks: 0, truncated: false, text: "", workspaceTrust: "public" } as never);
+  await page.toModelOutput({ page: "p-2", blocks: 0, truncated: false, text: "", workspaceTrust: "public" } as never);
   assertMarked("read_notion_page/empty page, public workspace");
 });
 
@@ -96,24 +96,24 @@ const commentsOut = (workspaceTrust?: "internal" | "public", count = 2) => ({
 
 await inTurn(async () => {
   assertClean("read_notion_comments [fresh turn]");
-  const v = comments.toModelOutput(commentsOut("public") as never).value;
+  const v = (await comments.toModelOutput(commentsOut("public") as never)).value;
   ok(v.includes(UNTRUSTED_OPEN) && v.includes(INJECTION), "read_notion_comments/public: the comment bodies are fenced with the injection intact as data");
   assertMarked("read_notion_comments/public");
 });
 
 await inTurn(async () => {
-  const v = comments.toModelOutput(commentsOut("internal") as never).value;
+  const v = (await comments.toModelOutput(commentsOut("internal") as never)).value;
   ok(v.includes(UNTRUSTED_OPEN), "read_notion_comments/internal: STILL fenced");
   assertClean("read_notion_comments/internal");
 });
 
 await inTurn(async () => {
-  comments.toModelOutput(commentsOut(undefined) as never);
+  await comments.toModelOutput(commentsOut(undefined) as never);
   assertMarked("read_notion_comments/undeclared");
 });
 
 await inTurn(async () => {
-  comments.toModelOutput(commentsOut("public", 0) as never);
+  await comments.toModelOutput(commentsOut("public", 0) as never);
   assertMarked("read_notion_comments/no comments, public workspace");
 });
 
