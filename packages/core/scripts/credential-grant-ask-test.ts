@@ -412,10 +412,13 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
   );
 });
 
-console.log("7. the ask verb: a tainted turn may not ask, and the seat is the only holder:");
+console.log("7. the ask verb: a tainted turn may not ask, and both a seat and a delegated worker hold it:");
 {
   ok(allowedOnLeanSeat("request_credential_grant"), "a DELEGATING conversational seat keeps the ask verb");
-  ok(!allowedOnWorkerSeat("request_credential_grant"), "…and a delegated WORKER never holds it — it would scope the grant to its own one-shot session");
+  ok(
+    allowedOnWorkerSeat("request_credential_grant"),
+    "…and a delegated WORKER holds it too (OPE-1343) — the seat delegates, so a seat-only verb was unreachable; the ask it raises is scoped to the ROOT seat, never to the worker's own one-shot session",
+  );
   ok(WORKER_ONLY_TOOLS_STANDING.every((t) => t !== "request_credential_grant"), "…so the worker-capability index never tells the seat to delegate it");
 
   const askCountBefore = (await store.credentialGrantsForScope(ORG, "sess-taint")).length;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getConfig } from "../access/config.js";
 import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { credentialGrantRefusalNote, resolveGrantOwner } from "../access/credential-grant-ask.js";
+import type { GrantAskWorkerOrigin } from "../access/credential-grant-card.js";
 import { askForCredentialGrant } from "../access/credential-grant-flow.js";
 import { resolveRequesterLabel } from "../access/credential-grant-notice.js";
 import { credentialGrantConnectors, domainsAdmitCredentialGrant } from "../access/credential-grant.js";
@@ -10,7 +11,8 @@ import { requesterThisTurn } from "../access/requester-identity.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
-import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { configuredAgentName } from "../identity/bot-name.js";
+import { currentSessionId, currentTurnId, delegationRootSessionId, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { Domain } from "../memory/domain.js";
@@ -35,7 +37,7 @@ function domainsForCtx(ctx: BindableContext): readonly Domain[] {
 
 export function requestCredentialGrantMount(ctx: BindableContext): boolean {
   try {
-    if (!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(windowGrainOf(ctx))) return false;
+    if (!mayRaiseGrantAsk(ctx)) return false;
   } catch {
     return false;
   }
@@ -44,6 +46,20 @@ export function requestCredentialGrantMount(ctx: BindableContext): boolean {
   for (const connector of credentialGrantConnectors()) if (domainsAdmitCredentialGrant(domains, connector)) return true;
   return false;
 }
+
+export function mayRaiseGrantAsk(ctx: BindableContext): boolean {
+  if ((CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(windowGrainOf(ctx))) return true;
+  return isSubagentChildContext(ctx);
+}
+
+export function grantScopeKey(ctx: BindableContext): string {
+  const root = delegationRootSessionId(ctx);
+  if (root !== undefined) return root;
+  if (ctx.session?.parent !== undefined || isSubagentChildContext(ctx)) return "";
+  return currentSessionId(ctx) ?? "";
+}
+
+export const UNNAMED_SEAT_LABEL = "the assistant";
 
 export const requestCredentialGrantEntry = defineTool({
   description:
@@ -130,12 +146,22 @@ export const requestCredentialGrantEntry = defineTool({
     if (frozenProblem !== undefined) {
       return { asked: false, message: `Refused: the arguments to fix are not something a grant can hold — ${frozenProblem}. Send plain JSON values only.` };
     }
+    if (!mayRaiseGrantAsk(c)) {
+      return {
+        asked: false,
+        message:
+          "Refused: this session is not a conversation, and it is not a task delegated from one, so there is nobody here whose chat a grant could be scoped to.",
+      };
+    }
     const p = resolvePartition(c);
     const domains = domainsForCtx(c);
-    const scopeKey = currentSessionId(c) ?? "";
+    const scopeKey = grantScopeKey(c);
     if (scopeKey.length === 0) {
       return { asked: false, message: "Refused: this conversation has no session id, so there is no chat for a grant to be scoped to." };
     }
+    const rootSessionId = delegationRootSessionId(c);
+    const workerOrigin: GrantAskWorkerOrigin | undefined =
+      rootSessionId === undefined ? undefined : { seatLabel: configuredAgentName() ?? UNNAMED_SEAT_LABEL };
     const verdict = requesterThisTurn(currentTurnId(c));
     const requesterPrincipalId = verdict.kind === "requester" ? tryPrincipalKey(p.platform, p.workspace, verdict.principalId) : undefined;
 
@@ -168,6 +194,7 @@ export const requestCredentialGrantEntry = defineTool({
       scopeKey,
       ...(p.surface === undefined ? {} : { surface: p.surface }),
       targetLabel: input.target_label,
+      ...(workerOrigin === undefined ? {} : { workerOrigin }),
       workspace: p.workspace,
     });
 

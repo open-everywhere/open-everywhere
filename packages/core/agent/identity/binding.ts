@@ -200,6 +200,17 @@ export function subagentParentSessionId(ctx: BindableContext): string | undefine
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
+export function delegationRootSessionId(ctx: BindableContext): string | undefined {
+  try {
+    const parent = ctx.session?.parent;
+    const root = parent?.rootSessionId;
+    if (typeof root === "string" && root.length > 0) return root;
+    return subagentParentSessionId(ctx);
+  } catch {
+    return undefined;
+  }
+}
+
 export function isSubagentChildContext(ctx: BindableContext): boolean {
   try {
     if (subagentParentSessionId(ctx) !== undefined) return true;

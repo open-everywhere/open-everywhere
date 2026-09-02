@@ -52,10 +52,23 @@ export function grantCardActions(ask: CredentialGrantAskRow): readonly DirectMes
   ];
 }
 
-export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string): string {
+export interface GrantAskWorkerOrigin {
+  readonly seatLabel: string;
+}
+
+export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin): string {
   return [
-    `*${requesterLabel}* asks to use your ${ask.connector} credential.`,
+    workerOrigin === undefined
+      ? `*${requesterLabel}* asks to use your ${ask.connector} credential.`
+      : `*${workerOrigin.seatLabel}* asks to use your ${ask.connector} credential.`,
     "",
+    ...(workerOrigin === undefined
+      ? []
+      : [
+          `• Who it is for: ${requesterLabel}, in their conversation with ${workerOrigin.seatLabel}.`,
+          `• How it was raised: ${workerOrigin.seatLabel} gave the work to a background task, and the task raised this ask. The task ends when its work does, and it never sees your answer.`,
+          `• What a grant reaches: that conversation, never the background task.`,
+        ]),
     `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
     `• On: \`${ask.resource}\``,
     ...frozenLines(ask),
@@ -184,13 +197,13 @@ export type GrantCardDelivery =
   | { readonly delivered: true; readonly surfaceId: string; readonly messageId: string }
   | { readonly delivered: false; readonly reason: "no_dm_arm" | "send_failed" };
 
-export async function deliverGrantCard(ask: CredentialGrantAskRow, requesterLabel: string): Promise<GrantCardDelivery> {
+export async function deliverGrantCard(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin): Promise<GrantCardDelivery> {
   if (!canDeliverDirectMessage(ask.ownerPlatform)) return { delivered: false, reason: "no_dm_arm" };
   const arm = postArm(ask.ownerPlatform);
   const deliver = arm?.deliverDirectMessage;
   if (deliver === undefined || arm === undefined) return { delivered: false, reason: "no_dm_arm" };
   try {
-    const landed = await deliver.call(arm, { actions: grantCardActions(ask), principalId: ask.ownerNativeId, text: grantCardText(ask, requesterLabel) });
+    const landed = await deliver.call(arm, { actions: grantCardActions(ask), principalId: ask.ownerNativeId, text: grantCardText(ask, requesterLabel, workerOrigin) });
     return { delivered: true, messageId: landed.messageId, surfaceId: landed.surfaceId };
   } catch {
     return { delivered: false, reason: "send_failed" };

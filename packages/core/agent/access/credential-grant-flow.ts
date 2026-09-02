@@ -28,6 +28,7 @@ import {
   expireGrantCard,
   refuseGrantCard,
   type GrantApproveGate,
+  type GrantAskWorkerOrigin,
   type GrantCardDelivery,
 } from "./credential-grant-card.js";
 import { grantOwnerSubject } from "./credential-grant-owner.js";
@@ -69,6 +70,7 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
   readonly domainGrantsConnector: boolean;
+  readonly workerOrigin?: GrantAskWorkerOrigin;
   readonly nowMs: number;
 }
 
@@ -143,7 +145,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     verb: toolSlug,
   };
   await store.addCredentialGrantAsk(input.org, ask);
-  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel);
+  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel, input.workerOrigin);
   if (!delivery.delivered) {
     await store.decideCredentialGrantAsk(input.org, ask.id, ["pending"], "expired", nowIso);
     await auditGrant(input, "grant.refused", ask.requesterPrincipalId, {

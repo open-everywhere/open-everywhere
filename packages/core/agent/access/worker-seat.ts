@@ -5,7 +5,6 @@ export const WORKER_WITHHELD_TOOLS: ReadonlySet<string> = new Set<string>([
   "stand_down",
   "read_channel",
   "read_thread",
-  "request_credential_grant",
 ]);
 
 export function chatArmGrain(grain: WindowGrain): boolean {
