@@ -271,6 +271,16 @@ export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";
 export { postHostNotice } from "./channels/reply-post.js";
 export { detectBridgeableInputRequest, renderQuestionForSurface } from "./channels/question-bridge.js";
 export type { BridgeableQuestion } from "./channels/question-bridge.js";
+export {
+  rememberBridgedQuestion,
+  readBridgedQuestion,
+  forgetBridgedQuestion,
+  resolveInboundAnswerRouting,
+  QUESTION_ANSWERED_AUDIT_ACTION,
+  QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
+} from "./channels/question-bridge.js";
+export type { OutstandingQuestion, InboundAnswerRouting, BridgedQuestionStore } from "./channels/question-bridge.js";
+export { bareTokenFromEveContext } from "./channels/window-key.js";
 
 export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
 export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";

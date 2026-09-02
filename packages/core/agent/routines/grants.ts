@@ -1,6 +1,13 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
-import { describeGrantKind, isLegacyConnectorGrantKind, isRoutinePermissionMemoKind, routinePermissionKind } from "../approvals/session-grant.js";
+import { connectorOpTierParts } from "../access/connector-op-gating.js";
+import {
+  describeGrantKind,
+  isLegacyConnectorGrantKind,
+  isRoutinePermissionMemoKind,
+  routinePermissionKind,
+  routinePermissionRefusal,
+} from "../approvals/session-grant.js";
 import { routineGrantKey, type Routine } from "./routine.js";
 
 type GrantedRoutine = Pick<Routine, "id" | "promptGeneration">;
@@ -20,8 +27,9 @@ export function declaredPermissionKinds(declared: readonly string[]): string[] {
     const trimmed = d.trim();
     const kind = routinePermissionKind(trimmed);
     if (!kind) {
+      const why = routinePermissionRefusal(trimmed);
       throw new Error(
-        `"${d}" is not a declarable routine permission. The whole vocabulary is: "pr.open" (open pull requests) and "tool:<connector tool>" — one row per TOOL, named exactly as the tool is called, e.g. "tool:notion__share_page". A connector slug on its own ("tool:notion") names no tool and is refused. Anything else — deletes included — is never declarable up front and always asks a human when it fires.`,
+        `"${d}" is not a declarable routine permission${why ? ` — ${why}` : ""}. The whole vocabulary is: "pr.open" (open pull requests) and "tool:<connector tool>" — one row per TOOL, named exactly as the tool is called, e.g. "tool:notion__share_page". A connector slug on its own ("tool:notion") names no tool and is refused. Anything else — deletes included — is never declarable up front and always asks a human when it fires.`,
       );
     }
     if (namesUnliftableTool(trimmed)) {
@@ -45,23 +53,36 @@ export function namesUnliftableTool(trimmed: string): boolean {
   return classifyConnectorOpTier(declaredToolName(trimmed)) === "destructive";
 }
 
+export function namesBundleRaisedTool(trimmed: string): boolean {
+  if (trimmed === PR_OPEN_DECLARATION) return false;
+  const tool = declaredToolName(trimmed);
+  if (classifyConnectorOpTier(tool) === "destructive") return false;
+  try {
+    return connectorOpTierParts(tool).declared === "destructive";
+  } catch {
+    return false;
+  }
+}
+
 function armablePermissionKinds(declared: readonly string[]): string[] {
   const kinds: string[] = [];
   for (const d of declared) {
     const trimmed = d.trim();
     const kind = routinePermissionKind(trimmed);
-    if (kind === null || namesUnliftableTool(trimmed)) continue;
+    if (kind === null || namesUnliftableTool(trimmed) || namesBundleRaisedTool(trimmed)) continue;
     if (!kinds.includes(kind)) kinds.push(kind);
   }
   return kinds;
 }
+
+export const ROUTINE_PERMISSION_NEVER_LIFTS_ACTION = "routine.permission_never_lifts";
 
 export function unarmedDeclarations(declared: readonly string[], granted: readonly string[]): string[] {
   const out: string[] = [];
   for (const d of declared) {
     const trimmed = d.trim();
     const kind = routinePermissionKind(trimmed);
-    const armed = kind !== null && !namesUnliftableTool(trimmed) && granted.includes(kind);
+    const armed = kind !== null && !namesUnliftableTool(trimmed) && !namesBundleRaisedTool(trimmed) && granted.includes(kind);
     if (!armed && !out.includes(d)) out.push(d);
   }
   return out;
@@ -77,7 +98,9 @@ export function describeDeclaredPermissions(declared: readonly string[]): string
         ? `unrecognised declaration: "${trimmed}" (grants nothing)`
         : namesUnliftableTool(trimmed)
           ? `the "${declaredToolName(trimmed)}" tool, never lifted on an unattended fire (grants nothing)`
-          : describeGrantKind(kind);
+          : namesBundleRaisedTool(trimmed)
+            ? `the "${declaredToolName(trimmed)}" tool, which this deployment's bundle configuration raises to the delete tier — the fence refuses it on every unattended fire (grants nothing here)`
+            : describeGrantKind(kind);
     if (!out.includes(line)) out.push(line);
   }
   return out;
@@ -110,6 +133,16 @@ export async function grantDeclaredRoutinePermissions(input: {
     if (done) written.push(kind);
   }
   return written;
+}
+
+export function bundleRaisedDeclarations(declared: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const d of declared) {
+    const trimmed = d.trim();
+    if (routinePermissionKind(trimmed) === null || !namesBundleRaisedTool(trimmed)) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
 }
 
 async function liveGrantKinds(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {

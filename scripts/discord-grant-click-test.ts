@@ -127,6 +127,8 @@ function clickEnvelope(customId: string, userId: string, guildId?: string): Reco
   return {
     type: 3,
     channel_id: "DM_CHANNEL",
+    application_id: "APP_ID",
+    token: "fixture-interaction-token-not-a-secret",
     data: { custom_id: customId, component_type: 2 },
     ...(guildId === undefined ? { user: { id: userId } } : { guild_id: guildId, member: { user: { id: userId } } }),
   };
@@ -249,14 +251,15 @@ console.log("7. a signed interaction over the real front route:");
     }) as never,
     { publicKey: keyHex },
   );
-  const post = async (interaction: unknown): Promise<{ status: number; body: string }> => {
+  const routeBackground: Promise<unknown>[] = [];
+  const post = async (interaction: unknown, args: Record<string, unknown> = {}): Promise<{ status: number; body: string }> => {
     const body = JSON.stringify(interaction);
     const ts = String(Math.floor(Date.now() / 1000));
     const headers = new Headers({
       "x-signature-ed25519": sign(null, Buffer.from(ts + body), privateKey).toString("hex"),
       "x-signature-timestamp": ts,
     });
-    const res = await front(new Request(`https://oe.example${PUBLIC_DISCORD_ROUTE}`, { method: "POST", headers, body }), {} as never);
+    const res = await front(new Request(`https://oe.example${PUBLIC_DISCORD_ROUTE}`, { method: "POST", headers, body }), args as never);
     return { status: res.status, body: await res.text() };
   };
 
@@ -270,6 +273,15 @@ console.log("7. a signed interaction over the real front route:");
   const other = await post(clickEnvelope("eve_input:something", OWNER_ID));
   eq(forwarded, 1, "…while eve's own HITL click still forwards to eve untouched");
   eq(other.body, "inner-ok", "…and gets eve's own answer");
+
+  const deferredAsk = await raise("sess-route-defer");
+  const deferred = await post(clickEnvelope(grantCardActionId(deferredAsk, "decline"), OWNER_ID), {
+    waitUntil: (p: Promise<unknown>) => void routeBackground.push(p),
+  });
+  eq(JSON.parse(deferred.body).type, 5, "🔴 …and a grant tap over the REAL route is answered with a DEFERRED response — the route really passes its waitUntil to the door");
+  eq(routeBackground.length, 1, "…handing exactly one piece of work to the route's own waitUntil");
+  await Promise.all(routeBackground);
+  eq(await statusOf(deferredAsk), "declined", "…and the work the route kept alive really did land");
 }
 
 console.log("8. a rewritten card:");
@@ -283,6 +295,80 @@ console.log("8. a rewritten card:");
   eq(cardEdits.length, 1, "…exactly once");
   eq(cardEdits[0]?.["components"], [], "🔴 …and the rewrite STRIPS the components, so a closed card offers no button to press");
   ok(typeof cardEdits[0]?.["content"] === "string" && String(cardEdits[0]["content"]).length > 0, "…while still carrying the replacement text — the strip must not cost the reader the outcome");
+}
+
+console.log("9. a slow approve answers inside the window (OPE-1282):");
+{
+  const askId = await raise("sess-deferred");
+
+  const background: Promise<unknown>[] = [];
+  const edits: { content: string }[] = [];
+  let resolveStarted = false;
+  let responded = false;
+  let respondedBeforeResolveFinished = false;
+
+  let releaseGate = (): void => {};
+  const gate = new Promise<void>((r) => {
+    releaseGate = r;
+  });
+
+  const response = await handleDiscordGrantCardInteraction(clickEnvelope(grantCardActionId(askId, "once"), OWNER_ID), {
+    waitUntil: (p) => {
+      background.push(
+        (async () => {
+          resolveStarted = true;
+          await gate;
+          await p;
+        })(),
+      );
+    },
+    edit: async (followUp, content) => {
+      eq(followUp.applicationId, "APP_ID", "§9 the follow-up is addressed to the app from the interaction's own envelope");
+      ok(followUp.token.length > 0, "§9 …with the interaction's token, which is what authorises the edit (no bot token needed)");
+      respondedBeforeResolveFinished = responded;
+      edits.push({ content });
+      return true;
+    },
+  });
+  responded = true;
+
+  assert.ok(response !== null, "§9 the handler claimed the click");
+  eq(response["type"], 5, "🔴 §9 the interaction is answered with a DEFERRED response (type 5) — this is the whole ticket");
+  eq((response["data"] as Record<string, unknown>)["flags"], 64, "🔴 §9 …and the EPHEMERAL flag rides the ACK, because Discord fixes visibility at the FIRST response — without it the eventual answer would be PUBLIC");
+  ok((response["data"] as Record<string, unknown>)["content"] === undefined, "§9 …and the ack carries no text of its own; the answer arrives in the edit");
+  ok(resolveStarted, "§9 the resolution really was handed to waitUntil, rather than skipped");
+
+  eq(await statusOf(askId), "pending", "🔴 §9 the ask is STILL PENDING at the moment the interaction is answered — the owner is acked before the work runs");
+  eq(edits.length, 0, "…and no follow-up has been sent yet");
+
+  releaseGate();
+  await Promise.all(background);
+
+  eq(await statusOf(askId), "approved", "🔴 §9 …and the decision really does land afterwards — deferring must not lose the approval");
+  eq((await store.credentialGrantsForScope(ORG, "sess-deferred")).length, 1, "…minting exactly one grant, as the synchronous path did");
+  eq(edits.length, 1, "🔴 §9 …and the placeholder is replaced with exactly one follow-up edit");
+  ok(edits[0]?.content.includes("Approved"), "…carrying core's own decision copy, so the owner is told what they granted");
+  ok(respondedBeforeResolveFinished, "🔴 §9 …and that edit happened AFTER the interaction response — the ordering the three-second window requires");
+
+  const noHostAsk = await raise("sess-no-waituntil");
+  const sync = await handleDiscordGrantCardInteraction(clickEnvelope(grantCardActionId(noHostAsk, "decline"), OWNER_ID));
+  eq(sync?.["type"], 4, "🔴 §9 with NO waitUntil the door answers synchronously (type 4) — never a defer it cannot follow up");
+  eq(await statusOf(noHostAsk), "declined", "…and the decision still lands on that path");
+
+  const noAddrAsk = await raise("sess-no-address");
+  const envelope = clickEnvelope(grantCardActionId(noAddrAsk, "decline"), OWNER_ID);
+  delete envelope["token"];
+  const syncNoAddr = await handleDiscordGrantCardInteraction(envelope, { waitUntil: (p) => void background.push(p) });
+  eq(syncNoAddr?.["type"], 4, "🔴 §9 …and an envelope with no interaction token answers synchronously too, rather than deferring into silence");
+  eq(await statusOf(noAddrAsk), "declined", "…with the decision landing there as well");
+
+  const guildAsk = await raise("sess-guild-defer");
+  const guild = await handleDiscordGrantCardInteraction(clickEnvelope(grantCardActionId(guildAsk, "standing"), OWNER_ID, "G1"), {
+    waitUntil: (p) => void background.push(p),
+    edit: async () => true,
+  });
+  eq(guild?.["type"], 4, "🔴 §9 a guild tap is refused with an IMMEDIATE answer — an answer already known must not be deferred");
+  eq(await statusOf(guildAsk), "pending", "…and still writes nothing");
 }
 
 console.log(`\n✓ discord-grant-click: ${n} assertions passed\n`);

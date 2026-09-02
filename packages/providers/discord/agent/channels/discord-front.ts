@@ -77,7 +77,10 @@ export interface DiscordFrontOptions {
   readonly now?: () => number;
   readonly handleApprovalInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
   readonly handleLinkConsentInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
-  readonly handleGrantCardInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
+  readonly handleGrantCardInteraction?: (
+    raw: unknown,
+    deps?: { waitUntil?: (p: Promise<unknown>) => void },
+  ) => Promise<DiscordInteractionResponse | null>;
   readonly handleOeCommand?: (raw: unknown, attachSession?: AttachSessionForCancel) => Promise<DiscordInteractionResponse | null>;
 }
 
@@ -111,7 +114,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
     }
 
     if (decision.kind === "grant-click") {
-      const response = await handleGrantCard(decision.interaction);
+      const response = await handleGrantCard(decision.interaction, { waitUntil: args.waitUntil });
       if (response) return interactionJson(response);
     }
 

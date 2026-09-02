@@ -80,9 +80,13 @@ export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">): strin
 
 const CONNECTOR_TOOL_DECLARATION_PREFIX = "tool:";
 
-const TOOL_NAME_SEGMENT = /^[a-z0-9][a-z0-9_-]*$/u;
+const TOOL_NAME_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 const RESERVED_TOOL_NAMESPACE = "grant";
+
+function namesReservedNamespace(head: string): boolean {
+  return head.toLowerCase() === RESERVED_TOOL_NAMESPACE;
+}
 
 export function routinePermissionKind(declared: string): string | null {
   if (declared === PR_OPEN_KIND) return PR_OPEN_KIND;
@@ -90,9 +94,29 @@ export function routinePermissionKind(declared: string): string | null {
   const tool = declared.slice(CONNECTOR_TOOL_DECLARATION_PREFIX.length);
   const segments = tool.split("__");
   if (segments.length < 2) return null;
-  if (segments[0] === RESERVED_TOOL_NAMESPACE) return null;
+  if (namesReservedNamespace(segments[0] ?? "")) return null;
   if (!segments.every((segment) => TOOL_NAME_SEGMENT.test(segment))) return null;
   return connectorToolPermissionKind(tool);
+}
+
+export function routinePermissionRefusal(declared: string): string | undefined {
+  if (declared === PR_OPEN_KIND) return undefined;
+  if (!declared.startsWith(CONNECTOR_TOOL_DECLARATION_PREFIX)) {
+    return `it is neither "pr.open" nor a "tool:<qualified connector tool>" declaration`;
+  }
+  const tool = declared.slice(CONNECTOR_TOOL_DECLARATION_PREFIX.length);
+  const segments = tool.split("__");
+  if (segments.length < 2) {
+    return `"${tool}" is a single segment, so it names a connection or a bare verb rather than a tool — a declaration must name the tool exactly as it is called, e.g. "tool:notion__share_page"`;
+  }
+  if (namesReservedNamespace(segments[0] ?? "")) {
+    return `"${segments[0]}" is the credential-grant plane's reserved namespace, which a routine may never declare a standing permission on`;
+  }
+  const bad = segments.find((segment) => !TOOL_NAME_SEGMENT.test(segment));
+  if (bad !== undefined) {
+    return `the segment "${bad}" is not a legal tool-name segment — each "__"-delimited segment must start with a letter or a digit and then carry only letters, digits, "_" or "-"`;
+  }
+  return undefined;
 }
 
 export function describeGrantKind(kind: string): string {

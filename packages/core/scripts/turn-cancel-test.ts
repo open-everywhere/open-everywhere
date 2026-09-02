@@ -811,7 +811,7 @@ const NO_REQUESTER_BASELINE =
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {
-  const HITL_CLIENTS = ["agent/channels/unified.ts"];
+  const HITL_CLIENTS = ["core/agent/channels/unified.ts", "providers/notion/agent/channels/notion.ts"];
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
   const found: string[] = [];
   const walk = (dir: URL): void => {
@@ -829,17 +829,29 @@ const NO_REQUESTER_BASELINE =
     }
   };
   for (const r of roots) walk(r);
-  const rel = found.map((p) => p.slice(p.indexOf("/packages/core/") + "/packages/core/".length)).sort();
+  const rel = found.map((p) => p.slice(p.indexOf("/packages/") + "/packages/".length)).sort();
   ok(
     rel.length === HITL_CLIENTS.length && rel.every((p, i) => p === HITL_CLIENTS[i]),
     `🔴 OE's HITL client is EXACTLY [${HITL_CLIENTS.join(", ")}] — a second .respond() call site is a second thing a cancel orphans. Found: ${rel.join(", ") || "none"}`,
   );
   const client = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
   ok(/\.respond\(\[\{ requestId: /.test(client), "…and that client really builds an inputResponses entry keyed on the parent-visible requestId");
+  const native = readFileSync(new URL("../../providers/notion/agent/channels/notion.ts", import.meta.url), "utf8");
+  ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and so does the NATIVE client, so the allow-list cannot pass by a client quietly becoming inert");
   const anchor = readFileSync(new URL("../agent/hooks/turn-anchor.ts", import.meta.url), "utf8");
   ok(
     /forgetBridgedQuestion\(/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),
     "🔴 …and hooks/turn-anchor.ts's turn.cancelled arm CLEARS OE's outstanding-question row — without it the room's next message would `respond` into a wiped proxy map and be swallowed",
+  );
+  const { bareTokenFromEveContext } = await import("../agent/channels/window-key.js");
+  const nativeBare = "notion:page_widgets:oe-sup:g1";
+  ok(
+    bareTokenFromEveContext(`notion:${nativeBare}`) === nativeBare,
+    "🔴 …and a NATIVE Notion session's namespaced continuation token strips to the token its dispatch minted — so the cancel's clear reaches the native leg's row, not a key nothing wrote",
+  );
+  ok(
+    /bareTokenFromEveContext\(s\.windowKey\)/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),
+    "…because the cancel arm really keys the clear off the stripped continuation token, which is what makes the line above a measurement of the live path",
   );
 }
 

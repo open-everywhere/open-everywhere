@@ -37,7 +37,15 @@ import {
   postHostNotice,
   detectBridgeableInputRequest,
   renderQuestionForSurface,
+  QUESTION_ANSWERED_AUDIT_ACTION,
+  QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  forgetNotionQuestion,
+  rememberNotionQuestion,
+  resolveNotionInboundAnswer,
+  type NotionInboundAnswer,
+} from "./notion-question-return.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
 import { createCommentReply, resolveNotionCredential, retrieveBotUser, type ResolvedNotionCredential } from "./notion-api.js";
@@ -142,7 +150,12 @@ export function notionSingleWindowPrivacyOk(
 
 type NotionState = NotionSessionState;
 
-export function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHandlerArgs["to"]): NotionSupervisorDeps {
+export function liveNotionSupervisorDeps(
+  send: SendFn,
+  surfaceKey: string,
+  to?: RouteHandlerArgs["to"],
+  respond?: RespondFn,
+): NotionSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -180,6 +193,10 @@ export function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: 
         });
         return;
       }
+      if (respond !== undefined) {
+        const answer = await resolveNotionInboundAnswer({ org, bareToken: token, auth });
+        if (answer && (await deliverNotionAnswer({ answerOrg: org, token, auth, message, context, answer, respond, surfaceKey }))) return;
+      }
       try {
         await send({ message, context: [...context] }, { auth, continuationToken: token, state });
       } catch (err) {
@@ -213,6 +230,71 @@ function notionSendFrom(from: RouteHandlerArgs<NotionState>["from"]): SendFn {
   };
 }
 
+type RespondFn = (input: { requestId: string; text: string }, opts: { auth: unknown; continuationToken: string; context?: readonly string[] }) => Promise<void>;
+
+function notionRespondFrom(from: RouteHandlerArgs<NotionState>["from"]): RespondFn {
+  return async (input, opts) => {
+    await (from(opts.continuationToken) as unknown as { respond: (r: readonly { requestId: string; text: string }[], o: unknown) => Promise<unknown> }).respond(
+      [{ requestId: input.requestId, text: input.text }],
+      {
+        auth: opts.auth,
+        ...(opts.context && opts.context.length > 0 ? { context: [...opts.context] } : {}),
+      },
+    );
+  };
+}
+
+async function deliverNotionAnswer(input: {
+  readonly answerOrg: string;
+  readonly token: string;
+  readonly auth: unknown;
+  readonly message: string;
+  readonly context: readonly string[];
+  readonly answer: NotionInboundAnswer;
+  readonly respond: RespondFn;
+  readonly surfaceKey: string;
+}): Promise<boolean> {
+  const detail = {
+    requestId: input.answer.requestId,
+    floor: input.answer.floor,
+    chars: input.message.length,
+    surfaceKey: input.surfaceKey,
+    route: "native",
+    ...(input.answer.taskId !== undefined ? { taskId: input.answer.taskId } : {}),
+    ...(input.answer.wakeId !== undefined ? { wakeId: input.answer.wakeId } : {}),
+  };
+  const [, workspace = "unknown", surface = "unknown"] = input.surfaceKey.split("/");
+  try {
+    await input.respond(
+      { requestId: input.answer.requestId, text: input.message },
+      { auth: input.auth, continuationToken: input.token, context: input.context },
+    );
+  } catch (err) {
+    const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+    log(`answer ${input.answer.requestId} could NOT be delivered (${error}) — falling back to an ordinary wake, the question stays open`);
+    await appendAudit({
+      org: input.answerOrg,
+      platform: "notion",
+      workspace,
+      surface,
+      action: QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
+      detail: { ...detail, error },
+    }).catch(() => undefined);
+    return false;
+  }
+  await forgetNotionQuestion(input.answerOrg, input.token);
+  log(`answer ${input.answer.requestId} delivered to ${input.token} (floor ${input.answer.floor})`);
+  await appendAudit({
+    org: input.answerOrg,
+    platform: "notion",
+    workspace,
+    surface,
+    action: QUESTION_ANSWERED_AUDIT_ACTION,
+    detail,
+  }).catch(() => undefined);
+  return true;
+}
+
 export default defineChannel<NotionState, { state: NotionState }>({
   kindHint: "notion",
   state: { discussionId: null, pageId: null, workspaceId: null },
@@ -222,6 +304,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
   routes: [
     POST(ROUTE, async (req, { from, waitUntil, to, attachSession }) => {
       const send = notionSendFrom(from);
+      const respond = notionRespondFrom(from);
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
       const integrations = notionIntegrations(notionDomains());
@@ -289,7 +372,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
             externalPolicy: resolveExternalPolicy(externalPolicyOverrideFor(d.surfaceKey, getConfig().loadDomains())),
           },
-          liveNotionSupervisorDeps(send, d.surfaceKey, to),
+          liveNotionSupervisorDeps(send, d.surfaceKey, to, respond),
         );
         if (d.trust?.unreachableRoots && d.trust.unreachableRoots.length > 0) {
           console.warn(
@@ -438,7 +521,19 @@ export default defineChannel<NotionState, { state: NotionState }>({
         await postHostNotice({ platform: "notion", ...target }, renderQuestionForSurface(question));
       } catch (err) {
         log(`input-request could not be posted into discussion ${target.discussionId}: ${String(err)}`);
+        return;
       }
+      const remembered = await rememberNotionQuestion({
+        org: deploymentOrg(),
+        namespacedToken: channel.continuation?.token,
+        requestId: question.requestId,
+        discussionId: target.discussionId,
+      });
+      log(
+        remembered
+          ? `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — answerable there (${question.requestId})`
+          : `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — NOT answerable (no outstanding-question row); a delegated worker's question will stay parked`,
+      );
     },
     async "message.completed"(data, channel, ctx) {
       const sessionId = ctx?.session?.id;

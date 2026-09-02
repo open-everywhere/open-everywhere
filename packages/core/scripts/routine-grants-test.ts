@@ -13,6 +13,7 @@ import {
 import {
   MAX_DECLARED_PERMISSIONS,
   ROUTINE_GRANT_NO_EXPIRY,
+  ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
   declaredPermissionKinds,
   describeDeclaredPermissions,
   grantDeclaredRoutinePermissions,
@@ -114,7 +115,6 @@ const NOW = "2026-03-30T11:30:00.000Z";
     "connector.op:notion",
     "connector.tool:notion__share_page",
     "tool:",
-    "tool:Notion__Share_Page",
     "tool:notion__share page",
     "tool:notion__a:b",
     "tool:notion___share_page",
@@ -345,6 +345,39 @@ const NOW = "2026-03-30T11:30:00.000Z";
 }
 
 {
+  const UPPER = "acme__API_post";
+  ok(routinePermissionKind(`tool:${UPPER}`) === connectorToolPermissionKind(UPPER), "a tool name with an UPPERCASE segment is declarable");
+  ok(
+    JSON.stringify(declaredPermissionKinds([`tool:${UPPER}`])) === JSON.stringify([connectorToolPermissionKind(UPPER)]),
+    "…and survives the propose-time gate as one row",
+  );
+  ok(
+    routinePermissionKind(`tool:${UPPER}`) !== routinePermissionKind("tool:acme__api_post"),
+    "🔴 the kind is CASE-SENSITIVE — declaring `acme__API_post` cannot lift `acme__api_post`, so the widening reaches exactly matching names and nothing else",
+  );
+  ok(routinePermissionKind(`tool:${UPPER}`)?.includes(UPPER) === true, "…and the memo kind carries the tool name byte-for-byte, as the fence will compare it");
+
+  ok(
+    describeDeclaredPermissions([`tool:${UPPER}`]).some((l) => l.includes(`use the "${UPPER}" tool`)),
+    "🔴 …and the card renders it as a real permission, not as a delete-tier refusal — the tier classifier case-folds the verb, so `API_post` classifies `write` exactly as `api_post` does",
+  );
+
+  for (const spelling of ["tool:Grant__U0OWNER__send", "tool:GRANT__U0OWNER__send", "tool:grant__U0OWNER__send"]) {
+    ok(routinePermissionKind(spelling) === null, `🔴 "${spelling}" is refused — the credential-grant namespace is matched case-INSENSITIVELY`);
+  }
+  ok(routinePermissionKind("tool:grants__U0OWNER__send") !== null, "…while a connection genuinely called `grants` is untouched — the match is the whole segment, never a prefix");
+
+  const spaced = await throwsAsync(() => declaredPermissionKinds(["tool:notion__share page"]), "a bad segment is still refused");
+  ok(spaced.includes("share page"), "🔴 the refusal NAMES the offending segment");
+  ok(spaced.includes("letters, digits"), "…and states the charset the segment must satisfy");
+  const slug = await throwsAsync(() => declaredPermissionKinds(["tool:notion"]), "a bare slug is still refused");
+  ok(slug.includes("single segment"), "🔴 …and a slug-shaped declaration is told THAT, not the charset rule");
+  const reserved = await throwsAsync(() => declaredPermissionKinds(["tool:grant__U0OWNER__send"]), "the reserved namespace is still refused");
+  ok(reserved.includes("reserved namespace"), "🔴 …and the reserved-namespace refusal names its own reason");
+  ok(reserved.includes("pr.open"), "…while every refusal still recites the legal vocabulary after the reason");
+}
+
+{
   const store = getOperationalStore();
   const swept = { ...ROUTINE, id: "r-sweep001" };
   const key = routineGrantKey(swept);
@@ -369,6 +402,124 @@ const NOW = "2026-03-30T11:30:00.000Z";
 
   const again = await sweepLegacyConnectorGrants(ORG);
   ok(again === 0, "sweeping twice removes nothing — the one-shot is idempotent");
+}
+
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineBundle } = await import("../agent/access/bundle.js");
+  const RAISED = "acme__share_report";
+  const PLAIN = "acme__update_report";
+
+  const { namesBundleRaisedTool, namesUnliftableTool } = await import("../agent/routines/grants.js");
+  ok(!namesBundleRaisedTool(`tool:${RAISED}`), "with no bundle registered, nothing is bundle-raised");
+  ok(describeDeclaredPermissions([`tool:${RAISED}`])[0]?.includes(`use the "${RAISED}" tool`) === true, "…and the card calls it an ordinary usable tool");
+
+  registerConfig({
+    loadBundles: () => [
+      defineBundle({
+        name: "acme-raised",
+        connectors: [{ name: "acme", credential: "k", contentOrigin: "external" }],
+        connectorOps: [{ connector: "acme", destructive: ["share_report"] }],
+      }),
+    ],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  ok(!namesUnliftableTool(`tool:${RAISED}`), "🔴 the STATIC classifier still calls it a write — which is why the propose-time gate lets it through");
+  ok(namesBundleRaisedTool(`tool:${RAISED}`), "🔴 …while THIS deployment's bundle raises it to the delete tier, so the fence refuses it on every fire");
+  ok(!namesBundleRaisedTool(`tool:${PLAIN}`), "…and an unnamed op on the same connector is untouched");
+  ok(!namesBundleRaisedTool("pr.open"), "…and `pr.open` names no connector tool at all");
+
+  ok(
+    JSON.stringify(declaredPermissionKinds([`tool:${RAISED}`])) === JSON.stringify([connectorToolPermissionKind(RAISED)]),
+    "🔴 the model-facing gate still ACCEPTS it — the throw stays deployment-independent, which is the whole reason it reads the static tier",
+  );
+
+  const line = describeDeclaredPermissions([`tool:${RAISED}`])[0] ?? "";
+  ok(line.includes(RAISED), "the arming card still NAMES the declaration — a hidden row is worse than an ugly one");
+  ok(line.includes("grants nothing here"), "🔴 …and says it grants nothing on THIS deployment, so the human reads the truth before they click");
+  ok(line.includes("bundle configuration"), "…and says WHY, so it reads as a deployment fact rather than a property of the verb");
+  const plainLine = describeDeclaredPermissions([`tool:${PLAIN}`])[0] ?? "";
+  ok(
+    plainLine.includes(`use the "${PLAIN}" tool`) && !plainLine.includes("grants nothing"),
+    "…while an unraised write on the same connector still renders as a real permission (asserted POSITIVELY: a bare `!includes` would pass on an empty line)",
+  );
+
+  const raisedRoutine: Routine = { ...ROUTINE, id: "r-raised01" };
+  const written = await grantDeclaredRoutinePermissions({
+    org: ORG,
+    routine: raisedRoutine,
+    declared: [`tool:${RAISED}`, `tool:${PLAIN}`],
+    grantedBy: "U0HUMAN",
+    tainted: false,
+    nowIso: NOW,
+  });
+  ok(!written.includes(connectorToolPermissionKind(RAISED)), "🔴 the arming click writes NO row for a bundle-raised tool");
+  ok(written.includes(connectorToolPermissionKind(PLAIN)), "…and still writes the one beside it, so the skip is the raise and not the whole card");
+  ok(
+    unarmedDeclarations([`tool:${RAISED}`, `tool:${PLAIN}`], written).includes(`tool:${RAISED}`),
+    "🔴 …and the arming OUTCOME names it as NOT armed, rather than letting the human believe it is live",
+  );
+  ok(!unarmedDeclarations([`tool:${RAISED}`, `tool:${PLAIN}`], written).includes(`tool:${PLAIN}`), "…without dragging the armed declaration into that clause");
+
+  const { bundleRaisedDeclarations } = await import("../agent/routines/grants.js");
+  ok(
+    JSON.stringify(bundleRaisedDeclarations([`tool:${RAISED}`, `tool:${PLAIN}`, "pr.open"])) === JSON.stringify([`tool:${RAISED}`]),
+    "🔴 the caller is handed exactly the raised declarations — not the armable ones beside them, and not `pr.open`",
+  );
+  ok(JSON.stringify(bundleRaisedDeclarations([`tool:${PLAIN}`])) === JSON.stringify([]), "…and nothing at all when no declaration is raised, so the row is not written on an ordinary arm");
+
+  {
+    const { readAudit } = await import("../agent/audit/audit.js");
+    const raisedPartition = { org: ORG, platform: "slack", workspace: "T1", surface: "C_RAISED", surfaceKey: "slack/T1/C_RAISED" } as unknown as Partition;
+    const createKind = actionKind("routine.create");
+    ok(createKind !== undefined, "the routine.create action kind is registered for the arming drive below");
+    const armCard = (permissions: readonly string[], tainted: boolean): Promise<string> =>
+      (createKind as { execute(a: RoutineCreateArgs, by: string): Promise<string> }).execute(
+        {
+          org: ORG,
+          partition: raisedPartition,
+          surfaceKey: "slack/T1/C_RAISED",
+          target: { channelId: "C_RAISED" },
+          trigger: ROUTINE.trigger,
+          prompt: ROUTINE.prompt,
+          createdBy: "U_AUTHOR",
+          ...(tainted ? { tainted: true } : {}),
+          permissions,
+        },
+        "U_CLICKER",
+      );
+    const neverLifts = async (): Promise<Record<string, unknown>[]> =>
+      (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === ROUTINE_PERMISSION_NEVER_LIFTS_ACTION).map((r) => r.detail as Record<string, unknown>);
+
+    ok((await neverLifts()).length === 0, "wiring precondition: no `never lifts` row exists yet, so a green below cannot be vacuous");
+
+    const plainOutcome = await armCard([`tool:${PLAIN}`], false);
+    ok((await neverLifts()).length === 0, "🔴 an arm with no raised declaration writes NO `never lifts` row");
+    ok(plainOutcome.includes("standing permission to"), "…and that card really did arm, so the control is a control and not a failed click");
+
+    const raisedOutcome = await armCard([`tool:${RAISED}`, `tool:${PLAIN}`], false);
+    const rows = await neverLifts();
+    ok(rows.length === 1, "🔴 arming a card carrying a config-raised declaration writes EXACTLY ONE `never lifts` row — the durable record this ticket exists for");
+    ok(rows[0]?.["declaration"] === `tool:${RAISED}`, "…naming the declaration an operator has to read to fix it");
+    ok(rows[0]?.["reason"] === "bundle-declared-destructive", "…and WHY, in the vocabulary of the config that decided it");
+    ok(rows[0]?.["id"] === undefined || typeof rows[0]["id"] === "string", "…joined to the routine it was armed for");
+    ok(raisedOutcome.includes(`NOT armed: "tool:${RAISED}"`), "🔴 …and the sentence the human reads names it as NOT armed, driven end to end rather than derived");
+    ok(raisedOutcome.includes(`standing permission to`) && !raisedOutcome.includes(`NOT armed: "tool:${PLAIN}"`), "…while the armable declaration beside it still arms and is not dragged into the clause");
+
+    const taintedOutcome = await armCard([`tool:${RAISED}`], true);
+    ok((await neverLifts()).length === 1, "🔴 a TAINTED arm writes no `never lifts` row — the reason is taint, and the row must not claim otherwise");
+    ok(taintedOutcome.includes("read external content"), "…and the outcome sentence gives the real reason instead");
+  }
+
+  const { declarableRoutinePermission } = await import("../agent/routines/permission-card.js");
+  ok(declarableRoutinePermission(`tool:${RAISED}`) === undefined, "🔴 no permission card is planned for a bundle-raised tool — the click could only ever be theatre");
+  ok(declarableRoutinePermission(`tool:${PLAIN}`)?.grantKind === connectorToolPermissionKind(PLAIN), "…while the unraised op on the same connector still cards");
 }
 
 console.log(`✓ routine-grants: ${passed} assertions passed`);

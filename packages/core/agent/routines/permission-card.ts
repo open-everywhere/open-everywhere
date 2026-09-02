@@ -6,7 +6,7 @@ import {
 } from "../approvals/routine-permission.js";
 import { routinePermissionAskedMemo, routinePermissionDeclinedMemo, routinePermissionKind } from "../approvals/session-grant.js";
 import type { RoutineCardProbe } from "./permission-card-wait.js";
-import { ROUTINE_GRANT_NO_EXPIRY, namesUnliftableTool } from "./grants.js";
+import { ROUTINE_GRANT_NO_EXPIRY, namesBundleRaisedTool, namesUnliftableTool } from "./grants.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
@@ -21,7 +21,7 @@ export { routineGrantKeyParts };
 
 export function declarableRoutinePermission(declaration: string): { grantKind: string; declaration: string } | undefined {
   const grantKind = routinePermissionKind(declaration);
-  if (grantKind === null || namesUnliftableTool(declaration)) return undefined;
+  if (grantKind === null || namesUnliftableTool(declaration) || namesBundleRaisedTool(declaration)) return undefined;
   return { grantKind, declaration };
 }
 

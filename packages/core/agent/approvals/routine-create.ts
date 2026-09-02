@@ -2,7 +2,13 @@ import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { describeTrigger, routineGrantGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { mintJobBound } from "../routines/bound.js";
-import { describeDeclaredPermissions, grantDeclaredRoutinePermissions, unarmedDeclarations } from "../routines/grants.js";
+import {
+  ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
+  bundleRaisedDeclarations,
+  describeDeclaredPermissions,
+  grantDeclaredRoutinePermissions,
+  unarmedDeclarations,
+} from "../routines/grants.js";
 import { describeGrantKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
@@ -89,6 +95,17 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
         principalId: decidedBy,
         action: "routine.grant",
         detail: { id: routine.id, grantedBy: decidedBy, kinds: granted, generation: routineGrantGeneration(routine), declared: true },
+      });
+    }
+    for (const declaration of args.tainted ? [] : bundleRaisedDeclarations(args.permissions ?? [])) {
+      await appendAudit({
+        org: args.partition.org,
+        platform: args.partition.platform,
+        workspace: args.partition.workspace,
+        surface: args.partition.surface,
+        principalId: decidedBy,
+        action: ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
+        detail: { id: routine.id, declaration, generation: routineGrantGeneration(routine), reason: "bundle-declared-destructive" },
       });
     }
     await appendAudit({
