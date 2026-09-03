@@ -346,6 +346,14 @@ export interface ConnectorOpApprovalDeps {
   readonly dmPrincipal?: typeof resolveDmPrincipal;
 }
 
+export function unresolvableConnectionRefusalMessage(toolName: string): string {
+  return (
+    `the tool "${toolName}" does not name a connection this plane can resolve. ` +
+    `A name in a reserved namespace belongs to the credential-grant plane, not to the connector plane. ` +
+    `The op did not run.`
+  );
+}
+
 async function decideConnectorWrite(
   ctx: { readonly toolName: string; readonly approvedTools: ReadonlySet<string>; readonly session?: { readonly auth?: unknown } },
   tier: ReturnType<typeof effectiveConnectorOpTier>,
@@ -355,7 +363,10 @@ async function decideConnectorWrite(
   const auth = ctx.session?.auth;
   if (auth !== undefined && auth !== null) {
     const sessionAuth = auth as Parameters<typeof boundConnectorCredential>[1];
-    const connection = ctx.toolName.split("__")[0] as string;
+    const connection = parseQualifiedToolName(ctx.toolName)?.connection;
+    if (connection === undefined) {
+      return { type: "denied", reason: unresolvableConnectionRefusalMessage(ctx.toolName) };
+    }
     const bound = await boundCredential(connection, sessionAuth);
     const memberPlaneBinding = bound?.memberPlane === true;
     const personalCredential = bound?.principal === "user";
@@ -390,6 +401,9 @@ export const ASK_UNATTENDED_SENTENCE =
 export const TAINTED_ASK_UNATTENDED_SENTENCE =
   "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external.";
 
+export const TAINTED_CONNECTOR_ORIGIN_ADVICE =
+  "A fire has no other turn. A connector read marks every fire untrusted while its grant declares `contentOrigin: \"external\"` or declares nothing. Only `contentOrigin: \"internal\"` changes that, and it asserts that org members author everything the connection returns. Do not declare it to unblock a routine.";
+
 export function unattendedConnectorRefusalMessage(
   connection: string,
   toolName: string,
@@ -397,9 +411,10 @@ export function unattendedConnectorRefusalMessage(
   tainted: boolean,
 ): string {
   const declaration = !tainted && tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
+  const origin = tainted ? `${TAINTED_CONNECTOR_ORIGIN_ADVICE} ` : "";
   return (
     `connection "${connection}": the ${tier}-tier op "${toolName}" needs approval and nobody is attending this run. ` +
-    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}` +
+    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}${origin}` +
     `The op did not run.`
   );
 }
@@ -459,11 +474,11 @@ async function callAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-function call<T>(fn: () => T, fallback: T): T {
+function taintedOrPoisoned(read: () => boolean): boolean {
   try {
-    return fn();
+    return read();
   } catch {
-    return fallback;
+    return true;
   }
 }
 
@@ -490,9 +505,10 @@ export function withUnattendedConnectorFence(
     if (tier === "read") return decision;
     const seamBelowBuiltIn = tier !== seamTier;
     if (!decisionWouldPrompt(decision) && !seamBelowBuiltIn) return decision;
+    const poisoned = taintedOrPoisoned(tainted);
     const loweredRefusal = (): ApprovalStatus => ({
       type: "denied",
-      reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier, call(tainted, false)),
+      reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier, poisoned),
     });
     if (connection === undefined || connection.length === 0) return seamBelowBuiltIn ? loweredRefusal() : decision;
     const auth = ctx.session?.auth;
@@ -502,7 +518,6 @@ export function withUnattendedConnectorFence(
     if (!facts.unattended) return decision;
     const kind = connectorToolPermissionKind(ctx.toolName);
     const nowIso = new Date().toISOString();
-    const poisoned = call(tainted, false);
     const lifted =
       !poisoned &&
       tier === "write" &&

@@ -333,6 +333,90 @@ async function f(ctx) {
 }
 
 {
+  const sitesIn = (src: string) => findAttendednessSites("fixture.ts", src);
+  const r5 = (src: string) => checkAttendednessSites(sitesIn(src));
+
+  const bareTool = `
+const approvalPolicy: Approval<PostFileInput> = (approvalCtx) => {
+  const files = approvalCtx.toolInput?.files ?? [];
+  const willPublish = resolveBlobHosting().enabled && files.some(inputFileIsHtml);
+  return willPublish ? "user-approval" : "not-applicable";
+};`;
+  ok(sitesIn(bareTool).length === 1 && sitesIn(bareTool)[0]!.shape === "eve-approval", "synthetic-r5E: 🔴 an eve `Approval<T>` policy is SEEN, and seen as its own shape — the front door the rule could not reach");
+  ok(sitesIn(bareTool)[0]!.derivedInFile === false, "synthetic-r5E: …and the file derives attendedness nowhere, which is the whole defect");
+  ok(r5(bareTool).map((d) => d.rule).join() === "attendedness-eve-approval-underived", "synthetic-r5E: 🔴 …so it is RED — this is the state post_file.ts actually shipped in");
+  ok(/input_required/.test(r5(bareTool)[0]!.message), "synthetic-r5E: …and the message names the consequence, so the red says why it matters rather than only what to type");
+
+  const derivedTool = bareTool.replace(
+    "  const files = approvalCtx.toolInput?.files ?? [];",
+    "  if (unattendedOf(ctx)) return { type: \"denied\", reason: \"nobody is attending this run\" };\n  const files = approvalCtx.toolInput?.files ?? [];",
+  );
+  ok(r5(derivedTool).length === 0, "synthetic-r5E: the same policy deriving through unattendedOf(ctx) is GREEN");
+  ok(sitesIn(derivedTool)[0]!.derivedInFile === true, "synthetic-r5E: …and the site records WHERE the derivation was found, so `--list` can say so");
+
+  const returnsPolicy = `
+export function connectorApprovalPolicy(): ApprovalPolicy {
+  return withDuplicateApprovalGuard(connectorOpApproval());
+}`;
+  ok(sitesIn(returnsPolicy).length === 1 && sitesIn(returnsPolicy)[0]!.shape === "eve-approval", "synthetic-r5E: a function that RETURNS a policy is a site too — the connection-plane authoring shape");
+  ok(r5(returnsPolicy).map((d) => d.rule).join() === "attendedness-eve-approval-underived", "synthetic-r5E: 🔴 …and RED with no derivation in its file");
+
+  ok(sitesIn(`
+export function withUnattendedConnectorFence(
+  policy: ApprovalPolicy,
+  deps: FenceDeps = {},
+) {
+  return policy;
+}`).length === 0, "synthetic-r5E: 🔴 a PARAMETER annotated `policy: ApprovalPolicy` is not a site — it is a wrapper's input, not a policy it authors");
+  ok(sitesIn(`
+export function withDuplicateApprovalGuard<TInput>(
+  policy: ApprovalPolicy<TInput>,
+  opts?: Options,
+): ApprovalPolicy<TInput>;`).length === 0, "synthetic-r5E: 🔴 an OVERLOAD SIGNATURE is not a site either — it ends in `;`, has no body, and decides nothing");
+
+  const exemptOverloaded = `
+export function withDuplicateApprovalGuard<TInput>(
+  policy: ApprovalPolicy<TInput>,
+  opts?: Options,
+): ApprovalPolicy<TInput>;
+// approval-chain: exempt — a pass-through guard that authors no verdict of its own.
+export function withDuplicateApprovalGuard<TInput>(
+  policy: Approval<TInput>,
+  opts: Options = {},
+): Approval<TInput> {
+  return policy;
+}`;
+  ok(sitesIn(exemptOverloaded).length === 1, "synthetic-r5E: an overloaded policy factory yields exactly ONE site — its implementation, never its signatures");
+  ok(sitesIn(exemptOverloaded)[0]!.exempt === true, "synthetic-r5E: 🔴 …and a marker above the DECLARATION is found, though the line above the match is a parameter");
+  ok(r5(exemptOverloaded).length === 0, "synthetic-r5E: …so a stated pass-through exemption is GREEN");
+  const exemptBareE = exemptOverloaded.replace(" — a pass-through guard that authors no verdict of its own.", "");
+  ok(r5(exemptBareE).map((d) => d.rule).join() === "attendedness-exempt-no-reason", "synthetic-r5E: 🔴 …while a BARE marker is RED here too — the opt-out needs a reason on every shape");
+  const strayMarker = `
+// approval-chain: exempt — this reason belongs to the helper below, not to the policy after it.
+function helper() {
+  return 1;
+}
+
+const approvalPolicy: Approval<Input> = (ctx) => "user-approval";`;
+  ok(sitesIn(strayMarker).length === 1 && sitesIn(strayMarker)[0]!.exempt === false, "synthetic-r5E: 🔴 a marker above a DIFFERENT declaration is not inherited — contiguity still decides");
+  ok(r5(strayMarker).map((d) => d.rule).join() === "attendedness-eve-approval-underived", "synthetic-r5E: …so the underived policy after it is still RED");
+  const methodPolicy = `
+// approval-chain: exempt — this reason belongs to the helper, and must not reach the class below.
+const helper = 1;
+
+class Policies {
+  makePolicy(
+    deps: Deps,
+  ): ApprovalPolicy {
+    return (ctx) => "user-approval";
+  }
+}`;
+  ok(sitesIn(methodPolicy).length === 1 && sitesIn(methodPolicy)[0]!.shape === "eve-approval", "synthetic-r5E: a policy authored as a class METHOD is still seen");
+  ok(sitesIn(methodPolicy)[0]!.exempt === false, "synthetic-r5E: 🔴 …and the walk does NOT climb out of its signature to inherit the `const` above it — a laundered exemption is a silent opt-out of a security control");
+  ok(r5(methodPolicy).map((d) => d.rule).join() === "attendedness-eve-approval-underived", "synthetic-r5E: …so it is RED, as an underived policy must be");
+}
+
+{
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const agentDir = join(root, "packages", "core", "agent");
   const walk = (dir: string): string[] => {
@@ -359,7 +443,13 @@ async function f(ctx) {
     flowExempt.length === 2 && flowExempt.every((a) => (a.exemptReason ?? "").length >= 12),
     "real-r5: flow.ts carries TWO exempt sites — its own fail-closed default and the routine permission card's propose — and both state why",
   );
-  ok(attended.filter((a) => a.exempt).length === 3, "real-r5: exactly three exemptions exist — the non-tool checkpoint, the routine permission card, and requestApproval's own default site. A fourth is a decision, not a detail");
+  ok(attended.filter((a) => a.exempt).length === 4, "real-r5: exactly four exemptions exist — the non-tool checkpoint, the routine permission card, requestApproval's own default site, and the pass-through duplicate guard. A fifth is a decision, not a detail");
+  ok(at("access/approval-dedupe.ts")?.exempt === true && (at("access/approval-dedupe.ts")?.exemptReason ?? "").length >= 12, "real-r5: the pass-through duplicate guard is exempt, and it states why");
+  const eveSites = attended.filter((a) => a.shape === "eve-approval");
+  ok(eveSites.length >= 4, `real-r5E: the eve ApprovalPolicy inventory is non-empty (${eveSites.length}) — zero would mean the detector went blind, not that the tree stopped authoring policies`);
+  ok(eveSites.every((a) => a.exempt || a.derivedInFile === true), `real-r5E: every eve approval site derives attendedness or states why it cannot (${eveSites.filter((a) => !a.exempt && a.derivedInFile !== true).map((a) => `${a.file}:${a.line}`).join(", ")})`);
+  ok(eveSites.some((a) => a.file.endsWith("tools/post_file.ts")), "real-r5E: 🔴 post_file's Blob-publish policy is SEEN — the third fire-parking gate, and the one this rule was blind to");
+  ok(eveSites.filter((a) => a.file.endsWith("connections/connector-auth.ts")).length >= 3, "real-r5E: …and the connection plane's three policy factories are seen too");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).length === 2, "real-r5: 🔴 BOTH slash-command propose sites are seen — they call through an injected alias, and a checker blind to that reported the file clean while both shipped with no bag");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).every((a) => a.expr === ATTENDEDNESS_DERIVATION_BINDING), "real-r5: …and both derive through the binding-taking twin, which is the only spelling available to a caller with no ctx");
 }

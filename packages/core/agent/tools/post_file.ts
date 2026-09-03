@@ -10,7 +10,10 @@ import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 import { confineToWorkspacePath } from "./describe_image.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
+import { surfaceContextFromAuth } from "../access/connector-scope.js";
+import { unattendedOf } from "../access/request.js";
 import { initiatorBoundResponsePolicy } from "../approvals/eve-response-policy.js";
+import type { SessionAuth } from "eve/context";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -224,10 +227,30 @@ function inputFileIsHtml(f: PostFileInput["files"][number]): boolean {
   return isHtmlArtifact(f.contentType ?? inferContentType(f.filename));
 }
 
-const approvalPolicy: Approval<PostFileInput> = (approvalCtx) => {
+const UNATTENDED_PUBLISH_REFUSAL =
+  "post_file: publishing an HTML artifact to a public URL needs approval, and nobody is attending this run. " +
+  "An unattended run cannot wait on an approval card, and no standing permission covers this tool. " +
+  "Ask a person to publish it, or post the file without Blob hosting so it attaches instead. Nothing was published.";
+
+async function publishIsUnattended(auth: unknown): Promise<boolean> {
+  if (auth === undefined || auth === null) return false;
+  const ctx = await surfaceContextFromAuth(auth as SessionAuth).catch(() => null);
+  if (ctx === null) return false;
+  try {
+    return unattendedOf(ctx);
+  } catch {
+    return false;
+  }
+}
+
+const approvalPolicy: Approval<PostFileInput> = async (approvalCtx) => {
   const files = approvalCtx.toolInput?.files ?? [];
   const willPublish = resolveBlobHosting().enabled && files.some(inputFileIsHtml);
-  return willPublish ? "user-approval" : "not-applicable";
+  if (!willPublish) return "not-applicable";
+  if (await publishIsUnattended(approvalCtx.session?.auth)) {
+    return { type: "denied", reason: UNATTENDED_PUBLISH_REFUSAL };
+  }
+  return "user-approval";
 };
 
 export default windowGated("post_file", defineTool({

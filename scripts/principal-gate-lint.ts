@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ATTENDEDNESS_DERIVATION,
   checkAttendednessSites,
   checkPrincipalGates,
   checkUnattendedDispatch,
@@ -71,7 +72,14 @@ if (listOnly) {
     console.log(`${(s.viaFireAuth ? "FIRE-AUTH" : "INLINE-BAG").padEnd(15)} ${s.file}:${s.line}  service-principal dispatch`);
   }
   for (const a of [...attended].sort((x, y) => (x.file === y.file ? x.line - y.line : x.file.localeCompare(y.file)))) {
-    console.log(`${(a.exempt ? "EXEMPT" : "ATTENDEDNESS").padEnd(15)} ${a.file}:${a.line}  ${a.shape.padEnd(13)} ${a.exempt ? a.exemptReason ?? "" : a.expr ?? "MISSING"}`);
+    const value = a.exempt
+      ? a.exemptReason ?? ""
+      : a.shape === "eve-approval"
+        ? a.derivedInFile === true
+          ? `${ATTENDEDNESS_DERIVATION} (in file)`
+          : "MISSING"
+        : a.expr ?? "MISSING";
+    console.log(`${(a.exempt ? "EXEMPT" : "ATTENDEDNESS").padEnd(15)} ${a.file}:${a.line}  ${a.shape.padEnd(13)} ${value}`);
   }
   console.log(`\n${gates.length} principal refusal gate(s) + ${sites.length} service-principal dispatch site(s) + ${attended.length} attendedness site(s) over ${files.length} source file(s).`);
   process.exit(0);
@@ -91,9 +99,12 @@ if (defects.length > 0) {
 
 const presence = gates.filter((g) => g.intent === "presence").length;
 const exempt = attended.filter((a) => a.exempt).length;
+const eve = attended.filter((a) => a.shape === "eve-approval" && !a.exempt).length;
 console.log(
   `✓ principal-gate-lint: ${gates.length} principal refusal gate(s), every one declaring its intent and reading an accessor that can deliver it ` +
     `(${presence} presence — refuse an unattended fire; ${gates.length - presence} accountability — somebody nameable must exist); ` +
     `${sites.length} service-principal dispatch site(s), every one building its bag through fire-auth (OPE-278); ` +
-    `${attended.length - exempt} attendedness site(s) deriving through unattendedOf(ctx), ${exempt} exempt with a stated reason (OPE-440).`,
+    `${attended.length - exempt - eve} attendedness site(s) deriving through unattendedOf(ctx); ` +
+    `${eve} eve ApprovalPolicy site(s) whose FILE derives it (OPE-1273 — the grain is the file, not the site); ` +
+    `and ${exempt} exempt with a stated reason (OPE-440).`,
 );

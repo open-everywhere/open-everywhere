@@ -11,7 +11,7 @@ import {
 } from "../agent/access/member-plane.js";
 import { expandConnectorGrant, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { memberGrantKey } from "../agent/access/member-grant.js";
-import { connectorOpApproval } from "../agent/connections/connector-auth.js";
+import { connectorOpApproval, unresolvableConnectionRefusalMessage } from "../agent/connections/connector-auth.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
@@ -185,6 +185,44 @@ const ctxFor = (toolName: string, attrs: Record<string, unknown> = {}) =>
 {
   const policy = connectorOpApproval({ boundCredential: async () => null, dmPrincipal: UNRESOLVABLE_SURFACE });
   ok((await policy(ctxFor("notion__create_page"))) === "user-approval", "🔴 an UNRESOLVABLE binding prompts rather than denying — byte-identical to a tree without the member plane");
+}
+
+const PLUGIN_CONNECTION = "acme__notes";
+const PLUGIN_WRITE = `${PLUGIN_CONNECTION}__create_page`;
+const recordingCredential = (bindings: Record<string, unknown>) => {
+  const asked: string[] = [];
+  const read = async (connection: string) => {
+    asked.push(connection);
+    return (bindings[connection] ?? null) as never;
+  };
+  return { asked, read: read as never };
+};
+
+{
+  const cred = recordingCredential({});
+  await connectorOpApproval({ boundCredential: cred.read, dmPrincipal: IN_CHANNEL })(ctxFor(PLUGIN_WRITE));
+  ok(cred.asked.join() === PLUGIN_CONNECTION, `🔴 the credential is looked up under the WHOLE slug "${PLUGIN_CONNECTION}" — asked for [${cred.asked.join(", ")}]`);
+  ok(!cred.asked.includes("acme"), "🔴 …and never under its head segment, which is the cross-contamination this parse exists to stop");
+}
+{
+  const cred = recordingCredential({ [PLUGIN_CONNECTION]: memberBinding });
+  const denied = await connectorOpApproval({ boundCredential: cred.read, dmPrincipal: IN_CHANNEL })(ctxFor(PLUGIN_WRITE));
+  ok(typeof denied === "object" && denied !== null && (denied as { type?: string }).type === "denied", "🔴 a plugin connection's member-plane write is DENIED — the verdict reads its OWN binding");
+  ok((denied as { reason?: string }).reason === memberPlaneRefusalMessage(PLUGIN_CONNECTION, "member_plane_write"), "…and the sentence names the whole slug, so the row a human reads names the connection that was actually consulted");
+}
+{
+  const cred = recordingCredential({ acme: memberBinding });
+  const decision = await connectorOpApproval({ boundCredential: cred.read, dmPrincipal: IN_CHANNEL })(ctxFor(PLUGIN_WRITE));
+  ok(decision === "user-approval", "🔴 a member-plane binding on the HEAD SEGMENT `acme` no longer decides `acme__notes` — the head's posture cannot reach its sibling's write");
+  const other = recordingCredential({ "notion__notes": memberBinding });
+  ok((await connectorOpApproval({ boundCredential: other.read, dmPrincipal: IN_CHANNEL })(ctxFor("notion__create_page"))) === "user-approval", "…and a single-segment connection is untouched by a plugin connection that shares its head");
+}
+{
+  const cred = recordingCredential({ grant: memberBinding });
+  const denied = await connectorOpApproval({ boundCredential: cred.read, dmPrincipal: IN_CHANNEL })(ctxFor("grant__U0OWNER__create_page"));
+  ok(typeof denied === "object" && denied !== null && (denied as { type?: string }).type === "denied", "🔴 a RESERVED `grant__` name is REFUSED here — fail-closed, exactly as consequence.ts classifies an unparseable name");
+  ok((denied as { reason?: string }).reason === unresolvableConnectionRefusalMessage("grant__U0OWNER__create_page"), "…with the sentence that says which plane owns the name, so the model reports routing rather than an outage");
+  ok(cred.asked.length === 0, "🔴 …and NO credential lookup was attempted — there is no connection to look one up for, and asking for `grant` is the bug");
 }
 
 {

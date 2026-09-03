@@ -36,6 +36,7 @@ export interface PrincipalGateDefect {
     | "unattended-inline-bag"
     | "attendedness-missing"
     | "attendedness-hand-rolled"
+    | "attendedness-eve-approval-underived"
     | "attendedness-exempt-no-reason";
   readonly message: string;
 }
@@ -286,8 +287,9 @@ const DERIVATION_CALL_RE = /\b(?:unattendedOf|unattendedFrom)\s*\(/;
 export interface AttendednessSite {
   readonly file: string;
   readonly line: number;
-  readonly shape: "propose" | "chain-literal";
+  readonly shape: "propose" | "chain-literal" | "eve-approval";
   readonly expr?: string;
+  readonly derivedInFile?: boolean;
   readonly exemptReason?: string;
   readonly exempt: boolean;
 }
@@ -303,6 +305,8 @@ function proposeAliasOn(line: string): string | undefined {
   return m[1] === "requestApproval" ? undefined : m[1];
 }
 const CHAIN_LITERAL_RE = /\bresolveApproverChain\s*\(\s*\{|:\s*ApprovalChainRequest\s*=\s*\{/;
+const EVE_APPROVAL_DECL_RE = /^\s*(?:export\s+)?(?:const|let)\s+[A-Za-z_$][\w$]*\s*:\s*(?:Approval|ApprovalPolicy)\b[^=]*=/;
+const EVE_APPROVAL_RETURN_RE = /\)\s*:\s*(?:Approval|ApprovalPolicy)\b[^{;]*\{\s*$/;
 const DECLARATION_RE = /\bfunction\s+(?:requestApproval|resolveApproverChain)\b/;
 const UNATTENDED_KEY_RE = /\bunattended\s*:\s*(.+)$/;
 const UNATTENDED_SHORTHAND_RE = /^\s*unattended\s*,\s*$/;
@@ -316,6 +320,22 @@ function exemptMarkerAbove(lines: readonly string[], line: number): { reason: st
     if (!(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"))) return undefined;
     const m = EXEMPT_MARKER_RE.exec(t);
     if (m) return { reason: (m[1] ?? "").trim() };
+  }
+  return undefined;
+}
+
+const DECL_OPENER_RE = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\b|(?:const|let)\s)/;
+const DECL_OPENER_WINDOW = 12;
+
+function eveApprovalExemptMarker(lines: readonly string[], line: number): { reason: string } | undefined {
+  const direct = exemptMarkerAbove(lines, line);
+  if (direct !== undefined) return direct;
+  const indentOf = (t: string) => (t.match(/^\s*/) ?? [""])[0].length;
+  const matchIndent = indentOf(lines[line - 1] ?? "");
+  for (let i = line - 2; i >= 0 && i >= line - 2 - DECL_OPENER_WINDOW; i--) {
+    const t = lines[i] ?? "";
+    if (t.trim() !== "" && indentOf(t) > matchIndent) continue;
+    return DECL_OPENER_RE.test(t) ? exemptMarkerAbove(lines, i + 1) : undefined;
   }
   return undefined;
 }
@@ -343,9 +363,22 @@ export function findAttendednessSites(file: string, source: string): Attendednes
   const code = stripComments(lines);
   const aliasCall = proposeAliases(code);
   const sites: AttendednessSite[] = [];
+  const fileDerives = code.some((l) => DERIVATION_CALL_RE.test(l));
   for (let i = 0; i < code.length; i++) {
     const c = code[i] ?? "";
     if (DECLARATION_RE.test(c) || proposeAliasOn(c) !== undefined) continue;
+    if (EVE_APPROVAL_DECL_RE.test(c) || EVE_APPROVAL_RETURN_RE.test(c)) {
+      const eveMarker = eveApprovalExemptMarker(lines, i + 1);
+      sites.push({
+        file,
+        line: i + 1,
+        shape: "eve-approval",
+        derivedInFile: fileDerives,
+        ...(eveMarker !== undefined ? { exemptReason: eveMarker.reason } : {}),
+        exempt: eveMarker !== undefined,
+      });
+      continue;
+    }
     const isPropose = PROPOSE_CALL_RE.test(c) || (aliasCall !== undefined && aliasCall.test(c));
     if (!isPropose && !CHAIN_LITERAL_RE.test(c)) continue;
     const indent = (c.match(/^\s*/) ?? [""])[0].length;
@@ -393,6 +426,25 @@ export function checkAttendednessSites(sites: readonly AttendednessSite[]): Prin
             `from a turn — the word alone is a rubber stamp, and this marker is the one way to opt OUT of a security control.`,
         });
       }
+      continue;
+    }
+    if (s.shape === "eve-approval") {
+      if (s.derivedInFile === true) continue;
+      defects.push({
+        file: s.file,
+        line: s.line,
+        rule: "attendedness-eve-approval-underived",
+        message:
+          `an eve \`ApprovalPolicy\` / \`Approval<T>\` site in a file that never derives attendedness.\n` +
+          `      eve's approval plane is the SECOND approval front door in this tree. A \`"user-approval"\` answer becomes a\n` +
+          `      \`tool-approval\` input request that SUSPENDS the run with \`status:"input_required"\` and no timeout arm, so on an\n` +
+          `      unattended fire it raises a card nobody can click and the fire never settles (OPE-1241). Derive the signal with\n` +
+          `      \`${ATTENDEDNESS_DERIVATION}\` (access/request.ts) or \`${ATTENDEDNESS_DERIVATION_BINDING}\` (identity/binding.ts)\n` +
+          `      and REFUSE an unattended run instead of parking it — connections/connector-auth.ts\n` +
+          `      \`withUnattendedConnectorFence\` is the worked example. If this policy authors no verdict of its own (a\n` +
+          `      pass-through wrapper, whose wrapped policy owns the question):\n` +
+          `      // approval-chain: exempt — <why this site decides nothing>`,
+      });
       continue;
     }
     if (s.expr === undefined) {

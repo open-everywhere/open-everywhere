@@ -5,6 +5,8 @@ import { registerNotionProvider as __regNotion } from "@open-everywhere/provider
 import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
 import { NOTION_CHANNEL_CREDENTIAL } from "@open-everywhere/provider-notion/agent/channels/notion-credentials.js";
 import { registerBroker as __registerNotionBroker, setRegisteredConnectorCredentials as __setNotionCredentials } from "@open-everywhere/core/agent/adapter-api.js";
+import { routineFireAttributes } from "@open-everywhere/core/agent/routines/fire-auth.js";
+import type { Routine } from "@open-everywhere/core/agent/routines/routine.js";
 __regNotion();
 __registerNotionBroker("test", { async getSecret() { return "ntn_test_token_post_file"; } });
 __setNotionCredentials([
@@ -44,7 +46,7 @@ const { registerConfig } = await import("@open-everywhere/core/agent/access/conf
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
 const { setBlobPutter, assertBlobUrl, hostHtmlArtifact } = await import("@open-everywhere/core/agent/blob/hosting.js");
 
-const approvalOf = (postFile as unknown as { approval: { request: (ctx: { toolInput: unknown }) => unknown } }).approval.request;
+const approvalOf = (postFile as unknown as { approval: { request: (ctx: { toolInput: unknown; session?: { auth: unknown } }) => unknown } }).approval.request;
 
 function registerBlobConfig(enabled: boolean, publicPrefix?: string): void {
   registerConfig({
@@ -399,6 +401,46 @@ await inSession(async () => {
   ok((await approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] } })) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
   ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
+
+  const POST_FILE_ROUTINE: Routine = {
+    id: "r-postfile",
+    org: "default",
+    surfaceKey: "slack/T0PF/C0PF",
+    trigger: { kind: "cron", expr: "0 3 * * *" },
+    prompt: "publish the nightly report page",
+    createdBy: "U0CREATOR",
+    createdAt: "2026-05-07T23:30:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+  };
+  const fireAuth = {
+    current: { attributes: routineFireAttributes(POST_FILE_ROUTINE, { team_id: "T0PF", channel_id: "C0PF", channel_type: "channel" }, "channel", true) },
+  };
+  const HTML_INPUT = { files: [{ source: { path: "page.html" }, filename: "page.html" }] };
+  const fired = await approvalOf({ toolInput: HTML_INPUT, session: { auth: fireAuth } });
+  ok(
+    typeof fired === "object" && fired !== null && (fired as { type?: string }).type === "denied",
+    "🔴 approval(html, opt-in, UNATTENDED FIRE): DENIED — the publish refuses instead of parking the fire on a card nobody can click",
+  );
+  ok(
+    ((fired as { reason?: string }).reason ?? "").includes("nobody is attending this run"),
+    "…and the refusal says why, so the fire's report names the reason rather than ending in silence",
+  );
+  const humanAuth = {
+    current: { principalId: "U0HUMAN", attributes: { team_id: "T0PF", channel_id: "C0PF", channel_type: "channel", user_id: "U0HUMAN", trust_checked: "true" } },
+  };
+  ok(
+    (await approvalOf({ toolInput: HTML_INPUT, session: { auth: humanAuth } })) === "user-approval",
+    "🔴 control: a live human's publish STILL raises the card — the refusal is attendedness, not the tool",
+  );
+  ok(
+    (await approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] }, session: { auth: fireAuth } })) === "not-applicable",
+    "control: an IMAGE on the same unattended fire is still ungated — the arm gates only the public publish",
+  );
+  ok(
+    (await approvalOf({ toolInput: HTML_INPUT, session: { auth: null } })) === "user-approval",
+    "control: an UNREADABLE bag stands the arm down — the card is still raised, so nothing is granted by standing down",
+  );
 });
 } finally {
   restoreFetch();
