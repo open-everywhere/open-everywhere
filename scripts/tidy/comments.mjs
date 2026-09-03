@@ -56,6 +56,11 @@ function isRefsOnly(line) {
   return stripped.length === 0;
 }
 
+function closeIndex(line, from) {
+  const at = line.indexOf("*/", from);
+  return at === -1 ? -1 : at + 2;
+}
+
 export function parseBlocks(text) {
   const lines = text.split("\n");
   const blocks = [];
@@ -65,21 +70,28 @@ export function parseBlocks(text) {
     if (trimmed.startsWith("//")) {
       const start = i;
       while (i < lines.length && lines[i].trim().startsWith("//")) i++;
-      blocks.push(makeBlock(lines, start, i - 1, "line"));
+      blocks.push(makeBlock(lines, start, i - 1, "line", -1));
       continue;
     }
     if (trimmed.startsWith("/*")) {
       const start = i;
       const kind = trimmed.startsWith("/**") && trimmed !== "/**/" ? "jsdoc" : "block";
-      if (trimmed.includes("*/")) {
-        blocks.push(makeBlock(lines, start, start, kind));
+      const openAt = lines[i].indexOf("/*");
+      const closedHere = closeIndex(lines[i], openAt + 2);
+      if (closedHere !== -1) {
+        blocks.push(makeBlock(lines, start, start, kind, closedHere));
         i++;
         continue;
       }
       i++;
-      while (i < lines.length && !lines[i].includes("*/")) i++;
+      let close = -1;
+      while (i < lines.length) {
+        close = closeIndex(lines[i], 0);
+        if (close !== -1) break;
+        i++;
+      }
       const end = Math.min(i, lines.length - 1);
-      blocks.push(makeBlock(lines, start, end, kind));
+      blocks.push(makeBlock(lines, start, end, kind, i < lines.length ? close : -1));
       i = end + 1;
       continue;
     }
@@ -101,8 +113,11 @@ function blockContent(rawLines, kind) {
   return out;
 }
 
-function makeBlock(lines, startIndex, endIndex, kind) {
+function makeBlock(lines, startIndex, endIndex, kind, closeAt) {
   const rawLines = lines.slice(startIndex, endIndex + 1);
+  const last = rawLines.length - 1;
+  const tail = closeAt === -1 ? "" : rawLines[last].slice(closeAt).trim();
+  if (tail !== "") rawLines[last] = rawLines[last].slice(0, closeAt);
   const raw = rawLines.join("\n");
   const indent = /^[ \t]*/u.exec(lines[startIndex])[0];
   return {
@@ -113,6 +128,7 @@ function makeBlock(lines, startIndex, endIndex, kind) {
     kind,
     indent,
     raw,
+    tail,
     content: blockContent(rawLines, kind),
   };
 }
@@ -152,6 +168,7 @@ export function inventoryFile(relPath, text) {
   for (const block of parseBlocks(text)) {
     const cls = classifyBlock(block);
     if (cls === "directive") continue;
+    if (block.tail !== "") continue;
     records.push({
       id: blockId(relPath, block),
       file: relPath,
@@ -309,6 +326,12 @@ function cmdApply(argv) {
       if (classifyBlock(exact) === "directive") {
         fail(`refusing ${decision.action} on ${decision.id} — that block is a DIRECTIVE and is kept verbatim`);
       }
+      if (exact.tail !== "") {
+        fail(
+          `refusing ${decision.action} on ${decision.id} — code follows the closing */ on line ${exact.end}, ` +
+            `and editing the block would move it. The inventory never offers such a block.`,
+        );
+      }
       if (decision.action !== "keep") edits.push({ block: exact, decision });
     }
 
@@ -446,8 +469,19 @@ function cmdVerify(argv) {
   }
   for (const relPath of files) {
     const abs = join(ROOT, relPath);
-    const baseText = git(["show", `${base}:${relPath}`], true) ?? "";
+    const baseShow = git(["show", `${base}:${relPath}`], true);
+    const baseExisted = baseShow !== undefined;
+    const baseText = baseShow ?? "";
     const currentText = existsSync(abs) ? readFileSync(abs, "utf8") : "";
+
+    if (baseExisted && currentText === "") {
+      problems.push(`${relPath}: the base carries this file and the current text is empty — a deleted or emptied file is never a comment-only change`);
+      continue;
+    }
+    if (baseText === currentText) {
+      problems.push(`${relPath}: changed, and the two texts are byte-identical — the change is not in the text (a file mode, or a new empty file), so nothing here can prove it comment-only`);
+      continue;
+    }
 
     if (codeTokens(baseText).join("\n") !== codeTokens(currentText).join("\n")) {
       problems.push(`${relPath}: the token stream differs — this change is not comment-only`);

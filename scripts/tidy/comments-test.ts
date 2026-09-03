@@ -249,6 +249,36 @@ try {
 
   {
     const root = newRepo();
+    const trailing = "/* Rescinded on 2026-08-01, superseded by OPE-1200. */ export const started = 1;";
+    write(
+      root,
+      "src/tail.ts",
+      ["/* A block a judge may really read. */", "export const ordinary = 2;", "", trailing].join("\n"),
+    );
+    commitAll(root, "fixture");
+
+    const records = inventory(root, ["src/tail.ts"]);
+
+    ok(
+      records.every((r) => !r.text.includes("export const started")),
+      "🔴 code after the closing */ is never part of a block's text",
+    );
+    ok(
+      records.every((r) => !r.text.includes("Rescinded")),
+      "…and the block it trails is not offered to a judge at all",
+    );
+    eq(records.length, 1, "the ordinary block in the same file is still inventoried");
+    eq(records[0]!.text, "A block a judge may really read.", "…and it is the ordinary one");
+
+    const tailId = `src/tail.ts:4:${createHash("sha1").update("/* Rescinded on 2026-08-01, superseded by OPE-1200. */").digest("hex").slice(0, 8)}`;
+    const refused = tidy(root, ["apply", decisionsFile(root, "tail.jsonl", [{ id: tailId, action: "delete" }])]);
+    ok(refused.status !== 0, "🔴 a decision naming a block with code after its */ is refused");
+    ok(refused.stderr.includes("code follows the closing"), "…and names the reason");
+    ok(read(root, "src/tail.ts").includes("export const started = 1;"), "…and the code is still there");
+  }
+
+  {
+    const root = newRepo();
     const original = [
       "// eslint-disable-next-line no-console",
       "console.log(1);",
@@ -329,6 +359,29 @@ try {
 
     const badBase = tidy(root, ["verify", "--base", "no-such-ref"]);
     ok(badBase.status !== 0, "an unresolvable --base fails rather than passing vacuously");
+  }
+
+  {
+    const root = newRepo();
+    write(root, "src/kept.ts", "// A comment.\nexport const a = 1;\n");
+    write(root, "src/prose-only.ts", ["// A file of nothing but prose.", "// Two lines of it."].join("\n"));
+    commitAll(root, "base");
+
+    const verify = (): Run => tidy(root, ["verify", "--base", "main"]);
+    ok(verify().status === 0, "the fixture starts green — the negative control for the two reds below");
+
+    rmSync(join(root, "src/prose-only.ts"));
+    const deleted = verify();
+    ok(deleted.status !== 0, "🔴 deleting a comments-only file fails verify");
+    ok(deleted.stderr.includes("src/prose-only.ts"), "…and the failure names it");
+    execFileSync("git", ["checkout", "--", "src/prose-only.ts"], { cwd: root });
+    ok(verify().status === 0, "…and restoring it is green again");
+
+    execFileSync("chmod", ["+x", join(root, "src/kept.ts")]);
+    const mode = verify();
+    ok(mode.status !== 0, "🔴 a mode-only change fails verify rather than passing on an empty diff");
+    ok(mode.stderr.includes("src/kept.ts"), "…and the failure names it");
+    ok(mode.stderr.includes("byte-identical"), "…and says the change is not in the text");
   }
 
   {
