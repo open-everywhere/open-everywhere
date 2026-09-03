@@ -27,7 +27,7 @@ const {
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { requestApproval, resolveApprovalClick, registerJudgeLiftNoticePoster } = await import("../agent/approvals/flow.js");
-const { disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
+const { contradictJudgeAllow, disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { recordApprovalJudgeContradiction } = await import("../agent/access/approval-judge.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -854,11 +854,44 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   ok((await approvalJudgeAdminDisarmed("shared", undefined)) === true, "🔴 org scope: a consult with NO org reads DISARMED — never a deployment-wide read");
   ok((await approvalJudgeAdminDisarmed(undefined, undefined)) === true, "org scope: the org-wide address answers the same way with no org");
+
+  const crossOrgWedge = (org: string): PendingActionRow => ({
+    id: "wedge-cross-org",
+    org,
+    kind: "spend.set",
+    argsJson: JSON.stringify({ scopeKey: "plain", monthlyTokens: 500_000 }),
+    scopeKey: "plain",
+    domain: "plain",
+    requestedBy: "U_PROPOSER",
+    channelId: "C_TEST",
+    threadTs: null,
+    messageTs: null,
+    postedTo: null,
+    status: "approved",
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    decidedBy: JUDGE_LIFT_DECIDED_BY,
+    decidedAt: new Date().toISOString(),
+  });
+  await getOperationalStore().addPendingAction(crossOrgWedge("org-a"));
+  await getOperationalStore().addPendingAction(crossOrgWedge("org-b"));
+
+  const aFirst = await contradictJudgeAllow({ org: "org-a", id: "wedge-cross-org", principalId: "U_A_CLICKER", route: "click" });
+  ok(aFirst.outcome === "recorded", "dedupe scope: org A's overrule of its own wedge row is recorded");
+
+  const aAgain = await contradictJudgeAllow({ org: "org-a", id: "wedge-cross-org", principalId: "U_A_CLICKER", route: "click" });
+  ok(aAgain.outcome === "already-recorded", "dedupe scope: control — a REPEAT overrule inside org A is still de-duplicated");
+
+  const bFirst = await contradictJudgeAllow({ org: "org-b", id: "wedge-cross-org", principalId: "U_B_CLICKER", route: "click" });
+  ok(bFirst.outcome === "recorded", "🔴 dedupe scope: org A's row on the same wedge id does NOT suppress org B's overrule — the human's act is not dropped");
+
+  ok((await contradictionRowsFor("org-b")).filter((r) => r.detail?.id === "wedge-cross-org").length === 1, "dedupe scope: org B's overrule really landed as one row in org B's own population");
+  ok((await contradictionRowsFor("org-a")).filter((r) => r.detail?.id === "wedge-cross-org").length === 1, "dedupe scope: and org A still holds exactly its own one row — the repeat click wrote nothing");
 }
 
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
-  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before — and OPE-1129: the DEDUPE read is scoped too, so a foreign org's row on the same wedge id cannot suppress this org's overrule`,
 );
 rmSync(tmp, { recursive: true, force: true });

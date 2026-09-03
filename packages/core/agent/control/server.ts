@@ -81,9 +81,9 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "audit_query",
     {
       title: "Query audit log",
-      description: "Read the append-only audit trail — who did what, when (memory writes, network grants, consequential tool actions). All filters optional. Read-only.",
+      description:
+        "Read the append-only audit trail — who did what, when (memory writes, network grants, consequential tool actions). Always this deployment's own org; every other filter is optional. Read-only.",
       inputSchema: {
-        org: z.string().optional(),
         workspace: z.string().optional(),
         surface: z.string().optional(),
         action: z.string().optional(),
@@ -92,7 +92,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         limit: z.number().int().positive().max(1000).optional(),
       },
     },
-    (args) => jsonTool(() => auditView(args))(),
+    (args) => jsonTool(() => auditView({ ...args, org: deploymentOrg() }))(),
   );
 
   server.registerTool(

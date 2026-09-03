@@ -35,9 +35,9 @@ export interface ContradictJudgeAllowResult {
   readonly row?: PendingActionRow;
 }
 
-async function alreadyContradicted(pendingId: string): Promise<boolean> {
+async function alreadyContradicted(org: string, pendingId: string): Promise<boolean> {
   try {
-    const rows = await readAudit({ action: "approval.judge.contradicted", limit: 1000 });
+    const rows = await readAudit({ org, action: "approval.judge.contradicted", limit: 1000 });
     return rows.some((r) => (r.detail as { id?: unknown } | undefined)?.id === pendingId);
   } catch {
     return false;
@@ -48,7 +48,7 @@ export async function contradictJudgeAllow(input: ContradictJudgeAllowInput): Pr
   const row = await getOperationalStore().getPendingAction(input.org, input.id);
   if (!row) return { outcome: "unknown" };
   if (row.status !== "approved" || row.decidedBy !== JUDGE_LIFT_DECIDED_BY) return { outcome: "not-judge-lift", row };
-  if (await alreadyContradicted(row.id)) return { outcome: "already-recorded", row };
+  if (await alreadyContradicted(row.org, row.id)) return { outcome: "already-recorded", row };
 
   const tool = toolForActionKind(row.kind);
   await recordApprovalJudgeContradiction(
