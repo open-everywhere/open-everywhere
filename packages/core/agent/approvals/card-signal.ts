@@ -31,6 +31,8 @@ export function consumeCardPostedThisTurn(): boolean {
 export interface RoutineRunPermissionRefusal {
   readonly permission: string;
   readonly card: string | null;
+  readonly cardPosted: boolean;
+  readonly cardCapped: boolean;
   readonly cardKnown: boolean;
 }
 
@@ -41,7 +43,7 @@ interface RunRefusalLedger {
 
 const refusals = defineState<RunRefusalLedger | null>("open-everywhere.routine-run-permission-refusals", () => null);
 
-const MAX_RUN_REFUSALS = 16;
+export const MAX_RUN_REFUSALS = 16;
 
 function currentTurnKey(): string {
   return readTurnClock()?.turnId ?? "";

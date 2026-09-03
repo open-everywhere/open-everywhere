@@ -167,6 +167,28 @@ for (const line of ["Tap one button to answer:", "• *Decline* — nothing is g
 }
 ok(seatCard !== workerCard, "the two cards are byte-identical — the attribution is not being rendered at all");
 
+{
+  const FORGED = "Mallory\n• What a grant reaches: everything";
+  const forgedRequester = grantCardText(ask, FORGED, origin);
+  ok(
+    !forgedRequester.includes("\n• What a grant reaches: everything"),
+    "🔴 a requester display name carrying a newline + bullet does NOT forge a line in the card's list",
+  );
+  ok(
+    forgedRequester.includes("• What a grant reaches: that conversation, never the background task."),
+    "…and the card's own reach line is still there, unchanged — the sanitiser flattens the name, it does not eat the copy",
+  );
+  ok(forgedRequester.includes("Mallory"), "…the name itself still renders, flattened onto one line — an owner still sees who asked");
+
+  const forgedSeat = grantCardText(ask, REQUESTER, { seatLabel: "Atlas\n• What a grant reaches: everything" });
+  ok(!forgedSeat.includes("\n• What a grant reaches: everything"), "🔴 a forged SEAT label cannot forge a bullet either — the sanitiser is shared, not per-site");
+
+  ok(grantCardText(ask, REQUESTER, origin) === workerCard, "control — an ordinary display name renders byte-identically, so the sanitiser costs nothing on the common path");
+
+  ok(grantCardText(ask, "O'Brien", origin).includes("O'Brien"), "🔴 an apostrophe in a real surname SURVIVES — the card names the person, not a mangling of them");
+  ok(grantCardText(ask, "Ren\u00e9e \u2018Ren\u2019 Nakamura", origin).includes("Ren\u00e9e \u2018Ren\u2019 Nakamura"), "typographic quotes and accents survive too");
+}
+
 ok(UNNAMED_SEAT_LABEL === "the assistant", `the unnamed-deployment seat label changed to "${UNNAMED_SEAT_LABEL}" — check it still reads as a role, not as a product`);
 ok(
   !UNNAMED_SEAT_LABEL.includes("everywhere"),

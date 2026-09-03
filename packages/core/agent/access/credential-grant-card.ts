@@ -1,7 +1,7 @@
 import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
-import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import { flatDisplayName, quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
 
@@ -57,16 +57,16 @@ export interface GrantAskWorkerOrigin {
 }
 
 export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin): string {
+  const who = flatDisplayName(requesterLabel);
+  const seat = workerOrigin === undefined ? undefined : flatDisplayName(workerOrigin.seatLabel);
   return [
-    workerOrigin === undefined
-      ? `*${requesterLabel}* asks to use your ${ask.connector} credential.`
-      : `*${workerOrigin.seatLabel}* asks to use your ${ask.connector} credential.`,
+    seat === undefined ? `*${who}* asks to use your ${ask.connector} credential.` : `*${seat}* asks to use your ${ask.connector} credential.`,
     "",
     ...(workerOrigin === undefined
       ? []
       : [
-          `• Who it is for: ${requesterLabel}, in their conversation with ${workerOrigin.seatLabel}.`,
-          `• How it was raised: ${workerOrigin.seatLabel} gave the work to a background task, and the task raised this ask. The task ends when its work does, and it never sees your answer.`,
+          `• Who it is for: ${who}, in their conversation with ${seat}.`,
+          `• How it was raised: ${seat} gave the work to a background task, and the task raised this ask. The task ends when its work does, and it never sees your answer.`,
           `• What a grant reaches: that conversation, never the background task.`,
         ]),
     `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,

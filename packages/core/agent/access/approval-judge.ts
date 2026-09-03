@@ -418,10 +418,11 @@ export async function recordApprovalJudgeContradiction(
   });
 }
 
-export async function approvalJudgeAdminDisarmed(domain: string | undefined): Promise<boolean> {
+export async function approvalJudgeAdminDisarmed(domain: string | undefined, org: string | undefined): Promise<boolean> {
+  if (org === undefined) return true;
   const limit = testLedgerReadLimit ?? LEDGER_READ_LIMIT;
   try {
-    const rows = await readAudit({ action: "approval.judge.contradicted", limit });
+    const rows = await readAudit({ org, action: "approval.judge.contradicted", limit });
     const operator = rows.filter((r) => {
       const a = (r.detail as { humanAction?: unknown } | undefined)?.humanAction;
       return a === APPROVAL_JUDGE_ADMIN_DISARM || a === APPROVAL_JUDGE_ADMIN_REARM;

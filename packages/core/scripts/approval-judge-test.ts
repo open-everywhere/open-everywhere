@@ -423,6 +423,9 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
 const contradictionRows = async (): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
   (await readAudit({})).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
 
+const contradictionRowsFor = async (org: string): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
+  (await readAudit({ org })).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
+
 async function liftedWedgeRow(tokens: number): Promise<string> {
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
@@ -433,7 +436,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 }
 
 {
-  ok((await approvalJudgeAdminDisarmed("plain")) === false, "disarm state: a clean ledger reads ARMED");
+  ok((await approvalJudgeAdminDisarmed("plain", "test-org")) === false, "disarm state: a clean ledger reads ARMED");
   ok((await contradictionRows()).length === 0, "producers: no contradiction row exists until a HUMAN acts — nothing writes one on its own");
 
   const wedgeId = await liftedWedgeRow(111_000);
@@ -492,7 +495,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(again.outcome === "contradicted" && again.contradiction === "already-recorded", "click surface: a second click on the same wedge row is a no-op");
   ok((await contradictionRows()).length === 1, "click surface: the repeat click wrote no second row — one action counts once");
 
-  ok((await approvalJudgeAdminDisarmed("plain")) === false, "🔴 OPE-1102: one real overrule leaves the judge ARMED");
+  ok((await approvalJudgeAdminDisarmed("plain", "test-org")) === false, "🔴 OPE-1102: one real overrule leaves the judge ARMED");
 
   for (const tokens of [112_000, 113_000, 114_000]) {
     const id = await liftedWedgeRow(tokens);
@@ -500,7 +503,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     ok(res.outcome === "contradicted" && res.contradiction === "recorded", `overrules: the click on wedge ${tokens} is recorded`);
   }
   ok((await contradictionRows()).length === 4, "overrules: the click producer wrote all four rows — the evidence is kept, it just drives nothing");
-  ok((await approvalJudgeAdminDisarmed("plain")) === false, "🔴 OPE-1102: FOUR human overrules — past the removed breaker's threshold of 3 — still leave the judge ARMED");
+  ok((await approvalJudgeAdminDisarmed("plain", "test-org")) === false, "🔴 OPE-1102: FOUR human overrules — past the removed breaker's threshold of 3 — still leave the judge ARMED");
 
   clearApprovalJudgeVerdictCache();
   const overruledDomain = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
@@ -512,7 +515,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 }
 
 {
-  ok((await approvalJudgeAdminDisarmed("otherdomain")) === false, "admin disarm: the target domain reads ARMED before the call");
+  ok((await approvalJudgeAdminDisarmed("otherdomain", "test-org")) === false, "admin disarm: the target domain reads ARMED before the call");
   const before = (await contradictionRows()).length;
   await disarmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS" });
   const rows = await contradictionRows();
@@ -521,14 +524,14 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(disarmRow !== undefined, "admin disarm: the row is scoped to the named domain");
   ok((disarmRow.detail ?? {}).humanAction === "admin-disarm" && (disarmRow.detail ?? {}).route === "control", "admin disarm: the row names the act and the ROUTE, separating it from a click overrule");
   ok(disarmRow.principalId === "U_OPS", "admin disarm: the row names WHO disarmed");
-  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "admin disarm: ONE marked row disarms the domain on its own");
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "admin disarm: an unnamed domain's judge stays armed");
+  ok((await approvalJudgeAdminDisarmed("otherdomain", "test-org")) === true, "admin disarm: ONE marked row disarms the domain on its own");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "admin disarm: an unnamed domain's judge stays armed");
 
   const rearmBefore = (await contradictionRows()).length;
   await rearmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS2" });
   const afterRearm = await contradictionRows();
   ok(afterRearm.length === rearmBefore + 1, "admin rearm: exactly ONE row");
-  ok((await approvalJudgeAdminDisarmed("otherdomain")) === false, "🔴 admin rearm: the domain reads ARMED again — the re-arm cancelled the disarm");
+  ok((await approvalJudgeAdminDisarmed("otherdomain", "test-org")) === false, "🔴 admin rearm: the domain reads ARMED again — the re-arm cancelled the disarm");
   const rearmRow = afterRearm.find((r) => (r.detail ?? {}).humanAction === "admin-rearm")!;
   ok(rearmRow !== undefined && (rearmRow.detail ?? {}).domain === "otherdomain" && (rearmRow.detail ?? {}).route === "control", "admin rearm: the row names the act, the domain and the ROUTE");
   ok(rearmRow.principalId === "U_OPS2", "admin rearm: the row names WHO re-armed");
@@ -539,13 +542,14 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(afterRearm.filter((r) => (r.detail ?? {}).humanAction === "overrule").length === 4, "🔴 admin rearm: every click overrule survives it too — a re-arm suppresses no human evidence");
 
   await disarmApprovalJudge({ org: "test-org", domain: "siblingdomain", principalId: "U_OPS" });
-  ok((await approvalJudgeAdminDisarmed("siblingdomain")) === true, "rearm scope: the sibling domain is disarmed");
+  ok((await approvalJudgeAdminDisarmed("siblingdomain", "test-org")) === true, "rearm scope: the sibling domain is disarmed");
   await rearmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS2" });
-  ok((await approvalJudgeAdminDisarmed("siblingdomain")) === true, "🔴 rearm scope: re-arming one domain does NOT re-arm another operator's disarmed domain");
+  ok((await approvalJudgeAdminDisarmed("siblingdomain", "test-org")) === true, "🔴 rearm scope: re-arming one domain does NOT re-arm another operator's disarmed domain");
 
   await disarmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS" });
-  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "🔴 latest wins: a disarm AFTER a re-arm disarms again — the state is the newest operator row, not a one-way latch");
+  ok((await approvalJudgeAdminDisarmed("otherdomain", "test-org")) === true, "🔴 latest wins: a disarm AFTER a re-arm disarms again — the state is the newest operator row, not a one-way latch");
 }
+
 {
   const { registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
   const live = getOperationalStore();
@@ -558,21 +562,21 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   } as typeof live;
   registerOperationalStore(throwing);
   resetOperationalStore();
-  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === true, "🔴 fail-closed: an UNREADABLE audit store reads as DISARMED, even for a domain nobody ever disarmed");
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed", "test-org")) === true, "🔴 fail-closed: an UNREADABLE audit store reads as DISARMED, even for a domain nobody ever disarmed");
   registerOperationalStore(live);
   resetOperationalStore();
-  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === false, "fail-closed control: the SAME domain reads ARMED once the store is readable again");
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed", "test-org")) === false, "fail-closed control: the SAME domain reads ARMED once the store is readable again");
 
-  const shortPage = (await contradictionRows()).length;
+  const shortPage = (await contradictionRowsFor("test-org")).length;
   ok(shortPage > 0, "full-page bound: the ledger already carries rows from the blocks above");
 
   setApprovalJudgeLedgerReadLimitForTest(shortPage);
-  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === true, "🔴 fail-closed: a FULL ledger page carrying no operator row for the domain reads as DISARMED — the decision is unproven, not absent");
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed", "test-org")) === true, "🔴 fail-closed: a FULL ledger page carrying no operator row for the domain reads as DISARMED — the decision is unproven, not absent");
 
   setApprovalJudgeLedgerReadLimitForTest(shortPage + 1);
-  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === false, "🔴 full-page control: a SHORT page proves no operator ever acted, so the same domain reads ARMED");
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed", "test-org")) === false, "🔴 full-page control: a SHORT page proves no operator ever acted, so the same domain reads ARMED");
 
-  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "full-page control: a domain with a real disarm row is unaffected by the bound");
+  ok((await approvalJudgeAdminDisarmed("otherdomain", "test-org")) === true, "full-page control: a domain with a real disarm row is unaffected by the bound");
   setApprovalJudgeLedgerReadLimitForTest(undefined);
 }
 
@@ -582,7 +586,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
       (r) => r.action === "approval.judge.contradicted" && (r.detail as { orgWide?: unknown } | undefined)?.orgWide === true,
     ) as { platform?: string; workspace?: string; detail?: Record<string, unknown> }[];
 
-  ok((await approvalJudgeAdminDisarmed(undefined)) === false, "org-wide: the org plane reads ARMED before any operator acts on it — the domain rows above do not leak into it");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "org-wide: the org plane reads ARMED before any operator acts on it — the domain rows above do not leak into it");
   ok((await orgWhere()).length === 0, "org-wide: no org-marked row exists yet");
 
   {
@@ -596,24 +600,24 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     } as typeof live;
     registerOperationalStore(throwing);
     resetOperationalStore();
-    ok((await approvalJudgeAdminDisarmed(undefined)) === true, "🔴 org-wide fail-closed: an UNREADABLE audit store reads the ORG plane as DISARMED — it used to read armed through the early return");
+    ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === true, "🔴 org-wide fail-closed: an UNREADABLE audit store reads the ORG plane as DISARMED — it used to read armed through the early return");
     registerOperationalStore(live);
     resetOperationalStore();
-    ok((await approvalJudgeAdminDisarmed(undefined)) === false, "org-wide fail-closed control: the org plane reads ARMED again once the store is readable");
+    ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "org-wide fail-closed control: the org plane reads ARMED again once the store is readable");
 
-    const page = (await contradictionRows()).length;
+    const page = (await contradictionRowsFor("test-org")).length;
     ok(page > 0, "org-wide full-page: the ledger already carries rows from the blocks above");
     setApprovalJudgeLedgerReadLimitForTest(page);
-    ok((await approvalJudgeAdminDisarmed(undefined)) === true, "🔴 org-wide fail-closed: a FULL ledger page carrying no org operator row reads the org plane as DISARMED");
+    ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === true, "🔴 org-wide fail-closed: a FULL ledger page carrying no org operator row reads the org plane as DISARMED");
     setApprovalJudgeLedgerReadLimitForTest(page + 1);
-    ok((await approvalJudgeAdminDisarmed(undefined)) === false, "🔴 org-wide full-page control: a SHORT page proves no operator acted org-wide, so the org plane reads ARMED");
+    ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "🔴 org-wide full-page control: a SHORT page proves no operator acted org-wide, so the org plane reads ARMED");
     setApprovalJudgeLedgerReadLimitForTest(undefined);
   }
 
   const beforeDisarm = (await contradictionRows()).length;
   await disarmApprovalJudge({ org: "test-org", orgWide: true, principalId: "U_OPS" });
   ok((await contradictionRows()).length === beforeDisarm + 1, "org-wide disarm: exactly ONE row");
-  ok((await approvalJudgeAdminDisarmed(undefined)) === true, "🔴 org-wide disarm: the domain-less plane is DISARMED off one row — the hole OPE-1130 closes");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === true, "🔴 org-wide disarm: the domain-less plane is DISARMED off one row — the hole OPE-1130 closes");
 
   const orgRows = await orgWhere();
   ok(orgRows.length === 1, "org-wide disarm: the row carries the explicit org marker");
@@ -622,24 +626,24 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok((orgRow.detail ?? {}).humanAction === "admin-disarm" && (orgRow.detail ?? {}).route === "control", "org-wide disarm: the row names the act and the route");
   ok(orgRow.platform === "org" && orgRow.workspace === "test-org", "🔴 org-wide disarm: the audit envelope says WHAT KIND the row is about (platform \"org\") and names the org — never the salvaged {platform:\"domain\", workspace:\"unknown\"} a made-up scope key would produce");
 
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "🔴 partition: an ORG-WIDE disarm leaves a domain ARMED — `orgWide` is not a wildcard over the per-domain rules");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "🔴 partition: an ORG-WIDE disarm leaves a domain ARMED — `orgWide` is not a wildcard over the per-domain rules");
 
   await rearmApprovalJudge({ org: "test-org", orgWide: true, principalId: "U_OPS2" });
-  ok((await approvalJudgeAdminDisarmed(undefined)) === false, "🔴 org-wide rearm: the domain-less plane is ARMED again — the two verbs are symmetric on this address too");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "🔴 org-wide rearm: the domain-less plane is ARMED again — the two verbs are symmetric on this address too");
   const rearmRow = (await orgWhere()).find((r) => (r.detail ?? {}).humanAction === "admin-rearm")!;
   ok(rearmRow !== undefined && (rearmRow.detail ?? {}).domain === undefined && (rearmRow.detail ?? {}).judgeVerdict === undefined, "org-wide rearm: the row is org-marked, names no domain and claims no verdict");
   ok((await orgWhere()).some((r) => (r.detail ?? {}).humanAction === "admin-disarm"), "org-wide rearm: the cancelled disarm row SURVIVES — append-only holds on this address too");
 
   await disarmApprovalJudge({ org: "test-org", domain: "partitiondomain", principalId: "U_OPS" });
-  ok((await approvalJudgeAdminDisarmed("partitiondomain")) === true, "partition: the named domain is disarmed (the premise — without it the next line is vacuous)");
-  ok((await approvalJudgeAdminDisarmed(undefined)) === false, "🔴 partition: a DOMAIN disarm leaves the domain-less plane ARMED — break-glass on one domain never reaches the org-level actions");
+  ok((await approvalJudgeAdminDisarmed("partitiondomain", "test-org")) === true, "partition: the named domain is disarmed (the premise — without it the next line is vacuous)");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "🔴 partition: a DOMAIN disarm leaves the domain-less plane ARMED — break-glass on one domain never reaches the org-level actions");
 
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "leg 6: a domain nobody disarmed still reads ARMED with org rows on the ledger");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "leg 6: a domain nobody disarmed still reads ARMED with org rows on the ledger");
   await disarmApprovalJudge({ org: "test-org", domain: "thirddomain", principalId: "U_OPS" });
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === true, "leg 6: a domain disarm still disarms that domain, byte-identically");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === true, "leg 6: a domain disarm still disarms that domain, byte-identically");
   await rearmApprovalJudge({ org: "test-org", domain: "thirddomain", principalId: "U_OPS2" });
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "leg 6: a domain re-arm still restores it");
-  ok((await approvalJudgeAdminDisarmed("partitiondomain")) === true, "leg 6: and it reaches no sibling domain — the domained scoping the blocks above pinned is untouched");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "leg 6: a domain re-arm still restores it");
+  ok((await approvalJudgeAdminDisarmed("partitiondomain", "test-org")) === true, "leg 6: and it reaches no sibling domain — the domained scoping the blocks above pinned is untouched");
 
 }
 
@@ -792,40 +796,69 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     { org: "test-org", platform: "org", workspace: "test-org" },
     { humanAction: "admin-disarm", route: "control" },
   );
-  ok((await approvalJudgeAdminDisarmed(undefined)) === false, "🔴 bare row: an operator row with NEITHER marker leaves the org plane ARMED — it addresses no plane, so there is nothing to fail closed about");
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "🔴 bare row: and it leaves every DOMAIN armed too — one malformed row cannot card the whole deployment");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === false, "🔴 bare row: an operator row with NEITHER marker leaves the org plane ARMED — it addresses no plane, so there is nothing to fail closed about");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "🔴 bare row: and it leaves every DOMAIN armed too — one malformed row cannot card the whole deployment");
 
   await recordApprovalJudgeContradiction(
     { org: "test-org", platform: "org", workspace: "test-org" },
     { domain: "bothmarkers", orgWide: true, humanAction: "admin-disarm", route: "control" },
   );
-  ok((await approvalJudgeAdminDisarmed(undefined)) === true, "🔴 ambiguous row: a disarm marked BOTH domained and org-wide FAILS CLOSED on the org plane — an operator act whose plane cannot be read is a third way of not knowing");
-  ok((await approvalJudgeAdminDisarmed("bothmarkers")) === true, "🔴 ambiguous row: it fails closed on the domain it names too — the pre-OPE-1130 answer for that lookup, kept");
-  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "🔴 ambiguous row: a domain the row does NOT name stays armed — the fail-closed answer is bounded to the two planes on the row");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === true, "🔴 ambiguous row: a disarm marked BOTH domained and org-wide FAILS CLOSED on the org plane — an operator act whose plane cannot be read is a third way of not knowing");
+  ok((await approvalJudgeAdminDisarmed("bothmarkers", "test-org")) === true, "🔴 ambiguous row: it fails closed on the domain it names too — the pre-OPE-1130 answer for that lookup, kept");
+  ok((await approvalJudgeAdminDisarmed("thirddomain", "test-org")) === false, "🔴 ambiguous row: a domain the row does NOT name stays armed — the fail-closed answer is bounded to the two planes on the row");
 
   await recordApprovalJudgeContradiction(
     { org: "test-org", platform: "org", workspace: "test-org" },
     { domain: "bothmarkers", orgWide: true, humanAction: "admin-rearm", route: "control" },
   );
-  ok((await approvalJudgeAdminDisarmed("bothmarkers")) === true, "🔴 ambiguous row: an ambiguous RE-ARM does not re-arm — the fail-closed answer stands");
-  ok((await approvalJudgeAdminDisarmed(undefined)) === true, "🔴 ambiguous row: nor does it re-arm the org plane");
+  ok((await approvalJudgeAdminDisarmed("bothmarkers", "test-org")) === true, "🔴 ambiguous row: an ambiguous RE-ARM does not re-arm — the fail-closed answer stands");
+  ok((await approvalJudgeAdminDisarmed(undefined, "test-org")) === true, "🔴 ambiguous row: nor does it re-arm the org plane");
 
   await recordApprovalJudgeContradiction(
     { org: "test-org", platform: "org", workspace: "test-org" },
     { domain: "ambiguouscontrol", humanAction: "admin-disarm", route: "control" },
   );
-  ok((await approvalJudgeAdminDisarmed("ambiguouscontrol")) === true, "ambiguous-row control: a well-formed disarm through the same seam disarms");
+  ok((await approvalJudgeAdminDisarmed("ambiguouscontrol", "test-org")) === true, "ambiguous-row control: a well-formed disarm through the same seam disarms");
   await recordApprovalJudgeContradiction(
     { org: "test-org", platform: "org", workspace: "test-org" },
     { domain: "ambiguouscontrol", humanAction: "admin-rearm", route: "control" },
   );
-  ok((await approvalJudgeAdminDisarmed("ambiguouscontrol")) === false, "ambiguous-row control: and a well-formed re-arm restores it — the refusals above are about the ambiguous ADDRESS, not about this seam");
+  ok((await approvalJudgeAdminDisarmed("ambiguouscontrol", "test-org")) === false, "ambiguous-row control: and a well-formed re-arm restores it — the refusals above are about the ambiguous ADDRESS, not about this seam");
 }
 
+{
+  await disarmApprovalJudge({ org: "org-a", domain: "shared", principalId: "U_A_OPS" });
+  ok((await approvalJudgeAdminDisarmed("shared", "org-a")) === true, "org scope: org A's disarm reads DISARMED in org A");
+  ok((await approvalJudgeAdminDisarmed("shared", "org-b")) === false, "🔴 org scope: and org B's judge on the SAME domain name is untouched — A's row is not in B's population");
+
+  await rearmApprovalJudge({ org: "org-b", domain: "shared", principalId: "U_B_OPS" });
+  ok((await approvalJudgeAdminDisarmed("shared", "org-b")) === false, "org scope: org B's own re-arm reads ARMED in org B");
+  ok(
+    (await approvalJudgeAdminDisarmed("shared", "org-a")) === true,
+    "🔴 org scope: org B's NEWER re-arm does NOT cancel org A's disarm — the permissive direction cannot cross an org boundary",
+  );
+
+  await disarmApprovalJudge({ org: "org-a", orgWide: true, principalId: "U_A_OPS" });
+  ok((await approvalJudgeAdminDisarmed(undefined, "org-a")) === true, "org scope: org A's ORG-WIDE disarm reads DISARMED in org A");
+  ok((await approvalJudgeAdminDisarmed(undefined, "org-b")) === false, "🔴 org scope: and leaves org B's domain-less plane ARMED — the org-wide key is per org, not global");
+  await rearmApprovalJudge({ org: "org-b", orgWide: true, principalId: "U_B_OPS" });
+  ok(
+    (await approvalJudgeAdminDisarmed(undefined, "org-a")) === true,
+    "🔴 org scope: org B's newer ORG-WIDE re-arm does not restore org A's domain-less judge — the OPE-1368 escalation is closed",
+  );
+
+  await rearmApprovalJudge({ org: "org-a", domain: "shared", principalId: "U_A_OPS" });
+  ok((await approvalJudgeAdminDisarmed("shared", "org-a")) === false, "🔴 org scope: control — inside ONE org a re-arm still cancels that org's own disarm");
+  await rearmApprovalJudge({ org: "org-a", orgWide: true, principalId: "U_A_OPS" });
+  ok((await approvalJudgeAdminDisarmed(undefined, "org-a")) === false, "org scope: control — and the same holds on the org-wide address");
+
+  ok((await approvalJudgeAdminDisarmed("shared", undefined)) === true, "🔴 org scope: a consult with NO org reads DISARMED — never a deployment-wide read");
+  ok((await approvalJudgeAdminDisarmed(undefined, undefined)) === true, "org scope: the org-wide address answers the same way with no org");
+}
 
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
-  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names)`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before`,
 );
 rmSync(tmp, { recursive: true, force: true });

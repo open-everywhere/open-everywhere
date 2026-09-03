@@ -282,3 +282,8 @@ export function quotedPurpose(purpose: string): string {
   const flat = purpose.replace(/[\r\n]+/gu, " ").replace(/["'`]/gu, "").trim();
   return flat.length > 200 ? `${flat.slice(0, 197)}...` : flat;
 }
+
+export function flatDisplayName(label: string): string {
+  const flat = label.replace(/[\r\n]+/gu, " ").trim();
+  return flat.length > 200 ? `${flat.slice(0, 197)}...` : flat;
+}

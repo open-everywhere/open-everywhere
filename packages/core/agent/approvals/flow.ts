@@ -260,6 +260,7 @@ export async function requestApproval(
       args: input.args,
       scopeKey: input.scopeKey,
       ...(input.domain != null ? { domain: input.domain } : {}),
+      org: input.org,
       principalId: input.requestedBy,
       unattended: input.chain?.unattended ?? true,
       ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
@@ -562,6 +563,7 @@ async function offerRoutinePermissionCardForProposal(
     {
       org: input.org,
       declaration: input.kind,
+      grantKind: input.kind,
       grantKey,
       scopeKey: input.scopeKey,
       domain: input.domain ?? null,
@@ -594,11 +596,11 @@ async function offerRoutinePermissionCard(
       const at = plan.cardId ? await routinePermissionCardPointer(offer.org, plan.cardId) : {};
       const clause = routinePermissionRefusalClause(plan.state, false, at.permalink);
       if (budgetMs <= 0 || plan.cardId === undefined || plan.grantKind === undefined) {
-        noteRunRefusal(plan.state, plan.grantKind, at);
+        noteRunRefusal(plan.state, plan.grantKind, at, plan.cardId !== undefined);
         return { clause };
       }
       const settled = await settleRoutineCardWait(offer.org, { cardId: plan.cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
-      return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
+      return noteUnlessArmed(settled, plan.state, plan.grantKind, at, true);
     }
     if (!hasApprovalCardPath(plan.platform ?? "")) return { clause: "" };
     const hadCardSignal = peekCardPostedThisTurn();
@@ -623,11 +625,11 @@ async function offerRoutinePermissionCard(
     const at = cardId ? await routinePermissionCardPointer(offer.org, cardId) : {};
     const clause = routinePermissionRefusalClause(plan.state, true, at.permalink);
     if (budgetMs <= 0 || plan.grantKind === undefined) {
-      noteRunRefusal(plan.state, plan.grantKind, at);
+      noteRunRefusal(plan.state, plan.grantKind, at, cardId !== undefined);
       return { clause };
     }
     const settled = await settleRoutineCardWait(offer.org, { cardId, grantKey, grantKind: plan.grantKind }, clause, budgetMs);
-    return noteUnlessArmed(settled, plan.state, plan.grantKind, at);
+    return noteUnlessArmed(settled, plan.state, plan.grantKind, at, cardId !== undefined);
   } catch {
     return { clause: "" };
   }
@@ -640,16 +642,19 @@ function noteUnlessArmed(
   state: RoutinePermissionCardState,
   grantKind: string | undefined,
   at: RoutineCardPointer,
+  cardPosted: boolean,
 ): RoutinePermissionCardOutcome {
-  if (settled.armedBy === undefined) noteRunRefusal(state, grantKind, at);
+  if (settled.armedBy === undefined) noteRunRefusal(state, grantKind, at, cardPosted);
   return settled;
 }
 
-function noteRunRefusal(state: RoutinePermissionCardState, grantKind: string | undefined, at: RoutineCardPointer): void {
+function noteRunRefusal(state: RoutinePermissionCardState, grantKind: string | undefined, at: RoutineCardPointer, cardPosted: boolean): void {
   if (grantKind === undefined) return;
   noteRoutineRunPermissionRefusal({
     permission: describeGrantKind(grantKind),
-    card: at.permalink ?? at.room ?? null,
+    card: at.permalink ?? null,
+    cardPosted,
+    cardCapped: false,
     cardKnown: state !== "unreadable",
   });
 }

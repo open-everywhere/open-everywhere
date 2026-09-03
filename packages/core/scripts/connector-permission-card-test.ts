@@ -20,6 +20,7 @@ process.env.OE_PLATFORM = "slack";
 process.env.OE_EGRESS_SPOOF = "1";
 delete process.env.OE_ORG;
 
+const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
@@ -247,7 +248,8 @@ console.log("§report the run's outcome summary lists a connector-plane refusal:
   });
   ok(listed.length === 1, "🔴 §report: the connector fence's refusal RECORDS the loss on this run's ledger");
   ok(listed[0]?.permission === describeGrantKind(connectorToolPermissionKind(OTHER_WRITE_OP)), "§report: named in the same plain language list_routines uses for a live grant");
-  ok(listed[0]?.card !== null, "§report: with a pointer to the still-open card, which is what makes the line actionable");
+  ok(listed[0]?.cardPosted === true, "🔴 §report: the line still records that a card IS waiting, which is what makes it actionable");
+  ok(listed[0]?.card === null, "🔴 §report: and carries NO pointer on a surface that mints no permalink — never the room's internal ids");
   ok(listed[0]?.cardKnown === true, "§report: and the card's state was really read");
 
   const both = await inSession(async () => {
@@ -298,6 +300,110 @@ console.log("§never a tainted turn and a non-routine fire card nothing:");
   ok(isDenied(hook.decision), "§never: a webhook fire's write is refused");
   ok((await cards()).length === hookBefore, "🔴 §never: and cards nothing — no routine holds the permission it would arm");
   ok(!hook.reason.includes("routine's own room"), "§never: its refusal is the byte-identical old one");
+}
+
+console.log("§cap one fire posts at most MAX_RUN_REFUSALS cards:");
+{
+  const { MAX_RUN_REFUSALS } = await import("../agent/approvals/card-signal.js");
+  const verbs = [
+    "add", "insert", "post", "put", "patch", "set", "move", "comment", "edit",
+    "write", "upload", "send", "assign", "label", "rename", "duplicate", "copy", "publish",
+  ] as const;
+  ok(verbs.length === MAX_RUN_REFUSALS + 2, "§cap: the fixture drives exactly two ops past the cap");
+  const ops = verbs.map((v) => `notion__${v}_block`);
+
+  const before = (await cards()).length;
+  const reasons = await inSession(async () => {
+    const out: string[] = [];
+    for (const op of ops) {
+      const { decision, reason } = await ask(fireAuth(), op);
+      ok(isDenied(decision), `§cap: ${op} is refused`);
+      out.push(reason);
+    }
+    return out;
+  });
+
+  const posted = (await cards()).length - before;
+  ok(posted === MAX_RUN_REFUSALS, `🔴 §cap: exactly ${MAX_RUN_REFUSALS} cards landed for ${ops.length} refused ops — the post path is bounded per fire`);
+  ok(reasons.length === ops.length, "🔴 §cap: and EVERY op was still refused — the cap drops cards, never refusals");
+  const carded = reasons.filter((r) => r.includes("is now waiting in the routine's own room")).length;
+  ok(carded === MAX_RUN_REFUSALS, "🔴 §cap: exactly the carded refusals claim a card — an over-cap refusal never claims one it did not get");
+  ok(
+    reasons.slice(MAX_RUN_REFUSALS).every((r) => !r.includes("waiting in the routine's own room")),
+    "§cap: and it is the LAST two that go uncarded — the cap drops the newest asks, not arbitrary ones",
+  );
+  ok(
+    reasons.slice(MAX_RUN_REFUSALS).every((r) => r.includes(ASK_UNATTENDED_SENTENCE) && r.includes("Declare ")),
+    "§cap: an over-cap refusal keeps the plain ask-unattended sentence AND the declaration advice",
+  );
+
+  const capped = await inSession(async () => {
+    resetTurnClock("turn_report", Date.now(), "sess-report");
+    for (let i = 0; i < MAX_RUN_REFUSALS; i++) await ask(fireAuth(), ops[0]!);
+    const overCap = await ask(fireAuth(), ops[1]!);
+    return { entries: consumeRoutineRunPermissionRefusals(), overCap };
+  });
+  ok(isDenied(capped.overCap.decision), "§cap: the over-cap permission is refused");
+  ok(capped.entries.length === 2, "🔴 §cap: BOTH permissions reach the run ledger — the capped one is recorded by the seam, not lost with its card");
+  const cappedEntry = capped.entries.find((e) => e.cardCapped);
+  ok(cappedEntry !== undefined, "🔴 §cap: and the over-cap one is marked as capped rather than as an ordinary absence");
+  ok(capped.entries.filter((e) => !e.cardCapped).length === 1, "§cap: while the permission that did reach the card plane is not marked capped");
+  ok(cappedEntry?.permission === describeGrantKind(connectorToolPermissionKind(ops[1]!)), "§cap: named in the SAME plain language every other report line uses");
+  const cappedReport = withRunRefusalBlock("The digest is published.", capped.entries);
+  ok(
+    cappedReport.includes("no card was offered for it — this run reached its card limit"),
+    "🔴 §cap: the report NAMES the capped loss and says why no card came",
+  );
+  ok(!cappedReport.includes("no card is waiting for it"), "🔴 §cap: …and never 'no card is waiting', which claims a fact nothing established and sends an owner to an edit_routine bump");
+  ok(!cappedReport.includes("could not be read"), "§cap: …nor blames a store that was never asked");
+
+  const sameSessionAfterNewTurn = await inSession(async () => {
+    resetTurnClock("turn_cap_1", Date.now(), "sess-cap");
+    for (const op of ops) await ask(fireAuth(), op);
+    const spent = (await cards()).length;
+    resetTurnClock("turn_cap_2", Date.now(), "sess-cap");
+    await ask(fireAuth(), `notion__mark_block`);
+    return (await cards()).length - spent;
+  });
+  ok(sameSessionAfterNewTurn === 1, "🔴 §cap: a SECOND TURN in the SAME session cards again — the budget is per turn, so a job routine's next fire is not silenced by its last one");
+
+  const overCap = ops[ops.length - 1]!;
+  const afterCap = (await cards()).length;
+  const fresh = await inSession(async () => ask(fireAuth(), overCap));
+  ok(isDenied(fresh.decision), "§cap: control — the over-cap op is refused on the next fire too");
+  ok((await cards()).length === afterCap + 1, "🔴 §cap: control — and DOES card there, so the bound is per fire and not per op");
+  ok(fresh.reason.includes("is now waiting in the routine's own room"), "§cap: control — and its refusal says so");
+}
+
+console.log("§timeout a stalled card post is dropped, not awaited:");
+{
+  const { registerRoutinePermissionCardOfferer, routinePermissionCardTimeoutMs, _setRoutinePermissionCardTimeoutMsForTest, _resetRoutinePermissionCardTimeoutMsForTest } =
+    await import("../agent/approvals/routine-permission-offer.js");
+  ok(routinePermissionCardTimeoutMs() === 8000, "§timeout: the shipped budget is 8s — the same number the result-reducing arm uses");
+
+  registerRoutinePermissionCardOfferer(async () => ({ clause: " CLAUSE-FROM-STUB" }));
+  const fast = await ask(fireAuth(), "notion__star_block");
+  ok(isDenied(fast.decision), "§timeout: control — the op is refused");
+  ok(fast.reason.includes("CLAUSE-FROM-STUB"), "🔴 §timeout: control — a prompt offerer's clause DOES reach the refusal through this path");
+
+  let stalls = 0;
+  registerRoutinePermissionCardOfferer(async () => {
+    stalls++;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+    return { clause: " CLAUSE-FROM-STUB" };
+  });
+  _setRoutinePermissionCardTimeoutMsForTest(50);
+  const startedAt = Date.now();
+  const stalled = await ask(fireAuth(), "notion__attach_block");
+  const elapsed = Date.now() - startedAt;
+  _resetRoutinePermissionCardTimeoutMsForTest();
+
+  ok(stalls === 1, "§timeout: the stalled offerer really was called — the leg measures the timeout, not a skipped call");
+  ok(isDenied(stalled.decision), "🔴 §timeout: the refusal still refuses");
+  ok(elapsed < 2_000, `🔴 §timeout: and returns in ${elapsed}ms, far inside the stub's 5s stall — the post cannot hold the durable step open`);
+  ok(!stalled.reason.includes("CLAUSE-FROM-STUB"), "🔴 §timeout: with NO card clause — a timed-out post is a refusal without a card, never a claim of one");
+  ok(stalled.reason.includes(ASK_UNATTENDED_SENTENCE), "§timeout: the plain ask-unattended sentence is untouched");
+  ok(routinePermissionCardTimeoutMs() === 8000, "§timeout: and the test seam restored the shipped budget");
 }
 
 rmSync(tmp, { recursive: true, force: true });

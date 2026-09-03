@@ -278,7 +278,7 @@ function extractSlackMessageUnfurlLines(messageBlocks: unknown): string[] {
   return out;
 }
 
-function hasSharedMessageAttachment(o: Record<string, unknown>): boolean {
+export function hasSharedMessageAttachment(o: Record<string, unknown>): boolean {
   const lines = extractSlackMessageUnfurlLines(o["message_blocks"]);
   return o["is_share"] === true || o["is_msg_unfurl"] === true || o["is_reply_unfurl"] === true || lines.length > 0;
 }
@@ -319,6 +319,26 @@ function extractSlackAttachmentLines(attachments: unknown): string[] {
     }
   }
   return out;
+}
+
+export function stripUnfencedSlackAttachments(rawBody: string): string {
+  try {
+    const parsed: unknown = JSON.parse(rawBody);
+    if (typeof parsed !== "object" || parsed === null) return rawBody;
+    const envelope = parsed as Record<string, unknown>;
+    const event = envelope["event"];
+    if (typeof event !== "object" || event === null) return rawBody;
+    const inner = event as Record<string, unknown>;
+    const attachments = inner["attachments"];
+    if (!Array.isArray(attachments) || attachments.length === 0) return rawBody;
+    const kept = attachments.filter((a) => typeof a === "object" && a !== null && hasSharedMessageAttachment(a as Record<string, unknown>));
+    if (kept.length === attachments.length) return rawBody;
+    const fencedEvent: Record<string, unknown> = { ...inner };
+    fencedEvent["attachments"] = kept;
+    return JSON.stringify({ ...envelope, event: fencedEvent });
+  } catch {
+    return rawBody;
+  }
 }
 
 export function resolveSlackInboundText(text: string, inner: Record<string, unknown>): string {

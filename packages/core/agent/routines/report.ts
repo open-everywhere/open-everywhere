@@ -37,6 +37,8 @@ export function withRunRefusalBlock(text: string, refused: readonly RoutineRunPe
 }
 
 function pointerPhrase(r: RoutineRunPermissionRefusal): string {
+  if (r.cardCapped) return "no card was offered for it — this run reached its card limit";
   if (r.card !== null) return `its card is waiting at ${r.card}`;
+  if (r.cardPosted) return "its card is waiting in the routine's own room";
   return r.cardKnown ? "no card is waiting for it" : "whether a card is waiting for it could not be read";
 }

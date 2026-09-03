@@ -452,4 +452,36 @@ console.log("7. the ask verb: a tainted turn may not ask, and both a seat and a 
   ok(badArgs.message.includes("has no value"), "…naming the offending key rather than failing inside the store");
 }
 
+console.log("8. an ask with NO VERIFIED REQUESTER is refused before anything is written:");
+{
+  const SCOPE_UNVERIFIED = "sess-unverified-requester";
+  const nowIso = (): string => new Date(clock).toISOString();
+  dmed.length = 0;
+  const before = (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.refused").length;
+
+  const refused = await raise({ requester: undefined, scope: SCOPE_UNVERIFIED });
+  eq(refused.sent, false, "🔴 an ask with no verified requester is REFUSED");
+  eq(refused.reason, "unverified_requester", "…by that exact name — the reason six prose sites cite");
+  eq(refused.askId, undefined, "…and hands back no ask id");
+  eq(
+    (await store.pendingCredentialGrantAsksForScope(ORG, SCOPE_UNVERIFIED, nowIso())).length,
+    0,
+    "🔴 …NO ask row is written — the scope is left unclaimed, so the refusal cannot block a later verified ask",
+  );
+  eq(dmed.length, 0, "🔴 …and NO card reaches the owner's DM — an owner is never asked to decide for nobody");
+
+  const after = (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.refused");
+  eq(after.length, before + 1, "…one grant.refused row records the attempt");
+  ok(
+    after.some((r) => (r.detail as { gate?: unknown } | undefined)?.gate === "unverified_requester"),
+    "…naming the gate that refused it",
+  );
+
+  dmed.length = 0;
+  const allowed = await raise({ scope: SCOPE_UNVERIFIED });
+  eq(allowed.sent, true, "🔴 control — the identical ask WITH a verified requester is raised");
+  eq((await store.pendingCredentialGrantAsksForScope(ORG, SCOPE_UNVERIFIED, nowIso())).length, 1, "control — and writes its ask row");
+  eq(dmed.length, 1, "control — and posts exactly one card, so the leg above measures the missing requester and nothing else");
+}
+
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

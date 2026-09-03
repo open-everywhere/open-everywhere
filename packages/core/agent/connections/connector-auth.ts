@@ -551,6 +551,7 @@ export function withUnattendedConnectorFence(
         ? await offerRoutinePermissionCardFor({
             org: facts.org,
             declaration: `tool:${ctx.toolName}`,
+            grantKind: connectorToolPermissionKind(ctx.toolName),
             grantKey: routineKey,
             scopeKey: facts.surfaceKey,
             requestedBy,

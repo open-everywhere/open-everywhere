@@ -536,7 +536,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   (store as { listPendingActions: unknown }).listPendingActions = async (): Promise<never> => {
     throw new Error("card store is down");
   };
-  let blind: readonly { permission: string; card: string | null; cardKnown: boolean }[];
+  let blind: readonly { permission: string; card: string | null; cardKnown: boolean; cardPosted: boolean; cardCapped: boolean }[];
   try {
     blind = await inSession(async () => {
       await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "d" }, scopeKey: DISCORD_SURFACE });
@@ -552,15 +552,27 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(!withRunRefusalBlock("body", blind).includes("no card is waiting"), "🔴 §runreport: …explicitly not that line");
   ok(declinedRun[0]?.cardKnown === true, "§runreport: while a DECLINE knows there is no card, so it says so — the negative control for the arm above");
 
-  noteRoutineRunPermissionRefusal({ permission: "open pull requests", card: null, cardKnown: true });
+  noteRoutineRunPermissionRefusal({ permission: "open pull requests", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
   ok(consumeRoutineRunPermissionRefusals().length === 0, "§runreport: fail-soft outside a session — the ledger never blocks or changes a refusal");
 
   ok(withRunRefusalBlock("body", []) === "body", "🔴 §runreport: an empty ledger is the IDENTITY function — every ordinary reply is untouched");
-  const rendered = withRunRefusalBlock("body", [{ permission: "open pull requests", card: PERMALINK, cardKnown: true }, { permission: "use Notion", card: null, cardKnown: true }]);
+  const rendered = withRunRefusalBlock("body", [{ permission: "open pull requests", card: PERMALINK, cardKnown: true, cardPosted: true, cardCapped: false }, { permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false }]);
   ok(rendered.startsWith("body\n\n"), "§runreport: the block is a SUFFIX under a blank line — the answer comes first, the footnote after");
   ok(rendered.includes(RUN_REFUSAL_HEADING), "§runreport: under the host-authored heading, so a reader knows it did not come from the model");
   ok(rendered.includes(`\u2022 open pull requests \u2014 its card is waiting at ${PERMALINK}`), "§runreport: a permission with an open card points at it");
   ok(rendered.includes("use Notion \u2014 no card is waiting for it"), "§runreport: and one without says so rather than rendering an empty pointer");
+
+  const noPermalink = withRunRefusalBlock("body", [{ permission: "use Notion", card: null, cardKnown: true, cardPosted: true, cardCapped: false }]);
+  ok(!noPermalink.includes("slack/"), "\u{1f534} \u00a7runreport: a card with no permalink renders NO room id \u2014 no arm is left that could print the platform triple");
+  ok(
+    noPermalink.includes("use Notion \u2014 its card is waiting in the routine's own room"),
+    "\u{1f534} \u00a7runreport: it names the room in WORDS instead \u2014 the card is posted to the routine's own surface, so that says everything the id did",
+  );
+  ok(!noPermalink.includes("no card is waiting"), "\u{1f534} \u00a7runreport: and never claims there is NO card \u2014 that line sends an owner to an edit that would destroy it");
+  ok(
+    withRunRefusalBlock("body", [{ permission: "use Notion", card: PERMALINK, cardKnown: true, cardPosted: true, cardCapped: false }]).includes(PERMALINK),
+    "\u00a7runreport: control \u2014 a card that HAS a permalink still points at it",
+  );
   await store.revokeSessionApprovals(ORG, dKey);
 }
 

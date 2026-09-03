@@ -1,5 +1,5 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignatureMatches } from "./slack-signature.js";
+import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignature, slackSignatureMatches } from "./slack-signature.js";
 import { slackContinuationToken } from "eve/channels/slack";
 import { callSlackWebApi } from "./slack-web-api.js";
 import {
@@ -78,6 +78,7 @@ import {
   slackWakeAuthorFacts,
   slackExternalPolicyForRoom,
   applySlackExternalPolicy,
+  stripUnfencedSlackAttachments,
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth } from "./slack-identity.js";
@@ -469,6 +470,20 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
+    const forwardNative = (): Promise<Response> => {
+      const fenced = stripUnfencedSlackAttachments(rawBody);
+      const ts = req.headers.get(SLACK_TIMESTAMP_HEADER);
+      const secret = signingSecret();
+      if (fenced === rawBody || !ts || !secret) {
+        return innerHandler(new Request(req.url, { method: "POST", headers: req.headers, body: rawBody }), args);
+      }
+      const headers = new Headers(req.headers);
+      headers.set(SLACK_SIGNATURE_HEADER, slackSignature(secret, ts, fenced));
+      headers.delete("content-length");
+      console.log("[open-everywhere:slack-front] stripped an unfenced link-unfurl attachment before the native forward (OPE-1380)");
+      return innerHandler(new Request(req.url, { method: "POST", headers, body: fenced }), args);
+    };
+
     const send = ((input: { message: string; context?: readonly string[] }, opts: { auth: unknown; continuationToken: string; state?: unknown }) =>
       args.from(opts.continuationToken).send(input.message, {
         auth: opts.auth,
@@ -610,8 +625,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     };
 
     if (decision.kind === "forward") {
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "dm-wake") {
@@ -721,40 +735,35 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         } catch {
         }
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "approval-click") {
       if (await handleApproval(decision.payload)) {
         return new Response(null, { status: 200 });
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "setkey-click") {
       if (await handleSetKeyClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "connect-click") {
       if (await handleConnectClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "grant-click") {
       if (await handleGrantCardClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "setkey-submit") {
@@ -764,8 +773,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           ? new Response(JSON.stringify(result.response), { status: 200, headers: { "content-type": "application/json" } })
           : new Response(null, { status: 200 });
       }
-      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-      return innerHandler(forwarded, args);
+      return forwardNative();
     }
 
     if (decision.kind === "join") {

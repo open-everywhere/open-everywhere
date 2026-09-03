@@ -211,6 +211,7 @@ const baseReq: ApprovalChainRequest = {
   args: { title: "docs: fix a typo" },
   scopeKey: "slack/T1/C_PAY",
   domain: "payments",
+  org: "default",
   principalId: "U_HUMAN",
   unattended: false,
   tainted: false,

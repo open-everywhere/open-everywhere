@@ -35,6 +35,7 @@ export interface ApprovalChainRequest {
   readonly args?: unknown;
   readonly scopeKey?: string;
   readonly domain?: string;
+  readonly org?: string;
   readonly principalId?: string;
   readonly unattended: boolean;
   readonly tainted?: boolean;
@@ -333,7 +334,7 @@ export async function resolveApproverChain(
     judgeDeferredTool(req.tool) &&
     approvalJudgeMode() === "enforce"
   ) {
-    if (await approvalJudgeAdminDisarmed(req.domain)) {
+    if (await approvalJudgeAdminDisarmed(req.domain, req.org)) {
       judgeRun = {
         verdict: "defer",
         source: "admin-disarm",
