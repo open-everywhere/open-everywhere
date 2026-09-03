@@ -10,6 +10,7 @@ const REGISTRY: Record<string, OperationalStore> = {
 let active: OperationalStore | null = null;
 let sqliteFloorNagged = false;
 let pgliteFloorNoticed = false;
+let requireArmedFloor = false;
 
 export type OperationalFloor = "pglite" | "sqlite" | "none";
 
@@ -72,6 +73,14 @@ export function getOperationalStore(): OperationalStore {
       noticePgliteFloorOnce();
       return armed;
     }
+    if (requireArmedFloor) {
+      throw new Error(
+        "the embedded-Postgres (PGlite) floor is the configured operational store, but nothing armed it — " +
+          "the sqlite stand-in would write to a DIFFERENT store than the deployment reads and report success. " +
+          "Call connectOperatorStore() (operator scripts) or registerOperationalPglite() (the app boot) before " +
+          "the first store use.",
+      );
+    }
     active = REGISTRY.sqlite;
     return active;
   }
@@ -103,6 +112,10 @@ export function registerOperationalStore(store: OperationalStore): void {
 
 export function resetOperationalStore(): void {
   active = null;
+}
+
+export function requireArmedOperationalFloor(on = true): void {
+  requireArmedFloor = on;
 }
 
 export function _resetFloorNagForTest(): void {

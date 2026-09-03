@@ -2,7 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { SECRET_STORE_ENV_KEYS } from "../agent/credentials/operator-secrets.js";
 import { registerOperationalPgliteLazy } from "../agent/operational/pglite-client.js";
 import { initOperationalSchema, type PgClient } from "../agent/operational/postgres.js";
-import { registerOperationalPostgres, resolveOperationalSelection } from "../agent/operational/provider.js";
+import {
+  registerOperationalPostgres,
+  requireArmedOperationalFloor,
+  resetOperationalStore,
+  resolveOperationalSelection,
+} from "../agent/operational/provider.js";
 
 export interface OperatorStoreTarget {
   readonly id: string;
@@ -39,6 +44,8 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
 
   if (selection.floor === "pglite") {
     registerOperationalPgliteLazy();
+    resetOperationalStore();
+    requireArmedOperationalFloor();
     connected = { id: "postgres", label: "embedded Postgres floor (PGlite, local data dir)" };
     return connected;
   }
@@ -55,6 +62,7 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
     const client = await neonClient(url);
     await initOperationalSchema(client);
     registerOperationalPostgres(client);
+    resetOperationalStore();
     connected = { id: "postgres", label: "hosted Postgres (DATABASE_URL)" };
     return connected;
   }
@@ -65,6 +73,7 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
 
 export function resetOperatorStoreConnection(): void {
   connected = null;
+  requireArmedOperationalFloor(false);
 }
 
 async function neonClient(connectionString: string): Promise<PgClient> {
