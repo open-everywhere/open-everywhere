@@ -11,7 +11,7 @@ const ok = (cond: boolean, label: string): void => {
 };
 
 const here = dirname(fileURLToPath(import.meta.url));
-const agentDir = join(here, "..", "agent");
+const packagesDir = join(here, "..", "..");
 
 function walkTs(dir: string): string[] {
   const out: string[] = [];
@@ -24,11 +24,45 @@ function walkTs(dir: string): string[] {
   return out;
 }
 
-{
-  const files = walkTs(agentDir);
-  ok(files.length > 50, `scanned the agent source tree (${files.length} .ts files)`);
+function agentRoots(): string[] {
+  const roots: string[] = [];
+  const scan = (parent: string): void => {
+    for (const name of readdirSync(parent)) {
+      if (name === "node_modules" || name === "dist" || name === ".turbo") continue;
+      const dir = join(parent, name);
+      if (!statSync(dir).isDirectory()) continue;
+      if (name === "agent") {
+        roots.push(dir);
+        continue;
+      }
+      scan(dir);
+    }
+  };
+  scan(packagesDir);
+  return roots.sort();
+}
 
-  const workflowToolFile = files.find((f) => f.replace(/\\/g, "/").endsWith("/tools/workflow.ts"));
+function declaresDispatchTool(source: string): boolean {
+  return /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch/.test(source);
+}
+
+{
+  const roots = agentRoots();
+  const files = roots.flatMap(walkTs);
+  const rel = (f: string): string => f.replace(/\\/g, "/").split("/packages/")[1] ?? f;
+  ok(files.length > 50, `scanned the agent source tree (${files.length} .ts files across ${roots.length} agent roots)`);
+
+  ok(
+    roots.some((r) => r.replace(/\\/g, "/").endsWith("/packages/core/agent")),
+    `the scan covers packages/core/agent (roots: ${roots.map(rel).join(", ")})`,
+  );
+  const providerFiles = files.filter((f) => /\/packages\/providers\/[^/]+\/agent\//.test(f.replace(/\\/g, "/")));
+  ok(
+    providerFiles.length > 0,
+    `the scan reaches PROVIDER agent source too (${providerFiles.length} .ts files under packages/providers/*/agent)`,
+  );
+
+  const workflowToolFile = files.find((f) => f.replace(/\\/g, "/").endsWith("/agent/tools/workflow.ts"));
   ok(
     workflowToolFile === undefined,
     "no agent/tools/workflow.ts exists (eve would register the code_mode/Workflow tool from it)",
@@ -37,15 +71,25 @@ function walkTs(dir: string): string[] {
   const activators = files.filter((f) => /experimental_workflow\s*\(/.test(readFileSync(f, "utf8")));
   ok(
     activators.length === 0,
-    `no source calls experimental_workflow(...) (found: ${activators.map((f) => f.split("/agent/")[1]).join(", ") || "none"})`,
+    `no source calls experimental_workflow(...) (found: ${activators.map(rel).join(", ") || "none"})`,
   );
 
-  const rtaFiles = files.filter((f) =>
-    /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch/.test(readFileSync(f, "utf8")),
-  );
+  const rtaFiles = files.filter((f) => declaresDispatchTool(readFileSync(f, "utf8")));
   ok(
     rtaFiles.length === 0,
-    `no agent source declares a runtime-action / dispatch tool (found: ${rtaFiles.map((f) => f.split("/agent/")[1]).join(", ") || "none"})`,
+    `no agent source in packages/** declares a runtime-action / dispatch tool (found: ${rtaFiles.map(rel).join(", ") || "none"})`,
+  );
+
+  for (const [label, source] of [
+    ["the retired `runtimeAction` property", `export const t = { name: "spawn", runtimeAction: { kind: "subagent-call" } };`],
+    ["a `behavior.handling` block", `export const t = {\n  name: "spawn",\n  behavior: { availability: [], handling: { kind: "dispatch" } },\n};`],
+    ["a bare dispatch `handling` block", `const h = { handling: { kind: "dispatch", target: {} } };`],
+  ] as const) {
+    ok(declaresDispatchTool(source), `POSITIVE CONTROL: the dispatch matcher sees ${label}`);
+  }
+  ok(
+    !declaresDispatchTool(`export const t = { name: "reply", description: "reply", execute: async () => ({}) };`),
+    "NEGATIVE CONTROL: the dispatch matcher does NOT fire on an ordinary gated tool",
   );
 }
 

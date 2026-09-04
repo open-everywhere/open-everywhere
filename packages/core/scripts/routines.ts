@@ -1,14 +1,16 @@
 import { listAllRoutines, routinesRoot } from "../agent/routines/store.js";
 import { isDue } from "../agent/routines/schedule.js";
 import { describeTrigger } from "../agent/routines/routine.js";
+import { connectOperatorStoreForCli } from "./operator-store-connect.js";
 
 const onlyDue = process.argv.includes("--due");
 const now = new Date();
 
+const target = await connectOperatorStoreForCli();
 const all = await listAllRoutines();
 const rows = onlyDue ? all.filter((r) => r.status === "active" && isDue(r.nextRunAt, now)) : all;
 
-console.log(`\nRoutine store: ${routinesRoot()}`);
+console.log(`\nRoutine store: ${routinesRoot()}   store: ${target.label}`);
 console.log(`${all.length} routine(s) total${onlyDue ? `, ${rows.length} due now` : ""}`);
 console.log("─".repeat(70));
 

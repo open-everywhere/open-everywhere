@@ -128,6 +128,7 @@ function ephemeral(content: string): DiscordInteractionResponse {
 export interface DiscordApprovalDeps {
   readonly postNotice?: (row: PendingActionRow, text: string) => Promise<unknown>;
   readonly decisionWake?: DecisionWakeDeps;
+  readonly waitUntil?: (p: Promise<unknown>) => void;
 }
 
 export function discordResponseFor(res: ApprovalClickResolution): DiscordInteractionResponse {
@@ -182,33 +183,50 @@ export async function handleDiscordApprovalInteraction(raw: unknown, deps: Disco
         return rowGuild ? isGuildAdminViaRest(rowGuild, clickerId) : false;
       },
     });
-    if (res.outcome === "expired") {
-      await deliverDecisionFeedback(
-        {
-          row: res.row,
-          summaryLines: res.summaryLines,
-          outcome: "expired",
-          outcomeLine: "expired",
-          executed: "none",
-          target: discordDecisionWakeTarget(res.row, click.guildId),
-          postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
-        },
-        deps.decisionWake,
-      );
-    } else if (res.outcome === "decided") {
-      await deliverDecisionFeedback(
-        {
-          row: res.row,
-          summaryLines: res.summaryLines,
-          outcome: res.row.status as ApprovalOutcome,
-          outcomeLine: res.outcomeLine,
-          executed: res.executed,
-          clickerId,
-          target: discordDecisionWakeTarget(res.row, click.guildId),
-          postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
-        },
-        deps.decisionWake,
-      );
+    const feedback = (): Promise<void> | undefined => {
+      if (res.outcome === "expired") {
+        return deliverDecisionFeedback(
+          {
+            row: res.row,
+            summaryLines: res.summaryLines,
+            outcome: "expired",
+            outcomeLine: "expired",
+            executed: "none",
+            target: discordDecisionWakeTarget(res.row, click.guildId),
+            postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
+          },
+          deps.decisionWake,
+        );
+      }
+      if (res.outcome === "decided") {
+        return deliverDecisionFeedback(
+          {
+            row: res.row,
+            summaryLines: res.summaryLines,
+            outcome: res.row.status as ApprovalOutcome,
+            outcomeLine: res.outcomeLine,
+            executed: res.executed,
+            clickerId,
+            target: discordDecisionWakeTarget(res.row, click.guildId),
+            postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
+          },
+          deps.decisionWake,
+        );
+      }
+      return undefined;
+    };
+
+    const pending = feedback();
+    if (pending !== undefined) {
+      if (deps.waitUntil === undefined) {
+        await pending;
+      } else {
+        deps.waitUntil(
+          pending.catch((err: unknown) => {
+            log(`deferred decision feedback failed for "${click.customId}": ${(err as Error)?.message ?? String(err)}`);
+          }),
+        );
+      }
     }
     return discordResponseFor(res);
   } catch (err) {

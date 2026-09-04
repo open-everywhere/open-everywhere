@@ -1,5 +1,6 @@
 import { spendRollup, spendRoot } from "../agent/spend/store.js";
 import { resolveCaps } from "../agent/spend/caps.js";
+import { connectOperatorStoreForCli } from "./operator-store-connect.js";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -7,9 +8,10 @@ function arg(name: string): string | undefined {
 }
 
 const period = arg("period") ?? new Date().toISOString().slice(0, 7);
+const target = await connectOperatorStoreForCli();
 const rollup = (await spendRollup()).filter((r) => r.period === period);
 
-console.log(`\nSpend ledger: ${spendRoot()}   period: ${period}`);
+console.log(`\nSpend ledger: ${spendRoot()}   period: ${period}   store: ${target.label}`);
 console.log("─".repeat(70));
 
 if (rollup.length === 0) {

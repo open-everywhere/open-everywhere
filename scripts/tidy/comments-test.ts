@@ -159,6 +159,35 @@ try {
 
   {
     const root = newRepo();
+    write(
+      root,
+      "src/c.ts",
+      [
+        "// Rescinded on 2026-08-01, superseded by OPE-1200.",
+        "export const history = 1;",
+        "",
+        "/** A jsdoc block that a caller needs. */",
+        "export function f(): void {}",
+      ].join("\n"),
+    );
+    commitAll(root, "fixture");
+    const records = inventory(root, ["src/c.ts"]);
+    const history = records.find((r) => r.text.includes("Rescinded"));
+    eq(history?.class, "auto-history", "the classifier still LABELS the block (the label is the inventory signal that stays)");
+
+    const before = read(root, "src/c.ts");
+    const jsdocId = records.find((r) => r.kind === "jsdoc")?.id ?? "";
+    const run = tidy(root, ["apply", decisionsFile(root, "label.jsonl", [{ id: jsdocId, action: "keep" }])]);
+    ok(run.status === 0, `apply exited 0 — ${run.stderr}`);
+    eq(read(root, "src/c.ts"), before, "🔴 an auto-history block no decision names is UNTOUCHED — the class deletes nothing");
+
+    const named = tidy(root, ["apply", decisionsFile(root, "named.jsonl", [{ id: history?.id ?? "", action: "delete" }])]);
+    ok(named.status === 0, `apply exited 0 — ${named.stderr}`);
+    ok(!read(root, "src/c.ts").includes("Rescinded"), "NEGATIVE CONTROL: a decision naming the block still deletes it");
+  }
+
+  {
+    const root = newRepo();
     const source = [
       "// eslint-disable-next-line no-console",
       "console.log(1);",

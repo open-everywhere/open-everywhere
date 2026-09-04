@@ -611,6 +611,82 @@ const store = getOperationalStore();
     ok(throwRes.type === 7, "decision feedback: throwing notice + wake still answer the ordinary decided card (the decide itself already happened)");
     ok((await store.getPendingAction("default", "dw-throws"))?.status === "approved", "decision feedback: the decide is durable regardless of feedback failures");
     await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+
+    {
+      await store.addPendingAction(
+        winRow({ id: "dw-defer", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 644, currentCap: null }) }),
+      );
+      const background: Promise<unknown>[] = [];
+      const deferredNotices: string[] = [];
+      let releaseGate = (): void => {};
+      const gate = new Promise<void>((r) => {
+        releaseGate = r;
+      });
+      const deferDeps = {
+        postNotice: async (r: PendingActionRow): Promise<string> => {
+          await gate;
+          deferredNotices.push(r.id);
+          return "dmsg-deferred";
+        },
+        decisionWake: { dispatch: async (): Promise<boolean> => true },
+        waitUntil: (p: Promise<unknown>) => background.push(p),
+      };
+      const deferRes = (await handleDiscordApprovalInteraction(
+        clickPayload("oe-approval:dw-defer:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }),
+        deferDeps,
+      )) as Resp;
+      ok(deferRes.type === 7, "🔴 OPE-1407: the response is STILL the type-7 decided card — only the feedback moved, never the answer");
+      ok(background.length === 1, "🔴 OPE-1407: the feedback really was handed to waitUntil, rather than skipped");
+      ok(deferredNotices.length === 0, "🔴 OPE-1407: NO notice has posted at the moment the interaction is answered — the admin is answered before the REST post runs");
+      ok((await store.getPendingAction("default", "dw-defer"))?.status === "approved", "OPE-1407: …and the DECISION itself is already made, because the response body is chosen from it");
+
+      releaseGate();
+      await Promise.all(background);
+      ok(deferredNotices.length === 1 && deferredNotices[0] === "dw-defer", "🔴 OPE-1407: …and the notice really does post afterwards — deferring must not lose it");
+      await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+    }
+
+    {
+      await store.addPendingAction(
+        winRow({ id: "dw-nohost", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 645, currentCap: null }) }),
+      );
+      const syncNotices: string[] = [];
+      const syncRes = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-nohost:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), {
+        postNotice: async (r: PendingActionRow): Promise<string> => {
+          syncNotices.push(r.id);
+          return "dmsg-sync";
+        },
+        decisionWake: { dispatch: async (): Promise<boolean> => true },
+      })) as Resp;
+      ok(syncRes.type === 7, "OPE-1407 control: the no-waitUntil path answers the same decided card");
+      ok(syncNotices.length === 1, "🔴 OPE-1407 control: with NO waitUntil the notice has ALREADY posted when the handler returns — the feedback was awaited, never dropped");
+      await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+    }
+
+    {
+      await store.addPendingAction(
+        winRow({ id: "dw-defer-throws", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 646, currentCap: null }) }),
+      );
+      const background: Promise<unknown>[] = [];
+      await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-defer-throws:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), {
+        postNotice: (): Promise<unknown> => {
+          throw new Error("discord down");
+        },
+        decisionWake: {
+          dispatch: async (): Promise<boolean> => {
+            throw new Error("dispatch down");
+          },
+        },
+        waitUntil: (p: Promise<unknown>) => background.push(p),
+      });
+      let rejected = false;
+      await Promise.all(background).catch(() => {
+        rejected = true;
+      });
+      ok(!rejected, "🔴 OPE-1407: a failing deferred feedback resolves rather than rejecting — an unhandled rejection off the response path helps nobody");
+      ok((await store.getPendingAction("default", "dw-defer-throws"))?.status === "approved", "OPE-1407: …and the decide is durable regardless");
+      await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+    }
   } finally {
     overrideSettingsForTest({ window: { topology: false } });
   }

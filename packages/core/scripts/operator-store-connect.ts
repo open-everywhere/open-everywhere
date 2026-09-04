@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { SECRET_STORE_ENV_KEYS } from "../agent/credentials/operator-secrets.js";
 import { registerOperationalPgliteLazy } from "../agent/operational/pglite-client.js";
 import { initOperationalSchema, type PgClient } from "../agent/operational/postgres.js";
@@ -56,7 +57,7 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
       throw new Error(
         'OE_OPERATIONAL_PROVIDER="postgres" but DATABASE_URL is not set — the operator-side secret commands open the ' +
           "deployment's own store directly, so they need the same connection string the deployment holds " +
-          "(put it in .env.local, or pass --env-file).",
+          "(put it in .env.local, or pass --root-env PATH).",
       );
     }
     const client = await neonClient(url);
@@ -69,6 +70,12 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
 
   connected = { id: selection.id, label: "sqlite file (DEPRECATED floor — see docs/deploy/database-graduation.md)" };
   return connected;
+}
+
+export async function connectOperatorStoreForCli(argv: readonly string[] = process.argv): Promise<OperatorStoreTarget> {
+  const flag = argv.indexOf("--root-env");
+  loadRootOfTrustEnv(resolve(flag >= 0 ? (argv[flag + 1] ?? ".env.local") : ".env.local"));
+  return await connectOperatorStore();
 }
 
 export function resetOperatorStoreConnection(): void {

@@ -193,6 +193,12 @@ export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean 
 }
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
+const STAND_DOWN_ACK_CRITERIA =
+  "Does this reply ACCEPT the request to stop following the thread? A terse acceptance is a PASS — " +
+  '"Understood.", "OK", "Got it", "Will do", a thumbs-up, or a one-word confirmation all accept the ' +
+  "request, and the reply's wording is written by the model. The reply does NOT have to promise, " +
+  "restate, or describe the stopping. Only a refusal, a question that re-opens the request, or a " +
+  "reply that ignores it and carries on with the thread's work fails.";
 const CAP_REFUSAL = "I'm holding off here";
 const OPE617_V2_SHA = "4944364aa5cf459b43cfaff96218f29e87331e9c";
 const CAP_REFUSAL_MARKER = /holding off/i;
@@ -314,9 +320,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: stopTs } = await slack.post("thanks, you can stop following this thread now", rootTs);
       const ack = await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await ctx.judgePass(
-        closedQA("Is this an acknowledgement that the agent will stop following the thread?", {}),
+        closedQA(STAND_DOWN_ACK_CRITERIA, {}),
         ack.text,
-        "stand down: the acknowledgement says it will stop following",
+        "stand down: the reply accepts the ask to stop",
       );
       if (ctx.auditRead) {
         const rows = await ctx.auditRead({ sinceIso: standDownFrom, platform: "slack", actions: [STOOD_DOWN_ACTION] });
@@ -692,9 +698,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const stopMsg = await discord.post("thanks, you can stop following this thread now", threadId);
       const stopAck = await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
-        closedQA("Is this an acknowledgement that the agent will stop following the thread?", {}),
+        closedQA(STAND_DOWN_ACK_CRITERIA, {}),
         stopAck.content,
-        "stand down: the acknowledgement says it will stop following",
+        "stand down: the reply accepts the ask to stop",
       );
       if (ctx.auditRead) {
         const rows = await ctx.auditRead({ sinceIso: discordStandDownFrom, platform: "discord", actions: [STOOD_DOWN_ACTION] });

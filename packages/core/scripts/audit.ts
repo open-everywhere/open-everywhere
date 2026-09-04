@@ -1,4 +1,5 @@
 import { readAudit, auditRoot, type AuditFilter } from "../agent/audit/audit.js";
+import { connectOperatorStoreForCli } from "./operator-store-connect.js";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -15,9 +16,10 @@ const filter: AuditFilter = {
   limit: arg("limit") ? Number(arg("limit")) : 200,
 };
 
+const target = await connectOperatorStoreForCli();
 const rows = await readAudit(filter);
 
-console.log(`\nAudit log: ${auditRoot()}`);
+console.log(`\nAudit log: ${auditRoot()}   store: ${target.label}`);
 const scope = [filter.org && `org=${filter.org}`, filter.action && `action=${filter.action}`, filter.principalId && `who=${filter.principalId}`, filter.since && `since=${filter.since}`]
   .filter(Boolean)
   .join("  ");

@@ -75,7 +75,10 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
 export interface DiscordFrontOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
-  readonly handleApprovalInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
+  readonly handleApprovalInteraction?: (
+    raw: unknown,
+    deps?: { waitUntil?: (p: Promise<unknown>) => void },
+  ) => Promise<DiscordInteractionResponse | null>;
   readonly handleLinkConsentInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
   readonly handleGrantCardInteraction?: (
     raw: unknown,
@@ -104,7 +107,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
     const decision = classifyDiscordInteraction(rawBody);
 
     if (decision.kind === "approval-click") {
-      const response = await handleClick(decision.interaction);
+      const response = await handleClick(decision.interaction, { waitUntil: args.waitUntil });
       if (response) return interactionJson(response);
     }
 

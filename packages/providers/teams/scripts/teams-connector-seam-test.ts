@@ -22,6 +22,8 @@ const SEAM = join(PKG_ROOT, SEAM_REL);
 const BARE_CONNECTOR_CALL = /(?<![.\w])callTeamsConnectorApi\s*\(/;
 const CONNECTOR_WRITE_METHOD = /method:\s*"(?:POST|PUT|PATCH|DELETE)"/;
 const EVE_ACTIVITY_WRITER = /(?<![.\w])(?:sendTeamsActivity|replyToTeamsActivity|updateTeamsActivity)\s*[(,}]/;
+const BARE_FETCH = /(?<![.\w])fetch\s*\(/;
+const OWN_TRANSPORT = /globalThis\.fetch/;
 
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
@@ -61,6 +63,20 @@ function tsFiles(dir: string): string[] {
   ok(EVE_ACTIVITY_WRITER.test(stripComments(`import { updateTeamsActivity } from "eve/channels/teams";`)), "§0 …and an import of one");
   ok(!EVE_ACTIVITY_WRITER.test(stripComments(`await sendTeamsActivityBackedOff({ x });`)), "🔴 §0 …and the BACKED-OFF wrapper is not an offender — this is the line that decides whether the gate is usable at all");
   ok(!EVE_ACTIVITY_WRITER.test(stripComments("// sendTeamsActivity is what this wraps\n")), "§0 …nor is prose about one");
+
+  ok(BARE_FETCH.test(stripComments("const res = await fetch(url);")), "§0 the bare-fetch matcher DOES match a real direct call");
+  ok(BARE_FETCH.test(stripComments("const res = await  fetch  (url);")), "§0 …and is not fooled by whitespace before the paren");
+  ok(
+    BARE_FETCH.test(stripComments("const res = await fetch(`${serviceUrl}/v3/conversations/${id}/activities`, { method: \"POST\" });")),
+    "🔴 §0 …and it matches the shape §5 exists for: a raw Connector write to a serviceUrl, which names neither `callTeamsConnectorApi` nor an eve activity writer",
+  );
+  ok(!BARE_FETCH.test(stripComments("// const res = await fetch(url);\n")), "§0 …and a commented-out call is NOT an offender");
+  ok(!BARE_FETCH.test(stripComments("/** prose naming fetch(url) */\nconst x = 1;")), "§0 …nor is prose in a block comment");
+  ok(!BARE_FETCH.test(stripComments("const res = await deps.fetch(url, init);")), "§0 …nor is a call through an injected seam");
+  ok(!BARE_FETCH.test(stripComments("const r = await fetchRoster(token, target);")), "§0 …nor is a helper whose name merely starts with fetch");
+
+  ok(OWN_TRANSPORT.test(stripComments("const base = globalThis.fetch as TeamsFetchLike;")), "§0 the own-transport matcher DOES match a module reaching for the global");
+  ok(!OWN_TRANSPORT.test(stripComments("// globalThis.fetch is what this seam wraps\n")), "§0 …and prose about it is not a transport");
 }
 
 const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
@@ -136,6 +152,58 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
   ok(
     !EVE_ACTIVITY_WRITER.test(seamCode),
     "🔴 §4 the seam itself does the Connector fetch host-side and must not fall back to eve's activity writers — eve's client discards the response headers, so a `Retry-After` cannot be read through it at all",
+  );
+}
+
+{
+  const KNOWN_TRANSPORTS: ReadonlyArray<{ file: string; route: "bare" | "global"; why: string }> = [
+    {
+      file: SEAM_REL,
+      route: "global",
+      why: "the Connector write seam itself — it does the Connector fetch host-side because eve's client discards the response headers a 429 backoff has to read.",
+    },
+    {
+      file: "agent/channels/teams-read.ts",
+      route: "bare",
+      why: "Microsoft GRAPH: `mintTeamsGraphTokenOnce` (the client-credentials token) and `liveTeamsGraphRequest` (the Graph read). A different vendor API with a different rate-limit contract — nothing here claims a backoff for it.",
+    },
+    {
+      file: "agent/ops.ts",
+      route: "bare",
+      why: "Microsoft GRAPH: `mintGraphTokenFromEnv`, the ops CLI's own token mint. Same vendor and same posture as teams-read.ts.",
+    },
+  ];
+
+  const found: string[] = [];
+  for (const file of AGENT_FILES) {
+    const src = stripComments(readFileSync(file, "utf8"));
+    if (BARE_FETCH.test(src) || OWN_TRANSPORT.test(src)) found.push(relative(PKG_ROOT, file));
+  }
+  eq(
+    found.slice().sort(),
+    KNOWN_TRANSPORTS.map((t) => t.file).sort(),
+    "🔴 §5 the modules reaching the global fetch are EXACTLY the tracked inventory — a NEW one appearing (which is how a raw Connector write to a serviceUrl would arrive, naming neither `callTeamsConnectorApi` nor an eve activity writer), or a listed one vanishing (the inventory going stale), reds here",
+  );
+
+  for (const entry of KNOWN_TRANSPORTS) {
+    const src = stripComments(readFileSync(join(PKG_ROOT, entry.file), "utf8"));
+    const bare = BARE_FETCH.test(src);
+    const global = OWN_TRANSPORT.test(src);
+    if (entry.route === "bare") {
+      ok(bare, `§5 \`${entry.file}\` is tracked as a BARE-fetch transport and must still hold one — if the call moved behind a seam, drop the entry here`);
+      ok(!global, `§5 \`${entry.file}\` is tracked as a BARE-fetch transport and must not ALSO reach globalThis.fetch — a second route needs its own entry`);
+    } else {
+      ok(global, `§5 \`${entry.file}\` is tracked as a globalThis.fetch transport and must still hold one`);
+      ok(!bare, `§5 \`${entry.file}\` is tracked as a globalThis.fetch transport and must not ALSO call the global directly — the seam's whole point is one injectable transport`);
+    }
+  }
+
+  ok(!BARE_FETCH.test(stripComments("await deps.fetch(url);")) && !OWN_TRANSPORT.test(stripComments("await deps.fetch(url);")),
+    "🔴 §5 a call through an INJECTED fetch is seen by neither matcher — the inventory bounds new transports, not every HTTP call");
+  const trackedGraphSource = stripComments(readFileSync(join(PKG_ROOT, "agent/channels/teams-read.ts"), "utf8"));
+  ok(
+    CONNECTOR_WRITE_METHOD.test(trackedGraphSource),
+    "🔴 §5 a tracked Graph transport ALREADY carries a write-method literal (its token mint POSTs) — which is why §5 cannot scan the tracked modules for one",
   );
 }
 
