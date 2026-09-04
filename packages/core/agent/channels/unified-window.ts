@@ -331,3 +331,4 @@ export interface UnifiedWindowWake {
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
 }
+

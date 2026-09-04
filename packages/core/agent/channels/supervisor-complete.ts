@@ -62,7 +62,7 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
     return;
   }
 
-  const delivery = supervisorTextDelivery(true, spec.midTurnPost);
+  const delivery = supervisorTextDelivery(true , spec.midTurnPost);
   if (!delivery.postText) {
     spec.log(`supervisor message-tool-only: DROPPED terminal prose (${action.text.length}c) — reply must come from the reply tool`);
     await appendAudit({
