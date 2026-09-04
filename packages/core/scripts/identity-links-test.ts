@@ -1,6 +1,7 @@
 
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+process.env.OE_ORG = "default";
 
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
@@ -1059,6 +1060,15 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(payload.linkSets.length > 0, "admin tools: link_sets_list returns the org's sets");
   ok(payload.linkSets.some((s) => s.status === "revoked"), "admin tools: the list shows REVOKED sets too — it is the offboarding worklist, not a live-only view");
   ok(payload.linkSets.flatMap((s) => s.ids).some((i) => i.establishedBy.startsWith("challenge:")), "admin tools: each account names the challenge that established it");
+
+  const foreignList = await adminTools.find((t) => t.name === "link_sets_list")!.handler({ org: "other-tenant" });
+  ok(foreignList.isError === true, "🔴 admin tools: link_sets_list naming another org is REFUSED even for an org admin");
+  ok(
+    foreignList.content[0]!.text.includes("other-tenant") && !foreignList.content[0]!.text.includes("challenge:"),
+    "…and the refusal names the org it refused, disclosing no link-set content",
+  );
+  const foreignSuspend = await adminTools.find((t) => t.name === "suspend_link_set")!.handler({ org: "other-tenant", linkSetId: "whatever" });
+  ok(foreignSuspend.isError === true, "🔴 admin tools: the MUTATORS refuse a foreign org too — a cross-tenant suspend is worse than a cross-tenant read");
 
   const target = (await listLinkSetsWithIds(ORG)).find((r) => r.set.status === "active")!;
   const suspend = adminTools.find((t) => t.name === "suspend_link_set")!;

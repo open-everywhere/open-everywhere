@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
+import { deploymentOrg } from "../agent/identity/deployment-org.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -1043,6 +1044,29 @@ const store = makeOperationalPostgresStore(client);
     ok((await verifyAppendOnlyAudit(client)).length === 0, "tamper: owner-mode boot repairs after the runtime refusal");
     const integrity = await store.readAudit({ org: "default", action: "audit.integrity" });
     ok(integrity.some((r) => r.detail?.healed === false) && integrity.filter((r) => r.detail?.healed === true).length === 2, "tamper: refusal (healed:false) and both repairs (healed:true) are all audit rows");
+  }
+
+  {
+    const previousOrg = process.env.OE_ORG;
+    process.env.OE_ORG = "Acme Inc";
+    try {
+      const normalised = deploymentOrg();
+      ok(normalised === "Acme-Inc", "OE_ORG=\"Acme Inc\" is a value the two paths CAN disagree on (deploymentOrg cleans it)");
+
+      await pg.exec("DROP POLICY audit_insert ON audit_entry");
+      await initOperationalSchema(client);
+      ok((await verifyAppendOnlyAudit(client)).length === 0, "the owner-mode boot healed the posture again");
+
+      const stamped = await store.readAudit({ org: normalised, action: "audit.integrity" });
+      ok(stamped.length === 1 && stamped[0].detail?.healed === true, "🔴 the integrity row is readable at deploymentOrg() — the org every other row is stamped with");
+      const rawEnv = await store.readAudit({ org: "Acme Inc", action: "audit.integrity" });
+      ok(rawEnv.length === 0, "🔴 nothing landed under the RAW env value — no second spelling of one deployment's org");
+      const other = await store.readAudit({ org: "default", action: "audit.integrity" });
+      ok(other.length === 3, "negative control: the \"default\" partition is unchanged by a boot under another org");
+    } finally {
+      if (previousOrg === undefined) delete process.env.OE_ORG;
+      else process.env.OE_ORG = previousOrg;
+    }
   }
 
   async function integrityHealMentions(fragment: string): Promise<boolean> {

@@ -8,6 +8,7 @@ const dir = join(tmpdir(), `open-everywhere-control-memory-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_MEMORY_PROVIDER;
+process.env.OE_ORG = "acme";
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -74,6 +75,9 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
   const engRow = list.body.tiers.find((t: { silo: string }) => t.silo === "eng-silo");
   ok("memory_list: file listing has sizes + a total", engRow.files.some((f: { path: string; bytes: number }) => f.path === "MEMORY.md" && f.bytes > 0) && engRow.totalBytes > 0);
   ok("memory_list: covering domain is reported (eng-silo <- \"eng\")", JSON.stringify(engRow.domains) === JSON.stringify(["eng"]));
+
+  const foreignList = await client.callTool({ name: "memory_list", arguments: { org: "other-tenant" } });
+  ok("🔴 memory_list: naming another org is REFUSED — the row filter is not an org filter", foreignList.isError === true);
   const orgRow = list.body.tiers.find((t: { silo: string }) => t.silo === "org-brain");
   ok("memory_list: org-brain reports NO covering explicit domain (pseudo-domain only)", orgRow.domains.length === 0);
 
@@ -161,6 +165,22 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
   ok("memory_write_file: creates a new file", write.body.ok === true);
   const read = await callJson(client, "memory_read", { org, silo: "eng-silo", relPath: "notes.md" });
   ok("memory_write_file: the new content round-trips (modulo the human-edit marker)", read.body.content.endsWith("# Notes\n- new note\n"));
+
+  const foreignWrite = await client.callTool({
+    name: "memory_write_file",
+    arguments: { org: "other-tenant", silo: "eng-silo", relPath: "notes.md", content: "# owned\n" },
+  });
+  ok("🔴 memory_write_file: naming another org is REFUSED for an org admin", foreignWrite.isError === true);
+  const foreignDelete = await client.callTool({
+    name: "memory_delete_file",
+    arguments: { org: "other-tenant", silo: "eng-silo", relPath: "notes.md" },
+  });
+  ok("🔴 memory_delete_file: same refusal — a cross-tenant delete is the sharpest form of the gap", foreignDelete.isError === true);
+  const stillOurs = await callJson(client, "memory_read", { org, silo: "eng-silo", relPath: "notes.md" });
+  ok(
+    "…and OUR file is untouched by either refused call — the gate refuses before the partition is built",
+    stillOurs.body.content.endsWith("# Notes\n- new note\n"),
+  );
   ok("memory_write_file: stamps the human-edit marker (OPE-64)", isHumanEdited(read.body.content));
 
   const overwritten = await callJson(client, "memory_write_file", { org, silo: "eng-silo", relPath: "notes.md", content: "# Notes\n- replaced\n" });

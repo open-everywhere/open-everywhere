@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
-import { scopeDenial, siloScopeDenial } from "./auth.js";
+import { foreignOrgDenial, scopeDenial, siloScopeDenial } from "./auth.js";
 import { getConfig } from "../access/config.js";
 import { deploymentOrg } from "../identity/binding.js";
 
@@ -242,7 +242,12 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         "Every memory silo (memory/silo.ts) the caller's roles cover, enumerated from CONFIG (the domains registry, incl. the conventional \"org-brain\" silo) — not by scanning the store. Each row: silo name, the explicit domain(s) referencing it, provider/backing, read-only flag, and its files with sizes. Row-filtered by role, never an all-or-nothing denial: a domain:<name> role sees only silos an explicit domain of that name references; \"admin\" sees every silo. The org-brain (or any silo referenced only by the org/public/dm pseudo-domains, or by no domain at all) is admin-only. DM/personal and workspace-tier memory are never listed here (excluded entirely — fail-closed privacy). Read-only.",
       inputSchema: { org: z.string().min(1) },
     },
-    (args) => jsonTool(() => memoryListView(args.org, roles))(),
+    (args) =>
+      jsonTool(() => {
+        const denial = foreignOrgDenial(args.org);
+        if (denial) throw new Error(denial);
+        return memoryListView(args.org, roles);
+      })(),
   );
 
   server.registerTool(
@@ -269,7 +274,12 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         "The approvals decide-queue: every action still awaiting an admin decision for an org — the id (feed it to decide_pending_action), the proposed action kind + who may decide it (policy), a code-rendered human summary of the FROZEN args (never the raw arg blob), the target scope/domain, who requested it, and its age + expiry. Row-filtered by role like memory_list — a domain:<name> role sees only pendings in its own domain; \"admin\" sees all. Read-only (a row past its TTL shows expired:true, it isn't decided here).",
       inputSchema: { org: z.string().min(1) },
     },
-    (args) => jsonTool(() => pendingActionsView(args.org, roles))(),
+    (args) =>
+      jsonTool(() => {
+        const denial = foreignOrgDenial(args.org);
+        if (denial) throw new Error(denial);
+        return pendingActionsView(args.org, roles);
+      })(),
   );
 
   if (opts.includeWrites && opts.readOnly !== true) registerControlWriteTools(server, opts.actor ?? "unknown", roles);

@@ -2,6 +2,7 @@ import { controlPartition } from "../../agent/memory/partition.js";
 import { siloTier } from "../../agent/memory/store.js";
 import type { MemoryFiles } from "../../agent/memory/store.js";
 import { mulberry32, pick } from "./memory-eval-harness.js";
+import { deploymentOrg } from "../../agent/identity/deployment-org.js";
 
 export type SiloShape = "flat" | "repo-tree" | "nested";
 export type DescQuality = "clear" | "vague";
@@ -349,7 +350,7 @@ function parseSeedCli(argv: readonly string[]): SeedCli {
     plan: argv.includes("--plan") || argv.includes("--dry-run"),
     seed: Number.parseInt(get("--seed") ?? "1", 10),
     size: get("--size") ?? "small",
-    org: get("--org") ?? process.env.OE_ORG ?? "default",
+    org: get("--org") ?? deploymentOrg(),
     domain: get("--domain") ?? "e2e-memory",
   };
 }

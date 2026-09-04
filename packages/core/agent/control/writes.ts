@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
-import { scopeDenial } from "./auth.js";
+import { foreignOrgDenial, scopeDenial } from "./auth.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { assertSafeRelPath } from "./views.js";
 import { getConfig } from "../access/config.js";
@@ -279,9 +279,11 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     },
     async (a) => {
       try {
+        const foreign = foreignOrgDenial(a.org);
+        if (foreign) return errorResult(foreign);
         const row = await store().getPendingAction(a.org, a.id);
         if (!row) {
-          return errorResult(`decide_pending_action: no pending action "${a.id}" in org "${a.org}" (already decided and aged out, wrong org, or never existed).`);
+          return errorResult(`decide_pending_action: no pending action "${a.id}" in org "${a.org}" (already decided and aged out, or never existed).`);
         }
         const denial = isOrgAdminOnlySpendCap(row)
           ? roles.includes("admin")
@@ -341,7 +343,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: judgeOperatorScopeSchema,
     },
     async (a) => {
-      const denial = scopeDenial(roles, judgeOperatorScopeRequest(a)) ?? judgeOperatorOrgDenial(a);
+      const denial = judgeOperatorOrgDenial(a) ?? scopeDenial(roles, judgeOperatorScopeRequest(a));
       if (denial) return errorResult(denial);
       const address = judgeOperatorAddress(a);
       try {
@@ -363,7 +365,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: judgeOperatorScopeSchema,
     },
     async (a) => {
-      const denial = scopeDenial(roles, judgeOperatorScopeRequest(a)) ?? judgeOperatorOrgDenial(a);
+      const denial = judgeOperatorOrgDenial(a) ?? scopeDenial(roles, judgeOperatorScopeRequest(a));
       if (denial) return errorResult(denial);
       const address = judgeOperatorAddress(a);
       try {
@@ -478,8 +480,9 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     },
   );
 
-  const requireOrgAdminForLinks = (verb: string): string | null =>
-    roles.includes("admin") ? null : `forbidden: ${verb} requires the org-wide "admin" role — a link-set spans every surface, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`;
+  const requireOrgAdminForLinks = (verb: string, org: string): string | null =>
+    foreignOrgDenial(org) ??
+    (roles.includes("admin") ? null : `forbidden: ${verb} requires the org-wide "admin" role — a link-set spans every surface, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`);
 
   server.registerTool(
     "link_sets_list",
@@ -490,7 +493,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("link_sets_list");
+      const denial = requireOrgAdminForLinks("link_sets_list", a.org);
       if (denial) return errorResult(denial);
       try {
         const rows = await listLinkSetsWithIds(a.org);
@@ -521,7 +524,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("suspend_link_set");
+      const denial = requireOrgAdminForLinks("suspend_link_set", a.org);
       if (denial) return errorResult(denial);
       try {
         const res = await setLinkSetHold({ org: a.org, linkSetId: a.linkSetId, hold: "suspended", actor });
@@ -543,7 +546,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("reactivate_link_set");
+      const denial = requireOrgAdminForLinks("reactivate_link_set", a.org);
       if (denial) return errorResult(denial);
       try {
         const res = await setLinkSetHold({ org: a.org, linkSetId: a.linkSetId, hold: "active", actor });
@@ -565,7 +568,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("revoke_link_set");
+      const denial = requireOrgAdminForLinks("revoke_link_set", a.org);
       if (denial) return errorResult(denial);
       try {
         const res = await revokeLinkSet({ org: a.org, linkSetId: a.linkSetId, actor });
@@ -587,7 +590,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("purge_link_set_credentials");
+      const denial = requireOrgAdminForLinks("purge_link_set_credentials", a.org);
       if (denial) return errorResult(denial);
       try {
         const res = await purgeLinkSetCredentials({ org: a.org, linkSetId: a.linkSetId, actor });
@@ -609,7 +612,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("directory_sync_now");
+      const denial = requireOrgAdminForLinks("directory_sync_now", a.org);
       if (denial) return errorResult(denial);
       try {
         const res = await syncDirectoryOrg({ org: a.org });
@@ -657,7 +660,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("directory_sync_status");
+      const denial = requireOrgAdminForLinks("directory_sync_status", a.org);
       if (denial) return errorResult(denial);
       try {
         const provider = directoryProvider();
@@ -688,7 +691,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), deliver: z.boolean().optional() },
     },
     async (a) => {
-      const denial = requireOrgAdminForLinks("directory_groups_plan");
+      const denial = requireOrgAdminForLinks("directory_groups_plan", a.org);
       if (denial) return errorResult(denial);
       try {
         const provider = directoryProvider();
@@ -768,10 +771,11 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     },
   );
 
-  const requireAdmin = (): string | null =>
-    roles.includes("admin")
+  const requireAdmin = (org: string): string | null =>
+    foreignOrgDenial(org) ??
+    (roles.includes("admin")
       ? null
-      : `forbidden: memory writes require the org-wide "admin" role (v1 — domain roles get memory_list/memory_read only; have: ${roles.length ? roles.join(", ") : "none"}).`;
+      : `forbidden: memory writes require the org-wide "admin" role (v1 — domain roles get memory_list/memory_read only; have: ${roles.length ? roles.join(", ") : "none"}).`);
 
   server.registerTool(
     "memory_write_file",
@@ -782,7 +786,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1), content: z.string() },
     },
     async (a) => {
-      const denial = requireAdmin();
+      const denial = requireAdmin(a.org);
       if (denial) return errorResult(denial);
       try {
         assertSafeRelPath(a.relPath);
@@ -815,7 +819,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1) },
     },
     async (a) => {
-      const denial = requireAdmin();
+      const denial = requireAdmin(a.org);
       if (denial) return errorResult(denial);
       try {
         assertSafeRelPath(a.relPath);

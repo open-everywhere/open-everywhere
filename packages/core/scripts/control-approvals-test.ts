@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -7,6 +8,7 @@ import "./_register-test-config.js";
 const dir = join(tmpdir(), `open-everywhere-control-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+process.env.OE_ORG = "default";
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -43,11 +45,12 @@ const future = new Date(Date.now() + 3_600_000).toISOString();
 const seed = async (id: string, over: Partial<PendingActionRow> & { tokens?: number; level?: string } = {}): Promise<void> => {
   const { tokens = 2222, level = "surface", ...rowOver } = over;
   const scopeKey = rowOver.scopeKey ?? "slack/T1/C7";
+  const org = rowOver.org ?? "default";
   const row: PendingActionRow = {
     id,
-    org: "default",
+    org,
     kind: "spend.set",
-    argsJson: JSON.stringify({ org: "default", scopeKey, level, monthlyTokens: tokens, currentCap: null }),
+    argsJson: JSON.stringify({ org, scopeKey, level, monthlyTokens: tokens, currentCap: null }),
     scopeKey,
     domain: rowOver.domain ?? "eng",
     requestedBy: "U9",
@@ -79,6 +82,9 @@ await client.connect(clientT);
   ok("list carries a code-rendered summary, requestedBy, age, kind, policy", Array.isArray(p.summary) && p.summary.length > 0 && p.requestedBy === "U9" && typeof p.ageSeconds === "number" && p.kind === "spend.set" && p.policy === "admin");
   ok("REDACTION: list never leaks the raw frozen args blob", list.pending.every((x: Record<string, unknown>) => x.argsJson === undefined && x.args === undefined));
   ok("summary is the human card text, not the raw args", p.summary.some((line: string) => /spend limit/i.test(line)));
+
+  const foreign = await client.callTool({ name: "pending_actions_list", arguments: { org: "other-tenant" } });
+  ok("🔴 pending_actions_list naming another org is REFUSED — an approvals queue is that tenant's live decisions", foreign.isError === true);
 }
 
 {
@@ -176,6 +182,23 @@ await client.connect(clientT);
 
   const orgOk = await callJson(client, "decide_pending_action", { org: "default", id: "pa-usercap", decision: "deny" });
   ok("an org admin CAN decide a per-user spend cap", orgOk.ok === true && orgOk.outcome === "decided");
+}
+
+{
+  await seed("pa-foreign-usercap", { org: "other-tenant", scopeKey: "user:slack/T9/U_OTHER", domain: "eng", level: "user", tokens: 9999 });
+  await seed("pa-own-usercap", { scopeKey: "user:slack/T1/U_ENG_MEMBER2", domain: "eng", level: "user", tokens: 8888 });
+
+  const foreign = await client.callTool({ name: "decide_pending_action", arguments: { org: "other-tenant", id: "pa-foreign-usercap", decision: "approve" } });
+  ok("🔴 an org admin approving ANOTHER tenant's pending spend cap is REFUSED", foreign.isError === true);
+  const foreignText = (foreign.content as { type: string; text: string }[])[0].text;
+  ok("the refusal is the ORG denial, not a role denial — it names both orgs", /is not this deployment's org/.test(foreignText) && foreignText.includes("other-tenant"));
+
+  const untouched = await store.getPendingAction("other-tenant", "pa-foreign-usercap");
+  ok("the foreign tenant's row is untouched: still pending, no decider, no decide time", untouched?.status === "pending" && untouched?.decidedBy === null && untouched?.decidedAt === null);
+  ok("the refused decide wrote NOTHING into the foreign tenant's audit partition", (await readAudit({ org: "other-tenant" })).length === 0);
+
+  const own = await callJson(client, "decide_pending_action", { org: "default", id: "pa-own-usercap", decision: "deny" });
+  ok("positive control: the SAME admin still decides this deployment's own per-user cap", own.ok === true && own.outcome === "decided" && own.decision === "rejected");
 }
 
 {

@@ -104,6 +104,7 @@ function runEntry(env: Record<string, string>): Promise<EntryResult> {
 }
 
 process.env.OE_SQLITE_PATH = join(workDir, "standin.sqlite3");
+process.env.OE_ORG = "default";
 delete process.env.OE_OPERATIONAL_PROVIDER;
 delete process.env.DATABASE_URL;
 delete process.env.OE_PGLITE_DIR;

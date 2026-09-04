@@ -16,6 +16,8 @@ import {
   SERVICE_TOKEN_ISSUER,
   roleCoversScope,
   scopeDenial,
+  siloScopeDenial,
+  foreignOrgDenial,
   type RoleRule,
 } from "../agent/control/auth.js";
 import { createAdminHttpServer } from "../agent/control/http.js";
@@ -167,6 +169,7 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
+  process.env.OE_ORG = "default";
   ok("scopeDenial: admin -> null (covered)", scopeDenial(["admin"], { org: "default", surfaceKey: "slack/T1/C_TXN" }) === null);
   ok(
     "scopeDenial: covering domain role -> null (covered)",
@@ -174,6 +177,36 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
   );
   const denial = scopeDenial(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_OTHER" });
   ok("scopeDenial: non-covering domain role -> a denial message naming the scope", typeof denial === "string" && /C_OTHER/.test(denial));
+
+  const foreignAdmin = scopeDenial(["admin"], { org: "other-tenant", surfaceKey: "slack/T1/C_TXN" });
+  ok(
+    "🔴 scopeDenial: ADMIN naming a foreign org -> DENIED (the role no longer short-circuits past the org)",
+    typeof foreignAdmin === "string" && /other-tenant/.test(foreignAdmin) && /default/.test(foreignAdmin),
+  );
+  ok(
+    "🔴 scopeDenial: a foreign org is denied for an UNSCOPED ask too — the org-wide reads (usage_window, overrides_list) are the sharp case",
+    typeof scopeDenial(["admin"], { org: "other-tenant" }) === "string",
+  );
+  ok(
+    "scopeDenial: a covering domain role does not carry across the org line either",
+    typeof scopeDenial(["domain:txn"], { org: "other-tenant", surfaceKey: "slack/T1/C_TXN" }) === "string",
+  );
+  ok(
+    "🔴 POSITIVE CONTROL: the same admin, the same scope, THIS deployment's org -> null (the gate refuses the org, not every call)",
+    scopeDenial(["admin"], { org: "default", surfaceKey: "slack/T1/C_TXN" }) === null,
+  );
+
+  ok(
+    "🔴 siloScopeDenial: ADMIN naming a foreign org -> DENIED",
+    typeof siloScopeDenial(["admin"], "other-tenant", "txn-brain", domains) === "string",
+  );
+  ok(
+    "🔴 POSITIVE CONTROL: the same admin on THIS deployment's org -> null",
+    siloScopeDenial(["admin"], "default", "txn-brain", domains) === null,
+  );
+
+  ok("foreignOrgDenial: this deployment's own org -> null", foreignOrgDenial("default") === null);
+  ok("foreignOrgDenial: any other org -> a message naming both", (foreignOrgDenial("other-tenant") ?? "").includes('"default"'));
 }
 
 {

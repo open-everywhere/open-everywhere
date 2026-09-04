@@ -1,4 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-surface-trust-")), "ops.sqlite3");
+process.env.OE_ORG = "acme";
+
 import {
   surfaceTrustPreflightChecks,
   surfaceTrafficFromAudit,
@@ -177,6 +184,46 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
     "🔴 FAIL-SOFT: an unreachable store is INFO, never `missing` — a red there would be a complaint about the OPERATOR's shell wearing the costume of a complaint about the DEPLOYMENT's config, and it would hold `ready` down forever",
   );
   ok(soft[0].detail.includes("no DATABASE_URL"), "…and it says what actually failed");
+  _resetPreflightProbesForTest();
+}
+
+{
+  const { appendAudit } = await import("../agent/audit/audit.js");
+  const recent = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  await appendAudit({ ts: recent, org: "acme", platform: "slack", workspace: "T_MINE", surface: "C_MINE", action: "slack.replied" });
+  await appendAudit({
+    ts: recent,
+    org: "other-tenant",
+    platform: "discord",
+    workspace: "G_THEIRS",
+    surface: "C_THEIRS",
+    action: "discord.replied",
+  });
+
+  _resetPreflightProbesForTest();
+  registerSurfaceTrustPreflight({
+    entries: () => [defineSurface({ key: "github/acme/unrelated", trust: "internal" })],
+  });
+  const checks = await runPreflightProbes({});
+  const red = find(checks, "undeclared surfaces");
+  eq(red?.status, "missing", "the probe read the real store and found undeclared traffic");
+  ok(
+    red?.detail.includes("slack/T_MINE/C_MINE") === true,
+    "🔴 POSITIVE CONTROL: THIS deployment's own undeclared surface IS named — the filter narrows the page, it does not empty it",
+  );
+  ok(
+    red?.detail.includes("discord/G_THEIRS/C_THEIRS") === false,
+    "🔴 DEFECT: the OTHER tenant's surface is NOT named — an unfiltered page reported another org's channels to this org's operator",
+  );
+
+  _resetPreflightProbesForTest();
+  registerSurfaceTrustPreflight({ entries: () => [defineSurface({ key: "slack/T_MINE", trust: "internal" })] });
+  const covered = await runPreflightProbes({});
+  eq(
+    find(covered, "undeclared surfaces")?.status,
+    "ok",
+    "…and with this org's own surface declared the check is `ok` — the foreign row raises no red from behind the filter either",
+  );
   _resetPreflightProbesForTest();
 }
 

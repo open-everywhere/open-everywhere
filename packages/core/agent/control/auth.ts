@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 export interface AdminIdentity {
   readonly issuer: string;
@@ -65,10 +66,18 @@ export function roleCoversScope(roles: readonly string[], scope: ScopeRequest, d
 }
 
 export function scopeDenial(roles: readonly string[], scope: ScopeRequest): string | null {
+  const foreign = foreignOrgDenial(scope.org);
+  if (foreign) return foreign;
   if (roles.includes("admin")) return null;
   if (roleCoversScope(roles, scope, getConfig().loadDomains())) return null;
   const label = scope.surfaceKey ?? scope.domain ?? `org "${scope.org}" (org-wide)`;
   return `forbidden: no role covers ${label} (have: ${roles.length ? roles.join(", ") : "none"}; need "admin" or a covering "domain:<name>").`;
+}
+
+export function foreignOrgDenial(org: string): string | null {
+  const mine = deploymentOrg();
+  if (org === mine) return null;
+  return `forbidden: org "${org}" is not this deployment's org ("${mine}"). The control plane answers about one org — no role covers another.`;
 }
 
 export function siloCoveringDomains(siloName: string, domains: readonly Domain[]): string[] {
@@ -76,6 +85,8 @@ export function siloCoveringDomains(siloName: string, domains: readonly Domain[]
 }
 
 export function siloScopeDenial(roles: readonly string[], org: string, siloName: string, domains: readonly Domain[]): string | null {
+  const foreign = foreignOrgDenial(org);
+  if (foreign) return foreign;
   if (roles.includes("admin")) return null;
   const covering = siloCoveringDomains(siloName, domains);
   const domainRoles = new Set(roles.filter((r) => r.startsWith("domain:")).map((r) => r.slice("domain:".length)));

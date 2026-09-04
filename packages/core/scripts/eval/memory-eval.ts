@@ -17,6 +17,7 @@ import {
   type Injection, type InjectBody, type HarnessMsg,
 } from "./memory-eval-harness.js";
 import { buildTopology, type Topology, type PlantedFact } from "./seed-silo.js";
+import { deploymentOrg } from "../../agent/identity/deployment-org.js";
 
 export const DOMAIN_REASONING_CEILING: ModelReasoning = "high";
 
@@ -528,7 +529,7 @@ function parseCli(argv: readonly string[]): Cli {
     size: get("--size") ?? "small",
     seed: Number.parseInt(get("--seed") ?? "1", 10),
     domain: get("--domain") ?? process.env.E2E_MEMORY_DOMAIN ?? "e2e-memory",
-    org: get("--org") ?? process.env.OE_ORG ?? "default",
+    org: get("--org") ?? deploymentOrg(),
     plan: argv.includes("--plan") || argv.includes("--dry-run"),
     restore: !argv.includes("--no-restore"),
     only: get("--only"),

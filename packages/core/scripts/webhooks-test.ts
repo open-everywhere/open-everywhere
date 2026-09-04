@@ -466,6 +466,16 @@ function captureReceive(): { calls: Captured[]; to: never } {
 
 ok(webhookOrg() === "acme", "webhookOrg reads OE_ORG (the same tenant default bindFrom uses)");
 
+{
+  const { deploymentOrg } = await import("../agent/identity/binding.js");
+  const prior = process.env.OE_ORG;
+  process.env.OE_ORG = "Acme Inc";
+  ok(deploymentOrg() === "Acme-Inc", "deploymentOrg NORMALISES a value with a space (seg())");
+  ok(webhookOrg() === deploymentOrg(), "🔴 webhookOrg agrees with deploymentOrg on a value that needs normalising — it used to return the raw \"Acme Inc\"");
+  process.env.OE_ORG = prior;
+  ok(webhookOrg() === "acme", "…and the fixture's org is restored for the rest of the suite");
+}
+
 const now = new Date("2026-07-02T12:00:00.000Z");
 const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
 await opStore.setSpendLimit("acme", "slack/T1/C1", "surface", { monthlyTokens: 100 });

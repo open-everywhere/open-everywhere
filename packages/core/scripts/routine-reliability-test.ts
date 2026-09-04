@@ -274,6 +274,18 @@ const okReceive = (() => ({ send: async () => undefined })) as never;
   const crossOrg = await call(["domain:payments"], { org: OTHER_ORG });
   ok(crossOrg.isError, "tool: naming another org does not widen anything");
 
+  const adminCrossOrg = await call(["admin"], { org: OTHER_ORG });
+  ok(adminCrossOrg.isError, "🔴 tool/DEFECT: an ADMIN naming another org is DENIED — `admin` short-circuited the scope check before it read `org`");
+  ok(
+    !adminCrossOrg.text.includes("TENANT SECRET"),
+    "…and the other tenant's routine PROMPT is absent from the refusal — the whole exposure was that prompts crossed the tenant line",
+  );
+  ok(adminCrossOrg.text.includes(OTHER_ORG) && adminCrossOrg.text.includes(ORG), "…and the refusal names both orgs, so the operator sees which partition they asked for");
+
+  const adminOwnOrg = await call(["admin"], { org: ORG });
+  ok(!adminOwnOrg.isError, "🔴 POSITIVE CONTROL: the same admin naming THIS deployment's org is answered (no capability lost)");
+  ok(JSON.parse(adminOwnOrg.text).routines.length === 2, "…with this org's own rows, all of them");
+
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-mine");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: "slack/T_REL/C_OTHER" } as never, "r-mine-2");
   await routineStore.removeRoutine({ org: OTHER_ORG, surfaceKey: "slack/T_THEM/C_THEM" } as never, "r-theirs");

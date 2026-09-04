@@ -8,6 +8,7 @@ import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_GRANT_PREFIX } from "../approvals/ses
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
+import { deploymentOrg } from "../identity/deployment-org.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
 
 export type { PgClient } from "../memory/postgres.js";
@@ -949,7 +950,7 @@ async function recordAuditIntegrity(
   if (heal && (heal.droppedPolicies.length || heal.droppedTriggers.length || heal.revokedGrants.length)) {
     detail.healed_artifacts = heal;
   }
-  const org = process.env.OE_ORG?.trim() || "default";
+  const org = deploymentOrg();
   const ts = new Date().toISOString();
   try {
     let prevSha: string | null = null;

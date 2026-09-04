@@ -7,6 +7,7 @@ import { join } from "node:path";
 const dir = join(tmpdir(), `open-everywhere-domain-model-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+process.env.OE_ORG = "acme";
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");

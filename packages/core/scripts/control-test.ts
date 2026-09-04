@@ -50,6 +50,7 @@ for (const c of access.connections) {
 }
 
 const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
+process.env.OE_ORG = CTL_ORG;
 {
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");

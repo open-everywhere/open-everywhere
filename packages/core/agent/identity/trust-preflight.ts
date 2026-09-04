@@ -148,8 +148,9 @@ export function registerSurfaceTrustPreflight(deps: SurfaceTrustProbeDeps = {}):
       deps.auditRows ??
       (async () => {
         const { readAudit } = await import("../audit/audit.js");
+        const { deploymentOrg } = await import("./binding.js");
         const since = new Date(now.getTime() - 90 * DAY_MS).toISOString();
-        return (await readAudit({ since, limit: 5000 })) as readonly SurfaceAuditRow[];
+        return (await readAudit({ org: deploymentOrg(), since, limit: 5000 })) as readonly SurfaceAuditRow[];
       });
     let traffic: readonly SurfaceTraffic[];
     try {

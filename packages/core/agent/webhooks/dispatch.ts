@@ -12,9 +12,10 @@ import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../rou
 import { mintWakeId } from "../channels/unified-window.js";
 import { normalizeDelivery } from "../routines/event-model.js";
 import { configHookDisclosure, configHookPosture, type FusedWebhookHook, type WebhookHook } from "./config.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 export function webhookOrg(): string {
-  return process.env.OE_ORG?.trim() || "default";
+  return deploymentOrg();
 }
 
 function renderPayloadBlock(hook: WebhookHook, rawBody: string, headers: Readonly<Record<string, string>>): string {

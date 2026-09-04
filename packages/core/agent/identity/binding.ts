@@ -1,6 +1,7 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
+import { seg, deploymentOrg } from "./deployment-org.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust } from "./trust.js";
 
@@ -52,8 +53,6 @@ export interface BindableContext {
   readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
 }
 
-const SAFE = /[^a-zA-Z0-9._-]+/g;
-
 function trustGroupKey(
   platform: string,
   workspace: string,
@@ -63,19 +62,11 @@ function trustGroupKey(
   return { groupKey: `${platform}/${workspace}/${group}` };
 }
 
-
-function seg(value: string | undefined, fallback: string): string {
-  const cleaned = (value ?? "").trim().replace(SAFE, "-").replace(/^[-.]+|[-.]+$/g, "");
-  return cleaned.length > 0 ? cleaned.slice(0, 100) : fallback;
-}
-
 export function surfaceKeySegment(value: string | undefined): string {
   return seg(value, "");
 }
 
-export function deploymentOrg(): string {
-  return seg(process.env.OE_ORG, "default");
-}
+export { deploymentOrg } from "./deployment-org.js";
 
 function authOf(ctx: BindableContext): AuthPrincipal | null {
   return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
