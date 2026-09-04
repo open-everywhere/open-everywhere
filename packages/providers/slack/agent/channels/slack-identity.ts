@@ -48,6 +48,7 @@ export interface ChannelFacts {
   readonly isPrivate?: boolean;
   readonly isExternal?: boolean;
   readonly trustChecked?: boolean;
+  readonly appInChannel?: boolean;
   readonly dmPartnerTrust?: "internal" | "external";
 }
 
@@ -78,7 +79,14 @@ export function channelFactsFromInfo(info: unknown): ChannelFacts {
   else if (ch["is_mpim"]) channelType = "mpim";
   else if (ch["is_group"] || ch["is_private"]) channelType = "group";
   else if (ch["is_channel"]) channelType = "channel";
-  return { channelType, isPrivate, isExternal, trustChecked: true };
+  const appInChannel = typeof ch["is_member"] === "boolean" ? (ch["is_member"] as boolean) : undefined;
+  return { channelType, isPrivate, isExternal, trustChecked: true, ...(appInChannel === undefined ? {} : { appInChannel }) };
+}
+
+export function appCanReadConversation(facts: ChannelFacts): boolean {
+  if (facts.trustChecked !== true) return false;
+  if (facts.channelType === "im" || facts.channelType === "mpim") return true;
+  return facts.appInChannel === true;
 }
 
 type Trust = NonNullable<RawIdentity["trust"]>;

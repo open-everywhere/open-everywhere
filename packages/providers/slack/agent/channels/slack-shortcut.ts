@@ -5,7 +5,6 @@ import {
   type WakeAttachment,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseSlackFiles, type ParsedMessageEvent } from "./slack-events.js";
-import { registerSlackAttachment } from "./slack-attachments.js";
 
 export interface ParsedSlackShortcut {
   readonly kind: "message" | "global";
@@ -51,9 +50,6 @@ export function parseSlackShortcutPayload(raw: unknown): ParsedSlackShortcut | n
   const threadTs = str(message.thread_ts);
   const authorId = str(message.user);
   const attachments = parseSlackFiles(message.files);
-  for (const a of attachments) {
-    if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId });
-  }
   return {
     kind: "message",
     callbackId,
@@ -95,7 +91,9 @@ export function shortcutMessageEvent(
   channelId: string,
   channelType?: string,
   nowMs: number = Date.now(),
+  opts: { readonly admitAttachments?: boolean } = {},
 ): ParsedMessageEvent {
+  const attachments = opts.admitAttachments === true ? sc.message?.attachments : undefined;
   const text = sc.kind === "message" && sc.message ? fenceAndDeclareShortcutIngestion(sc.message.text) : globalShortcutText(sc);
   return {
     channelId,
@@ -105,7 +103,7 @@ export function shortcutMessageEvent(
     userId: sc.userId,
     ...(channelType ? { channelType } : {}),
     text,
-    ...(sc.message?.attachments && sc.message.attachments.length > 0 ? { attachments: sc.message.attachments } : {}),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
     authoredText: sc.kind === "global" ? text : "",
     isAppMention: false,
   };

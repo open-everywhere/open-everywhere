@@ -80,7 +80,15 @@ import {
   type WakeEngagementTier,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { slackMode, buildSlackAuth, channelFactsFromInfo, partnerFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import {
+  slackMode,
+  buildSlackAuth,
+  channelFactsFromInfo,
+  partnerFactsFromInfo,
+  appCanReadConversation,
+  type ChannelFacts,
+  type OpenEverywhereSlackAuth,
+} from "./slack-identity.js";
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
@@ -1116,21 +1124,22 @@ export function _resetBotDisplayName(): void {
   botDisplayNamePromise = undefined;
 }
 
-const channelTrustCache = new Map<string, { internal: boolean; meta?: ChannelJoinMeta; at: number }>();
+const channelTrustCache = new Map<string, { internal: boolean; meta?: ChannelJoinMeta; canRead: boolean; at: number }>();
 
-async function channelInternalAndMeta(channelId: string): Promise<{ internal: boolean; meta?: ChannelJoinMeta }> {
+async function channelInternalAndMeta(channelId: string): Promise<{ internal: boolean; meta?: ChannelJoinMeta; canRead: boolean }> {
   const hit = channelTrustCache.get(channelId);
-  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return { internal: hit.internal, meta: hit.meta };
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return { internal: hit.internal, meta: hit.meta, canRead: hit.canRead };
   try {
     const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}&include_num_members=true`);
-    if (!info) return { internal: false };
+    if (!info) return { internal: false, canRead: false };
     const facts = channelFactsFromInfo(info);
     const internal = facts.trustChecked === true && facts.isExternal === false;
+    const canRead = appCanReadConversation(facts);
     const meta = channelJoinMetaFromInfo(channelId, info);
-    channelTrustCache.set(channelId, { internal, meta, at: Date.now() });
-    return { internal, meta };
+    channelTrustCache.set(channelId, { internal, meta, canRead, at: Date.now() });
+    return { internal, meta, canRead };
   } catch {
-    return { internal: false };
+    return { internal: false, canRead: false };
   }
 }
 
@@ -1398,9 +1407,9 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   return singleWindowMentionPolicy(true, true, privacyOk);
 }
 
-export async function slackChannelFactsFor(channelId: string): Promise<{ internal: boolean; channelType?: string }> {
-  const { internal, meta } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined }));
-  return { internal, ...(meta?.channelType ? { channelType: meta.channelType } : {}) };
+export async function slackChannelFactsFor(channelId: string): Promise<{ internal: boolean; channelType?: string; appCanRead: boolean }> {
+  const { internal, meta, canRead } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined, canRead: false }));
+  return { internal, ...(meta?.channelType ? { channelType: meta.channelType } : {}), appCanRead: canRead };
 }
 
 export function slackDomainUsesUnifiedWindow(surfaceKey: string): boolean {

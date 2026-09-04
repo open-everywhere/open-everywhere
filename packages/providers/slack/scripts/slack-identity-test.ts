@@ -15,6 +15,7 @@ import {
   channelFactsFromInfo,
   channelFactsFromRaw,
   partnerFactsFromInfo,
+  appCanReadConversation,
 } from "../agent/channels/slack-identity.js";
 
 let passed = 0;
@@ -135,6 +136,23 @@ ok(channelFactsFromInfo({ channel: { is_channel: true, is_org_shared: true } }).
 ok(channelFactsFromInfo({ channel: { is_channel: true } }).isExternal === false, "factsFromInfo: no shared flags -> isExternal false");
 ok(channelFactsFromInfo({ channel: { is_channel: true } }).trustChecked === true, "factsFromInfo: successful fetch -> trustChecked true");
 ok(channelFactsFromInfo(null).trustChecked === undefined, "factsFromInfo: empty info -> trustChecked undefined (fetch failed)");
+
+ok(channelFactsFromInfo({ channel: { is_channel: true, is_member: true } }).appInChannel === true, "factsFromInfo: is_member true -> appInChannel true");
+ok(channelFactsFromInfo({ channel: { is_channel: true, is_member: false } }).appInChannel === false, "factsFromInfo: 🔴 is_member false -> appInChannel false (a public channel the app never joined)");
+ok(channelFactsFromInfo({ channel: { is_channel: true, is_member: false } }).trustChecked === true, "factsFromInfo: 🔴 …on a lookup that SUCCEEDED — trustChecked alone would have admitted it");
+ok(channelFactsFromInfo({ channel: { is_im: true } }).appInChannel === undefined, "factsFromInfo: a DM carries no is_member -> appInChannel undefined (never invented as false)");
+ok(channelFactsFromInfo({ channel: { is_channel: true, is_member: "yes" } }).appInChannel === undefined, "factsFromInfo: a non-boolean is_member is not read -- Slack's raw JSON is probed, never assumed");
+
+const canRead = (info: unknown) => appCanReadConversation(channelFactsFromInfo(info));
+ok(canRead({ channel: { is_channel: true, is_member: true } }) === true, "canRead: a channel the app IS in -> yes");
+ok(canRead({ channel: { is_channel: true, is_member: false } }) === false, "canRead: 🔴 a channel the app is NOT in -> NO, on a lookup that succeeded");
+ok(canRead({ channel: { is_channel: true } }) === false, "canRead: 🔴 a channel whose response omits is_member -> NO (fail closed, never inferred)");
+ok(canRead({ channel: { is_group: true, is_private: true, is_member: false } }) === false, "canRead: a private group the app is not in -> no");
+ok(canRead({ channel: { is_im: true } }) === true, "canRead: a DM -> yes; Slack answers conversations.info for a DM only to an app that is in it");
+ok(canRead({ channel: { is_mpim: true } }) === true, "canRead: a group DM -> yes, for the same reason");
+ok(canRead(null) === false, "canRead: 🔴 a FAILED lookup -> NO — channel_not_found is how an unreadable private room answers");
+ok(appCanReadConversation({}) === false, "canRead: 🔴 no facts at all -> NO — negative control on the fail-closed default");
+ok(appCanReadConversation({ channelType: "channel", appInChannel: true }) === false, "canRead: 🔴 membership WITHOUT a confirmed probe -> NO — trustChecked is required, not optional");
 
 const trExt = bindFrom(slackCtx({ team_id: "T", channel_id: "CEXT", channel_type: "channel", is_ext_shared: "true", trust_checked: "true" }));
 ok(trExt.trust === "external", "bindFrom: slack ext-shared channel binds external");

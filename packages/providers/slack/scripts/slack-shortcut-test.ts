@@ -6,7 +6,7 @@ import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
 import { supervisorFifoKey } from "../agent/channels/slack-events.js";
 import { parseSlackShortcutPayload, shortcutMessageEvent, shortcutWakeKey, globalShortcutText } from "../agent/channels/slack-shortcut.js";
-import { resolveSlackAttachment } from "../agent/channels/slack-attachments.js";
+import { resolveSlackAttachment, _resetSlackAttachmentsForTest } from "../agent/channels/slack-attachments.js";
 import { UNTRUSTED_OPEN, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
@@ -32,6 +32,8 @@ const MSG_TS = "1769912729.916000";
 const TRIGGER = "13345224609.738474920.8088930838d88f008e0";
 const DM_SURFACE = `slack/${TEAM}/${DM_CHANNEL}`;
 const SEAT_TOKEN = `oe-dom:oe-dm/${DM_SURFACE}:oe-sup:g3-abc123`;
+const UNREADABLE_CHANNEL = "C_NOT_A_MEMBER";
+const FILE = { id: "F1", name: "receipt.png", mimetype: "image/png", url_private: "https://files.slack.test/F1" };
 
 function messageShortcut(over: Record<string, unknown> = {}, msgOver: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -157,14 +159,19 @@ function mkReq(body: string, contentType = FORM): Request {
   eq(shortcutMessageEvent(parseSlackShortcutPayload(messageShortcut({}, { thread_ts: "1769912660.000100" }))!, DM_CHANNEL, "im").threadTs, "1769912660.000100", "map: a threaded target keeps its thread root, so the reply lands in that thread");
   eq(ev.attachments, undefined, "map: a message with no files carries no attachments (never an empty array)");
 
-  const withFile = shortcutMessageEvent(
-    parseSlackShortcutPayload(messageShortcut({}, { files: [{ id: "F1", name: "receipt.png", mimetype: "image/png", url_private: "https://files.slack.test/F1" }] }))!,
-    DM_CHANNEL,
-    "im",
-  );
+  const withFileSc = parseSlackShortcutPayload(messageShortcut({}, { files: [FILE] }))!;
+  const withFile = shortcutMessageEvent(withFileSc, DM_CHANNEL, "im", NOW_MS, { admitAttachments: true });
   eq(withFile.attachments?.length, 1, "map: 🔴 the target message's FILES ride through, parsed by the same parseSlackFiles the Events API path uses");
   eq(withFile.attachments?.[0]?.id, "F1", "map: …and it is that file");
-  eq(resolveSlackAttachment("F1")?.urlPrivate, "https://files.slack.test/F1", "map: 🔴 …and the shortcut REGISTERED it, so describe_image can actually resolve the id the wake advertises");
+  eq(shortcutMessageEvent(withFileSc, DM_CHANNEL, "im", NOW_MS).attachments, undefined, "map: 🔴 …and it defaults to WITHHELD — a caller that has not established the app can read the room carries no files");
+  eq(
+    shortcutMessageEvent(withFileSc, DM_CHANNEL, "im", NOW_MS, { admitAttachments: false }).attachments,
+    undefined,
+    "map: 🔴 …an explicit refusal drops the REFERENCE too, never an id describe_image would fail closed on",
+  );
+  _resetSlackAttachmentsForTest();
+  parseSlackShortcutPayload(messageShortcut({}, { files: [FILE] }));
+  eq(resolveSlackAttachment("F1"), undefined, "map: 🔴 parsing a shortcut REGISTERS NOTHING — the registry is seeded by the front door, after the gates, never at classification time");
   eq(resolveSlackAttachment("F_NEVER_SEEN"), undefined, "map: negative control — the registry does not answer for a file no shortcut ever carried");
 
   const g = parseSlackShortcutPayload(globalShortcut())!;
@@ -217,7 +224,7 @@ async function runFront(
   opts: {
     dedupe?: EventDedupe;
     fifo?: SpyFifo;
-    channelFacts?: (channelId: string) => { internal: boolean; channelType?: string };
+    channelFacts?: (channelId: string) => { internal: boolean; channelType?: string; appCanRead?: boolean };
     dmChannel?: string | null;
     ambient?: boolean;
   } = {},
@@ -255,7 +262,13 @@ async function runFront(
       ambientEnabledFor: () => opts.ambient !== false,
       dmPartnerTrustFor: async () => "internal" as const,
       channelFactsFor: async (channelId: string) =>
-        opts.channelFacts ? opts.channelFacts(channelId) : channelId === DM_CHANNEL ? { internal: true, channelType: "im" } : { internal: true, channelType: "channel" },
+        opts.channelFacts
+          ? opts.channelFacts(channelId)
+          : channelId === DM_CHANNEL
+            ? { internal: true, channelType: "im", appCanRead: true }
+            : channelId === UNREADABLE_CHANNEL
+              ? { internal: true, channelType: "channel", appCanRead: false }
+              : { internal: true, channelType: "channel", appCanRead: true },
       authorFactsFor: async (internal: boolean) => ({ surfaceInternal: internal, refuted: false }),
       openDirectMessageChannel: async (userId: string) => {
         dmOpens.push(userId);
@@ -354,6 +367,78 @@ async function runFront(
 
   const second = await runFront(urlencoded(messageShortcut({ trigger_id: "13345224609.738474920.SECOND" })), { dedupe, fifo });
   eq(second.dispatched.length, 1, "idempotency: 🔴 …but a SECOND, deliberate click on the SAME message DOES wake — the key is the click, not the message");
+}
+
+{
+  const withFile = (channelId: string) => urlencoded(messageShortcut({ channel: { id: channelId } }, { files: [FILE] }));
+
+  _resetSlackAttachmentsForTest();
+  const denied = await runFront(withFile(UNREADABLE_CHANNEL));
+  eq(denied.res.status, 200, "gate(unreadable): Slack still gets its ack");
+  eq(
+    resolveSlackAttachment("F1"),
+    undefined,
+    "gate(unreadable): 🔴 the file was NOT registered — describe_image fails closed on it, so the bot token can never be pointed at a room the app is not in",
+  );
+  ok(denied.fifo.keys.includes(supervisorFifoKey(UNREADABLE_CHANNEL)), "gate(unreadable): the click still wakes — withholding the file is not a drop, and the message's text still reaches the model");
+
+  _resetSlackAttachmentsForTest();
+  const admitted = await runFront(withFile(PUBLIC_CHANNEL));
+  eq(
+    resolveSlackAttachment("F1")?.urlPrivate,
+    "https://files.slack.test/F1",
+    "gate(readable): 🔴 positive control — in a room the app IS in, the same file IS registered, so describe_image resolves the id the wake advertises",
+  );
+  eq(resolveSlackAttachment("F1")?.teamId, TEAM, "gate(readable): …with the workspace it came from, for token routing");
+  eq(resolveSlackAttachment("F_NEVER_SEEN"), undefined, "gate(readable): negative control — the registry still answers for nothing else");
+
+  _resetSlackAttachmentsForTest();
+  await runFront(withFile(DM_CHANNEL));
+  eq(resolveSlackAttachment("F1")?.urlPrivate, "https://files.slack.test/F1", "gate(dm): a message shortcut in the app's own DM carries its file — the app is in that room by construction");
+}
+
+{
+  const inChannel = urlencoded(messageShortcut({ channel: { id: PUBLIC_CHANNEL } }, { files: [FILE] }));
+
+  _resetSlackAttachmentsForTest();
+  const dropped = await runFront(inChannel, { ambient: false });
+  eq(dropped.dispatched.length, 0, "seed(ambient off): nothing was woken — the addressed drop, unchanged");
+  eq(
+    resolveSlackAttachment("F1"),
+    undefined,
+    "seed(ambient off): 🔴 …and nothing was REGISTERED either — a click that wakes nothing must not evict a real upload's record from the shared LRU",
+  );
+
+  _resetSlackAttachmentsForTest();
+  const woken = await runFront(inChannel, { ambient: true });
+  ok(woken.fifo.keys.includes(supervisorFifoKey(PUBLIC_CHANNEL)), "seed(ambient on): the click reached the supervisor DISPATCHER — as far as this offline tier can see a channel wake go (§8)");
+  eq(resolveSlackAttachment("F1")?.urlPrivate, "https://files.slack.test/F1", "seed(ambient on): 🔴 positive control — the wake that happens DOES seed the registry");
+
+  _resetSlackAttachmentsForTest();
+  const dedupe = new EventDedupe();
+  await runFront(inChannel, { dedupe });
+  _resetSlackAttachmentsForTest();
+  const retry = await runFront(inChannel, { dedupe });
+  eq(retry.dispatched.length, 0, "seed(redelivery): Slack redelivering the click wakes nothing a second time");
+  eq(resolveSlackAttachment("F1"), undefined, "seed(redelivery): 🔴 …and re-seeds nothing — the registration sits BEHIND the dedupe, not in front of it");
+}
+
+{
+  const blind = () => ({ internal: false });
+
+  const r = await runFront(urlencoded(messageShortcut()), { channelFacts: blind });
+  eq(r.res.status, 200, "unresolved: Slack still gets its ack — a dropped shortcut must not look like a broken endpoint");
+  eq(r.dispatched.length, 0, "unresolved: 🔴 NOTHING was woken — a shortcut never routes on a room it could not identify");
+  eq(r.fifo.keys.length, 0, "unresolved: 🔴 …and nothing was enqueued on ANY fifo — in particular not the channel supervisor's, which is where a DM's content used to land");
+  eq(r.seatCalls.length, 0, "unresolved: no seat was minted");
+  eq(r.innerCalled, false, "unresolved: still not forwarded to eve");
+
+  const resolved = await runFront(urlencoded(messageShortcut()), { channelFacts: () => ({ internal: true, channelType: "im", appCanRead: true }) });
+  eq(resolved.dispatched.length, 1, "unresolved: positive control — with a resolved `im` the same click wakes the DM window as before");
+  eq(resolved.fifo.keys.includes(dmFifoKey(DM_CHANNEL)), true, "unresolved: …on the DM's own fifo");
+
+  const g = await runFront(urlencoded(globalShortcut()), { channelFacts: blind });
+  eq(g.dispatched.length, 1, "unresolved(global): a global shortcut resolves no room — it wakes the DM it opened, whatever conversations.info says");
 }
 
 console.log(`✓ slack-shortcut-test: ${n} assertion(s) passed`);

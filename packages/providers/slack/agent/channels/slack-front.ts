@@ -82,7 +82,7 @@ import {
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth } from "./slack-identity.js";
-import { persistSlackAttachment } from "./slack-attachments.js";
+import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
 import {
   parseSlackShortcutPayload,
   shortcutMessageEvent,
@@ -317,7 +317,7 @@ export interface FrontOptions {
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
-  readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string }>;
+  readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string; appCanRead?: boolean }>;
   readonly openDirectMessageChannel?: (userId: string) => Promise<string | undefined>;
   readonly authorFactsFor?: (
     channelInternal: boolean,
@@ -529,7 +529,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     const notYetSeen = (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> =>
       notYetSeenKey(wakeKey(env, ev.channelId, ev.ts), ev);
 
-    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false): void => {
+    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false, onWake?: () => void): void => {
       let ambient = false;
       let surfaceKey: string | undefined;
       try {
@@ -542,6 +542,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.warn(`[open-everywhere:slack-front] ${label} ${ev.channelId}/${ev.ts}: ambient off after mention was kept — dropped (no road to the unified window)`);
         return;
       }
+      onWake?.();
       if (ambient) {
         const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
@@ -634,6 +635,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       );
     };
 
+    const registerAttachments = (ev: ParsedMessageEvent): void => {
+      for (const a of ev.attachments ?? []) {
+        if (a.kind === "image" && a.id && a.url) {
+          registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, ...(ev.teamId ? { teamId: ev.teamId } : {}) });
+        }
+      }
+    };
+
     const persistAttachments = (ev: ParsedMessageEvent): void => {
       const atts = ev.attachments;
       if (!atts || atts.length === 0) return;
@@ -708,16 +717,34 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
         return new Response(null, { status: 200 });
       }
-      const shortcutChannelType =
+      const shortcutFacts =
         sc.kind === "global"
-          ? "im"
+          ? { channelType: "im" as string | undefined, appCanRead: true }
           : await channelFactsFor(shortcutChannelId)
-              .then((f) => f.channelType)
-              .catch(() => undefined);
-      const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now());
+              .then((f) => ({ channelType: f.channelType, appCanRead: f.appCanRead === true }))
+              .catch(() => ({ channelType: undefined as string | undefined, appCanRead: false }));
+      const shortcutChannelType = shortcutFacts.channelType;
+      if (!shortcutChannelType) {
+        console.warn(
+          `[open-everywhere:slack-front] ${sc.kind} shortcut "${sc.callbackId}" in ${shortcutChannelId}: ` +
+            `conversations.info resolved no channel type — dropped (a shortcut never routes on an unresolved room)`,
+        );
+        return new Response(null, { status: 200 });
+      }
+      if (sc.kind === "message" && !shortcutFacts.appCanRead && (sc.message?.attachments?.length ?? 0) > 0) {
+        console.warn(
+          `[open-everywhere:slack-front] ${sc.kind} shortcut "${sc.callbackId}" in ${shortcutChannelId}: ` +
+            `withheld ${sc.message?.attachments?.length} file reference(s) — the app cannot read that conversation`,
+        );
+      }
+      const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now(), { admitAttachments: shortcutFacts.appCanRead });
       if (!(await notYetSeenKey(shortcutWakeKey(sc), sev))) return new Response(null, { status: 200 });
-      persistAttachments(sev);
+      const seedAttachments = (): void => {
+        registerAttachments(sev);
+        persistAttachments(sev);
+      };
       if (shortcutChannelType === "im" || shortcutChannelType === "mpim") {
+        seedAttachments();
         args.waitUntil(
           fifo.enqueue(dmFifoKey(shortcutChannelId), async () => {
             await deliverWithStrandRetry(() => scheduleDmWake(sev, shortcutChannelType));
@@ -726,7 +753,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
         return new Response(null, { status: 200 });
       }
-      scheduleUnownedWake(sev, `${sc.kind}-shortcut`, true);
+      scheduleUnownedWake(sev, `${sc.kind}-shortcut`, true, seedAttachments);
       return new Response(null, { status: 200 });
     }
 
