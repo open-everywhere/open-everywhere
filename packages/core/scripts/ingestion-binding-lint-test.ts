@@ -143,6 +143,10 @@ function tsFilesUnder(dir: string): string[] {
   ok(at("webhooks/dispatch.ts").length === 2, "real: webhooks/dispatch.ts carries both its webhook-body and webhook-summary sites");
   ok(at("access/untrusted-projection.ts").some((s) => s.kindLiteral === "connector" && s.labelText === "name"), "real: access/untrusted-projection.ts's connector site is SEEN with its bound-identifier label (`label: name`)");
   ok(at("tools/sandbox_tools.ts").some((s) => s.kindLiteral === "skill-declared" && s.hasLabel && s.labelText === undefined), "real: tools/sandbox_tools.ts's skill-declared site is SEEN with its bare shorthand `label` property");
+  ok(
+    at("channels/slack-shortcut.ts").some((s) => s.form === "noteIngestionVerdict" && s.kindLiteral === "chat-message" && s.labelText === "slack:shortcut"),
+    "real: channels/slack-shortcut.ts's site is SEEN — the Slack SHORTCUT wake's kind-binding entry (OPE-1376). A message shortcut carries a Slack message body in through the INTERACTIVITY door, which no Events API route uses, so the route declares what it ingests",
+  );
 
   ok(sites.length >= 27, `real: the inventory is at least the 27 sites standing after OPE-794 (saw ${sites.length}) — a collapse here means the detector stopped seeing, not that routes went away`);
 

@@ -83,6 +83,12 @@ import {
 } from "./slack-events.js";
 import { buildSlackAuth } from "./slack-identity.js";
 import { persistSlackAttachment } from "./slack-attachments.js";
+import {
+  parseSlackShortcutPayload,
+  shortcutMessageEvent,
+  shortcutWakeKey,
+  type ParsedSlackShortcut,
+} from "./slack-shortcut.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -100,7 +106,8 @@ export type FrontDecision =
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
-  | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" };
+  | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" }
+  | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   const raw = new URLSearchParams(rawBody).get("payload");
@@ -203,6 +210,10 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const grantClick = parseOeGrantClickPayload(rawBody);
     if (grantClick !== undefined) {
       return { kind: "grant-click", reason: "block_actions oe_grant: click — ours, never forwarded", payload: grantClick };
+    }
+    const shortcut = parseSlackShortcutPayload(decodeInteractivityPayload(rawBody));
+    if (shortcut) {
+      return { kind: "shortcut", reason: `${shortcut.kind} shortcut "${shortcut.callbackId}" — ours, never forwarded`, shortcut };
     }
     return { kind: "forward", reason: "urlencoded interaction/slash — slackChannel owns it" };
   }
@@ -307,6 +318,7 @@ export interface FrontOptions {
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
   readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string }>;
+  readonly openDirectMessageChannel?: (userId: string) => Promise<string | undefined>;
   readonly authorFactsFor?: (
     channelInternal: boolean,
     userId: string | undefined,
@@ -319,6 +331,17 @@ const OK = () => new Response("ok");
 function wakeKey(env: SlackEventEnvelope, channelId: string, ts: string, botIdentity = "default"): string {
   const eventId = typeof env.event_id === "string" ? env.event_id : undefined;
   return `${botIdentity}:${eventId ?? `${channelId}:${ts}`}`;
+}
+
+async function liveOpenDirectMessageChannel(userId: string): Promise<string | undefined> {
+  try {
+    const opened = await callSlackWebApi({ botToken: undefined, operation: "conversations.open", body: { users: userId } });
+    if (opened?.ok !== true) return undefined;
+    const channel = opened.channel as { id?: unknown } | undefined;
+    return typeof channel?.id === "string" && channel.id.length > 0 ? channel.id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const DEDUPE_TTL_MS = 10 * 60_000;
@@ -452,6 +475,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleGrantCardClick = opts.handleGrantCardClick ?? liveHandleGrantCardClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
+  const openDirectMessageChannel = opts.openDirectMessageChannel ?? liveOpenDirectMessageChannel;
   const resolveDmSeat = opts.resolveDmSeat ?? ((org, dm, atIso) => liveGetOrCreateDmSeat(org, dm, atIso));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
@@ -491,8 +515,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
       } as never)) as unknown as Parameters<typeof liveDeps>[0];
 
-    const notYetSeen = async (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> => {
-      const key = wakeKey(env, ev.channelId, ev.ts);
+    const notYetSeenKey = async (key: string, ev: ParsedMessageEvent): Promise<boolean> => {
       if (dedupe.seen(key, now())) return false;
       dedupe.mark(key, now());
       try {
@@ -502,6 +525,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       }
       return true;
     };
+
+    const notYetSeen = (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> =>
+      notYetSeenKey(wakeKey(env, ev.channelId, ev.ts), ev);
 
     const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false): void => {
       let ambient = false;
@@ -670,6 +696,38 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         }),
       );
       return OK();
+    }
+
+    if (decision.kind === "shortcut") {
+      const sc = decision.shortcut;
+      const shortcutChannelId = sc.kind === "message" ? sc.channelId : await openDirectMessageChannel(sc.userId);
+      if (!shortcutChannelId) {
+        console.log(
+          `[open-everywhere:slack-front] ${sc.kind} shortcut "${sc.callbackId}" from ${sc.userId}: no channel to wake in ` +
+            `(a global shortcut opens the invoker's DM, which needs the im:write bot scope) — nothing woken`,
+        );
+        return new Response(null, { status: 200 });
+      }
+      const shortcutChannelType =
+        sc.kind === "global"
+          ? "im"
+          : await channelFactsFor(shortcutChannelId)
+              .then((f) => f.channelType)
+              .catch(() => undefined);
+      const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now());
+      if (!(await notYetSeenKey(shortcutWakeKey(sc), sev))) return new Response(null, { status: 200 });
+      persistAttachments(sev);
+      if (shortcutChannelType === "im" || shortcutChannelType === "mpim") {
+        args.waitUntil(
+          fifo.enqueue(dmFifoKey(shortcutChannelId), async () => {
+            await deliverWithStrandRetry(() => scheduleDmWake(sev, shortcutChannelType));
+            console.log(`[open-everywhere:slack-front] ${sc.kind} shortcut "${sc.callbackId}": woke the ${shortcutChannelType} window ${shortcutChannelId}`);
+          }),
+        );
+        return new Response(null, { status: 200 });
+      }
+      scheduleUnownedWake(sev, `${sc.kind}-shortcut`, true);
+      return new Response(null, { status: 200 });
     }
 
     if (decision.kind === "mention") {

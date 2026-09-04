@@ -37,4 +37,5 @@ export const INGESTION_ROUTES: readonly IngestionRoute[] = [
   { key: "packages/providers/notion/agent/tools/read_notion_comments.ts#read_notion_comments", file: "packages/providers/notion/agent/tools/read_notion_comments.ts", form: "ingestion-property", kind: "notion", label: "read_notion_comments", pending: false },
   { key: "packages/providers/notion/agent/tools/read_notion_page.ts#read_notion_page", file: "packages/providers/notion/agent/tools/read_notion_page.ts", form: "ingestion-property", kind: "notion", label: "read_notion_page", pending: false },
   { key: "packages/providers/slack/agent/channels/slack-events.ts#slack:channel-join-intro", file: "packages/providers/slack/agent/channels/slack-events.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "slack:channel-join-intro", pending: false },
+  { key: "packages/providers/slack/agent/channels/slack-shortcut.ts#slack:shortcut", file: "packages/providers/slack/agent/channels/slack-shortcut.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "slack:shortcut", pending: false },
 ];

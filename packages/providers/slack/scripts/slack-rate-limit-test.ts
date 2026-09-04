@@ -135,6 +135,7 @@ function recorder() {
     ["auth.test", "the bot's own identity, awaited before OK()"],
     ["conversations.info", "channelFactsFor → channelInternalAndMeta, awaited before OK()"],
     ["users.info", "authorFactsFor → slackAuthorIsMember, awaited before OK()"],
+    ["conversations.open", "a GLOBAL shortcut's DM landing place (OPE-1376) — openDirectMessageChannel, awaited before the interactivity ack"],
   ];
 
   for (const [operation, why] of PINNED_PROBES) {

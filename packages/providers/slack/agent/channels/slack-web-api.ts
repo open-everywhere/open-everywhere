@@ -46,7 +46,7 @@ export function encodeSlackForm(body: unknown): string {
   return params.toString();
 }
 
-const PROBE_OPERATIONS: ReadonlySet<string> = new Set(["auth.test", "conversations.info", "users.info"]);
+const PROBE_OPERATIONS: ReadonlySet<string> = new Set(["auth.test", "conversations.info", "users.info", "conversations.open"]);
 const PROBE_MAX_ATTEMPTS = 2;
 const PROBE_CAP_MS = 2_000;
 

@@ -16,6 +16,20 @@ export function slackManifest(): string {
             should_escape: false,
           },
         ],
+        shortcuts: [
+          {
+            name: "Send to Open Everywhere",
+            type: "message",
+            callback_id: "oe_message_shortcut",
+            description: "Wake the agent on this message.",
+          },
+          {
+            name: "Ask Open Everywhere",
+            type: "global",
+            callback_id: "oe_global_shortcut",
+            description: "Wake the agent in a DM.",
+          },
+        ],
       },
       oauth_config: {
         scopes: {
@@ -23,6 +37,7 @@ export function slackManifest(): string {
             "app_mentions:read",
             "chat:write",
             "channels:history",
+            "commands",
             "channels:read",
             "groups:read",
             "im:history",
@@ -42,6 +57,10 @@ export function slackManifest(): string {
         event_subscriptions: {
           request_url: "https://YOUR-DEPLOY-URL/eve/v1/slack",
           bot_events: ["app_mention", "message.im", "reaction_added", "reaction_removed"],
+        },
+        interactivity: {
+          is_enabled: true,
+          request_url: "https://YOUR-DEPLOY-URL/eve/v1/slack",
         },
         org_deploy_enabled: false,
         socket_mode_enabled: false,
