@@ -35,6 +35,7 @@ import { emptySkipCounts, renderSkipBreakdown } from "./skip-summary.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
+import { renderObservationSummary, type Observation } from "./observations.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
 
@@ -150,6 +151,7 @@ async function main(): Promise<void> {
   const skipCounts = emptySkipCounts();
   const reportedJudgeReds: string[] = [];
   let reportedJudgeTotal = 0;
+  const observations: Observation[] = [];
 
   const onlyIdx = process.argv.findIndex((a) => a === "--only" || a.startsWith("--only="));
   const onlyRaw =
@@ -313,6 +315,10 @@ async function main(): Promise<void> {
       log(line: string): void {
         console.log(`  [${scenario.id}] ${line}`);
       },
+      observe(line: string): void {
+        observations.push({ scenario: scenario.id, line });
+        console.error(`  ⚠ [${scenario.id}] OBSERVATION: ${line}`);
+      },
       recordTiming(record: TimingsRecord): void {
         timingRecords.push(record);
       },
@@ -430,6 +436,9 @@ async function main(): Promise<void> {
 
   const judgeSummary = renderReportedJudgeSummary(reportedJudgeTotal, reportedJudgeReds);
   for (const line of judgeSummary.lines) (judgeSummary.stream === "stderr" ? console.error : console.log)(line);
+
+  const observationSummary = renderObservationSummary(observations);
+  for (const line of observationSummary.lines) (observationSummary.stream === "stderr" ? console.error : console.log)(line);
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
   if (skipped > 0) console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);

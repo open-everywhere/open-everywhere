@@ -86,8 +86,8 @@ export function staleReplyRefusalMessage(freshness: Extract<ReplyFreshness, { st
     `reply: this conversation has moved on — ${count} newer ${plural} arrived after the ones you have seen. ` +
     "NOTHING was posted. Those messages are already queued and reach you as your next wake, so the best move is " +
     "to end this turn now (`no_reply`) and answer them together with this one — the wake stays open and unanswered. " +
-    "Re-send this same call to post it anyway, or pass `force: true` when posting now matters more than reflecting " +
-    "the newest messages."
+    "Posting now is DISCOURAGED, not blocked: send this same call again, or pass `force: true`, and it posts. " +
+    "It costs the room an answer that ignores the newest messages, and the override is recorded."
   );
 }
 

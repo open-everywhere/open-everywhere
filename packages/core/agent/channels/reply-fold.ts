@@ -79,11 +79,12 @@ export async function replyFoldTarget(input: {
 
 export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean): string {
   const valve = canForce
-    ? "Re-send this same call to post it as a new message anyway, or pass `force: true` when it genuinely has to be a separate message."
-    : "Re-send this same call to post it as a new message anyway.";
+    ? "A second message is DISCOURAGED, not blocked: send this same call again, or pass `force: true`, and it posts. It costs the room a near-duplicate to read, and the override is recorded."
+    : "A second message is DISCOURAGED, not blocked: send this same call again and it posts. It costs the room a near-duplicate to read.";
   return (
     "reply: your last message in this conversation is still the newest one — nobody has said anything since. " +
-    "NOTHING was posted. Fold this into that message instead: call `edit_reply` with " +
+    "NOTHING was posted. The room already has your answer, so a second post beside it reads as noise. " +
+    "Fold this into that message instead: call `edit_reply` with " +
     `message_id \`${target.messageId}\`. ` +
     "🔴 An edit REPLACES the message outright, so write the FULL message — everything the old one said that still " +
     "holds, plus what you are adding — never only the new part. " +

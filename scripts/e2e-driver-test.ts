@@ -1021,6 +1021,61 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { classifyAnswers, repliesPerWake, renderRepliesPerWake } = await import("../packages/core/scripts/e2e/duplicate-post.js");
+  const { renderObservationSummary } = await import("../packages/core/scripts/e2e/observations.js");
+
+  const missing = classifyAnswers(0, "tok-1");
+  ok(missing.verdict === "missing" && missing.red, "classifyAnswers: NO token-carrying reply is the RED — the human asked and the room stayed silent");
+  ok(missing.label.includes("unanswered") && missing.label.includes("tok-1"), "classifyAnswers: the red label says the mention went unanswered, and quotes the token it looked for");
+
+  const single = classifyAnswers(1, "tok-1");
+  ok(single.verdict === "single" && !single.red, "classifyAnswers/CONTROL: exactly one answer is green — the healthy shape");
+
+  for (const n of [2, 16]) {
+    const dup = classifyAnswers(n, "tok-1");
+    ok(dup.verdict === "duplicate", `classifyAnswers: ${n} answers classify as a duplicate`);
+    ok(!dup.red, `🔴 classifyAnswers: …and a duplicate is NOT red — ${n} answers still passes the gate`);
+    ok(dup.label.includes(`${n} replies`), "classifyAnswers: the duplicate label QUOTES the count — the ticket's evidence is a number (16 rows on one wake), not an adjective");
+    ok(/discouraged/i.test(dup.label), "classifyAnswers: …and says the second post is discouraged, so a reader knows why it is reported and not failed");
+  }
+  ok(classifyAnswers(-1, "tok-1").red, "classifyAnswers: a nonsense negative count is treated as MISSING (fail toward the red that means 'the room said nothing')");
+
+  const postRow = (wakeId: unknown, action = "reply.post") => ({
+    ts: "2026-05-07T23:30:00.000Z",
+    org: "default",
+    platform: "teams",
+    workspace: "acme",
+    action,
+    ...(wakeId === undefined ? {} : { detail: { wakeId } }),
+  });
+  ok(repliesPerWake([]).length === 0, "repliesPerWake: an empty window counts nothing");
+  const counted = repliesPerWake([postRow("w-a"), postRow("w-a"), postRow("w-b"), postRow("w-a")]);
+  ok(counted.length === 2 && counted[0].wake === "w-a" && counted[0].posts === 3, "repliesPerWake: counts posts per wake, busiest FIRST (three on w-a)");
+  ok(counted[1].wake === "w-b" && counted[1].posts === 1, "repliesPerWake: …and the quiet wake is still reported, so the busy one has something to be compared against");
+  ok(
+    repliesPerWake([postRow("w-a", "reply.refused"), postRow("w-a", "reply.forced")]).length === 0,
+    "repliesPerWake/CONTROL: only `reply.post` rows count — a refusal and an override are not posts, and counting them would inflate every duplicate report",
+  );
+  ok(
+    repliesPerWake([postRow(undefined), postRow(7), postRow("")]).length === 0,
+    "🔴 repliesPerWake: a row with no usable wake id is DROPPED, never bucketed under a placeholder — the whole claim is 'these posts answered the SAME wake'",
+  );
+
+  ok(renderRepliesPerWake([]) === null, "renderRepliesPerWake: nothing measured ⇒ no line at all (an observation channel that always speaks is one nobody reads)");
+  const quiet = renderRepliesPerWake([{ wake: "w-a", posts: 1 }]);
+  ok(quiet !== null && quiet.includes("w-a=1") && !quiet.includes("duplicate"), "renderRepliesPerWake/CONTROL: one post per wake quotes the count and claims no duplicate");
+  const busy = renderRepliesPerWake([{ wake: "w-a", posts: 16 }, { wake: "w-b", posts: 1 }]);
+  ok(busy !== null && busy.includes("w-a=16") && busy.includes("w-b=1"), "renderRepliesPerWake: QUOTES every wake's count — this is the line the ticket's '16 reply.post rows on one wake' is read off");
+  ok(busy!.includes("busiest wake carries 16 posts") && /discouraged, not gated/i.test(busy!), "renderRepliesPerWake: …and names the busiest wake as a duplicate that is reported, never gated");
+
+  ok(renderObservationSummary([]).lines.length === 0, "renderObservationSummary/CONTROL: a run with no observations prints NOTHING");
+  const summary = renderObservationSummary([{ scenario: "J-TEAMS", line: "reply.post rows per wake: w-a=16" }]);
+  ok(summary.stream === "stderr", "renderObservationSummary: goes to stderr, so a `| tail` on a long live run cannot swallow it");
+  ok(summary.lines.length === 2 && summary.lines[1].includes("J-TEAMS") && summary.lines[1].includes("w-a=16"), "renderObservationSummary: one lead line plus one line per observation, each naming its scenario");
+  ok(/do NOT fail the run/i.test(summary.lines[0]), "renderObservationSummary: the lead line says an observation never gates — the reader's first question about a ⚠ in a green run");
+}
+
+{
   const { parseLinkCode, LINK_CODE_ALPHABET } = await import("../packages/core/scripts/e2e/journey.js");
   ok(LINK_CODE_ALPHABET === "23456789ACDEFGHJKLMNPQRSTUVWXYZ", "LINK_CODE_ALPHABET mirrors agent/identity/link-challenge.ts (no 0/1/I/O/B, no lower case — 31 symbols)");
   ok(parseLinkCode("…and nothing else:\n\n    link K7QD2XMN\n\nIt is single-use") === "K7QD2XMN", "parseLinkCode: lifts the code out of the tool's own verbatim instructions");

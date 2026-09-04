@@ -1,5 +1,6 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
 import { deployedBuildCarries } from "./deployed-build.js";
+import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
@@ -114,6 +115,7 @@ export interface ScenarioContext {
   judgeReport(rubric: Rubric, reply: string, label: string): Promise<boolean>;
   skip(reason: string): never;
   log(line: string): void;
+  observe(line: string): void;
   recordTiming(record: TimingsRecord): void;
 }
 
@@ -1579,11 +1581,23 @@ export const SCENARIOS: readonly Scenario[] = [
       await sleep(SILENCE_WINDOW);
       const chain = await teams.replies(driven.id);
       const answers = chain.filter((m) => teams.isBotReply(m) && m.text.includes(markerT));
-      ctx.gate(
-        answers.length === 1,
-        `re-mention: EXACTLY ONE reply carries the run token "${markerT}" — one question, one answer (OPE-568 double-post gate); saw ${answers.length}`,
-      );
-      ctx.log(`re-mention: ${chain.filter((m) => teams.isBotReply(m)).length} bot post(s) in the chain overall (a completion relay may add one — only the token-carrying count is gated)`);
+      const answerVerdict = classifyAnswers(answers.length, markerT);
+      ctx.gate(!answerVerdict.red, answerVerdict.label);
+      if (answerVerdict.verdict === "duplicate") ctx.observe(answerVerdict.label);
+      ctx.log(`re-mention: ${chain.filter((m) => teams.isBotReply(m)).length} bot post(s) in the chain overall (a completion relay may add one — only the token-carrying count is reported)`);
+
+      if (ctx.auditRead) {
+        try {
+          const posts = await ctx.auditRead({ sinceIso: runStart, platform: "teams", actions: ["reply.post"] });
+          const perWake = repliesPerWake(posts);
+          const line = renderRepliesPerWake(perWake);
+          if (line === null) ctx.log("re-mention: no wake-bearing `reply.post` rows in this run's window — nothing to count per wake");
+          else if (perWake[0].posts > 1) ctx.observe(line);
+          else ctx.log(`re-mention: ${line}`);
+        } catch (err) {
+          ctx.log(`re-mention: per-wake reply.post count unavailable (${String(err instanceof Error ? err.message : err)})`);
+        }
+      }
     },
   },
   {

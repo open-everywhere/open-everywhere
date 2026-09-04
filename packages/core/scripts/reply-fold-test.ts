@@ -372,9 +372,21 @@ let foldedMessageId = "";
 
 {
   const target = { messageId: "ts-9", platform: "slack" };
-  ok(foldIntoEditRefusalMessage(target, true).includes("force: true"), "§12: the unified copy names the `force` valve it actually has");
-  ok(!foldIntoEditRefusalMessage(target, false).includes("force"), "🔴 §12: the per-surface copy does NOT — that variant takes no `force` input, and naming one would teach a call that fails");
-  ok(foldIntoEditRefusalMessage(target, false).includes("Re-send"), "§12: …it names the valve it does have");
+  const unified = foldIntoEditRefusalMessage(target, true);
+  const perSurface = foldIntoEditRefusalMessage(target, false);
+  ok(unified.includes("force: true"), "§12: the unified copy names the `force` valve it actually has");
+  ok(!perSurface.includes("force"), "🔴 §12: the per-surface copy does NOT — that variant takes no `force` input, and naming one would teach a call that fails");
+  ok(perSurface.includes("send this same call again"), "§12: …it names the valve it does have");
+  for (const [name, copy] of [
+    ["unified", unified],
+    ["per-surface", perSurface],
+  ] as const) {
+    ok(copy.includes("DISCOURAGED, not blocked"), `🔴 §12/${name}: the valve is named as DISCOURAGED, never as a plain instruction`);
+    ok(copy.includes("reads as noise"), `🔴 §12/${name}: …and the copy says WHY — the room already holds the answer`);
+    ok(copy.includes("costs the room a near-duplicate"), `🔴 §12/${name}: …and what a second post COSTS`);
+    ok(!copy.includes("anyway"), `🔴 §12/${name}: the pre-ruling invitation wording ("…to post it as a new message anyway") is GONE`);
+  }
+  ok(unified.includes("the override is recorded"), "🔴 §12/unified: …and the force valve says its own extra cost — the override is written to the audit");
 }
 
 {

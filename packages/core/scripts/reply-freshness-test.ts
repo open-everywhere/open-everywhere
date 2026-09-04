@@ -311,6 +311,10 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(one.includes("1 newer message arrived"), "§9: a single message reads as one message, not as a count with a plural bug");
   const many = staleReplyRefusalMessage({ stale: true, newer: 3, capped: false });
   ok(many.includes("3 newer messages"), "§9: several read as several");
+  ok(many.includes("DISCOURAGED, not blocked"), "🔴 §9: the override valve is named as DISCOURAGED, never as a plain instruction");
+  ok(many.includes("ignores the newest messages"), "🔴 §9: …and the copy says what taking it COSTS");
+  ok(!many.includes("anyway"), "🔴 §9: the pre-ruling invitation wording (\"…to post it anyway\") is GONE");
+  ok(many.includes("force: true"), "§9: the valve itself is still named — the gate is a speed bump, never a wall");
 }
 
 {

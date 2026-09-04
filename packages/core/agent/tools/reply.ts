@@ -60,7 +60,7 @@ export const unifiedReplyEntry = defineTool({
         .optional()
         .default(false)
         .describe(
-          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), or that your own last message here is still the newest one and this should be an edit. It posts your reply anyway. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It is recorded.",
+          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), or that your own last message here is still the newest one and this should be an edit. It posts your reply anyway. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
