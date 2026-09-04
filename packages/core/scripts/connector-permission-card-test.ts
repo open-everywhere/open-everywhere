@@ -32,11 +32,11 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { overrideSettingsForTest, registerSettings } = await import("../agent/settings/settings.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { addRoutine } = await import("../agent/routines/store.js");
-const { ROUTINE_MARKER, routineGrantKey } = await import("../agent/routines/routine.js");
+const { ROUTINE_MARKER, routinePermissionKey } = await import("../agent/routines/routine.js");
 const { routineFireAttributes, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
-const { ROUTINE_GRANT_NO_EXPIRY } = await import("../agent/routines/grants.js");
+const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("../agent/routines/declared-permissions.js");
 const { ROUTINE_PERMISSION_KIND } = await import("../agent/approvals/routine-permission.js");
-const { connectorToolPermissionKind, describeGrantKind } = await import("../agent/approvals/session-grant.js");
+const { connectorToolPermissionKind, describeDeclaredPermissionKind } = await import("../agent/approvals/session-grant.js");
 const { resolveApprovalClick, requestApproval } = await import("../agent/approvals/flow.js");
 const { consumeRoutineRunPermissionRefusals } = await import("../agent/approvals/card-signal.js");
 const { RUN_REFUSAL_HEADING, withRunRefusalBlock } = await import("../agent/routines/report.js");
@@ -111,7 +111,7 @@ const routine = await addRoutine({ org: ORG, surfaceKey: SURFACE } as never, {
   createdAt: new Date().toISOString(),
   status: "active",
 } as never);
-const KEY = routineGrantKey(routine);
+const KEY = routinePermissionKey(routine);
 
 const DEST_ATTRS = { team_id: "T0CARD", channel_id: "C0CARD", channel_type: "channel" } as const;
 const WRITE_OP = "notion__create_page";
@@ -121,7 +121,7 @@ const WRITE_DECLARATION = `tool:${WRITE_OP}`;
 
 function fireAuth(): unknown {
   const attributes = routineFireAttributes(routine as never, DEST_ATTRS, "channel", true);
-  return { current: { attributes: { ...attributes, [ROUTINE_MARKER.grant]: KEY } } };
+  return { current: { attributes: { ...attributes, [ROUTINE_MARKER.permissionKey]: KEY } } };
 }
 function webhookAuth(): unknown {
   return { current: { attributes: webhookFireAttributes("hook-1", "T0CARD", "C0CARD", false, true) } };
@@ -169,7 +169,7 @@ console.log("§card the fence offers the routine permission card:");
   ok(rows.length === 1, "🔴 §card: EXACTLY ONE permission card row landed");
   const row = rows[0]!;
   ok(row.channelId === "C0CARD", "§card: it landed in the ROUTINE's own room");
-  ok(row.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§card: with no clock expiry — the routine generation is its bound");
+  ok(row.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§card: with no clock expiry — the routine generation is its bound");
   const args = argsOf(row);
   ok(args.grantKind === connectorToolPermissionKind(WRITE_OP), "🔴 §card: the card decides the PER-TOOL kind the fence's lift arm reads");
   ok(args.declaration === WRITE_DECLARATION, "🔴 §card: and names `tool:<qualified op>` — the exact string the refusal coaches a human to declare");
@@ -223,7 +223,7 @@ console.log("§click approving the card lets the next unattended fire run the op
   const granted = await store.getSessionApproval(ORG, KEY, connectorToolPermissionKind(WRITE_OP), new Date().toISOString());
   ok(granted !== null, "🔴 §click: and writes exactly the standing row the fence's lift arm reads");
   ok(granted?.grantedBy === "U0CLICKER", "§click: recorded against the human who armed it, never the fire");
-  ok(granted?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§click: with no TTL — the routine generation is the death mechanism");
+  ok(granted?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§click: with no TTL — the routine generation is the death mechanism");
 
   const after = await ask(fireAuth(), WRITE_OP);
   ok(after.decision === "not-applicable", "🔴 §click: the NEXT unattended fire's fence now LIFTS the op — the card was worth clicking");
@@ -247,7 +247,7 @@ console.log("§report the run's outcome summary lists a connector-plane refusal:
     return consumeRoutineRunPermissionRefusals();
   });
   ok(listed.length === 1, "🔴 §report: the connector fence's refusal RECORDS the loss on this run's ledger");
-  ok(listed[0]?.permission === describeGrantKind(connectorToolPermissionKind(OTHER_WRITE_OP)), "§report: named in the same plain language list_routines uses for a live grant");
+  ok(listed[0]?.permission === describeDeclaredPermissionKind(connectorToolPermissionKind(OTHER_WRITE_OP)), "§report: named in the same plain language list_routines uses for a live grant");
   ok(listed[0]?.cardPosted === true, "🔴 §report: the line still records that a card IS waiting, which is what makes it actionable");
   ok(listed[0]?.card === null, "🔴 §report: and carries NO pointer on a surface that mints no permalink — never the room's internal ids");
   ok(listed[0]?.cardKnown === true, "§report: and the card's state was really read");
@@ -348,7 +348,7 @@ console.log("§cap one fire posts at most MAX_RUN_REFUSALS cards:");
   const cappedEntry = capped.entries.find((e) => e.cardCapped);
   ok(cappedEntry !== undefined, "🔴 §cap: and the over-cap one is marked as capped rather than as an ordinary absence");
   ok(capped.entries.filter((e) => !e.cardCapped).length === 1, "§cap: while the permission that did reach the card plane is not marked capped");
-  ok(cappedEntry?.permission === describeGrantKind(connectorToolPermissionKind(ops[1]!)), "§cap: named in the SAME plain language every other report line uses");
+  ok(cappedEntry?.permission === describeDeclaredPermissionKind(connectorToolPermissionKind(ops[1]!)), "§cap: named in the SAME plain language every other report line uses");
   const cappedReport = withRunRefusalBlock("The digest is published.", capped.entries);
   ok(
     cappedReport.includes("no card was offered for it — this run reached its card limit"),

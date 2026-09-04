@@ -1,15 +1,16 @@
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
-import { describeTrigger, routineGrantGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { describeTrigger, routinePermissionGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { mintJobBound } from "../routines/bound.js";
 import {
+  ROUTINE_PERMISSIONS_ARMED_ACTION,
   ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
   bundleRaisedDeclarations,
   describeDeclaredPermissions,
-  grantDeclaredRoutinePermissions,
+  armDeclaredRoutinePermissions,
   unarmedDeclarations,
-} from "../routines/grants.js";
-import { describeGrantKind } from "./session-grant.js";
+} from "../routines/declared-permissions.js";
+import { describeDeclaredPermissionKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
@@ -78,7 +79,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.sessionMode === "job" ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
     };
     await addRoutine(args.partition, routine);
-    const granted = await grantDeclaredRoutinePermissions({
+    const armed = await armDeclaredRoutinePermissions({
       org: args.org,
       routine,
       declared: args.permissions ?? [],
@@ -86,15 +87,15 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       tainted: Boolean(args.tainted),
       nowIso: now.toISOString(),
     });
-    if (granted.length > 0) {
+    if (armed.length > 0) {
       await appendAudit({
         org: args.partition.org,
         platform: args.partition.platform,
         workspace: args.partition.workspace,
         surface: args.partition.surface,
         principalId: decidedBy,
-        action: "routine.grant",
-        detail: { id: routine.id, grantedBy: decidedBy, kinds: granted, generation: routineGrantGeneration(routine), declared: true },
+        action: ROUTINE_PERMISSIONS_ARMED_ACTION,
+        detail: { id: routine.id, grantedBy: decidedBy, kinds: armed, generation: routinePermissionGeneration(routine), declared: true },
       });
     }
     for (const declaration of args.tainted ? [] : bundleRaisedDeclarations(args.permissions ?? [])) {
@@ -105,7 +106,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
         surface: args.partition.surface,
         principalId: decidedBy,
         action: ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
-        detail: { id: routine.id, declaration, generation: routineGrantGeneration(routine), reason: "bundle-declared-destructive" },
+        detail: { id: routine.id, declaration, generation: routinePermissionGeneration(routine), reason: "bundle-declared-destructive" },
       });
     }
     await appendAudit({
@@ -117,10 +118,10 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       action: "routine.create",
       detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
     });
-    const unarmed = unarmedDeclarations(args.permissions ?? [], granted);
+    const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
       `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}` +
-      `${granted.length > 0 ? `; standing permission to ${granted.map(describeGrantKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}` +
+      `${armed.length > 0 ? `; standing permission to ${armed.map(describeDeclaredPermissionKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}` +
       `${unarmed.length > 0 ? `; NOT armed: ${unarmed.map((d) => `"${d}"`).join(" · ")} — the routine asks a person when it reaches that step${args.tainted ? " (nothing was made standing: this routine was authored in a turn that read external content)" : ""}` : ""}.`
     );
   },

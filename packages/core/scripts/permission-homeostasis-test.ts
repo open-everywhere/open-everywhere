@@ -377,7 +377,7 @@ const GRANTS: DeclaredGrants[] = [
   ok(privacyProposals.length > 0, "connector privacy fixture: the fixture actually produces proposals");
   const connectorBlob = JSON.stringify(privacyEv) + JSON.stringify(privacyProposals) + renderPermissionProposals(privacyEv, privacyProposals);
   ok(!connectorBlob.includes("U-ALICE") && !connectorBlob.includes("principalId"), "⭐ connector privacy: the refusal rows carry a principal COLUMN and a principal-shaped detail, and none of it reaches the evidence, the proposals or the report");
-  ok(!connectorBlob.includes("rt_a"), "⭐ connector privacy: the routine GRANT KEY does not reach the output either — only whether one was present is read");
+  ok(!connectorBlob.includes("rt_a"), "⭐ connector privacy: the routine PERMISSION KEY does not reach the output either — only whether one was present is read");
 }
 
 {
@@ -406,32 +406,32 @@ const GRANTS: DeclaredGrants[] = [
 
   {
     const { ev, c } = clusterOf(REFUSALS);
-    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ arrival NEGATIVE CONTROL: three empty-room refusals and no grant row ⇒ all three liftable");
+    ok(c.liftableUnattended === 3 && c.armedSinceUnattended === 0, "⭐ arrival NEGATIVE CONTROL: three empty-room refusals and no grant row ⇒ all three liftable");
     ok(proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ arrival NEGATIVE CONTROL: …and the proposal is raised");
   }
 
   {
     const { ev, c } = clusterOf([...REFUSALS, granted(2)]);
     ok(c.refusals === 3, "arrival: the grant row is NOT counted as a refusal — it is read for its stamp alone");
-    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1349: a `routine.permission_granted` row after the refusals moves every one of them off the liftable count");
+    ok(c.liftableUnattended === 0 && c.armedSinceUnattended === 3, "🔴 OPE-1349: a `routine.permission_granted` row after the refusals moves every one of them off the liftable count");
     ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "🔴 OPE-1349: …so the 'arm this grant' proposal STOPS — the ask has been answered");
   }
 
   {
     const { ev, c } = clusterOf([...REFUSALS, lifted(1)]);
-    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1349: a `connector.unattended_lift` on the same op under the same routine grant suppresses it too");
+    ok(c.liftableUnattended === 0 && c.armedSinceUnattended === 3, "🔴 OPE-1349: a `connector.unattended_lift` on the same op under the same routine grant suppresses it too");
     ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "OPE-1349: …with the same effect on the proposal");
   }
 
   {
     const { ev, c } = clusterOf([granted(9), ...REFUSALS]);
-    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a grant row stamped BEFORE the refusals suppresses nothing — it demonstrably did not stop them");
+    ok(c.liftableUnattended === 3 && c.armedSinceUnattended === 0, "⭐ OPE-1349: a grant row stamped BEFORE the refusals suppresses nothing — it demonstrably did not stop them");
     ok(proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ OPE-1349: …and the proposal survives, which is the failure mode a bare presence check would have caused");
   }
 
   {
     const { ev, c } = clusterOf([...REFUSALS, granted(4)]);
-    ok(c.liftableUnattended === 2 && c.grantedSinceUnattended === 1, "OPE-1349: an arrival mid-cluster answers only the refusals it post-dates (strictly — the same-stamp row is not answered)");
+    ok(c.liftableUnattended === 2 && c.armedSinceUnattended === 1, "OPE-1349: an arrival mid-cluster answers only the refusals it post-dates (strictly — the same-stamp row is not answered)");
     const p = proposePermissionChanges(ev, "widen").find((x) => x.id === "widen:connector:unattended:notion");
     ok(p !== undefined && /2 unattended/.test(p.summary), "OPE-1349: the surviving proposal counts only the still-unarmed rows");
     ok(p!.evidence.some((e) => /1 further .*permission ARRIVING/.test(e)), "OPE-1349: …and the answered row is REPORTED rather than dropped — the reader sees all three rows behind a proposal that stands on two");
@@ -439,26 +439,26 @@ const GRANTS: DeclaredGrants[] = [
 
   {
     const { c } = clusterOf([...REFUSALS, granted(1, KEY, "connector.tool:notion__delete_page")]);
-    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a grant for a DIFFERENT tool under the same routine suppresses nothing — the standing permission is per-tool");
+    ok(c.liftableUnattended === 3 && c.armedSinceUnattended === 0, "⭐ OPE-1349: a permission for a DIFFERENT tool under the same routine suppresses nothing — the standing permission is per-tool");
     const otherRoutine = clusterOf([...REFUSALS, granted(1, "oe-routine:rt_other:g1")]);
-    ok(otherRoutine.c.liftableUnattended === 3, "⭐ OPE-1349: a grant under a DIFFERENT ROUTINE suppresses nothing either — another routine's authority is another question");
+    ok(otherRoutine.c.liftableUnattended === 3, "⭐ OPE-1349: a permission under a DIFFERENT ROUTINE suppresses nothing either — another routine's authority is another question");
   }
 
   {
     const NEXT_GEN = "oe-routine:rt_nightly:g4";
     const { ev, c } = clusterOf([...REFUSALS, granted(1, NEXT_GEN)]);
-    ok(c.liftableUnattended === 0 && c.grantedSinceUnattended === 3, "🔴 OPE-1361: a click on a NEWER generation of the same routine answers the older generation's refusals");
+    ok(c.liftableUnattended === 0 && c.armedSinceUnattended === 3, "🔴 OPE-1361: a click on a NEWER generation of the same routine answers the older generation's refusals");
     ok(!proposePermissionChanges(ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "🔴 OPE-1361: …so the proposal a human already actioned STOPS being re-proposed");
 
     const byLift = clusterOf([...REFUSALS, lifted(1, NEXT_GEN)]);
-    ok(byLift.c.liftableUnattended === 0 && byLift.c.grantedSinceUnattended === 3, "🔴 OPE-1361: a `connector.unattended_lift` under the new generation answers them too — the arm that fires without the card");
+    ok(byLift.c.liftableUnattended === 0 && byLift.c.armedSinceUnattended === 3, "🔴 OPE-1361: a `connector.unattended_lift` under the new generation answers them too — the arm that fires without the card");
 
     const revoked = clusterOf([granted(9, "oe-routine:rt_nightly:g2"), ...REFUSALS]);
-    ok(revoked.c.liftableUnattended === 3 && revoked.c.grantedSinceUnattended === 0, "⭐ OPE-1361: an arrival on an EARLIER generation, stamped before the refusals, suppresses nothing — a revoked permission is still a live want");
+    ok(revoked.c.liftableUnattended === 3 && revoked.c.armedSinceUnattended === 0, "⭐ OPE-1361: an arrival on an EARLIER generation, stamped before the refusals, suppresses nothing — a revoked permission is still a live want");
     ok(proposePermissionChanges(revoked.ev, "widen").some((p) => p.id === "widen:connector:unattended:notion"), "⭐ OPE-1361: …and its proposal survives");
 
     const notAKey = clusterOf([...REFUSALS.map((r) => ({ ...r, detail: { ...r.detail, routine: "slack:T1:C1:9" } })), granted(1, "slack:T1:C1:9")]);
-    ok(notAKey.c.liftableUnattended === 3 && notAKey.c.grantedSinceUnattended === 0, "⭐ OPE-1361: a `routine` value that is not a routine grant key joins to nothing — one redundant proposal, never a dropped need");
+    ok(notAKey.c.liftableUnattended === 3 && notAKey.c.armedSinceUnattended === 0, "⭐ OPE-1361: a `routine` value that is not a routine permission key joins to nothing — one redundant proposal, never a dropped need");
   }
 
   {
@@ -468,14 +468,14 @@ const GRANTS: DeclaredGrants[] = [
       detail: { connection: "notion", op: "notion__create_page", tier: "write", reason: "ask-unattended", routine: KEY },
     }));
     const { c } = clusterOf([...unjoinable, granted(1)]);
-    ok(c.liftableUnattended === 3 && c.grantedSinceUnattended === 0, "⭐ OPE-1349: a refusal row with no `grant` kind is never suppressed — an unjoinable row fails towards a redundant proposal, never towards a dropped need");
+    ok(c.liftableUnattended === 3 && c.armedSinceUnattended === 0, "⭐ OPE-1349: a refusal row with no `grant` kind is never suppressed — an unjoinable row fails towards a redundant proposal, never towards a dropped need");
   }
 
   {
     const ev = permissionEvidence([...REFUSALS, granted(2), lifted(1)], GRANTS, W30);
     const proposals = proposePermissionChanges(ev);
     const blob = JSON.stringify(ev) + JSON.stringify(proposals) + renderPermissionProposals(ev, proposals);
-    ok(!blob.includes(KEY) && !blob.includes("rt_nightly"), "⭐ arrival privacy: the routine grant key rides on both arrival actions and reaches NONE of the evidence, the proposals or the report");
+    ok(!blob.includes(KEY) && !blob.includes("rt_nightly"), "⭐ arrival privacy: the routine permission key rides on both arrival actions and reaches NONE of the evidence, the proposals or the report");
     ok(!blob.includes("U-ALICE") && !blob.includes("principalId"), "⭐ arrival privacy: no principal either");
   }
 

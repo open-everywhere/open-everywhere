@@ -53,7 +53,7 @@ export function isRoutinePermissionMemoKind(kind: string): boolean {
   return kind.startsWith(ROUTINE_CARD_ASKED_PREFIX) || kind.startsWith(ROUTINE_CARD_DECLINED_PREFIX);
 }
 
-export function isLegacyConnectorGrantKind(kind: string): boolean {
+export function isLegacyConnectorOpKind(kind: string): boolean {
   return kind.startsWith(CONNECTOR_OP_KIND_PREFIX);
 }
 
@@ -62,10 +62,10 @@ export function sessionGrantKind(row: Pick<PendingActionRow, "kind" | "argsJson"
   return null;
 }
 
-export const ROUTINE_GRANT_PREFIX = "oe-routine:";
+export const ROUTINE_PERMISSION_PREFIX = "oe-routine:";
 
-export function grantLifetime(memoSessionId: string | undefined): "routine" | "session" {
-  return memoSessionId !== undefined && memoSessionId.startsWith(ROUTINE_GRANT_PREFIX) ? "routine" : "session";
+export function permissionLifetime(memoSessionId: string | undefined): "routine" | "session" {
+  return memoSessionId !== undefined && memoSessionId.startsWith(ROUTINE_PERMISSION_PREFIX) ? "routine" : "session";
 }
 
 export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">): string {
@@ -75,7 +75,7 @@ export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">): strin
     if (typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
   } catch {
   }
-  return grantLifetime(sessionId) === "routine" ? "Approve for this routine (standing)" : "Approve for session";
+  return permissionLifetime(sessionId) === "routine" ? "Approve for this routine (standing)" : "Approve for session";
 }
 
 const CONNECTOR_TOOL_DECLARATION_PREFIX = "tool:";
@@ -119,13 +119,15 @@ export function routinePermissionRefusal(declared: string): string | undefined {
   return undefined;
 }
 
-export function describeGrantKind(kind: string): string {
+export function describeLegacyConnectorOpKind(kind: string): string {
+  return `nothing — "${kind.slice(CONNECTOR_OP_KIND_PREFIX.length)}" is a legacy per-connector row that lifts no tool`;
+}
+
+export function describeDeclaredPermissionKind(kind: string): string {
   if (kind === PR_OPEN_KIND) return "open pull requests";
   if (kind.startsWith(CONNECTOR_TOOL_KIND_PREFIX)) {
     return `use the "${kind.slice(CONNECTOR_TOOL_KIND_PREFIX.length)}" tool`;
   }
-  if (kind.startsWith(CONNECTOR_OP_KIND_PREFIX)) {
-    return `nothing — "${kind.slice(CONNECTOR_OP_KIND_PREFIX.length)}" is a legacy row that lifts no tool`;
-  }
+  if (kind.startsWith(CONNECTOR_OP_KIND_PREFIX)) return describeLegacyConnectorOpKind(kind);
   return kind;
 }

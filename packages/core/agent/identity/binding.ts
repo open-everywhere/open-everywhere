@@ -8,7 +8,7 @@ import { declaredSurfaceTrust } from "./trust.js";
 import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
-import { ROUTINE_MARKER, routineGrantKeyStamped } from "../routines/routine.js";
+import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
@@ -273,7 +273,7 @@ export function currentWindowToken(ctx: BindableContext): string | undefined {
 }
 
 export function proposingSessionId(ctx: BindableContext): string | undefined {
-  const routineKey = routineGrantKeyStamped(authOf(ctx)?.attributes);
+  const routineKey = routinePermissionKeyStamped(authOf(ctx)?.attributes);
   if (routineKey !== undefined) return routineKey;
   if (isSubagentChildContext(ctx)) {
     const inherited = currentWindowToken(ctx);

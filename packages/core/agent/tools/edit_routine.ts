@@ -5,7 +5,7 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
-import { describeTrigger, routineGrantGeneration } from "../routines/routine.js";
+import { describeTrigger, routinePermissionGeneration } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
@@ -87,7 +87,7 @@ export default defineTool({
           ...(routine.report ? { report: routine.report } : {}),
           ...(routine.sessionMode ? { sessionMode: routine.sessionMode } : {}),
           tainted,
-          generation: routineGrantGeneration(routine),
+          generation: routinePermissionGeneration(routine),
         },
         scopeKey: p.surfaceKey,
         domain: null,

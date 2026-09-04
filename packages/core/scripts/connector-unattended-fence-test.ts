@@ -24,9 +24,9 @@ import {
 } from "../agent/connections/connector-auth.js";
 import { classifyConnectorOpTier } from "../agent/access/consequence.js";
 import { connectorSessionKind, connectorToolPermissionKind } from "../agent/approvals/session-grant.js";
-import { ROUTINE_MARKER, routineGrantKey, type Routine } from "../agent/routines/routine.js";
+import { ROUTINE_MARKER, routinePermissionKey, type Routine } from "../agent/routines/routine.js";
 import { routineFireAttributes, webhookFireAttributes } from "../agent/routines/fire-auth.js";
-import { declaredPermissionKinds, grantDeclaredRoutinePermissions } from "../agent/routines/grants.js";
+import { declaredPermissionKinds, armDeclaredRoutinePermissions } from "../agent/routines/declared-permissions.js";
 import { overrideSettingsForTest, registerSettings } from "../agent/settings/settings.js";
 import { effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
 
@@ -67,15 +67,15 @@ const ROUTINE: Routine = {
   consecutiveFailures: 0,
 };
 const DEST_ATTRS = { team_id: "T0FENCE", channel_id: "C0FENCE", channel_type: "channel" } as const;
-const GRANT_KEY = routineGrantKey(ROUTINE);
-const OTHER_GENERATION_KEY = routineGrantKey({ ...ROUTINE, promptGeneration: 2 });
-const OTHER_ROUTINE_KEY = routineGrantKey({ ...ROUTINE, id: "r-other" });
+const GRANT_KEY = routinePermissionKey(ROUTINE);
+const OTHER_GENERATION_KEY = routinePermissionKey({ ...ROUTINE, promptGeneration: 2 });
+const OTHER_ROUTINE_KEY = routinePermissionKey({ ...ROUTINE, id: "r-other" });
 
 function fireAuth(grantKey: string | undefined = GRANT_KEY): unknown {
   const attributes = routineFireAttributes(ROUTINE, DEST_ATTRS, "channel", true);
   return {
     current: {
-      attributes: grantKey === undefined ? attributes : { ...attributes, [ROUTINE_MARKER.grant]: grantKey },
+      attributes: grantKey === undefined ? attributes : { ...attributes, [ROUTINE_MARKER.permissionKey]: grantKey },
     },
   };
 }
@@ -188,7 +188,7 @@ console.log("§2 an unattended write with no grant is refused:");
 
 console.log("§3 the routine's declared per-tool permission lifts the op:");
 {
-  const written = await grantDeclaredRoutinePermissions({
+  const written = await armDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
     declared: [WRITE_DECLARATION],
@@ -252,7 +252,7 @@ console.log("§6 no declared permission lifts a destructive op:");
     declineMessage = e instanceof Error ? e.message : String(e);
   }
   ok(declineMessage.includes("DELETE-tier"), "declaring a delete-tier tool is refused at propose time, so no misleading row is ever written");
-  const armed = await grantDeclaredRoutinePermissions({
+  const armed = await armDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
     declared: [`tool:${DESTRUCTIVE_OP}`],
@@ -297,7 +297,7 @@ console.log("§9 an unreadable bag stands the fence down:");
   ok((await ask(fenced, fireAuth(), "post_file")) === "user-approval", "a non-connector tool is passed through untouched");
 }
 
-console.log("§10 an unattended run with no routine grant key:");
+console.log("§10 an unattended run with no routine permission key:");
 {
   let reads = 0;
   const fenced = withUnattendedConnectorFence(fixedPolicy("user-approval"), {
@@ -307,7 +307,7 @@ console.log("§10 an unattended run with no routine grant key:");
     },
   });
   const decision = await ask(fenced, webhookAuth(), WRITE_OP);
-  ok(isDenied(decision), "a webhook fire (the REAL webhookFireAttributes bag carries no routine grant key) is refused");
+  ok(isDenied(decision), "a webhook fire (the REAL webhookFireAttributes bag carries no routine permission key) is refused");
   ok(reads === 0, "…and no row read is even attempted — there is no key to read one under");
   ok(rowFor(await refusedRows(), WRITE_OP) !== undefined, "…and the refusal is still audited");
 }
@@ -363,7 +363,7 @@ console.log("§12 a <plugin>__<server> connection keys on its whole tool name:")
   const row = rowFor(await refusedRows(), PLUGIN_OP);
   ok(row?.detail?.["connection"] === "acme__notes", "…and the audit row names the WHOLE slug, not its head segment");
   ok(row?.detail?.["grant"] === connectorToolPermissionKind(PLUGIN_OP), "…and the kind it looked for is the whole TOOL's, with nothing parsed out of it");
-  await grantDeclaredRoutinePermissions({
+  await armDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
     declared: [`tool:${PLUGIN_OP}`],
@@ -378,7 +378,7 @@ console.log("§12 a <plugin>__<server> connection keys on its whole tool name:")
 
 console.log("§13 one declared row lifts one tool, and a legacy row lifts nothing:");
 {
-  await grantDeclaredRoutinePermissions({
+  await armDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
     declared: [`tool:${SHARE_OP}`],
@@ -502,7 +502,7 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
     ok(refusedDeclaration, `🔴 the DECLARATION of ${op} is refused at propose time — the static tier, which no arm moves`);
   }
   ok(declaredPermissionKinds([`tool:${INVITE_OP}`]).length === 1, "control: a recognised write declares cleanly, so the refusals above are the tier and not the vocabulary");
-  await grantDeclaredRoutinePermissions({
+  await armDeclaredRoutinePermissions({
     org: "default",
     routine: ROUTINE,
     declared: [`tool:${UNKNOWN_OP}`],

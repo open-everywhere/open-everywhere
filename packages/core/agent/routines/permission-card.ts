@@ -6,18 +6,18 @@ import {
 } from "../approvals/routine-permission.js";
 import { routinePermissionAskedMemo, routinePermissionDeclinedMemo, routinePermissionKind } from "../approvals/session-grant.js";
 import type { RoutineCardProbe } from "./permission-card-wait.js";
-import { ROUTINE_GRANT_NO_EXPIRY, namesBundleRaisedTool, namesUnliftableTool } from "./grants.js";
+import { ROUTINE_PERMISSION_NO_EXPIRY, namesBundleRaisedTool, namesUnliftableTool } from "./declared-permissions.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { listAllRoutines, getRoutine } from "./store.js";
 import { isSilentRoutine, routineReportSurfaceKey, type Routine } from "./routine.js";
-import { routineGrantKeyParts } from "./grant-key.js";
+import { routinePermissionKeyParts } from "./permission-key.js";
 import { resolveRoutineTarget } from "../schedules/routine-dispatch.js";
 
 export type RoutinePermissionCardState = "declined" | "live" | "lapsed" | "unreadable" | "absent" | "n/a";
 
-export { routineGrantKeyParts };
+export { routinePermissionKeyParts };
 
 export function declarableRoutinePermission(declaration: string): { grantKind: string; declaration: string } | undefined {
   const grantKind = routinePermissionKind(declaration);
@@ -71,7 +71,7 @@ export interface RoutinePermissionPlan {
   readonly grantKind?: string;
 }
 
-async function routineForGrantKey(org: string, scopeKey: string, routineId: string): Promise<Routine | null> {
+async function routineForPermissionKey(org: string, scopeKey: string, routineId: string): Promise<Routine | null> {
   const keyed = await getRoutine(org, scopeKey, routineId).catch(() => null);
   if (keyed) return keyed;
   const all = await listAllRoutines().catch(() => [] as Routine[]);
@@ -83,7 +83,7 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
     if (offer.tainted) return { state: "n/a" };
     const declarable = declarableRoutinePermission(offer.declaration);
     if (!declarable) return { state: "n/a" };
-    const parts = routineGrantKeyParts(offer.grantKey);
+    const parts = routinePermissionKeyParts(offer.grantKey);
     if (!parts) return { state: "n/a" };
 
     const read = await readRoutinePermissionCardState(offer.org, offer.grantKey, declarable.grantKind, offer.nowIso);
@@ -91,7 +91,7 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
       return { state: read.state, grantKind: declarable.grantKind, ...(read.cardId !== undefined ? { cardId: read.cardId } : {}) };
     }
 
-    const routine = await routineForGrantKey(offer.org, offer.scopeKey, parts.routineId);
+    const routine = await routineForPermissionKey(offer.org, offer.scopeKey, parts.routineId);
     if (!routine) return { state: "n/a" };
     if (isSilentRoutine(routine)) return { state: "n/a" };
     const dest = resolveRoutineTarget(routine);
@@ -197,7 +197,7 @@ export async function routineCardProbe(org: string, cardId: string, grantKey: st
   return { status: "approved", armed: grant !== null };
 }
 
-export async function routineCardGrantedBy(org: string, grantKey: string, grantKind: string): Promise<string | undefined> {
+export async function routineCardArmedBy(org: string, grantKey: string, grantKind: string): Promise<string | undefined> {
   const grant = await getOperationalStore()
     .getSessionApproval(org, grantKey, grantKind, new Date().toISOString())
     .catch(() => null);
@@ -218,7 +218,7 @@ export async function markRoutinePermissionAsked(
       kind: askedMemoKind,
       grantedBy: askedBy,
       createdAt: nowIso,
-      expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+      expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
     })
     .catch(() => undefined);
 }

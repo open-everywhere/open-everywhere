@@ -29,7 +29,7 @@ import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type Cl
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
-import { describeGrantKind, sessionGrantKind } from "./session-grant.js";
+import { describeDeclaredPermissionKind, sessionGrantKind } from "./session-grant.js";
 import {
   consumeCardPostedThisTurn,
   markCardPostedThisTurn,
@@ -61,7 +61,7 @@ import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerat
 import {
   markRoutinePermissionAsked,
   planRoutinePermissionCard,
-  routineCardGrantedBy,
+  routineCardArmedBy,
   routineCardProbe,
   routinePermissionCardPointer,
   routinePermissionRefusalClause,
@@ -74,7 +74,7 @@ import {
   type RoutinePermissionCardOffer,
   type RoutinePermissionCardResult,
 } from "./routine-permission-offer.js";
-import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
+import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
 import { readTurnClock } from "../observability/turn-clock.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
@@ -486,7 +486,7 @@ export async function requestApproval(
   const store = getOperationalStore();
 
   const now = new Date();
-  const expiresAt = input.noClockExpiry ? ROUTINE_GRANT_NO_EXPIRY : new Date(now.getTime() + approvalTtlHours() * 3_600_000).toISOString();
+  const expiresAt = input.noClockExpiry ? ROUTINE_PERMISSION_NO_EXPIRY : new Date(now.getTime() + approvalTtlHours() * 3_600_000).toISOString();
   const argsJson = JSON.stringify(input.args ?? null);
 
   const nowIso = now.toISOString();
@@ -651,7 +651,7 @@ function noteUnlessArmed(
 function noteRunRefusal(state: RoutinePermissionCardState, grantKind: string | undefined, at: RoutineCardPointer, cardPosted: boolean): void {
   if (grantKind === undefined) return;
   noteRoutineRunPermissionRefusal({
-    permission: describeGrantKind(grantKind),
+    permission: describeDeclaredPermissionKind(grantKind),
     card: at.permalink ?? null,
     cardPosted,
     cardCapped: false,
@@ -672,7 +672,7 @@ async function settleRoutineCardWait(
   });
   emitTelemetry("oe.feature.used", { "oe.feature": "routine_permission_card_wait", "oe.outcome": outcome });
   if (outcome === "approved") {
-    const armedBy = await routineCardGrantedBy(org, ctx.grantKey, ctx.grantKind);
+    const armedBy = await routineCardArmedBy(org, ctx.grantKey, ctx.grantKind);
     if (armedBy !== undefined) return { clause: cardClause, armedBy, waited: true };
   }
   const waitClause = routineCardWaitRefusalClause(outcome, Math.round(budgetMs / 1_000));

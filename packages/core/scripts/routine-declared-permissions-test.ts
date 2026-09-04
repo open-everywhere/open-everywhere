@@ -2,32 +2,33 @@ process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 
 import {
-  ROUTINE_GRANT_PREFIX,
+  ROUTINE_PERMISSION_PREFIX,
   ROUTINE_MARKER,
   nextPromptGeneration,
-  routineGrantGeneration,
-  routineGrantKey,
-  routineGrantKeyStamped,
+  routinePermissionGeneration,
+  routinePermissionKey,
+  routinePermissionKeyStamped,
   type Routine,
 } from "../agent/routines/routine.js";
 import {
   MAX_DECLARED_PERMISSIONS,
-  ROUTINE_GRANT_NO_EXPIRY,
+  ROUTINE_PERMISSION_NO_EXPIRY,
   ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
   declaredPermissionKinds,
   describeDeclaredPermissions,
-  grantDeclaredRoutinePermissions,
+  armDeclaredRoutinePermissions,
   listRoutinePermissions,
   revokeRoutinePermissions,
-  sweepLegacyConnectorGrants,
+  sweepLegacyConnectorOpRows,
   unarmedDeclarations,
-} from "../agent/routines/grants.js";
+} from "../agent/routines/declared-permissions.js";
 import {
   connectorSessionKind,
   connectorToolPermissionKind,
-  describeGrantKind,
+  describeDeclaredPermissionKind,
+  describeLegacyConnectorOpKind,
   grantButtonLabel,
-  grantLifetime,
+  permissionLifetime,
   routinePermissionKind,
   sessionGrantKind,
 } from "../agent/approvals/session-grant.js";
@@ -73,24 +74,24 @@ const ROUTINE: Routine = {
 const NOW = "2026-03-30T11:30:00.000Z";
 
 {
-  const key = routineGrantKey(ROUTINE);
-  ok(key.startsWith(ROUTINE_GRANT_PREFIX), "a routine grant key carries the routine namespace");
-  ok(key === `${ROUTINE_GRANT_PREFIX}${ROUTINE.id}:g1`, "an un-edited routine keys on generation 1");
-  ok(routineGrantKey({ ...ROUTINE, promptGeneration: 4 }) === `${ROUTINE_GRANT_PREFIX}${ROUTINE.id}:g4`, "the key embeds the live generation");
+  const key = routinePermissionKey(ROUTINE);
+  ok(key.startsWith(ROUTINE_PERMISSION_PREFIX), "a routine permission key carries the routine namespace");
+  ok(key === `${ROUTINE_PERMISSION_PREFIX}${ROUTINE.id}:g1`, "an un-edited routine keys on generation 1");
+  ok(routinePermissionKey({ ...ROUTINE, promptGeneration: 4 }) === `${ROUTINE_PERMISSION_PREFIX}${ROUTINE.id}:g4`, "the key embeds the live generation");
   for (const g of [0, -3, 1.5, Number.NaN] as number[]) {
-    ok(routineGrantGeneration({ promptGeneration: g }) === 1, `generation ${g} reads as 1`);
+    ok(routinePermissionGeneration({ promptGeneration: g }) === 1, `generation ${g} reads as 1`);
   }
   let r: Pick<Routine, "promptGeneration"> = {};
   const seen = new Set<number>();
   for (let i = 0; i < 5; i++) {
     const next = nextPromptGeneration(r);
-    ok(next > routineGrantGeneration(r) && !seen.has(next), "each edit moves strictly forward to an unused generation");
+    ok(next > routinePermissionGeneration(r) && !seen.has(next), "each edit moves strictly forward to an unused generation");
     seen.add(next);
     r = { promptGeneration: next };
   }
-  ok(grantLifetime(routineGrantKey(ROUTINE)) === "routine", "session-grant.ts recognises a real routine key as standing");
-  ok(grantLifetime("oe-dom:eng:win:slack/T1/C1:oe-sup:g1") === "session", "a window token is NOT read as a routine key");
-  ok(grantLifetime(undefined) === "session", "an unknown key falls back to the session (pre-OPE-152) meaning");
+  ok(permissionLifetime(routinePermissionKey(ROUTINE)) === "routine", "session-grant.ts recognises a real routine key as standing");
+  ok(permissionLifetime("oe-dom:eng:win:slack/T1/C1:oe-sup:g1") === "session", "a window token is NOT read as a routine key");
+  ok(permissionLifetime(undefined) === "session", "an unknown key falls back to the session (pre-OPE-152) meaning");
 }
 
 {
@@ -143,15 +144,22 @@ const NOW = "2026-03-30T11:30:00.000Z";
   );
   ok(capped.includes(String(MAX_DECLARED_PERMISSIONS)), "the cap refusal names the cap");
 
-  ok(describeGrantKind("pr.open") === "open pull requests", "pr.open renders in plain language");
+  for (const declaration of ["pr.open", "tool:notion__share_page", "tool:linear__create_issue"]) {
+    const kind = routinePermissionKind(declaration);
+    ok(kind !== null, `${declaration} is declarable`);
+    ok(!/grant/i.test(describeDeclaredPermissionKind(kind!)), `describeDeclaredPermissionKind never says "grant" (${declaration})`);
+  }
+  ok(describeDeclaredPermissionKind("pr.open") === "open pull requests", "pr.open renders in plain language");
   ok(
-    describeGrantKind(connectorToolPermissionKind("notion__share_page")) === 'use the "notion__share_page" tool',
+    describeDeclaredPermissionKind(connectorToolPermissionKind("notion__share_page")) === 'use the "notion__share_page" tool',
     "a per-tool row renders the TOOL, which is what the human is being asked to buy",
   );
-  const legacy = describeGrantKind(connectorSessionKind("notion"));
+  const legacy = describeDeclaredPermissionKind(connectorSessionKind("notion"));
   ok(legacy.includes("legacy") && !legacy.startsWith("write to notion"), "a stored LEGACY row renders as the inert record it is, never as a live connector write");
   ok(legacy.includes("notion"), "…and still names it, because a row hidden from the reader is worse than an ugly one");
-  ok(describeGrantKind("something.new") === "something.new", "an unrecognised grain renders VERBATIM — a row is never hidden from the reader");
+  ok(legacy === describeLegacyConnectorOpKind(connectorSessionKind("notion")), "the legacy arm IS a SEPARATE renderer, delegated to rather than re-spelled inside the routine plane's own");
+  ok(/per-connector/.test(legacy) && !/session/i.test(legacy), "…and it names the retired GRAIN, not a plane — the remedy for a stored one is on the routine plane");
+  ok(describeDeclaredPermissionKind("something.new") === "something.new", "an unrecognised grain renders VERBATIM — a row is never hidden from the reader");
   ok(
     JSON.stringify(describeDeclaredPermissions(["pr.open", "tool:notion__share_page"])) === JSON.stringify(["open pull requests", 'use the "notion__share_page" tool']),
     "the declared set renders in order",
@@ -192,7 +200,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
 }
 
 {
-  const written = await grantDeclaredRoutinePermissions({
+  const written = await armDeclaredRoutinePermissions({
     org: ORG,
     routine: ROUTINE,
     declared: ["pr.open", "tool:notion__share_page"],
@@ -202,15 +210,15 @@ const NOW = "2026-03-30T11:30:00.000Z";
   });
   ok(JSON.stringify(written) === JSON.stringify(["pr.open", connectorToolPermissionKind("notion__share_page")]), "arming writes exactly the declared rows");
   const held = await listRoutinePermissions(ORG, ROUTINE, NOW);
-  ok(JSON.stringify(held) === JSON.stringify([connectorToolPermissionKind("notion__share_page"), "pr.open"].map(describeGrantKind)), "the standing set is READABLE (kind-ascending)");
-  const row = await getOperationalStore().getSessionApproval(ORG, routineGrantKey(ROUTINE), "pr.open", NOW);
-  ok(row?.grantedBy === "U_CLICKER", "the grant is attributed to the human who CLICKED, not to the proposing model");
-  ok(row?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "a routine grant carries no TTL — its death is the generation key + revoke, never a silent expiry");
+  ok(JSON.stringify(held) === JSON.stringify([connectorToolPermissionKind("notion__share_page"), "pr.open"].map(describeDeclaredPermissionKind)), "the standing set is READABLE (kind-ascending)");
+  const row = await getOperationalStore().getSessionApproval(ORG, routinePermissionKey(ROUTINE), "pr.open", NOW);
+  ok(row?.grantedBy === "U_CLICKER", "the permission is attributed to the human who CLICKED, not to the proposing model");
+  ok(row?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "a declared permission carries no TTL — its death is the generation key + revoke, never a silent expiry");
   await getOperationalStore().setSessionApproval({ org: ORG, sessionId: "some-other-session", kind: "pr.open", grantedBy: "U", createdAt: NOW, expiresAt: NOW });
   ok((await listRoutinePermissions(ORG, ROUTINE, NOW)).length === 2, "the standing set survives another write's prune-on-write GC");
 
   const taintedRoutine = { ...ROUTINE, id: "r-tainted1" };
-  const none = await grantDeclaredRoutinePermissions({
+  const none = await armDeclaredRoutinePermissions({
     org: ORG,
     routine: taintedRoutine,
     declared: ["pr.open", "tool:notion__share_page"],
@@ -218,26 +226,26 @@ const NOW = "2026-03-30T11:30:00.000Z";
     tainted: true,
     nowIso: NOW,
   });
-  ok(none.length === 0, "a routine proposed in a TAINTED turn is granted NOTHING, even when a human arms it");
+  ok(none.length === 0, "a routine proposed in a TAINTED turn is armed with NOTHING, even when a human arms it");
   ok((await listRoutinePermissions(ORG, taintedRoutine, NOW)).length === 0, "…and holds no standing set at all");
 }
 
 {
   const edited = { ...ROUTINE, id: "r-edited01" };
-  await grantDeclaredRoutinePermissions({ org: ORG, routine: edited, declared: ["pr.open"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
+  await armDeclaredRoutinePermissions({ org: ORG, routine: edited, declared: ["pr.open"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
   await getOperationalStore().setSessionApproval({
     org: ORG,
-    sessionId: routineGrantKey(edited),
+    sessionId: routinePermissionKey(edited),
     kind: connectorToolPermissionKind("linear__create_issue"),
     grantedBy: "U_NIGHT",
     createdAt: NOW,
-    expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+    expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
   });
-  ok((await listRoutinePermissions(ORG, edited, NOW)).length === 2, "the routine holds a declared AND an accumulated grant");
+  ok((await listRoutinePermissions(ORG, edited, NOW)).length === 2, "the routine holds a declared AND an accumulated permission");
 
   const afterEdit = { ...edited, promptGeneration: nextPromptGeneration(edited) };
   ok((await listRoutinePermissions(ORG, afterEdit, NOW)).length === 0, "an EDIT invalidates the WHOLE set — declared and accumulated — with no sweep");
-  ok((await getOperationalStore().getSessionApproval(ORG, routineGrantKey(afterEdit), "pr.open", NOW)) === null, "…so the run-time consult misses too: 'grant it pr.open, then rewrite the prompt' inherits nothing");
+  ok((await getOperationalStore().getSessionApproval(ORG, routinePermissionKey(afterEdit), "pr.open", NOW)) === null, "…so the run-time consult misses too: 'grant it pr.open, then rewrite the prompt' inherits nothing");
   ok((await listRoutinePermissions(ORG, edited, NOW)).length === 2, "the old generation's rows are simply unreachable, not swept");
 }
 
@@ -245,36 +253,36 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const partition = { org: ORG, platform: "slack", workspace: "T1", surface: "C1", surfaceKey: ROUTINE.surfaceKey } as unknown as Partition;
   const live = { ...ROUTINE, id: "r-revoke01" };
   await addRoutine(partition, live);
-  await grantDeclaredRoutinePermissions({ org: ORG, routine: live, declared: ["pr.open", "tool:notion__share_page"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
+  await armDeclaredRoutinePermissions({ org: ORG, routine: live, declared: ["pr.open", "tool:notion__share_page"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
   ok((await listRoutinePermissions(ORG, live, NOW)).length === 2, "the routine holds a standing set");
 
   const revoked = await revokeRoutinePermissions(ORG, live);
-  ok(revoked.grants === 2 && revoked.rows === 2, "revoking withdraws every grant under the key");
+  ok(revoked.permissions === 2 && revoked.rows === 2, "revoking withdraws every declared permission under the key");
   ok((await listRoutinePermissions(ORG, live, NOW)).length === 0, "…and the standing set is empty afterwards");
   const still = await getRoutine(ORG, live.surfaceKey, live.id);
   ok(still !== null && still.status === "active" && still.prompt === live.prompt, "the ROUTINE is untouched — revoking authority is not cancelling the work");
-  ok(routineGrantGeneration(still!) === 1, "…and its generation is unchanged, so a durable job's seat is NOT rotated by a revoke");
+  ok(routinePermissionGeneration(still!) === 1, "…and its generation is unchanged, so a durable job's seat is NOT rotated by a revoke");
   const twice = await revokeRoutinePermissions(ORG, live);
-  ok(twice.grants === 0 && twice.rows === 0, "revoking twice is a no-op on both counts");
+  ok(twice.permissions === 0 && twice.rows === 0, "revoking twice is a no-op on both counts");
 }
 
 {
   const attrs = routineFireAttributes(ROUTINE, { team_id: "T1", channel_id: "C1" }, "channel", false);
-  ok(attrs[ROUTINE_MARKER.grant] === routineGrantKey(ROUTINE), "a fire is stamped with the routine's grant key, host-set off the STORED row");
-  ok(routineFireAttributes({ ...ROUTINE, promptGeneration: 3 }, {}, "channel", false)[ROUTINE_MARKER.grant] === routineGrantKey({ ...ROUTINE, promptGeneration: 3 }), "…carrying the row's live generation, so an edit re-keys the next fire");
+  ok(attrs[ROUTINE_MARKER.permissionKey] === routinePermissionKey(ROUTINE), "a fire is stamped with the routine's grant key, host-set off the STORED row");
+  ok(routineFireAttributes({ ...ROUTINE, promptGeneration: 3 }, {}, "channel", false)[ROUTINE_MARKER.permissionKey] === routinePermissionKey({ ...ROUTINE, promptGeneration: 3 }), "…carrying the row's live generation, so an edit re-keys the next fire");
 
   const ctxWith = (attributes: Record<string, string>) => ({
     session: { auth: { current: { principalId: "", attributes } } },
     channel: { continuationToken: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" },
   });
-  ok(proposingSessionId(ctxWith(attrs) as never) === routineGrantKey(ROUTINE), "a FIRE proposes under the ROUTINE's key, not its throwaway session — the one swap both consult sites and the click path ride");
+  ok(proposingSessionId(ctxWith(attrs) as never) === routinePermissionKey(ROUTINE), "a FIRE proposes under the ROUTINE's key, not its throwaway session — the one swap both consult sites and the click path ride");
   ok(proposingSessionId(ctxWith({}) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "an ordinary human turn is untouched: it still keys on its window token");
-  ok(proposingSessionId(ctxWith({ [ROUTINE_MARKER.grant]: "slack/T1/C1" }) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "a stamp WITHOUT the routine namespace is ignored — the key cannot be redirected at an arbitrary session");
-  ok(routineGrantKeyStamped({ [ROUTINE_MARKER.grant]: "nonsense" }) === undefined, "…and the reader itself refuses a non-namespaced value");
+  ok(proposingSessionId(ctxWith({ [ROUTINE_MARKER.permissionKey]: "slack/T1/C1" }) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "a stamp WITHOUT the routine namespace is ignored — the key cannot be redirected at an arbitrary session");
+  ok(routinePermissionKeyStamped({ [ROUTINE_MARKER.permissionKey]: "nonsense" }) === undefined, "…and the reader itself refuses a non-namespaced value");
 }
 
 {
-  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routineGrantKey(ROUTINE) }) }) === "Approve for this routine (standing)", "a ROUTINE-keyed frozen arg maps to the STANDING wording (the label rule, not a live card)");
+  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routinePermissionKey(ROUTINE) }) }) === "Approve for this routine (standing)", "a ROUTINE-keyed frozen arg maps to the STANDING wording (the label rule, not a live card)");
   ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" }) }) === "Approve for session", "a human turn's card is unchanged");
   ok(grantButtonLabel({ argsJson: "{" }) === "Approve for session", "unparseable frozen args fall back to the conservative wording");
   ok(grantButtonLabel({ argsJson: "{}" }) === "Approve for session", "so does an args bag with no session at all");
@@ -282,7 +290,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
 
 {
   const legacyCard = { ...ROUTINE, id: "r-frozen01" };
-  const written = await grantDeclaredRoutinePermissions({
+  const written = await armDeclaredRoutinePermissions({
     org: ORG,
     routine: legacyCard,
     declared: ["pr.open", "connector:notion"],
@@ -380,8 +388,8 @@ const NOW = "2026-03-30T11:30:00.000Z";
 {
   const store = getOperationalStore();
   const swept = { ...ROUTINE, id: "r-sweep001" };
-  const key = routineGrantKey(swept);
-  const row = (sessionId: string, kind: string) => ({ org: ORG, sessionId, kind, grantedBy: "U", createdAt: NOW, expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  const key = routinePermissionKey(swept);
+  const row = (sessionId: string, kind: string) => ({ org: ORG, sessionId, kind, grantedBy: "U", createdAt: NOW, expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
 
   await store.setSessionApproval(row(key, "connector.op:notion"));
   await store.setSessionApproval(row(key, "connector.op:linear"));
@@ -391,16 +399,16 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const held = await listRoutinePermissions(ORG, swept, NOW);
   ok(held.length === 1, `an inert connector.op: row is not one of the routine's permissions (saw ${JSON.stringify(held)})`);
   ok(
-    !held.some((line) => line.includes("legacy row that lifts no tool")),
+    !held.some((line) => line === describeLegacyConnectorOpKind(connectorSessionKind("notion"))),
     "…so a human is never told a routine holds a permission that lifts nothing",
   );
 
-  const removed = await sweepLegacyConnectorGrants(ORG);
+  const removed = await sweepLegacyConnectorOpRows(ORG);
   ok(removed === 2, `the sweep removes exactly the inert routine rows (removed ${removed})`);
   ok((await store.listSessionApprovals(ORG, key, NOW)).map((r) => r.kind).join(",") === connectorToolPermissionKind("notion__share_page"), "…and the LIVE per-tool grant under the same key survives");
   ok((await store.listSessionApprovals(ORG, "some-session-token", NOW)).length === 1, "…and a legacy-shaped row under a NON-routine key is not this defect, so it survives too");
 
-  const again = await sweepLegacyConnectorGrants(ORG);
+  const again = await sweepLegacyConnectorOpRows(ORG);
   ok(again === 0, "sweeping twice removes nothing — the one-shot is idempotent");
 }
 
@@ -410,7 +418,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const RAISED = "acme__share_report";
   const PLAIN = "acme__update_report";
 
-  const { namesBundleRaisedTool, namesUnliftableTool } = await import("../agent/routines/grants.js");
+  const { namesBundleRaisedTool, namesUnliftableTool } = await import("../agent/routines/declared-permissions.js");
   ok(!namesBundleRaisedTool(`tool:${RAISED}`), "with no bundle registered, nothing is bundle-raised");
   ok(describeDeclaredPermissions([`tool:${RAISED}`])[0]?.includes(`use the "${RAISED}" tool`) === true, "…and the card calls it an ordinary usable tool");
 
@@ -451,7 +459,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   );
 
   const raisedRoutine: Routine = { ...ROUTINE, id: "r-raised01" };
-  const written = await grantDeclaredRoutinePermissions({
+  const written = await armDeclaredRoutinePermissions({
     org: ORG,
     routine: raisedRoutine,
     declared: [`tool:${RAISED}`, `tool:${PLAIN}`],
@@ -467,7 +475,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   );
   ok(!unarmedDeclarations([`tool:${RAISED}`, `tool:${PLAIN}`], written).includes(`tool:${PLAIN}`), "…without dragging the armed declaration into that clause");
 
-  const { bundleRaisedDeclarations } = await import("../agent/routines/grants.js");
+  const { bundleRaisedDeclarations } = await import("../agent/routines/declared-permissions.js");
   ok(
     JSON.stringify(bundleRaisedDeclarations([`tool:${RAISED}`, `tool:${PLAIN}`, "pr.open"])) === JSON.stringify([`tool:${RAISED}`]),
     "🔴 the caller is handed exactly the raised declarations — not the armable ones beside them, and not `pr.open`",
@@ -522,4 +530,4 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ok(declarableRoutinePermission(`tool:${PLAIN}`)?.grantKind === connectorToolPermissionKind(PLAIN), "…while the unraised op on the same connector still cards");
 }
 
-console.log(`✓ routine-grants: ${passed} assertions passed`);
+console.log(`✓ routine-declared-permissions: ${passed} assertions passed`);

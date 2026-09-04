@@ -2,17 +2,17 @@ import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
 import { connectorOpTierParts } from "../access/connector-op-gating.js";
 import {
-  describeGrantKind,
-  isLegacyConnectorGrantKind,
+  describeDeclaredPermissionKind,
+  isLegacyConnectorOpKind,
   isRoutinePermissionMemoKind,
   routinePermissionKind,
   routinePermissionRefusal,
 } from "../approvals/session-grant.js";
-import { routineGrantKey, type Routine } from "./routine.js";
+import { routinePermissionKey, type Routine } from "./routine.js";
 
-type GrantedRoutine = Pick<Routine, "id" | "promptGeneration">;
+type PermissionedRoutine = Pick<Routine, "id" | "promptGeneration">;
 
-export const ROUTINE_GRANT_NO_EXPIRY = "9999-12-31T23:59:59.999Z";
+export const ROUTINE_PERMISSION_NO_EXPIRY = "9999-12-31T23:59:59.999Z";
 
 export const MAX_DECLARED_PERMISSIONS = 6;
 
@@ -77,6 +77,9 @@ function armablePermissionKinds(declared: readonly string[]): string[] {
 
 export const ROUTINE_PERMISSION_NEVER_LIFTS_ACTION = "routine.permission_never_lifts";
 
+export const ROUTINE_PERMISSIONS_ARMED_ACTION = "routine.grant";
+export const ROUTINE_PERMISSIONS_REVOKED_ACTION = "routine.grants_revoked";
+
 export function unarmedDeclarations(declared: readonly string[], granted: readonly string[]): string[] {
   const out: string[] = [];
   for (const d of declared) {
@@ -100,15 +103,15 @@ export function describeDeclaredPermissions(declared: readonly string[]): string
           ? `the "${declaredToolName(trimmed)}" tool, never lifted on an unattended fire (grants nothing)`
           : namesBundleRaisedTool(trimmed)
             ? `the "${declaredToolName(trimmed)}" tool, which this deployment's bundle configuration raises to the delete tier — the fence refuses it on every unattended fire (grants nothing here)`
-            : describeGrantKind(kind);
+            : describeDeclaredPermissionKind(kind);
     if (!out.includes(line)) out.push(line);
   }
   return out;
 }
 
-export async function grantDeclaredRoutinePermissions(input: {
+export async function armDeclaredRoutinePermissions(input: {
   readonly org: string;
-  readonly routine: GrantedRoutine;
+  readonly routine: PermissionedRoutine;
   readonly declared: readonly string[];
   readonly grantedBy: string;
   readonly tainted: boolean;
@@ -116,7 +119,7 @@ export async function grantDeclaredRoutinePermissions(input: {
 }): Promise<string[]> {
   if (input.tainted || input.declared.length === 0) return [];
   const store = getOperationalStore();
-  const sessionId = routineGrantKey(input.routine);
+  const sessionId = routinePermissionKey(input.routine);
   const written: string[] = [];
   for (const kind of armablePermissionKinds(input.declared)) {
     const done = await store
@@ -126,7 +129,7 @@ export async function grantDeclaredRoutinePermissions(input: {
         kind,
         grantedBy: input.grantedBy,
         createdAt: input.nowIso,
-        expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+        expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
       })
       .then(() => true)
       .catch(() => false);
@@ -145,26 +148,26 @@ export function bundleRaisedDeclarations(declared: readonly string[]): string[] 
   return out;
 }
 
-async function liveGrantKinds(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
+async function livePermissionKinds(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
   const rows = await getOperationalStore()
-    .listSessionApprovals(org, routineGrantKey(routine), nowIso)
+    .listSessionApprovals(org, routinePermissionKey(routine), nowIso)
     .catch(() => []);
-  return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k) && !isLegacyConnectorGrantKind(k));
+  return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k) && !isLegacyConnectorOpKind(k));
 }
 
-export async function listRoutinePermissions(org: string, routine: GrantedRoutine, nowIso: string): Promise<string[]> {
-  return (await liveGrantKinds(org, routine, nowIso)).map(describeGrantKind);
+export async function listRoutinePermissions(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
+  return (await livePermissionKinds(org, routine, nowIso)).map(describeDeclaredPermissionKind);
 }
 
 export async function revokeRoutinePermissions(
   org: string,
-  routine: GrantedRoutine,
-): Promise<{ grants: number; rows: number }> {
-  const grants = (await liveGrantKinds(org, routine, new Date().toISOString())).length;
-  const rows = await getOperationalStore().revokeSessionApprovals(org, routineGrantKey(routine));
-  return { grants, rows };
+  routine: PermissionedRoutine,
+): Promise<{ permissions: number; rows: number }> {
+  const permissions = (await livePermissionKinds(org, routine, new Date().toISOString())).length;
+  const rows = await getOperationalStore().revokeSessionApprovals(org, routinePermissionKey(routine));
+  return { permissions, rows };
 }
 
-export async function sweepLegacyConnectorGrants(org: string): Promise<number> {
-  return await getOperationalStore().sweepLegacyConnectorGrants(org);
+export async function sweepLegacyConnectorOpRows(org: string): Promise<number> {
+  return await getOperationalStore().sweepLegacyConnectorOpRows(org);
 }

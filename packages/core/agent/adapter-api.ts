@@ -539,7 +539,7 @@ export type { TenantAdmissionDecision, TenantAdmissionInput } from "./access/ten
 
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
-export { sessionGrantKind, connectorSessionKind, grantButtonLabel } from "./approvals/session-grant.js";
+export { sessionGrantKind, grantButtonLabel } from "./approvals/session-grant.js";
 
 export { isAllowedDriver } from "./testing/driver-allowlist.js";
 

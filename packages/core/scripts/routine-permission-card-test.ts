@@ -29,8 +29,8 @@ const { RUN_REFUSAL_HEADING, withRunRefusalBlock } = await import("../agent/rout
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { addRoutine, removeRoutine, updateRoutine } = await import("../agent/routines/store.js");
-const { routineGrantKey } = await import("../agent/routines/routine.js");
-const { ROUTINE_GRANT_NO_EXPIRY, listRoutinePermissions, revokeRoutinePermissions } = await import("../agent/routines/grants.js");
+const { routinePermissionKey } = await import("../agent/routines/routine.js");
+const { ROUTINE_PERMISSION_NO_EXPIRY, listRoutinePermissions, revokeRoutinePermissions } = await import("../agent/routines/declared-permissions.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { decidedCardBlocks } = await import("../agent/approvals/card.js");
 const { ROUTINE_PERMISSION_KIND } = await import("../agent/approvals/routine-permission.js");
@@ -39,7 +39,7 @@ const {
   declarableRoutinePermission,
   planRoutinePermissionCard,
   readRoutinePermissionCardState,
-  routineGrantKeyParts,
+  routinePermissionKeyParts,
   routinePermissionRefusalClause,
 } = await import("../agent/routines/permission-card.js");
 
@@ -109,16 +109,16 @@ const routine = await addRoutine(
     status: "active",
   } as never,
 );
-const KEY = routineGrantKey(routine);
+const KEY = routinePermissionKey(routine);
 
 {
-  const parts = routineGrantKeyParts(KEY);
-  ok(parts?.routineId === "r-nightly" && parts.generation === 1, "§key: a real routine grant key yields its id and generation");
-  ok(routineGrantKeyParts("slack:T1:C1:12345") === undefined, "§key: a window/session token is NOT a routine key");
-  ok(routineGrantKeyParts("oe-routine:r-nightly") === undefined, "§key: a key with no generation is refused, never defaulted to g1");
-  ok(routineGrantKeyParts("oe-routine:r-nightly:g0") === undefined, "§key: generation 0 is refused — no key is ever minted at g0");
-  ok(routineGrantKeyParts("oe-routine:a:b:g1") === undefined, "§key: an extra segment is refused rather than parsed loosely");
-  ok(routineGrantKeyParts("") === undefined, "§key: the empty string is refused");
+  const parts = routinePermissionKeyParts(KEY);
+  ok(parts?.routineId === "r-nightly" && parts.generation === 1, "§key: a real routine permission key yields its id and generation");
+  ok(routinePermissionKeyParts("slack:T1:C1:12345") === undefined, "§key: a window/session token is NOT a routine key");
+  ok(routinePermissionKeyParts("oe-routine:r-nightly") === undefined, "§key: a key with no generation is refused, never defaulted to g1");
+  ok(routinePermissionKeyParts("oe-routine:r-nightly:g0") === undefined, "§key: generation 0 is refused — no key is ever minted at g0");
+  ok(routinePermissionKeyParts("oe-routine:a:b:g1") === undefined, "§key: an extra segment is refused rather than parsed loosely");
+  ok(routinePermissionKeyParts("") === undefined, "§key: the empty string is refused");
 }
 
 {
@@ -132,7 +132,7 @@ const KEY = routineGrantKey(routine);
   );
   ok(
     declarableRoutinePermission("tool:notion__delete_page") === undefined,
-    "🔴 §vocabulary: a DELETE-tier connector tool is NOT declarable — the planner applies routines/grants.ts's own tier test, so a card is refused here even before the fence's guard",
+    "🔴 §vocabulary: a DELETE-tier connector tool is NOT declarable — the planner applies routines/declared-permissions.ts's own tier test, so a card is refused here even before the fence's guard",
   );
   ok(declarableRoutinePermission("tool:notion") === undefined, "§vocabulary: a connection-shaped declaration names no tool, so it is not declarable");
   ok(declarableRoutinePermission("tool:grant__notion__read") === undefined, "§vocabulary: the RESERVED grant namespace belongs to the credential-grant plane, not this one");
@@ -142,11 +142,11 @@ const KEY = routineGrantKey(routine);
   const now = () => new Date().toISOString();
   const stateOf = async (key: string, kind: string): Promise<string> => (await readRoutinePermissionCardState(ORG, key, kind, now())).state;
   ok((await stateOf(KEY, "pr.open")) === "absent", "§state: nothing written yet reads as absent");
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   ok((await stateOf(KEY, "pr.open")) === "lapsed", "🔴 §state: an ask-memo with NO pending row reads as LAPSED, never live — the memo outlives the card, so it cannot assert one is waiting");
   ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())).cardId === undefined, "§state: and a lapsed read names no card, because it found none");
   ok((await stateOf(KEY, "connector.tool:notion__share_page")) === "absent", "§state: the memo is PER PERMISSION — one tool's card says nothing about another's");
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   ok((await stateOf(KEY, "pr.open")) === "declined", "§state: a decline WINS over a live ask — a declined permission never re-cards");
   ok((await stateOf("oe-routine:r-nightly:g2", "pr.open")) === "absent", "§state: the rows are generation-scoped — the next generation starts clean");
   await store.revokeSessionApprovals(ORG, KEY);
@@ -208,7 +208,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const rows = await cardsFor(ROUTINE_PERMISSION_KIND);
   ok(rows.length === 1, "§refusal: one permission card row landed");
   ok(rows[0]?.channelId === "C_ROOM", "§refusal: it landed in the ROUTINE's room, not the room the refused proposal named");
-  ok(rows[0]?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§refusal: the card row carries no clock expiry");
+  ok(rows[0]?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§refusal: the card row carries no clock expiry");
   ok(first.includes("is now waiting in the routine's own room"), "§refusal: the refusal tells the model a card was posted");
   ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", new Date().toISOString())).state === "live", "§refusal: the ask-memo is written after the post");
 
@@ -244,7 +244,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const line = await kind!.execute(args, "U_CLICKER");
   const granted = await store.getSessionApproval(ORG, KEY, "pr.open", new Date().toISOString());
   ok(granted !== null, "§click: approve writes exactly the standing row open_pull_request's session skip reads");
-  ok(granted?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§click: the standing row has no TTL — the generation is its death mechanism");
+  ok(granted?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§click: the standing row has no TTL — the generation is its death mechanism");
   ok(granted?.grantedBy === "U_CLICKER", "§click: the row records the human who armed it");
   ok(line.includes("r-nightly"), "§click: the outcome line names the routine");
 
@@ -303,7 +303,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
 
   await refuse({ ...proposal, args: { ...proposal.args, title: "generation one" } });
   const g1 = await cards();
-  ok(g1.length === 1 && g1[0]!.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§residue: the generation-1 card is pending with no clock");
+  ok(g1.length === 1 && g1[0]!.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§residue: the generation-1 card is pending with no clock");
 
   await updateRoutine(ORG, SURFACE, "r-nightly", { promptGeneration: 4 });
   const liveKey = "oe-routine:r-nightly:g4";
@@ -325,7 +325,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     kind: routinePermissionDeclinedMemo("pr.open"),
     grantedBy: "U_OWNER",
     createdAt: new Date().toISOString(),
-    expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+    expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
   });
   const before = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
   const quiet = await refuse({ ...proposal, args: { ...proposal.args, title: "bump again" } });
@@ -354,7 +354,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     createdAt: new Date().toISOString(),
     status: "active",
   } as never);
-  const teamsKey = routineGrantKey(teamsRoutine);
+  const teamsKey = routinePermissionKey(teamsRoutine);
   const before = (await store.listPendingActions(ORG)).length;
   const threw = await refuse({ ...proposal, args: { ...proposal.args, sessionId: teamsKey }, scopeKey: "teams/T9/CONV9" });
   ok(threw.includes("ask-unattended"), "§room: the Teams fire is still refused");
@@ -379,14 +379,14 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     createdAt: new Date().toISOString(),
     status: "active",
   } as never);
-  const silentKey = routineGrantKey(silent);
+  const silentKey = routinePermissionKey(silent);
   const plan = await planRoutinePermissionCard({ ...baseOffer, grantKey: silentKey });
   ok(plan.state === "n/a" && plan.card === undefined, "§silent: a silent routine plans no card — its declared silence holds");
   const before = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
   const threw = await refuse({ ...proposal, args: { ...proposal.args, sessionId: silentKey, title: "silent fire" } });
   ok(threw.includes("ask-unattended"), "§silent: the silent routine's fire is still refused");
   ok(!threw.includes("routine's own room"), "§silent: and the refusal claims no card");
-  ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === before, "§silent: no card row is minted, so an edit_routine grant is still the way in");
+  ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === before, "§silent: no card row is minted, so an edit_routine declaration is still the way in");
   ok(
     (await readRoutinePermissionCardState(ORG, silentKey, "pr.open", new Date().toISOString())).state === "absent",
     "§silent: and no ask-memo is written",
@@ -396,20 +396,20 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
 {
   await store.revokeSessionApprovals(ORG, KEY);
   const now = () => new Date().toISOString();
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionDeclinedMemo("connector.tool:notion__share_page"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionDeclinedMemo("connector.tool:notion__share_page"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   ok((await listRoutinePermissions(ORG, routine, now())).length === 0, "§readers: markers alone are NOT permissions — list_routines shows none");
   const markerRevoke = await revokeRoutinePermissions(ORG, routine);
-  ok(markerRevoke.grants === 0, "§readers: revoking counts NO grants, so the tool cannot report authority that was never held");
+  ok(markerRevoke.permissions === 0, "§readers: revoking counts NO permissions, so the tool cannot report authority that was never held");
   ok(markerRevoke.rows === 2, `§readers: but it reports the rows it deleted, so a call that destroyed a human's durable decline still audits (got ${markerRevoke.rows})`);
   ok((await readRoutinePermissionCardState(ORG, KEY, "pr.open", now())).state === "absent", "§readers: the revoke still clears the markers — a revoke is a clean slate and the routine may ask again");
 
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: "pr.open", grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
-  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: "pr.open", grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: KEY, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: now(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   const held = await listRoutinePermissions(ORG, routine, now());
-  ok(held.length === 1 && held[0] === "open pull requests", "§readers: a REAL grant beside a marker is still listed, and listed alone");
+  ok(held.length === 1 && held[0] === "open pull requests", "§readers: a REAL permission beside a marker is still listed, and listed alone");
   const mixedRevoke = await revokeRoutinePermissions(ORG, routine);
-  ok(mixedRevoke.grants === 1, "§readers: the reported count is the GRANT, not the grant plus its bookkeeping");
+  ok(mixedRevoke.permissions === 1, "§readers: the reported count is the PERMISSION, not the permission plus its bookkeeping");
   ok(mixedRevoke.rows === 2, "§readers: while the deleted-row count sees both — two numbers, two questions");
 }
 
@@ -452,7 +452,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     createdAt: new Date().toISOString(),
     status: "active",
   } as never);
-  const dKey = routineGrantKey(dRoutine);
+  const dKey = routinePermissionKey(dRoutine);
 
   const posted = await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey }, scopeKey: DISCORD_SURFACE });
   ok(posted.includes("is now waiting in the routine's own room"), "§pointer: the discord fire posts a card and says so");
@@ -508,7 +508,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     return consumeRoutineRunPermissionRefusals();
   });
   ok(first.length === 1, "🔴 §runreport: the real refusal path RECORDS the loss on this run's ledger");
-  ok(first[0]?.permission === "open pull requests", "§runreport: named in the same plain language list_routines uses for a live grant");
+  ok(first[0]?.permission === "open pull requests", "§runreport: named in the same plain language list_routines uses for a live permission");
   ok(first[0]?.card === PERMALINK, "🔴 §runreport: with a POINTER to the still-open card, which is what makes the line actionable");
 
   const drained = await inSession(async () => consumeRoutineRunPermissionRefusals());
@@ -521,7 +521,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   });
   ok(twice.length === 1, "§runreport: one line per PERMISSION — a run that hit the same gate twice says it once");
 
-  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionDeclinedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   const declinedRun = await inSession(async () => {
     await refuse({ ...proposal, args: { ...proposal.args, scopeKey: DISCORD_SURFACE, sessionId: dKey, title: "c" }, scopeKey: DISCORD_SURFACE });
     return consumeRoutineRunPermissionRefusals();
@@ -530,7 +530,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   await store.revokeSessionApprovals(ORG, dKey);
 
   await store.revokeSessionApprovals(ORG, dKey);
-  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_GRANT_NO_EXPIRY });
+  await store.setSessionApproval({ org: ORG, sessionId: dKey, kind: routinePermissionAskedMemo("pr.open"), grantedBy: "U_OWNER", createdAt: new Date().toISOString(), expiresAt: ROUTINE_PERMISSION_NO_EXPIRY });
   const blindCardsBefore = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
   const realList = store.listPendingActions.bind(store);
   (store as { listPendingActions: unknown }).listPendingActions = async (): Promise<never> => {
@@ -596,7 +596,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     {},
   );
   const ttlHours = (Date.parse(res.expiresAt) - Date.now()) / 3_600_000;
-  ok(res.expiresAt !== ROUTINE_GRANT_NO_EXPIRY && ttlHours > 23 && ttlHours < 25, `§expiry: an ordinary card is unaffected — it still expires on approvals.ttlHours (got ${ttlHours.toFixed(2)}h)`);
+  ok(res.expiresAt !== ROUTINE_PERMISSION_NO_EXPIRY && ttlHours > 23 && ttlHours < 25, `§expiry: an ordinary card is unaffected — it still expires on approvals.ttlHours (got ${ttlHours.toFixed(2)}h)`);
 }
 
 {
@@ -629,7 +629,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     createdAt: new Date().toISOString(),
     status: "active",
   } as never);
-  const reapKey = routineGrantKey(reapRoutine);
+  const reapKey = routinePermissionKey(reapRoutine);
   const fireReap = async (title: string): Promise<void> => {
     await requestApproval(
       {
@@ -680,7 +680,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
     createdAt: new Date().toISOString(),
     status: "active",
   } as never);
-  const goneKey = routineGrantKey(goneRoutine);
+  const goneKey = routinePermissionKey(goneRoutine);
   await requestApproval(
     {
       org: ORG,

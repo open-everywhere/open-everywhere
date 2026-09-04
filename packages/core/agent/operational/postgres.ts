@@ -4,7 +4,7 @@ import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proac
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
-import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_GRANT_PREFIX } from "../approvals/session-grant.js";
+import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -3067,10 +3067,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as unknown[]).length;
     },
 
-    async sweepLegacyConnectorGrants(org: string) {
+    async sweepLegacyConnectorOpRows(org: string) {
       const { rows } = await client.query(
         "DELETE FROM pr_session_approval WHERE org_id = $1 AND session_id LIKE $2 AND kind LIKE $3 RETURNING kind",
-        [org, `${ROUTINE_GRANT_PREFIX}%`, `${CONNECTOR_OP_KIND_PREFIX}%`],
+        [org, `${ROUTINE_PERMISSION_PREFIX}%`, `${CONNECTOR_OP_KIND_PREFIX}%`],
       );
       return (rows as unknown[]).length;
     },

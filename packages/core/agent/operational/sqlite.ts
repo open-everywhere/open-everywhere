@@ -6,7 +6,7 @@ import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proac
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
-import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_GRANT_PREFIX } from "../approvals/session-grant.js";
+import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -79,7 +79,7 @@ function getDb(): DatabaseSync {
       surface_key TEXT NOT NULL,
       routine_id  TEXT NOT NULL,
       prompt      TEXT NOT NULL,          -- the exact text the routine ran under
-      generation  INTEGER,                -- the promptGeneration it ran under (joins routineGrantKey)
+      generation  INTEGER,                -- the promptGeneration it ran under (joins routinePermissionKey)
       authored_by TEXT,                   -- createdBy on the genesis row, the edit's requestedBy after
       armed_by    TEXT,                   -- the approver whose click armed it (never on genesis)
       approval_id TEXT,                   -- pending_actions.id of the card that armed it
@@ -2620,11 +2620,11 @@ export const sqliteOperationalStore: OperationalStore = {
     return Number(getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
   },
 
-  async sweepLegacyConnectorGrants(org) {
+  async sweepLegacyConnectorOpRows(org) {
     return Number(
       getDb()
         .prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id LIKE ? AND kind LIKE ?")
-        .run(org, `${ROUTINE_GRANT_PREFIX}%`, `${CONNECTOR_OP_KIND_PREFIX}%`).changes,
+        .run(org, `${ROUTINE_PERMISSION_PREFIX}%`, `${CONNECTOR_OP_KIND_PREFIX}%`).changes,
     );
   },
 

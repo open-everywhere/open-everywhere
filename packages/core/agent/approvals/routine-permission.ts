@@ -3,8 +3,8 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import { getRoutine } from "../routines/store.js";
-import { ROUTINE_GRANT_NO_EXPIRY } from "../routines/grants.js";
-import { routineGrantGeneration, routineGrantKey } from "../routines/routine.js";
+import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
+import { routinePermissionGeneration, routinePermissionKey } from "../routines/routine.js";
 import { routineCardWaitSeconds } from "../routines/permission-card-wait.js";
 import { routinePermissionDeclinedMemo } from "./session-grant.js";
 import type { ActionKind } from "./types.js";
@@ -76,7 +76,7 @@ export async function routineCardGenerationState(args: RoutinePermissionArgs): P
     return { state: "unreadable" };
   }
   if (!routine) return { state: "gone" };
-  if (routineGrantKey(routine) !== args.grantKey) return { state: "superseded", generation: routineGrantGeneration(routine) };
+  if (routinePermissionKey(routine) !== args.grantKey) return { state: "superseded", generation: routinePermissionGeneration(routine) };
   return { state: "current" };
 }
 
@@ -109,7 +109,7 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
       kind: args.grantKind,
       grantedBy: decidedBy,
       createdAt: now.toISOString(),
-      expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+      expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
     });
     await appendAudit({
       ...whereFromScope(args.org, args.scopeKey),
@@ -141,7 +141,7 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
         kind: routinePermissionDeclinedMemo(args.grantKind),
         grantedBy: decidedBy,
         createdAt: now.toISOString(),
-        expiresAt: ROUTINE_GRANT_NO_EXPIRY,
+        expiresAt: ROUTINE_PERMISSION_NO_EXPIRY,
       })
       .catch(() => undefined);
     await appendAudit({

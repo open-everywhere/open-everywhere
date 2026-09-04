@@ -127,7 +127,7 @@ const store = makeOperationalPostgresStore(client);
     `pg revisions: THE SUPERSEDED INSTRUCTION SURVIVES the patch that overwrote it (recorded prompts: ${JSON.stringify(revs.map((r) => r.prompt))})`,
   );
   ok(revs.length === 2 && revs[0]!.seq < revs[1]!.seq, `pg revisions: the first edit records the destroyed text AND its replacement, oldest-first by the identity seq (got ${revs.length})`);
-  ok(revs[0]!.generation === 1 && revs[1]!.generation === 2, "pg revisions: each row carries the generation its text ran under — the join back to routineGrantKey()");
+  ok(revs[0]!.generation === 1 && revs[1]!.generation === 2, "pg revisions: each row carries the generation its text ran under — the join back to routinePermissionKey()");
   ok(revs[0]!.authoredBy === "U_MAKER" && revs[0]!.recordedAt === "2026-06-20T08:00:00Z", "pg revisions: the GENESIS row is attributed from the row (createdBy/createdAt), not from the edit that retired it");
   ok(revs[0]!.armedBy === undefined && revs[0]!.approvalId === undefined, "pg revisions: the genesis row claims no approver — crediting this edit's clicker for the OLD text would be the most misleading thing this table could say");
   ok(revs[1]!.authoredBy === "U_ASKER" && revs[1]!.armedBy === "U_ARMER" && revs[1]!.approvalId === "pa_r1", "pg revisions: asker, armer and the arming card's id all round-trip");

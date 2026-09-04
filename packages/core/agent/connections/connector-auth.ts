@@ -11,7 +11,7 @@ import { once, type ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
 import { offerRoutinePermissionCardFor } from "../approvals/routine-permission-offer.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { routineGrantKeyStamped } from "../routines/routine.js";
+import { routinePermissionKeyStamped } from "../routines/routine.js";
 import type { ApprovalPolicy } from "eve/tools/approval";
 import {
   assertConnectorGranted,
@@ -426,7 +426,7 @@ export interface UnattendedConnectorFenceDeps {
   readonly tainted?: () => boolean;
 }
 
-async function routineGrantExists(org: string, grantKey: string, kind: string, nowIso: string): Promise<boolean> {
+async function routinePermissionExists(org: string, grantKey: string, kind: string, nowIso: string): Promise<boolean> {
   return (await getOperationalStore().getSessionApproval(org, grantKey, kind, nowIso)) !== null;
 }
 
@@ -447,7 +447,7 @@ async function fencedTurnFacts(
 ): Promise<FencedTurnFacts | null> {
   const ctx = await surfaceContext(auth).catch(() => null);
   if (!ctx) return null;
-  const grantKey = routineGrantKeyStamped((auth.current ?? auth.initiator)?.attributes);
+  const grantKey = routinePermissionKeyStamped((auth.current ?? auth.initiator)?.attributes);
   try {
     const binding = bindFrom(ctx);
     const partition = resolvePartition(ctx);
@@ -492,7 +492,7 @@ export function withUnattendedConnectorFence(
   deps: UnattendedConnectorFenceDeps = {},
 ): ApprovalPolicy {
   const surfaceContext = deps.surfaceContext ?? surfaceContextFromAuth;
-  const grantExists = deps.grantExists ?? routineGrantExists;
+  const permissionExists = deps.grantExists ?? routinePermissionExists;
   const audit = deps.audit ?? appendAudit;
   const tainted = deps.tainted ?? untrustedIngestedThisTurn;
   return async (ctx): Promise<ApprovalStatus> => {
@@ -522,7 +522,7 @@ export function withUnattendedConnectorFence(
       !poisoned &&
       tier === "write" &&
       facts.grantKey !== undefined &&
-      (await callAsync(() => grantExists(facts.org, facts.grantKey as string, kind, nowIso), false));
+      (await callAsync(() => permissionExists(facts.org, facts.grantKey as string, kind, nowIso), false));
     const where = {
       org: facts.org,
       platform: facts.platform,

@@ -3,12 +3,12 @@ import type { PendingActionRow } from "../approvals/types.js";
 import { ROUTINE_PERMISSION_KIND, type RoutinePermissionArgs } from "../approvals/routine-permission.js";
 import {
   declarationForPermissionKind,
-  describeGrantKind,
+  describeDeclaredPermissionKind,
   isRoutinePermissionMemoKind,
   routinePermissionMemoParts,
 } from "../approvals/session-grant.js";
-import { routineGrantKey, routineReportSurfaceKey, type Routine } from "./routine.js";
-import { routineGrantKeyParts } from "./grant-key.js";
+import { routinePermissionKey, routineReportSurfaceKey, type Routine } from "./routine.js";
+import { routinePermissionKeyParts } from "./permission-key.js";
 
 type ReviewedRoutine = Pick<Routine, "id" | "promptGeneration" | "surfaceKey" | "report">;
 
@@ -89,7 +89,7 @@ async function readOneView(
   nowIso: string,
   cards: readonly ParsedCard[] | undefined,
 ): Promise<RoutinePermissionView> {
-  const liveKey = routineGrantKey(routine);
+  const liveKey = routinePermissionKey(routine);
   const rows = await getOperationalStore()
     .listSessionApprovals(org, liveKey, nowIso)
     .catch(() => undefined);
@@ -102,7 +102,7 @@ async function readOneView(
   for (const row of rows ?? []) {
     if (!isRoutinePermissionMemoKind(row.kind)) {
       granted.add(row.kind);
-      permissions.push(describeGrantKind(row.kind));
+      permissions.push(describeDeclaredPermissionKind(row.kind));
       continue;
     }
     const parts = routinePermissionMemoParts(row.kind);
@@ -113,7 +113,7 @@ async function readOneView(
   const live = new Map<string, ParsedCard>();
   const superseded = new Map<string, ParsedCard>();
   for (const card of cards ?? []) {
-    const parts = routineGrantKeyParts(card.args.grantKey);
+    const parts = routinePermissionKeyParts(card.args.grantKey);
     if (parts === undefined || parts.routineId !== routine.id) continue;
     const bucket = card.args.grantKey === liveKey ? live : superseded;
     if (!bucket.has(card.args.grantKind)) bucket.set(card.args.grantKind, card);
@@ -125,7 +125,7 @@ async function readOneView(
     if (seen.has(grantKind)) return;
     seen.add(grantKind);
     asks.push({
-      permission: describeGrantKind(grantKind),
+      permission: describeDeclaredPermissionKind(grantKind),
       declaration: card?.args.declaration ?? declarationForPermissionKind(grantKind) ?? null,
       state,
       askedAt: card?.row.createdAt ?? null,

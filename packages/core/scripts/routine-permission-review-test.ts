@@ -24,7 +24,7 @@ const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { requestApproval } = await import("../agent/approvals/flow.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { addRoutine, updateRoutine } = await import("../agent/routines/store.js");
-const { routineGrantKey } = await import("../agent/routines/routine.js");
+const { routinePermissionKey } = await import("../agent/routines/routine.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { ROUTINE_PERMISSION_KIND } = await import("../agent/approvals/routine-permission.js");
 const { declarationForPermissionKind, routinePermissionMemoParts } = await import("../agent/approvals/session-grant.js");
@@ -94,12 +94,12 @@ const cardRows = async (): Promise<{ id: string; argsJson: string; createdAt: st
   ok(asked?.marker === "asked" && asked.grantKind === "pr.open", "§parse: an ask marker yields its marker and the permission it is about");
   const declined = routinePermissionMemoParts("routine.permission.declined:connector.tool:notion__share_page");
   ok(declined?.marker === "declined" && declined.grantKind === "connector.tool:notion__share_page", "§parse: a decline marker keeps the WHOLE grant kind, colons and all");
-  ok(routinePermissionMemoParts("pr.open") === undefined, "§parse: a real grant is NOT a marker — the row that lifts a gate must never read as bookkeeping");
-  ok(routinePermissionMemoParts("connector.tool:notion__share_page") === undefined, "§parse: nor is a connector-tool grant");
+  ok(routinePermissionMemoParts("pr.open") === undefined, "§parse: a real permission is NOT a marker — the row that lifts a gate must never read as bookkeeping");
+  ok(routinePermissionMemoParts("connector.tool:notion__share_page") === undefined, "§parse: nor is a connector-tool permission");
   ok(routinePermissionMemoParts("routine.permission.asked:") === undefined, "§parse: a bare prefix names no permission, so it yields nothing to render");
 
   ok(declarationForPermissionKind("pr.open") === "pr.open", "§parse: pr.open is spelled as itself");
-  ok(declarationForPermissionKind("connector.tool:notion__share_page") === "tool:notion__share_page", "§parse: a connector-tool grant spells back as the `tool:` declaration edit_routine takes");
+  ok(declarationForPermissionKind("connector.tool:notion__share_page") === "tool:notion__share_page", "§parse: a connector-tool permission spells back as the `tool:` declaration edit_routine takes");
   ok(declarationForPermissionKind("connector.op:notion") === undefined, "§parse: a legacy connector.op row lifts no tool, so no declaration is offered for it");
   ok(declarationForPermissionKind("connector.tool:notion") === undefined, "§parse: a stored kind naming no connection segment spells back to nothing — advice edit_routine would refuse is never offered");
   ok(declarationForPermissionKind("skill.create") === undefined, "§parse: a non-declarable kind offers no declaration");
@@ -109,7 +109,7 @@ const nightly = await makeRoutine("r-nightly", SURFACE, "C1");
 {
   ok((await viewOf(nightly)).asks.length === 0, "§waiting: a routine that has asked for nothing has an empty record — the state is read, never assumed");
 
-  const told = await refuse(routineGrantKey(nightly), SURFACE);
+  const told = await refuse(routinePermissionKey(nightly), SURFACE);
   ok(told.includes("ask-unattended"), "§waiting: the fire is still refused — the review surface changes no verdict");
   const card = (await cardRows())[0];
   ok(card !== undefined, "§waiting: the real planner posted one card");
@@ -128,7 +128,7 @@ const nightly = await makeRoutine("r-nightly", SURFACE, "C1");
 
 const elsewhere = await makeRoutine("r-elsewhere", OTHER_SURFACE, "C9");
 {
-  await refuse(routineGrantKey(elsewhere), OTHER_SURFACE);
+  await refuse(routinePermissionKey(elsewhere), OTHER_SURFACE);
   ok((await cardRows()).length === 2, "§scope: both routines now hold a card in the same org");
 
   const mine = await viewOf(nightly);
@@ -154,7 +154,7 @@ const elsewhere = await makeRoutine("r-elsewhere", OTHER_SURFACE, "C9");
 
 const refused = await makeRoutine("r-refused", SURFACE, "C1");
 {
-  await refuse(routineGrantKey(refused), SURFACE);
+  await refuse(routinePermissionKey(refused), SURFACE);
   const kind = actionKind(ROUTINE_PERMISSION_KIND);
   const card = (await cardRows()).find((r) => (JSON.parse(r.argsJson) as { routineId?: string }).routineId === "r-refused")!;
   await store.decidePendingAction(ORG, card.id, "rejected", "U_CLICKER", now());
@@ -169,7 +169,7 @@ const refused = await makeRoutine("r-refused", SURFACE, "C1");
 
 const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
 {
-  await refuse(routineGrantKey(lapsed), SURFACE);
+  await refuse(routinePermissionKey(lapsed), SURFACE);
   const card = (await cardRows()).find((r) => (JSON.parse(r.argsJson) as { routineId?: string }).routineId === "r-lapsed")!;
   await store.decidePendingAction(ORG, card.id, "approved", "U_CLICKER", now());
 
@@ -210,19 +210,19 @@ const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
   } finally {
     (store as { listSessionApprovals: unknown }).listSessionApprovals = real;
   }
-  ok(broken.permissionsUnreadable === true, "🔴 §grantsunreadable: a failed grant read SAYS so, so an empty permission set reads as unknown rather than none");
-  ok(broken.permissions.length === 0, "§grantsunreadable: and still invents no grant — the direction that matters is unchanged");
-  ok(broken.asks.length === 0, "§grantsunreadable: every marker on the key was on the same unread rows, so no ask is asserted either");
+  ok(broken.permissionsUnreadable === true, "🔴 §permissionsunreadable: a failed grant read SAYS so, so an empty permission set reads as unknown rather than none");
+  ok(broken.permissions.length === 0, "§permissionsunreadable: and still invents no grant — the direction that matters is unchanged");
+  ok(broken.asks.length === 0, "§permissionsunreadable: every marker on the key was on the same unread rows, so no ask is asserted either");
 
   const healthy = await viewOf(lapsed);
-  ok(healthy.permissionsUnreadable === false, "🔴 §grantsunreadable: with the store answering, the flag is false — it tracks the READ, not the routine");
-  ok(healthy.asks.length === 1 && healthy.asks[0]!.state === "lapsed", "§grantsunreadable: and the rows read exactly as they did before");
-  ok(emptyRoutinePermissionView().permissionsUnreadable === false, "§grantsunreadable: a caller that never asked has not had a read FAIL");
+  ok(healthy.permissionsUnreadable === false, "🔴 §permissionsunreadable: with the store answering, the flag is false — it tracks the READ, not the routine");
+  ok(healthy.asks.length === 1 && healthy.asks[0]!.state === "lapsed", "§permissionsunreadable: and the rows read exactly as they did before");
+  ok(emptyRoutinePermissionView().permissionsUnreadable === false, "§permissionsunreadable: a caller that never asked has not had a read FAIL");
 }
 
 const edited = await makeRoutine("r-edited", SURFACE, "C1");
 {
-  await refuse(routineGrantKey(edited), SURFACE);
+  await refuse(routinePermissionKey(edited), SURFACE);
   ok((await viewOf(edited)).asks[0]!.state === "waiting", "§superseded: before the edit the card is simply waiting");
 
   await updateRoutine(ORG, SURFACE, "r-edited", { promptGeneration: 2 });

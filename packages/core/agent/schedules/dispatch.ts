@@ -19,7 +19,7 @@ import { checkBound } from "../routines/bound.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
-import { isClockScheduled, isJobRoutine, routineGrantGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
+import { isClockScheduled, isJobRoutine, routinePermissionGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
@@ -219,7 +219,7 @@ export async function dispatchTick(
         dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
           ? { ...dest.origin, threadTs: jobAnchor }
           : dest.origin;
-      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routineGrantGeneration(r)) : runFireSeatKey(fireWakeId);
+      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routinePermissionGeneration(r)) : runFireSeatKey(fireWakeId);
       const message = renderFireMessage(r);
       const deliver = async (): Promise<void> => {
         await auditFireAttrsSent(r, markedAuth.attributes, fireWakeId);

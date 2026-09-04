@@ -5,7 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
-import { listRoutinePermissions, revokeRoutinePermissions } from "../routines/grants.js";
+import { ROUTINE_PERMISSIONS_REVOKED_ACTION, listRoutinePermissions, revokeRoutinePermissions } from "../routines/declared-permissions.js";
 import { appendAudit } from "../audit/audit.js";
 
 export default defineTool({
@@ -39,7 +39,7 @@ export default defineTool({
     }
 
     const held = await listRoutinePermissions(p.org, routine, new Date().toISOString());
-    const { grants: revoked, rows } = await revokeRoutinePermissions(p.org, routine);
+    const { permissions: revoked, rows } = await revokeRoutinePermissions(p.org, routine);
     if (rows > 0) {
       await appendAudit({
         org: p.org,
@@ -47,7 +47,7 @@ export default defineTool({
         workspace: p.workspace,
         surface: p.surface,
         principalId: requestedBy,
-        action: "routine.grants_revoked",
+        action: ROUTINE_PERMISSIONS_REVOKED_ACTION,
         detail: { id, revokedBy: requestedBy, count: revoked, rows, permissions: held },
       });
     }

@@ -18,7 +18,7 @@ import type { ReadableBy } from "../access/read-grant.js";
 import type { Domain } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
-import { declaredPermissionKinds } from "../routines/grants.js";
+import { declaredPermissionKinds } from "../routines/declared-permissions.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";

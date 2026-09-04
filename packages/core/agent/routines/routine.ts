@@ -1,5 +1,5 @@
 import { describeFilter, storedFilter } from "./event-model.js";
-import { ROUTINE_GRANT_PREFIX } from "./grant-key.js";
+import { ROUTINE_PERMISSION_PREFIX } from "./permission-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
 
 export type RoutineTrigger =
@@ -87,19 +87,19 @@ export function isJobRoutine(r: Pick<Routine, "sessionMode">): boolean {
   return r.sessionMode === "job";
 }
 
-export function routineGrantGeneration(r: Pick<Routine, "promptGeneration">): number {
+export function routinePermissionGeneration(r: Pick<Routine, "promptGeneration">): number {
   const g = r.promptGeneration;
   return Number.isInteger(g) && (g as number) > 0 ? (g as number) : 1;
 }
 
 export function nextPromptGeneration(r: Pick<Routine, "promptGeneration">): number {
-  return routineGrantGeneration(r) + 1;
+  return routinePermissionGeneration(r) + 1;
 }
 
-export { ROUTINE_GRANT_PREFIX };
+export { ROUTINE_PERMISSION_PREFIX };
 
-export function routineGrantKey(r: Pick<Routine, "id" | "promptGeneration">): string {
-  return `${ROUTINE_GRANT_PREFIX}${r.id}:g${routineGrantGeneration(r)}`;
+export function routinePermissionKey(r: Pick<Routine, "id" | "promptGeneration">): string {
+  return `${ROUTINE_PERMISSION_PREFIX}${r.id}:g${routinePermissionGeneration(r)}`;
 }
 
 export function isSilentRoutine(r: Pick<Routine, "report">): boolean {
@@ -145,7 +145,7 @@ export const ROUTINE_MARKER = {
   org: "open_everywhere_routine_org",
   silent: "open_everywhere_routine_silent",
   manual: "open_everywhere_routine_manual",
-  grant: "open_everywhere_routine_grant_key",
+  permissionKey: "open_everywhere_routine_grant_key",
   fire: "open_everywhere_routine_fire_id",
 } as const;
 
@@ -167,9 +167,9 @@ export function routineSilentStamped(attributes: Attrs): boolean {
   return oneAttrValue(attributes?.[ROUTINE_MARKER.silent]) === "true";
 }
 
-export function routineGrantKeyStamped(attributes: Attrs): string | undefined {
-  const key = oneAttrValue(attributes?.[ROUTINE_MARKER.grant]);
-  return key !== undefined && key.startsWith(ROUTINE_GRANT_PREFIX) ? key : undefined;
+export function routinePermissionKeyStamped(attributes: Attrs): string | undefined {
+  const key = oneAttrValue(attributes?.[ROUTINE_MARKER.permissionKey]);
+  return key !== undefined && key.startsWith(ROUTINE_PERMISSION_PREFIX) ? key : undefined;
 }
 
 export function routineManualStamped(attributes: Attrs): boolean {

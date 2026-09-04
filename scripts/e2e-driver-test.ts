@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
-  allNameGrantKind,
+  allNamePermissionKind,
   allNoticesDelivered,
-  connectorToolGrantKind,
+  pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
   discordOwnedGrants,
   isUnattendedFenceRefusal,
@@ -2423,7 +2423,7 @@ rmSync(dir, { recursive: true, force: true });
   });
   const OP = "notion__create_page";
   const KIND = "connector.tool:notion__create_page";
-  ok(connectorToolGrantKind(OP) === KIND, "connectorToolGrantKind spells the per-TOOL memo kind the declare vocabulary and the fence both key on");
+  ok(pinnedConnectorToolPermissionKind(OP) === KIND, "pinnedConnectorToolPermissionKind spells the per-TOOL memo kind the declare vocabulary and the fence both key on");
 
   const fenceRefusal = grantRow("connector.refused", { connection: "notion", op: OP, tier: "write", reason: "ask-unattended", grant: KIND, routine: "rt_1:3" });
   const taintedRefusal = grantRow("connector.refused", { connection: "notion", op: OP, tier: "write", reason: "ask-unattended-tainted", grant: KIND, tainted: true, routine: null });
@@ -2448,9 +2448,9 @@ rmSync(dir, { recursive: true, force: true });
   ok(!allAtWriteTier([fenceRefusal, grantRow("connector.refused", { op: OP, tier: "destructive", reason: "ask-unattended", grant: KIND })]), "NEGATIVE: one destructive-tier row fails the whole gate — the tier is what decides liftability");
   ok(!allAtWriteTier([]), "VACUITY: allAtWriteTier([]) is FALSE — Array.every answers true for an empty array, which is exactly how a gate reports \"every refusal named the write tier\" having seen none");
 
-  ok(allNameGrantKind([fenceRefusal, lift], KIND), "allNameGrantKind accepts rows naming the per-tool kind");
-  ok(!allNameGrantKind([fenceRefusal, grantRow("connector.refused", { op: OP, tier: "write", reason: "ask-unattended", grant: "connector.op:notion" })], KIND), "NEGATIVE: the SUPERSEDED per-connector spelling (connector.op:<slug>) fails the join — it is refused by the declare vocabulary and never widened, so a live leg must go red rather than accept one");
-  ok(!allNameGrantKind([], KIND), "VACUITY: allNameGrantKind([]) is FALSE");
+  ok(allNamePermissionKind([fenceRefusal, lift], KIND), "allNamePermissionKind accepts rows naming the per-tool kind");
+  ok(!allNamePermissionKind([fenceRefusal, grantRow("connector.refused", { op: OP, tier: "write", reason: "ask-unattended", grant: "connector.op:notion" })], KIND), "NEGATIVE: the SUPERSEDED per-connector spelling (connector.op:<slug>) fails the join — it is refused by the declare vocabulary and never widened, so a live leg must go red rather than accept one");
+  ok(!allNamePermissionKind([], KIND), "VACUITY: allNamePermissionKind([]) is FALSE");
 
   ok(allAttributedToRoutine([lift]), "allAttributedToRoutine accepts a lift naming its routine grant key");
   ok(!allAttributedToRoutine([grantRow("connector.unattended_lift", { op: OP, grant: KIND, routine: null })]), "NEGATIVE: a lift with routine:null is unattributed — it cannot answer whose click authorised the write, which is the row's whole audit value");

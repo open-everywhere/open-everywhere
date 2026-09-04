@@ -1,5 +1,5 @@
 import { awsCommandVerdict, cliOpToIamAction } from "./aws-screen.js";
-import { routineGrantKeyIdentity } from "../routines/grant-key.js";
+import { routinePermissionKeyIdentity } from "../routines/permission-key.js";
 
 export interface EvidenceRow {
   readonly ts: string;
@@ -74,7 +74,7 @@ export interface ConnectorRefusalEvidence {
   readonly ungranted: number;
   readonly liftableUnattended: number;
   readonly unroutedUnattended: number;
-  readonly grantedSinceUnattended: number;
+  readonly armedSinceUnattended: number;
   readonly firstSeen: string;
   readonly lastSeen: string;
 }
@@ -139,10 +139,10 @@ function bump(m: Map<string, number>, key: string): void {
   m.set(key, (m.get(key) ?? 0) + 1);
 }
 
-function arrivalJoinKey(routineKey: string | undefined, grantKind: string | undefined): string | undefined {
-  if (routineKey === undefined || grantKind === undefined) return undefined;
-  const routine = routineGrantKeyIdentity(routineKey);
-  return routine === undefined ? undefined : `${routine}\u0000${grantKind}`;
+function arrivalJoinKey(routineKey: string | undefined, permissionKind: string | undefined): string | undefined {
+  if (routineKey === undefined || permissionKind === undefined) return undefined;
+  const routine = routinePermissionKeyIdentity(routineKey);
+  return routine === undefined ? undefined : `${routine}\u0000${permissionKind}`;
 }
 
 export function argvOfCommandLabel(label: string): readonly string[] {
@@ -214,7 +214,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     ungranted: number;
     liftable: number;
     unrouted: number;
-    grantedSince: number;
+    armedSince: number;
     first: string;
     last: string;
   }
@@ -226,8 +226,8 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     if (row.action !== "routine.permission_granted" && row.action !== "connector.unattended_lift") continue;
     const d = row.detail ?? {};
     const routineKey = row.action === "routine.permission_granted" ? str(d.key) : str(d.routine);
-    const grantKind = str(d.grant);
-    const joinKey = arrivalJoinKey(routineKey, grantKind);
+    const permissionKind = str(d.grant);
+    const joinKey = arrivalJoinKey(routineKey, permissionKind);
     if (joinKey === undefined) continue;
     const prior = grantedAt.get(joinKey);
     if (prior === undefined || row.ts > prior) grantedAt.set(joinKey, row.ts);
@@ -289,7 +289,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
           ungranted: 0,
           liftable: 0,
           unrouted: 0,
-          grantedSince: 0,
+          armedSince: 0,
           first: row.ts,
           last: row.ts,
         };
@@ -307,11 +307,11 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       if (reason === "ungranted") acc.ungranted++;
       if (reason === "ask-unattended" && tier === "write") {
         const routineKey = str(d.routine);
-        const grantKind = str(d.grant);
-        const joinKey = arrivalJoinKey(routineKey, grantKind);
+        const permissionKind = str(d.grant);
+        const joinKey = arrivalJoinKey(routineKey, permissionKind);
         const arrived = joinKey === undefined ? undefined : grantedAt.get(joinKey);
         if (routineKey === undefined) acc.unrouted++;
-        else if (arrived !== undefined && arrived > row.ts) acc.grantedSince++;
+        else if (arrived !== undefined && arrived > row.ts) acc.armedSince++;
         else acc.liftable++;
       }
       continue;
@@ -405,7 +405,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       ungranted: c.ungranted,
       liftableUnattended: c.liftable,
       unroutedUnattended: c.unrouted,
-      grantedSinceUnattended: c.grantedSince,
+      armedSinceUnattended: c.armedSince,
       firstSeen: c.first,
       lastSeen: c.last,
     }))

@@ -1,7 +1,7 @@
 import { defineState } from "eve/context";
 import { readTurnClock } from "../observability/turn-clock.js";
 import { MAX_RUN_REFUSALS, noteRoutineRunPermissionRefusal } from "./card-signal.js";
-import { describeGrantKind } from "./session-grant.js";
+import { describeDeclaredPermissionKind } from "./session-grant.js";
 
 export interface RoutinePermissionCardOffer {
   readonly org: string;
@@ -74,7 +74,7 @@ export async function offerRoutinePermissionCardFor(offer: RoutinePermissionCard
   if (registered === undefined) return { clause: "" };
   if (!claimCardSlot()) {
     noteRoutineRunPermissionRefusal({
-      permission: describeGrantKind(offer.grantKind),
+      permission: describeDeclaredPermissionKind(offer.grantKind),
       card: null,
       cardPosted: false,
       cardKnown: false,

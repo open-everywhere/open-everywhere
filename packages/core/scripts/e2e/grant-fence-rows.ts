@@ -16,7 +16,7 @@ export interface FenceRowDetail {
 
 const detailOf = (e: AuditWireEntry): FenceRowDetail => (e.detail ?? {}) as FenceRowDetail;
 
-export function connectorToolGrantKind(tool: string): string {
+export function pinnedConnectorToolPermissionKind(tool: string): string {
   return `connector.tool:${tool}`;
 }
 
@@ -47,7 +47,7 @@ export function allAtWriteTier(rows: readonly AuditWireEntry[]): boolean {
   return rows.length > 0 && rows.every((e) => detailOf(e).tier === "write");
 }
 
-export function allNameGrantKind(rows: readonly AuditWireEntry[], expected: string): boolean {
+export function allNamePermissionKind(rows: readonly AuditWireEntry[], expected: string): boolean {
   return rows.length > 0 && rows.every((e) => detailOf(e).grant === expected);
 }
 

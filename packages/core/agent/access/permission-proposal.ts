@@ -145,9 +145,9 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
                   `${r.unroutedUnattended} further \`ask-unattended\`/\`write\` row(s) carried NO routine (a webhook or job wake, \`routine: null\`). They are NOT counted above, because a standing routine permission is not their actuator — there is no routine card to re-arm.`,
                 ]
               : []),
-            ...(r.grantedSinceUnattended > 0
+            ...(r.armedSinceUnattended > 0
               ? [
-                  `${r.grantedSinceUnattended} further \`ask-unattended\`/\`write\` row(s) were followed by the permission ARRIVING — a \`connector.unattended_lift\` on the same op under the same ROUTINE, whatever generation of its instruction, so the refusal was already answered (the grant has since been armed, or it was there all along and a transient store read said otherwise). They are NOT counted above, and this proposal stands only on what is still unarmed.`,
+                  `${r.armedSinceUnattended} further \`ask-unattended\`/\`write\` row(s) were followed by the permission ARRIVING — a \`connector.unattended_lift\` on the same op under the same ROUTINE, whatever generation of its instruction, so the refusal was already answered (the grant has since been armed, or it was there all along and a transient store read said otherwise). They are NOT counted above, and this proposal stands only on what is still unarmed.`,
                 ]
               : []),
             `Reasons: ${reasonsSeen}.`,
@@ -155,7 +155,7 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
             `Ops: ${opsSeen}.`,
           ],
           remedy:
-            `This one is NOT a config-file diff, so none is offered. The standing permission is a per-tool routine grant — a human tap on ` +
+            `This one is NOT a config-file diff, so none is offered. The standing permission is a per-tool declared permission on the routine — a human tap on ` +
             `the routine's own card — not bundle config. Re-arm it with \`edit_routine\`/the creation card. ` +
             `⚠ Only the \`write\` tier is liftable: a \`destructive\` op and a TAINTED turn are never lifted by any grant ` +
             `(\`ask-unattended-tainted\` is its own reason code), so any of those rows in the counts above are a control working, not a gap.`,
@@ -181,7 +181,7 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
       ],
       remedy:
         `This one is NOT a config-file diff, so none is offered. An unattended deny means the fire lacked a STANDING permission for ` +
-        `\`${r.tool}\`, and standing permissions are granted by a human tap on the routine's own creation card (they are per-routine ` +
+        `\`${r.tool}\`, and standing permissions are armed by a human tap on the routine's own creation card (they are per-routine ` +
         `store rows, not bundle config). Re-arm it with \`edit_routine\`/the creation card, or — if this scope should never card ` +
         `\`${r.tool}\` at all — add an operator approver to the bundle's \`approvers\` in a reviewed PR, which IS a config diff but one ` +
         `only a human should author, because it changes policy for every caller in the scope rather than for one routine.`,

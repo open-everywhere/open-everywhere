@@ -1,4 +1,4 @@
-import { routineGrantGeneration, type Routine } from "../routines/routine.js";
+import { routinePermissionGeneration, type Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-window.js";
@@ -322,7 +322,7 @@ export function routinePromptRevisionWrites(input: {
     : [
         {
           prompt: existing.prompt,
-          generation: routineGrantGeneration(existing),
+          generation: routinePermissionGeneration(existing),
           ...(existing.createdBy ? { authoredBy: existing.createdBy } : {}),
           recordedAt: existing.createdAt,
         },
@@ -331,7 +331,7 @@ export function routinePromptRevisionWrites(input: {
     ...genesis,
     {
       prompt: updated.prompt,
-      generation: routineGrantGeneration(updated),
+      generation: routinePermissionGeneration(updated),
       ...(provenance?.authoredBy ? { authoredBy: provenance.authoredBy } : {}),
       ...(provenance?.armedBy ? { armedBy: provenance.armedBy } : {}),
       ...(provenance?.approvalId ? { approvalId: provenance.approvalId } : {}),
@@ -772,7 +772,7 @@ export interface OperationalStore {
   getSessionApproval(org: string, sessionId: string, kind: string, nowIso: string): Promise<SessionApprovalRow | null>;
   listSessionApprovals(org: string, sessionId: string, nowIso: string): Promise<SessionApprovalRow[]>;
   revokeSessionApprovals(org: string, sessionId: string): Promise<number>;
-  sweepLegacyConnectorGrants(org: string): Promise<number>;
+  sweepLegacyConnectorOpRows(org: string): Promise<number>;
 
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;

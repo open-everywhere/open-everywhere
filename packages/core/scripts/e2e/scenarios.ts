@@ -20,9 +20,9 @@ import { ARMING_ADVISORY_LOOKBACK_DAYS, lookbackIso, watchConnectorArming, type 
 import {
   allAtWriteTier,
   allAttributedToRoutine,
-  allNameGrantKind,
+  allNamePermissionKind,
   allNoticesDelivered,
-  connectorToolGrantKind,
+  pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
   discordOwnedGrants,
   noticesForGrant,
@@ -3994,7 +3994,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       const OP = "notion__create_page";
-      const OP_GRANT_KIND = connectorToolGrantKind(OP);
+      const OP_PERMISSION_KIND = pinnedConnectorToolPermissionKind(OP);
 
       const driveArm = async (arm: "A" | "B", declared: boolean): Promise<{ sinceIso: string; cardTs?: string }> => {
         const sinceIso = new Date(Date.now() - 5_000).toISOString();
@@ -4079,8 +4079,8 @@ export const SCENARIOS: readonly Scenario[] = [
         `🔴 (hard) arm A: every refusal row names tier "write" — the tier is what decides liftability, so a row naming another tier means the leg drove a different class of op than it believes (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
       );
       ctx.gate(
-        allNameGrantKind(rowsA.refused, OP_GRANT_KIND),
-        `🔴 (hard) arm A: the refusal names the grant kind a declaration WOULD have to write, "${OP_GRANT_KIND}" — this is the join between the fence's per-TOOL lookup and the declare vocabulary, and a drift in either spelling silently unlifts every declared routine (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
+        allNamePermissionKind(rowsA.refused, OP_PERMISSION_KIND),
+        `🔴 (hard) arm A: the refusal names the grant kind a declaration WOULD have to write, "${OP_PERMISSION_KIND}" — this is the join between the fence's per-TOOL lookup and the declare vocabulary, and a drift in either spelling silently unlifts every declared routine (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
       );
       ctx.gate(
         rowsA.lifted.length === 0,
@@ -4102,12 +4102,12 @@ export const SCENARIOS: readonly Scenario[] = [
         `🔴 (hard) arm B: the DECLARED fire's connector WRITE was LIFTED — a connector.unattended_lift row for ${OP} (found ${rowsB.lifted.length}; refusals in the same window: ${JSON.stringify(rowsB.refused.map((e) => e.detail))}). An absence here with arm A green means the declare→lift join is broken: the click wrote a row the fence does not read.`,
       );
       ctx.gate(
-        allNameGrantKind(rowsB.lifted, OP_GRANT_KIND),
-        `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_GRANT_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+        allNamePermissionKind(rowsB.lifted, OP_PERMISSION_KIND),
+        `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_PERMISSION_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
       );
       ctx.gate(
         allAttributedToRoutine(rowsB.lifted),
-        `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine grant key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+        `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine permission key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
       );
       ctx.gate(
         rowsB.refused.length === 0,

@@ -28,7 +28,7 @@ process.env.OE_ORG = "acme";
 const { registerSlackTestBridge, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 const store = await import("../agent/routines/store.js");
 const routineMod = await import("../agent/routines/routine.js");
-const { describeTrigger, routineGrantGeneration, routineGrantKey, routineManualStamped, ROUTINE_MARKER } = routineMod;
+const { describeTrigger, routinePermissionGeneration, routinePermissionKey, routineManualStamped, ROUTINE_MARKER } = routineMod;
 const { renderFireMessage } = await import("../agent/routines/fire-message.js");
 const { jobFireSeatKey } = await import("../agent/routines/fire-window.js");
 const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
@@ -258,7 +258,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   ok(revs[1]!.prompt === "New instruction.", "revisions: the replacing text is recorded too — the log plus the live row is the whole history");
 
   ok(revs[0]!.generation === 1 && revs[1]!.generation === 2, `revisions: each row carries the generation its text ran under (got ${revs[0]!.generation}/${revs[1]!.generation})`);
-  ok(routineGrantKey({ id: "r-edit", promptGeneration: revs[0]!.generation }) !== routineGrantKey({ id: "r-edit", promptGeneration: revs[1]!.generation }), "revisions: those two generations are the two DIFFERENT grant keys — the log is joinable to the authority it explains");
+  ok(routinePermissionKey({ id: "r-edit", promptGeneration: revs[0]!.generation }) !== routinePermissionKey({ id: "r-edit", promptGeneration: revs[1]!.generation }), "revisions: those two generations are the two DIFFERENT grant keys — the log is joinable to the authority it explains");
 
   ok(revs[0]!.authoredBy === "U7" && revs[0]!.recordedAt === "2026-07-01T00:00:00.000Z", `revisions: the genesis row carries the routine's OWN createdBy + createdAt (got ${revs[0]!.authoredBy}/${revs[0]!.recordedAt})`);
   ok(revs[0]!.armedBy === undefined && revs[0]!.approvalId === undefined, "revisions: the genesis row claims NO approver — the store knows who created a routine, never who clicked the card that armed it");
@@ -319,14 +319,14 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 
 {
   const before = (await store.getRoutine(ORG, SURFACE, "r-edit"))!;
-  ok(routineGrantGeneration(before) === 2, "invalidate: the edit above advanced the routine's authority generation");
+  ok(routinePermissionGeneration(before) === 2, "invalidate: the edit above advanced the routine's authority generation");
 
-  const g1 = routineGrantKey({ id: "r-edit", promptGeneration: 1 });
-  const g2 = routineGrantKey(before);
+  const g1 = routinePermissionKey({ id: "r-edit", promptGeneration: 1 });
+  const g2 = routinePermissionKey(before);
   ok(g1 !== g2, "invalidate: the standing-grant key MOVED — every grant frozen against the old text is now unreachable by lookup, declared and accumulated alike");
   ok(g2.includes("r-edit") && /:g2$/.test(g2), "invalidate: the key names the routine AND its generation (the shape a session grant already uses for window rotation)");
-  ok(routineGrantKey({ id: "r-edit" }) === g1, "invalidate: an absent generation reads as 1 — every pre-OPE-147 row keeps the key it already had, no migration");
-  ok(routineGrantKey({ id: "r-x", promptGeneration: 0 }) === routineGrantKey({ id: "r-x", promptGeneration: 1 }), "invalidate: a zero/garbage generation floors to 1 rather than minting a key that collides with another generation's");
+  ok(routinePermissionKey({ id: "r-edit" }) === g1, "invalidate: an absent generation reads as 1 — every pre-OPE-147 row keeps the key it already had, no migration");
+  ok(routinePermissionKey({ id: "r-x", promptGeneration: 0 }) === routinePermissionKey({ id: "r-x", promptGeneration: 1 }), "invalidate: a zero/garbage generation floors to 1 rather than minting a key that collides with another generation's");
 
   ok(jobFireSeatKey("r-edit", 1) !== jobFireSeatKey("r-edit", 2), "invalidate: an edited JOB rotates onto a FRESH eve seat — a long-lived seat answers from its own backscroll, so keeping it would keep the pre-edit behaviour");
   ok(jobFireSeatKey("r-edit", 1) === jobFireSeatKey("r-edit"), "invalidate: generation 1 is the default seat — every job created before OPE-147 keeps the seat it already has");
@@ -340,7 +340,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
     "U9",
   );
   const rearmed = (await store.getRoutine(ORG, SURFACE, "r-gen"))!;
-  ok(routineGrantGeneration(rearmed) === 4, "invalidate: enable_routine does NOT bump the generation — re-arming changes no text, so a grant given to this exact instruction still applies");
+  ok(routinePermissionGeneration(rearmed) === 4, "invalidate: enable_routine does NOT bump the generation — re-arming changes no text, so a grant given to this exact instruction still applies");
 }
 
 {
@@ -465,4 +465,4 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 }
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + grant invalidation + prompt revisions + re-arm)`);
+console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + permission invalidation + prompt revisions + re-arm)`);

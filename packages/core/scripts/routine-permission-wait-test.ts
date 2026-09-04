@@ -25,8 +25,8 @@ const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { requestApproval, resolveApprovalClick, autoApprovedNote } = await import("../agent/approvals/flow.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { addRoutine, updateRoutine } = await import("../agent/routines/store.js");
-const { routineGrantKey } = await import("../agent/routines/routine.js");
-const { ROUTINE_GRANT_NO_EXPIRY } = await import("../agent/routines/grants.js");
+const { routinePermissionKey } = await import("../agent/routines/routine.js");
+const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("../agent/routines/declared-permissions.js");
 const { ROUTINE_PERMISSION_KIND } = await import("../agent/approvals/routine-permission.js");
 const { routinePermissionAskedMemo } = await import("../agent/approvals/session-grant.js");
 const { consumeRoutineRunPermissionRefusals } = await import("../agent/approvals/card-signal.js");
@@ -261,7 +261,7 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
   const stale = routineCardWaitRefusalClause("stale", 120);
   ok(stale.includes("nothing was armed"), "§copy: a stale approval says the click bought nothing rather than reporting success");
   ok(stale.includes("check whether the instruction changed"), "🔴 §copy: it names the likely cause as something to CHECK, not as something it verified");
-  ok(!stale.includes("had already been edited"), "🔴 §copy: never asserting the edit outright — the probe read a grant row, not a routine");
+  ok(!stale.includes("had already been edited"), "🔴 §copy: never asserting the edit outright — the probe read a permission row, not a routine");
   ok(routineCardWaitRefusalClause("gone", 120).includes("fresh one"), "§copy: a dead card points at the next card, never at itself");
   const unreadable = routineCardWaitRefusalClause("unreadable", 120);
   ok(unreadable.includes("could not read it"), "§copy: an unreadable window says the card could not be read");
@@ -312,7 +312,7 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
   const clickerArgs = {
     org: ORG,
     scopeKey: SURFACE,
-    grantKey: routineGrantKey(clickerRoutine),
+    grantKey: routinePermissionKey(clickerRoutine),
     routineId: "r-clicker",
     routineSurfaceKey: SURFACE,
     grantKind: "pr.open",
@@ -349,7 +349,7 @@ const routine = await addRoutine({ org: ORG, surfaceKey: SURFACE } as never, {
   createdAt: new Date().toISOString(),
   status: "active",
 } as never);
-const KEY = routineGrantKey(routine);
+const KEY = routinePermissionKey(routine);
 
 const proposal = {
   org: ORG,
@@ -456,7 +456,7 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   ok(!refusal.includes("was DENIED by the approver chain"), "🔴 §fire: THE DENY IS LIFTED — an approval inside the window is not answered with the refusal it was raised by");
   ok(!refusal.includes("nobody was present"), "§fire: and certainly not with the auto-decline sentence");
   const grant = await store.getSessionApproval(ORG, KEY, "pr.open", new Date().toISOString());
-  ok(grant?.grantedBy === "U_CLICKER" && grant.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "§fire: the click armed the standing row every FUTURE fire reads");
+  ok(grant?.grantedBy === "U_CLICKER" && grant.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§fire: the click armed the standing row every FUTURE fire reads");
   const wedges = await approvedPrOpenWedges();
   ok(wedges.length === 1, "🔴 §fire: the decided WEDGE row is in the store — the run reached the act rather than throwing the refusal");
   ok(wedges[0]?.decidedBy === "U_CLICKER", "§fire: attributed to the human who clicked, never to the fire");
