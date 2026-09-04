@@ -21,8 +21,9 @@ import {
   type MemoryOp,
 } from "../agent/memory/dream/ops.js";
 import { selectCandidates } from "../agent/memory/dream/candidates.js";
-import { EXTERNAL_CLAIM_PREFIX, EXTERNAL_PROVENANCE_PREFIX, markAddedBullets, renderProvenanceWording } from "../agent/memory/provenance-mark.js";
-import { tidySilo } from "../agent/memory/dream/tidy.js";
+import { EXTERNAL_CLAIM_PREFIX, EXTERNAL_PROVENANCE_PREFIX, conserveProvenanceOnMerge, markAddedBullets, renderClaimAttribution, renderProvenanceMark, renderProvenanceWording } from "../agent/memory/provenance-mark.js";
+import { tidySilo, tidySiloJudged } from "../agent/memory/dream/tidy.js";
+import type { DreamJudge } from "../agent/memory/dream/judge.js";
 import { workflowSignature, inMemoryLedger, auditRecurrenceLedger } from "../agent/memory/dream/recurrence.js";
 import { learnFromSession } from "../agent/memory/dream/learn.js";
 import { stampHumanEdit, isHumanEdited, humanEditedAt, humanEditedFiles } from "../agent/memory/provenance.js";
@@ -176,6 +177,89 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
   const forged = "- Adams noted [unverified claim handling is broken in the payout ledger for Dublin [[billing]] and Brent owns it";
   eq(factText(forged), forged, "🔴 OPE-1228: a bullet that only OPENS with the claim token is not a carrier — factText leaves it whole");
   ok(contentWords(forged).has("payout") && contentWords(forged).has("ledger"), "🔴 OPE-1228: …so its fact words survive into the comparison instead of being swallowed");
+}
+
+{
+  const wording = renderProvenanceWording(["web", "github"]);
+  const wrap = (line: string): string => markAddedBullets({}, { "m.md": `${line}\n` }, wording).files["m.md"]!.trim();
+  const carried = (line: string): boolean => line.includes(EXTERNAL_CLAIM_PREFIX) && line.includes(EXTERNAL_PROVENANCE_PREFIX);
+
+  const marked = wrap("- 2026-08-22: Adams owns the billing renewal cadence for enterprise accounts");
+  const plainLonger =
+    "- 2026-08-22: Adams owns the billing renewal cadence for enterprise accounts, and the billing renewal cadence for those enterprise accounts is the cadence that Adams owns, as we and they use it and as they use the cadence that Adams owns for enterprise billing";
+
+  ok(carried(marked), "OPE-1247 fixture: the writer produced BOTH carriers on the marked bullet");
+  ok(!carried(plainLonger) && !plainLonger.includes(EXTERNAL_PROVENANCE_PREFIX), "OPE-1247 fixture: the restatement carries NO mark");
+  ok(plainLonger.length > marked.length, "🔴 OPE-1247 fixture: the UNMARKED restatement is the LONGER line — this is what makes length-based `keep` pick the unhedged one");
+  ok(jaccard(contentWords(marked), contentWords(plainLonger)) >= 0.7, "OPE-1247 fixture: the pair clears the 0.70 consolidate bar");
+
+  const pair: MemoryFiles = { "m.md": `## People\n${marked}\n${plainLonger}\n` };
+  const merged = detectConsolidations(pair);
+  ok(has(merged, "consolidate"), "OPE-1247 fixture: the detector proposes the merge");
+  const survivor = merged[0]!.after!;
+  ok(survivor.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1247: the consolidation survivor CARRIES the machine-readable suffix — a marked bullet cannot be laundered by merging it with a longer plain twin");
+  ok(survivor.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1247: …and the in-sentence attribution, which is the half a reader carries away");
+  ok(survivor.includes("as we and they use it"), "🔴 OPE-1247: the survivor keeps the LONGER line's own words — the fix conserves the disclosure, it does not override the specificity rule");
+  eq((survivor.match(/\[external-provenance:/g) ?? []).length, 1, "OPE-1247: exactly one suffix — the carrier never stacks");
+
+  const plainPair: MemoryFiles = {
+    "m.md": `## People\n- 2026-08-22: Adams owns the billing renewal cadence for enterprise accounts\n${plainLonger}\n`,
+  };
+  const plainMerged = detectConsolidations(plainPair);
+  ok(has(plainMerged, "consolidate"), "OPE-1247 control: the unmarked pair is proposed for merge too");
+  ok(!plainMerged[0]!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1247 positive control: two UNMARKED bullets consolidate to an UNMARKED survivor — no disclosure is invented");
+  ok(!plainMerged[0]!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1247 positive control: …and no attribution is invented either");
+
+  const linky: MemoryFiles = { "billing.md": "# Billing\n", "m.md": `## People\n${wrap("- 2026-08-22: Adams owns the [[Billing]] renewal cadence for enterprise accounts")}\n` };
+  const repaired = repairLinks(linky).files["m.md"]!;
+  ok(repaired.includes("[[billing]]"), "OPE-1247 fixture: the link WAS rewritten (else the assertion below proves nothing)");
+  ok(carried(repaired.split("\n").find((l) => l.includes("Adams"))!), "🔴 OPE-1247: a marked bullet rewritten by link-repair keeps BOTH carriers");
+
+  eq(conserveProvenanceOnMerge(marked, [marked, plainLonger]), marked, "OPE-1247: a survivor that already carries the mark is returned unchanged");
+  eq(conserveProvenanceOnMerge(plainLonger, [plainLonger]), plainLonger, "OPE-1247: nothing to conserve → the survivor is untouched");
+  eq(conserveProvenanceOnMerge(survivor, [marked, plainLonger]), survivor, "🔴 OPE-1247: re-running the conservation on its own output is a no-op — carriers never stack");
+
+  const laundering: DreamJudge = {
+    judge: async (_scope, c) => (c.kind === "consolidate" ? { confirm: true, keep: plainLonger, note: "same fact" } : { confirm: false }),
+    distill: async () => [],
+  };
+  const judged = await tidySiloJudged(pair, "brain", laundering);
+  const judgedConsolidate = judged.proposals.find((p) => p.kind === "consolidate");
+  ok(judgedConsolidate !== undefined, "OPE-1247 fixture: the judge confirmed a consolidation (else the assertion below proves nothing)");
+  ok(judgedConsolidate!.after!.includes(EXTERNAL_PROVENANCE_PREFIX) && judgedConsolidate!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1247: a judge-confirmed survivor carries the mark too — the model's free-text `keep` cannot launder it");
+
+  const bareKeep: DreamJudge = {
+    judge: async (_scope, c) => (c.kind === "consolidate" ? { confirm: true, keep: "Adams owns the billing renewal cadence", note: "same fact" } : { confirm: false }),
+    distill: async () => [],
+  };
+  const bare = (await tidySiloJudged(pair, "brain", bareKeep)).proposals.find((p) => p.kind === "consolidate");
+  ok(bare !== undefined, "OPE-1247 fixture: the non-bullet `keep` produced a proposal");
+  ok(bare!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1247: a NON-BULLET `keep` still takes the suffix — the disclosure is never silently dropped");
+  ok(!bare!.after!.includes(EXTERNAL_CLAIM_PREFIX), "OPE-1247: …and takes NO in-sentence attribution, because the re-cast declines a shape it cannot split — tag-only is the documented fallback");
+
+  const suffixOnlyQuestion = `- Who owns billing now?  ${renderProvenanceMark(["web"])}`;
+  eq(conserveProvenanceOnMerge(suffixOnlyQuestion, [marked]), suffixOnlyQuestion, "🔴 OPE-1247: a survivor that already carries the suffix is returned untouched — a question is never re-cast as an assertion");
+
+  const attributionOnly = `- 2026-08-22: ${renderClaimAttribution(["slack"])} Adams owns the billing renewal cadence`;
+  const suffixOnly = `- 2026-08-22: Adams owns the billing renewal cadence  ${renderProvenanceMark(["web"])}`;
+  ok(attributionOnly.includes(EXTERNAL_CLAIM_PREFIX) && !attributionOnly.includes(EXTERNAL_PROVENANCE_PREFIX), "OPE-1247 fixture: the first source holds the attribution ALONE");
+  ok(suffixOnly.includes(EXTERNAL_PROVENANCE_PREFIX) && !suffixOnly.includes(EXTERNAL_CLAIM_PREFIX), "OPE-1247 fixture: the second source holds the suffix ALONE");
+  const twoDonors = conserveProvenanceOnMerge("- 2026-08-22: Adams owns billing renewals", [attributionOnly, suffixOnly]);
+  ok(!(twoDonors.includes("slack") && twoDonors.includes("web")), "🔴 OPE-1247: the survivor never mixes two sources' carriers — one donor, so its two disclosures cannot name different ingestion kinds");
+  ok(twoDonors.includes("slack"), "OPE-1247: …and the donor is the FIRST source that discloses anything");
+
+  const oldMarked = wrap("- 2020-01-05: Adams owns the billing renewal cadence for enterprise accounts");
+  const newerPlain = "- 2026-08-22: Brent owns the billing renewal cadence for enterprise accounts";
+  const supersede: DreamJudge = {
+    judge: async () => ({ confirm: true, keep: newerPlain, note: "superseded" }),
+    distill: async () => [],
+  };
+  const staleFixture: MemoryFiles = { "m.md": `## People\n${oldMarked}\n${newerPlain}\n` };
+  const staleJudged = await tidySiloJudged(staleFixture, "brain", supersede, { now: new Date("2026-09-01T00:00:00Z") });
+  const staleProposal = staleJudged.proposals.find((p) => p.kind === "stale");
+  ok(staleProposal !== undefined, "OPE-1247 fixture: a STALE proposal exists (else the control below asserts nothing)");
+  ok(!staleProposal!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1247 negative control: a STALE survivor is NOT stamped with the superseded bullet's mark — supersession is not restatement, and a mark it never earned is an overclaim");
+  ok(!staleProposal!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1247 negative control: …and takes no in-sentence attribution either");
 }
 
 {

@@ -13,6 +13,7 @@ import { salienceScores, type NodeSalience } from "./salience.js";
 import { selectCandidates, type CandidateOptions } from "./candidates.js";
 import type { DreamJudge } from "./judge.js";
 import { humanEditedFiles } from "../provenance.js";
+import { conserveProvenanceOnMerge } from "../provenance-mark.js";
 
 export interface TidyOptions {
   readonly now?: Date;
@@ -92,12 +93,16 @@ export async function tidySiloJudged(
       rejected++;
       continue;
     }
+    const after =
+      c.kind === "consolidate" && verdict.keep !== undefined
+        ? conserveProvenanceOnMerge(verdict.keep, c.bullets)
+        : verdict.keep;
     proposals.push({
       kind: c.kind,
       file: c.file,
       summary: `judge-confirmed ${c.kind} — ${verdict.note ?? c.reason}`,
       before: c.bullets.join("\n"),
-      after: verdict.keep,
+      after,
     });
   }
 

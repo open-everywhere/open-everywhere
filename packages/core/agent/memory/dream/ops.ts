@@ -1,5 +1,5 @@
 import { buildGraph, resolveNode } from "../graph.js";
-import { EXTERNAL_CLAIM_LEAD, EXTERNAL_PROVENANCE_LEAD } from "../provenance-mark.js";
+import { conserveProvenanceOnMerge, provenanceCarrierPattern } from "../provenance-mark.js";
 import type { MemoryFiles } from "../store.js";
 import { salienceMap } from "./salience.js";
 
@@ -136,9 +136,7 @@ const STOP = new Set([
 const NEGATION = /\b(not|no|never|n't|dont|doesn't|isn't|aren't|wasn't|stop(?:ped)?|deprecat(?:ed)?|remov(?:ed)?|cancel(?:led)?|drop(?:ped)?|no longer|instead of)\b/i;
 const DATE_PREFIX = /^\s*-\s+(\d{4}-\d{2}-\d{2})\s*[:]?\s*/;
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const PROVENANCE_CARRIER = new RegExp(`${escapeRe(EXTERNAL_CLAIM_LEAD)}[^\\][]*\\]|${escapeRe(EXTERNAL_PROVENANCE_LEAD)}[^\\][]*\\]`, "g");
+const PROVENANCE_CARRIER = provenanceCarrierPattern();
 
 export function factText(line: string): string {
   return line.replace(PROVENANCE_CARRIER, " ");
@@ -201,9 +199,8 @@ export function detectConsolidations(files: MemoryFiles, threshold = 0.7, exclud
       if (a.negated !== b.negated) continue;
       if (jaccard(a.words, b.words) < threshold) continue;
       const keep = a.line.length >= b.line.length ? a.line : b.line;
-      const drop = keep === a.line ? b.line : a.line;
-      ops.push({ kind: "consolidate", file: a.file, summary: `near-duplicate bullets — merge into one`, before: `${a.line}\n${b.line}`, after: keep });
-      void drop;
+      const survivor = conserveProvenanceOnMerge(keep, [a.line, b.line]);
+      ops.push({ kind: "consolidate", file: a.file, summary: `near-duplicate bullets — merge into one`, before: `${a.line}\n${b.line}`, after: survivor });
     }
   }
   return ops;

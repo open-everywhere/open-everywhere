@@ -11,6 +11,14 @@ export const EXTERNAL_PROVENANCE_LEAD = `${EXTERNAL_PROVENANCE_PREFIX} added on 
 
 const UNNAMED_SOURCE = "external content";
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function provenanceCarrierPattern(): RegExp {
+  return new RegExp(`${escapeRe(EXTERNAL_CLAIM_LEAD)}[^\\][]*\\]|${escapeRe(EXTERNAL_PROVENANCE_LEAD)}[^\\][]*\\]`, "g");
+}
+
 export const MAX_MARKED_KINDS = 4;
 
 const MAX_KIND_CHARS = 24;
@@ -85,6 +93,39 @@ export function recastAsAttributedClaim(line: string, attribution: string): stri
   const statement = dated?.[2] ?? rest;
   if (!isAssertionShaped(statement)) return line;
   return `${head[1]!}${lead}${attribution} ${statement}`;
+}
+
+export interface LineCarriers {
+  readonly attribution: string | null;
+  readonly mark: string | null;
+}
+
+export function carriersOf(line: string): LineCarriers {
+  let attribution: string | null = null;
+  let mark: string | null = null;
+  for (const [found] of line.matchAll(provenanceCarrierPattern())) {
+    if (attribution === null && found.startsWith(EXTERNAL_CLAIM_LEAD)) attribution = found;
+    if (mark === null && found.startsWith(EXTERNAL_PROVENANCE_LEAD)) mark = found;
+  }
+  return { attribution, mark };
+}
+
+export function conserveProvenanceOnMerge(survivor: string, sources: readonly string[]): string {
+  let donor: LineCarriers | null = null;
+  for (const source of sources) {
+    const carriers = carriersOf(source);
+    if (carriers.attribution !== null || carriers.mark !== null) {
+      donor = carriers;
+      break;
+    }
+  }
+  if (donor === null) return survivor;
+  const held = carriersOf(survivor);
+  if (held.attribution !== null || held.mark !== null) return survivor;
+  let out = survivor;
+  if (donor.attribution !== null) out = recastAsAttributedClaim(out, donor.attribution);
+  if (donor.mark !== null) out = `${out.trimEnd()}  ${donor.mark}`;
+  return out;
 }
 
 export function lineDigest(line: string): string {
