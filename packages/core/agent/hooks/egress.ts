@@ -3,8 +3,8 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { resolveAccessFor } from "../access/request.js";
-import { compileNetworkPolicy } from "../access/egress.js";
-import type { EffectiveAccess } from "../access/resolver.js";
+import { compileNetworkPolicy, openWriteHosts } from "../access/egress.js";
+import type { EffectiveAccess, ReachableHost } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
@@ -28,11 +28,14 @@ function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
 }
 
+const WRITE_HOSTS_ROW_CAP = 20;
+
 export interface ResolvedEgressPolicy {
   readonly policy: SandboxNetworkPolicy;
   readonly scopeKey: string;
   readonly connectors: readonly string[];
   readonly connectorContentOrigin: ConnectorContentOriginMap;
+  readonly reachableHosts: readonly ReachableHost[];
   readonly compileError?: string;
 }
 
@@ -43,9 +46,22 @@ export async function computeEgressPolicy(
   try {
     const access = resolve();
     const policy = await compile(access);
-    return { policy, scopeKey: access.scopeKey, connectors: access.connectors, connectorContentOrigin: access.connectorContentOrigin };
+    return {
+      policy,
+      scopeKey: access.scopeKey,
+      connectors: access.connectors,
+      connectorContentOrigin: access.connectorContentOrigin,
+      reachableHosts: access.reachableHosts,
+    };
   } catch (err) {
-    return { policy: "deny-all", scopeKey: "(unresolved)", connectors: [], connectorContentOrigin: {}, compileError: String(err) };
+    return {
+      policy: "deny-all",
+      scopeKey: "(unresolved)",
+      connectors: [],
+      connectorContentOrigin: {},
+      reachableHosts: [],
+      compileError: String(err),
+    };
   }
 }
 
@@ -131,7 +147,10 @@ export interface EgressEnforcementResult {
 export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementDeps): Promise<EgressEnforcementResult> {
   const audit = deps.audit ?? appendAudit;
 
-  const { policy, scopeKey, connectors, connectorContentOrigin, compileError } = await computeEgressPolicy(deps.resolve, deps.compile);
+  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError } = await computeEgressPolicy(
+    deps.resolve,
+    deps.compile,
+  );
 
   (deps.stampConnectorContentOrigin ?? setConnectorContentOrigin)(connectorContentOrigin);
 
@@ -140,6 +159,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
   }
 
   const hostCount = typeof policy === "string" ? 0 : Object.keys(policy.allow ?? {}).length;
+  const writeHosts = openWriteHosts(policy, reachableHosts);
   const summary = compileError
     ? `deny-all (compile error)`
     : typeof policy === "string"
@@ -181,6 +201,9 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
             scopeKey,
             hosts: hostCount,
             summary,
+            writeHostCount: writeHosts.length,
+            ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
+            ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
             aborted: true,
           },
         });
@@ -276,6 +299,9 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         phase,
         reason,
         policyFingerprint: fingerprint,
+        writeHostCount: writeHosts.length,
+        ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
+        ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
         ...(compileError ? { error: compileError } : {}),
         ...(enforceError ? { enforceError } : {}),
         ...(abortError ? { aborted: true } : {}),

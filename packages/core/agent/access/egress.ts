@@ -76,3 +76,49 @@ export async function compileNetworkPolicy(
   if (Object.keys(allow).length === 0) return "deny-all";
   return { allow };
 }
+
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
+
+export interface OpenWriteHost {
+  readonly host: string;
+  readonly via: string | null;
+  readonly methods: readonly string[] | "any";
+}
+
+export function openWriteHosts(
+  policy: SandboxNetworkPolicy,
+  reachableHosts: readonly ReachableHost[] = [],
+): readonly OpenWriteHost[] {
+  if (typeof policy === "string") {
+    return policy === "allow-all" ? [{ host: "*", via: null, methods: "any" }] : [];
+  }
+  const allow = (policy as { allow?: readonly string[] | Record<string, EgressRule[]> }).allow;
+  if (!allow) return [];
+  const viaByHost = new Map(reachableHosts.map((h) => [h.host, h.viaConnection]));
+  const byHost = (a: { host: string }, b: { host: string }): number => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0);
+  if (Array.isArray(allow)) {
+    return allow.map((host) => ({ host, via: viaByHost.get(host) ?? null, methods: "any" as const })).sort(byHost);
+  }
+  const out: OpenWriteHost[] = [];
+  for (const [host, rules] of Object.entries(allow)) {
+    let unrestricted = false;
+    const methods = new Set<string>();
+    for (const rule of rules ?? []) {
+      const declared = rule.match?.method;
+      if (!declared || declared.length === 0) {
+        unrestricted = true;
+        continue;
+      }
+      for (const m of declared) methods.add(m.toUpperCase());
+    }
+    if ((rules ?? []).length === 0) unrestricted = true;
+    const writes = unrestricted || [...methods].some((m) => !READ_ONLY_METHODS.has(m));
+    if (!writes) continue;
+    out.push({
+      host,
+      via: viaByHost.get(host) ?? null,
+      methods: unrestricted ? "any" : [...methods].sort(),
+    });
+  }
+  return out.sort(byHost);
+}
