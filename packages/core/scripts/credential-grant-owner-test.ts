@@ -7,11 +7,11 @@ import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { rawVaultSubject, sharedVaultSubject } from "../agent/identity/oauth-vault-share.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import {
-  _resetGrantBorrowTransportsForTest,
   registerGrantBorrowTransport,
   runGrantedCall,
   type GrantCallContext,
 } from "../agent/access/credential-grant-broker.js";
+import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { credentialGrantMintVerdict } from "../agent/access/credential-grant.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { credentialGrantRefusalMessage, type CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
@@ -121,7 +121,7 @@ console.log("5. the broker hands the owner subject to the transport, and refuses
   registerGrantBorrowTransport("notion", async (_call, _grant, owner) => {
     seen.push(owner);
     return { blocks: [] };
-  });
+  }, "test:credential-grant-owner");
 
   const ctx = (): GrantCallContext => ({
     nowMs: NOW,

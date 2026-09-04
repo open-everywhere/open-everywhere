@@ -1,5 +1,6 @@
+
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -9,13 +10,16 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-borrow-mo
 delete process.env.OE_PLATFORM;
 
 import {
-  _resetGrantBorrowTransportsForTest,
   _resetGrantRoomNoticeForTest,
   borrowScopeDigest,
+  GrantBorrowTransportAlreadyRegisteredError,
+  grantBorrowTransport,
   registerGrantBorrowTransport,
   runGrantedCall,
   type GrantBorrowCall,
 } from "../agent/access/credential-grant-broker.js";
+import { installGrantBorrowTransports } from "../agent/connections/grant-mcp-transport.js";
+import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
@@ -203,7 +207,7 @@ console.log("3. the broker sends a borrow row through the borrow transport:");
   registerGrantBorrowTransport("notion", async (call, grant, owner) => {
     seen.push({ call, grantId: grant.id, ownerSubject: owner.vaultSubject });
     return { content: [{ text: "the page body", type: "text" }] };
-  });
+  }, "test:credential-grant-borrow-mount");
 
   const ctx = { nowMs: Date.now(), org: ORG, platform: "slack", requesterPrincipalId: "slack/W1/U-req", scopeKey: SCOPE, workspace: "W1" };
   const result = await runGrantedCall("grant-broker", { page_id: "ATTACKER-PAGE", page_size: 5 }, ctx);
@@ -276,6 +280,98 @@ console.log("6. two chats, one pinned name, the installed eve:");
   ok(!fromB.message?.includes("CHAT-A"), "…with no trace of the other chat's grant in it");
   assert.throws(() => bound({}, {}, elsewhere), /no variant key in its durable closure/u, "a closure with no grant id FAILS CLOSED — guessing whose credential to spend is the defect this exists for");
   n++;
+}
+
+console.log("7. the borrow-transport registry fails closed on a second registration:");
+{
+  const store = getOperationalStore();
+  await store.addCredentialGrant(ORG, borrowRow({ id: "grant-first-wins", scopeKey: "wrun_first_wins" }));
+  const ctx = { nowMs: Date.now(), org: ORG, platform: "slack", requesterPrincipalId: "slack/W1/U-req", scopeKey: "wrun_first_wins", workspace: "W1" };
+
+  _resetGrantBorrowTransportsForTest();
+  const firstSaw: string[] = [];
+  const secondSaw: string[] = [];
+
+  registerGrantBorrowTransport(
+    "notion",
+    async (call) => {
+      firstSaw.push(call.mcpTool);
+      return { content: [{ text: "the page body", type: "text" }] };
+    },
+    "test:the-first-registrant",
+  );
+  const beforeAttempt = await runGrantedCall("grant-first-wins", { page_size: 5 }, ctx);
+  ok(beforeAttempt.ok, `the first registration is accepted and the borrow call reaches it: ${beforeAttempt.ok ? "" : beforeAttempt.message}`);
+  eq(firstSaw.length, 1, "…the first transport was called exactly once");
+
+  let refusal: unknown;
+  try {
+    registerGrantBorrowTransport("notion", async (call) => {
+      secondSaw.push(call.mcpTool);
+      return { content: [{ text: "the bundle's own answer", type: "text" }] };
+    }, "test:a-provider-bundle");
+  } catch (err: unknown) {
+    refusal = err;
+  }
+  ok(
+    refusal instanceof GrantBorrowTransportAlreadyRegisteredError,
+    "a SECOND registration for a connector that already has a transport THROWS the named error, rather than replacing it",
+  );
+  const named = refusal as GrantBorrowTransportAlreadyRegisteredError;
+  eq(named.connector, "notion", "the refusal names the connector it protected");
+  eq(named.registrant, "test:the-first-registrant", "…and WHO holds it, so a bundle author can find the owner of the seam");
+  ok(named.message.includes("test:the-first-registrant"), "…in the message too, which is what a stack trace carries");
+
+  const afterAttempt = await runGrantedCall("grant-first-wins", { page_size: 7 }, ctx);
+  ok(afterAttempt.ok, `the grant still dispatches after the refused registration: ${afterAttempt.ok ? "" : afterAttempt.message}`);
+  eq(firstSaw.length, 2, "the FIRST transport took the later call as well — the refused registrant never replaced it");
+  eq(secondSaw.length, 0, "…and the second transport was never reached, on either call");
+
+  registerGrantBorrowTransport("linear", async () => ({ content: [] }), "test:another-connector");
+  ok(grantBorrowTransport("linear") !== undefined, "a connector nobody had registered still accepts its FIRST transport");
+
+  let forged: unknown;
+  try {
+    registerGrantBorrowTransport("github", async () => ({ content: [] }), "core:connections/grant-mcp-transport");
+  } catch (err: unknown) {
+    forged = err;
+  }
+  ok(forged instanceof Error && forged.message.includes("reserved"), "a caller cannot register under CORE's own registrant label");
+  eq(grantBorrowTransport("github"), undefined, "…and the refused call registered nothing");
+
+  _resetGrantBorrowTransportsForTest();
+  installGrantBorrowTransports();
+  const coreTransport = grantBorrowTransport("notion");
+  ok(coreTransport !== undefined, "core's boot path registers the generic borrow transport");
+  assert.doesNotThrow(() => {
+    installGrantBorrowTransports();
+  }, "a SECOND boot registration is a no-op, not a refusal — the granted tools mount on every host boot");
+  n++;
+  eq(grantBorrowTransport("notion"), coreTransport, "…and the FIRST transport is the one still in force after the re-boot");
+
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", async () => ({ content: [] }), "test:a-provider-bundle-that-loaded-first");
+  assert.throws(
+    () => {
+      installGrantBorrowTransports();
+    },
+    (err: unknown) => err instanceof GrantBorrowTransportAlreadyRegisteredError,
+    "core's boot path THROWS on a connector someone else holds — a silent skip would leave the foreign transport spending the owner's credential",
+  );
+  n++;
+  _resetGrantBorrowTransportsForTest();
+
+  const manifest = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as { exports: Record<string, unknown> };
+  const subpaths = Object.keys(manifest.exports);
+  const SEAM = "agent/access/grant-borrow-transport-registry.internal.ts";
+  ok(existsSync(join(import.meta.dirname, "..", SEAM)), `the reset and core's boot registration live in ${SEAM}`);
+  ok(
+    !subpaths.includes(`./${SEAM.replace(/\.ts$/u, ".js")}`) && !subpaths.some((s) => s.endsWith(".internal.js")),
+    "…and no subpath publishes it, so a bundle cannot deep-import the reset or core's boot registration",
+  );
+  const brokerSurface = Object.keys(await import("../agent/access/credential-grant-broker.js"));
+  ok(!brokerSurface.includes("_resetGrantBorrowTransportsForTest"), "the PUBLISHED broker does not carry the registry reset — a bundle cannot empty the registry and register into it");
+  ok(brokerSurface.includes("registerGrantBorrowTransport"), "…while the broker's own registration function IS on that namespace, so the assertion above reads a real surface");
 }
 
 console.log(`\n✓ credential-grant-borrow-mount: ${String(n)} assertions passed`);

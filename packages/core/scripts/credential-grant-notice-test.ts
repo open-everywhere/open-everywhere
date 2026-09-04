@@ -8,6 +8,7 @@ delete process.env.OE_PLATFORM;
 delete process.env.OE_EGRESS_SPOOF;
 
 import { registerGrantBorrowTransport, runGrantedCall } from "../agent/access/credential-grant-broker.js";
+import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import {
   deliverGrantOwnerNotice,
   grantOwnerNoticeText,
@@ -112,10 +113,11 @@ const vendor = fakeMcpServer({
 });
 const BORROW_DEPS = { fetch: vendor.fetch, mintOwnerToken: async (): Promise<string> => "OWNER-TOKEN" };
 
+_resetGrantBorrowTransportsForTest();
 registerGrantBorrowTransport("notion", async (call) => {
   sent.push(call.mcpTool);
   return { blocks: ["one", "two"] };
-});
+}, "test:credential-grant-notice");
 
 const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   ...stamps,

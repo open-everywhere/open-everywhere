@@ -11,6 +11,11 @@ import {
 import { getOperationalStore } from "../operational/provider.js";
 import { connectorTransportSpec } from "../connections/connector-transport.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
+import {
+  GrantBorrowTransportAlreadyRegisteredError,
+  grantBorrowTransport,
+  registerGrantBorrowTransport,
+} from "./grant-borrow-transport-registry.internal.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 
@@ -21,19 +26,7 @@ export interface GrantBorrowCall {
 
 export type GrantBorrowTransport = (call: GrantBorrowCall, grant: CredentialGrantRow, owner: GrantOwnerSubject) => Promise<unknown>;
 
-const BORROW_TRANSPORTS = new Map<string, GrantBorrowTransport>();
-
-export function registerGrantBorrowTransport(connector: string, transport: GrantBorrowTransport): void {
-  BORROW_TRANSPORTS.set(connector, transport);
-}
-
-export function grantBorrowTransport(connector: string): GrantBorrowTransport | undefined {
-  return BORROW_TRANSPORTS.get(connector);
-}
-
-export function _resetGrantBorrowTransportsForTest(): void {
-  BORROW_TRANSPORTS.clear();
-}
+export { GrantBorrowTransportAlreadyRegisteredError, grantBorrowTransport, registerGrantBorrowTransport };
 
 export type GrantRoomNotice = (line: string, grant: CredentialGrantRow) => Promise<void>;
 

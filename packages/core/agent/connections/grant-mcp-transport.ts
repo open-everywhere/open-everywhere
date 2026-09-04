@@ -1,4 +1,9 @@
-import { registerGrantBorrowTransport, type GrantBorrowCall, type GrantBorrowTransport } from "../access/credential-grant-broker.js";
+import type { GrantBorrowCall, GrantBorrowTransport } from "../access/credential-grant-broker.js";
+import {
+  foreignGrantBorrowRegistrant,
+  GrantBorrowTransportAlreadyRegisteredError,
+  registerCoreGrantBorrowTransport,
+} from "../access/grant-borrow-transport-registry.internal.js";
 import type { GrantOwnerSubject } from "../access/credential-grant-owner.js";
 import { CREDENTIAL_GRANT_ROLES } from "../access/credential-grant.js";
 import { asGrantUndispatched, GrantUndispatchedError, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
@@ -33,6 +38,10 @@ export function grantMcpTransport(deps: GrantMcpTransportDeps = {}): GrantBorrow
 }
 
 export function installGrantBorrowTransports(deps: GrantMcpTransportDeps = {}): void {
+  for (const role of CREDENTIAL_GRANT_ROLES) {
+    const foreign = foreignGrantBorrowRegistrant(role.connector);
+    if (foreign !== undefined) throw new GrantBorrowTransportAlreadyRegisteredError(role.connector, foreign);
+  }
   const transport = grantMcpTransport(deps);
-  for (const role of CREDENTIAL_GRANT_ROLES) registerGrantBorrowTransport(role.connector, transport);
+  for (const role of CREDENTIAL_GRANT_ROLES) registerCoreGrantBorrowTransport(role.connector, transport);
 }

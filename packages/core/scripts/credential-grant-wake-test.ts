@@ -7,11 +7,11 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  _resetGrantBorrowTransportsForTest,
   registerGrantBorrowTransport,
   runGrantedCall,
   type GrantCallContext,
 } from "../agent/access/credential-grant-broker.js";
+import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { currentJobWakePosture, markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
 import { readAudit } from "../agent/audit/audit.js";
@@ -57,7 +57,7 @@ selectConnectorTransport({ connector: "notion", directUrl: "https://mcp.notion.c
 registerGrantBorrowTransport("notion", async (call) => {
   sent.push(call.mcpTool);
   return { blocks: [] };
-});
+}, "test:credential-grant-wake");
 
 const ctx = (): GrantCallContext => ({
   nowMs: NOW,

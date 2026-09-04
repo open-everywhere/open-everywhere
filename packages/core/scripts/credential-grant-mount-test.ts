@@ -11,7 +11,6 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-mount-"))
 delete process.env.OE_PLATFORM;
 
 import {
-  _resetGrantBorrowTransportsForTest,
   _resetGrantRoomNoticeForTest,
   borrowScopeDigest,
   GRANT_REFUND_CAP_PER_TURN,
@@ -19,6 +18,7 @@ import {
   registerGrantRoomNotice,
   runGrantedCall,
 } from "../agent/access/credential-grant-broker.js";
+import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
@@ -87,7 +87,7 @@ const sent: { mcpTool: string; input: Record<string, unknown> }[] = [];
 registerGrantBorrowTransport("notion", async (call) => {
   sent.push({ input: { ...call.input }, mcpTool: call.mcpTool });
   return { blocks: ["one", "two"] };
-});
+}, "test:credential-grant-mount");
 
 const roomLines: string[] = [];
 registerGrantRoomNotice(async (line) => {
@@ -366,7 +366,7 @@ console.log("7. the requester key grammar (OPE-1090):");
 console.log("8. a fence refusal refunds the once-mode burn (OPE-1198):");
 {
   _resetGrantBorrowTransportsForTest();
-  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS));
+  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS), "test:credential-grant-mount");
 
   const ask = await askForCredentialGrant(askInput("session-refund", "once"));
   const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
@@ -411,7 +411,7 @@ console.log("8b. a throw that cannot prove it sent nothing KEEPS the burn:");
   _resetGrantBorrowTransportsForTest();
   registerGrantBorrowTransport("notion", async () => {
     throw new Error("the vendor accepted the tools/call and the socket then died");
-  });
+  }, "test:credential-grant-mount");
   const ask = await askForCredentialGrant(askInput("session-keepburn", "once"));
   const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   const grantId = approved.approved ? approved.grant.id : "";
@@ -435,7 +435,7 @@ console.log("8b. a throw that cannot prove it sent nothing KEEPS the burn:");
 console.log("9. the refund is capped per grant row per turn (OPE-1240):");
 {
   _resetGrantBorrowTransportsForTest();
-  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS));
+  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS), "test:credential-grant-mount");
 
   const mintOnce = async (scopeKey: string): Promise<string> => {
     const ask = await askForCredentialGrant(askInput(scopeKey, "once"));

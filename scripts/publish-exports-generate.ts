@@ -18,7 +18,7 @@ function walkTs(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) walkTs(full, out);
-    else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) out.push(full);
+    else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts") && !entry.name.endsWith(".internal.ts")) out.push(full);
   }
   return out;
 }
