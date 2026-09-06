@@ -71,8 +71,9 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
 
   const emptyTransform = summariseEgressPolicy({ allow: { "x.test": [{ transform: [] }] } } as never);
   ok(emptyTransform.allow[0]!.credentialInjected === false, "an EMPTY transform array is not a credential (that is the compiler's bare-allow shape)");
+
   const emptyHeaders = summariseEgressPolicy({ allow: { "x.test": [{ transform: [{ headers: {} }] }] } } as never);
-  ok(emptyHeaders.allow[0]!.credentialInjected === false, "a transform with NO headers is not a credential either");
+  ok(emptyHeaders.allow[0]!.credentialInjected === true, "a transform ENTRY with no headers reads as a credential — an unrecognised shape never claims the firewall injected nothing");
 
   ok(summariseEgressPolicy("deny-all" as never).defaultAction === "deny" && summariseEgressPolicy("deny-all" as never).allow.length === 0, "deny-all summarises as default-deny with an empty list");
   ok(summariseEgressPolicy("allow-all" as never).defaultAction === "allow", "allow-all is reported honestly as allow — OE never compiles it, and hiding it would hide a bug");

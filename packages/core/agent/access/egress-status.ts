@@ -1,5 +1,6 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { lockCommand, unlockCommand } from "../memory/readonly.js";
+import { ruleStampsCredential } from "./egress.js";
 
 export const EGRESS_DIR = "egress";
 export const EGRESS_STATUS_PATH = `${EGRESS_DIR}/STATUS.json`;
@@ -46,9 +47,7 @@ export function summariseEgressPolicy(policy: SandboxNetworkPolicy): EgressPolic
       for (const m of rule.match?.method ?? []) methods.add(m);
       const prefix = rule.match?.path?.startsWith;
       if (typeof prefix === "string" && prefix.length > 0) prefixes.add(prefix);
-      for (const t of rule.transform ?? []) {
-        if (t.headers !== undefined && Object.keys(t.headers).length > 0) credentialInjected = true;
-      }
+      if (ruleStampsCredential(rule)) credentialInjected = true;
     }
     allow.push({
       host,

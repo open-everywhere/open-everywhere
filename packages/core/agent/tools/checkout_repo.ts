@@ -12,6 +12,8 @@ import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
+import { auditBrokeredEgressPolicy } from "../scm/broker-audit.js";
+import type { BindableContext } from "../identity/binding.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { checkoutCommand, checkoutCommandBrokered, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
@@ -80,6 +82,7 @@ export default windowGated("checkout_repo", defineTool({
       } else {
         await sandbox.setNetworkPolicy(brokered);
       }
+      await auditBrokeredEgressPolicy(ctx as BindableContext, access, brokered, "checkout_repo");
       result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, app.committer()) });
       if (!result.stdout.includes(CHECKOUT_OK)) {
         throw new Error(`clone failed for "${input.repo}": ${(result.stderr || result.stdout || "unknown error").slice(0, 500)}`);

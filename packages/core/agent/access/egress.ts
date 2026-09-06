@@ -82,7 +82,22 @@ const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"
 export interface OpenWriteHost {
   readonly host: string;
   readonly via: string | null;
+  readonly credentialed: boolean;
   readonly methods: readonly string[] | "any";
+}
+
+export function ruleStampsCredential(rule: { readonly transform?: readonly unknown[] }): boolean {
+  return (rule.transform ?? []).length > 0;
+}
+
+export const WRITE_HOSTS_ROW_CAP = 20;
+
+export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): Record<string, unknown> {
+  return {
+    writeHostCount: writeHosts.length,
+    ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
+    ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
+  };
 }
 
 export function openWriteHosts(
@@ -90,20 +105,22 @@ export function openWriteHosts(
   reachableHosts: readonly ReachableHost[] = [],
 ): readonly OpenWriteHost[] {
   if (typeof policy === "string") {
-    return policy === "allow-all" ? [{ host: "*", via: null, methods: "any" }] : [];
+    return policy === "allow-all" ? [{ host: "*", via: null, credentialed: false, methods: "any" }] : [];
   }
   const allow = (policy as { allow?: readonly string[] | Record<string, EgressRule[]> }).allow;
   if (!allow) return [];
   const viaByHost = new Map(reachableHosts.map((h) => [h.host, h.viaConnection]));
   const byHost = (a: { host: string }, b: { host: string }): number => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0);
   if (Array.isArray(allow)) {
-    return allow.map((host) => ({ host, via: viaByHost.get(host) ?? null, methods: "any" as const })).sort(byHost);
+    return allow.map((host) => ({ host, via: null, credentialed: false, methods: "any" as const })).sort(byHost);
   }
   const out: OpenWriteHost[] = [];
   for (const [host, rules] of Object.entries(allow)) {
     let unrestricted = false;
+    let credentialed = false;
     const methods = new Set<string>();
     for (const rule of rules ?? []) {
+      if (ruleStampsCredential(rule)) credentialed = true;
       const declared = rule.match?.method;
       if (!declared || declared.length === 0) {
         unrestricted = true;
@@ -116,7 +133,8 @@ export function openWriteHosts(
     if (!writes) continue;
     out.push({
       host,
-      via: viaByHost.get(host) ?? null,
+      via: credentialed ? (viaByHost.get(host) ?? null) : null,
+      credentialed,
       methods: unrestricted ? "any" : [...methods].sort(),
     });
   }

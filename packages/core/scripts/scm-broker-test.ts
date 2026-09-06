@@ -14,12 +14,17 @@ import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, withBareAllowH
 import { stampEnforcement, isEnforced } from "../agent/access/enforcement.js";
 import checkoutRepoGated from "../agent/tools/checkout_repo.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
 
 const checkoutRepoTool = (await resolveWindowGated(checkoutRepoGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
   n++;
 };
 
@@ -176,6 +181,12 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
       getSandbox,
     }) as unknown as BindableContext;
 
+  const brokerRowCount = async (): Promise<number> =>
+    (await getOperationalStore().readAudit({ action: "egress.policy" })).filter(
+      (r) => (r.detail as Record<string, unknown> | undefined)?.phase === "scm.broker",
+    ).length;
+  const brokerRowsBefore = await brokerRowCount();
+
   const runCallsA: string[] = [];
   const policyCallsA: unknown[] = [];
   const sandboxA = {
@@ -199,6 +210,33 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   ok(mintCalls.length === 1 && mintCalls[0].repositories.length === 2 && mintCalls[0].repositories.includes("web") && mintCalls[0].repositories.includes("api"), "checkout_repo (enforced): mints the UNION of the session's granted repos, not just the one being checked out");
   ok(mintCalls[0].permissions.contents === "read", "checkout_repo (enforced): the broker mint is READ-ONLY");
 
+  {
+    eq(await brokerRowCount(), brokerRowsBefore + 1, "checkout_repo (enforced): the brokered re-apply appends exactly ONE egress.policy row");
+
+    const rows = await getOperationalStore().readAudit({ action: "egress.policy" });
+    const brokerRows = rows.filter((r) => (r.detail as Record<string, unknown> | undefined)?.phase === "scm.broker");
+    const detail = brokerRows[0]!.detail as Record<string, unknown>;
+    eq(detail.reason, "checkout_repo", "…naming which SCM call re-applied the policy");
+    eq(detail.enforced, true, "…and that it was really enforced — the row is appended only after the apply returned");
+    ok(typeof detail.policyFingerprint === "string" && /^[0-9a-f]{64}$/u.test(detail.policyFingerprint as string), "…with the policy generation id, so this row joins the session-start one");
+
+    const listed = detail.writeHosts as { host: string; via: string | null; credentialed: boolean; methods: unknown }[];
+    ok(Array.isArray(listed), "…and it carries the writeHosts list");
+    const names = listed.map((h) => h.host).sort();
+    ok(names.includes("github.com") && names.includes("codeload.github.com"), "🔴 the row NAMES both brokered git hosts as open to a write — the gap OPE-1448 found");
+    const gh = listed.find((h) => h.host === "github.com")!;
+    eq(gh.methods, "any", "🔴 …and says the broker rule narrows no verb, which is what an un-narrowed rule does");
+    eq(gh.credentialed, true, "🔴 …and that a credential rides on it — the installation token, stamped at the firewall");
+    eq(gh.via, null, "…named by no bundle connection, because the broker's token belongs to none");
+    eq(detail.writeHostCount, listed.length, "the exact count agrees with the list at this size (well under the cap)");
+
+    const stamped = brokerAuthHeader("tok_1").Authorization!;
+    ok(stamped.length > 20, "positive control: the canary is a real encoded credential, not an empty string");
+    ok(JSON.stringify(appliedPolicy).includes(stamped), "🔴 positive control: the APPLIED policy really carries that credential — otherwise the absence below proves nothing");
+    ok(!JSON.stringify(brokerRows[0]).includes(stamped), "🔴 negative control: the stamped credential VALUE does not appear anywhere in the stored row");
+    ok(!JSON.stringify(brokerRows[0]).includes("Authorization"), "…and no transform header reaches it either");
+  }
+
   mintCalls.length = 0;
   const runCallsB: string[] = [];
   const policyCallsB: unknown[] = [];
@@ -219,6 +257,8 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   ok(policyCallsB.length === 0, "checkout_repo (fallback): setNetworkPolicy is NOT called — enforcement isn't available on this backend/config");
   ok(runCallsB.length === 1 && runCallsB[0].includes("http.extraheader"), "checkout_repo (fallback): the clone command carries the in-sandbox token, exactly as before this change");
   ok(mintCalls.length === 1 && mintCalls[0].repositories.length === 1 && mintCalls[0].repositories[0] === "web", "checkout_repo (fallback): mints only the ONE repo being checked out (today's behavior), not the session's union");
+
+  eq(await brokerRowCount(), brokerRowsBefore + 1, "🔴 checkout_repo (fallback): still ONE new broker row in total — a path that applies no policy audits none");
 
   } finally {
     globalThis.fetch = originalFetch;

@@ -3,7 +3,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { resolveAccessFor } from "../access/request.js";
-import { compileNetworkPolicy, openWriteHosts } from "../access/egress.js";
+import { compileNetworkPolicy, openWriteHosts, writeHostsAuditFields } from "../access/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { getConfig } from "../access/config.js";
@@ -27,8 +27,6 @@ import { getSettings } from "../settings/settings.js";
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
 }
-
-const WRITE_HOSTS_ROW_CAP = 20;
 
 export interface ResolvedEgressPolicy {
   readonly policy: SandboxNetworkPolicy;
@@ -201,9 +199,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
             scopeKey,
             hosts: hostCount,
             summary,
-            writeHostCount: writeHosts.length,
-            ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
-            ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
+            ...writeHostsAuditFields(writeHosts),
             aborted: true,
           },
         });
@@ -299,9 +295,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         phase,
         reason,
         policyFingerprint: fingerprint,
-        writeHostCount: writeHosts.length,
-        ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
-        ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
+        ...writeHostsAuditFields(writeHosts),
         ...(compileError ? { error: compileError } : {}),
         ...(enforceError ? { enforceError } : {}),
         ...(abortError ? { aborted: true } : {}),

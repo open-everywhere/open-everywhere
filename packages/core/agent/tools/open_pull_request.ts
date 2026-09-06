@@ -14,6 +14,8 @@ import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
+import { auditBrokeredEgressPolicy, type BrokerApplyReason } from "../scm/broker-audit.js";
+import type { BindableContext } from "../identity/binding.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -129,19 +131,20 @@ export default windowGated("open_pull_request", defineTool({
       const { rulesByOwner } = await mintGitReadBroker(brokerApp, access.repos);
       brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
     }
-    const applyPolicy = async (policy: SandboxNetworkPolicy): Promise<void> => {
+    const applyPolicy = async (policy: SandboxNetworkPolicy, reason: BrokerApplyReason): Promise<void> => {
       if (useSelfHostEgress()) await pushEgressPolicy(policy);
       else await sandbox.setNetworkPolicy(policy);
+      await auditBrokeredEgressPolicy(ctx as BindableContext, access, policy, reason);
     };
 
     let push: Awaited<ReturnType<typeof sandbox.run>>;
     try {
-      if (brokered) await applyPolicy(withBareAllowHost(brokered, "github.com"));
+      if (brokered) await applyPolicy(withBareAllowHost(brokered, "github.com"), "open_pull_request.push");
       push = await sandbox.run({ command: stagePushCommand(dir, token, input.head) });
     } finally {
       if (brokered) {
         try {
-          await applyPolicy(brokered);
+          await applyPolicy(brokered, "open_pull_request.restore");
         } catch (restoreErr) {
           throw new Error(
             `open_pull_request: could not restore the git read-broker egress policy after the staging push — ` +
