@@ -14,6 +14,8 @@ import {
   AttachmentOversizeError,
 } from "../agent/channels/attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
+import { capResult, maxResultChars } from "../agent/access/result-cap.js";
+import { registerConfig } from "../agent/access/config.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -203,5 +205,48 @@ function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?:
   _resetAttachmentPlaneForTest();
 }
 
+{
+  _resetAttachmentPlaneForTest();
+  const enc = new TextEncoder();
+  const limit = maxResultChars();
+  const whole = `HEAD-MARKER${"x".repeat(limit + 50_000)}TAIL-MARKER`;
+  registerAttachmentResolver({
+    platform: "fake",
+    resolve: async () => undefined,
+    resolveGuarded: async (id) =>
+      id === "FAKE_LONG"
+        ? { ref: `fake:${id}`, mimeType: "text/plain", name: "long.txt", pull: async () => enc.encode(whole) }
+        : undefined,
+  });
+
+  const longOut = await tool.execute({ attachmentId: "FAKE_LONG" }, ctx);
+  ok(longOut.content === whole, "🔴 7: `execute` returns the WHOLE decoded body — a pre-cap here is what hands an arm a truncation");
+  ok(!(longOut.content ?? "").includes("…[truncated "), "7: …so the output object carries NO truncation marker");
+
+  const builtIn = capResult(whole, limit);
+  ok(builtIn.length < whole.length && builtIn.includes("…[truncated "), "7: negative control — this body IS over the built-in cap, so the rows above are not vacuous");
+
+  let seenByArm: string | undefined;
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    reduceResult: (body: string) => {
+      seenByArm = body;
+      return undefined;
+    },
+  });
+  const rendered = await eveContextStorage().run(new FakeSession(), async () => await tool.toModelOutput(longOut));
+  ok(seenByArm !== undefined, "7: the projection DID consult the registered arm for this route");
+  ok(!(seenByArm ?? "").includes("…[truncated "), "🔴 7: …and handed it a body with NO truncation marker — the defect OPE-1385 names");
+  ok((seenByArm ?? "").includes("HEAD-MARKER") && (seenByArm ?? "").includes("TAIL-MARKER"), "7: …the WHOLE body, head and tail both");
+  ok(rendered.value.length < whole.length, "7: the built-in still bounds what the model sees — dropping the pre-cap did not widen the context");
+  _resetAttachmentPlaneForTest();
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint · size-guarded plane: pre-check reject/happy/unknown/2nd-platform)`);
+console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint · size-guarded plane: pre-check reject/happy/unknown/2nd-platform · the reducing arm meets a whole body)`);

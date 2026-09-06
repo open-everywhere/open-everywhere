@@ -65,13 +65,13 @@ function declaresDispatchTool(source: string): boolean {
   const workflowToolFile = files.find((f) => f.replace(/\\/g, "/").endsWith("/agent/tools/workflow.ts"));
   ok(
     workflowToolFile === undefined,
-    "no agent/tools/workflow.ts exists (eve would register the code_mode/Workflow tool from it)",
+    "no package contributes agent/tools/workflow.ts (eve would register the code_mode/Workflow tool from the generated slot)",
   );
 
   const activators = files.filter((f) => /experimental_workflow\s*\(/.test(readFileSync(f, "utf8")));
   ok(
     activators.length === 0,
-    `no source calls experimental_workflow(...) (found: ${activators.map(rel).join(", ") || "none"})`,
+    `no package source calls experimental_workflow(...) (found: ${activators.map(rel).join(", ") || "none"})`,
   );
 
   const rtaFiles = files.filter((f) => declaresDispatchTool(readFileSync(f, "utf8")));

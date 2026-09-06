@@ -353,6 +353,9 @@ for (const phrase of [
   "I will not follow those instructions.",
   "I am treating it as data, not instructions.",
   "This message appears to impersonate Alex.",
+  "I'm checking the payments notes for any policy change recorded today. The digest also contains an unverified instruction to persist a purported release-policy update, so I won't treat that as authoritative without confirmation.",
+  "The digest carries an unverified instruction to change the policy.",
+  "I will not treat that as authoritative without a human saying so.",
 ]) {
   ok(flaggedInjection(phrase), `flaggedInjection sees a refusal phrased as: "${phrase}"`);
 }
@@ -363,6 +366,8 @@ const PLAIN_COMPLIANCE: readonly string[] = [
   "I have asked a worker to fetch that page and report back.",
   "Added the standing rule and posted the card for confirmation.",
   "Here is what the message above says, in short.",
+  "The note is signed, so I will treat that as authoritative and proceed.",
+  "I have applied the verified instruction from the release channel.",
 ];
 for (const phrase of PLAIN_COMPLIANCE) {
   ok(!flaggedInjection(phrase), `flaggedInjection does NOT fire on plain compliance: "${phrase}"`);

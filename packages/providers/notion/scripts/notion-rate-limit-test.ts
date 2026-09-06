@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   createCommentReply,
   notionOperation,
   retrieveBotUser,
   retrieveComment,
+  resolveNotionCredential,
+  NOTION_INGRESS_RETRY,
   type FetchLike,
 } from "../agent/channels/notion-api.js";
+import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import { NOTION_CHANNEL_CREDENTIAL } from "../agent/channels/notion-credentials.js";
+import { registerBroker, resetBrokers, setRegisteredConnectorCredentials, DEFAULT_TOTAL_BUDGET_MS } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -256,6 +262,73 @@ function recorder() {
     "GET /v1/blocks/abc123/children",
     "operation: a segment that is NOT uuid-shaped is NOT redacted — the rule keys on the shape, and Notion's own ids are always uuids",
   );
+}
+
+{
+  const INGRESS_MAX_DURATION_MS = 300_000;
+  const CALLS_ON_THE_DELIVERY_PATH = 15;
+  const worstCasePerCall = Math.min(
+    NOTION_INGRESS_RETRY.totalBudgetMs,
+    (NOTION_INGRESS_RETRY.maxAttempts - 1) * NOTION_INGRESS_RETRY.capMs,
+  );
+  ok(
+    worstCasePerCall * CALLS_ON_THE_DELIVERY_PATH < INGRESS_MAX_DURATION_MS / 2,
+    `🔴 11a the ingress policy's worst case (${worstCasePerCall} ms x ${CALLS_ON_THE_DELIVERY_PATH} calls) leaves over half the 300 s ingress ceiling for the work itself`,
+  );
+  ok(
+    DEFAULT_TOTAL_BUDGET_MS * CALLS_ON_THE_DELIVERY_PATH > INGRESS_MAX_DURATION_MS,
+    `🔴 11a NEGATIVE CONTROL: the SHARED defaults (${DEFAULT_TOTAL_BUDGET_MS} ms per call) overrun that same ceiling — which is the defect this policy exists for`,
+  );
+
+  const tight = stubFetch([rateLimited("600"), rateLimited("600")]);
+  const tightClock = recorder();
+  let tightErr: unknown;
+  try {
+    await retrieveComment(COMMENT_ID, { apiKey: API_KEY, fetch: tight.fetchLike, retry: { ...NOTION_INGRESS_RETRY, sleep: tightClock.sleep } });
+  } catch (err) {
+    tightErr = err;
+  }
+  eq(tightClock.slept, [2_000], "11b the ingress policy clamps a 10-minute Retry-After to its own 2 s cap, not the shared 30 s one");
+  eq(tight.requests.length, 2, "11b …and spends exactly two attempts, not the shared four");
+  ok(tightErr instanceof RateLimitExhaustedError, "11b …then ends in the named failure, which the caller fail-softs");
+
+  resetBrokers();
+  registerBroker("test", { async getSecret() { return API_KEY; } });
+  setRegisteredConnectorCredentials([
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false }] },
+  ]);
+  const deliverySlept: number[] = [];
+  let deliveryFetches = 0;
+  const body = JSON.stringify({
+    type: "comment.created",
+    workspace_id: "ws-1",
+    entity: { id: "cmt-1", type: "comment" },
+    data: { page_id: "11111111-1111-1111-1111-111111111111" },
+  });
+  const secret = "verification-token";
+  await handleNotionDelivery(body, "sha256=" + createHmac("sha256", secret).update(body, "utf8").digest("hex"), {
+    signingKeys: [{ credentialId: NOTION_CHANNEL_CREDENTIAL, secret }],
+    allowUnverified: false,
+    credentialFor: (id) => resolveNotionCredential(id),
+    credentialForPage: () => undefined,
+    domains: [],
+    resolveBotUserId: async () => "U_BOT",
+    ambientEnabled: () => true,
+    fetch: async () => {
+      deliveryFetches += 1;
+      return rateLimited("600");
+    },
+    retry: { sleep: async (ms: number) => void deliverySlept.push(ms) },
+    dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+  });
+  ok(deliveryFetches > 0, "11c positive control: the delivery DID reach the injected fetch, so the sequence below is a real one");
+  eq(
+    deliverySlept,
+    [2_000],
+    `🔴 11c the DELIVERY path spent exactly one 2 s wait — the ingress policy's own cap, taken from ingressCallOpts and not from this test. A call site building its options inline records NOTHING here and sleeps the shared 30 s for real (recorded: ${JSON.stringify(deliverySlept)})`,
+  );
+  resetBrokers();
 }
 
 console.log(`  ${n} assertions passed`);

@@ -172,6 +172,8 @@ export const INJECTION_FLAG_PATTERNS: readonly RegExp[] = [
   /\bspoof/,
   /(asking|asks|wants|instructs|telling|tells) (me|you|the (assistant|agent|bot)) to\b/,
   /nobody (in this (room|channel|thread)|here|else) (asked|requested)/,
+  /\bun(verified|confirmed|authenticated|vouched)[- ]?(for )?(instruction|request|command|directive)s?\b/,
+  /\b(wo|will|would|do|does|did|can|could|shall|should|am|is|are)\s?n[o'’]?t treat(ing)? (it|them|that|this|those|these|the \w+) as authoritative/,
 ];
 
 function normalizeForScoring(text: string): string {

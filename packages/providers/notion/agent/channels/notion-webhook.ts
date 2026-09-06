@@ -9,6 +9,7 @@ import {
   resolveBlockOwningPage,
   richTextToPlainText,
   notionParentLink,
+  NOTION_INGRESS_RETRY,
   type FetchLike,
   type NotionWebhookEvent,
   type NotionComment,
@@ -52,6 +53,7 @@ export interface HandleNotionDeliveryDeps {
   readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
   readonly fetch?: FetchLike;
   readonly version?: string;
+  readonly retry?: NotionCallOpts["retry"];
   readonly dispatch: (d: NotionUntieredSupervisorDispatch) => Promise<void>;
   readonly onHandshakeToken?: (token: string) => void;
   readonly attachSession: AttachSessionForCancel;
@@ -79,6 +81,10 @@ export interface NotionDeliveryOutcome {
   readonly verified: boolean;
   readonly credentialId?: string;
   readonly signerCredentialId?: string;
+}
+
+function ingressCallOpts(cred: ResolvedNotionCredential, deps: HandleNotionDeliveryDeps): NotionCallOpts {
+  return { ...cred, fetch: deps.fetch, version: deps.version, retry: { ...NOTION_INGRESS_RETRY, ...deps.retry } };
 }
 
 export async function handleNotionDelivery(
@@ -138,12 +144,12 @@ async function deliver(
 
   let comment: NotionComment;
   try {
-    comment = await retrieveComment(commentId, { ...cred, fetch: deps.fetch, version: deps.version });
+    comment = await retrieveComment(commentId, ingressCallOpts(cred, deps));
   } catch (err) {
     return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}`, signed, credentialId };
   }
 
-  const resolvedPage = await resolveDeliveryPage(comment, { ...cred, fetch: deps.fetch, version: deps.version });
+  const resolvedPage = await resolveDeliveryPage(comment, ingressCallOpts(cred, deps));
   if (!resolvedPage.pageId) {
     return { status: 200, body: "ok", action: "unresolved-page", detail: resolvedPage.reason, signed, credentialId };
   }
@@ -193,7 +199,7 @@ async function deliver(
   }
 
   const trust = await resolveNotionDeliveryTrust(pageId, workspaceId ?? "", deps.trustRoots, {
-    parentOf: (id) => notionParentLink(id, { ...cred, fetch: deps.fetch, version: deps.version }),
+    parentOf: (id) => notionParentLink(id, ingressCallOpts(cred, deps)),
   });
 
   const triggerText = richTextToPlainText(comment.rich_text);
@@ -204,11 +210,7 @@ async function deliver(
     sentAt: comment.created_time ?? new Date().toISOString(),
     text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",
   };
-  const threadComments = await loadThreadSiblings(comment, pageId, discussionId, botUserId, {
-    ...cred,
-    fetch: deps.fetch,
-    version: deps.version,
-  });
+  const threadComments = await loadThreadSiblings(comment, pageId, discussionId, botUserId, ingressCallOpts(cred, deps));
   const auth = buildNotionAuth({
     workspaceId,
     pageId,

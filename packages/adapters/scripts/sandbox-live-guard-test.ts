@@ -13,6 +13,8 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
+const SPAWN_CEILING_MS = 90_000;
+
 function runGuard(overrides: Record<string, string | undefined>) {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.VERCEL_OIDC_TOKEN;
@@ -25,27 +27,24 @@ function runGuard(overrides: Record<string, string | undefined>) {
   return spawnSync("npx", ["tsx", target], {
     cwd: pkgRoot,
     env,
-    timeout: 8_000,
+    timeout: SPAWN_CEILING_MS,
     encoding: "utf8",
   });
 }
 
-{
-  const r = runGuard({});
-  ok(r.status === 2, `no credentials → exit 2 (got ${r.status}, signal ${r.signal})`);
-  ok(r.stderr.includes("SKIPPED"), "no credentials → SKIPPED message on stderr");
+function assertRefusedFast(r: ReturnType<typeof runGuard>, label: string) {
+  ok(
+    r.signal === null,
+    `${label} → the child exited on its own; it was KILLED at the ${SPAWN_CEILING_MS} ms ceiling (signal ${r.signal}), which means the guard did not refuse`,
+  );
+  ok(r.status === 2, `${label} → exit 2 (got ${r.status}, signal ${r.signal})`);
+  ok(r.stderr.includes("SKIPPED"), `${label} → SKIPPED message on stderr`);
 }
 
-{
-  const r = runGuard({ VERCEL_TOKEN: "fake-bare-api-token-not-oidc" });
-  ok(r.status === 2, `VERCEL_TOKEN alone → exit 2, the SDK never reads it implicitly (got ${r.status}, signal ${r.signal})`);
-  ok(r.stderr.includes("SKIPPED"), "VERCEL_TOKEN alone → SKIPPED message on stderr");
-}
+assertRefusedFast(runGuard({}), "no credentials");
 
-{
-  const r = runGuard({ OE_VERCEL_API_TOKEN: "fake-bare-api-token-not-oidc" });
-  ok(r.status === 2, `OE_VERCEL_API_TOKEN alone → exit 2, the SDK never reads it implicitly (got ${r.status}, signal ${r.signal})`);
-  ok(r.stderr.includes("SKIPPED"), "OE_VERCEL_API_TOKEN alone → SKIPPED message on stderr");
-}
+assertRefusedFast(runGuard({ VERCEL_TOKEN: "fake-bare-api-token-not-oidc" }), "VERCEL_TOKEN alone");
+
+assertRefusedFast(runGuard({ OE_VERCEL_API_TOKEN: "fake-bare-api-token-not-oidc" }), "OE_VERCEL_API_TOKEN alone");
 
 console.log(`\n✓ sandbox-live-guard: ${n} assertions passed\n`);

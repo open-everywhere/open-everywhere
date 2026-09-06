@@ -83,6 +83,22 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
     floor: 300,
     evalFloor: 300,
   },
+  {
+    module: "agent/schedules",
+    why: "eve's schedule slot root. Same scan-mounted shape; a schedule module evaluates in the served process whether or not a singleton root imports it.",
+    registers: false,
+    slotRoot: true,
+    floor: 300,
+    evalFloor: 300,
+  },
+  {
+    module: "agent/skills",
+    why: "eve's skill slot root. Same scan-mounted shape. Its FLOORS are much lower than the other roots' because its graph genuinely is — one module, ~155 resolutions, against agent/tools' thousands. A floor is a reach check, not a size target: set it above what a broken import would resolve and below what this root really reaches.",
+    registers: false,
+    slotRoot: true,
+    floor: 120,
+    evalFloor: 120,
+  },
 ];
 
 interface ChildResult {

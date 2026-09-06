@@ -48,7 +48,7 @@ import {
 } from "./notion-question-return.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
-import { createCommentReply, resolveNotionCredential, retrieveBotUser, type ResolvedNotionCredential } from "./notion-api.js";
+import { createCommentReply, resolveNotionCredential, retrieveBotUser, NOTION_INGRESS_RETRY, type ResolvedNotionCredential } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { notionTrustRoots } from "./notion-ancestry-trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
@@ -83,7 +83,7 @@ function resolveBotUser(
       overrideId && overrideId.length > 0
         ? Promise.resolve(named({ id: overrideId }))
         : credential()
-            .then((cred) => (cred ? retrieveBotUser({ ...cred }).then(named) : {}))
+            .then((cred) => (cred ? retrieveBotUser({ ...cred, retry: NOTION_INGRESS_RETRY }).then(named) : {}))
             .catch((err) => {
               log(`could not resolve bot user for credential "${credentialId}" (GET /v1/users/me failed): ${String(err)}`);
               return {};

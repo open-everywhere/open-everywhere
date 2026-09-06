@@ -4,7 +4,6 @@ import { type BindableContext } from "../identity/binding.js";
 import { resolveGuardedAttachment, AttachmentOversizeError } from "../channels/attachments.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { capResult } from "../access/result-cap.js";
 
 const TEXT_MIME_ALLOW: ReadonlySet<string> = new Set([
   "text/plain",
@@ -133,10 +132,9 @@ export default defineTool({
     }
 
     const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    const content = capResult(text);
 
     await auditToolAction(ctx, "read_file_upload", { ok: true, id, mimeType: cls.mime, bytes: bytes.byteLength });
-    return { ok: true, content, name: src.name, mimeType: cls.mime };
+    return { ok: true, content: text, name: src.name, mimeType: cls.mime };
   },
   toModelOutput(output: ReadFileUploadOutput) {
     if (!output.ok) {

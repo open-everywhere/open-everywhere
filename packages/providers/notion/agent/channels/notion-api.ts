@@ -159,6 +159,12 @@ export interface NotionCallOpts {
   readonly retry?: Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
 }
 
+export const NOTION_INGRESS_RETRY = {
+  maxAttempts: 2,
+  capMs: 2_000,
+  totalBudgetMs: 4_000,
+} as const satisfies NonNullable<NotionCallOpts["retry"]>;
+
 function notionHeaders(opts: NotionCallOpts): Record<string, string> {
   return {
     authorization: `Bearer ${opts.apiKey}`,

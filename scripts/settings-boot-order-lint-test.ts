@@ -137,7 +137,11 @@ function main(): void {
       "…and prints what each entry walked",
     );
     const evaluated = [...listed.out.matchAll(/(\d+) script\(s\) evaluated, \d+ trap\(s\)/g)].map((m) => Number(m[1]));
-    ok(evaluated.length === 6, `every booted entry reports its evaluation count (saw ${evaluated.length})`);
+    const bootedMatch = /(\d+) entr\(ies\) booted/.exec(listed.out);
+    ok(bootedMatch !== null, "the lint's summary states how many entries it booted");
+    const booted = Number(bootedMatch?.[1] ?? -1);
+    ok(booted >= 6, `…and it booted at least the six slot roots and singleton roots this suite knows about (saw ${booted})`);
+    ok(evaluated.length === booted, `every booted entry reports its evaluation count (booted ${booted}, reported ${evaluated.length})`);
     ok(
       evaluated.every((n) => n > 0),
       `…and each is a real count, not a zero standing in for one (saw ${JSON.stringify(evaluated)})`,

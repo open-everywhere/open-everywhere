@@ -27,31 +27,60 @@ const BARE_FETCH = /(?<![.\w])fetch\s*\(/;
 const OWN_TRANSPORT = /globalThis\.fetch/;
 const EVE_LINEAR_DIR = join(PKG_ROOT, "..", "..", "..", "node_modules", "eve", "dist", "src", "public", "channels", "linear");
 
-function eveTransportNames(): string[] {
-  const read = (file: string): string => {
-    try {
-      return readFileSync(join(EVE_LINEAR_DIR, file), "utf8");
-    } catch (err) {
-      throw new Error(
-        `linear-write-seam: cannot read eve's ${file} at ${EVE_LINEAR_DIR} — an eve bump moved or renamed it. ` +
-          "Find the new home of eve's Linear transport declarations and update EVE_LINEAR_DIR (and the " +
-          "eve-upgrade-check skill's checklist). Do NOT fall back to a hand-written list.",
-        { cause: err },
-      );
-    }
-  };
-  const declared = new Set([...read("api.d.ts").matchAll(/export declare function ([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]));
-  const reExportedFromApi = /export \{([^}]*)\} from "[^"]*channels\/linear\/api\.js";/.exec(read("index.d.ts"));
-  if (reExportedFromApi === null) {
-    throw new Error(`linear-write-seam: eve's index.d.ts no longer re-exports from channels/linear/api.js — read ${EVE_LINEAR_DIR}/index.d.ts and update this derivation.`);
+function readEveLinear(file: string): string {
+  try {
+    return readFileSync(join(EVE_LINEAR_DIR, file), "utf8");
+  } catch (err) {
+    throw new Error(
+      `linear-write-seam: cannot read eve's ${file} at ${EVE_LINEAR_DIR} — an eve bump moved or renamed it. ` +
+        "Find the new home of eve's Linear transport declarations and update EVE_LINEAR_DIR (and the " +
+        "eve-upgrade-check skill's checklist). Do NOT fall back to a hand-written list.",
+      { cause: err },
+    );
   }
-  const exposed = reExportedFromApi[1]
-    .split(",")
+}
+
+function eveExposedValueNames(): string[] {
+  const index = readEveLinear("index.d.ts");
+  const names = [...index.matchAll(/export \{([^}]*)\} from "[^"]*channels\/linear\/[A-Za-z0-9_.-]+\.js";/g)]
+    .flatMap((m) => m[1].split(","))
     .map((part) => part.trim())
     .filter((part) => part.length > 0 && !part.startsWith("type "));
-  const names = exposed.filter((name) => declared.has(name)).sort();
   if (names.length === 0) {
-    throw new Error(`linear-write-seam: derived ZERO HTTP-issuing eve exports from ${EVE_LINEAR_DIR} — §2 would then match nothing and pass over every offender.`);
+    throw new Error(`linear-write-seam: eve's index.d.ts re-exported ZERO values from channels/linear/ — read ${EVE_LINEAR_DIR}/index.d.ts and update this derivation.`);
+  }
+  return names;
+}
+
+function transportBearingModules(): string[] {
+  const modules = readdirSync(EVE_LINEAR_DIR)
+    .filter((f) => f.endsWith(".d.ts"))
+    .map((f) => f.slice(0, -".d.ts".length))
+    .filter((m) => m !== "index");
+  const bearing = modules.filter((m) => {
+    const js = readEveLinear(`${m}.js`);
+    return /\bfetch\b/.test(js) || /channels\/linear\/api\.js/.test(js);
+  });
+  if (bearing.length === 0) {
+    throw new Error(`linear-write-seam: NO module under ${EVE_LINEAR_DIR} reaches a fetch or the transport module — the derivation below would then watch nothing and §2 would pass over every offender.`);
+  }
+  return bearing.sort();
+}
+
+const COVERED_ELSEWHERE: Readonly<Record<string, string>> = {
+  linearChannel:
+    "§4 reads the `api:` out of every `linearChannel({…})` config and REFUSES an indirect one. That is " +
+    "a stronger check than a name ban, and banning the name here would red `linear.ts`'s two honest call sites.",
+};
+
+function eveTransportNames(): string[] {
+  const exposed = new Set(eveExposedValueNames());
+  const declared = transportBearingModules().flatMap((m) =>
+    [...readEveLinear(`${m}.d.ts`).matchAll(/export declare function ([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]),
+  );
+  const names = [...new Set(declared)].filter((name) => exposed.has(name) && !(name in COVERED_ELSEWHERE)).sort();
+  if (names.length === 0) {
+    throw new Error(`linear-write-seam: derived ZERO request-issuing eve exports from ${EVE_LINEAR_DIR} — §2 would then match nothing and pass over every offender.`);
   }
   return names;
 }
@@ -86,6 +115,38 @@ function tsFiles(dir: string): string[] {
   ok(EVE_TRANSPORT_NAMES.includes("callLinearGraphQL"), `§0 the derived eve-transport inventory names the query transport the seam wraps (derived: ${EVE_TRANSPORT_NAMES.join(", ")})`);
   ok(EVE_TRANSPORT_NAMES.includes("createLinearAgentActivity"), "§0 …and the Agent-Activity transport the mention route's terminal answer rides");
   ok(!EVE_TRANSPORT_NAMES.includes("LinearApiError"), "🔴 §0 …and NOT eve's error class — it issues no request, and matching it would flag `catch (e) { if (e instanceof LinearApiError) }` in every honest file");
+
+  const bearing = transportBearingModules();
+  ok(bearing.includes("api"), `§0 the transport-bearing scan names eve's transport module (derived: ${bearing.join(", ")})`);
+  ok(
+    bearing.includes("defaults"),
+    "🔴 §0 …and `defaults`, which imports `api.js` and posts an Agent Activity through it — the module the old `api.d.ts`-only reading was blind to",
+  );
+  ok(!bearing.includes("verify"), "🔴 §0 NEGATIVE CONTROL: `verify` signs a webhook body and issues NOTHING, so the scan does not call every module a transport");
+  ok(!bearing.includes("constants"), "§0 …nor the constants module");
+  ok(
+    EVE_TRANSPORT_NAMES.includes("defaultOnAgentSession"),
+    `§0 a re-exported function of a transport-bearing module IS watched — the widening's whole point (derived: ${EVE_TRANSPORT_NAMES.join(", ")})`,
+  );
+  ok(
+    !EVE_TRANSPORT_NAMES.includes("signLinearWebhookBody"),
+    "🔴 §0 …while an export of a NON-transport module is not — otherwise §2 would red on any honest file that verifies a webhook",
+  );
+  ok(
+    !EVE_TRANSPORT_NAMES.includes("createDefaultEvents"),
+    "🔴 §0 …and a transport-bearing module's UNEXPORTED declaration is not watched either — `eve/channels/linear` does not re-export it, so no OE file can name it",
+  );
+
+  const derivedWithoutExclusions = new Set(
+    transportBearingModules().flatMap((m) =>
+      [...readFileSync(join(EVE_LINEAR_DIR, `${m}.d.ts`), "utf8").matchAll(/export declare function ([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]),
+    ),
+  );
+  ok(Object.keys(COVERED_ELSEWHERE).length > 0, "§0 the covered-elsewhere map is not empty — an empty one would mean §2 watches `linearChannel` and reds on `linear.ts`");
+  for (const [name, why] of Object.entries(COVERED_ELSEWHERE)) {
+    ok(derivedWithoutExclusions.has(name), `🔴 §0 \`${name}\` is excluded from §2 as covered elsewhere and eve MUST still declare it — an eve rename would make this exclusion protect nothing`);
+    ok(!EVE_TRANSPORT_NAMES.includes(name), `§0 …and the exclusion actually took: \`${name}\` is not watched by §2 (${why.slice(0, 40)}…)`);
+  }
   for (const name of EVE_TRANSPORT_NAMES) {
     ok(EVE_TRANSPORT.test(stripComments(`import { ${name} } from "eve/channels/linear";`)), `§0 the eve-transport matcher DOES match a direct import of eve's \`${name}\``);
     ok(EVE_TRANSPORT.test(stripComments(`await ${name}({});`)), `§0 …and a direct call to it`);
