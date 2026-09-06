@@ -1,5 +1,4 @@
 import { appendAudit, readAudit, type AuditEntry, type AuditInput } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { describeReadableBy, scopeGrantsRead, type ReadableBy } from "../access/read-grant.js";
@@ -338,8 +337,4 @@ export function renderDeliveryHistory(h: DeliveryHistory): string {
     );
   }
   return lines.join("\n");
-}
-
-export function historyOrg(): string {
-  return deploymentOrg();
 }

@@ -129,17 +129,6 @@ export async function setOperatorSecret(input: SetOperatorSecretInput): Promise<
   return { name: input.name, bytes: Buffer.byteLength(input.value, "utf8"), at, replaced: existing !== null };
 }
 
-export async function setOperatorSecrets(
-  entries: readonly ParsedSecretEntry[],
-  opts: { readonly setBy: string } & OperatorSecretOptions,
-): Promise<readonly SecretWriteResult[]> {
-  const out: SecretWriteResult[] = [];
-  for (const entry of entries) {
-    out.push(await setOperatorSecret({ name: entry.name, value: entry.value, setBy: opts.setBy, ...(opts.org ? { org: opts.org } : {}) }));
-  }
-  return out;
-}
-
 export async function listOperatorSecrets(
   opts: OperatorSecretOptions & { readonly includeInternal?: boolean } = {},
 ): Promise<readonly SecretListEntry[]> {

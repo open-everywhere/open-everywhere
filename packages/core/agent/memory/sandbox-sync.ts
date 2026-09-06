@@ -62,14 +62,6 @@ export async function removeTierDir(sandbox: SandboxSession, tier: Tier): Promis
   await sandbox.run({ command: `rm -rf '${dir.replace(/'/g, "'\\''")}'` });
 }
 
-export async function readTierFile(
-  sandbox: SandboxSession,
-  tier: Tier,
-  rel: string,
-): Promise<string | null> {
-  return sandbox.readTextFile({ path: `${tierSandboxDir(tier)}/${rel}` });
-}
-
 export async function writeTierFile(
   sandbox: SandboxSession,
   tier: Tier,

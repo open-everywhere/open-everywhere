@@ -62,7 +62,3 @@ export function getConfigPrProvider(): ConfigPrProvider {
   }
   return registered;
 }
-
-export function resetConfigPrProviderForTest(): void {
-  registered = undefined;
-}

@@ -1,4 +1,4 @@
-import { ACCESS_KEY_SEP, decodeSet, sectionHasDelta, type ConfigFacts, type FactSection } from "./config-facts.js";
+import { ACCESS_KEY_SEP, decodeSet, type ConfigFacts, type FactSection } from "./config-facts.js";
 
 export const MAX_BLAST_ITEMS = 60;
 
@@ -207,8 +207,4 @@ function cap<T>(items: T[], label: string, into: string[]): readonly T[] {
 
 export function factsEstablishNothing(facts: ConfigFacts): boolean {
   return facts.sections.every((s) => s.kind === "not-computable");
-}
-
-export function changedSectionNames(facts: ConfigFacts): string[] {
-  return facts.sections.filter(sectionHasDelta).map((s) => s.section);
 }

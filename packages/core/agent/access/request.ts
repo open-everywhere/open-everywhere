@@ -1,23 +1,13 @@
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalId, bindFrom, unattendedFrom, type BindableContext, type Visibility, type Trust } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, unattendedFrom, type BindableContext } from "../identity/binding.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionMode } from "./resolver.js";
 import { getConfig } from "./config.js";
 import { groupsForPrincipal } from "../identity/groups.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { memberPlaneGrants } from "./member-grant.js";
 
-export type { Visibility, Trust } from "../identity/binding.js";
-
 export function resolveMode(ctx: BindableContext): SessionMode {
   return bindFrom(ctx).mode;
-}
-
-export function resolveTrust(ctx: BindableContext): Trust {
-  return bindFrom(ctx).trust;
-}
-
-export function resolveVisibility(ctx: BindableContext): Visibility {
-  return bindFrom(ctx).visibility;
 }
 
 export function principalIdOf(ctx: BindableContext): string | undefined {

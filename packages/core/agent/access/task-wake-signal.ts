@@ -74,13 +74,3 @@ export function taskWakeThisTurn(turnId: string | undefined): string | undefined
     return undefined;
   }
 }
-
-export function taskWakeTaskThisTurn(turnId: string | undefined): string | undefined {
-  if (turnId === undefined || turnId.length === 0) return undefined;
-  try {
-    const state = readState(slot.get());
-    return state.turn === turnId ? state.taskId : undefined;
-  } catch {
-    return undefined;
-  }
-}

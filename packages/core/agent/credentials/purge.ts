@@ -12,10 +12,6 @@ export function resetCredentialPurgeHook(): void {
   registeredHooks.clear();
 }
 
-export function credentialPurgeHooks(): ReadonlyMap<string, CredentialPurgeHook> {
-  return registeredHooks;
-}
-
 export interface CredentialPurgeOutcome {
   readonly purged: number;
   readonly failed: boolean;

@@ -6,8 +6,6 @@ import type { CredentialIntakeRow } from "../operational/store.js";
 
 export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 
-export const INTAKE_PAGE_KEY_ENV = PAGE_TOKEN_KEY_ENV;
-
 const TOKEN_FIELD = "t";
 const VALUE_FIELD = "k";
 

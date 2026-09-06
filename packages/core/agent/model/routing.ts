@@ -62,10 +62,6 @@ interface DomainModelPickCacheEntry {
 }
 const domainModelPickCache = new Map<string, DomainModelPickCacheEntry>();
 
-export function _resetDomainModelPickCacheForTest(): void {
-  domainModelPickCache.clear();
-}
-
 async function liveDomainModelPick(org: string, domainName: string): Promise<DomainModelPick | null> {
   const key = `${org} ${domainName}`;
   const now = Date.now();

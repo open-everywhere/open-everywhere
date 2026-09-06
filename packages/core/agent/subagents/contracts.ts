@@ -39,5 +39,3 @@ export const FRESH_EYES_REVIEW_OUTPUT = z.object({
     .describe("Per-subject plain-language readings. Fill it when the caller asked for a walkthrough; omit it otherwise."),
 });
 
-export type FreshEyesReviewOutput = z.infer<typeof FRESH_EYES_REVIEW_OUTPUT>;
-

@@ -36,11 +36,6 @@ export function registerOverlayHome(codec: OverlayHomeCodec): void {
   OVERLAY_HOMES.set(codec.kind, codec);
 }
 
-export function resetOverlayHomes(): void {
-  OVERLAY_HOMES.clear();
-  registerCoreOverlayHomes();
-}
-
 function overlayHomeFor(o: CredentialBindingOverride): OverlayHomeCodec | undefined {
   for (const codec of OVERLAY_HOMES.values()) if (codec.claims(o)) return codec;
   return undefined;

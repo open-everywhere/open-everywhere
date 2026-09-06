@@ -25,13 +25,6 @@ export function discoveredInstallationsGeneration(): number {
   return generation;
 }
 
-export function resetGitHubInstallationsForTest(): void {
-  discovered = {};
-  hydratedAt = 0;
-  inFlight = null;
-  generation = 0;
-}
-
 function setDiscovered(next: Record<string, string>): void {
   const before = JSON.stringify(discovered);
   const after = JSON.stringify(next);

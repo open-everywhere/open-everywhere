@@ -1,4 +1,4 @@
-import { SURFACE_KEY, bundleConnectorNames, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
+import { SURFACE_KEY, bundleConnectorNames, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
 import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
@@ -303,8 +303,4 @@ export function renderDelta(delta: AccessDelta): string[] {
     ...ack,
   ];
   return ["```" + lines.join("\n") + "```"];
-}
-
-export function bindingsFor(bundleName: string, bindings: readonly Binding[]): readonly Binding[] {
-  return bindings.filter((b) => b.bundle === bundleName);
 }

@@ -148,10 +148,6 @@ export function measureNames(dataset: DatasetName): string[] {
   return Object.keys(DATASETS[dataset].measures);
 }
 
-export function hasTsDimension(dataset: DatasetName): boolean {
-  return Object.values(DATASETS[dataset].dims).some((d) => d.kind === "ts");
-}
-
 export function schemaCard(): string {
   const lines: string[] = [];
   for (const name of DATASET_NAMES) {

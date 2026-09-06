@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const TEMPLATE_TREES = {
@@ -50,14 +50,4 @@ export function readTemplateTree(name: TemplateTreeName, fromUrl: string = impor
 
 export function readAllTemplateTrees(fromUrl: string = import.meta.url): TemplateFile[] {
   return (Object.keys(TEMPLATE_TREES) as TemplateTreeName[]).flatMap((n) => readTemplateTree(n, fromUrl));
-}
-
-export function templateTreeDrift(appRoot: string, fromUrl: string = import.meta.url): string[] {
-  const drift: string[] = [];
-  for (const file of readAllTemplateTrees(fromUrl)) {
-    const onDisk = resolve(appRoot, file.path);
-    if (!existsSync(onDisk)) drift.push(`${file.path}: missing on disk`);
-    else if (readFileSync(onDisk, "utf8") !== file.content) drift.push(`${file.path}: differs from the shipped template`);
-  }
-  return drift;
 }

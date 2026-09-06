@@ -124,7 +124,3 @@ const HANDLERS: Record<CredentialType, Handler> = {
 export async function resolveHeaders(conn: Connection): Promise<Record<string, string>> {
   return HANDLERS[conn.credentialType](conn);
 }
-
-export function isImplemented(type: CredentialType): boolean {
-  return type in HANDLERS;
-}

@@ -20,7 +20,3 @@ assertGroupsValid(mergedGroups);
 export function loadGroups(): readonly Group[] {
   return mergedGroups;
 }
-
-export function loadBaseGroups(): readonly Group[] {
-  return groups;
-}
