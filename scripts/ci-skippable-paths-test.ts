@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { isSkippableDiff, isSkippablePath, runtimePaths } from "./ci/skippable-paths.js";
+import { deployedRuntimePaths, isSkippableDiff, isSkippablePath, runtimePaths, shipsInDeployedFunction } from "./ci/skippable-paths.js";
 
 let checks = 0;
 const check = (label: string, fn: () => void): void => {
@@ -77,4 +77,38 @@ check("runtimePaths: empty when the diff is fully skippable — the complement o
   assert.deepEqual(runtimePaths([".claude/skills/example/SKILL.md", "AGENTS.md"]), []);
 });
 
-console.log(`✓ ci-skippable-paths: ${checks} check(s) passed (path predicate, whole-diff predicate, blocking-subset — all offline)`);
+check("scripts/** ships in NO deploy, and is still RUNTIME to the walk-back", () => {
+  assert.equal(isSkippablePath("scripts/reconcile-lib.ts"), false);
+  assert.equal(shipsInDeployedFunction("scripts/reconcile-lib.ts"), false);
+  assert.equal(isSkippablePath("scripts/deploy/lib.ts"), false);
+  assert.equal(shipsInDeployedFunction("scripts/deploy/lib.ts"), false);
+});
+
+check("shipsInDeployedFunction: a WORKSPACE scripts tree is not the root one, and ships", () => {
+  assert.equal(shipsInDeployedFunction("packages/core/scripts/eval/run.ts"), true);
+});
+
+check("shipsInDeployedFunction: everything rule 1 calls skippable is unshipped too", () => {
+  for (const path of [".claude/settings.json", "docs/deploy/rollback.md", "AGENTS.md"]) {
+    assert.equal(isSkippablePath(path), true, path);
+    assert.equal(shipsInDeployedFunction(path), false, path);
+  }
+});
+
+check("shipsInDeployedFunction: the shipped trees SHIP", () => {
+  assert.equal(shipsInDeployedFunction("agent/agent.ts"), true);
+  assert.equal(shipsInDeployedFunction("packages/core/agent/access/config.ts"), true);
+  assert.equal(shipsInDeployedFunction("package.json"), true);
+  assert.equal(shipsInDeployedFunction("vercel.json"), true);
+  assert.equal(shipsInDeployedFunction("agent/docs/generated/deploy.ts"), true);
+  assert.equal(shipsInDeployedFunction("brand-new-top-level/thing.ts"), true);
+});
+
+check("deployedRuntimePaths: a scripts-only landing owes no ship, a mixed one does", () => {
+  const scriptsOnly = ["scripts/reconcile.ts", "scripts/reconcile-fixtures/05-ship-owed.json", "scripts/README.md"];
+  assert.deepEqual(deployedRuntimePaths(scriptsOnly), []);
+  assert.deepEqual(runtimePaths(scriptsOnly), scriptsOnly);
+  assert.deepEqual(deployedRuntimePaths([...scriptsOnly, "agent/tools/read-docs.ts"]), ["agent/tools/read-docs.ts"]);
+});
+
+console.log(`✓ ci-skippable-paths: ${checks} check(s) passed (path predicate, whole-diff predicate, blocking-subset, deployed-path predicate — all offline)`);

@@ -19,3 +19,17 @@ export function isSkippableDiff(paths: string[]): boolean {
 export function runtimePaths(paths: string[]): string[] {
   return paths.filter((path) => !isSkippablePath(path));
 }
+
+const UNSHIPPED_PREFIXES = [
+  "scripts/",
+];
+
+export function shipsInDeployedFunction(path: string): boolean {
+  const normalized = path.replace(/^\.\//, "");
+  if (isSkippablePath(normalized)) return false;
+  return !UNSHIPPED_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+export function deployedRuntimePaths(paths: string[]): string[] {
+  return paths.filter(shipsInDeployedFunction);
+}

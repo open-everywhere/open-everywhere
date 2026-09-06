@@ -544,6 +544,21 @@ await check("walkBackForCloudProof: REFUSES when the cumulative diff includes a 
   assert.match(decision.message, /agent\/agent\.ts/);
 });
 
+await check("walkBackForCloudProof: REFUSES over a scripts/deploy-only diff — the gate's own source is runtime here", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof(
+    {
+      ancestors: [SHA, A1, A2],
+      statuses: { [A1]: [], [A2]: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] },
+      diffs: { [`${A2}..${SHA}`]: ["scripts/deploy/ci-gate-lib.ts"] },
+    },
+    calls,
+  );
+  const decision = await walkBackForCloudProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /scripts\/deploy\/ci-gate-lib\.ts/);
+});
+
 await check("walkBackForCloudProof: REFUSES immediately on a RED ancestor — never walks further back past it", async () => {
   const calls: string[] = [];
   const exec = routedExecWithCloudProof(
