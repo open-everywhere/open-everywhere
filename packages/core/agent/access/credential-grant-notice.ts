@@ -6,7 +6,11 @@ import { accountProfileFor, composedAccountName } from "../identity/account-disp
 import { parsePrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { CredentialGrantRow } from "../operational/credential-grant-rows.js";
-import { registerGrantRoomNotice } from "./credential-grant-broker.js";
+import {
+  foreignGrantRoomNoticeRegistrant,
+  GrantRoomNoticeAlreadyRegisteredError,
+  registerCoreGrantRoomNotice,
+} from "./grant-room-notice-registry.internal.js";
 import { GRANT_MODE_WORDS } from "./credential-grant-card.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 
@@ -133,7 +137,9 @@ async function auditOwnerNotice(
 }
 
 export function installGrantUseNotices(): void {
-  registerGrantRoomNotice(async (line, grant) => {
+  const foreign = foreignGrantRoomNoticeRegistrant();
+  if (foreign !== undefined) throw new GrantRoomNoticeAlreadyRegisteredError(foreign);
+  registerCoreGrantRoomNotice(async (line, grant) => {
     const context = grantRoomContext();
     const atIso = new Date().toISOString();
     const requesterLabel = await resolveRequesterLabel(grant.requesterPrincipalId).catch(() => undefined);
@@ -143,5 +149,8 @@ export function installGrantUseNotices(): void {
     ]);
     if (room.status === "rejected") log(`room notice could not be posted for grant ${grant.id}: ${String(room.reason)}`);
     if (owner.status === "rejected") log(`owner notice could not be delivered for grant ${grant.id}: ${String(owner.reason)}`);
+    if (room.status === "rejected") return { posted: false, reason: "post_failed" };
+    if (!room.value) return { posted: false, reason: context === undefined ? "no_room_context" : "no_post_arm" };
+    return { posted: true };
   });
 }

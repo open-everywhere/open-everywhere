@@ -16,6 +16,11 @@ import {
   grantBorrowTransport,
   registerGrantBorrowTransport,
 } from "./grant-borrow-transport-registry.internal.js";
+import {
+  GrantRoomNoticeAlreadyRegisteredError,
+  grantRoomNotice,
+  registerGrantRoomNotice,
+} from "./grant-room-notice-registry.internal.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 
@@ -28,17 +33,15 @@ export type GrantBorrowTransport = (call: GrantBorrowCall, grant: CredentialGran
 
 export { GrantBorrowTransportAlreadyRegisteredError, grantBorrowTransport, registerGrantBorrowTransport };
 
-export type GrantRoomNotice = (line: string, grant: CredentialGrantRow) => Promise<void>;
+export type GrantRoomNotice = (line: string, grant: CredentialGrantRow) => Promise<GrantRoomNoticeOutcome>;
 
-let roomNotice: GrantRoomNotice | undefined;
+export type GrantRoomNoticeOutcome = { readonly posted: true } | { readonly posted: false; readonly reason: GrantRoomSilence };
 
-export function registerGrantRoomNotice(notice: GrantRoomNotice): void {
-  roomNotice = notice;
-}
+export type GrantRoomSilence = "no_room_context" | "no_post_arm" | "post_failed";
 
-export function _resetGrantRoomNoticeForTest(): void {
-  roomNotice = undefined;
-}
+export type GrantRoomSilenceAtPort = "port_unarmed" | "arm_threw";
+
+export { GrantRoomNoticeAlreadyRegisteredError, registerGrantRoomNotice };
 
 const REFUND_CAP_PER_TURN = 3;
 
@@ -144,13 +147,37 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     }
     throw err;
   }
-  if (roomNotice !== undefined) {
+  const notice = grantRoomNotice();
+  if (notice === undefined) {
+    await auditUndisclosedCall(ctx, grant, "port_unarmed");
+  } else {
     try {
-      await roomNotice(disclosure, grant);
-    } catch {
+      const outcome = await notice(disclosure, grant);
+      if (!outcome.posted) await auditUndisclosedCall(ctx, grant, outcome.reason);
+    } catch (noticeErr) {
+      await auditUndisclosedCall(ctx, grant, "arm_threw", noticeErr);
     }
   }
   return { disclosure, ok: true, result };
+}
+
+async function auditUndisclosedCall(
+  stamps: GrantAuditStamps,
+  grant: CredentialGrantRow,
+  gate: GrantRoomSilence | GrantRoomSilenceAtPort,
+  err?: unknown,
+): Promise<void> {
+  await auditGrant(stamps, "grant.undisclosed", grant.ownerPrincipalId, {
+    connector: grant.connector,
+    gate,
+    grantId: grant.id,
+    mode: grant.mode,
+    owner: grant.ownerPrincipalId,
+    requester: grant.requesterPrincipalId,
+    resource: grantAuditResource(grant),
+    verb: grant.verb,
+    ...(err === undefined ? {} : { error: err instanceof Error ? err.name : "unknown" }),
+  });
 }
 
 interface GrantSendPath {

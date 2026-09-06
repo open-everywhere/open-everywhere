@@ -10,14 +10,20 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-borrow-mo
 delete process.env.OE_PLATFORM;
 
 import {
-  _resetGrantRoomNoticeForTest,
   borrowScopeDigest,
   GrantBorrowTransportAlreadyRegisteredError,
   grantBorrowTransport,
+  GrantRoomNoticeAlreadyRegisteredError,
   registerGrantBorrowTransport,
+  registerGrantRoomNotice,
   runGrantedCall,
   type GrantBorrowCall,
 } from "../agent/access/credential-grant-broker.js";
+import {
+  _resetGrantRoomNoticeForTest,
+  grantRoomNotice,
+} from "../agent/access/grant-room-notice-registry.internal.js";
+import { installGrantUseNotices } from "../agent/access/credential-grant-notice.js";
 import { installGrantBorrowTransports } from "../agent/connections/grant-mcp-transport.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
@@ -372,6 +378,141 @@ console.log("7. the borrow-transport registry fails closed on a second registrat
   const brokerSurface = Object.keys(await import("../agent/access/credential-grant-broker.js"));
   ok(!brokerSurface.includes("_resetGrantBorrowTransportsForTest"), "the PUBLISHED broker does not carry the registry reset — a bundle cannot empty the registry and register into it");
   ok(brokerSurface.includes("registerGrantBorrowTransport"), "…while the broker's own registration function IS on that namespace, so the assertion above reads a real surface");
+}
+
+console.log("8. the room-notice port fails closed on a second registration:");
+{
+  const store = getOperationalStore();
+  await store.addCredentialGrant(ORG, borrowRow({ id: "grant-notice-first-wins", scopeKey: "wrun_notice_first_wins" }));
+  const ctx = { nowMs: Date.now(), org: ORG, platform: "slack", requesterPrincipalId: "slack/W1/U-req", scopeKey: "wrun_notice_first_wins", workspace: "W1" };
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", async () => ({ content: [{ text: "the page body", type: "text" }] }), "test:the-notice-section");
+
+  const undisclosedRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ action: "grant.undisclosed", org: ORG })).map((r) => r.detail as Record<string, unknown>);
+
+  _resetGrantRoomNoticeForTest();
+  const firstRoom: string[] = [];
+  const secondRoom: string[] = [];
+
+  registerGrantRoomNotice(async (line) => {
+    firstRoom.push(line);
+    return { posted: true };
+  }, "test:the-first-arm");
+  const noneBefore = (await undisclosedRows()).length;
+  const beforeAttempt = await runGrantedCall("grant-notice-first-wins", { page_size: 5 }, ctx);
+  ok(beforeAttempt.ok, `the first arm is accepted and the granted call dispatches: ${beforeAttempt.ok ? "" : beforeAttempt.message}`);
+  eq(firstRoom.length, 1, "…the first arm took the disclosure exactly once");
+  ok(beforeAttempt.ok && firstRoom[0] === beforeAttempt.disclosure, "…and the line the room saw IS the host-authored line the model got back");
+  eq((await undisclosedRows()).length, noneBefore, "…and a call the room saw writes NO grant.undisclosed row");
+
+  let refusal: unknown;
+  try {
+    registerGrantRoomNotice(async (line) => {
+      secondRoom.push(line);
+      return { posted: true };
+    }, "test:a-provider-bundle");
+  } catch (err: unknown) {
+    refusal = err;
+  }
+  ok(
+    refusal instanceof GrantRoomNoticeAlreadyRegisteredError,
+    "a SECOND registration on the room-notice port THROWS the named error, rather than replacing the arm",
+  );
+  const namedNotice = refusal as GrantRoomNoticeAlreadyRegisteredError;
+  eq(namedNotice.registrant, "test:the-first-arm", "the refusal names WHO holds the port, so a bundle author can find the owner of the seam");
+  ok(namedNotice.message.includes("test:the-first-arm"), "…in the message too, which is what a stack trace carries");
+
+  const afterAttempt = await runGrantedCall("grant-notice-first-wins", { page_size: 7 }, ctx);
+  ok(afterAttempt.ok, `the grant still dispatches after the refused registration: ${afterAttempt.ok ? "" : afterAttempt.message}`);
+  eq(firstRoom.length, 2, "the FIRST arm took the later disclosure as well — the refused registrant never replaced it");
+  eq(secondRoom.length, 0, "…and the second arm was never reached, on either call");
+
+  _resetGrantRoomNoticeForTest();
+  let forgedNotice: unknown;
+  try {
+    registerGrantRoomNotice(async () => ({ posted: true }), "core:access/credential-grant-notice");
+  } catch (err: unknown) {
+    forgedNotice = err;
+  }
+  ok(forgedNotice instanceof Error && forgedNotice.message.includes("reserved"), "a caller cannot register under CORE's own registrant label");
+  eq(grantRoomNotice(), undefined, "…and the refused call armed nothing");
+
+  installGrantUseNotices();
+  const coreArm = grantRoomNotice();
+  ok(coreArm !== undefined, "core's boot path arms the shipped room notice");
+  assert.doesNotThrow(() => {
+    installGrantUseNotices();
+  }, "a SECOND boot registration is a no-op, not a refusal — the granted tools mount on every host boot");
+  n++;
+  eq(grantRoomNotice(), coreArm, "…and the FIRST arm is the one still in force after the re-boot");
+
+  _resetGrantRoomNoticeForTest();
+  registerGrantRoomNotice(async () => ({ posted: true }), "test:a-provider-bundle-that-loaded-first");
+  assert.throws(
+    () => {
+      installGrantUseNotices();
+    },
+    (err: unknown) => err instanceof GrantRoomNoticeAlreadyRegisteredError,
+    "core's boot path THROWS on a port someone else holds — a silent skip would leave the foreign arm deciding what the room hears",
+  );
+  n++;
+
+  const silenceOf = async (page: number, label: string): Promise<Record<string, unknown> | undefined> => {
+    const before = (await undisclosedRows()).length;
+    const call = await runGrantedCall("grant-notice-first-wins", { page_size: page }, ctx);
+    ok(call.ok, `${label}: the granted call itself still succeeds — a room post that did not land never swallows it: ${call.ok ? "" : call.message}`);
+    const after = await undisclosedRows();
+    if (after.length === before) return undefined;
+    eq(after.length, before + 1, `${label}: …and writes exactly one grant.undisclosed row`);
+    return after[0]!;
+  };
+
+  _resetGrantRoomNoticeForTest();
+  const unarmedRow = await silenceOf(9, "nothing armed on the port");
+  ok(unarmedRow !== undefined, "a call with NOTHING armed on the port writes a row rather than passing in silence");
+  eq(unarmedRow?.gate, "port_unarmed", "…whose gate NAMES the reason the room did not see the line");
+  eq(unarmedRow?.grantId, "grant-notice-first-wins", "…and the grant it happened on, so it joins to that call's grant.used row");
+  eq(unarmedRow?.owner, "slack/W1/U-owner", "…under the owner whose credential was spent unseen");
+  eq(unarmedRow?.error, undefined, "…with no error class, because nothing threw — the port was simply empty");
+
+  _resetGrantRoomNoticeForTest();
+  const armFailure = new Error("the room refused the post");
+  armFailure.name = "RoomPostRefused";
+  registerGrantRoomNotice(async () => {
+    throw armFailure;
+  }, "test:an-arm-that-throws");
+  const threwRow = await silenceOf(11, "an arm that rejects");
+  eq(threwRow?.gate, "arm_threw", "an arm that REJECTS is told apart from an empty port");
+  eq(threwRow?.error, "RoomPostRefused", "…and the row records the error CLASS, never the message, which can quote the address it failed to reach");
+
+  for (const reason of ["no_room_context", "no_post_arm", "post_failed"] as const) {
+    _resetGrantRoomNoticeForTest();
+    registerGrantRoomNotice(async () => ({ posted: false, reason }), `test:an-arm-reporting-${reason}`);
+    const row = await silenceOf(13, `an arm reporting ${reason}`);
+    eq(row?.gate, reason, `…the broker records the reason the arm reported, unchanged: ${reason}`);
+    eq(row?.error, undefined, `…with no error class, because reporting is not throwing: ${reason}`);
+  }
+
+  _resetGrantRoomNoticeForTest();
+  installGrantUseNotices();
+  const shippedRow = await silenceOf(15, "the SHIPPED arm with no room context");
+  ok(shippedRow !== undefined, "🔴 the SHIPPED arm's own room-silence is audited — not left to a console log");
+  eq(shippedRow?.gate, "no_room_context", "…and it names the state it was in: the call ran outside the mount's room wrap");
+  eq(shippedRow?.error, undefined, "…with no error class — nothing threw, there was simply no room to address");
+
+  const manifest = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as { exports: Record<string, unknown> };
+  const NOTICE_SEAM = "agent/access/grant-room-notice-registry.internal.ts";
+  ok(existsSync(join(import.meta.dirname, "..", NOTICE_SEAM)), `the reset and core's boot registration live in ${NOTICE_SEAM}`);
+  ok(
+    !Object.keys(manifest.exports).includes(`./${NOTICE_SEAM.replace(/\.ts$/u, ".js")}`),
+    "…and no subpath publishes it, so a bundle cannot deep-import the reset or core's boot registration",
+  );
+  const brokerNames = Object.keys(await import("../agent/access/credential-grant-broker.js"));
+  ok(!brokerNames.includes("_resetGrantRoomNoticeForTest"), "the PUBLISHED broker does not carry the port's reset — a bundle cannot empty the port and arm itself into it");
+  ok(brokerNames.includes("registerGrantRoomNotice"), "…while the port's own registration function IS on that namespace, so the assertion above reads a real surface");
+
+  _resetGrantRoomNoticeForTest();
 }
 
 console.log(`\n✓ credential-grant-borrow-mount: ${String(n)} assertions passed`);

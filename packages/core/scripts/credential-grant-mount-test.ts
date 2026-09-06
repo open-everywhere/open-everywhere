@@ -11,7 +11,6 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-mount-"))
 delete process.env.OE_PLATFORM;
 
 import {
-  _resetGrantRoomNoticeForTest,
   borrowScopeDigest,
   GRANT_REFUND_CAP_PER_TURN,
   registerGrantBorrowTransport,
@@ -19,6 +18,7 @@ import {
   runGrantedCall,
 } from "../agent/access/credential-grant-broker.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
+import { _resetGrantRoomNoticeForTest } from "../agent/access/grant-room-notice-registry.internal.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
@@ -92,7 +92,8 @@ registerGrantBorrowTransport("notion", async (call) => {
 const roomLines: string[] = [];
 registerGrantRoomNotice(async (line) => {
   roomLines.push(line);
-});
+  return { posted: true };
+}, "test:credential-grant-mount");
 
 const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   ...stamps,

@@ -434,7 +434,16 @@ export interface GrantSweepReport {
 
 export async function auditGrant(
   stamps: GrantAuditStamps,
-  action: "grant.asked" | "grant.granted" | "grant.declined" | "grant.expired" | "grant.used" | "grant.refused" | "grant.revoked" | "grant.notified",
+  action:
+    | "grant.asked"
+    | "grant.granted"
+    | "grant.declined"
+    | "grant.expired"
+    | "grant.used"
+    | "grant.refused"
+    | "grant.revoked"
+    | "grant.notified"
+    | "grant.undisclosed",
   principalId: string | undefined,
   detail: Readonly<Record<string, unknown>>,
 ): Promise<void> {
