@@ -1,12 +1,16 @@
 import { defineSurface, registerSurfaces, type Surface } from "@open-everywhere/core/agent/identity/trust.js";
-import { teamsVouchedKeys } from "./teams-vouched-keys.js";
 
 export const surfaces: readonly Surface[] = [
   defineSurface({ key: "discord/1300000000000000100", trust: "internal" }),
 
   defineSurface({ key: "discord/300000000000000104", trust: "internal" }),
 
-  ...teamsVouchedKeys().map((key) => defineSurface({ key, trust: "internal" })),
+  defineSurface({ key: "teams/7e5a0000-0000-4000-8000-000000000001", trust: "internal" }),
+
+  defineSurface({
+    key: "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2",
+    trust: "internal",
+  }),
 
   defineSurface({ key: "slack/T0EXAMPLE", trust: "internal" }),
 

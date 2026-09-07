@@ -1624,4 +1624,26 @@ overrideSettingsForTest({ window: { topology: false } });
   for (const arm of liveArms) registerPostArm(arm);
 }
 
+{
+  _resetSurfacesForTest();
+  await import("../agent/identity/surfaces.js");
+  const { loadDomains } = await import("../agent/memory/config/domains.js");
+  const unified = loadDomains().find((d) => d.name === "e2e-unified");
+  ok(unified !== undefined, "real config: the e2e-unified domain exists — without it this block measures nothing");
+  const teamsMembers = (unified?.channels ?? []).filter((c) => c.startsWith("teams/"));
+  ok(teamsMembers.length === 1, `real config: e2e-unified names exactly one Teams member (found ${teamsMembers.length})`);
+
+  const teamsKey = teamsMembers[0]!;
+  const tenantKey = teamsKey.split("/").slice(0, 2).join("/");
+  ok(
+    isVouchedInternal(tenantKey, teamsKey),
+    "real config: the Teams window member is internal at some grain — assertWindowSourcesVouched's own check",
+  );
+  ok(
+    isVouchedSurface(teamsKey),
+    "🔴 real config: the Teams window member is vouched at EXACT CHANNEL grain — the single-window floor reads this, and the tenant line does NOT satisfy it",
+  );
+  _resetSurfacesForTest();
+}
+
 console.log(`unified-window: ${n} assertions passed`);

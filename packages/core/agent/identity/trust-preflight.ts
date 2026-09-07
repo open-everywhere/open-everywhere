@@ -36,11 +36,12 @@ function ageDays(now: Date, iso: string): number | undefined {
 export function undeclaredSurfacesFix(undeclared: readonly string[]): string {
   const example = undeclared[0] ?? "";
   const teamsRemedy =
-    `set OE_TEAMS_INTERNAL_SURFACES in this deployment's environment to a comma-separated list of exact ` +
-    `"teams/<tenantId>/<threadId>" keys. 🔴 Do NOT write a Teams key into agent/identity/surfaces.ts — it carries ` +
-    `your real Microsoft 365 tenant id, and a tracked copy fails npm run lint:teams-vouch. There is no tenant-grain ` +
-    `shortcut for Teams either: a "teams/<tenantId>" entry is refused at boot, because it would reach cross-tenant ` +
-    `Connect/shared channels you never named. Name each channel. See docs/deploy/surfaces/teams.md`;
+    `add a line to agent/identity/surfaces.ts declaring the TENANT — defineSurface({ key: "teams/<tenantId>", ` +
+    `trust: "internal" }). A declaration counts at any rung, so that covers every room under the tenant; declare a ` +
+    `single "teams/<tenantId>/<threadId>" key instead to narrow it to one channel. 🔴 A member of a cross-surface ` +
+    `SINGLE WINDOW also needs its exact channel key declared, because the window privacy floor reads isVouchedSurface, ` +
+    `an exact-key match a tenant declaration does not satisfy — OPE-1521 makes that floor walk the rungs, and the extra ` +
+    `line goes when it lands. See docs/deploy/surfaces/teams.md`;
   if (example.startsWith("teams/")) return `${teamsRemedy} — this deployment's undeclared example is "${example}".`;
 
   const generic =

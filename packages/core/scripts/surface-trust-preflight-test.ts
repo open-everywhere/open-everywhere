@@ -53,23 +53,21 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
   {
     const teams = run([], [seen("teams/deadbeef-1111/19-abc-thread.tacv2", 30)]);
     const f = find(teams, "undeclared surfaces")?.fix ?? "";
-    ok(f.includes("OE_TEAMS_INTERNAL_SURFACES"), "🔴 a TEAMS undeclared surface names the env var, not a source file");
-    ok(!f.includes("defineSurface("), "…and does NOT tell the operator to paste a defineSurface line into tracked source");
-    ok(f.includes("lint:teams-vouch"), "…and says what would reject that commit");
-    ok(
-      !/Declaring the tenant \(e\.g\./.test(f),
-      "…and never offers the tenant-grain shortcut, which Teams refuses at boot",
-    );
+    ok(f.includes("defineSurface("), "🔴 a TEAMS undeclared surface gets the tracked defineSurface remedy, like every platform");
+    ok(!f.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and names no environment variable — the vouch is config-as-code");
+    ok(/teams\/<tenantId>"/.test(f), "…and offers the TENANT declaration, which is the vouch (a declaration counts at any rung)");
+    ok(/single-window|SINGLE WINDOW/.test(f), "…and says a single-window member also needs its exact channel key");
+    ok(/OPE-1521/.test(f), "…and names the ticket that makes the window floor walk the rungs, so the extra line reads as temporary");
 
     const other = run([], [seen("discord/G1/C_GENERAL", 30)]);
     const g = find(other, "undeclared surfaces")?.fix ?? "";
     ok(g.includes("defineSurface("), "NEGATIVE CONTROL: a non-Teams surface still gets the defineSurface remedy");
     ok(g.includes("Declaring the tenant"), "…tenant-grain shortcut included, which is correct off Teams");
-    ok(!g.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and no Teams text where no Teams surface is undeclared");
+    ok(!/OPE-1521/.test(g), "…and no Teams-only window text where no Teams surface is undeclared");
 
     const mixed = undeclaredSurfacesFix(["discord/G1/C_GENERAL", "teams/deadbeef-1111/19-abc-thread.tacv2"]);
-    ok(mixed.includes("defineSurface("), "a mixed list keeps the generic remedy for its non-Teams example…");
-    ok(mixed.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and still names the env var for the Teams key behind it");
+    ok(mixed.includes("Declaring the tenant"), "a mixed list keeps the generic remedy for its non-Teams example…");
+    ok(/OPE-1521/.test(mixed), "…and still names the single-window channel-key caveat for the Teams key behind it");
   }
 
   const green = run(

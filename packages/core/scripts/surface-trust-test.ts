@@ -320,6 +320,47 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 
 {
   _resetSurfacesForTest();
+  const TENANT = "teams/deadbeef-74bc";
+  const CHANNEL = `${TENANT}/19-abc-thread.tacv2`;
+  const THREAD = `${TENANT}/19-abc-thread.tacv2;messageid=1700000000000`;
+
+  registerSurfaces([defineSurface({ key: TENANT, trust: "internal" })]);
+  eq(declaredTrustForKeys(TENANT, CHANNEL), "internal", "tenant rung: a CHANNEL under the declared tenant resolves internal");
+  eq(
+    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: [THREAD, CHANNEL] }),
+    "internal",
+    "tenant rung: a THREAD under the declared tenant resolves internal (neither grain is declared itself)",
+  );
+  eq(
+    declaredTrustForKeys("teams/other-tenant", "teams/other-tenant/19-abc-thread.tacv2"),
+    undefined,
+    "NEGATIVE CONTROL: a channel in a DIFFERENT tenant stays undeclared — the vouch is not global",
+  );
+  ok(
+    !isVouchedSurface(CHANNEL),
+    "🔴 tenant rung: the tenant declaration does NOT satisfy isVouchedSurface — a tenant vouch never admits a room to a shared window",
+  );
+
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: CHANNEL, trust: "internal" })]);
+  ok(isVouchedSurface(CHANNEL), "channel-only: the exact entry satisfies isVouchedSurface — the single-window floor opens");
+  eq(declaredTrustForKeys(TENANT, CHANNEL), "internal", "channel-only: …and the ordinary memory verdict is internal too");
+  eq(
+    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: [THREAD, CHANNEL] }),
+    "internal",
+    "channel-only: …and a thread inside that channel resolves on the channel key",
+  );
+  ok(!isVouchedSurface(THREAD), "channel-only: still exact — a thread is not itself exact-vouched");
+  eq(
+    declaredTrustForKeys(TENANT, `${TENANT}/19-UNNAMED-thread.tacv2`),
+    undefined,
+    "🔴 channel-only: a SIBLING room under the same tenant stays undeclared — this is what the tenant shortcut would promote",
+  );
+  _resetSurfacesForTest();
+}
+
+{
+  _resetSurfacesForTest();
   for (const k of ["OE_TRUST", "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_MODE"]) delete process.env[k];
 
   const vendor: IdentityMapper = (ctx) => {
