@@ -64,42 +64,39 @@ export interface SpendView {
 }
 
 export async function spendView(period: string = currentPeriod()): Promise<SpendView> {
-  const rollup = (await spendRollup()).filter((r) => r.period === period);
+  const org = deploymentOrg();
+  const rollup = (await spendRollup(org)).filter((r) => r.period === period);
 
-  const orgs = [...new Set(rollup.map((l) => l.org))];
-  const limitOrgs = [...new Set([...orgs, deploymentOrg()])];
-  const limitsByOrg = new Map(await Promise.all(limitOrgs.map(async (org) => [org, await activeSpendLimitsForOrg(org)] as const)));
-  const effCapsFor = (org: string, workspaceKey: string, surfaceKey: string): Caps => {
+  const limits = await activeSpendLimitsForOrg(org);
+  const effCapsFor = (workspaceKey: string, surfaceKey: string): Caps => {
     const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
-    const limits = limitsByOrg.get(org) ?? [];
     return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;
   };
 
   const surfaces: SpendSurfaceRow[] = [];
   const byWorkspace = new Map<string, { tokens: number; usd: number }>();
-  for (const { org, surfaceKey, tokens, usd } of rollup) {
+  for (const { org: rowOrg, surfaceKey, tokens, usd } of rollup) {
     const workspaceKey = surfaceKey.split("/").slice(0, 2).join("/");
-    const caps = effCapsFor(org, workspaceKey, surfaceKey);
+    const caps = effCapsFor(workspaceKey, surfaceKey);
     const tokenCap = caps.surfaceMonthlyTokens ?? null;
     const tokenOver = tokenCap != null && tokens >= tokenCap;
     const usdCap = caps.surfaceMonthlyUsd ?? null;
     const usdOver = usdCap != null && usd >= usdCap;
-    surfaces.push({ org, surfaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver });
-    const wk = `${org}/${workspaceKey}`;
+    surfaces.push({ org: rowOrg, surfaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver });
+    const wk = `${rowOrg}/${workspaceKey}`;
     const acc = byWorkspace.get(wk) ?? { tokens: 0, usd: 0 };
     byWorkspace.set(wk, { tokens: acc.tokens + tokens, usd: acc.usd + usd });
   }
   const workspaces: SpendWorkspaceRow[] = [...byWorkspace].map(([key, { tokens, usd }]) => {
-    const org = key.slice(0, key.indexOf("/"));
     const workspaceKey = key.slice(key.indexOf("/") + 1);
-    const caps = effCapsFor(org, workspaceKey, "");
+    const caps = effCapsFor(workspaceKey, "");
     const tokenCap = caps.workspaceMonthlyTokens ?? null;
     const tokenOver = tokenCap != null && tokens >= tokenCap;
     const usdCap = caps.workspaceMonthlyUsd ?? null;
     const usdOver = usdCap != null && usd >= usdCap;
     return { key, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
   });
-  const userCaps = Object.fromEntries(limitOrgs.map((org) => [org, userCapInventory(limitsByOrg.get(org) ?? [])] as const));
+  const userCaps = { [org]: userCapInventory(limits) };
   return { root: spendRoot(), period, surfaces, workspaces, userCaps };
 }
 

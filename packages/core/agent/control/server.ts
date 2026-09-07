@@ -54,10 +54,15 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Spend report",
       description:
-        "Per-surface and per-workspace token + estimated USD spend for a month against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same caps the spend gate enforces). Read-only. period defaults to the current month (YYYY-MM).",
+        "Per-surface and per-workspace token + estimated USD spend for a month against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same caps the spend gate enforces), plus the per-person allowances declared for the org. Reads the spend ledger and the active spend-limit overrides. Always this deployment's own org — there is no org argument, and no other tenant's rows are reachable. Org-wide, with no way to narrow it to one domain, so it requires the org-wide \"admin\" role (service tokens carry it). Read-only. period defaults to the current month (YYYY-MM).",
       inputSchema: { period: z.string().regex(/^\d{4}-\d{2}$/).optional() },
     },
-    (args) => jsonTool(() => spendView(args.period))(),
+    (args) =>
+      jsonTool(async () => {
+        const denial = scopeDenial(roles, { org: deploymentOrg() });
+        if (denial) throw new Error(denial);
+        return spendView(args.period);
+      })(),
   );
 
   server.registerTool(
