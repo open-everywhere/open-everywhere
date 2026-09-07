@@ -1,0 +1,36 @@
+import type { SurfaceParityDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
+
+export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
+  "identity-mapper": "supported",
+  "capability-manifest": "supported",
+  "post-arm": "supported",
+  "wake-origin-codec": "supported",
+  "read-adapter": "supported",
+  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "ancillary-ops": "supported",
+  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1501" },
+
+  "addressed-leg": { supported: "the `direct` wake — a name-drop or structured mention, not a platform @mention" },
+  "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
+  "name-drop-mention": "supported",
+  threads: { supported: "thread-first — every wake arrives scoped to one discussion" },
+  rooms: { unsupported: "no standing container — a discussion is minted by its first comment and anchored to one block" },
+  dm: { unsupported: "no DM plane — Notion carries no person-to-person message channel" },
+  mpim: { unsupported: "no DM plane — Notion carries no person-to-person message channel" },
+
+  reply: "supported",
+  edit_reply: "supported",
+  react: { unsupported: "vendor limit — the Notion comment API exposes no reaction write" },
+  no_reply: "supported",
+  read_channel: "supported",
+  read_thread: "supported",
+  search: "supported",
+  post_message: { unsupported: "not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507" },
+  dm_person: { unsupported: "no DM plane — Notion carries no person-to-person message channel (§4.7.2)" },
+  set_dm_delivery: { unsupported: "no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2)" },
+  stop: { supported: "a comment whose entire body is `stop` — Notion pushes no reaction webhook" },
+  ack_stop_glyph: { unsupported: "vendor limit — the Notion comment API exposes no reaction write, so there is no glyph to place" },
+  ack_cancel_note: "supported",
+  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1501)" },
+  post_file: { supported: "at most 3 files per post — a Notion comment's own vendor cap" },
+};

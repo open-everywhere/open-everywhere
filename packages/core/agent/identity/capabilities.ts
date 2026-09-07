@@ -17,6 +17,10 @@ export function registerCapabilityManifest(platform: string, manifest: Capabilit
   MANIFESTS.set(platform, manifest);
 }
 
+export function registeredCapabilityManifestPlatforms(): readonly string[] {
+  return [...MANIFESTS.keys()].sort();
+}
+
 export function capabilitiesForPlatform(platform: string | undefined): CapabilityManifest {
   return (platform !== undefined ? MANIFESTS.get(platform) : undefined) ?? NONE;
 }

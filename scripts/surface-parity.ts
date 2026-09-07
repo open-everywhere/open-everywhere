@@ -1,0 +1,214 @@
+import { readFileSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readdirSync, statSync } from "node:fs";
+import { writeFileIfChanged } from "./write-if-changed.js";
+
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
+import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
+import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
+import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
+import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
+import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import {
+  checkSurfaceParity,
+  clearProviderSelection,
+  registeredCapabilityManifestPlatforms,
+  registeredIdentityMapperPlatforms,
+  registeredPostArmPlatforms,
+  registeredReactionSurfaces,
+  registeredSearchConnectors,
+  renderParityMatrix,
+  renderParityTable,
+  supportedReadPlatforms,
+  surfaceMessageOps,
+  surfaceParityFor,
+  wakeOriginCodec,
+  type CapabilityProbe,
+  type SurfaceParityDeclaration,
+} from "@open-everywhere/core/agent/adapter-api.js";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const check = process.argv.includes("--check");
+
+const contractFlagAt = process.argv.indexOf("--contract");
+const CONTRACT =
+  contractFlagAt >= 0 && process.argv[contractFlagAt + 1] !== undefined
+    ? process.argv[contractFlagAt + 1]!
+    : "docs/extending/chat-surface-contract.md";
+
+if (contractFlagAt >= 0 && !check) {
+  console.error("✗ surface-parity: --contract is a verification affordance and requires --check; it never writes.");
+  process.exit(1);
+}
+
+const PLATFORMS = ["slack", "discord", "teams", "github", "linear", "notion"] as const;
+
+clearProviderSelection();
+
+registerSlackProvider();
+registerDiscordProvider();
+registerTeamsProvider();
+registerGithubProvider();
+registerLinearProvider();
+registerNotionProvider();
+
+function engagementSeamPlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (sourcesReference(dir, ENGAGEMENT_IMPORT)) wired.add(platform);
+  }
+  return wired;
+}
+
+const ENGAGEMENT_IMPORT =
+  /import\s*(?:type\s*)?\{[^}]*\b(?:markThreadEngaged|shouldDeliverReply)\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
+
+function sourcesReference(dir: string, pattern: RegExp): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry === "node_modules" || entry === "dist") continue;
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) {
+      if (sourcesReference(p, pattern)) return true;
+      continue;
+    }
+    if (!entry.endsWith(".ts") || entry.endsWith("-test.ts")) continue;
+    if (entry === "docs-generated.ts" || entry === "surface-parity.ts") continue;
+    if (pattern.test(readFileSync(p, "utf8"))) return true;
+  }
+  return false;
+}
+
+function setOf(platforms: Iterable<string>): ReadonlySet<string> {
+  return new Set([...platforms].filter((p) => (PLATFORMS as readonly string[]).includes(p)));
+}
+
+const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
+  ["identity-mapper", setOf(registeredIdentityMapperPlatforms())],
+  ["capability-manifest", setOf(registeredCapabilityManifestPlatforms())],
+  ["post-arm", setOf(registeredPostArmPlatforms())],
+  ["wake-origin-codec", setOf(PLATFORMS.filter((p) => wakeOriginCodec(p) !== undefined))],
+  ["read-adapter", setOf(supportedReadPlatforms())],
+  ["reaction-feedback-ingest", setOf(registeredReactionSurfaces())],
+  ["ancillary-ops", setOf(PLATFORMS.filter((p) => surfaceMessageOps(p) !== undefined))],
+  ["ambient-engagement-seam", engagementSeamPlatforms()],
+  ["search", setOf(registeredSearchConnectors())],
+]);
+
+const declarations = new Map<string, SurfaceParityDeclaration>();
+const missing: string[] = [];
+for (const platform of PLATFORMS) {
+  const declared = surfaceParityFor(platform);
+  if (declared === undefined) missing.push(platform);
+  else declarations.set(platform, declared);
+}
+
+if (missing.length > 0) {
+  console.error(
+    `✗ surface-parity: ${missing.join(", ")} registered no surface-parity declaration.\n` +
+      `  Add \`packages/providers/<id>/agent/surface-parity.ts\` and call \`registerSurfaceParity(...)\`\n` +
+      `  from that bundle's \`register<X>Provider()\`, beside \`registerCapabilityManifest\`.`,
+  );
+  process.exit(1);
+}
+
+const problems = checkSurfaceParity(declarations, PROBES);
+
+console.log(renderParityMatrix(declarations, PLATFORMS));
+console.log("");
+
+if (problems.length > 0) {
+  console.error(`✗ surface-parity: ${problems.length} problem(s):\n`);
+  for (const p of problems) {
+    console.error(`  • ${p.platform}${p.capability === undefined ? "" : ` [${p.capability}]`}: ${p.message}`);
+  }
+  process.exit(1);
+}
+
+interface Region {
+  readonly name: string;
+  readonly group: "seam" | "shape" | "verb";
+}
+
+const REGIONS: readonly Region[] = [
+  { name: "surface-parity-seams", group: "seam" },
+  { name: "surface-parity-shapes", group: "shape" },
+  { name: "surface-parity-verbs", group: "verb" },
+];
+
+const contractPath = resolve(root, CONTRACT);
+const original = readFileSync(contractPath, "utf8");
+let updated = original;
+
+for (const region of REGIONS) {
+  const begin = `<!-- BEGIN GENERATED: ${region.name} (scripts/surface-parity.ts) -->`;
+  const end = `<!-- END GENERATED: ${region.name} -->`;
+  const beginAt = updated.indexOf(begin);
+  const endAt = updated.indexOf(end);
+  if (beginAt < 0 || endAt < 0 || endAt < beginAt) {
+    console.error(
+      `✗ surface-parity: ${CONTRACT} is missing the \`${region.name}\` markers.\n` +
+        `  Expected a block delimited by:\n    ${begin}\n    ${end}\n` +
+        `  Re-add them where that table should live — this script owns everything between them.`,
+    );
+    process.exit(1);
+  }
+  const table = [begin, "", renderParityTable(region.group, declarations, PLATFORMS), "", end].join("\n");
+  updated = updated.slice(0, beginAt) + table + updated.slice(endAt + end.length);
+}
+
+function declarationAtoms(text: string): string {
+  const code = text
+    .replace(/\/\*[\s\S]*?\*\//gu, " ")
+    .replace(/^[^\n"]*\/\/[^\n]*$/gmu, " ")
+    .replace(/^\s*import\s[^;]*;/gmu, " ");
+  const strings = [...code.matchAll(/"((?:[^"\\]|\\.)*)"/gu)].map((m) => m[1]!);
+  const keys = [...code.matchAll(/(?:^|[{,])\s*"?([a-z_][a-z0-9_-]*)"?\s*:/gimu)].map((m) => m[1]!);
+  return [...new Set([...strings, ...keys])].sort().join("\n");
+}
+{
+  const stale = PLATFORMS.filter((p) => {
+    const src = join(root, "packages", "providers", p, "agent", "surface-parity.ts");
+    const built = join(root, "packages", "providers", p, "dist", "agent", "surface-parity.js");
+    try {
+      return declarationAtoms(readFileSync(src, "utf8")) !== declarationAtoms(readFileSync(built, "utf8"));
+    } catch {
+      return true;
+    }
+  });
+  if (stale.length > 0) {
+    console.error(
+      `✗ surface-parity: ${stale.join(", ")} — the declaration SOURCE and its BUILD disagree, and this\n` +
+        `  gate reads the build. It would render the PREVIOUS declarations: ${check ? "reporting green" : "silently reverting"}\n` +
+        `  ${check ? `over a ${CONTRACT} that is stale against the source you just edited` : CONTRACT}.\n` +
+        `  Run: npm run build:packages`,
+    );
+    process.exit(1);
+  }
+}
+
+if (check) {
+  if (updated !== original) {
+    console.error(
+      `✗ surface-parity: the generated tables in ${CONTRACT} are out of date with the provider\n` +
+        `  declarations (packages/providers/*/agent/surface-parity.ts).\n` +
+        `  Run: npx tsx scripts/surface-parity.ts`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `✓ surface-parity: ${PLATFORMS.length} surfaces, every capability declared with a reason, ` +
+      `${PROBES.size - 1} row(s) cross-checked against the live registries + 1 (ambient-engagement-seam) ` +
+      `against the bundle sources, ${CONTRACT} in sync`,
+  );
+} else {
+  const wrote = writeFileIfChanged(contractPath, updated);
+  console.log(`✓ surface-parity: ${CONTRACT} ${wrote ? "updated" : "already current"} — 3 generated table(s)`);
+}

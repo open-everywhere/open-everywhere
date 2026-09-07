@@ -1,0 +1,36 @@
+import type { SurfaceParityDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
+
+export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
+  "identity-mapper": "supported",
+  "capability-manifest": "supported",
+  "post-arm": "supported",
+  "wake-origin-codec": "supported",
+  "read-adapter": "supported",
+  "reaction-feedback-ingest": "supported",
+  "ancillary-ops": { supported: "inline — rides Eve's own Slack client path, not the ops registry" },
+  "ambient-engagement-seam": "supported",
+
+  "addressed-leg": "supported",
+  "ambient-leg": "supported",
+  "name-drop-mention": "supported",
+  threads: "supported",
+  rooms: "supported",
+  dm: "supported",
+  mpim: "supported",
+
+  reply: "supported",
+  edit_reply: "supported",
+  react: "supported",
+  no_reply: "supported",
+  read_channel: "supported",
+  read_thread: "supported",
+  search: { unsupported: "no work-search adapter — Slack is a chat surface, not a work corpus (§4.7)" },
+  post_message: "supported",
+  dm_person: "supported",
+  set_dm_delivery: "supported",
+  stop: { supported: "✋ reaction, plus the `/oe stop` command" },
+  ack_stop_glyph: "supported",
+  ack_cancel_note: "supported",
+  stand_down: { supported: "marks the engagement row; refuses out loud when the registry holds none" },
+  post_file: "supported",
+};

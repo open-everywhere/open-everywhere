@@ -1,0 +1,36 @@
+import type { SurfaceParityDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
+
+export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
+  "identity-mapper": "supported",
+  "capability-manifest": "supported",
+  "post-arm": "supported",
+  "wake-origin-codec": "supported",
+  "read-adapter": "supported",
+  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "ancillary-ops": "supported",
+  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1500" },
+
+  "addressed-leg": "supported",
+  "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },
+  "name-drop-mention": { unsupported: "not built yet — Leg A wakes on an @mention or room chatter, never on a name-drop match" },
+  threads: "supported",
+  rooms: "supported",
+  dm: "supported",
+  mpim: "supported",
+
+  reply: "supported",
+  edit_reply: "supported",
+  react: { unsupported: "vendor limit — Graph's outbound reaction route refuses an application-only identity" },
+  no_reply: "supported",
+  read_channel: "supported",
+  read_thread: "supported",
+  search: { unsupported: "no work-search adapter — Teams is a chat surface, not a work corpus (§4.7)" },
+  post_message: "supported",
+  dm_person: "supported",
+  set_dm_delivery: "supported",
+  stop: { supported: "the `angry` reaction — Teams' six fixed values carry no ✋" },
+  ack_stop_glyph: { unsupported: "vendor limit — Teams' fixed six-value reaction vocabulary has no raised hand" },
+  ack_cancel_note: "supported",
+  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1500)" },
+  post_file: { unsupported: "not built yet — no Teams attachment transport is wired (§7.3)" },
+};

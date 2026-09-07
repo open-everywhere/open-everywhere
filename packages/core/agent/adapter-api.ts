@@ -197,7 +197,7 @@ export type { ProviderRegistrationRefusal } from "./access/provider-selection.js
 export { registerDocs, registerProviderDocs, clearDocs, visibleDocs, docIndex, readDoc, normalizeDocPath } from "./docs/registry.js";
 export type { DocEntry, RegisteredDoc, DocLookup } from "./docs/registry.js";
 
-export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, TurnOriginFenceError, currentTurnIssue, currentTurnOrganization, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
+export { registerIdentityMapper, registeredIdentityMapperPlatforms, deploymentOrg, bindFrom, assertTurnSurface, TurnOriginFenceError, currentTurnIssue, currentTurnOrganization, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
@@ -254,10 +254,31 @@ export { markNoReplyThisTurn } from "./channels/no-reply-signal.js";
 
 export { readAudit } from "./audit/audit.js";
 
-export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/capabilities.js";
+export { registerCapabilityManifest, capabilitiesForPlatform, registeredCapabilityManifestPlatforms } from "./identity/capabilities.js";
 export type { CapabilityManifest } from "./identity/capabilities.js";
 
-export { registerPostArm } from "./channels/post-arms.js";
+export {
+  registerSurfaceParity,
+  surfaceParityFor,
+  registeredSurfaceParityPlatforms,
+  checkSurfaceParity,
+  renderParityTable,
+  renderParityMatrix,
+  isSupported,
+  declarationNote,
+  SURFACE_CAPABILITIES,
+} from "./identity/surface-parity.js";
+export type {
+  SurfaceParityDeclaration,
+  SurfaceCapability,
+  SurfaceCapabilityId,
+  CapabilityDeclaration,
+  CapabilityGroup,
+  CapabilityProbe,
+  ParityProblem,
+} from "./identity/surface-parity.js";
+
+export { registerPostArm, registeredPostArmPlatforms } from "./channels/post-arms.js";
 export type { PostArm, PostIntent, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery, DirectMessageAction, ReactTarget } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";

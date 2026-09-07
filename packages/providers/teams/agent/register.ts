@@ -1,6 +1,7 @@
 import {
   registerIdentityMapper,
   registerCapabilityManifest,
+  registerSurfaceParity,
   registerPostArm,
   registerWakeOriginCodec,
   registerReadAdapter,
@@ -15,6 +16,7 @@ import {
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { TEAMS_SURFACE_PARITY } from "./surface-parity.js";
 import { registerTeamsOps } from "./ops.js";
 import { teamsMessageOps } from "./channels/teams-message-ops.js";
 import teamsChannel from "./channels/teams.js";
@@ -69,6 +71,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
 export function registerTeamsProvider(): void {
   registerIdentityMapper("teams", bindTeams);
   registerCapabilityManifest("teams", { midTurnPost: true, reactions: false });
+  registerSurfaceParity("teams", TEAMS_SURFACE_PARITY);
   registerPostArm(teamsPostArm);
   registerWakeOriginCodec("teams", teamsWakeOriginCodec);
   registerReadAdapter(teamsReadAdapter);

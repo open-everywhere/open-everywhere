@@ -185,6 +185,10 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
   MAPPERS.set(platform, mapper);
 }
 
+export function registeredIdentityMapperPlatforms(): readonly string[] {
+  return [...MAPPERS.keys()].sort();
+}
+
 export const SUBAGENT_CHANNEL_KIND = "subagent";
 
 export function subagentParentSessionId(ctx: BindableContext): string | undefined {

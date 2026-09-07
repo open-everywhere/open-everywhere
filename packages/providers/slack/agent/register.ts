@@ -1,6 +1,7 @@
 import {
   registerIdentityMapper,
   registerCapabilityManifest,
+  registerSurfaceParity,
   registerPostArm,
   registerWakeOriginCodec,
   registerReadAdapter,
@@ -13,6 +14,7 @@ import {
   registerWebhookVerifier,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { SLACK_SURFACE_PARITY } from "./surface-parity.js";
 import { bindSlack, partnerFactsFromInfo } from "./channels/slack-identity.js";
 import { slackPostArm } from "./channels/slack-post-arm.js";
 import { slackWakeOriginCodec } from "./channels/slack-origin-codec.js";
@@ -35,6 +37,7 @@ import { registerSlackOps } from "./ops.js";
 export function registerSlackProvider(): void {
   registerIdentityMapper("slack", bindSlack);
   registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerSurfaceParity("slack", SLACK_SURFACE_PARITY);
   registerPostArm(slackPostArm);
   registerWakeOriginCodec("slack", slackWakeOriginCodec);
   registerReadAdapter(slackReadAdapter);

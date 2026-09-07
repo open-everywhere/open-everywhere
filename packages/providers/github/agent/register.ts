@@ -1,6 +1,7 @@
 import {
   registerIdentityMapper,
   registerCapabilityManifest,
+  registerSurfaceParity,
   registerPostArm,
   registerWakeOriginCodec,
   registerProviderDocs,
@@ -9,6 +10,7 @@ import {
   registerSurfaceMessageOps,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { GITHUB_SURFACE_PARITY } from "./surface-parity.js";
 import { registerGithubOps } from "./ops.js";
 import { registerGitHubMemory, declareGitHubMemoryCapability } from "./memory/memory.js";
 import { bindGitHub } from "./channels/github-identity.js";
@@ -21,6 +23,7 @@ import { githubMessageOps } from "./channels/github-message-ops.js";
 export function registerGithubProvider(): void {
   registerIdentityMapper("github", bindGitHub);
   registerCapabilityManifest("github", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerSurfaceParity("github", GITHUB_SURFACE_PARITY);
   registerPostArm(githubPostArm);
   registerWakeOriginCodec("github", githubWakeOriginCodec);
   registerReadAdapter(githubReadAdapter);
