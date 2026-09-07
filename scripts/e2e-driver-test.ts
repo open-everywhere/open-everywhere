@@ -979,6 +979,107 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const DISCORD_CHANNEL_FIRST = /discord\.(awaitReply|awaitReplyMatching|collectRepliesDuring)\(/g;
+
+  function argsOf(src: string, openIdx: number): readonly string[] {
+    const args: string[] = [];
+    let depth = 0;
+    let start = openIdx + 1;
+    let quote = "";
+    for (let i = openIdx; i < src.length; i++) {
+      const ch = src[i]!;
+      if (quote) {
+        if (ch === "\\") i++;
+        else if (ch === quote) quote = "";
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        if (depth === 0) { args.push(src.slice(start, i).trim()); break; }
+      } else if (ch === "," && depth === 1) {
+        args.push(src.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    return args;
+  }
+
+  function discordWaits(body: string): readonly { readonly method: string; readonly channelArg: string; readonly afterArg: string }[] {
+    const out: { method: string; channelArg: string; afterArg: string }[] = [];
+    for (const m of body.matchAll(DISCORD_CHANNEL_FIRST)) {
+      const args = argsOf(body, m.index! + m[0].length - 1);
+      out.push({ method: m[1]!, channelArg: args[0] ?? "", afterArg: args[1] ?? "" });
+    }
+    return out;
+  }
+
+  let totalWaits = 0;
+  const parentChannelWaits: string[] = [];
+  for (const s of SCENARIOS) {
+    const body = s.run.toString();
+    for (const w of discordWaits(body)) {
+      totalWaits++;
+      if (/\.channelId$/.test(w.channelArg)) parentChannelWaits.push(`${s.id}: discord.${w.method}(${w.channelArg}, …)`);
+    }
+  }
+  ok(totalWaits >= 5, `OPE-1479: the scan finds the Discord channel-first reply waits in the compiled scenario bodies (found ${totalWaits}, blindness floor 5)`);
+  ok(
+    parentChannelWaits.length === 0,
+    `OPE-1479: no Discord reply wait polls the ASK'S OWN CHANNEL — OE replies in the auto-created ` +
+      `thread, so a \`.channelId\` first argument polls a channel that never holds the reply and the ` +
+      `leg dies on its full timeout while the product is right. Found ${parentChannelWaits.length}: ${parentChannelWaits.join("; ")}`,
+  );
+
+  const grantBody = SCENARIOS.find((s) => s.id === "S-DISCORD-GRANT")!.run.toString();
+  function threadBindings(body: string): ReadonlyMap<string, string> {
+    const bound = new Map<string, string>();
+    for (const m of body.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*await\s+discord\.awaitThread\(/g)) {
+      bound.set(m[1]!, argsOf(body, m.index! + m[0].length - 1)[0] ?? "");
+    }
+    return bound;
+  }
+  const grantThreads = threadBindings(grantBody);
+  const grantWaits = discordWaits(grantBody);
+  ok(grantWaits.length === 2, `OPE-1479: S-DISCORD-GRANT still has its two reply waits — phase 1's grant ask and phase 2's granted call (found ${grantWaits.length})`);
+  ok(grantThreads.size === 2, `OPE-1479: S-DISCORD-GRANT binds a thread id per phase (found ${grantThreads.size}: ${JSON.stringify([...grantThreads])})`);
+  const misjoined = grantWaits.filter((w) => grantThreads.get(w.channelArg) !== w.afterArg);
+  ok(
+    misjoined.length === 0,
+    `OPE-1479: both S-DISCORD-GRANT reply waits poll the thread \`discord.awaitThread\` derived from ` +
+      `THE SAME message the wait polls after — the two-line shape J-DISC and S8 use. Bindings: ` +
+      `${JSON.stringify([...grantThreads])}; waits not joined to their own message: ` +
+      `${JSON.stringify(misjoined.map((w) => `${w.channelArg} after ${w.afterArg}`))}`,
+  );
+
+  const defective = 'async ctx=>{const asked=await discord.post(x);const reply=await discord.awaitReply(asked.channelId,asked.id,{timeoutMs:3e5});}';
+  const defectiveWaits = discordWaits(defective);
+  ok(
+    defectiveWaits.length === 1 && defectiveWaits[0]!.channelArg === "asked.channelId" && defectiveWaits[0]!.afterArg === "asked.id",
+    `OPE-1479: NEGATIVE CONTROL — the walk splits the defective call into its own two arguments (read ${JSON.stringify(defectiveWaits)})`,
+  );
+  ok(defectiveWaits.some((w) => /\.channelId$/.test(w.channelArg)), "OPE-1479: NEGATIVE CONTROL — arm A's test flags the parent-channel wait a live run found");
+  ok(threadBindings(defective).size === 0, "OPE-1479: NEGATIVE CONTROL — arm B reads the defective body as binding NO thread id, so its wait is unjoined");
+  const crossPhase = 'async ctx=>{const a=await discord.post(x);const threadId=await discord.awaitThread(a.id,{timeoutMs:3e5});const b=await discord.post(y);const r=await discord.awaitReply(threadId,b.id,{timeoutMs:3e5});}';
+  const crossWaits = discordWaits(crossPhase);
+  ok(
+    crossWaits.length === 1 && !/\.channelId$/.test(crossWaits[0]!.channelArg),
+    "OPE-1479: NEGATIVE CONTROL — arm A is blind to the cross-phase mix-up (its first argument is no `.channelId`)",
+  );
+  ok(
+    threadBindings(crossPhase).get(crossWaits[0]!.channelArg) !== crossWaits[0]!.afterArg,
+    "OPE-1479: NEGATIVE CONTROL — arm B DOES catch it: the polled thread was derived from `a.id`, but the wait polls after `b.id`",
+  );
+  const fixed = 'async ctx=>{const asked=await discord.post(x);const threadId=await discord.awaitThread(asked.id,{timeoutMs:3e5});const reply=await discord.awaitReply(threadId,asked.id,{timeoutMs:3e5});}';
+  const fixedWaits = discordWaits(fixed);
+  ok(
+    fixedWaits.length === 1 && !/\.channelId$/.test(fixedWaits[0]!.channelArg) && threadBindings(fixed).get(fixedWaits[0]!.channelArg) === fixedWaits[0]!.afterArg,
+    "OPE-1479: NEGATIVE CONTROL — the two-line fixed shape passes BOTH arms through the same scanner (so neither arm is unconditionally red)",
+  );
+}
+
+{
   const { describeSpendGateRows, spendGateDoorOf, silenceCauseGate, SPEND_GATE_DOORS } = await import("../packages/core/scripts/e2e/journey.js");
   const row = (action: string, detail?: Record<string, unknown>) => ({
     ts: "2026-04-09T23:30:00.000Z",

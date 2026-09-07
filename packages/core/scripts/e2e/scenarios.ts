@@ -4146,7 +4146,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "discord",
     suite: "extended",
     optional: true,
-    timeoutMs: 600_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       if (!ctx.auditRead) {
@@ -4172,7 +4172,8 @@ export const SCENARIOS: readonly Scenario[] = [
           `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask <@${ownerId}> to lend this conversation ONE Notion tool — a page-read — so we can check the borrow path end to end. Use the credential-grant ask for it. The purpose is: "e2e grant-tap fixture, ref ${token}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`,
         ),
       );
-      const reply = await discord.awaitReply(asked.channelId, asked.id, { timeoutMs: 300_000 });
+      const threadId = await discord.awaitThread(asked.id, { timeoutMs: 300_000 });
+      const reply = await discord.awaitReply(threadId, asked.id, { timeoutMs: 300_000 });
       ctx.gate(reply.content.trim().length > 0, "S-DISCORD-GRANT: the grant ask drew a bot reply (the turn ran end-to-end)");
       ctx.log(`S-DISCORD-GRANT: reply — "${reply.content.replace(/\s+/g, " ").trim().slice(0, 220)}"`);
 
@@ -4220,7 +4221,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const useAsk = await discord.post(
         discord.mention(`Now use the Notion tool that was lent to this conversation to read that page, and tell me what you got. Reference ${useToken} in your answer.`),
       );
-      const useReply = await discord.awaitReply(useAsk.channelId, useAsk.id, { timeoutMs: 300_000 });
+      const useThreadId = await discord.awaitThread(useAsk.id, { timeoutMs: 300_000 });
+      const useReply = await discord.awaitReply(useThreadId, useAsk.id, { timeoutMs: 300_000 });
       ctx.gate(useReply.content.trim().length > 0, "S-DISCORD-GRANT: the granted-call ask drew a bot reply");
       const used = (await auditRead({ sinceIso, actions: ["grant.used"] })).filter((e) => e.action === "grant.used");
       ctx.gate(
