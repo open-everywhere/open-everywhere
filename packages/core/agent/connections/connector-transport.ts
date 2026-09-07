@@ -68,9 +68,11 @@ function registerCoreConnectorTransports(): void {
         ...(spec.fallbackSecretRef !== undefined ? { fallbackSecretRef: spec.fallbackSecretRef } : {}),
         ...(spec.fallbackBroker !== undefined ? { fallbackBroker: spec.fallbackBroker } : {}),
       };
+      const userAware = userAwareProviderToken(opts);
+      const app = appProviderToken(opts);
       return {
         url: spec.directUrl,
-        auth: connectorUserPrincipalEnabled() ? userAwareProviderToken(opts) : appProviderToken(opts),
+        auth: (ctx) => (connectorUserPrincipalEnabled() ? userAware : app)(ctx),
       };
     },
   });

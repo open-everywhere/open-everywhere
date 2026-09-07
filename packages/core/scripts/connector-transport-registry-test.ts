@@ -6,6 +6,7 @@ const {
   registeredConnectorTransports,
   resetConnectorTransports,
 } = await import("../agent/connections/connector-transport.js");
+const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -22,37 +23,33 @@ const baseSpec = {
   fallbackBroker: "env",
 };
 
-function setEnv(env: Record<string, string | undefined>): () => void {
-  const prior: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(env)) {
-    prior[k] = process.env[k];
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  return () => {
-    for (const [k, v] of Object.entries(prior)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  };
-}
-
 {
+  resetSettingsForTest();
+  resetConnectorTransports();
   {
-    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: undefined });
-    resetConnectorTransports();
     const t = selectConnectorTransport(baseSpec);
-    ok(t.url === NOTION_URL, "flags-off: direct-mcp keeps the vendor URL");
-    ok(typeof t.auth === "function", "flags-off: an auth resolver is produced");
-    restore();
+    ok(t.url === NOTION_URL, "direct-mcp resolves the vendor URL");
+    ok(typeof t.auth === "function", "direct-mcp produces an auth resolver");
   }
 
   {
-    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: "1" });
+    let reads = 0;
+    registerSettings({
+      connectors: {
+        get userPrincipal(): boolean {
+          reads++;
+          return true;
+        },
+        opTiering: true,
+      },
+    });
+    const afterRegistration = reads;
     resetConnectorTransports();
     const t = selectConnectorTransport(baseSpec);
-    ok(t.url === NOTION_URL, "user-principal armed: direct-mcp still uses the vendor URL");
-    restore();
+    ok(reads === afterRegistration, "selection performs NO settings read — the flag is deferred (OPE-1450)");
+    await Promise.resolve(t.auth({ session: { auth: undefined } } as never)).catch(() => undefined);
+    ok(reads > afterRegistration, "negative control: the auth CALL does read the flag — deferred, not dropped");
+    resetSettingsForTest();
   }
 }
 

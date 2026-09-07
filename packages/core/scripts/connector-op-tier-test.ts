@@ -72,6 +72,38 @@ registerSettings({ connectors: { opTiering: true } });
 }
 resetSettingsForTest();
 
+{
+  resetSettingsForTest();
+  const builtBeforeRegistration = connectorApprovalPolicy();
+  registerSettings({ connectors: { opTiering: true } });
+  ok(
+    (await builtBeforeRegistration({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable",
+    "a policy BUILT before registerSettings() still honours the deployment's opTiering (OPE-1450)",
+  );
+  ok(
+    (await builtBeforeRegistration({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)) === "user-approval",
+    "negative control: the same deferred policy still PROMPTS on a write",
+  );
+  resetSettingsForTest();
+}
+{
+  let reads = 0;
+  registerSettings({
+    connectors: {
+      get opTiering(): boolean {
+        reads++;
+        return true;
+      },
+    },
+  });
+  const afterRegistration = reads;
+  const policy = connectorApprovalPolicy();
+  ok(reads === afterRegistration, "building the policy performs NO settings read (OPE-1450)");
+  await policy({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
+  ok(reads > afterRegistration, "negative control: the CALL does read the flag — deferred, not dropped");
+  resetSettingsForTest();
+}
+
 function oracleTier(toolName: string): ConnectorOpTier {
   let op = connectorOpName(toolName).toLowerCase();
   const sep = toolName.indexOf("__");

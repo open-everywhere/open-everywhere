@@ -390,8 +390,10 @@ async function decideConnectorWrite(
 }
 
 export function connectorApprovalPolicy(): ApprovalPolicy {
+  const tiered = connectorOpApproval();
+  const blanket = once();
   return withDuplicateApprovalGuard(
-    withUnattendedConnectorFence(connectorOpTieringEnabled() ? connectorOpApproval() : once()),
+    withUnattendedConnectorFence((ctx) => (connectorOpTieringEnabled() ? tiered : blanket)(ctx)),
   );
 }
 
