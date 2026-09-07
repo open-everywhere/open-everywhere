@@ -2,6 +2,7 @@ import {
   codeOnly,
   helperFamilies,
   scanViews,
+  signalsOf,
   spawnsChild,
   splitParams,
   withoutComments,
@@ -192,4 +193,34 @@ function eq(actual: unknown, expected: unknown, label: string): void {
   ok(!spawnsChild(uv.spec, uv.code), "a plain string constant naming the specifier is not an import");
 }
 
-console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families)\n`);
+{
+  const fixture = [
+    'import assert from "node:assert";',
+    'const label = "assert(inAString);";',
+    "// assert(inALineComment);",
+    "/* assert(inABlockComment); */",
+    "const quoted = `",
+    "assert(inATemplateLiteral);",
+    "`;",
+    "assert(a === b);",
+    "  assert.equal(a, b);",
+    "await assert.rejects(p);",
+    "assertMarked(a);",
+    "ok(assert(nested));",
+    "",
+  ].join("\n");
+
+  eq(
+    signalsOf(fixture).directAssertSites,
+    3,
+    "🔴 `directAssertSites` counts the three statement-position `assert` calls and none of the five controls — a comment, a string, a template body, an `assert`-prefixed helper name, and a nested call",
+  );
+
+  const controlsOnly = fixture
+    .split("\n")
+    .filter((l) => !/^[ \t]*(?:await[ \t]+)?assert(?:\.\w+)?[ \t]*\(/u.test(l))
+    .join("\n");
+  eq(signalsOf(controlsOnly).directAssertSites, 0, "🔴 the controls alone count ZERO — the three above are what the fixture measures");
+}
+
+console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families, direct-assert sites)\n`);

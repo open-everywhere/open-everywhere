@@ -348,7 +348,7 @@ function inSession<T>(fn: () => T): T {
     setWorkerWake(false);
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);
-    eq(Object.keys(toolset).sort(), ["agent", "no_reply", "reply"], "🔴 D6 TASKS, FLAG OFF: with no task tool in the set the subtraction is a no-op — the shipped build is byte-identical");
+    eq(Object.keys(toolset).sort(), ["agent", "no_reply", "reply"], "🔴 D6 TASKS, NO TASK NAME: a set carrying no `task_*` name comes back untouched — the subtraction removes only names it was given");
   });
 
   inSession(() => {

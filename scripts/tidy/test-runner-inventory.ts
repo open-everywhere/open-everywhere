@@ -265,7 +265,7 @@ function closingLines(text: string): string {
     .join("\n");
 }
 
-function signalsOf(text: string): RunnerRecord["signals"] {
+export function signalsOf(text: string): RunnerRecord["signals"] {
   const spec = withoutComments(text);
   const code = codeOnly(text);
   return {

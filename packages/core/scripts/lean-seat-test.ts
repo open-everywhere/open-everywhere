@@ -85,7 +85,7 @@ for (const name of ["task_cancel"]) {
 for (const [name, why] of [
   ["task_peek", "DELETED by eve 0.40.0 — the worker's output now arrives inline on the settlement notification, so no seat-side read verb exists to grant"],
   ["task_sleep", "DELETED by eve 0.42.0 — task-mode parents rely on lifecycle notifications instead of model-paced waits"],
-  ["task_update", "CHILD-only: eve's isTaskToolAvailable never mounts it on a seat (measured on the T1 probe)"],
+  ["task_update", "CHILD-only: eve hides it from a seat at the advertise seam, `harness/advertised-tools.js` `shouldHideTool` (measured on the T1 probe)"],
 ] as const) {
   ok(!allowedOnLeanSeat(name), `lean seat does NOT hold ${name} — ${why}`);
   ok(!LEAN_SEAT_TOOLS.has(name), `${name} is NOT a named LEAN_SEAT_TOOLS member — the table tracks what the pinned eve mounts`);
