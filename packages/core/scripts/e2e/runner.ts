@@ -1,6 +1,11 @@
 import {
   resolveCapabilities,
   resolveConnectorWrite,
+  resolveEngagedDiscord,
+  resolveEngagedGithub,
+  resolveEngagedLinear,
+  resolveEngagedNotion,
+  resolveEngagedSlack,
   resolveDiscord,
   resolveGithub,
   resolveLinear,
@@ -94,6 +99,11 @@ async function main(): Promise<void> {
   const slackUnified = resolveSlackUnified();
   const pr = resolvePr();
   const connectorWrite = resolveConnectorWrite();
+  const engagedSlack = resolveEngagedSlack();
+  const engagedDiscord = resolveEngagedDiscord();
+  const engagedGithub = resolveEngagedGithub();
+  const engagedLinear = resolveEngagedLinear();
+  const engagedNotion = resolveEngagedNotion();
 
   const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
@@ -137,6 +147,11 @@ async function main(): Promise<void> {
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
+  const discordEngagedDriver = discord.ok && engagedDiscord.ok ? new DiscordDriver({ ...discord.cfg, channel: engagedDiscord.cfg.id }) : undefined;
+  const githubEngagedDriver = github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined;
+  const linearEngagedDriver = linear.ok && engagedLinear.ok ? new LinearDriver({ ...linear.cfg, teamId: engagedLinear.cfg.id }) : undefined;
+  const notionEngagedDriver =
+    notionAmbient.ok && engagedNotion.ok ? new NotionDriver({ ...notionAmbient.cfg, pageId: engagedNotion.cfg.id }) : undefined;
   const slackSecondaryDriver =
     slack.ok && slackSecondary.ok ? new SlackDriver({ token: slackSecondary.cfg.token, channel: slack.cfg.channel, botUserId: slack.cfg.botUserId }) : undefined;
 
@@ -254,6 +269,11 @@ async function main(): Promise<void> {
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,
+      ...(engagedSlack.ok ? { engagedSlack: engagedSlack.cfg } : {}),
+      discordEngaged: discordEngagedDriver,
+      githubEngaged: githubEngagedDriver,
+      linearEngaged: linearEngagedDriver,
+      notionEngaged: notionEngagedDriver,
       slackCapFixture: slackCapFixtureDriver,
       slackSupervisor: slackSupervisorDriver,
       dm: dmDriver,

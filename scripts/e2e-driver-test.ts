@@ -105,6 +105,20 @@ const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendin
   await import("../packages/core/scripts/e2e/scenarios.js");
 const { PENDING_WORK_FRAME } = await import("../packages/core/agent/channels/turn-delivery.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
+const {
+  REPLY_POST_ACTION,
+  STOOD_DOWN_ACTION,
+  dispatchAddressings,
+  dispatchedAction,
+  replyPostCount,
+  reportedDirectMention,
+  reportedNameDrop,
+  reportedThreadFollow,
+  standDownAttemptedButUnmarked,
+  standDownMarked,
+  standDownRows,
+} = await import("../packages/core/scripts/e2e/engaged-rows.js");
+const { STAND_DOWN_ACTION } = await import("../packages/core/agent/tools/stand_down.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
 const { relayGate, parseRelayPayload, authForRelayMessage } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
@@ -322,12 +336,14 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
+    "J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
     `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on;)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
+    "engagedSlack", "engagedDiscord", "engagedGithub", "engagedLinear", "engagedNotion"]);
   for (const s of SCENARIOS) {
     okShape(s.title.trim().length > 0, `${s.id} has a title`);
     okShape(typeof s.run === "function", `${s.id} has a run body`);
@@ -339,8 +355,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725)",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS the three RED-AS-KNOWN engaged-seam journeys (OPE-1503: J-ENGAGED-github/linear/notion drive a seam their providers do not have yet, so they are optional and expected red, and OPE-1501 flips each to core; J-ENGAGED-teams is core) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -357,8 +373,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
-    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) (S-DM-DISCORD retired at OPE-725)",
+    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -367,7 +383,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT", "S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -392,10 +408,31 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-LINK-SLACK requires slack + syntheticDm (the initiator's DM turns — a driver-posted DM never wakes) + slackSecondary (a genuinely SECOND real account; link-store.ts refuses a self-claim, so this flow cannot be driven from one identity)",
   );
   ok(req("J-WORKFLOW") === "slack+synthetic+pr", "J-WORKFLOW requires slack + synthetic + pr (the read→PR→remember→recall chain reuses the PR drive)");
+
+  ok(req("J-ENGAGED-slack") === "slack+engagedSlack", "J-ENGAGED-slack requires slack + engagedSlack (the base xoxp driver, rebound onto the addressed-only channel)");
+  ok(req("J-ENGAGED-discord") === "discord+engagedDiscord", "J-ENGAGED-discord requires discord + engagedDiscord");
+  ok(req("J-ENGAGED-github") === "github+engagedGithub", "J-ENGAGED-github requires github + engagedGithub");
+  ok(req("J-ENGAGED-linear") === "linear+engagedLinear", "J-ENGAGED-linear requires linear + engagedLinear");
+  ok(req("J-ENGAGED-notion") === "notionAmbient+engagedNotion", "J-ENGAGED-notion requires notionAmbient + engagedNotion (the ambient Notion driver, rebound onto the addressed-only page)");
+  const suiteOf = (id: string) => SCENARIOS.find((sc) => sc.id === id)!.suite;
+  ok(suiteOf("J-ENGAGED-slack") === "core" && suiteOf("J-ENGAGED-discord") === "core", "the Slack and Discord engaged journeys are core — their seam exists today and they must pass");
+  for (const id of ["J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
+    ok(suiteOf(id) === "extended", `${id} is extended/optional — RED-AS-KNOWN until OPE-1501 lands its surface's seam`);
+  }
+  const surfaceOf = (id: string) => SCENARIOS.find((sc) => sc.id === id)!.surface;
+  for (const [id, surface] of [
+    ["J-ENGAGED-slack", "slack"],
+    ["J-ENGAGED-discord", "discord"],
+    ["J-ENGAGED-github", "github"],
+    ["J-ENGAGED-linear", "linear"],
+    ["J-ENGAGED-notion", "notion"],
+  ] as const) {
+    ok(surfaceOf(id) === surface, `${id} drives the ${surface} surface`);
+  }
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite" | "engagedSlack" | "engagedDiscord" | "engagedGithub" | "engagedLinear" | "engagedNotion">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -419,13 +456,18 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     soakSlack: [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps],
     soakNotion: [ENV.notionSoakPage1, ENV.notionSoakPage2],
     soakLinear: [ENV.linearSoakLabelId],
+    engagedSlack: [ENV.engagedSlackChannel],
+    engagedDiscord: [ENV.engagedDiscordChannel],
+    engagedGithub: [ENV.engagedGithubRepo],
+    engagedLinear: [ENV.engagedLinearTeamId],
+    engagedNotion: [ENV.engagedNotionPageId],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -449,8 +491,34 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     soakSlack: [],
     soakNotion: [],
     soakLinear: [],
+    engagedSlack: [],
+    engagedDiscord: [],
+    engagedGithub: [],
+    engagedLinear: [],
+    engagedNotion: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
+
+  const roomOnlyMissing = new Set(["slack", "discord", "github", "linear", "notionAmbient"] as const);
+  for (const [id, varName] of [
+    ["J-ENGAGED-slack", ENV.engagedSlackChannel],
+    ["J-ENGAGED-discord", ENV.engagedDiscordChannel],
+    ["J-ENGAGED-github", ENV.engagedGithubRepo],
+    ["J-ENGAGED-linear", ENV.engagedLinearTeamId],
+    ["J-ENGAGED-notion", ENV.engagedNotionPageId],
+  ] as const) {
+    const reason = skipReason(SCENARIOS.find((sc) => sc.id === id)!, roomOnlyMissing, missing, true);
+    ok(reason?.includes(varName) === true, `${id} self-skips naming ${varName} while its room is unprovisioned (got ${JSON.stringify(reason)})`);
+  }
+  ok(skipReason(SCENARIOS.find((sc) => sc.id === "J-ENGAGED-slack")!, all, noneMissing, false) === undefined, "J-ENGAGED-slack runs on a default pass once its room is provisioned");
+  ok(skipReason(SCENARIOS.find((sc) => sc.id === "J-ENGAGED-discord")!, all, noneMissing, false) === undefined, "J-ENGAGED-discord runs on a default pass once its room is provisioned");
+  for (const id of ["J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
+    ok(
+      skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
+      `${id} stays out of a default pass — it is RED-AS-KNOWN until its seam lands, and a known red must not fail every run`,
+    );
+    ok(skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, true) === undefined, `${id} runs in the extended lane, where its red is the point`);
+  }
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
     "S8 stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens",
@@ -1230,6 +1298,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
     notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel],
     soakSlack: [], soakNotion: [], soakLinear: [],
+    engagedSlack: [], engagedDiscord: [], engagedGithub: [], engagedLinear: [], engagedNotion: [],
   } as const;
   for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, cwMissing, true);
@@ -2687,6 +2756,73 @@ rmSync(dir, { recursive: true, force: true });
   ok(!allNoticesDelivered([sentNotice, failedNotice], "discord"), "NEGATIVE: a failed notice means the owner was NOT told — accepting it would invert the row's whole purpose");
   ok(!allNoticesDelivered([grantRow("grant.notified", { outcome: "sent", ownerPlatform: "slack" })], "discord"), "NEGATIVE: a notice delivered on Slack does not prove Discord's DM arm ran");
   ok(!allNoticesDelivered([], "discord"), "VACUITY: allNoticesDelivered([]) is FALSE");
+}
+
+{
+  const row = (action: string, detail: Record<string, unknown>, surface = "C1") => ({
+    ts: "2026-05-11T23:30:00.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "T1",
+    surface,
+    action,
+    detail,
+  });
+
+  ok(STOOD_DOWN_ACTION === STAND_DOWN_ACTION, "the pack's stood-down action name IS the tool's own STAND_DOWN_ACTION — no second spelling of one row");
+  ok(dispatchedAction("discord") === "discord.dispatched" && dispatchedAction("notion") === "notion.dispatched", "dispatchedAction builds the per-platform dispatch action name");
+
+  const KEY = "slack/T1/C1";
+  const standDown = (marked: unknown) => row(STOOD_DOWN_ACTION, { surfaceKey: KEY, anchor: "1700.0001", marked, reason: null }, KEY);
+  const marked = standDown(true);
+  const unmarked = standDown(false);
+  ok(standDownMarked([marked]), "standDownMarked reads marked:true — the registry really held a row, which is what makes the plain follow-up an ENGAGED wake");
+  ok(!standDownMarked([unmarked]), "NEGATIVE: marked:false is NOT a stand-down that took — the tool writes the row then refuses, and reading it as success would report a stop that never happened");
+  ok(!standDownMarked([row(STOOD_DOWN_ACTION, { anchor: "1700.0001" })]), "NEGATIVE: an absent `marked` field is not evidence of the effect");
+  ok(!standDownMarked([row(STOOD_DOWN_ACTION, { anchor: "1700.0001", marked: "true" })]), "NEGATIVE: a STRING \"true\" is not the boolean the tool writes — a row that cannot state the effect is not evidence of it");
+  ok(!standDownMarked([row("reply.post", { marked: true })]), "NEGATIVE: another action carrying a `marked` field is not a stand-down row");
+  ok(!standDownMarked([]), "VACUITY: standDownMarked([]) is FALSE — no row means no proof, never a pass");
+  ok(standDownMarked([marked], { anchor: "1700.0001" }), "the anchor join accepts the row for THIS conversation");
+  ok(!standDownMarked([marked], { anchor: "1700.9999" }), "NEGATIVE: another conversation's stand-down does not answer for this one — the anchor is the registry's own key");
+  ok(standDownMarked([marked], { surface: KEY }), "the surface join accepts a stand-down row scoped by its QUALIFIED key — the shape stand_down.ts writes");
+  ok(!standDownMarked([marked], { surface: "slack/T1/CZ" }), "NEGATIVE: another room's stand-down does not answer for this one");
+  ok(
+    !standDownMarked([marked], { surface: "C1" }),
+    "NEGATIVE: the BARE segment matches no stand-down row — reusing a reply.post scope here is how step (c) reds on a healthy deployment while its negative control passes vacuously beside it",
+  );
+  ok(
+    standDownMarked([{ ...marked, surface: undefined }], { surface: KEY }),
+    "the join also reads detail.surfaceKey, so a row whose top-level surface the route omits is still found",
+  );
+  ok(standDownRows([marked, unmarked, row("reply.post", {})]).length === 2, "standDownRows keeps both stand-down rows and drops everything else");
+
+  ok(standDownAttemptedButUnmarked([unmarked]), "standDownAttemptedButUnmarked finds the marked:false row that falsifies the whole engaged claim");
+  ok(!standDownAttemptedButUnmarked([marked]), "NEGATIVE: a successful stand-down is not an unmarked attempt");
+  ok(!standDownAttemptedButUnmarked([]), "VACUITY: an empty window reports no falsification");
+
+  const dispatched = (addressing: unknown) => ({ ...row("discord.dispatched", addressing === undefined ? {} : { addressing }), platform: "discord" });
+  ok(dispatchAddressings([dispatched("thread-follow")], "discord").join(",") === "thread-follow", "dispatchAddressings reads detail.addressing off the platform's dispatch rows");
+  ok(dispatchAddressings([dispatched("direct"), dispatched("name-drop")], "discord").join(",") === "direct,name-drop", "dispatchAddressings keeps the window's own order");
+  ok(dispatchAddressings([dispatched(undefined)], "discord").length === 0, "a dispatch row with no addressing contributes nothing rather than an undefined entry");
+  ok(dispatchAddressings([dispatched(7)], "discord").length === 0, "NEGATIVE: a non-string addressing is dropped, never coerced");
+  ok(dispatchAddressings([dispatched("thread-follow")], "slack").length === 0, "NEGATIVE: rows are keyed to their OWN platform's action — Slack writes no dispatch row at all, and reading Discord's as Slack's would invent evidence");
+  ok(reportedThreadFollow([dispatched("thread-follow")], "discord"), "reportedThreadFollow names the ENGAGED addressing");
+  ok(!reportedThreadFollow([dispatched("channel-watch")], "discord"), "NEGATIVE: channel-watch is AMBIENT room chatter — treating it as engaged is exactly the confusion these journeys exist to end");
+  ok(!reportedThreadFollow([], "discord"), "VACUITY: a surface that reports nothing reports no thread-follow — callers must log, not pass");
+  ok(reportedDirectMention([dispatched("direct-mention")], "discord") && reportedDirectMention([dispatched("direct")], "discord"), "reportedDirectMention accepts BOTH spellings — Discord's native path stamps `direct`, every other surface `direct-mention`");
+  ok(!reportedDirectMention([dispatched("name-drop")], "discord"), "NEGATIVE: a name-drop is not an @mention");
+  ok(reportedNameDrop([dispatched("name-drop")], "discord"), "reportedNameDrop names the name-drop addressing");
+  ok(!reportedNameDrop([dispatched("direct")], "discord"), "NEGATIVE: an @mention is not a name-drop");
+
+  const post = (surface: string) => row(REPLY_POST_ACTION, { chars: 12 }, surface);
+  ok(replyPostCount([post("C1"), post("C1")]) === 2, "replyPostCount counts the posts the deployment actually made");
+  ok(replyPostCount([post("C1"), post("CZ")], { surface: "C1" }) === 1, "the surface scope keeps one fixture's posts out of another's silence window");
+  ok(
+    replyPostCount([post("C1")], { surface: "slack/T1/C1" }) === 0,
+    "NEGATIVE: a fully-qualified KEY matches no post row — the mirror of the stand-down case above, and an audited-silence gate scoped that way would pass however much the deployment posted",
+  );
+  ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
+  ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
 }
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +

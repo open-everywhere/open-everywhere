@@ -81,6 +81,17 @@ const rawDomains: Domain[] = [
   }),
 
   defineDomain({
+    name: "e2e-engaged",
+    channels: [
+      "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000104",
+    ],
+    memory: "e2e-brain",
+    nameDropWake: true,
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+  }),
+
+  defineDomain({
     name: "soak",
     channels: [
       "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000102",

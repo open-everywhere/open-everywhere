@@ -59,6 +59,12 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   { surface: "notion", envVar: "E2E_NOTION_PAGE_ID", what: "J-NOT's ambient scratch page" },
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_1", what: "the soak tests' spec page" },
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_2", what: "the soak tests' late-recall page" },
+
+  { surface: "slack", envVar: "E2E_ENGAGED_SLACK_CHANNEL", what: "J-ENGAGED-slack's addressed-only channel" },
+  { surface: "discord", envVar: "E2E_ENGAGED_DISCORD_CHANNEL", what: "J-ENGAGED-discord's addressed-only channel" },
+  { surface: "github", envVar: "E2E_ENGAGED_GITHUB_REPO", what: "J-ENGAGED-github's addressed-only repo" },
+  { surface: "linear", envVar: "E2E_ENGAGED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team" },
+  { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page — the one name both sides already share" },
 ];
 
 export type NonRoomReason =
@@ -138,6 +144,7 @@ export interface PlannedRoom {
   readonly envVar: string;
   readonly action: ProvisionAction;
   readonly reuseOf?: string;
+  readonly readByCode?: string;
   readonly note: string;
 }
 
@@ -152,7 +159,7 @@ export interface ProvisionDomain {
 
 export const PROVISION_PLAN: readonly ProvisionDomain[] = [
   {
-    domain: "e2e-addressed",
+    domain: "e2e-engaged",
     slug: "addressed",
     linearKey: "OEEA",
     ticket: "OPE-1503",
@@ -180,7 +187,13 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         note: "the PR-target repo is already granted and App-installed; a second repo would need a second install",
       },
       { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", action: "create", note: "a team in the e2e Linear org" },
-      { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", action: "create", note: "a page under the e2e page's own parent" },
+      {
+        surface: "notion",
+        envVar: "E2E_ADDRESSED_NOTION_PAGE_ID",
+        action: "create",
+        readByCode: "`agent/memory/config/domains.ts` names this page in the `e2e-engaged` roster and `env.ts` reads the var, so it is in ROOM_VARS — but the room is still this plan's own to write",
+        note: "a page under the e2e page's own parent; `oe-e2e-addressed-notion` already exists, and create finds it by name rather than making a second one",
+      },
     ],
   },
 ];

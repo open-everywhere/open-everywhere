@@ -162,6 +162,15 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "These are every scenario that calls open_pull_request — the one consequential-write door with its own approval shape (card vs. armed-judge vs. session-grant vs. ungranted-repo refusal).",
   },
   {
+    area: "engagement-seam",
+    globs: [
+      "packages/core/agent/channels/engagement.ts",
+      "packages/core/agent/tools/stand_down.ts",
+    ],
+    scenarios: ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion", "J1", "J-DISC"],
+    why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, so it is the one that turns a regression in these two files RED rather than red-as-known. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
+  },
+  {
     area: "core-agent-loop",
     globs: ["agent/agent.ts", "packages/core/agent/control/**"],
     scenarios: ["J1", "J2", "J3", "J4", "J-DISC", "J-GH", "J-LIN", "J-NOT"],

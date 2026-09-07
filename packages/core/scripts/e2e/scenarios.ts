@@ -1,4 +1,4 @@
-import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
+import { auditSilencesExpected, ENV, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { deployedBuildCarries } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
@@ -30,6 +30,18 @@ import {
   refusedUnverifiedRequester,
   splitFenceRows,
 } from "./grant-fence-rows.js";
+import {
+  REPLY_POST_ACTION,
+  STOOD_DOWN_ACTION,
+  dispatchAddressings,
+  dispatchedAction,
+  replyPostCount,
+  reportedDirectMention,
+  reportedNameDrop,
+  reportedThreadFollow,
+  standDownAttemptedButUnmarked,
+  standDownMarked,
+} from "./engaged-rows.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
@@ -108,6 +120,11 @@ export interface ScenarioContext {
   readonly prRepo?: string;
   readonly prApi?: PrApi;
   readonly connectorWrite?: SlackDriver;
+  readonly engagedSlack?: EngagedRoomConfig;
+  readonly discordEngaged?: DiscordDriver;
+  readonly githubEngaged?: GithubDriver;
+  readonly linearEngaged?: LinearDriver;
+  readonly notionEngaged?: NotionDriver;
   readonly judge: ReplyJudge;
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
@@ -194,7 +211,6 @@ export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean 
   });
 }
 
-const STOOD_DOWN_ACTION = "engagement.stood_down";
 const STAND_DOWN_ACK_CRITERIA =
   "Does this reply ACCEPT the request to stop following the thread? A terse acceptance is a PASS — " +
   '"Understood.", "OK", "Got it", "Will do", a thumbs-up, or a one-word confirmation all accept the ' +
@@ -255,6 +271,86 @@ export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive"
     return `${scenario.id} is flagged expensive but carries no costReason — state why it is expensive`;
   }
   return undefined;
+}
+
+const ENGAGED_STOP_ASK = "thanks, that's everything — please stop following this thread now";
+const ENGAGED_NAME = "Open Everywhere";
+const ENGAGED_SEAM_TICKET = { github: "OPE-1501", linear: "OPE-1501", notion: "OPE-1501" } as const;
+
+async function gateEngagedWake(
+  ctx: ScenarioContext,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface?: string;
+    readonly leg: string;
+    readonly expect: "addressed" | "thread-follow" | "name-drop";
+  },
+): Promise<void> {
+  const scope = opts.surface ? { surface: opts.surface } : {};
+  const posts = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
+  ctx.gate(
+    replyPostCount(posts, opts.surface ? { surface: opts.surface } : {}) > 0,
+    `${opts.leg}: a ${REPLY_POST_ACTION} audit row proves the deployment dispatched a turn and posted (found ${posts.length}) — not merely that a message appeared`,
+  );
+  const dispatched = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [dispatchedAction(opts.platform)] });
+  const seen = dispatchAddressings(dispatched, opts.platform);
+  if (seen.length === 0) {
+    ctx.log(`${opts.leg}: ${opts.platform} writes no dispatch row on the addressed-only path — what woke it is evidenced by the stand-down row below, not here`);
+    return;
+  }
+  const held =
+    opts.expect === "addressed"
+      ? reportedDirectMention(dispatched, opts.platform)
+      : opts.expect === "name-drop"
+        ? reportedNameDrop(dispatched, opts.platform)
+        : reportedThreadFollow(dispatched, opts.platform);
+  ctx.gate(
+    held,
+    `${opts.leg}: the ${opts.platform}.dispatched row says what woke it, and it is "${opts.expect}" (saw ${JSON.stringify(seen)})`,
+  );
+}
+
+async function gateStandDownMarked(
+  ctx: ScenarioContext,
+  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly anchor?: string; readonly ticket?: string },
+): Promise<void> {
+  const rows = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [STOOD_DOWN_ACTION] });
+  const join = {
+    ...(opts.anchor === undefined ? {} : { anchor: opts.anchor }),
+    ...(opts.surface === undefined ? {} : { surface: opts.surface }),
+  };
+  const because = opts.ticket ? ` — still expected to RED until ${opts.ticket} lands this surface's engaged seam` : "";
+  ctx.gate(
+    !standDownAttemptedButUnmarked(rows, join),
+    `stop: NEGATIVE CONTROL — no ${STOOD_DOWN_ACTION} row carries marked:false. One would prove the conversation was never on the engagement registry, so nothing above rode the engaged seam${because}`,
+  );
+  ctx.gate(
+    standDownMarked(rows, join),
+    `stop: an ${STOOD_DOWN_ACTION} row marks this conversation (marked:true${opts.anchor === undefined ? "" : `, anchor=${opts.anchor}`}) — the registry really held it, which is what makes the plain follow-up above an ENGAGED wake and not an ambient one (read ${rows.length} row(s))${because}`,
+  );
+}
+
+async function gateAuditedSilence(
+  ctx: ScenarioContext,
+  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly observedSilent: boolean },
+): Promise<void> {
+  ctx.gate(opts.observedSilent, "stop honoured: a further plain message drew NO post in the silence window");
+  const scope = opts.surface ? { surface: opts.surface } : {};
+  const posts = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
+  ctx.gate(
+    replyPostCount(posts, opts.surface ? { surface: opts.surface } : {}) === 0,
+    `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on this surface after the stop (found ${posts.length})`,
+  );
+}
+
+function requireAuditRead(ctx: ScenarioContext): void {
+  if (!ctx.auditRead) {
+    ctx.skip(
+      "the engaged-seam journeys gate on audit rows (reply.post + engagement.stood_down), which need " +
+        "E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — a post-only run cannot tell an engaged wake from an ambient one",
+    );
+  }
 }
 
 export const SCENARIOS: readonly Scenario[] = [
@@ -4380,6 +4476,245 @@ export const SCENARIOS: readonly Scenario[] = [
         allNoticesDelivered(notified, "discord"),
         `🔴 (hard): every notice row for this grant records outcome "sent" AND ownerPlatform "discord" (the DELIVERY arm — the one row on this plane that does carry a platform field) — a "failed" outcome means the DM arm threw and the owner was NOT told (the row exists to make that visible, never to paper over it), and the platform is what says it was DISCORD's arm that delivered, which is this leg's whole point (${JSON.stringify(notified.map((e) => e.detail))})`,
       );
+    },
+  },
+  {
+    id: "J-ENGAGED-slack",
+    title: "Slack ADDRESSED-ONLY journey: mention → plain follow-up wakes → stand_down marks the row → audited silence (+ name-drop)",
+    requires: ["slack", "engagedSlack"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const slack = ctx.slack!.withChannel(ctx.engagedSlack!.id);
+      const surface = slack.channelId;
+
+      const mentionFrom = new Date().toISOString();
+      const { ts: rootTs } = await slack.post(slack.mention("what's 12*12? reply with just the number"));
+      const first = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(first.threadTs === rootTs, "mention: the reply lands in the thread the mention opened");
+      ctx.gate(first.text.includes("144"), "mention: the reply answers correctly (hard gate: 144)");
+      await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "slack", surface, leg: "mention", expect: "addressed" });
+
+      const followFrom = new Date().toISOString();
+      const { ts: followTs } = await slack.post("and what's that plus 6?", rootTs);
+      const second = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(second.ts !== first.ts, "engaged: the plain follow-up drew a FRESH reply with no re-mention");
+      ctx.gate(second.text.includes("150"), "engaged: the follow-up reply kept the thread's context (hard gate: 150)");
+      await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "slack", surface, leg: "engaged follow-up", expect: "thread-follow" });
+
+      const stopFrom = new Date().toISOString();
+      const { ts: stopTs } = await slack.post(ENGAGED_STOP_ASK, rootTs);
+      await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "slack", anchor: rootTs });
+
+      const silenceFrom = new Date().toISOString();
+      const { ts: afterStopTs } = await slack.post("and what's 5 plus 5?", rootTs);
+      const during = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
+      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "slack", surface, observedSilent: during.length === 0 });
+
+      const controlFrom = new Date().toISOString();
+      const { ts: controlTs } = await slack.post("has anyone seen the release checklist?");
+      const controlReplies = await slack.collectRepliesDuring(controlTs, controlTs, SILENCE_WINDOW);
+      ctx.gate(controlReplies.length === 0, "name-drop NEGATIVE CONTROL: a top-level message naming nobody draws no reply");
+      const dropFrom = new Date().toISOString();
+      const { ts: dropTs } = await slack.post(`has anyone asked ${ENGAGED_NAME} about the release checklist?`);
+      const dropReply = await slack.awaitThreadReply(dropTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(dropReply.threadTs === dropTs, "name-drop: the reply roots on the message that dropped the name");
+      await gateEngagedWake(ctx, { sinceIso: dropFrom, platform: "slack", surface, leg: "name-drop", expect: "name-drop" });
+      ctx.log(`(control window opened ${controlFrom}; name-drop driven at ${dropTs})`);
+    },
+  },
+  {
+    id: "J-ENGAGED-discord",
+    title: "Discord ADDRESSED-ONLY journey: mention → auto-thread → plain follow-up wakes → stand_down marks the row → audited silence",
+    requires: ["discord", "engagedDiscord"],
+    surface: "discord",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const discord = ctx.discordEngaged!;
+
+      const mentionFrom = new Date().toISOString();
+      const driven = await discord.post(discord.mention("summarize this channel's topic in one line"));
+      const threadId = await discord.awaitThread(driven.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(threadId.length > 0, "mention: an auto-thread opened off the driven message (the wake reached the native path)");
+      const first = await discord.awaitReply(threadId, driven.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(first.content.trim().length > 0, "mention: the agent replied in the auto-thread");
+      await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "discord", leg: "mention", expect: "addressed" });
+
+      const followFrom = new Date().toISOString();
+      const followUp = await discord.post("expand that into two or three sentences", threadId);
+      const second = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(second.id !== first.id, "engaged: the plain follow-up drew a FRESH reply with no re-mention");
+      await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "discord", leg: "engaged follow-up", expect: "thread-follow" });
+
+      const stopFrom = new Date().toISOString();
+      const stopMsg = await discord.post(ENGAGED_STOP_ASK, threadId);
+      await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
+      await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "discord", anchor: threadId });
+
+      const silenceFrom = new Date().toISOString();
+      const afterStop = await discord.post("and who else works on it?", threadId);
+      const silent = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
+      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", observedSilent: silent.length === 0 });
+      ctx.log(`(engaged thread ${threadId}; stand-down driven at ${stopMsg.id})`);
+    },
+  },
+  {
+    id: "J-ENGAGED-github",
+    title: "GitHub ADDRESSED-ONLY journey — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    requires: ["github", "engagedGithub"],
+    surface: "github",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const github = ctx.githubEngaged!;
+      const issue = await github.createIssue(
+        `e2e engaged-seam probe ${factToken("eng")}`,
+        "Opened by the OPE-1503 addressed-only journey. Closed on teardown.",
+      );
+      try {
+        const mentionFrom = new Date().toISOString();
+        const askId = await github.comment(issue, github.mention("what's 12*12? reply with just the number"));
+        const first = await github.awaitBotReply(issue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
+        ctx.gate(first.body.trim().length > 0, "mention: the agent replied on the issue");
+        await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "github", leg: "mention", expect: "addressed" });
+
+        const followFrom = new Date().toISOString();
+        const followId = await github.comment(issue, "and what's that plus 6?");
+        const second = await github
+          .awaitBotReply(issue, followId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) })
+          .catch(() => undefined);
+        ctx.gate(
+          second !== undefined && second.id !== first.id,
+          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — TODO(OPE-1501): GitHub has no engaged seam yet (no packages/providers/github file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+        );
+        await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "github", leg: "engaged follow-up", expect: "thread-follow" });
+
+        const stopFrom = new Date().toISOString();
+        const stopId = await github.comment(issue, ENGAGED_STOP_ASK);
+        await github.awaitBotReply(issue, stopId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) }).catch(() => undefined);
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github", ticket: ENGAGED_SEAM_TICKET.github });
+
+        const silenceFrom = new Date().toISOString();
+        await github.comment(issue, "and what's 5 plus 5?");
+        await sleep(SILENCE_WINDOW);
+        const after = await github.comments(issue);
+        const observedSilent = after.filter((c) => github.isBotComment(c) && c.createdAt > silenceFrom).length === 0;
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", observedSilent });
+      } finally {
+        await github.closeIssue(issue).catch(() => undefined);
+      }
+    },
+  },
+  {
+    id: "J-ENGAGED-linear",
+    title: "Linear ADDRESSED-ONLY journey — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    requires: ["linear", "engagedLinear"],
+    surface: "linear",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const linear = ctx.linearEngaged!;
+      const issue = await linear.createIssue(`e2e engaged-seam probe ${factToken("eng")}`);
+      try {
+        const seen = new Set<string>();
+        const mentionFrom = new Date().toISOString();
+        await linear.comment(issue.id, linear.mention("what's 12*12? reply with just the number"));
+        const first = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT });
+        seen.add(first.id);
+        ctx.gate(first.body.trim().length > 0, "mention: the agent replied on the issue");
+        await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "linear", leg: "mention", expect: "addressed" });
+
+        const followFrom = new Date().toISOString();
+        await linear.comment(issue.id, "and what's that plus 6?");
+        const second = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        if (second) seen.add(second.id);
+        ctx.gate(
+          second !== undefined,
+          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — TODO(OPE-1501): Linear has no engaged seam yet (no packages/providers/linear file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+        );
+        await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "linear", leg: "engaged follow-up", expect: "thread-follow" });
+
+        const stopFrom = new Date().toISOString();
+        await linear.comment(issue.id, ENGAGED_STOP_ASK);
+        await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear", ticket: ENGAGED_SEAM_TICKET.linear });
+
+        const silenceFrom = new Date().toISOString();
+        await linear.comment(issue.id, "and what's 5 plus 5?");
+        await sleep(SILENCE_WINDOW);
+        const after = await linear.comments(issue.id);
+        const observedSilent = after.filter((c) => linear.isAppComment(c) && c.createdAt > silenceFrom).length === 0;
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", observedSilent });
+      } finally {
+        await linear.archive(issue.id).catch(() => undefined);
+      }
+    },
+  },
+  {
+    id: "J-ENGAGED-notion",
+    title: "Notion ADDRESSED-ONLY journey (name-drop is the address) — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    requires: ["notionAmbient", "engagedNotion"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const notion = ctx.notionEngaged!;
+      const blockId = await notion.appendParagraphBlock(`e2e engaged-seam probe ${factToken("eng")}`);
+      try {
+        const mentionFrom = new Date().toISOString();
+        const opened = await notion.createBlockDiscussion(blockId, `${ENGAGED_NAME} — what's 12*12? reply with just the number`);
+        const first = await notion.awaitBotReplyOnBlock(blockId, opened.discussionId, mentionFrom, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        ctx.gate(
+          first !== undefined && first.text.trim().length > 0,
+          "name-drop: the agent replied in the block discussion — TODO(OPE-1510): Notion's whole ingress is behind the ambient gate (handleNotionWebhook step 9 returns ambient-disabled BEFORE it classifies the comment), so an addressed-only Notion page cannot be addressed at all. This gate is RED-AS-KNOWN until that gate reads addressing, and OPE-1501's engaged seam sits behind it",
+        );
+        await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "notion", leg: "name-drop", expect: "addressed" });
+
+        const followFrom = new Date().toISOString();
+        await notion.replyToDiscussion(opened.discussionId, "and what's that plus 6?");
+        const second = await notion
+          .awaitBotReplyIn(opened.discussionId, followFrom, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) })
+          .catch(() => undefined);
+        ctx.gate(
+          second !== undefined && second.id !== first?.id,
+          "engaged: a plain comment in the engaged discussion woke the agent without re-naming it — TODO(OPE-1501): Notion has no engaged seam yet (no packages/providers/notion file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+        );
+        await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up", expect: "thread-follow" });
+
+        const stopFrom = new Date().toISOString();
+        await notion.replyToDiscussion(opened.discussionId, ENGAGED_STOP_ASK);
+        await notion
+          .awaitBotReplyIn(opened.discussionId, stopFrom, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) })
+          .catch(() => undefined);
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "notion", ticket: ENGAGED_SEAM_TICKET.notion });
+
+        const silenceFrom = new Date().toISOString();
+        await notion.replyToDiscussion(opened.discussionId, "and what's 5 plus 5?");
+        await sleep(SILENCE_WINDOW);
+        const after = await notion.blockComments(blockId);
+        const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime > silenceFrom).length === 0;
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", observedSilent });
+      } finally {
+        await notion.archiveBlock(blockId).catch(() => undefined);
+      }
     },
   },
 ];

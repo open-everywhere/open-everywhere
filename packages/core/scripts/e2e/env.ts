@@ -75,6 +75,12 @@ export const ENV = {
   githubSoakRepo: "E2E_GITHUB_SOAK_REPO",
   soakDomain: "E2E_SOAK_DOMAIN",
 
+  engagedSlackChannel: "E2E_ENGAGED_SLACK_CHANNEL",
+  engagedDiscordChannel: "E2E_ENGAGED_DISCORD_CHANNEL",
+  engagedGithubRepo: "E2E_ENGAGED_GITHUB_REPO",
+  engagedLinearTeamId: "E2E_ENGAGED_LINEAR_TEAM_ID",
+  engagedNotionPageId: "E2E_ADDRESSED_NOTION_PAGE_ID",
+
   expectUnified: "E2E_EXPECT_UNIFIED",
   unixArmed: "E2E_UNIX_ARMED",
   spendCapFixture: "E2E_SPEND_CAP_FIXTURE",
@@ -109,7 +115,12 @@ export type Capability =
   | "connectorWrite"
   | "soakSlack"
   | "soakNotion"
-  | "soakLinear";
+  | "soakLinear"
+  | "engagedSlack"
+  | "engagedDiscord"
+  | "engagedGithub"
+  | "engagedLinear"
+  | "engagedNotion";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -435,6 +446,36 @@ export function resolveSoakGithub(env: Env = process.env): Resolved<GithubDriver
   return { ok: true, cfg: { ...base.cfg, repo: values[0] } };
 }
 
+export interface EngagedRoomConfig {
+  readonly id: string;
+}
+
+function engagedRoom(env: Env, name: string): Resolved<EngagedRoomConfig> {
+  const { values, missing } = need(env, [name]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { id: values[0] } };
+}
+
+export function resolveEngagedSlack(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  return engagedRoom(env, ENV.engagedSlackChannel);
+}
+
+export function resolveEngagedDiscord(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  return engagedRoom(env, ENV.engagedDiscordChannel);
+}
+
+export function resolveEngagedGithub(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  return engagedRoom(env, ENV.engagedGithubRepo);
+}
+
+export function resolveEngagedLinear(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  return engagedRoom(env, ENV.engagedLinearTeamId);
+}
+
+export function resolveEngagedNotion(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  return engagedRoom(env, ENV.engagedNotionPageId);
+}
+
 export function isLocalEvalTarget(targetUrl: string | undefined): boolean {
   if (!targetUrl) return false;
   try {
@@ -478,6 +519,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const soakSlack = resolveSoakSlack(env);
   const soakNotion = resolveSoakNotion(env);
   const soakLinear = resolveSoakLinear(env);
+  const engagedSlack = resolveEngagedSlack(env);
+  const engagedDiscord = resolveEngagedDiscord(env);
+  const engagedGithub = resolveEngagedGithub(env);
+  const engagedLinear = resolveEngagedLinear(env);
+  const engagedNotion = resolveEngagedNotion(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -501,6 +547,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (soakSlack.ok) available.add("soakSlack");
   if (soakNotion.ok) available.add("soakNotion");
   if (soakLinear.ok) available.add("soakLinear");
+  if (engagedSlack.ok) available.add("engagedSlack");
+  if (engagedDiscord.ok) available.add("engagedDiscord");
+  if (engagedGithub.ok) available.add("engagedGithub");
+  if (engagedLinear.ok) available.add("engagedLinear");
+  if (engagedNotion.ok) available.add("engagedNotion");
   return {
     available,
     missing: {
@@ -526,6 +577,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       soakSlack: soakSlack.ok ? [] : soakSlack.missing,
       soakNotion: soakNotion.ok ? [] : soakNotion.missing,
       soakLinear: soakLinear.ok ? [] : soakLinear.missing,
+      engagedSlack: engagedSlack.ok ? [] : engagedSlack.missing,
+      engagedDiscord: engagedDiscord.ok ? [] : engagedDiscord.missing,
+      engagedGithub: engagedGithub.ok ? [] : engagedGithub.missing,
+      engagedLinear: engagedLinear.ok ? [] : engagedLinear.missing,
+      engagedNotion: engagedNotion.ok ? [] : engagedNotion.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

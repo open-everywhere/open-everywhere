@@ -253,11 +253,20 @@ ok(new Set(twoSynthetic.map(rowKey)).size === 2, "two Teams rows that render the
 ok(new Set(ROOM_VARS.map((v) => v.envVar)).size === ROOM_VARS.length, "no env var is listed twice in ROOM_VARS");
 for (const spec of ROOM_VARS) ok(spec.envVar.startsWith("E2E_"), `${spec.envVar} is an e2e fixture var`);
 ok(inventoryVars().length > ROOM_VARS.length, "the provisioning plan's created rooms join the inventory's vars");
-ok(inventoryVars().some((v) => v.envVar === "E2E_ADDRESSED_NOTION_PAGE_ID"), "a planned room's env var is inventoried");
+ok(!ROOM_VARS.some((v) => v.envVar === "E2E_ADDRESSED_DISCORD_CHANNEL"), "the control: the var below is in NO ROOM_VARS row, so only the plan can put it in the inventory");
+ok(inventoryVars().some((v) => v.envVar === "E2E_ADDRESSED_DISCORD_CHANNEL"), "a planned room's env var is inventoried");
+for (const plan of PROVISION_PLAN) {
+  for (const room of plan.rooms) {
+    if (room.readByCode !== undefined) {
+      ok(ROOM_VARS.some((v) => v.envVar === room.envVar), `${plan.domain}/${room.surface} declares readByCode only for a var shipped code reads`);
+    }
+  }
+}
 ok(new Set(inventoryVars().map((v) => v.envVar)).size === inventoryVars().length, "the joined var list holds no duplicate");
 
 ok(roomName("addressed", "discord") === "oe-e2e-addressed-discord", "a created room's name is oe-e2e-<slug>-<surface>");
-ok(planFor("e2e-addressed") !== undefined && planFor("addressed") !== undefined, "a plan resolves by domain name and by slug");
+ok(planFor("e2e-engaged") !== undefined && planFor("addressed") !== undefined, "a plan resolves by domain name and by slug");
+ok(planFor("e2e-addressed") === undefined, "the retired spelling resolves to no plan");
 ok(planFor("nope") === undefined, "an unknown domain has no plan");
 for (const plan of PROVISION_PLAN) {
   ok(new Set(plan.rooms.map((r) => r.surface)).size === plan.rooms.length, `${plan.domain} names each surface once`);
@@ -267,7 +276,7 @@ for (const plan of PROVISION_PLAN) {
     else {
       ok(!room.reuseOf, `${plan.domain}/${room.surface} creates a room and reuses no var`);
       ok(
-        !ROOM_VARS.some((v) => v.envVar === room.envVar),
+        !ROOM_VARS.some((v) => v.envVar === room.envVar) || Boolean(room.readByCode),
         `${plan.domain}/${room.surface} creates into a var of its own, never over an existing fixture's`,
       );
     }
