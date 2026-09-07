@@ -116,8 +116,9 @@ export function slackTrust(
   trustChecked: string | undefined,
   mode: SessionMode,
 ): Trust {
-  if (mode === "dm" || mode === "mpim") return "internal";
+  if (mode === "dm") return "internal";
   if (isExternal === "true") return "external";
+  if (mode === "mpim") return "internal";
   if (trustChecked !== "true") return "external";
   return "internal";
 }

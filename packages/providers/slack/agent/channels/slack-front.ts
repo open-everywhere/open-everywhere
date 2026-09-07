@@ -317,7 +317,9 @@ export interface FrontOptions {
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
-  readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string; appCanRead?: boolean }>;
+  readonly channelFactsFor?: (
+    channelId: string,
+  ) => Promise<{ internal: boolean; channelType?: string; appCanRead?: boolean; extShared?: boolean; trustChecked?: boolean }>;
   readonly openDirectMessageChannel?: (userId: string) => Promise<string | undefined>;
   readonly authorFactsFor?: (
     channelInternal: boolean,
@@ -570,7 +572,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       const atIso = new Date(now()).toISOString();
       const isGroup = dmKind === "mpim";
       const partnerTrust = !isGroup && ev.userId ? await dmPartnerTrustFor(ev.userId, ev.teamId) : undefined;
-      const surfaceInternal = isGroup ? (await channelFactsFor(ev.channelId)).internal : partnerTrust === "internal";
+      const roomFacts = isGroup ? await channelFactsFor(ev.channelId) : undefined;
+      const surfaceInternal = isGroup ? roomFacts?.internal === true : partnerTrust === "internal";
+      const authorRefuted = isGroup ? (await authorFactsFor(surfaceInternal, ev.userId, ev.teamId)).refuted : partnerTrust === "external";
       const wakeTrust = resolveWakeTrust({
         authorIsBot: Boolean(ev.botId) && !driverAdmitted,
         authorId: ev.userId,
@@ -578,7 +582,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         channelKey: p.surfaceKey,
       });
       {
-        const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: partnerTrust === "external" }, "scheduleDmWake");
+        const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorRefuted }, "scheduleDmWake");
         if (verdict !== "proceed") {
           console.log(`[open-everywhere:slack-front] dm ${p.surfaceKey}: suppressed — externalPolicy verdict "${verdict}"`);
           return;
@@ -599,13 +603,16 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           channelType: dmKind,
           isPrivate: true,
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
+          ...(roomFacts?.extShared === undefined ? {} : { isExternal: roomFacts.extShared }),
+          ...(roomFacts?.trustChecked === undefined ? {} : { trustChecked: roomFacts.trustChecked }),
         }),
-        [{ trust: wakeTrust, refuted: partnerTrust === "external" }],
+        [{ trust: wakeTrust, refuted: authorRefuted }],
         { dm: true },
       );
       const message = renderWakeMessage(ev, () => atIso, {
         dm: true,
         trust: wakeTrust,
+        triggerRefuted: authorRefuted || undefined,
         wakeId,
         ...(seat.freshGeneration && seat.tail.length > 0 ? { backscroll: seat.tail } : {}),
       });

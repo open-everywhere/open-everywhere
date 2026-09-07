@@ -411,7 +411,7 @@ function slackTsToIso(ts: string): string {
 
 function triggerMessage(
   ev: ParsedMessageEvent,
-  opts: { trust: WakeTrust; isEdit: boolean; authorName?: string; authorHandle?: string; mention?: boolean },
+  opts: { trust: WakeTrust; isEdit: boolean; authorName?: string; authorHandle?: string; mention?: boolean; refuted?: boolean },
 ): WakeMessageInput {
   const rawId = ev.userId ?? undefined;
   return {
@@ -422,6 +422,7 @@ function triggerMessage(
     id: ev.ts,
     sentAt: slackTsToIso(ev.ts),
     trust: opts.trust,
+    refuted: opts.refuted || undefined,
     trigger: true,
     mention: opts.mention || undefined,
     edited: opts.isEdit || undefined,
@@ -511,6 +512,7 @@ export interface SlackWakeOpts {
   readonly wakeId?: string;
   readonly directMention?: boolean;
   readonly dm?: boolean;
+  readonly triggerRefuted?: boolean;
 }
 
 function slackJudgedWake(
@@ -544,6 +546,7 @@ function slackJudgedWake(
         authorName: opts.triggerAuthorName,
         authorHandle: opts.triggerAuthorHandle,
         mention: directMention ? true : undefined,
+        refuted: opts.triggerRefuted,
       }),
     ),
   };
@@ -1124,11 +1127,18 @@ export function _resetBotDisplayName(): void {
   botDisplayNamePromise = undefined;
 }
 
-const channelTrustCache = new Map<string, { internal: boolean; meta?: ChannelJoinMeta; canRead: boolean; at: number }>();
+const channelTrustCache = new Map<
+  string,
+  { internal: boolean; meta?: ChannelJoinMeta; canRead: boolean; extShared?: boolean; trustChecked?: boolean; at: number }
+>();
 
-async function channelInternalAndMeta(channelId: string): Promise<{ internal: boolean; meta?: ChannelJoinMeta; canRead: boolean }> {
+async function channelInternalAndMeta(
+  channelId: string,
+): Promise<{ internal: boolean; meta?: ChannelJoinMeta; canRead: boolean; extShared?: boolean; trustChecked?: boolean }> {
   const hit = channelTrustCache.get(channelId);
-  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return { internal: hit.internal, meta: hit.meta, canRead: hit.canRead };
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) {
+    return { internal: hit.internal, meta: hit.meta, canRead: hit.canRead, extShared: hit.extShared, trustChecked: hit.trustChecked };
+  }
   try {
     const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}&include_num_members=true`);
     if (!info) return { internal: false, canRead: false };
@@ -1136,8 +1146,9 @@ async function channelInternalAndMeta(channelId: string): Promise<{ internal: bo
     const internal = facts.trustChecked === true && facts.isExternal === false;
     const canRead = appCanReadConversation(facts);
     const meta = channelJoinMetaFromInfo(channelId, info);
-    channelTrustCache.set(channelId, { internal, meta, canRead, at: Date.now() });
-    return { internal, meta, canRead };
+    const entry = { internal, meta, canRead, extShared: facts.isExternal, trustChecked: facts.trustChecked };
+    channelTrustCache.set(channelId, { ...entry, at: Date.now() });
+    return entry;
   } catch {
     return { internal: false, canRead: false };
   }
@@ -1407,9 +1418,23 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   return singleWindowMentionPolicy(true, true, privacyOk);
 }
 
-export async function slackChannelFactsFor(channelId: string): Promise<{ internal: boolean; channelType?: string; appCanRead: boolean }> {
-  const { internal, meta, canRead } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined, canRead: false }));
-  return { internal, ...(meta?.channelType ? { channelType: meta.channelType } : {}), appCanRead: canRead };
+export async function slackChannelFactsFor(
+  channelId: string,
+): Promise<{ internal: boolean; channelType?: string; appCanRead: boolean; extShared?: boolean; trustChecked?: boolean }> {
+  const { internal, meta, canRead, extShared, trustChecked } = await channelInternalAndMeta(channelId).catch(() => ({
+    internal: false,
+    meta: undefined,
+    canRead: false,
+    extShared: undefined as boolean | undefined,
+    trustChecked: undefined as boolean | undefined,
+  }));
+  return {
+    internal,
+    ...(meta?.channelType ? { channelType: meta.channelType } : {}),
+    appCanRead: canRead,
+    ...(extShared === undefined ? {} : { extShared }),
+    ...(trustChecked === undefined ? {} : { trustChecked }),
+  };
 }
 
 export function slackDomainUsesUnifiedWindow(surfaceKey: string): boolean {

@@ -5,7 +5,12 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe, recordWakeFailure } from "../agent/channels/slack-front.js";
-import { DM_BOT_AUTHOR_DROP_REASON, DM_DRIVER_ADMIT_REASON } from "../agent/channels/slack-events.js";
+import {
+  DM_BOT_AUTHOR_DROP_REASON,
+  DM_DRIVER_ADMIT_REASON,
+  slackWakeAuthorFacts,
+  type SlackMemberProbe,
+} from "../agent/channels/slack-events.js";
 import {
   getOperationalStore,
   overrideSettingsForTest,
@@ -103,7 +108,7 @@ async function runFront(
     partnerTrust?: "internal" | "external";
     dedupe?: EventDedupe;
     fifo?: SpyFifo;
-    channelFacts?: { internal: boolean; channelType?: string } | null;
+    channelFacts?: { internal: boolean; channelType?: string; extShared?: boolean; trustChecked?: boolean } | null;
     authorRefuted?: boolean;
     sendThrowsFirst?: Error;
     sendThrowsAlways?: Error;
@@ -151,12 +156,14 @@ async function runFront(
         factsLookups.push(channelId);
         if (opts.channelFacts === null) return { internal: false };
         if (opts.channelFacts) return opts.channelFacts;
-        return channelId === MPIM_CHANNEL ? { internal: true, channelType: "mpim" } : { internal: true, channelType: "channel" };
+        return channelId === MPIM_CHANNEL
+          ? { internal: true, channelType: "mpim", extShared: false, trustChecked: true }
+          : { internal: true, channelType: "channel", extShared: false, trustChecked: true };
       },
-      authorFactsFor: async (internal: boolean) => {
+      authorFactsFor: async (internal: boolean, userId?: string, teamId?: string) => {
         authorFactLookups++;
-        const refuted = opts.authorRefuted === true;
-        return { surfaceInternal: internal && !refuted, refuted };
+        const probe: SlackMemberProbe = async () => (opts.authorRefuted === undefined ? undefined : !opts.authorRefuted);
+        return slackWakeAuthorFacts(internal, userId, teamId, probe);
       },
       resolveDmSeat: async (_org, dm, _at) => {
         if (opts.seatThrows) throw new Error("registry down");
@@ -240,7 +247,7 @@ async function runFront(
   ok(!d.message.includes('reason="mention"'), "…not `mention`: telling a 1:1 DM it was @mentioned is a small lie that costs orientation");
   ok(d.message.includes('trust="principal"'), "the vouched DM partner renders `principal` — a DM is addressed by the shape of the room");
   ok(
-    !d.message.includes("<untrusted_external_data source=\"slack-message\">"),
+    !d.message.includes("<untrusted_external_data"),
     "🔴 a VOUCHED DM partner's body is NOT fenced (OPE-577 — the fence keys on the author, and a DM partner the gate confirmed is a member)",
   );
   ok(d.message.includes("what&apos;s the refund status?"), "…with the human's text XML-escaped by the renderer, as on every surface");
@@ -523,7 +530,7 @@ async function runFront(
   ok(!d.message.includes("everything said here is addressed to you"), "🔴 the 1:1's false-in-a-group claim is nowhere in a group-DM render — the render makes no addressing claim in prose at all");
   ok(d.message.includes('type="mpim"'), "🔴 the room shape reaches the model on the channel type — a group DM is `mpim`, a 1:1 is `im`");
   ok(d.message.includes('trust="principal"'), "the author renders vouched off the SURFACE's confirmed-internal verdict (tag-keyed to `principal` because a DM is addressed), which is what stands in for the partner check a group DM cannot make");
-  ok(!d.message.includes("<untrusted_external_data source=\"slack-message\">"), "…and that `peer` verdict carries the body OUTSIDE the fence, like every other surface's member-authored message (OPE-577)");
+  ok(!d.message.includes("<untrusted_external_data"), "…and that member-grade verdict carries the body OUTSIDE the fence, like every other surface's member-authored message (OPE-577)");
 
   eq(d.target.origin.replyAnchorTs, undefined, "🔴 no replyAnchorTs — one seat, one room, one reply placement; splitting it on whether the human typed `<@bot>` would put two geometries in one conversation");
   eq(d.target.origin.threadTs, undefined, "…so a top-level group-DM answer posts flat");
@@ -535,6 +542,68 @@ async function runFront(
     r.dispatched[0]!.message.includes('trust="unauth"'),
     "🔴 an unconfirmable mpim (a workspace without `mpim:read`) renders `unauth`, not `peer` — fail-closed DOWN, and the wake still FIRES rather than being dropped, so the room degrades instead of going deaf",
   );
+}
+
+{
+  const guest = await runFront(mpimEnvelope("Ev11c-guest"), { authorRefuted: true });
+  const guestAttrs = guest.dispatched[0]!.auth.attributes ?? {};
+  eq(guest.dispatched.length, 1, "a refuted author's group DM still WAKES — the mark is carriage, never a suppression");
+  eq(
+    guestAttrs["oe_chat_nonmember"],
+    "true",
+    "🔴 OPE-1486: a GUEST who WRITES in a group DM stamps `oe_chat_nonmember` — the same per-user membership probe a channel's author leg uses, so the member plane refuses a personal credential on this turn",
+  );
+  ok(guest.authorFactLookups > 0, "…and the probe actually ran on the mpim leg (a stamp with no lookup would be a fabricated verdict)");
+
+  const member = await runFront(mpimEnvelope("Ev11c-member"), { authorRefuted: false });
+  eq(
+    (member.dispatched[0]!.auth.attributes ?? {})["oe_chat_nonmember"],
+    undefined,
+    "🔴 NEGATIVE CONTROL: a MEMBER's message in the SAME group DM leaves `oe_chat_nonmember` ABSENT — the mark is the author's, not the room's, so it cannot be an always-on bit",
+  );
+
+  const unresolvable = await runFront(mpimEnvelope("Ev11c-unknown"));
+  eq(
+    (unresolvable.dispatched[0]!.auth.attributes ?? {})["oe_chat_nonmember"],
+    undefined,
+    "🔴 NEGATIVE CONTROL: an UNRESOLVABLE probe leaves the attribute absent — the leg fails OPEN like the channel's, because failing closed here would mark every group-DM wake in a workspace without `users:read`",
+  );
+
+  ok(
+    guest.dispatched[0]!.message.includes('trust="principal"'),
+    "🔴 …the WAKE TIER is UNCHANGED by the refutation — the room's confirmed-internal verdict still decides it, so an invited guest in an addressed room is still answered",
+  );
+  ok(
+    guest.dispatched[0]!.message.includes('<untrusted_external_data'),
+    "🔴 OPE-1486: …while a REFUTED author's body is rendered INSIDE the untrusted fence even at that member-grade tier — the one-way fence backstop (`WakeMessageInput.refuted`). Without it a guest's text would reach the model unfenced in a group DM, which is the one room where the tier and the refutation come apart.",
+  );
+  ok(
+    !member.dispatched[0]!.message.includes('<untrusted_external_data'),
+    "🔴 NEGATIVE CONTROL: a MEMBER's body in the same room is NOT fenced — the backstop keys on the refutation, so it cannot be an always-on fence",
+  );
+  ok(
+    !unresolvable.dispatched[0]!.message.includes('<untrusted_external_data'),
+    "🔴 NEGATIVE CONTROL: an UNRESOLVABLE probe does not fence either — the backstop fails OPEN with the rest of the leg",
+  );
+}
+
+{
+  const ordinary = await runFront(mpimEnvelope("Ev11d-int"));
+  const oa = ordinary.dispatched[0]!.auth.attributes ?? {};
+  eq(oa["is_ext_shared"], "false", "🔴 OPE-1486: an ordinary group DM stamps the platform's own sharing verdict onto its auth — the attribute `bindSlack` reads through `slackTrust`");
+  eq(oa["trust_checked"], "true", "…with the checked stamp beside it, exactly as a channel wake stamps the pair");
+
+  const connect = await runFront(mpimEnvelope("Ev11d-ext"), { channelFacts: { internal: false, channelType: "mpim", extShared: true, trustChecked: true } });
+  eq(
+    (connect.dispatched[0]!.auth.attributes ?? {})["is_ext_shared"],
+    "true",
+    "🔴 OPE-1486: a SLACK CONNECT group DM stamps `is_ext_shared=true`, which is what demotes `binding.trust` to `external` and takes the room out of the member plane under a workspace-wide `internal` declaration",
+  );
+
+  const degraded = await runFront(mpimEnvelope("Ev11d-noscope"), { channelFacts: null });
+  const da = degraded.dispatched[0]!.auth.attributes ?? {};
+  eq(da["is_ext_shared"], undefined, "🔴 NEGATIVE CONTROL: a workspace without `mpim:read` stamps NO sharing attribute — the probe answered nothing, and absence never demotes");
+  eq(da["trust_checked"], undefined, "…and no checked stamp either, so `slackTrust` reads the same unchecked mpim it read before");
 }
 
 {
@@ -633,6 +702,9 @@ async function runFront(
 
     const grouped = await runFront(mentionEnvelope("Ev15d", MPIM_CHANNEL), { authorRefuted: true });
     ok(!grouped.innerCalled, "OPE-525 negative control: a group-DM mention is still owned by the mpim divert, not by the forward gate");
+    eq(grouped.dispatched.length, 0, "🔴 OPE-1486: on `withhold` a REFUTED author's GROUP-DM mention is suppressed by the mpim divert's own author gate — the group DM was the last room this grain could not reach");
+    const groupedMember = await runFront(mentionEnvelope("Ev15e", MPIM_CHANNEL), { authorRefuted: false });
+    eq(groupedMember.dispatched.length, 1, "🔴 NEGATIVE CONTROL: an UNREFUTED author's group-DM mention still diverts on `withhold` — the gate reads the author, not the room shape");
   } finally {
     overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
   }

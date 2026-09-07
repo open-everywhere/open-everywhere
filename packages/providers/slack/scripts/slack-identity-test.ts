@@ -4,6 +4,8 @@ import {
   registerIdentityMapper,
   resolvePartition,
   bridgedContext,
+  registerSurfaces,
+  defineSurface,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
@@ -129,7 +131,10 @@ ok(slackTrust("false", "true", "channel") === "internal", "slackTrust: checked +
 ok(slackTrust(undefined, undefined, "channel") === "external", "slackTrust: FAIL-CLOSED never checked -> external");
 ok(slackTrust("false", undefined, "channel") === "external", "slackTrust: FAIL-CLOSED check absent even if flag false -> external");
 ok(slackTrust(undefined, undefined, "dm") === "internal", "slackTrust: dm is a personal silo -> internal (gate N/A)");
-ok(slackTrust("true", "true", "mpim") === "internal", "slackTrust: mpim is a personal silo -> internal (gate N/A)");
+ok(slackTrust("true", "true", "mpim") === "external", "slackTrust: 🔴 a SLACK CONNECT group DM (is_ext_shared=true) -> external — the platform's positive signal demotes an mpim like a channel");
+ok(slackTrust("true", undefined, "mpim") === "external", "slackTrust: …and it demotes on the sharing flag alone, without a trust_checked stamp");
+ok(slackTrust("false", "true", "mpim") === "internal", "slackTrust: NEGATIVE CONTROL — an ordinary checked group DM stays internal");
+ok(slackTrust(undefined, undefined, "mpim") === "internal", "slackTrust: 🔴 an UNCHECKED group DM stays internal — an mpim is demoted by evidence, never by its absence (a workspace without `mpim:read` resolves neither fact)");
 
 ok(channelFactsFromInfo({ channel: { is_channel: true, is_ext_shared: true } }).isExternal === true, "factsFromInfo: is_ext_shared -> isExternal true");
 ok(channelFactsFromInfo({ channel: { is_channel: true, is_org_shared: true } }).isExternal === true, "factsFromInfo: is_org_shared -> isExternal true");
@@ -218,6 +223,38 @@ ok(uniBind.platform === "slack" && uniBind.workspace === "T9" && uniBind.surface
   ok(slackDm.attributes.channel_id === "D0001", "buildSlackAuth(im) still captures the raw DM channel id (identity/memory unchanged)");
   ok(!("oe_grain" in slackChan.attributes), "buildSlackAuth(channel) does NOT stamp a grain (native/full preserved)");
   ok(slackMpim.attributes["oe_grain"] === "standing", "buildSlackAuth(mpim/group-DM) stamps oe_grain=standing (widened: group DMs narrow too)");
+}
+
+{
+  registerSurfaces([defineSurface({ key: "slack/TVOUCH", trust: "internal" })]);
+  const mpimBind = bindFrom(slackCtx({ team_id: "TVOUCH", channel_id: "G_GROUP", channel_type: "mpim", is_ext_shared: "false", trust_checked: "true", user_id: "U7" }));
+  const chanBind = bindFrom(slackCtx({ team_id: "TVOUCH", channel_id: "C_ROOM", channel_type: "channel", is_ext_shared: "false", trust_checked: "true", user_id: "U7" }));
+  ok(mpimBind.mode === "mpim", "G4b precondition: the group-DM context really does bind mode `mpim` (so the rows below are not a channel in disguise)");
+  ok(
+    mpimBind.declaredTrust === "internal" && mpimBind.trust === "internal",
+    "🔴 G4b: a GROUP DM under a WORKSPACE-level `internal` declaration reaches the mint site with BOTH conjuncts satisfied — a declaration counts at any rung the operator wrote it on, and an mpim has no key of its own to declare",
+  );
+  ok(
+    chanBind.declaredTrust === mpimBind.declaredTrust && chanBind.trust === mpimBind.trust,
+    "G4b: …and a CHANNEL in the same workspace resolves the SAME pair — the point of the ruling is that a group DM and a channel are one rule here",
+  );
+
+  const connectBind = bindFrom(slackCtx({ team_id: "TVOUCH", channel_id: "G_CONNECT", channel_type: "mpim", is_ext_shared: "true", trust_checked: "true", user_id: "U7" }));
+  ok(
+    connectBind.declaredTrust === "internal",
+    "…the Slack Connect group DM is covered by the SAME declaration (so the demotion below must come from the platform leg, not from a missing vouch)",
+  );
+  ok(
+    connectBind.trust === "external",
+    "🔴 G4b: a SLACK CONNECT group DM (is_ext_shared=true) binds `trust: external`, so the second conjunct FAILS and the room is not vouched — a coarse workspace declaration can never re-promote a room the platform positively reported as spanning another organisation. Before OPE-1486 `slackTrust` graded every mpim `internal` and this demotion was unreachable.",
+  );
+
+  const undeclared = bindFrom(slackCtx({ team_id: "TOTHER", channel_id: "G_GROUP", channel_type: "mpim", is_ext_shared: "false", trust_checked: "true", user_id: "U7" }));
+  ok(
+    undeclared.declaredTrust === undefined && undeclared.trust === "internal",
+    "G4b NEGATIVE CONTROL: an UNDECLARED group DM binds `internal` on the JOIN while carrying no declaration at all — the pair a gate reading `trust` alone would admit, and the reason G4b reads the first conjunct too",
+  );
+  registerSurfaces([]);
 }
 
 console.log(`✓ slack-identity: ${passed} assertions passed`);
