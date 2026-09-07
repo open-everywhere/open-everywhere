@@ -1,6 +1,9 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { resolvePartition } from "../memory/partition.js";
+import { isThreadStopped } from "../channels/engagement.js";
+import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, replyEditLocus, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
 import {
@@ -29,6 +32,10 @@ import {
   WAKE_DONE_REFUSAL_REASON,
   WAKE_DONE_FORCED_AUDIT_REASON,
   wakeDeclinedRefusalMessage,
+  REPLY_STOPPED_REFUSAL_REASON,
+  markStoppedAckThisTurn,
+  wasStoppedAckSpentThisTurn,
+  stoppedRefusalMessage,
 } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
@@ -43,6 +50,23 @@ import { preRegisterDynamicVariants } from "../access/window-gated.js";
 
 function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
+}
+
+interface StandDownState {
+  readonly stopped: boolean;
+  readonly refuse: boolean;
+}
+
+const STAND_DOWN_CLEAR: StandDownState = { stopped: false, refuse: false };
+
+async function standDownState(bind: BindableContext, turnId: string | undefined): Promise<StandDownState> {
+  try {
+    const binding = bindFrom(bind);
+    const stopped = await isThreadStopped(resolvePartition(bind), binding.engagementKey ?? binding.threadTs);
+    return { stopped, refuse: stopped && wasStoppedAckSpentThisTurn(turnId) };
+  } catch {
+    return STAND_DOWN_CLEAR;
+  }
 }
 
 export const unifiedReplyEntry = defineTool({
@@ -84,6 +108,7 @@ export const unifiedReplyEntry = defineTool({
       const turnId = currentTurnId(bind);
 
       if (isWakeDeclinedThisTurn(turnId, input.wake)) {
+        noteTurnCloseoutRefusal(bind, WAKE_DECLINED_REFUSAL_REASON);
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DECLINED_REFUSAL_REASON);
         throw new Error(wakeDeclinedRefusalMessage());
       }
@@ -101,6 +126,13 @@ export const unifiedReplyEntry = defineTool({
         throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));
       }
       const origin = resolution.origin;
+
+      const standDown = input.wake === turnWake ? await standDownState(bind, turnId) : STAND_DOWN_CLEAR;
+      if (standDown.refuse) {
+        noteTurnCloseoutRefusal(bind, REPLY_STOPPED_REFUSAL_REASON);
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STOPPED_REFUSAL_REASON);
+        throw new Error(stoppedRefusalMessage());
+      }
 
       if (isWakeDoneThisTurn(turnId, input.wake)) {
         if (terminalPostClosesConversation(origin)) {
@@ -154,6 +186,7 @@ export const unifiedReplyEntry = defineTool({
         { terminal: input.done !== false },
       );
       markRepliedThisTurn(turnId);
+      if (standDown.stopped) markStoppedAckThisTurn(turnId);
       markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);
 
@@ -205,6 +238,12 @@ export const baseReplyEntry = defineTool({
           }
           const bindBase = ctx as BindableContext;
           const baseTurnId = currentTurnId(bindBase);
+          const standDownBase = await standDownState(bindBase, baseTurnId);
+          if (standDownBase.refuse) {
+            noteTurnCloseoutRefusal(bindBase, REPLY_STOPPED_REFUSAL_REASON);
+            await auditReplyRefused(replyAuditFor(bindBase, "tool"), REPLY_STOPPED_REFUSAL_REASON);
+            throw new Error(stoppedRefusalMessage());
+          }
           const foldWindow = tailWindow();
           if (foldWindow) {
             await refuseIfShouldFold({
@@ -218,6 +257,7 @@ export const baseReplyEntry = defineTool({
           }
           const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
           markRepliedThisTurn(baseTurnId);
+          if (standDownBase.stopped) markStoppedAckThisTurn(baseTurnId);
           noteTerminalCallGrain(bindBase);
           return { posted: true, id };
         },

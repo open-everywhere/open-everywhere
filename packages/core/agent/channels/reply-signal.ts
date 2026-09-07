@@ -149,6 +149,41 @@ export function declinedWakesThisTurn(turnId: string | undefined): readonly stri
   }
 }
 
+interface StoppedAckSpent {
+  readonly turnId: string;
+  readonly spent: true;
+}
+
+const stoppedAckSlot = defineState<StoppedAckSpent | null>("open-everywhere.reply-stopped-ack", () => null);
+
+export const REPLY_STOPPED_REFUSAL_REASON = "stopped";
+
+export function markStoppedAckThisTurn(turnId: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  try {
+    stoppedAckSlot.update(() => ({ turnId, spent: true }));
+  } catch {
+  }
+}
+
+export function wasStoppedAckSpentThisTurn(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const cur = stoppedAckSlot.get();
+    return cur !== null && cur.turnId === turnId;
+  } catch {
+    return false;
+  }
+}
+
+export function stoppedRefusalMessage(): string {
+  return (
+    "You were asked to stand down in this conversation and that stop is recorded, so nothing was posted. " +
+    "Your acknowledgement has already gone out; anything further here is exactly what the person asked you to stop doing. " +
+    `${END_TURN_WITH_SENTINEL_INSTRUCTION} Someone @mentioning you is what brings you back.`
+  );
+}
+
 interface RepliedWakes {
   readonly turnId: string;
   readonly wakes: readonly string[];

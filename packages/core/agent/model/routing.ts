@@ -4,7 +4,7 @@ import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
-import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, backstopReply } from "./step-boundary.js";
+import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -268,11 +268,11 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   const boundary = noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);
-  if (boundary.tier === "hard") {
+  if (boundary.tier === "hard" || boundary.tier === "closed") {
     reportStepBoundary(ctx, boundary);
     noteUncalledModelStep(captureSite);
     stampModelCall(defaults.primary.id);
-    return turnBackstopModel(deps.backend.model(defaults.primary.id), backstopReply(boundary));
+    return turnBackstopModel(deps.backend.model(defaults.primary.id), boundaryStopReply(boundary));
   }
   const routed = await resolveRoutedPrimaryModel(ctx, defaults, capturingDeps);
   if (boundary.tier !== "soft") return routed;

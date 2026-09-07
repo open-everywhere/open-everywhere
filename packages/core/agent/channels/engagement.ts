@@ -54,6 +54,11 @@ export async function markThreadStopped(p: Partition, threadTs: string): Promise
   }
 }
 
+export async function isThreadStopped(p: Partition, anchor: string | undefined): Promise<boolean> {
+  if (anchor === undefined || anchor.length === 0) return false;
+  return (await getThreadEngagement(p, anchor))?.stopped === true;
+}
+
 export async function isThreadEngaged(p: Partition, threadTs: string): Promise<boolean> {
   try {
     return (await getOperationalStore().getEngagement(p.org, p.surfaceKey, threadTs)) !== null;

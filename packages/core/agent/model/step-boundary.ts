@@ -2,9 +2,10 @@ import { currentTurnId, currentSessionId, type BindableContext } from "../identi
 import { resolvePartition } from "../memory/partition.js";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
+import { claimTurnCloseoutReport } from "./turn-closeout.js";
 import type { RoutableModel, RoutedCallOptions } from "./routing.js";
 
-export type StepBoundaryTier = "none" | "soft" | "hard";
+export type StepBoundaryTier = "none" | "soft" | "hard" | "closed";
 
 export interface StepBoundaryDecision {
   readonly tier: StepBoundaryTier;
@@ -14,6 +15,7 @@ export interface StepBoundaryDecision {
   readonly turnId?: string;
   readonly sessionId?: string;
   readonly crossed: boolean;
+  readonly closeoutReason?: string;
 }
 
 const INERT: StepBoundaryDecision = { tier: "none", count: 0, budget: 0, backstop: 0, crossed: false };
@@ -70,7 +72,6 @@ export function noteTurnStep(ctx: BindableContext, event?: unknown, settings = g
   } catch {
     return INERT;
   }
-  if (budget <= 0) return INERT;
   let turnId: string | undefined;
   let sessionId: string | undefined;
   try {
@@ -80,7 +81,12 @@ export function noteTurnStep(ctx: BindableContext, event?: unknown, settings = g
     return INERT;
   }
   if (turnId === undefined) return INERT;
-  const count = bump(stepCountKey(sessionId, turnId));
+  const count = budget > 0 ? bump(stepCountKey(sessionId, turnId)) : 0;
+  const closeout = claimTurnCloseoutReport(sessionId, turnId);
+  if (closeout !== undefined) {
+    return { tier: "closed", count, budget, backstop, turnId, sessionId, crossed: closeout.first, closeoutReason: closeout.reason };
+  }
+  if (budget <= 0) return INERT;
   const tier = classifyStepCount(count, budget, backstop);
   const previous = classifyStepCount(count - 1, budget, backstop);
   return { tier, count, budget, backstop, turnId, sessionId, crossed: tier !== previous };
@@ -108,6 +114,19 @@ export function backstopReply(d: StepBoundaryDecision): string {
     `Whatever was completed before this point stands; anything in flight did not finish. Ask me to ` +
     `continue and I will resume from where the work actually got to.`
   );
+}
+
+function closedTurnReply(d: StepBoundaryDecision): string {
+  return (
+    `${STEP_BOUNDARY_MARKER}: this turn had already closed its reply obligation, and the host then ` +
+    `refused a further attempt to speak (${d.closeoutReason ?? "closed"}). The turn is now ended by the ` +
+    `harness after ${d.count} model round-trips. Everything this turn posted stands, and any background ` +
+    `work it started continues and reports on its own. The next message here wakes you.`
+  );
+}
+
+export function boundaryStopReply(d: StepBoundaryDecision): string {
+  return d.tier === "closed" ? closedTurnReply(d) : backstopReply(d);
 }
 
 export function appendHarnessNotice(prompt: unknown, text: string): unknown {
@@ -178,13 +197,19 @@ export function turnBackstopModel<TModel extends RoutableModel>(inner: TModel, t
 
 export const STEP_BOUNDARY_ACTION = "turn.step_boundary";
 
+function crossingNote(tier: StepBoundaryTier): string {
+  if (tier === "soft") return "the wrap-up instruction now rides every call this turn";
+  if (tier === "closed") return "the turn had closed its wake and was refused again, so it was ended here";
+  return "the turn was stopped by the text-only backstop";
+}
+
 export function reportStepBoundary(ctx: BindableContext, d: StepBoundaryDecision): void {
   if (!d.crossed || d.tier === "none") return;
   try {
     console.warn(
       `[open-everywhere:step-boundary] ${d.tier} boundary crossed on turn ${d.turnId}: ${d.count} model ` +
-        `round-trips (budget ${d.budget}, backstop ${d.backstop}) — ` +
-        (d.tier === "soft" ? "the wrap-up instruction now rides every call this turn" : "the turn was stopped by the text-only backstop"),
+        `round-trips (budget ${d.budget}, backstop ${d.backstop}` +
+        `${d.closeoutReason !== undefined ? `, reason ${d.closeoutReason}` : ""}) — ${crossingNote(d.tier)}`,
     );
   } catch {
   }
@@ -198,7 +223,15 @@ export function reportStepBoundary(ctx: BindableContext, d: StepBoundaryDecision
   void appendAudit({
     ...where,
     action: STEP_BOUNDARY_ACTION,
-    detail: { tier: d.tier, steps: d.count, budget: d.budget, backstop: d.backstop, turnId: d.turnId, ...(d.sessionId ? { sessionId: d.sessionId } : {}) },
+    detail: {
+      tier: d.tier,
+      steps: d.count,
+      budget: d.budget,
+      backstop: d.backstop,
+      turnId: d.turnId,
+      ...(d.sessionId ? { sessionId: d.sessionId } : {}),
+      ...(d.closeoutReason !== undefined ? { reason: d.closeoutReason } : {}),
+    },
   }).catch(() => {
   });
 }

@@ -92,3 +92,44 @@ test("a turn that stays within budget never writes a turn.step_boundary row", as
   const rows = await readAuditRows({ actions: ["turn.step_boundary"], sinceIso });
   expect(rows.filter((r) => r.surface === channelId)).toEqual([]);
 });
+
+test("a turn that closes its reply obligation and keeps stepping is ended by the closeout boundary, not by the step budget", async () => {
+  await bootAgent();
+
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ turn: { stepBudget: 120, stepBackstopMultiple: 3 } });
+  expect(settings.getSettings().turn.stepBudget).toBe(120);
+
+  const restoreTool = wrapToolExecute("list_routines", async () => ({ routines: [] }));
+  afterThisTest(restoreTool);
+
+  const handle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: "c1" }] },
+        { calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: "c2" }] },
+        { calls: [{ tool: "list_routines", input: {}, id: "c3" }] },
+        { say: "should never be reached — the closeout boundary ends the turn first" },
+      ],
+    }),
+  );
+
+  const channelId = freshUnlistedChannelId();
+  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  await discordMentionWake({ channelId, text: "<@9000000000000000001> quiet please" });
+
+  const closed = await waitFor(async () => {
+    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    return found.find((r) => (r.detail ?? {}).tier === "closed");
+  }, "a closed turn.step_boundary audit row");
+
+  expect(closed.detail?.reason).toBe("no-reply-redundant");
+  expect(closed.detail?.steps).toBe(3);
+  expect(closed.detail?.budget).toBe(120);
+
+  const all = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+  expect(all.map((r) => (r.detail ?? {}).tier).sort()).toEqual(["closed"]);
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(handle.requests.some((r) => r.stepIndex >= 2)).toBe(false);
+});

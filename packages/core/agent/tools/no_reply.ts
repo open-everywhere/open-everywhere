@@ -6,6 +6,7 @@ import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "..
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION, NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
 import { markWakeDeclinedThisTurn } from "../channels/reply-signal.js";
+import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { auditSilencesEnabled } from "../audit/audit.js";
 import { currentTurnId, currentWakeId, type BindableContext } from "../identity/binding.js";
@@ -20,6 +21,8 @@ export const NO_REPLY_REASONS = [
   "awaiting_context",
   "other",
 ] as const;
+
+export const NO_REPLY_REDUNDANT_CLOSEOUT_REASON = "no-reply-redundant";
 
 export const NO_REPLY_NOTE =
   `Turn reply requirement satisfied — silence recorded as this turn's answer. ` +
@@ -71,6 +74,7 @@ export default defineTool({
     noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();
     if (already !== null) {
+      noteTurnCloseoutRefusal(ctx as BindableContext, NO_REPLY_REDUNDANT_CLOSEOUT_REASON);
       if (auditSilencesEnabled()) {
         await auditToolAction(ctx, "reply.no_reply_redundant", {
           reason: input.reason,

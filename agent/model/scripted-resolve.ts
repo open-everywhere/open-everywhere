@@ -3,7 +3,7 @@ import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
-import { backstopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
+import { boundaryStopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
@@ -52,12 +52,12 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   stampModelCall(SCRIPTED_MODEL_ID);
 
   const boundary = noteTurnStep(bindable, event);
-  if (boundary.tier === "hard") {
+  if (boundary.tier === "hard" || boundary.tier === "closed") {
     reportStepBoundary(bindable, boundary);
     return mockModel({
       modelId: SCRIPTED_MODEL_ID,
       provider: "open-everywhere-scripted",
-      respond: () => ({ text: backstopReply(boundary) }),
+      respond: () => ({ text: boundaryStopReply(boundary) }),
     });
   }
   if (boundary.tier === "soft") reportStepBoundary(bindable, boundary);
