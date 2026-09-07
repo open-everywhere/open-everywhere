@@ -16,7 +16,7 @@ import {
 } from "../channels/reply-freshness.js";
 import { refuseIfShouldFold } from "../channels/reply-fold.js";
 import { tailWindow } from "../channels/session-tail-record.js";
-import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
+import { replierLabelFor } from "../channels/turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
@@ -175,7 +175,7 @@ export const unifiedReplyEntry = defineTool({
         force: input.force === true,
       });
 
-      const framed = withRunRefusalBlock(withPendingWorkFrame(input.text, owingTask !== undefined), consumeRoutineRunPermissionRefusals());
+      const framed = withRunRefusalBlock(input.text, consumeRoutineRunPermissionRefusals());
 
       const id = await postUnifiedReply(
         origin,
@@ -206,7 +206,7 @@ export const unifiedReplyEntry = defineTool({
       const pendingNote =
         owingTask !== undefined
           ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns." +
-            " This post was delivered under a host line saying this is still being worked on and what follows is an interim update, not the final result, so do not add that caveat yourself."
+            " Nothing is added to your message on its way out, so your own words are the only thing that tells this conversation where the work stands: say plainly that you are still working on it, and do not present what you have as the final result."
           : "";
       return {
         posted: true,

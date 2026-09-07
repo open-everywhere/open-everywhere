@@ -33,7 +33,8 @@ const { consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.
 const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
   "../agent/access/pending-delegation-signal.js"
 );
-const { PENDING_WORK_FRAME, withPendingWorkFrame, withReplierPrefix } = await import("../agent/channels/turn-delivery.js");
+const turnDelivery = await import("../agent/channels/turn-delivery.js");
+const { withReplierPrefix } = turnDelivery;
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -445,18 +446,20 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       const ack = await callReply(w, "turn_699a", w, HANDOFF, false);
       ok(ack.posted === true, "§10a precondition: the `done:false` hand-off posts");
       ok(
-        typeof ack.note === "string" && ack.note.includes("not the final result"),
-        "🔴 §10a/NOTE: the tool result tells the model the host framed this post, in the frame's own words — an in-band claim about the frame must not be able to drift from the frame",
+        typeof ack.note === "string" && ack.note.includes("has NOT reported yet"),
+        "🔴 §10a/NOTE: the tool result tells the model its worker has not reported, so it knows it does not hold the answer",
+      );
+      ok(
+        typeof ack.note === "string" && ack.note.includes("still working on it") && ack.note.includes("do not present what you have as the final result"),
+        "🔴 §10a/NOTE: …and it instructs the model to SAY SO in its own words — the host adds no line of its own, so an unwritten caveat is an unsaid one",
       );
     });
 
     ok(posted.length === before + 1, "§10a/ROOM: exactly one message reached the room");
     ok(
-      lastPosted().startsWith(PENDING_WORK_FRAME),
-      `🔴 §10a: the posted body OPENS with the host frame while the dispatched worker still owes this wake. A frame after the text arrives after the reader has already believed it (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+      lastPosted() === HANDOFF,
+      `🔴 §10a: the posted body is the model's text BYTE-IDENTICAL, even on the turn whose worker still owes the answer. The host asserts nothing in the room — that is what OPE-1516 removed, and a body longer than the model's text means it came back (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
     );
-    ok(lastPosted().includes(HANDOFF), "🔴 §10a: …and the model's own text is still delivered in full — the frame adds a line, it never replaces or truncates the message");
-    ok(lastPosted() !== HANDOFF, "§10a: …so the room genuinely received something the model did not author");
   }
 
   {
@@ -470,9 +473,12 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(posted.length === before + 1, "§10b/ROOM: one message reached the room");
     ok(
       lastPosted() === TEXT,
-      `🔴 §10b NEGATIVE CONTROL: an ordinary reply is delivered BYTE-IDENTICAL to what the model wrote. The frame is a condition, not a decoration on every post (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+      `🔴 §10b NEGATIVE CONTROL: an ordinary reply is delivered BYTE-IDENTICAL to what the model wrote (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
     );
-    ok(!lastPosted().includes(PENDING_WORK_FRAME), "🔴 §10b: …asserted on the frame's own text and not only on equality, so a reworded frame cannot slip past this leg");
+    ok(
+      typeof plain.note === "string" && !plain.note.includes("has NOT reported yet"),
+      "🔴 §10b: …and the tool result carries NO pending-work instruction on a turn that delegated nothing — the note is a condition, not boilerplate on every reply",
+    );
   }
 
   {
@@ -485,7 +491,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const pending = await callReply(w, "turn_699c", w, HANDOFF, false);
       ok(pending.posted === true, "§10c precondition: the hand-off posts while the worker runs");
-      ok(lastPosted().startsWith(PENDING_WORK_FRAME), "§10c precondition: …and it is framed");
+      ok(typeof pending.note === "string" && pending.note.includes("has NOT reported yet"), "§10c precondition: …and the model was instructed that its worker still owes the answer");
 
       await hook({ data: { result: peekResult("task_699c", "completed") } }, ctxFor(w, "turn_699c"));
 
@@ -495,8 +501,9 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
     ok(
       lastPosted() === REAL,
-      `🔴 §10c THE CONDITION, ISOLATED: once the worker has reported, the SAME wake in the SAME turn posts UNFRAMED. The frame tracks the ledger, not the conversation — a frame that stuck to the wake would still be here (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+      `🔴 §10c THE CONDITION, ISOLATED: once the worker has reported, the SAME wake in the SAME turn posts the model's text verbatim. The INSTRUCTION tracks the ledger, not the conversation, and the body was never the host's to write (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
     );
+    ok(!lastPosted().includes(HANDOFF), "§10c: …and the settled answer replaced the hand-off text rather than accumulating on top of it");
   }
 
   {
@@ -512,11 +519,10 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
     ok(posted.length === before + 1, "§10d/ROOM: the bridge posted the model's prose, as OPE-701 requires");
     ok(
-      lastPosted().startsWith(PENDING_WORK_FRAME),
-      `🔴 §10d: the BRIDGED prose carries the same frame. This is the path the refusal itself opens, so a frame on the tool path alone would leave the defect's own escape route unframed (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+      lastPosted() === FABRICATION,
+      `🔴 §10d: the BRIDGED prose is delivered BYTE-IDENTICAL too. This is the path the refusal itself opens, and the host adds nothing on it either — the two write paths must agree about the host's silence, or one of them starts speaking in the room (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
     );
-    ok(lastPosted().includes("RECURRING.md"), "🔴 §10d: …and the model's text still posts in full. The host frames the answer; it never deletes it");
-    ok((await answeredAt(wB)) === undefined, "§10d: …and OPE-701's hold is intact — framing the prose did not start closing the wake");
+    ok((await answeredAt(wB)) === undefined, "🔴 §10d: …and OPE-701's hold is INTACT — this is the guarantee that survived OPE-1516. The conversation stays open for the worker's real answer, which is the mechanism that outlived the frame");
   }
 
   {
@@ -535,16 +541,11 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
   }
 
   {
-    ok(withPendingWorkFrame("body", false) === "body", "🔴 §10f: unframed is the IDENTITY function — the fail-soft direction costs a frame, never a message");
-    ok(withPendingWorkFrame("body", true) === `${PENDING_WORK_FRAME}\n\nbody`, "🔴 §10f: framed is the constant, a BLANK line, then the body — a single newline joins into one paragraph under markdown");
-    ok(
-      !/[*_`~[\]]/.test(PENDING_WORK_FRAME),
-      "🔴 §10f: the frame carries NO markdown. Slack's emphasis dialect is not GitHub's, and one constant crosses six surfaces — a frame that renders as literal punctuation on five of them is worse than plain prose",
-    );
-    ok(PENDING_WORK_FRAME.includes("not the final result"), "§10f: …and it says the one honest thing the host actually knows — that this message is not the worker's answer");
-    const both = withReplierPrefix(withPendingWorkFrame("body", true), { taskLabel: "audit the ledger" });
-    ok(both.startsWith("[audit the ledger] "), "🔴 §10f: the replier tier label stays OUTERMOST — the frame must never displace the signal a reader uses to tell a worker from the seat");
-    ok(both.includes(PENDING_WORK_FRAME) && both.endsWith("body"), "§10f: …and both signals survive together, in that order");
+    ok(!("PENDING_WORK_FRAME" in turnDelivery), "🔴 §10f: `turn-delivery` exports NO pending-work frame constant. OPE-1516 removed the host's line from the room; an export named here is that line coming back");
+    ok(!("withPendingWorkFrame" in turnDelivery), "🔴 §10f: …and no `withPendingWorkFrame` helper either — the composition that applied it is gone, not merely unused");
+    const labelled = withReplierPrefix("body", { taskLabel: "audit the ledger" });
+    ok(labelled === "[audit the ledger] body", "🔴 §10f: the replier tier label is now the ONLY host addition to a posted body — WHO is speaking, and nothing about what the message is");
+    ok(withReplierPrefix("body", undefined) === "body", "§10f: …and a bare supervisor reply is untouched, so no post carries a host addition by default");
   }
 }
 

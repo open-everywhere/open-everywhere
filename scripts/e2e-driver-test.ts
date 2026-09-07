@@ -109,7 +109,6 @@ const {
 } = await import("../packages/core/scripts/e2e/judge.js");
 const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned } =
   await import("../packages/core/scripts/e2e/scenarios.js");
-const { PENDING_WORK_FRAME } = await import("../packages/core/agent/channels/turn-delivery.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const {
   REPLY_POST_ACTION,
@@ -956,38 +955,37 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
 
   ok(
-    isFillerAck(
-      `${PENDING_WORK_FRAME}\n\nI'm retrieving the admin listing and domain references now; I'll return the exact output or any access refusal.`,
-    ),
-    "isFillerAck: OPE-834 — a PENDING_WORK_FRAME-prefixed reply is filler even when the model tail matches no prose branch (the deploy #95 red)",
+    isFillerAck("I'm retrieving the admin listing and domain references now; I'll return the exact output or any access refusal."),
+    "isFillerAck: OPE-834 — the live-run interim classifies as filler on its model tail ALONE, now that no host frame precedes it",
   );
-  ok(isFillerAck(PENDING_WORK_FRAME), "isFillerAck: OPE-834 — the bare PENDING_WORK_FRAME line alone is filler");
-  ok(isFillerAck("I'll fetch that for you shortly."), "isFillerAck: OPE-834 — widened will-branch matches the contraction \"I'll fetch\" alone, no frame present");
+  ok(isFillerAck("I'll fetch that for you shortly."), "isFillerAck: OPE-834 — widened will-branch matches the contraction \"I'll fetch\" alone");
   ok(
     !isFillerAck("I'll be honest, the balance is £42.10."),
     "isFillerAck: OPE-834 negative control — \"I'll\" followed by a verb outside the listed set stays substantive",
   );
   ok(
     !isFillerAck("A worker finished the admin listing. Domains: e2e-unified, e2e-secondary. Silos: 4 total."),
-    "isFillerAck: OPE-834 negative control — text that mentions a worker but carries no PENDING_WORK_FRAME stays substantive",
+    "isFillerAck: OPE-834 negative control — text that mentions a worker but reports an OUTCOME stays substantive",
   );
 }
 
 {
-  ok(isPendingWorkHandoff(PENDING_WORK_FRAME), "isPendingWorkHandoff: the bare host frame line IS a hand-off");
   ok(
-    isPendingWorkHandoff(`${PENDING_WORK_FRAME}\n\nI'm checking the issue details and will return a grounded one-line summary including \`gh-39426\`.`),
-    "isPendingWorkHandoff: the live-run J-GH hand-off comment, verbatim, IS a hand-off",
+    isPendingWorkHandoff("I'm checking the issue details and will return a grounded one-line summary including `gh-39426`."),
+    "isPendingWorkHandoff: the live-run J-GH hand-off, frame stripped, is STILL a hand-off on its prose alone",
   );
   ok(
     !isPendingWorkHandoff("Issue #1 (\u201c[oe-e2e] ambient supervisor fixture issue\u201d) couldn't be summarized from its body; **gh-39426**."),
     "isPendingWorkHandoff: the live-run grounded answer is NOT a hand-off",
   );
-  ok(!isPendingWorkHandoff("one sec, looking at it"), "isPendingWorkHandoff: plain filler prose with no host frame is NOT a hand-off (no prose heuristic here)");
-  ok(isFillerAck("one sec, looking at it"), "isPendingWorkHandoff: …and isFillerAck, the wider predicate, still catches that prose — the two are different questions");
+  ok(isPendingWorkHandoff("one sec, looking at it"), "isPendingWorkHandoff: plain filler prose IS a hand-off now — the predicate is the prose heuristic, and carries its false-skip risk (OPE-1523)");
+  ok(
+    isFillerAck("one sec, looking at it") === isPendingWorkHandoff("one sec, looking at it"),
+    "isPendingWorkHandoff: …and the two agree by construction, because no exact host signal is left to separate them",
+  );
 
-  const s11Interim = `${PENDING_WORK_FRAME}\n\nI'm checking the durable team memory for the exact \`sprint-22088\` mascot and will report back plainly if it isn't recorded.`;
-  ok(isPendingWorkHandoff(s11Interim), "isPendingWorkHandoff: the live-run S11 interim, verbatim, IS a hand-off — 194 chars, so no LENGTH threshold could have caught it");
+  const s11Interim = "I'm checking the durable team memory for the exact `sprint-22088` mascot and will report back plainly if it isn't recorded.";
+  ok(isPendingWorkHandoff(s11Interim), "isPendingWorkHandoff: the live-run S11 interim, frame stripped, is STILL a hand-off — no LENGTH threshold could have caught it either");
   ok(
     !isPendingWorkHandoff("I couldn't find any recorded team mascot for `sprint-22088` in durable memory, so I don't know it."),
     "isPendingWorkHandoff: the live-run S11 clean decline is NOT a hand-off — it is exactly what the gate asks for",

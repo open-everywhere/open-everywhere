@@ -6,7 +6,6 @@ import {
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  pendingFramedChars,
   readAuditRows,
   redeliveryRecoveryNote,
   registerScript,
@@ -217,9 +216,9 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
     expect(String(r.detail?.id)).toMatch(/^spoof-/);
     expect(r.detail?.platform).toBe("discord");
   }
-  expect(replies.some((r) => r.detail?.chars === pendingFramedChars(DISPATCH_SAY))).toBe(true);
-  expect(replies.some((r) => r.detail?.chars === pendingFramedChars(SETTLEMENT_SAY))).toBe(true);
-  expect(pendingFramedChars(DISPATCH_SAY)).not.toBe(pendingFramedChars(SETTLEMENT_SAY));
+  expect(replies.some((r) => r.detail?.chars === DISPATCH_SAY.length)).toBe(true);
+  expect(replies.some((r) => r.detail?.chars === SETTLEMENT_SAY.length)).toBe(true);
+  expect(DISPATCH_SAY.length).not.toBe(SETTLEMENT_SAY.length);
 });
 
 test("negative control: the same run without the upload — no refusal, no marking, delegation keeps its seat", async () => {

@@ -36,7 +36,7 @@ import {
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
-import { finalMessageActionForTurn, isBareStop, replierLabelFor, withPendingWorkFrame, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
+import { finalMessageActionForTurn, isBareStop, replierLabelFor, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
@@ -486,7 +486,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           const owingTask = wakeId ? pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId)) : undefined;
           const id = await postUnifiedReply(
             origin,
-            withRunRefusalBlock(withPendingWorkFrame(action.text, owingTask !== undefined), consumeRoutineRunPermissionRefusals()),
+            withRunRefusalBlock(action.text, consumeRoutineRunPermissionRefusals()),
             {},
             {
               org,

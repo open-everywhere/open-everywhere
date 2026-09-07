@@ -9,7 +9,6 @@ import {
   disposeLater,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
-  pendingFramedChars,
   readAuditRows,
   registerScript,
   taskIdOfDelegation,
@@ -23,10 +22,7 @@ function freshUnlistedChannelId(): string {
 }
 
 const TERMINAL_SAY = "oe-659 terminal route answer";
-const BRIDGE_SAY = "oe-659 bridge route answer, a deliberately different length";
-if (TERMINAL_SAY.length === BRIDGE_SAY.length) {
-  throw new Error("OPE-659 test: the two replies must differ in LENGTH — detail.chars is the only fingerprint a reply.post row carries.");
-}
+const BRIDGE_SAY = "oe-659 bridge route answer, a deliberately different length that is longer";
 
 async function replyRowFor(input: { channelId: string; say: string }): Promise<AuditRow> {
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
@@ -69,6 +65,23 @@ test("both terminal reply routes name the human who mentioned the bot — and th
 
 const DELEGATOR_SAY = "oe-659 handing this off to a worker";
 const SETTLEMENT_SAY = "oe-659 the worker has reported back to me";
+const REGRESSION_SETTLEMENT_SAY = "oe-734 regression settlement reply, a fifth length distinct from the rest";
+
+{
+  const fingerprints = {
+    TERMINAL_SAY: TERMINAL_SAY.length,
+    BRIDGE_SAY: BRIDGE_SAY.length,
+    SETTLEMENT_SAY: SETTLEMENT_SAY.length,
+    REGRESSION_SETTLEMENT_SAY: REGRESSION_SETTLEMENT_SAY.length,
+    DELEGATOR_SAY: DELEGATOR_SAY.length,
+  };
+  const counts = Object.values(fingerprints);
+  if (new Set(counts).size !== counts.length) {
+    throw new Error(
+      `OPE-659/OPE-734 test: the replies must differ in LENGTH — detail.chars is the only fingerprint a reply.post row carries. Saw ${JSON.stringify(fingerprints)}. Give the colliding reply a different text.`,
+    );
+  }
+}
 
 test("a HOST-WOKEN settlement reply names the human whose seat it is — the auth the turn inherits (OPE-659)", async () => {
   await bootAgent();
@@ -110,7 +123,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
     120_000,
   );
 
-  const delegator = rows.find((r) => r.detail?.chars === pendingFramedChars(DELEGATOR_SAY));
+  const delegator = rows.find((r) => r.detail?.chars === DELEGATOR_SAY.length);
   const settled = rows.find((r) => r.detail?.chars === SETTLEMENT_SAY.length);
   expect(delegator).toBeDefined();
   expect(settled).toBeDefined();
@@ -131,7 +144,7 @@ test("OPE-734 — arming the settlement script under the dispatch turn's session
       child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
     }),
   );
-  const say = "oe-734 regression settlement reply, a third distinct length";
+  const say = REGRESSION_SETTLEMENT_SAY;
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> please delegate this too` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the delegating turn's terminal step");
   const taskId = taskIdOfDelegation(handle, "the OPE-734 delegation");
