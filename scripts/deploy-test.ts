@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -1158,10 +1158,13 @@ mkdirSync(bareCwd, { recursive: true });
 const E2E_DEPLOYMENT_ID = "dpl_OPE1045E2E";
 const E2E_DEPLOYMENT_HOST = "oe-1045-e2e-deployment.vercel.app";
 const E2E_DEPLOYED_AT = 1_786_698_000_000;
+const E2E_DEPLOYED_SHA = "c4460004c4460004c4460004c4460004c4460004";
+const E2E_OTHER_HOST = "oe-1485-other-deployment.vercel.app";
+const E2E_OTHER_SHA = "abcdef01abcdef01abcdef01abcdef01abcdef01";
 
 type VerifyRun = { code: number | null; output: string };
 
-function fakeStack(options: { aliasStatus?: number } = {}) {
+function fakeStack(options: { aliasStatus?: number; omitCommitMeta?: boolean } = {}) {
   return createServer((req, res) => {
     const url = req.url ?? "";
     const send = (status: number, body: unknown): void => {
@@ -1171,7 +1174,17 @@ function fakeStack(options: { aliasStatus?: number } = {}) {
     if (url.startsWith("/control/v1/audit")) return send(200, {});
     if (url.startsWith("/v13/deployments/")) {
       if (options.aliasStatus && options.aliasStatus !== 200) return send(options.aliasStatus, { error: { code: "not_found", message: "deployment not found" } });
-      return send(200, { id: E2E_DEPLOYMENT_ID, url: E2E_DEPLOYMENT_HOST, readyState: "READY", createdAt: E2E_DEPLOYED_AT });
+      const key = decodeURIComponent(url.slice("/v13/deployments/".length).split("?")[0]);
+      if (key === E2E_OTHER_HOST) {
+        return send(200, { id: "dpl_OPE1485OTHER", url: E2E_OTHER_HOST, readyState: "READY", createdAt: E2E_DEPLOYED_AT, meta: { githubCommitSha: E2E_OTHER_SHA } });
+      }
+      return send(200, {
+        id: E2E_DEPLOYMENT_ID,
+        url: E2E_DEPLOYMENT_HOST,
+        readyState: "READY",
+        createdAt: E2E_DEPLOYED_AT,
+        ...(options.omitCommitMeta ? {} : { meta: { githubCommitSha: E2E_DEPLOYED_SHA } }),
+      });
     }
     if (url.startsWith("/v9/projects/")) {
       return send(200, { crons: { deploymentId: E2E_DEPLOYMENT_ID, updatedAt: E2E_DEPLOYED_AT + 1_000 } });
@@ -1181,14 +1194,18 @@ function fakeStack(options: { aliasStatus?: number } = {}) {
   });
 }
 
-async function runVerify(argv: string[], vars: Record<string, string>, options: { aliasStatus?: number } = {}): Promise<VerifyRun> {
+async function runVerify(
+  argv: string[],
+  vars: Record<string, string>,
+  options: { aliasStatus?: number; omitCommitMeta?: boolean; cwd?: string } = {},
+): Promise<VerifyRun> {
   const server = fakeStack(options);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
   try {
     return await new Promise<VerifyRun>((resolve) => {
       const child = spawn(tsxBin, [verifyScript, ...argv, "--attempts", "1", "--delay-ms", "1"], {
-        cwd: bareCwd,
+        cwd: options.cwd ?? bareCwd,
         env: {
           PATH: process.env.PATH ?? "",
           HOME: fakeHome,
@@ -1246,6 +1263,75 @@ await check("deploy:verify EXITS 2 with the variable NAME when no project can be
   const run = await runVerify(["--record", "--no-rollback"], { OE_VERCEL_API_TOKEN: "oe-1045-team-scoped-token" });
   assert.equal(run.code, 2, `expected the config exit code, got ${run.code}\n${run.output}`);
   assert.ok(/VERCEL_PROJECT_ID/.test(run.output), `the missing variable must be named:\n${run.output}`);
+});
+
+const checkoutWithOwnHead = join(scratch, "checkout-with-own-head");
+mkdirSync(checkoutWithOwnHead, { recursive: true });
+const git = (...args: string[]): string =>
+  execFileSync("git", ["-C", checkoutWithOwnHead, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+git("init", "-q");
+git("-c", "user.name=OE Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "--no-gpg-sign", "-m", "fixture");
+const LOCAL_HEAD = git("rev-parse", "HEAD");
+
+await check("deploy:verify --record stamps the DEPLOYMENT's own commit, not this checkout's HEAD", async () => {
+  const pointer = join(scratch, "e2e-pointer-commit.json");
+  const run = await runVerify(["--record", "--no-rollback"], { ...CI_VARS, OE_DEPLOY_STATE_FILE: pointer }, { cwd: checkoutWithOwnHead });
+  assert.equal(run.code, 0, run.output);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(
+    state.lastGood?.commit,
+    E2E_DEPLOYED_SHA,
+    `the pointer must carry the deployment's meta.githubCommitSha, not the local HEAD (${LOCAL_HEAD})\n${run.output}`,
+  );
+  assert.notEqual(LOCAL_HEAD, E2E_DEPLOYED_SHA, "the fixture checkout must sit on a different sha, or this leg proves nothing");
+  assert.ok(/pointer commit ← the deployment's own meta.githubCommitSha/.test(run.output), `the run must say where the commit came from:\n${run.output}`);
+});
+
+await check("deploy:verify --record falls back to the local HEAD when the deployment record carries no commit sha", async () => {
+  const pointer = join(scratch, "e2e-pointer-commit-fallback.json");
+  const run = await runVerify(
+    ["--record", "--no-rollback"],
+    { ...CI_VARS, OE_DEPLOY_STATE_FILE: pointer },
+    { cwd: checkoutWithOwnHead, omitCommitMeta: true },
+  );
+  assert.equal(run.code, 0, run.output);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(state.lastGood?.commit, LOCAL_HEAD, `expected the local HEAD fallback\n${run.output}`);
+  assert.ok(/pointer commit ← this checkout's git HEAD/.test(run.output), `the fallback must say so out loud:\n${run.output}`);
+});
+
+await check("deploy:verify --record: an explicit --commit outranks the deployment's own sha", async () => {
+  const pointer = join(scratch, "e2e-pointer-commit-explicit.json");
+  const run = await runVerify(
+    ["--record", "--no-rollback", "--commit", "0f0f0f0"],
+    { ...CI_VARS, OE_DEPLOY_STATE_FILE: pointer },
+    { cwd: checkoutWithOwnHead },
+  );
+  assert.equal(run.code, 0, run.output);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(state.lastGood?.commit, "0f0f0f0", `the operator's own --commit must win\n${run.output}`);
+});
+
+await check("deploy:verify --record --url <other deployment> stamps THAT deployment's sha, not the alias's", async () => {
+  const pointer = join(scratch, "e2e-pointer-commit-url.json");
+  const run = await runVerify(
+    ["--record", "--no-rollback", "--url", `https://${E2E_OTHER_HOST}`],
+    { ...CI_VARS, OE_DEPLOY_STATE_FILE: pointer },
+    { cwd: checkoutWithOwnHead },
+  );
+  assert.equal(run.code, 0, run.output);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(state.lastGood?.url, `https://${E2E_OTHER_HOST}`);
+  assert.equal(
+    state.lastGood?.commit,
+    E2E_OTHER_SHA,
+    `the pointer must carry the sha of the deployment named on --url, not the alias target's (${E2E_DEPLOYED_SHA}) or the local HEAD (${LOCAL_HEAD})\n${run.output}`,
+  );
+  assert.equal(
+    state.lastGood?.id,
+    undefined,
+    `--url with no --id must record NO id, not the alias target's (${E2E_DEPLOYMENT_ID})\n${run.output}`,
+  );
 });
 
 await check("deploy:verify honours --url/--id, so its own printed remedy works", async () => {

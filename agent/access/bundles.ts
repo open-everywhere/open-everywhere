@@ -136,6 +136,8 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
+  defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
+
   defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-teams-person-fixture", scope: { level: "domain", domain: "e2e-unified" } }),

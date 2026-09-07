@@ -6,6 +6,7 @@ import {
   currentCommit,
   decideAfterProbe,
   DeployConfigError,
+  deploymentKey,
   fileStore,
   parseArgs,
   probeHealth,
@@ -17,8 +18,22 @@ import {
   runCronCheck,
   runRecord,
   runRollback,
+  teamQuery,
   unresolvedAliasFailure,
+  vercelApiJson,
+  type VercelApi,
 } from "./lib.js";
+
+async function deployedCommit(api: VercelApi, target: string): Promise<string | undefined> {
+  try {
+    const body = await vercelApiJson(api, `/v13/deployments/${encodeURIComponent(deploymentKey(target))}?${teamQuery(api.project)}`);
+    const meta = (body as { meta?: unknown } | null)?.meta;
+    const sha = (meta as { githubCommitSha?: unknown } | null | undefined)?.githubCommitSha;
+    return typeof sha === "string" && /^[0-9a-f]{7,40}$/i.test(sha) ? sha.toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const args = parseArgs(process.argv.slice(2));
 const log = (line: string): void => console.log(line);
@@ -73,13 +88,30 @@ try {
     }
 
     if (args.flags.has("record")) {
+      const recordUrl = args.values.get("url") ?? current.url;
+      const recordId = args.values.get("id") ?? (args.values.get("url") ? undefined : current.id);
+      const explicitCommit = args.values.get("commit");
+      const commitTarget = args.values.get("id") ?? args.values.get("url") ?? current.id ?? current.url;
+      const deployed = explicitCommit === undefined && commitTarget ? await deployedCommit(api, commitTarget) : undefined;
+      const commit = explicitCommit ?? deployed ?? (await currentCommit());
+      log(
+        `  pointer commit ← ${
+          explicitCommit !== undefined
+            ? "--commit"
+            : deployed !== undefined
+              ? "the deployment's own meta.githubCommitSha"
+              : commit !== undefined
+                ? "this checkout's git HEAD (the deployment record carried no commit sha, or the lookup failed)"
+                : "nothing — no commit recorded"
+        }`,
+      );
       const recorded = await runRecord({
         env,
         client,
         store: fileStore(env.stateFile),
-        url: args.values.get("url") ?? current.url,
-        id: args.values.get("id") ?? current.id,
-        commit: args.values.get("commit") ?? (await currentCommit()),
+        url: recordUrl,
+        id: recordId,
+        commit,
         note: args.values.get("note"),
         label: "deploy:verify --record",
         log,

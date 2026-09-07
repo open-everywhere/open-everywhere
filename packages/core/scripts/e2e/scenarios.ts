@@ -1479,6 +1479,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const notion = ctx.notion!;
       const query = ctx.notionQuery ?? "team handbook";
+      const sinceIso = new Date(Date.now() - 15_000).toISOString();
       const { ts: askTs } = await notion.post(
         notion.mention(`search Notion for "${query}" and tell me what you find — a page title plus a short summary is enough. If nothing matches, just say so plainly; don't guess.`),
       );
@@ -1492,6 +1493,27 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text,
         "Notion search reply is sane (found-or-honest-miss, never an error)",
       );
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso, limit: 1000 });
+        const connectorRows = rows.filter((r) => r.action.startsWith("connector."));
+        const evidence = connectorRows.filter(
+          (r) =>
+            (r.action === "connector.op" || r.action === "connector.use") &&
+            r.detail?.connection === "notion" &&
+            (r.surface === undefined || r.surface === notion.channelId),
+        );
+        ctx.gate(
+          evidence.length > 0,
+          `the connector itself was reached: ${evidence.length} connector.op/connector.use row(s) on this channel in the leg's window ` +
+            `(all connector rows seen: ${[...new Set(connectorRows.map((r) => r.action))].join(", ") || "none"}) — the reply alone ` +
+            `cannot tell a real connector search from a channel that mounts no connector`,
+        );
+      } else {
+        ctx.log(
+          "connector-plane check SKIPPED — it needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN). Without it " +
+            "this leg gates on the reply's WORDS only, which cannot tell a real connector search from an ungranted channel.",
+        );
+      }
     },
   },
   {

@@ -64,8 +64,15 @@ ok(
   "route ②: skill package ships scripts/notion.mjs",
 );
 
-ok(!bound.connectors.includes("notion"), "route ③ REMOVED: the org/channel does NOT grant the notion MCP connector (service-oauth was a dead end)");
-ok(bound.connectorCredentials["notion"] === undefined, "route ③ REMOVED: no service/org connector credential is bound for 'notion' on the channel");
+ok(bound.connectors.includes("notion"), "S24 fixture channel: the notion connector IS granted here (e2e-connector-fixture), so the connector plane is reachable");
+ok(
+  bound.connectorCredentials["notion"]?.credential === "team-key",
+  `S24 fixture channel: the grant resolves the 'team-key' credential (got: ${JSON.stringify(bound.connectorCredentials["notion"]?.credential)})`,
+);
+ok(
+  !catalogues.some((c) => c.connector === "notion" && c.credentials.some((cr) => cr.type === "service-oauth")),
+  "route ③ REMOVED: the notion catalogue configures NO service-oauth credential at all, so the dead end cannot be re-granted by naming it",
+);
 
 const unbound = resolveFor("T_SOME_OTHER_WORKSPACE", "C_SOME_OTHER_CHANNEL");
 ok(!unbound.reachableHosts.some((h) => h.host === "api.notion.com"), "unbound channel: api.notion.com NOT reachable");
