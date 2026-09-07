@@ -351,7 +351,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
 
   const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
   registerSlackFixtureMapper();
-  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
   const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
   const { actionKind } = await import("../agent/approvals/actions.js");
   await import("../agent/approvals/flow.js");
@@ -405,6 +405,128 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     ok(setLines.some((l: string) => l.startsWith("⚠") && /read external content/.test(l)), "the spend.set card renders a ⚠ taint line from the frozen flag");
     ok(actionKind("spend.clear")!.summarize(clearFrozen).some((l: string) => l.startsWith("⚠")), "the spend.clear card renders one too");
     ok(!actionKind("spend.set")!.summarize({ ...frozen, tainted: false }).some((l: string) => l.startsWith("⚠")), "a clean spend.set card renders NO taint line (the banner is positive-only)");
+  }
+
+  {
+    const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
+    const { registerModelPricing, _resetModelPricingForTest, _setBuiltInForTest, usdMicrosAtWrite } = await import("../agent/spend/pricing.js");
+    const { defaultAgentModelId } = await import("../agent/model/default-model.js");
+    const { unpricedModelsForScope, unpricedCoverageNote } = await import("../agent/tools/set_spend_limit.js");
+
+    _resetModelPricingForTest();
+    registerModelPricing({ "test/priced-model": { inPerMtok: 1, outPerMtok: 2 } });
+    const domainsForCoverage = [defineDomain({ name: "eng", channels: ["slack/T123/C456"] }), defineDomain({ name: "dm", match: "dm" })];
+    const registerDomains = (list: ReturnType<typeof defineDomain>[]): void => {
+      registerConfig({ loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {}, loadDomains: () => list, loadSilos: () => [], domainsForSurface: () => [] });
+    };
+    registerDomains(domainsForCoverage);
+
+    const seed = async (surfaceKey: string, model: string | undefined): Promise<void> => {
+      await appendUsageEvent({
+        org: "default",
+        surfaceKey,
+        sessionId: `s-${surfaceKey}-${model ?? "none"}`,
+        principalId: "U_SPENDER",
+        kind: "channel",
+        ...(model !== undefined ? { model } : {}),
+        inputTokens: 1_000_000,
+        outputTokens: 500_000,
+      });
+    };
+    await seed("slack/T123/C_COVER", "test/priced-model");
+    await seed("slack/T123/C_COVER", "test/no-rate-model");
+    await seed("slack/T123/C_COVER2", "test/neighbour-no-rate-model");
+    await seed("slack/T123/C_ALLPRICED", "test/priced-model");
+
+    const setOut = await inSession(async () =>
+      execTool(setSpendLimitTool)({ monthlyUsd: 50, reason: "incident headroom", scopeKey: "slack/T123/C_COVER" }, slackCtx("C_COVER") as never),
+    );
+    const reported = (setOut as { unpricedModels?: string[] }).unpricedModels;
+    ok(JSON.stringify(reported) === JSON.stringify(["test/no-rate-model"]), `🔴 OPE-1193: a USD proposal names EXACTLY the scope's unpriced models under unpricedModels (got ${JSON.stringify(reported)})`);
+    ok(/Pricing coverage/.test(setOut.note) && setOut.note.includes("test/no-rate-model"), "OPE-1193: …and the note carries the sentence the model must relay, naming the model");
+    ok(setOut.requested === true, "🔴 OPE-1193: the proposal still POSTS — pricing coverage is a report, never a refusal");
+    const coverFrozen = await frozenOf(setOut.pendingId);
+    ok(coverFrozen["monthlyUsd"] === 50 && coverFrozen["scopeKey"] === "slack/T123/C_COVER", "🔴 OPE-1193: …and the pending row is frozen with the proposed cap, unchanged by the report");
+
+    const cleanOut = await inSession(async () =>
+      execTool(setSpendLimitTool)({ monthlyUsd: 50, reason: "fully priced", scopeKey: "slack/T123/C_ALLPRICED" }, slackCtx("C_COVER") as never),
+    );
+    ok((cleanOut as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: a scope whose models are all priced reports NO unpricedModels field");
+    ok(!/Pricing coverage/.test(cleanOut.note), "OPE-1193: …and its note carries no coverage sentence");
+
+    const tokensOnly = await inSession(async () =>
+      execTool(setSpendLimitTool)({ monthlyTokens: 5_000_000, reason: "token bridge", scopeKey: "slack/T123/C_COVER" }, slackCtx("C_COVER") as never),
+    );
+    ok((tokensOnly as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: a token-only proposal reports no pricing coverage — a token cap counts every call");
+
+    const atSurface = await unpricedModelsForScope("default", "surface", "slack/T123/C_COVER");
+    ok(JSON.stringify(atSurface.models) === JSON.stringify(["test/no-rate-model"]), `🔴 OPE-1193: the surface read matches the key EXACTLY — "C_COVER2" is not swept in (got ${JSON.stringify(atSurface.models)})`);
+    const atWorkspace = await unpricedModelsForScope("default", "workspace", "slack/T123");
+    ok(atWorkspace.models.includes("test/no-rate-model") && atWorkspace.models.includes("test/neighbour-no-rate-model"), "OPE-1193: the workspace read spans the whole prefix, so it sees both channels' gaps");
+
+    const criteriaRead = await unpricedModelsForScope("default", "domain", "dm");
+    ok(criteriaRead.notMeasurable !== undefined && criteriaRead.models.length === 0, "🔴 OPE-1193: a CRITERIA domain reports notMeasurable, not an empty list that reads as \"no gap\"");
+    ok(/criteria domain/i.test(criteriaRead.notMeasurable ?? ""), "OPE-1193: …and says why, in terms the reader can act on");
+    const explicitRead = await unpricedModelsForScope("default", "domain", "eng");
+    ok(explicitRead.notMeasurable === undefined, "OPE-1193: an EXPLICIT domain is measurable — the not-measurable answer is specific to the criteria layer, not a blanket give-up");
+
+    await seed("slack/T123/C_UNSTAMPED", undefined);
+    _setBuiltInForTest({});
+    const noSole = await unpricedModelsForScope("default", "surface", "slack/T123/C_UNSTAMPED");
+    ok(usdMicrosAtWrite({ inputTokens: 1_000_000, outputTokens: 500_000 }) === 0, "OPE-1193 control: with no sole configured model the ledger prices a stampless row at $0");
+    ok(noSole.models.includes("(unstamped)"), "🔴 OPE-1193: …and the report lists it as (unstamped) — the seeded row is really there, and the fallback branch is really reached");
+    _setBuiltInForTest({ [defaultAgentModelId()]: { inPerMtok: 1, outPerMtok: 2 } });
+    const withSole = await unpricedModelsForScope("default", "surface", "slack/T123/C_UNSTAMPED");
+    ok(usdMicrosAtWrite({ inputTokens: 1_000_000, outputTokens: 500_000 }) > 0, "OPE-1193 control: with the deploy's own model priced the ledger prices a stampless row above $0");
+    ok(!withSole.models.includes("(unstamped)"), "🔴 OPE-1193: …and the report drops it — the tool's rule and usdMicrosAtWrite's agree in BOTH directions");
+    _setBuiltInForTest(null);
+
+    const mixed = unpricedCoverageNote({ models: ["(unknown)", "test/no-rate-model"] }, "slack/T123/C_COVER");
+    ok(/no committed price: test\/no-rate-model/.test(mixed), "OPE-1193: a real model id gets the PRICING remedy — commit the rate");
+    ok(/instrumentation gap/.test(mixed) && /\(unknown\)/.test(mixed), "🔴 OPE-1193: …and (unknown) gets the INSTRUMENTATION sentence instead, never 'commit a rate' for an id that does not exist");
+    ok(!/no committed price: [^.]*\(unknown\)/.test(mixed), "🔴 OPE-1193: …and (unknown) never appears in the commit-a-rate list");
+    ok(unpricedCoverageNote({ models: [] }, "slack/T123/C_COVER") === "", "OPE-1193: a clean scope adds no sentence at all");
+
+    {
+      const real = getOperationalStore();
+      const throwing = new Proxy(real, {
+        get(target, prop, receiver) {
+          if (prop === "usageSummary") {
+            return () => {
+              throw new Error("ledger unavailable (test)");
+            };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      registerOperationalStore(throwing);
+      resetOperationalStore();
+      const brokenOut = await inSession(async () =>
+        execTool(setSpendLimitTool)({ monthlyUsd: 75, reason: "ledger down", scopeKey: "slack/T123/C_BROKEN" }, slackCtx("C_COVER") as never),
+      );
+      registerOperationalStore(real);
+      resetOperationalStore();
+      ok(/Pricing coverage NOT MEASURED/.test(brokenOut.note), "🔴 OPE-1193: a failed ledger read SAYS SO in the note — never the same silence a fully priced scope produces");
+      ok((brokenOut as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: …and it names no models, because it measured none");
+      ok(brokenOut.requested === true, "🔴 OPE-1193: …and the proposal still POSTS — a broken read is not a refusal either");
+      const workingOut = await inSession(async () =>
+        execTool(setSpendLimitTool)({ monthlyUsd: 75, reason: "ledger up", scopeKey: "slack/T123/C_BROKEN2" }, slackCtx("C_COVER") as never),
+      );
+      ok(!/NOT MEASURED/.test(workingOut.note), "OPE-1193: a working read never claims NOT MEASURED — the sentence is specific to the failure");
+    }
+
+    {
+      const desc = (setSpendLimitTool as unknown as { description: string }).description;
+      ok(/Pricing coverage/.test(desc), "🔴 OPE-1193: the description keys the relay exception on the note's \"Pricing coverage\" sentence, which BOTH branches emit");
+      ok(!/carries `unpricedModels`/.test(desc), "🔴 OPE-1193: …and no longer keys it on a field the not-measurable branch never sets");
+      const gapNote = unpricedCoverageNote({ models: ["test/no-rate-model"] }, "slack/T123/C_COVER");
+      const unmeasuredNote = unpricedCoverageNote({ models: [], notMeasurable: "the usage ledger could not be read on this turn, so no coverage was measured." }, "slack/T123/C_COVER");
+      ok(/Pricing coverage/.test(gapNote) && /Pricing coverage/.test(unmeasuredNote), "OPE-1193: …and both branches really do carry that prefix, so the key matches what the tool emits");
+    }
+
+    _resetModelPricingForTest();
+    registerDomains([defineDomain({ name: "eng", channels: ["slack/T123/C456"] })]);
   }
 
   delete process.env.OE_EGRESS_SPOOF;

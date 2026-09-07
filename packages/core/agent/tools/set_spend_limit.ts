@@ -4,10 +4,13 @@ import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { domainForChannel } from "../memory/domain.js";
+import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, effectiveUserCaps, domainNameForScope } from "../spend/caps.js";
+import { usageSummary } from "../spend/usage-events.js";
+import { modelPricing, soleConfiguredModel } from "../spend/pricing.js";
+import { UNKNOWN_MODEL } from "../spend/spend.js";
 import { userScopeKey, parseScopeKey } from "../access/scope-key.js";
 import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
@@ -60,6 +63,75 @@ export async function currentCapsFor(
     tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
     usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
   };
+}
+
+const COVERAGE_WINDOW_DAYS = 30;
+
+const UNSTAMPED = "(unstamped)";
+
+const NO_MODEL_OBSERVED: readonly string[] = [UNKNOWN_MODEL, UNSTAMPED];
+
+function contributesZeroUsd(model: string | undefined): boolean {
+  if (model !== undefined) return modelPricing(model) === undefined;
+  const sole = soleConfiguredModel();
+  return sole === undefined || modelPricing(sole) === undefined;
+}
+
+export interface CoverageReport {
+  readonly models: readonly string[];
+  readonly notMeasurable?: string;
+}
+
+function rowsForScope<T extends { readonly surfaceKey: string; readonly kind?: string; readonly principalId?: string }>(
+  all: readonly T[],
+  level: Level,
+  scopeKey: string,
+  domains: readonly Domain[],
+): readonly T[] {
+  if (level === "surface") return all.filter((r) => r.surfaceKey === scopeKey);
+  if (level === "domain") return all.filter((r) => domainForChannel(r.surfaceKey, domains)?.name === scopeKey);
+  if (level === "user") {
+    const parsed = parseScopeKey(scopeKey);
+    return parsed.kind === "principal" ? all.filter((r) => r.principalId === parsed.id && r.surfaceKey.startsWith(`${parsed.platform}/`)) : [];
+  }
+  return all;
+}
+
+export async function unpricedModelsForScope(org: string, level: Level, scopeKey: string): Promise<CoverageReport> {
+  const domains = getConfig().loadDomains();
+  const criteria = level === "domain" ? domains.find((d) => d.name === scopeKey)?.match : undefined;
+  if (criteria !== undefined) {
+    return {
+      models: [],
+      notMeasurable: `"${scopeKey}" is a CRITERIA domain — it matches ${criteria} TURNS rather than named channels — and a usage row records neither the session mode nor the trust that decide membership, so this scope's traffic cannot be identified in the ledger.`,
+    };
+  }
+  const sinceTs = new Date(Date.now() - COVERAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const prefix = level === "workspace" ? `${scopeKey}/` : level === "surface" ? scopeKey : undefined;
+  const all = await usageSummary(org, { sinceTs, ...(prefix !== undefined ? { surfaceKeyPrefix: prefix } : {}) });
+  const unpriced = new Set<string>();
+  for (const r of rowsForScope(all, level, scopeKey, domains)) {
+    if (contributesZeroUsd(r.model)) unpriced.add(r.model ?? UNSTAMPED);
+  }
+  return { models: [...unpriced].sort() };
+}
+
+export function unpricedCoverageNote(report: CoverageReport, scopeKey: string): string {
+  if (report.notMeasurable !== undefined) {
+    return ` ⚠ Pricing coverage NOT MEASURED for "${scopeKey}": ${report.notMeasurable} RELAY THIS: tell the user this cap's coverage is unknown — a USD cap counts only priced rows, and nothing here establishes whether this scope has any.`;
+  }
+  if (report.models.length === 0) return "";
+  const rated = report.models.filter((m) => !NO_MODEL_OBSERVED.includes(m));
+  const unobserved = report.models.filter((m) => NO_MODEL_OBSERVED.includes(m));
+  const parts = [`⚠ Pricing coverage: this scope's traffic in the last ${COVERAGE_WINDOW_DAYS} days includes calls that a USD cap on "${scopeKey}" does not count — they add $0 to the spend ledger.`];
+  if (rated.length > 0) {
+    parts.push(`${rated.length} model(s) carry no committed price: ${rated.join(", ")}. Measure the rate (\`npm run probe:models\`) and commit it in agent/spend/model-pricing.ts.`);
+  }
+  if (unobserved.length > 0) {
+    parts.push(`Some rows record no model at all (${unobserved.join(", ")}). That is an instrumentation gap, not a pricing one — no rate can be committed for them, because nothing observed which model ran.`);
+  }
+  parts.push(`The cap still sums every other priced row in the scope, and a token cap is unaffected. RELAY THIS: the $ figure does not meter all of this scope's traffic.`);
+  return ` ${parts.join(" ")}`;
 }
 
 export interface SpendSetPlan {
@@ -163,7 +235,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; with level:"domain", every surface in this channel\'s memory domain; or with level:"user", ONE PERSON\'s own allowance) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL or USER-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget, and a per-person allowance is a change about somebody who is not in the room the card lands in). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). level:"user" defaults to the person who just spoke ("my own allowance"); to change somebody ELSE\'s, pass their key explicitly as "user:<platform>/<id>". A person\'s allowance is checked INDEPENDENTLY of the room\'s cap — raising it never switches off the cap on the channel they are in. An over-budget decline message names the exact cap that stopped the turn and its key. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can\'t host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; with level:"domain", every surface in this channel\'s memory domain; or with level:"user", ONE PERSON\'s own allowance) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL or USER-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget, and a per-person allowance is a change about somebody who is not in the room the card lands in). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). level:"user" defaults to the person who just spoke ("my own allowance"); to change somebody ELSE\'s, pass their key explicitly as "user:<platform>/<id>". A person\'s allowance is checked INDEPENDENTLY of the room\'s cap — raising it never switches off the cap on the channel they are in. An over-budget decline message names the exact cap that stopped the turn and its key. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT in two cases, where the `note` carries something the channel cannot see and you MUST relay it: when this surface can\'t host a card (it then goes to a card-capable channel in the same domain, and the `note` names it), and whenever the `note` carries a "Pricing coverage" sentence (the USD cap you proposed does not count some of this scope\'s traffic, or its coverage could not be measured at all — the proposal still stands either way, this is a report, not a refusal).',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
@@ -187,6 +259,12 @@ export default defineTool({
     expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
     autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
+    unpricedModels: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Models this scope ran on in the last 30 days that carry no committed price, so a USD cap does not count their calls ("(unstamped)" = rows with no model id). Present only on a monthlyUsd proposal that found one; its ABSENCE is not proof of full coverage, because coverage is not always measurable — read `note`, which says which of the two happened. The proposal stands either way.',
+      ),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -225,6 +303,19 @@ export default defineTool({
       approvalPostDeps(venue.platform),
     );
 
+    let coverageReport: CoverageReport = { models: [] };
+    if (plan.args.monthlyUsd != null) {
+      try {
+        coverageReport = await unpricedModelsForScope(plan.args.org, plan.args.level, plan.args.scopeKey);
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        console.warn(`[open-everywhere:spend] set_spend_limit could not read pricing coverage for "${plan.args.scopeKey}": ${why}`);
+        coverageReport = { models: [], notMeasurable: "the usage ledger could not be read on this turn, so no coverage was measured." };
+      }
+    }
+    const coverage = unpricedCoverageNote(coverageReport, plan.args.scopeKey);
+    const coverageFields = coverageReport.models.length > 0 ? { unpricedModels: [...coverageReport.models] } : {};
+
     const proposed = [
       ...(plan.args.monthlyTokens != null ? [`${plan.args.monthlyTokens.toLocaleString()} tokens/month (current: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString()})`] : []),
       ...(plan.args.monthlyUsd != null ? [`$${plan.args.monthlyUsd.toFixed(2)}/month (current: ${plan.args.currentUsd === null ? "uncapped" : `$${plan.args.currentUsd.toFixed(2)}`})`] : []),
@@ -234,10 +325,12 @@ export default defineTool({
         requested: false,
         pendingId: posted.id,
         expiresAt: posted.expiresAt,
+        ...coverageFields,
         note:
           `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
           `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
-          (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here."),
+          (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here.") +
+          coverage,
       };
     }
     const subject = `${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
@@ -246,14 +339,16 @@ export default defineTool({
         requested: false,
         autoApproved: true,
         pendingId: posted.id,
-        note: autoApprovedNote(subject, posted.autoApproved),
+        ...coverageFields,
+        note: autoApprovedNote(subject, posted.autoApproved) + coverage,
       };
     }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
+      ...coverageFields,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it") + coverage,
     };
   },
 });
