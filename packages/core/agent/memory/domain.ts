@@ -407,7 +407,10 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
               `  ${where} includes UN-vouched source "${ch}" in a multi-source (${members.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy` +
               (platform === "notion"
                 ? `. A Notion TRUST ROOT does not satisfy this gate: the ancestor walk runs per delivery against the live Notion API, so config load cannot resolve it. Declare this page in the register as well`
-                : ``),
+                :
+                  platform === "teams"
+                  ? `. For TEAMS, do NOT write the key into that file — it carries your real Microsoft 365 tenant id, and a tracked copy fails npm run lint:teams-vouch. Add it to the OE_TEAMS_INTERNAL_SURFACES environment variable instead (comma-separated "teams/<tenantId>/<threadId>" keys); see docs/deploy/surfaces/teams.md`
+                  : ``),
           );
         }
       }

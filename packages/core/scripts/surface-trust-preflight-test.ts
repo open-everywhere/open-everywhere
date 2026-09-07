@@ -10,6 +10,7 @@ import {
   surfaceTrustPreflightChecks,
   surfaceTrafficFromAudit,
   registerSurfaceTrustPreflight,
+  undeclaredSurfacesFix,
   type SurfaceTraffic,
 } from "../agent/identity/trust-preflight.js";
 import { runPreflightProbes, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
@@ -48,6 +49,28 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
   ok(red?.detail.includes("notion/WS/page-a") === true, "…every one of them");
   ok(red?.detail.includes("slack/T0/C_ENG") === false, "…and NOT the one the tenant declaration already covers");
   ok(red?.fix?.includes("defineSurface(") === true, "…and the fix is the literal line to add, not a description of the problem");
+
+  {
+    const teams = run([], [seen("teams/deadbeef-1111/19-abc-thread.tacv2", 30)]);
+    const f = find(teams, "undeclared surfaces")?.fix ?? "";
+    ok(f.includes("OE_TEAMS_INTERNAL_SURFACES"), "🔴 a TEAMS undeclared surface names the env var, not a source file");
+    ok(!f.includes("defineSurface("), "…and does NOT tell the operator to paste a defineSurface line into tracked source");
+    ok(f.includes("lint:teams-vouch"), "…and says what would reject that commit");
+    ok(
+      !/Declaring the tenant \(e\.g\./.test(f),
+      "…and never offers the tenant-grain shortcut, which Teams refuses at boot",
+    );
+
+    const other = run([], [seen("discord/G1/C_GENERAL", 30)]);
+    const g = find(other, "undeclared surfaces")?.fix ?? "";
+    ok(g.includes("defineSurface("), "NEGATIVE CONTROL: a non-Teams surface still gets the defineSurface remedy");
+    ok(g.includes("Declaring the tenant"), "…tenant-grain shortcut included, which is correct off Teams");
+    ok(!g.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and no Teams text where no Teams surface is undeclared");
+
+    const mixed = undeclaredSurfacesFix(["discord/G1/C_GENERAL", "teams/deadbeef-1111/19-abc-thread.tacv2"]);
+    ok(mixed.includes("defineSurface("), "a mixed list keeps the generic remedy for its non-Teams example…");
+    ok(mixed.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and still names the env var for the Teams key behind it");
+  }
 
   const green = run(
     [defineSurface({ key: "slack/T0", trust: "internal" }), defineSurface({ key: "discord/G1", trust: "public" })],

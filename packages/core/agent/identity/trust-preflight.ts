@@ -33,6 +33,23 @@ function ageDays(now: Date, iso: string): number | undefined {
   return Number.isFinite(t) ? (now.getTime() - t) / DAY_MS : undefined;
 }
 
+export function undeclaredSurfacesFix(undeclared: readonly string[]): string {
+  const example = undeclared[0] ?? "";
+  const teamsRemedy =
+    `set OE_TEAMS_INTERNAL_SURFACES in this deployment's environment to a comma-separated list of exact ` +
+    `"teams/<tenantId>/<threadId>" keys. 🔴 Do NOT write a Teams key into agent/identity/surfaces.ts — it carries ` +
+    `your real Microsoft 365 tenant id, and a tracked copy fails npm run lint:teams-vouch. There is no tenant-grain ` +
+    `shortcut for Teams either: a "teams/<tenantId>" entry is refused at boot, because it would reach cross-tenant ` +
+    `Connect/shared channels you never named. Name each channel. See docs/deploy/surfaces/teams.md`;
+  if (example.startsWith("teams/")) return `${teamsRemedy} — this deployment's undeclared example is "${example}".`;
+
+  const generic =
+    `add a line per surface to agent/identity/surfaces.ts — defineSurface({ key: "${example}", trust: "internal" }) ` +
+    `if only organisation members can type there, or trust: "public" if anyone can. Declaring the tenant ` +
+    `(e.g. "${example.split("/").slice(0, 2).join("/")}") covers every room under it.`;
+  return undeclared.some((k) => k.startsWith("teams/")) ? `${generic} FOR THE TEAMS SURFACE(S) ABOVE, instead: ${teamsRemedy}.` : generic;
+}
+
 export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): Check[] {
   const deadDays = input.deadEntryDays ?? DEFAULT_DEAD_ENTRY_DAYS;
   const newDays = input.newSurfaceDays ?? DEFAULT_NEW_SURFACE_DAYS;
@@ -85,7 +102,7 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
           name: "surface trust: undeclared surfaces",
           status: "missing",
           detail: `${undeclared.length} surface(s) have traffic but NO trust declaration: ${nameList(undeclared)}`,
-          fix: `add a line per surface to agent/identity/surfaces.ts — defineSurface({ key: "${undeclared[0]}", trust: "internal" }) if only organisation members can type there, or trust: "public" if anyone can. Declaring the tenant (e.g. "${undeclared[0]?.split("/").slice(0, 2).join("/")}") covers every room under it.`,
+          fix: undeclaredSurfacesFix(undeclared),
         },
   );
 

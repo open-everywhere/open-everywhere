@@ -155,6 +155,14 @@ allow("pending-migration", [
   ["OE_ADMIN_GITHUB", "OPE-1153: arms the GitHub OAuth verifier on the admin control plane."],
   ["OE_TEST_DRIVER_IDS", "OPE-1153: the identity allowlist the e2e driver is vouched for by."],
   ["OE_TEAMS_SERVICE_HOSTS", "OPE-1153: extends the trusted Teams service host list."],
+  [
+    "OE_TEAMS_INTERNAL_SURFACES",
+    "OPE-1489: a VOUCH LIST is a trust wall, the class this file's 🔴 note sends to the backlog — setting it from a hosting dashboard grants a named Teams channel the shared org brain, with no diff and no review. It is env because the value is an operator identifier that must never enter a diff (OPE-1488), and no reviewable home for such a value exists in this repository yet. The bound is real — agent/identity/teams-vouched-keys.ts vouches nothing when the variable is absent and refuses anything but an exact teams/<tenantId>/<threadId> key, and scripts/teams-vouch-lint.ts keeps the value out of the tracked tree.",
+  ],
+  [
+    "OE_TEAMS_E2E_UNIFIED_SURFACE",
+    "OPE-1489: the Teams member of the e2e-unified cross-surface window (agent/memory/config/domains.ts). A domain roster is wiring rather than a wall, but it is env for the same identifier reason as the vouch list above, and it is DELIBERATELY a second name: deriving the roster from the vouch list would enroll every vouched channel in that window silently and would make assertWindowSourcesVouched vacuous for Teams. It moves out under the same ticket.",
+  ],
   ["OE_EGRESS_SPOOF", "OPE-1153: a test valve that changes egress behaviour."],
   ["OE_ACCESS_DRY_RUN", "OPE-1153: arms or disarms the access-request writes."],
   ["OE_CREDENTIAL_BINDING_LIVE", "OPE-1153: arms the live credential-binding path."],

@@ -41,7 +41,7 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     "defineSurface: a well-formed surfaceKey builds and carries its trust",
   );
   ok(
-    defineSurface({ key: "teams/7e5a0000-74bc/19-abc-thread.tacv2", trust: "internal" }).key.length > 0,
+    defineSurface({ key: "teams/deadbeef-74bc/19-abc-thread.tacv2", trust: "internal" }).key.length > 0,
     "defineSurface: a surface segment with dots/dashes is well-formed (3 segments)",
   );
   throws(() => defineSurface({ key: "discord", trust: "internal" }), "defineSurface: a bare platform (1 segment) is malformed");
@@ -216,7 +216,7 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
   const config = [
     "discord/1300000000000000100",
     "discord/300000000000000104",
-    "teams/7e5a0000-0000-4000-8000-000000000001/19-0example-thread.tacv2",
+    "teams/deadbeef-1111/19-0example-thread.tacv2",
     "linear/1a000000-5dfc",
     "linear/1a000000-5dfc/1a000000-f271",
     "notion/40000000-0001",
@@ -231,8 +231,8 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     ["discord/1300000000000000100", "discord/1300000000000000100/C_ANY"],
     ["discord/300000000000000104", "discord/300000000000000104/C_OTHER"],
     ["discord/NOT_LISTED", "discord/NOT_LISTED/C1"],
-    ["teams/7e5a0000-0000-4000-8000-000000000001", "teams/7e5a0000-0000-4000-8000-000000000001/19-0example-thread.tacv2"],
-    ["teams/7e5a0000-0000-4000-8000-000000000001", "teams/7e5a0000-0000-4000-8000-000000000001/19-OTHER-thread.tacv2"],
+    ["teams/deadbeef-1111", "teams/deadbeef-1111/19-0example-thread.tacv2"],
+    ["teams/deadbeef-1111", "teams/deadbeef-1111/19-OTHER-thread.tacv2"],
     ["linear/1a000000-5dfc", "linear/1a000000-5dfc/1a000000-f271"],
     ["linear/1a000000-5dfc", "linear/1a000000-5dfc/OTHER-TEAM"],
     ["notion/40000000-0001", "notion/40000000-0001/40000000-0101"],
@@ -280,16 +280,16 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 
 {
   _resetSurfacesForTest();
-  const TENANT = "teams/7e5a0000";
-  const CHANNEL = "teams/7e5a0000/19-abc-thread.tacv2";
-  const GROUP = "teams/7e5a0000/team:eng-team-guid";
+  const TENANT = "teams/deadbeef";
+  const CHANNEL = "teams/deadbeef/19-abc-thread.tacv2";
+  const GROUP = "teams/deadbeef/team:eng-team-guid";
   const q = (extra: { groupKey?: string } = {}) => declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: [CHANNEL], ...extra });
 
   registerSurfaces([defineSurface({ key: GROUP, trust: "internal" })]);
   eq(q({ groupKey: GROUP }), "internal", "team rung: a `team:<id>` declaration reaches a channel that carries that group key");
   eq(q(), undefined, "team rung: the SAME channel with NO group key is undeclared — the rung is opt-in per binding");
   eq(
-    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: ["teams/7e5a0000/19-other-thread.tacv2"], groupKey: "teams/7e5a0000/team:other-team" }),
+    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: ["teams/deadbeef/19-other-thread.tacv2"], groupKey: "teams/deadbeef/team:other-team" }),
     undefined,
     "team rung: a channel in a DIFFERENT team is untouched by this team's declaration",
   );
@@ -305,13 +305,13 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
   ]);
   eq(q({ groupKey: GROUP }), "public", "team rung: an EXACT channel declaration beats the GROUP declaration");
 
-  registerSurfaces([defineSurface({ key: "teams/7e5a0000/team:*", trust: "public" })]);
+  registerSurfaces([defineSurface({ key: "teams/deadbeef/team:*", trust: "public" })]);
   eq(q({ groupKey: GROUP }), "public", "team rung: a group GLOB (`team:*`) matches any team under the tenant");
   eq(q(), undefined, "🔴 team rung: a group glob does NOT sweep in an ordinary channel key — no colon, no match");
-  registerSurfaces([defineSurface({ key: "teams/7e5a0000/*", trust: "public" })]);
+  registerSurfaces([defineSurface({ key: "teams/deadbeef/*", trust: "public" })]);
   eq(q(), "public", "team rung: a surface glob matches the channel…");
   eq(
-    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: ["teams/7e5a0000/no-such-channel"], groupKey: GROUP }),
+    declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: ["teams/deadbeef/no-such-channel"], groupKey: GROUP }),
     "public",
     "…and a surface glob answers about surfaces only — the group key contributes nothing to it",
   );

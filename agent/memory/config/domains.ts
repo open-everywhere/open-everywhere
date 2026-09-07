@@ -12,6 +12,7 @@ import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-every
 import { assertExposedAgentsCurated } from "@open-everywhere/core/agent/memory/agents-codemod.js";
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
 import { loadRoles } from "../../roles/roles.js";
+import { teamsUnifiedWindowKeys } from "../../identity/teams-vouched-keys.js";
 import { loadAgentsOverlay } from "./agents-overlay.js";
 import { UTILITY_MODEL, SUPERVISOR_MODEL } from "../../model/models.js";
 
@@ -64,7 +65,7 @@ const rawDomains: Domain[] = [
 
   defineDomain({
     name: "e2e-unified",
-    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "slack/T0EXAMPLE/C0EXRANDM", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101", "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2", "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011",
+    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "slack/T0EXAMPLE/C0EXRANDM", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101", ...teamsUnifiedWindowKeys(), "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011",
       ...(process.env.OE_MEMORY_EVAL === "1" ? [] : [E2E_NOTION_SURFACE])],
     memory: "e2e-ambient-brain",
     ambientSupervisor: true,
