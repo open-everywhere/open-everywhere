@@ -448,8 +448,12 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   );
   const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "build-dynamic-tools.js"), "utf8");
   ok(
-    /\{description:(\w+)\.description,execute:createToolExecuteWithAuth\([\s\S]{0,260}?inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
+    /\{description:(\w+)\.description,execute:\1\.execution===`background`\?createToolExecuteWithAuth\(\{execution:`background`,scope:\1\.name,[\s\S]{0,300}?\}\):createToolExecuteWithAuth\(\{scope:\1\.name,[\s\S]{0,300}?\}\),inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
     "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
+  );
+  ok(
+    /,name:(\w+)\.name,execution:\1\.execution,/.test(life6),
+    "…and replay carries the tool's own `execution` mode through from that metadata too, so a background dynamic tool stays background across a replay",
   );
   ok(/toModelOutput:(\w+)=>\{if\(\w+===void 0\)throw missingCallbackError/.test(life6), "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946");
 }

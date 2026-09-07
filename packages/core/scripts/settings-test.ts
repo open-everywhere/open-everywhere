@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   SETTINGS,
-  backgroundTasksAtBuild,
   defineSettings,
   getSettings,
   registerSettings,
@@ -10,7 +9,7 @@ import {
   settingEnvNames,
 } from "../agent/settings/settings.js";
 import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED } from "../agent/access/capabilities.js";
-import { backgroundTasksEnabled, oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
+import { oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
 import { taintTierMode } from "../agent/access/taint-enforcement.js";
 import { approvalJudgeMode } from "../agent/access/approval-judge.js";
 import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
@@ -60,31 +59,6 @@ console.log("1 — precedence is two tiers: the registered override, then the sh
   eq(at({}).connectors.dmOnly, true, "[1] settings not overridden keep their shipped default");
   resetSettingsForTest();
   eq(at({}).window.topology, false, "[1] resetSettingsForTest() drops back to the shipped defaults");
-}
-
-console.log("1b — delegation.backgroundTasks ships ON and resolves at BUILD time (OPE-564/565):");
-{
-  resetSettingsForTest();
-  eq(at({}).delegation.backgroundTasks, true, "[1b] the SHIPPED default is ON — the OPE-565 soak closed the experiment by moving the value into the schema (OPE-370 default==prod)");
-  eq(backgroundTasksEnabled(), true, "[1b] the runtime reader agrees with the shipped default");
-
-  eq(backgroundTasksAtBuild({}), true, "[1b] the BUILD resolver with no declared override answers the shipped default");
-  eq(backgroundTasksAtBuild({ delegation: { backgroundTasks: false } }), false, "[1b] …and a declared override in `agent/settings/settings.ts` is what DISARMS it — a reviewed diff, paired with an `oe build` in the same PR");
-
-  const saved = { a: process.env.OE_BACKGROUND_TASKS, b: process.env.OE_DELEGATION_BACKGROUND_TASKS };
-  process.env.OE_BACKGROUND_TASKS = "0";
-  process.env.OE_DELEGATION_BACKGROUND_TASKS = "false";
-  eq(backgroundTasksAtBuild({}), true, "[1b] 🔴 the BUILD resolver is ENV-BLIND — no environment variable can disarm background tasks");
-  eq(at(process.env).delegation.backgroundTasks, true, "[1b] 🔴 and neither can the RUNTIME reader, even handed the whole disarming environment");
-  if (saved.a === undefined) delete process.env.OE_BACKGROUND_TASKS;
-  else process.env.OE_BACKGROUND_TASKS = saved.a;
-  if (saved.b === undefined) delete process.env.OE_DELEGATION_BACKGROUND_TASKS;
-  else process.env.OE_DELEGATION_BACKGROUND_TASKS = saved.b;
-
-  registerSettings(defineSettings({ delegation: { backgroundTasks: false } }));
-  eq(backgroundTasksEnabled(), false, "[1b] a registered override moves the RUNTIME reader — so its `true` answer above is a value, not a hard-coded return");
-  resetSettingsForTest();
-  eq(backgroundTasksEnabled(), true, "[1b] …and it drops back when the override goes");
 }
 
 const DELETED_ENV_MIRRORS: ReadonlyArray<readonly [string, string]> = [

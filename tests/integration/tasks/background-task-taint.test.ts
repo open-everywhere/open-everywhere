@@ -46,20 +46,16 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
   await waitFor(() => handle.requests.find((r) => r.role === "child"), "the child's own model call");
 
   const output = result.output as { taskId?: unknown; status?: unknown; agentId?: unknown };
-  const taskMode = typeof output?.taskId === "string";
+  expect(typeof output?.taskId).toBe("string");
 
-  if (taskMode) {
-    expect(String(output.taskId)).toMatch(/^task_/);
-    expect(output.status).toBe("working");
-    expect(String(output.agentId)).toMatch(/^ag_/);
-    expect(JSON.stringify(result.output)).not.toContain(CHILD_ANSWER);
-  } else {
-    expect(JSON.stringify(result.output)).toContain(CHILD_ANSWER);
-  }
+  expect(String(output.taskId)).toMatch(/^task_/);
+  expect(output.status).toBe("working");
+  expect(String(output.agentId)).toMatch(/^ag_/);
+  expect(JSON.stringify(result.output)).not.toContain(CHILD_ANSWER);
 
   handle.dispose();
   live = registerScript({ parent: [{ say: "noted" }], child: [{ say: "noted" }] });
-  await sleep(taskMode ? 8_000 : 2_000);
+  await sleep(8_000);
 
   const rows = await readAuditRows({
     actions: ["taint.forward", "delegation.task_started", "delegation.task_settled"],
@@ -70,27 +66,19 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
   expect(mine.filter((r) => r.action === "taint.forward").map((r) => ({ leg: r.detail?.leg, session: r.detail?.session }))).toEqual([]);
 
   const started = mine.filter((r) => r.action === "delegation.task_started");
-  if (taskMode) {
-    expect(started.length).toBe(1);
-    expect(started[0].detail?.task).toBe(output.taskId);
-    expect(started[0].detail?.agent).toBe(output.agentId);
-    expect(started[0].detail?.session).toBe(resumed.sessionId);
-    expect(started[0].detail?.continuation).toBe(false);
-    expect(JSON.stringify(started[0].detail)).not.toContain("count to three");
-    expect(JSON.stringify(started[0].detail)).not.toContain(CHILD_ANSWER);
-  } else {
-    expect(started).toEqual([]);
-  }
+  expect(started.length).toBe(1);
+  expect(started[0].detail?.task).toBe(output.taskId);
+  expect(started[0].detail?.agent).toBe(output.agentId);
+  expect(started[0].detail?.session).toBe(resumed.sessionId);
+  expect(started[0].detail?.continuation).toBe(false);
+  expect(JSON.stringify(started[0].detail)).not.toContain("count to three");
+  expect(JSON.stringify(started[0].detail)).not.toContain(CHILD_ANSWER);
 
   const settledRows = mine.filter((r) => r.action === "delegation.task_settled");
-  if (taskMode) {
-    expect(settledRows.length).toBe(1);
-    expect(settledRows[0].detail?.task).toBe(output.taskId);
-    expect(settledRows[0].detail?.agent).toBe(output.agentId);
-    expect(settledRows[0].detail?.marker).toBe("clean");
-    expect(settledRows[0].detail?.adopted).toBe(false);
-    expect(JSON.stringify(settledRows[0].detail)).not.toContain(CHILD_ANSWER);
-  } else {
-    expect(settledRows).toEqual([]);
-  }
+  expect(settledRows.length).toBe(1);
+  expect(settledRows[0].detail?.task).toBe(output.taskId);
+  expect(settledRows[0].detail?.agent).toBe(output.agentId);
+  expect(settledRows[0].detail?.marker).toBe("clean");
+  expect(settledRows[0].detail?.adopted).toBe(false);
+  expect(JSON.stringify(settledRows[0].detail)).not.toContain(CHILD_ANSWER);
 });

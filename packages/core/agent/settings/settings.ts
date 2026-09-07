@@ -49,7 +49,6 @@ export interface AgentSettings {
   };
   readonly delegation: {
     readonly oneshotAgent: boolean;
-    readonly backgroundTasks: boolean;
   };
   readonly models: {
     readonly stack: string;
@@ -305,12 +304,6 @@ export const SETTINGS = {
       shipped: true,
       summary:
         "Whether this deployment DELEGATES at all. Armed, a conversational seat may hand a self-contained job to a full-hands worker through eve's built-in `agent`, and `spawn_thread_session` may mint a persistent thread seat. Disarming makes the whole delegation machinery inert: no seat holds `agent`, `spawn_thread_session` never mounts, and the wide-hands kit widens back to the task and native grains. There is no switch between delegation ROUTES — the built-in is the only one — so the only posture this expresses is LESS delegation.",
-    } satisfies SettingSpec<boolean>,
-    backgroundTasks: {
-      path: "delegation.backgroundTasks",
-      shipped: true,
-      summary:
-        "Run this deployment's delegations as durable BACKGROUND tasks (eve `experimental.tasks`). The `agent` call returns a task receipt at once instead of blocking the turn, the worker runs on after the parent's turn ends, and eve delivers the completion as a new message. That message CARRIES the worker's output, so the seat needs no read-back verb. It mounts two lifecycle tools at the pinned eve version — `task_cancel` on a delegating seat (on an already-settled worker it returns that worker's full view) and `task_update` on the worker — and implies persistent-session children, so a seat can continue an existing worker with `agent({agentId, message})`. Arming it takes an `oe build`: eve decides at COMPILE time which framework tools exist, so this is code-only and a running deployment cannot be flipped. The delegation verb does not change (OPE-445) — only its return shape.",
     } satisfies SettingSpec<boolean>,
   },
   models: {
@@ -842,7 +835,6 @@ export function getSettings(
     },
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
-      backgroundTasks: resolve(SETTINGS.delegation.backgroundTasks, o.delegation?.backgroundTasks, env),
     },
     models: {
       stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
@@ -955,10 +947,6 @@ export function settingDocs(): readonly SettingDoc[] {
     }
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-export function backgroundTasksAtBuild(overrides: AgentSettingsOverrides): boolean {
-  return overrides.delegation?.backgroundTasks ?? SETTINGS.delegation.backgroundTasks.shipped;
 }
 
 export function settingEnvNames(): readonly string[] {

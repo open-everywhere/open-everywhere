@@ -1,8 +1,7 @@
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
-  classifyDelegationOutcome, delegationArmOf, type DelegationArm, type ToolCall,
+  classifyDelegationOutcome, type ToolCall,
 } from "./window-harness.js";
-import { backgroundTasksEnabled } from "../../agent/access/delegation-flag.js";
 import { type AuditWireEntry } from "./audit-read.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -25,8 +24,6 @@ const { rowsSince, readFailed: auditReadFailed } = createAuditReader(TARGET, REA
 
 const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<ToolCall[] | null> =>
   readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
-
-const ARM: DelegationArm = delegationArmOf(backgroundTasksEnabled());
 
 function receiptsFor(rows: readonly AuditWireEntry[], wakeId: string): { nativeReceipt: boolean; sessionId: string | undefined; settled: AuditWireEntry | undefined } {
   const sessionId = rows.find((r) => dS(r, "wakeId") === wakeId && (dS(r, "sessionId") ?? "").length > 0)?.detail?.sessionId as string | undefined;
@@ -54,17 +51,17 @@ async function t1aAsync(): Promise<void> {
     if (nativeReceipt) {
       const route = `delegation.task_started (caller session ${sessionId})`;
       const close = settled === undefined ? "not yet settled at this read" : `settled status=${dS(settled, "status")} marker=${dS(settled, "marker")}`;
-      return record("T1a", "PASS", `agent delegated on the ${ARM} arm — ${route}; ${close}. The worker does the job and its result reaches the caller.`);
+      return record("T1a", "PASS", `agent delegated — ${route}; ${close}. The worker does the job and its result reaches the caller.`);
     }
     const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
     if (reply) {
       const sid = dS(reply, "sessionId");
       const calls = sid ? await toolCallsOf(sid, since) : null;
-      const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls, arm: ARM });
-      return record("T1a", v.status, `${v.reason} (wake ${wakeId}, session ${sid ?? "<absent>"}, arm ${ARM}).`);
+      const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls });
+      return record("T1a", v.status, `${v.reason} (wake ${wakeId}, session ${sid ?? "<absent>"}).`);
     }
   }
-  record("T1a", "SKIP", `no delegation receipt row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms on the ${ARM} arm — the model did not choose to delegate this turn (delegation is model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
+  record("T1a", "SKIP", `no delegation receipt row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose to delegate this turn (delegation is model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function t1cFile(): Promise<void> {
@@ -80,7 +77,7 @@ async function t1cFile(): Promise<void> {
       const route = `delegation.task_started (caller session ${sessionId})`;
       const posted = rows.find((r) => r.action.endsWith(".post_file"));
       if (posted) {
-        return record("T1c", "PASS", `agent delegated a FILE ask on the ${ARM} arm and the worker POSTED the artifact — ${route} then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
+        return record("T1c", "PASS", `agent delegated a FILE ask and the worker POSTED the artifact — ${route} then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
       }
       if (settled) {
         return record("T1c", "FAIL", `the delegated worker SETTLED (${settled.action}) with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return leaves the requester empty-handed). Check the worker persona still permits post_file for a file task.`);
@@ -90,19 +87,19 @@ async function t1cFile(): Promise<void> {
       if (reply) {
         const sid = dS(reply, "sessionId");
         const calls = sid ? await toolCallsOf(sid, since) : null;
-        const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls, arm: ARM });
+        const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls });
         if (v.status === "PASS") {
-          return record("T1c", "SKIP", `${v.reason} — but no .post_file row landed for the file ask (wake ${wakeId}, session ${sid ?? "<absent>"}). Artifact delivery UNVERIFIED on the ${ARM} arm.`);
+          return record("T1c", "SKIP", `${v.reason} — but no .post_file row landed for the file ask (wake ${wakeId}, session ${sid ?? "<absent>"}). Artifact delivery UNVERIFIED.`);
         }
-        return record("T1c", v.status, `${v.reason} (file ask; wake ${wakeId}, session ${sid ?? "<absent>"}, arm ${ARM}).`);
+        return record("T1c", v.status, `${v.reason} (file ask; wake ${wakeId}, session ${sid ?? "<absent>"}).`);
       }
     }
   }
-  record("T1c", "SKIP", `no delegation receipt / .post_file row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms on the ${ARM} arm — the model did not delegate the file ask this turn (model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
+  record("T1c", "SKIP", `no delegation receipt / .post_file row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not delegate the file ask this turn (model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
 }
 
 async function main(): Promise<void> {
-  console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE} arm=${ARM}`);
+  console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE}`);
   console.log(`  seat lock: /tmp/oe-e2e-locks/domain-${DOMAIN}.lock — hold it for the whole live drive`);
   if (!TARGET || !READ || !INJECT) {
     for (const id of ["T1a", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs a live spoofed-ingest target");

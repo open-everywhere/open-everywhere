@@ -237,7 +237,9 @@ test("the carriage probe records the SAME key set on both sides of the session h
 
   for (const stamp of FIRE_STAMPS) expect(keysOf(sent)).toContain(stamp);
 
-  expect([...keysOf(seen)].sort()).toEqual([...keysOf(sent)].sort());
+  const TURN_BOUNDARY_ATTRS = ["oe_dispatch_turn", "oe_parent_turn_tainted"];
+  const seenFromHop = keysOf(seen).filter((k) => !TURN_BOUNDARY_ATTRS.includes(k));
+  expect([...seenFromHop].sort()).toEqual([...keysOf(sent)].sort());
 
   for (const k of keysOf(sent)) expect(keysOf(seen)).toContain(k);
 

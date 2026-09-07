@@ -43,7 +43,7 @@ function agentRoots(): string[] {
 }
 
 function declaresDispatchTool(source: string): boolean {
-  return /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch/.test(source);
+  return /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch|\bworkflowId\s*:/.test(source);
 }
 
 {
@@ -77,13 +77,14 @@ function declaresDispatchTool(source: string): boolean {
   const rtaFiles = files.filter((f) => declaresDispatchTool(readFileSync(f, "utf8")));
   ok(
     rtaFiles.length === 0,
-    `no agent source in packages/** declares a runtime-action / dispatch tool (found: ${rtaFiles.map(rel).join(", ") || "none"})`,
+    `no agent source in packages/** declares a workflow / dispatch tool (found: ${rtaFiles.map(rel).join(", ") || "none"})`,
   );
 
   for (const [label, source] of [
     ["the retired `runtimeAction` property", `export const t = { name: "spawn", runtimeAction: { kind: "subagent-call" } };`],
     ["a `behavior.handling` block", `export const t = {\n  name: "spawn",\n  behavior: { availability: [], handling: { kind: "dispatch" } },\n};`],
     ["a bare dispatch `handling` block", `const h = { handling: { kind: "dispatch", target: {} } };`],
+    ["a `workflowId` declaration — the shape eve 0.51.0 exposes", `export const t = { name: "run", workflowId: "w1", nodeId: "n", resultKind: "text" };`],
   ] as const) {
     ok(declaresDispatchTool(source), `POSITIVE CONTROL: the dispatch matcher sees ${label}`);
   }
@@ -106,6 +107,16 @@ function declaresDispatchTool(source: string): boolean {
   const gatedConnectorOp = { name: "read_notion_page", description: "gated connector read", inputSchema: {}, execute: gatedExecute };
 
   const rtaExecute = async (): Promise<unknown> => ({ ran: "inline" });
+  const workflowTool = (name: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name,
+    description: "workflow tool",
+    inputSchema: {},
+    execute: rtaExecute,
+    workflowId: "w1",
+    nodeId: "node",
+    resultKind: "text",
+    ...extra,
+  });
   const dispatchTool = (name: string, target: Record<string, unknown>): Record<string, unknown> => ({
     name,
     description: "delegation",
@@ -113,22 +124,24 @@ function declaresDispatchTool(source: string): boolean {
     execute: rtaExecute,
     behavior: { availability: [], handling: { kind: "dispatch", target } },
   });
-  const delegation = dispatchTool("spawn", { kind: "subagent-call", nodeId: "node", subagentName: "spawn" });
 
   const mixed = new Map<string, unknown>([
     ["read_notion_page", gatedConnectorOp],
-    ["spawn", delegation],
+    ["run_workflow", workflowTool("run_workflow")],
   ]);
   const host = wf.buildWorkflowHostTools({ tools: mixed });
 
   ok(!("read_notion_page" in host), "sandbox host tools EXCLUDE the gated connector op (unreachable from code-mode)");
-  ok("spawn" in host, "sandbox host tools include the delegation tool (the only exposed class)");
+  ok("run_workflow" in host, "sandbox host tools include the workflow tool (the only exposed class)");
   ok(
-    host.spawn?.execute !== rtaExecute,
-    "even the exposed delegation tool's execute is WRAPPED (interrupts back to the host gate — the original execute never runs inline in the sandbox)",
+    host.run_workflow?.execute !== rtaExecute,
+    "even the exposed workflow tool's execute is WRAPPED (interrupts back to the host gate — the original execute never runs inline in the sandbox)",
   );
 
   for (const [label, target] of [
+    ["subagent-call", { kind: "subagent-call", nodeId: "n", subagentName: "s" }],
+    ["self-agent-call", { kind: "self-agent-call", nodeId: "n", subagentName: "s" }],
+    ["remote-agent-call", { kind: "remote-agent-call", nodeId: "n", remoteAgentName: "r" }],
     ["task-cancel", { kind: "task-cancel" }],
     ["task-update", { kind: "task-update" }],
     ["workflow-tool-call", { kind: "workflow-tool-call", workflowId: "w1" }],
@@ -136,27 +149,18 @@ function declaresDispatchTool(source: string): boolean {
     const only = new Map<string, unknown>([["ctl", dispatchTool("ctl", target as unknown as Record<string, unknown>)]]);
     ok(
       Object.keys(wf.buildWorkflowHostTools({ tools: only })).length === 0,
-      `a \`${label}\` dispatch tool is NOT exposed to the sandbox (only agent-call targets are)`,
+      `a \`${label}\` dispatch tool is NOT exposed to the sandbox (the filter reads \`workflowId\`, and a dispatch tool carries none)`,
     );
   }
-  for (const [label, target] of [
-    ["subagent-call", { kind: "subagent-call", nodeId: "n", subagentName: "s" }],
-    ["self-agent-call", { kind: "self-agent-call", nodeId: "n", subagentName: "s" }],
-    ["remote-agent-call", { kind: "remote-agent-call", nodeId: "n", remoteAgentName: "r" }],
-  ] as const) {
-    const only = new Map<string, unknown>([["d", dispatchTool("d", target as unknown as Record<string, unknown>)]]);
-    ok(
-      Object.keys(wf.buildWorkflowHostTools({ tools: only })).length === 1,
-      `NEGATIVE CONTROL: a \`${label}\` dispatch tool IS exposed — the exclusions above are the filter, not an empty fixture`,
-    );
-  }
+  ok(
+    Object.keys(wf.buildWorkflowHostTools({ tools: new Map<string, unknown>([["w", workflowTool("w")]]) })).length === 1,
+    "NEGATIVE CONTROL: a tool declaring a `workflowId` IS exposed — the exclusions above are the filter, not an empty fixture",
+  );
 
-  const bg = new Map<string, unknown>([
-    ["bg", { ...dispatchTool("bg", { kind: "subagent-call", nodeId: "n", subagentName: "bg" }), execution: "background" }],
-  ]);
+  const bg = new Map<string, unknown>([["bg", workflowTool("bg", { execution: "background" })]]);
   ok(
     "bg" in wf.buildWorkflowHostTools({ tools: bg }),
-    "a BACKGROUND delegation tool is still exposed to the sandbox (the host filter ignores `execution`)",
+    "a BACKGROUND workflow tool is still exposed to the sandbox (the host filter ignores `execution`)",
   );
 
   const nonRtaOnly = new Map<string, unknown>([
@@ -166,7 +170,7 @@ function declaresDispatchTool(source: string): boolean {
   const emptyHost = wf.buildWorkflowHostTools({ tools: nonRtaOnly });
   ok(
     Object.keys(emptyHost).length === 0,
-    "a tool-set with no delegation tools yields an EMPTY sandbox host set (⇒ Workflow tool never registered)",
+    "a tool-set with no workflow tools yields an EMPTY sandbox host set (⇒ Workflow tool never registered)",
   );
 }
 
@@ -207,6 +211,6 @@ function declaresDispatchTool(source: string): boolean {
 
 console.log(
   `\n✓ codemode-containment: ${n} assertions passed ` +
-    `(OE posture: no workflow.ts / no experimental_workflow / zero delegation tools · eve pin: sandbox exposes only wrapped agent-call delegation tools · ` +
+    `(OE posture: no workflow.ts / no experimental_workflow / zero workflow tools · eve pin: sandbox exposes only wrapped workflow tools · ` +
     `live: benign runs, fetch fail-closed, connector op unreachable)\n`,
 );

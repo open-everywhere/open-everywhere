@@ -90,6 +90,7 @@ export function openTaintTurn(ctx: HookContext): void {
   beginTaintVerdictTurn(turnId);
   seedIfTainted(ctx);
   adoptParentTurnTaint(ctx);
+  recordDispatchTurnForChildren();
   announceTaintOff(ctx);
 }
 
@@ -188,6 +189,8 @@ registerTaintKindObserver(() => {
 export const TAINT_FORWARD_ACTION = "taint.forward";
 
 export const OE_PARENT_TURN_TAINTED_ATTR = "oe_parent_turn_tainted";
+
+export const OE_DISPATCH_TURN_ATTR = "oe_dispatch_turn";
 
 interface ForwardStamp {
   readonly sessionId: string;
@@ -303,8 +306,9 @@ function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
     const stamp = parseForwardStamp(Array.isArray(raw) ? raw[0] : raw);
     if (stamp === null || stamp.sessionId !== parentSession) return null;
     if (!laterTurnOfSameChild(ctx)) {
-      const pinned = (ctx as { session?: { parent?: { turn?: { id?: unknown } } } }).session?.parent?.turn?.id;
-      if (typeof pinned === "string" && pinned.length > 0 && stamp.turnId !== pinned) return null;
+      const rawPin = currentAttrs(ctx)?.[OE_DISPATCH_TURN_ATTR];
+      const pin = parseForwardStamp(Array.isArray(rawPin) ? rawPin[0] : rawPin);
+      if (pin === null || pin.sessionId !== parentSession || pin.turnId !== stamp.turnId) return null;
     }
     let ownTurnId: string | undefined;
     try {
@@ -317,6 +321,18 @@ function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
     return memo.some((k) => k === stamp.raw || k.startsWith(`${stamp.raw}@`)) ? null : stamp;
   } catch {
     return null;
+  }
+}
+
+export function recordDispatchTurnForChildren(): boolean {
+  try {
+    const who = turnIdentity.get();
+    if (who === null || who.attrs === null) return false;
+    const pin = renderForwardStamp(who.sessionId, who.turnId, []);
+    who.attrs[OE_DISPATCH_TURN_ATTR] = pin;
+    return who.attrs[OE_DISPATCH_TURN_ATTR] === pin;
+  } catch {
+    return false;
   }
 }
 

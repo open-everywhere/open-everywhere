@@ -201,13 +201,7 @@ const SHARED_FILESYSTEM_LINE =
 const DO_NOT_PRE_EMPT_THE_GATE =
   "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: a verb that needs standing checks it when the worker runs it, and refuses with a reason the person can act on. A refusal you write instead never reaches that gate, so the person gets your guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — its refusal included.";
 
-function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined, backgroundTasks: boolean): string {
-  if (!backgroundTasks) {
-    const blocking = asyncVerb
-      ? `\`${route}\` runs the worker and BLOCKS this turn until it answers — right for short work the person is waiting on, wrong for anything long, because nothing else in this room is delivered while you wait. For work that will take a while, use \`${asyncVerb}\`: it mints a durable seat that runs alongside you and reports back on its own.`
-      : `\`${route}\` runs the worker and BLOCKS this turn until it answers, so keep what you hand it bounded. Nothing else in this room is delivered while you wait.`;
-    return `${blocking} ${SHARED_FILESYSTEM_LINE}`;
-  }
+function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined): string {
   const lines = [
     `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
     `Acknowledge the hand-off in the same turn and pass \`done: false\`, which keeps the wake open for the real answer.`,
@@ -229,7 +223,6 @@ export function renderWorkerCapabilityIndex(
   route: MemoryRecallRoute,
   groups: readonly WorkerCapabilityGroup[] = WORKER_CAPABILITY_GROUPS,
   asyncVerb?: "spawn_thread_session",
-  backgroundTasks: boolean = false,
 ): string {
   if (route === "none" || route === "file-tools") return "";
   const present = new Set(workerOnly);
@@ -253,7 +246,7 @@ export function renderWorkerCapabilityIndex(
     "worker can see its own kit and you cannot, so naming a verb for it is a guess at a list that",
     "moves. Give it the context it needs in the brief itself — it does not share your backscroll.",
     "",
-    route === "agent" ? delegationReturnShape(route, asyncVerb, backgroundTasks) : "",
+    route === "agent" ? delegationReturnShape(route, asyncVerb) : "",
     "",
     "And never say you cannot do something that a worker can. Route it, say you have routed it, and",
     "come back with the answer. Routed work is NOT done until the worker reports back: acknowledge",

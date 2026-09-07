@@ -2463,7 +2463,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
-  const { scoreWithheld, classifyDelegationOutcome, delegationArmOf } =
+  const { scoreWithheld, classifyDelegationOutcome } =
     await import("../packages/core/scripts/e2e/window-harness.js");
   const { withheldFromGrain } = await import("@open-everywhere/core/agent/access/window-gate-manifest.js");
   const { LEAN_SEAT_TOOLS } = await import("@open-everywhere/core/agent/access/lean-seat.js");
@@ -2494,10 +2494,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const overCut = scoreWithheld([...manifest, "reply"], manifest, keep);
   ok(!overCut.ok && overCut.cutKeep.join(",") === "reply", "scoreWithheld: withholding a lean-seat KEEP name FAILS (a seat cut past usefulness)");
 
-  ok(delegationArmOf(true) === "native-tasks", "delegationArmOf: the SHIPPED default (backgroundTasks on) is the native-tasks arm");
-  ok(delegationArmOf(false) === "native-sync", "delegationArmOf: background tasks off is the native-sync arm — the child runs inside the turn and writes no row");
-
-  const base = { nativeReceipt: false, replied: false, calls: null, arm: "native-tasks" as const };
+  const base = { nativeReceipt: false, replied: false, calls: null };
   ok(
     classifyDelegationOutcome({ ...base, nativeReceipt: true }).status === "PASS",
     "classifyDelegationOutcome: a delegation.task_started row joined to the caller session PASSES on the shipped native arm (the OPE-979 permanent red)",
@@ -2505,19 +2502,11 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const called = [{ name: "agent", errored: false }];
   ok(
     classifyDelegationOutcome({ ...base, replied: true, calls: called }).status === "FAIL",
-    "classifyDelegationOutcome: a clean agent call with NO receipt row FAILS on an arm that writes one — the dispatch leg is broken",
+    "classifyDelegationOutcome: a clean agent call with NO receipt row FAILS — every delegation writes one, so the dispatch leg is broken",
   );
   ok(
     classifyDelegationOutcome({ ...base, replied: true, calls: [{ name: "agent", errored: true }] }).status === "FAIL",
     "classifyDelegationOutcome: an agent call whose execute ERRORED FAILS (never laundered into a model-didn't-choose SKIP)",
-  );
-  ok(
-    classifyDelegationOutcome({ ...base, arm: "native-sync", replied: true, calls: called }).status === "PASS",
-    "classifyDelegationOutcome: on native-sync a clean agent call IS the receipt — that arm writes no dispatch row at all",
-  );
-  ok(
-    classifyDelegationOutcome({ ...base, arm: "native-sync", replied: true, calls: [{ name: "agent", errored: true }] }).status === "FAIL",
-    "classifyDelegationOutcome: native-sync does NOT excuse an errored agent call",
   );
   ok(
     classifyDelegationOutcome({ ...base, replied: true, calls: null }).status === "SKIP",

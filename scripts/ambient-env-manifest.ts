@@ -48,18 +48,6 @@ export const AMBIENT_READ_MANIFEST: ReadonlyMap<string, DeclaredRead> = new Map(
     },
   ],
   [
-    declarationKey("packages/core/scripts/settings-test.ts", WHOLE_ENV),
-    {
-      klass: "deliberate",
-      why:
-        "the assertion is that neither the BUILD resolver nor the runtime reader can be disarmed by " +
-        "an environment variable, so handing the runtime reader the host's whole environment is the " +
-        "strongest form of the claim, not a weakness. The two names that would disarm it are pinned " +
-        "and restored around the arm. (The schema is not blind in general — `resolve()` reads env " +
-        "for `models.stack`, its one harness seam; this arm is about the behaviour rows.)",
-    },
-  ],
-  [
     declarationKey("packages/create/scripts/telemetry-test.ts", WHOLE_ENV),
     {
       klass: "deliberate",

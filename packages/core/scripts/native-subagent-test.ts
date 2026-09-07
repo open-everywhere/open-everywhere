@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { filesContainingAll } from "./eve-dist-search.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-native-subagent-")), "ops.sqlite3");
 process.env.OE_WORKSPACE = "dev";
@@ -488,6 +489,8 @@ function inSession<T>(fn: () => T): T {
 
   const ATTR = spawnTaint.OE_PARENT_TURN_TAINTED_ATTR;
 
+  const PIN = spawnTaint.OE_DISPATCH_TURN_ATTR;
+
   const hook = spawnTaint.default as unknown as {
     events: {
       "turn.started": (event: unknown, ctx: unknown) => Promise<void> | void;
@@ -540,21 +543,13 @@ function inSession<T>(fn: () => T): T {
       "🔴 D9 TRIPWIRE 2/4c: …and it does not touch `attributes` at all — no freeze, no copy. `Object.freeze` there is shallow today; a deep freeze or a spread would kill the carriage silently",
     );
 
-    const dispatchCandidates = [
-      "execution/dispatch-runtime-actions-shared.js",
-      "execution/dispatch-runtime-actions-step.js",
-    ];
-    const dispatchCarriers = dispatchCandidates.filter((rel) => {
-      if (!existsSync(join(eveRoot, "dist/src", rel))) return false;
-      const src = dist(rel);
-      return src.includes("deserializeContext(") && src.includes("serializedContext") && src.includes("get(AuthKey)");
-    });
+    const dispatchCarriers = filesContainingAll("deserializeContext(", "serializedContext", "get(AuthKey)??null");
     ok(
       dispatchCarriers.length > 0,
-      `🔴 D9 TRIPWIRE 3/4: the dispatch step still builds the child's auth from the PARENT's serialized context (\`deserializeContext(e.serializedContext)\` then \`.get(AuthKey)\`) — NOT from the tool call, which is why a hook can reach it and a tool cannot. Looked in: ${dispatchCandidates.join(", ")}`,
+      "🔴 D9 TRIPWIRE 3/4: the dispatch step still builds the child's auth from the PARENT's serialized context (`deserializeContext(…serializedContext)` then `.get(AuthKey)`) — NOT from the tool call, which is why a hook can reach it and a tool cannot. The shape is absent from the whole installed eve.",
     );
 
-    const subagentTool = dist("execution/subagent-tool.js");
+    const subagentTool = dist("subagents/tool.js");
     const authParam = /,auth:(\w+),batchEvent:/.exec(subagentTool);
     ok(authParam !== null, "🔴 D9 TRIPWIRE 4/4a: `buildSubagentRunInput` still destructures an `auth` input");
     ok(
@@ -583,6 +578,11 @@ function inSession<T>(fn: () => T): T {
       "sess-fwd-parent|turn_7",
       "🔴 D9 PARENT SIDE: a tainted turn stamps `<sessionId>|<turnId>` onto its OWN auth attributes — the bag eve copies verbatim into every native child it dispatches. NO kind tail here: this turn was tainted by a SEED ATTRIBUTE, which knows the turn is tainted and not by what (OPE-1215)",
     );
+    eq(
+      bagOf(parent)[PIN],
+      "sess-fwd-parent|turn_7",
+      "🔴 D9 PARENT SIDE (OPE-1467): the same turn writes OE's own DISPATCH PIN into the same bag — the two ride together, which is what lets the child compare the stamp against a turn OE named rather than against eve's `session.parent.turn`",
+    );
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
@@ -590,6 +590,11 @@ function inSession<T>(fn: () => T): T {
     await turnStarted(clean);
     eq(untrustedIngestedThisTurn(), false, "the clean parent's own turn signal reads `=== false`");
     eq(bagOf(clean)[ATTR], undefined, "🔴 D9 NEGATIVE CONTROL: a CLEAN turn writes NO stamp — asserted `=== undefined`, not merely falsy");
+    eq(
+      bagOf(clean)[PIN],
+      "sess-fwd-clean|turn_1",
+      "🔴 D9 (OPE-1467): …but it DOES write the dispatch pin. The pin is an identity fact about which turn started a child, never a taint signal — a pin that appeared only on tainted turns would leak the taint by its presence, and would leave a clean parent's children unable to discriminate at all",
+    );
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
@@ -630,7 +635,7 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-child",
       turn: { id: "turn_0", sequence: 0 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f1", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
     });
     await turnStarted(child);
     eq(
@@ -675,14 +680,44 @@ function inSession<T>(fn: () => T): T {
     const wrongTurn = fwdCtx({
       id: "sess-fwd-wrong-turn",
       turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f6", turn: { id: "turn_8", sequence: 8 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      parent: { sessionId: "sess-fwd-parent", callId: "call_f6", turn: { id: "turn_9", sequence: 9 } },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_8" },
     });
     await turnStarted(wrongTurn);
     eq(
       untrustedIngestedThisTurn(),
       false,
-      "🔴 D9 DISCRIMINATOR, TURN HALF: on a child's FIRST turn, where `session.parent.turn` names the turn that really dispatched it, a stamp naming turn_7 does NOT taint a child dispatched from turn_8 of the same session (OPE-1215: the turn half is consulted on the first turn only — a later turn's pin is stale, and the adopted-stamp memo discriminates there instead)",
+      "🔴 D9 DISCRIMINATOR, TURN HALF: on a child's FIRST turn, where OE's own dispatch pin names the turn that really dispatched it, a stamp naming turn_7 does NOT taint a child dispatched from turn_8 of the same session (OPE-1215: the turn half is consulted on the first turn only — a later turn's pin belongs to an earlier delivery, and the adopted-stamp memo discriminates there instead)",
+    );
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const evePinAhead = fwdCtx({
+      id: "sess-fwd-eve-pin-ahead",
+      turn: { id: "turn_0", sequence: 0 },
+      parent: { sessionId: "sess-fwd-parent", callId: "call_f6b", turn: { id: "turn_8", sequence: 8 } },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7|web", [PIN]: "sess-fwd-parent|turn_7" },
+    });
+    await turnStarted(evePinAhead);
+    eq(
+      untrustedIngestedThisTurn(),
+      true,
+      "🔴 D9 DISCRIMINATOR (OPE-1467): eve 0.51.0 pins `session.parent.turn` ONE TURN AHEAD of the dispatch, and the child still adopts — the turn half reads OE's own dispatch pin, so an upstream change to that field cannot switch this leg off",
+    );
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const noPin = fwdCtx({
+      id: "sess-fwd-no-pin",
+      turn: { id: "turn_0", sequence: 0 },
+      parent: { sessionId: "sess-fwd-parent", callId: "call_f6c", turn: { id: "turn_7", sequence: 7 } },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+    });
+    await turnStarted(noPin);
+    eq(
+      untrustedIngestedThisTurn(),
+      false,
+      "🔴 D9 DISCRIMINATOR, ABSENT PIN (OPE-1467): a stamp that arrives with NO dispatch pin beside it does NOT taint a first-turn child — the pin and the stamp are written by one turn boundary into one bag, so a stamp without a pin cannot be shown to belong to this dispatch",
     );
   });
 
@@ -691,7 +726,7 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-wrong-session",
       turn: { id: "turn_0", sequence: 0 },
       parent: { sessionId: "sess-fwd-other", callId: "call_f7", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-other|turn_7" },
     });
     await turnStarted(wrongSession);
     eq(
@@ -751,7 +786,7 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-persistent",
       turn: { id: "turn_0", sequence: 0 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
     });
     await turnStarted(first);
     eq(untrustedIngestedThisTurn(), true, "…the SAME child on its FIRST turn adopts — the discriminator is the sequence, nothing else");
@@ -764,6 +799,7 @@ function inSession<T>(fn: () => T): T {
       parent: { sessionId: "sess-fwd-parent", callId: "call_f8", turn: { id: "turn_7", sequence: 7 } },
     });
     bagOf(arrayForm)[ATTR] = ["sess-fwd-parent|turn_7"];
+    bagOf(arrayForm)[PIN] = ["sess-fwd-parent|turn_7"];
     await turnStarted(arrayForm);
     eq(untrustedIngestedThisTurn(), true, "🔴 D9: the ARRAY spelling of the stamp adopts too — eve can hand any attribute back as `string[]`");
   });
@@ -773,7 +809,7 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-child-3",
       turn: { id: "turn_0", sequence: 0 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f4", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
     });
     await turnStarted(child);
     ok(untrustedIngestedThisTurn(), "precondition: the child adopted");
@@ -781,6 +817,11 @@ function inSession<T>(fn: () => T): T {
       bagOf(child)[ATTR],
       "sess-fwd-child-3|turn_0",
       "🔴 D9 HOP: the adopting child OVERWRITES the inherited stamp with its OWN (session, turn) pair, in the same handler — so a grandchild inherits, and cannot instead match the GRANDPARENT's pair",
+    );
+    eq(
+      bagOf(child)[PIN],
+      "sess-fwd-child-3|turn_0",
+      "🔴 D9 HOP (OPE-1467): …and it overwrites the inherited DISPATCH PIN with its own pair too, AFTER its own adoption read that pin. A pin written before the adoption would name this child rather than its parent, the comparison would never match, and no child anywhere would adopt",
     );
   });
 
@@ -796,7 +837,7 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-child-off",
       turn: { id: "turn_0", sequence: 0 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f5", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
     });
     await turnStarted(child);
     eq(untrustedIngestedThisTurn(), false, "🔴 D9 OPE-399: `taint.mode: \"off\"` makes the forward adoption inert — the child of a tainted parent turn is not marked, which is the deployer's reviewed choice");
@@ -812,7 +853,7 @@ function inSession<T>(fn: () => T): T {
         id: "sess-fence-child",
         turn: { id: "turn_0", sequence: 0 },
         parent: { sessionId: "sess-fwd-parent", callId: "call_g1", turn: { id: "turn_7", sequence: 7 } },
-        attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+        attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
       });
       await turnStarted(child);
       ok(untrustedIngestedThisTurn(), "precondition: the child adopted its parent turn's taint");
@@ -864,7 +905,7 @@ function inSession<T>(fn: () => T): T {
         id: "sess-fence-persistent",
         turn: { id: "turn_0", sequence: 0 },
         parent: { sessionId: "sess-fwd-parent", callId: "call_g3", turn: { id: "turn_7", sequence: 7 } },
-        attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+        attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
       });
       await turnStarted(first);
       eq(spawnTaint.adoptedParentTurnTaintThisTurn(first as never), true, "precondition: the persistent child's FIRST turn adopted");

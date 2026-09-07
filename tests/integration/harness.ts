@@ -309,8 +309,8 @@ export function taskIdOfDelegation(handle: ScriptedHandle, callLabel: string): s
   if (typeof taskId !== "string" || taskId.length === 0) {
     throw new Error(
       `integration harness: no background-task receipt on the "agent" result for ${callLabel} — ` +
-        `got ${JSON.stringify(delegation?.output)}. Either the delegation never happened, or this build ` +
-        "has `delegation.backgroundTasks` OFF and the delegation returned the child's prose inline.",
+        `got ${JSON.stringify(delegation?.output)}. The delegation never happened, or it returned no receipt ` +
+        "— every delegation mints one, so a missing receipt is a regression.",
     );
   }
   return taskId;

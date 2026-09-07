@@ -61,7 +61,7 @@ test("a settlement turn holds the task's own address from the notification, befo
   expect(new Set(dispatchStep.tools).has("reply")).toBe(true);
 
   const output = resumed.toolResults.find((t) => t.name === "agent")!.output as { taskId?: unknown };
-  const taskMode = typeof output?.taskId === "string";
+  expect(typeof output?.taskId).toBe("string");
 
   const ingressedReply = await waitFor(
     () => replyResultById(dispatched.requests, "t597-reply-ingressed"),
@@ -71,14 +71,6 @@ test("a settlement turn holds the task's own address from the notification, befo
   expect(ingressedReply.text).not.toContain(NO_ADDRESS_COPY);
   const dispatchWake = disclosedTurnWake(ingressedReply.text);
   expect(dispatchWake).toBeDefined();
-
-  if (!taskMode) {
-    expect(JSON.stringify(output)).toContain(CHILD_ANSWER);
-    const before = dispatched.requests.length;
-    await sleep(5_000);
-    expect(dispatched.requests.length).toBe(before);
-    return;
-  }
 
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated child's last step" });
   const taskId = taskIdOfDelegation(dispatched, "t597-delegate");

@@ -18,8 +18,7 @@ import { loadModelPolicy } from "./model/policy.js";
 import { compactionThresholdTokens } from "./model/stacks.js";
 import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
-import { backgroundTasksAtBuild, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
-import { SETTINGS_OVERRIDES } from "./settings/settings.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import appPackageJson from "../package.json" with { type: "json" };
 
@@ -33,8 +32,6 @@ const UTILITY_GATEWAY_DEFAULTS = {
 } as const;
 
 const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
-
-const BACKGROUND_TASKS = backgroundTasksAtBuild(SETTINGS_OVERRIDES);
 
 const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
 
@@ -110,7 +107,6 @@ export default defineAgent({
   }),
   reasoning: "medium",
   limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
-  experimental: { tasks: BACKGROUND_TASKS },
   compaction: {
     thresholdPercent: COMPACTION_THRESHOLD_PERCENT,
   },

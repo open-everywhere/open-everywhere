@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { filesContainingAll } from "./eve-dist-search.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,6 +17,9 @@ const eveRoot = dirname(require.resolve("eve/package.json"));
 const distSrc = join(eveRoot, "dist", "src");
 const eveVersion = (JSON.parse(readFileSync(join(eveRoot, "package.json"), "utf8")) as { version: string }).version;
 const read = (rel: string): string => readFileSync(join(distSrc, rel), "utf8");
+
+const SUBAGENT_TOOL = "subagents/tool.js";
+const SUBAGENT_HITL_PROXY = "subagents/hitl-proxy.js";
 
 console.log(`auth-attribute-provenance: verifying against installed eve ${eveVersion}`);
 
@@ -86,14 +90,12 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
 }
 
 {
-  const authFromContainer = /(?:auth:|\w+=)\w+\.get\(AuthKey\)\?\?null/u;
-  const dispatchFiles = ["execution/dispatch-runtime-actions-shared.js", "execution/dispatch-runtime-actions-step.js"]
-    .filter((rel) => existsSync(join(distSrc, rel)));
+  const authSites = filesContainingAll("deserializeContext(", "serializedContext", "get(AuthKey)??null");
   ok(
-    dispatchFiles.some((rel) => authFromContainer.test(read(rel))),
-    `subagent dispatch still takes the child's auth from the PARENT's AuthKey slot (looked in: ${dispatchFiles.join(", ") || "no dispatch file found at all"})`,
+    authSites.length > 0,
+    "subagent dispatch still takes the child's auth from the PARENT's deserialized context — no module of the installed eve pairs `deserializeContext` with a `get(AuthKey)??null` read any more",
   );
-  const sub = read("execution/subagent-tool.js");
+  const sub = read(SUBAGENT_TOOL);
   ok(/\{action:\w+,auth:\w+,batchEvent/.test(sub), "buildSubagentRunInput still takes `auth` as a caller argument, not off the action");
   ok(!/\w+\.input\.auth/.test(sub), "buildSubagentRunInput still never reads `auth` off the model's action input");
 }
@@ -103,7 +105,7 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   ok(/function coalesceTurnInputs/.test(messages), "harness/messages.js still exports coalesceTurnInputs");
   const body = /function coalesceTurnInputs\([^)]*\)\{[\s\S]*?\n?\}(?=function )/.exec(messages)?.[0] ?? messages.slice(messages.indexOf("function coalesceTurnInputs"), messages.indexOf("function normalizeUserContent"));
   ok(!/auth/.test(body), "coalesceTurnInputs still merges only inputResponses/message/context/outputSchema — never `auth`");
-  const hitlProxy = read("execution/subagent-hitl-proxy.js");
+  const hitlProxy = read(SUBAGENT_HITL_PROXY);
   ok(/payload:\{inputResponses:/.test(hitlProxy), "routeDeliverPayload still routes HITL answers as `inputResponses` payloads");
   ok(!/auth/.test(hitlProxy), "the HITL proxy still never touches `auth` — an answer cannot become an attribute");
 }

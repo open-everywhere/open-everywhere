@@ -177,17 +177,10 @@ export async function sessionMatrix<T extends { tag: string }>(
   return tagToSession;
 }
 
-export type DelegationArm = "native-tasks" | "native-sync";
-
-export function delegationArmOf(backgroundTasks: boolean): DelegationArm {
-  return backgroundTasks ? "native-tasks" : "native-sync";
-}
-
 export interface DelegationEvidence {
   readonly nativeReceipt: boolean;
   readonly replied: boolean;
   readonly calls: readonly { readonly name: string; readonly errored: boolean }[] | null;
-  readonly arm: DelegationArm;
 }
 
 export interface DelegationVerdict {
@@ -212,12 +205,9 @@ export function classifyDelegationOutcome(ev: DelegationEvidence): DelegationVer
   if (agentCalls.some((c) => c.errored)) {
     return { status: "FAIL", reason: "the model CALLED agent and the execute ERRORED — read the action.result error in the transcript; the delegation route is broken, not unchosen" };
   }
-  if (ev.arm === "native-sync") {
-    return { status: "PASS", reason: "the model called agent and the call did not error — on the native-sync arm (delegation.backgroundTasks off) no receipt row exists, so a clean call IS the receipt" };
-  }
   return {
     status: "FAIL",
-    reason: `the model called agent, the call did NOT error, and yet no delegation.task_started (joined on the caller session) row landed — the dispatch leg is broken on the ${ev.arm} arm`,
+    reason: "the model called agent, the call did NOT error, and yet no delegation.task_started (joined on the caller session) row landed — the dispatch leg is broken",
   };
 }
 

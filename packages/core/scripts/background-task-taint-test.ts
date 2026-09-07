@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { filesContainingAll } from "./eve-dist-search.js";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -196,8 +197,11 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
     eq(keys, ["agentId", "status", "taskId"], "🔴 PART 0B PRODUCER B: eve's `SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA` still names exactly `agentId`, `status`, `taskId` — the three fields arm B reads. A rename here is a silent settlement outage everywhere else");
     ok(/status:z\.literal\(`working`\)/.test(body), "🔴 PART 0B PRODUCER B: eve still stamps the receipt status as the literal `working` — arm B's positive discriminator");
 
-    const localSubagent = eveSrc("execution/tools/subagent/local.js");
-    ok(localSubagent !== null && /execution:`background`/.test(localSubagent), "🔴 PART 0B PRODUCER B: eve's local subagent tool still declares `execution: \"background\"`, which is what routes the delegation through generic tool execution and produces the plain `tool-result` envelope");
+    const producers = filesContainingAll("execution:`background`", "SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA");
+    ok(
+      producers.length > 0,
+      "🔴 PART 0B PRODUCER B: some module of the installed eve still pairs `execution: \"background\"` with the receipt schema — the pairing that routes a delegation through generic tool execution and produces the plain `tool-result` envelope",
+    );
 
     eq(
       tasks.readTaskReceipt(receiptResultV2("t597-delegate", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),

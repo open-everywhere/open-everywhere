@@ -2,8 +2,9 @@ import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
   afterThisTest,
-  awaitTaskSettlement,
+  armSettlement,
   bootAgent,
+  consumeSettlement,
   disposeLater,
   installNotionApiStub,
   notionCommentEventPost,
@@ -51,14 +52,17 @@ async function driveDelegationAndReadWorker(wake: () => Promise<void>): Promise<
   await wake();
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "notion: the dispatch turn's own terminal step");
+
+  const armed = armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT);
+  disposeLater(armed);
+
   await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "notion: the worker's terminal step" });
   expect(handle.requests.filter((r) => r.fault !== undefined), "notion: the scripted model reported a fault").toEqual([]);
 
   const taskId = taskIdOfDelegation(handle, "the notion delegation");
-  const drained = await awaitTaskSettlement({ dispatched: handle, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: "notion: the worker's settlement wake" });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined), "notion: a straggling worker crossed into the drain").toEqual([]);
-  drained.handle.dispose();
+  await consumeSettlement({ armed, dispatched: handle, taskId, label: "notion: the worker's settlement wake" });
+  expect(armed.requests.filter((r) => r.fault !== undefined), "notion: a straggling worker crossed into the drain").toEqual([]);
+  armed.dispose();
 
   return handle;
 }

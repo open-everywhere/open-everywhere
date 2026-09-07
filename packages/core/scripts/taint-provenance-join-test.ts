@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import memoryHook from "../agent/hooks/memory.js";
 import spawnTaintHook from "../agent/hooks/spawn-taint.js";
-import { OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
+import { OE_DISPATCH_TURN_ATTR, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import { markUntrustedIngestedThisTurn, taintKindsThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { EXTERNAL_PROVENANCE_PREFIX } from "../agent/memory/provenance-mark.js";
 import { registerConfig } from "../agent/access/config.js";
@@ -375,6 +375,7 @@ console.log("C — the kinds cross the hop, and only kinds the ingestion table n
 {
   const parent = makeSeat("forge-parent", "standing");
   const child = makeChild(parent, "forge-child", 0, "forge-parent-turn-1", "call_c2");
+  child.bag[OE_DISPATCH_TURN_ATTR] = "forge-parent|forge-parent-turn-1";
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "forge-parent|forge-parent-turn-1|web,not-a-real-kind";
   await inSession(child, async () => {
     await taint.events["turn.started"]!({}, child.ctx);
@@ -385,6 +386,7 @@ console.log("C — the kinds cross the hop, and only kinds the ingestion table n
 {
   const parent = makeSeat("bare-parent", "standing");
   const child = makeChild(parent, "bare-child", 0, "bare-parent-turn-1", "call_c3");
+  child.bag[OE_DISPATCH_TURN_ATTR] = "bare-parent|bare-parent-turn-1";
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "bare-parent|bare-parent-turn-1";
   await inSession(child, async () => {
     await taint.events["turn.started"]!({}, child.ctx);

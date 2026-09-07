@@ -645,14 +645,15 @@ interface EveActionResultEvent {
   readonly data: { readonly result: unknown };
 }
 
-interface EveRuntimeActions {
-  setPendingRuntimeActionBatch(input: {
-    readonly actions: readonly unknown[];
+interface EveCoordination {
+  setPendingCoordinationBatch(input: {
+    readonly runtimeActions: readonly unknown[];
+    readonly tasks: readonly unknown[];
     readonly event: { readonly sequence: number; readonly stepIndex: number; readonly turnId: string };
     readonly responseMessages: readonly unknown[];
     readonly session: unknown;
   }): unknown;
-  resolvePendingRuntimeActions(input: {
+  resolvePendingCoordination(input: {
     readonly emit: (event: EveActionResultEvent) => Promise<void>;
     readonly session: unknown;
     readonly stepInput: { readonly runtimeActionResults: readonly unknown[] };
@@ -664,8 +665,8 @@ console.log("10. the blocking arm's batch rule — a partial dispatch batch emit
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
   const evePath = (rel: string) => pathToFileURL(join(eveRoot, "dist/src", rel)).href;
-  const runtimeActions = (await import(evePath("harness/runtime-actions.js"))) as EveRuntimeActions;
-  const { AGENT_HANDLES_STATE_KEY } = (await import(evePath("harness/handles/state-key.js"))) as { AGENT_HANDLES_STATE_KEY: string };
+  const coordination = (await import(evePath("harness/coordination.js"))) as EveCoordination;
+  const { AGENT_HANDLES_STATE_KEY } = (await import(evePath("subagents/handles/state-key.js"))) as { AGENT_HANDLES_STATE_KEY: string };
 
   const NAME = "worker";
   const call = (id: string): unknown => ({
@@ -690,8 +691,9 @@ console.log("10. the blocking arm's batch rule — a partial dispatch batch emit
     outcome: { kind: "terminal", result: { kind: "succeeded", output }, usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 } },
   });
 
-  const parked = runtimeActions.setPendingRuntimeActionBatch({
-    actions: [call("call_A"), call("call_B")],
+  const parked = coordination.setPendingCoordinationBatch({
+    runtimeActions: [call("call_A"), call("call_B")],
+    tasks: [],
     event: { sequence: 3, stepIndex: 0, turnId: "turn_1" },
     responseMessages: [{ role: "assistant", content: [] }],
     session: { sessionId: "parent-seat", history: [], state: { [AGENT_HANDLES_STATE_KEY]: { handles: [handle("call_A"), handle("call_B")] } } },
@@ -699,7 +701,7 @@ console.log("10. the blocking arm's batch rule — a partial dispatch batch emit
 
   async function resolveWith(results: readonly unknown[]): Promise<{ outcome: string; events: EveActionResultEvent[] }> {
     const events: EveActionResultEvent[] = [];
-    const out = await runtimeActions.resolvePendingRuntimeActions({
+    const out = await coordination.resolvePendingCoordination({
       emit: async (e) => {
         events.push(e);
       },

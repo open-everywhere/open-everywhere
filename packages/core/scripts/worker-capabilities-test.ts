@@ -93,7 +93,6 @@ eq(renderWorkerCapabilityIndex([], "agent"), "", "no worker-only capability ⇒ 
 const standingBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session");
 ok(standingBlock.startsWith("## What a worker can do that you cannot"), "the block leads with its heading");
 ok(standingBlock.includes("`agent`") && standingBlock.includes("`spawn_thread_session`"), "a standing seat is told BOTH verbs — the blocking one and the async one");
-ok(/BLOCKS this turn/.test(standingBlock), "the block states the synchronous cost of `agent` (plan §2.3 — eve's agent tool blocks, unlike Tag's async Agents)");
 ok(/Brief it by INTENT, not by tool/.test(standingBlock), "the block asks for intent-shaped briefs (plan's 'achieve X, not use tool Y' ruling)");
 
 const threadBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_THREAD, "agent");
@@ -105,69 +104,52 @@ for (const name of grouped) {
   ok(!standingBlock.includes("`" + name + "`"), `the block does not name "${name}" — it is not worker-only from a standing seat`);
 }
 
-eq(
-  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", false),
-  standingBlock,
-  "🔴 the flag DEFAULTS to false: passing `false` renders BYTE-IDENTICALLY to omitting the argument",
-);
-
-const backgroundBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true);
-ok(backgroundBlock !== standingBlock, "🔴 OPE-564: the background build renders a DIFFERENT delegation paragraph — without this the flag would be cosmetic");
-ok(!/BLOCKS this turn/.test(backgroundBlock), "🔴 OPE-564: the blocking claim is GONE on a background build — it is the sentence that would strand a seat waiting for a result that arrives on a later turn");
-ok(/does NOT block/.test(backgroundBlock), "…and the block says so in as many words, rather than leaving the old claim merely unstated");
-ok(/task receipt/.test(backgroundBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
-ok(/`done: false`/.test(backgroundBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
-ok(/arrives as a NEW message on a later turn/.test(backgroundBlock), "the seat is told WHERE the result appears — a later turn, not this one");
-ok(!backgroundBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
-ok(/that message tells you how to read its output/.test(backgroundBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");
-ok(backgroundBlock.includes("`task_cancel`"), "the STOP verb is still named — `task_cancel` survives eve 0.42.0 and is how a seat drops work it no longer needs");
-ok(backgroundBlock.includes("`task_cancel`"), "the stop verb is named — the other half of the two lifecycle verbs a seat actually holds");
-ok(!backgroundBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
-ok(!backgroundBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
-ok(/which request the result answers/.test(backgroundBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
-ok(/`agentId` is refused/.test(backgroundBlock), "🔴 OPE-593: the copy states the refusal — eve's own prompt still teaches `agentId`, so OE must contradict it out loud");
-ok(/A worker does ONE job/.test(backgroundBlock), "…and states the invariant the refusal protects: a delegated worker is single-turn");
+ok(!/BLOCKS this turn/.test(standingBlock), "🔴 OPE-1440: the blocking claim is GONE — it is the sentence that would strand a seat waiting for a result that arrives on a later turn");
+ok(/does NOT block/.test(standingBlock), "…and the block says so in as many words, rather than leaving the old claim merely unstated");
+ok(/task receipt/.test(standingBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
+ok(/`done: false`/.test(standingBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
+ok(/arrives as a NEW message on a later turn/.test(standingBlock), "the seat is told WHERE the result appears — a later turn, not this one");
+ok(!standingBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
+ok(/that message tells you how to read its output/.test(standingBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");
+ok(standingBlock.includes("`task_cancel`"), "the STOP verb is named — `task_cancel` is how a seat drops work it no longer needs");
+ok(!standingBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
+ok(!standingBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
+ok(/which request the result answers/.test(standingBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
+ok(/`agentId` is refused/.test(standingBlock), "🔴 OPE-593: the copy states the refusal — eve's own prompt still teaches `agentId`, so OE must contradict it out loud");
+ok(/A worker does ONE job/.test(standingBlock), "…and states the invariant the refusal protects: a delegated worker is single-turn");
 ok(
-  !/call \`agent\` with that worker's/.test(backgroundBlock) && !/with that worker's `agentId`/.test(backgroundBlock),
+  !/call \`agent\` with that worker's/.test(standingBlock) && !/with that worker's `agentId`/.test(standingBlock),
   "🔴 OPE-593: the OPE-564 teaching sentence is GONE — a seat told how to continue would try, and a refused call it was taught to make is a retry loop",
 );
-ok(/put everything the new worker needs in its brief/.test(backgroundBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
-ok(/Brief it by INTENT, not by tool/.test(backgroundBlock), "the intent-shaped-brief ruling survives the re-aim");
+ok(/put everything the new worker needs in its brief/.test(standingBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
 
-const backgroundThreadBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_THREAD, "agent", undefined, undefined, true);
-ok(/does NOT block/.test(backgroundThreadBlock), "a thread seat is told the same return shape — the flag is build-wide, not per grain");
-ok(!backgroundThreadBlock.includes("spawn_thread_session"), "…and STILL never hears about the standing-only spawner (no recursive thread trees)");
+ok(/does NOT block/.test(threadBlock), "a thread seat is told the same return shape — the shape is build-wide, not per grain");
+ok(!/BLOCKS this turn/.test(threadBlock), "…and the retired blocking claim is absent there too");
+ok(!threadBlock.includes("spawn_thread_session"), "…and it STILL never hears about the standing-only spawner (no recursive thread trees)");
 
 const SHARED_FS_SENTENCE =
   "Every worker shares ONE filesystem with you and with every other worker running beside it. " +
   "Give each one its own directory or file scope in the brief, or two of them will write over each other.";
 
 for (const [label, block] of [
-  ["the SYNC standing prompt", standingBlock],
-  ["the SYNC thread prompt", threadBlock],
-  ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
-  ["the BACKGROUND standing prompt", backgroundBlock],
-  ["the BACKGROUND thread prompt", backgroundThreadBlock],
+  ["the standing prompt", standingBlock],
+  ["the thread prompt", threadBlock],
+  ["the standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
 ] as const) {
   ok(block.includes(SHARED_FS_SENTENCE), `🔴 OPE-584: ${label} carries the shared-filesystem sentence VERBATIM — one mechanism, one sentence, every delegating prompt`);
 }
 
-ok(/BLOCKS this turn/.test(standingBlock), "🔴 the sync prompt still states the BLOCKING return shape — the shared-filesystem line is an addition, never a replacement");
-ok(/does NOT block/.test(backgroundBlock), "…and the background prompt still states the non-blocking one");
-
-ok(!/does NOT block/.test(standingBlock) && !/BLOCKS this turn/.test(backgroundBlock), "🔴 the two return-shape claims stay mutually exclusive — a prompt carrying both would be unreadable advice");
-
 for (const route of ["none", "file-tools"] as const) {
   ok(
-    !renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session", true).includes("shares ONE filesystem"),
+    !renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session").includes("shares ONE filesystem"),
     `a seat on route "${route}" is told nothing about a shared filesystem — it starts no workers`,
   );
 }
 
 eq(
-  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true),
-  backgroundBlock,
-  "the background render is byte-stable across calls as well — the prompt cache must not churn on either build",
+  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session"),
+  standingBlock,
+  "the render is byte-stable across calls — the prompt cache must not churn turn to turn",
 );
 
 const PERMISSION_STEER =
@@ -184,11 +166,9 @@ ok(
 );
 
 for (const [label, block] of [
-  ["the SYNC standing prompt", standingBlock],
-  ["the SYNC thread prompt", threadBlock],
-  ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
-  ["the BACKGROUND standing prompt", backgroundBlock],
-  ["the BACKGROUND thread prompt", backgroundThreadBlock],
+  ["the standing prompt", standingBlock],
+  ["the thread prompt", threadBlock],
+  ["the standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
 ] as const) {
   ok(block.includes(PERMISSION_STEER), `🔴 OPE-651: ${label} carries the permission steer VERBATIM — a seat must not pre-empt a gate it does not hold`);
 }
@@ -199,7 +179,7 @@ ok(
 );
 
 for (const route of ["none", "file-tools"] as const) {
-  const block = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session", true);
+  const block = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session");
   eq(block, "", `a seat on route "${route}" renders no block at all, so it never receives the permission steer either`);
   ok(!block.includes("Permission works the same way"), `…asserted directly on route "${route}" as well, so a later non-empty render on that route cannot smuggle the steer in`);
 }

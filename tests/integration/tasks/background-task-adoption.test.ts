@@ -7,7 +7,6 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   readUsageWindow,
   registerScript,
-  sleep,
   waitFor,
   type RecordedRequest,
   type ScriptedHandle,
@@ -29,8 +28,6 @@ function close(handle: ScriptedHandle): void {
 }
 
 const CHILD_ANSWER = "the worker finished the background job";
-
-const TASK_TOOLS = ["task_peek", "task_cancel", "task_sleep", "task_update"] as const;
 
 test("a background delegation ends the parent's turn, comes back as a message, and bills the parent", async () => {
   await bootAgent();
@@ -56,43 +53,37 @@ test("a background delegation ends the parent's turn, comes back as a message, a
   await waitFor(() => first.requests.find((r) => r.role === "child"), "the child's own model call");
 
   const output = delegation.output as { taskId?: unknown; status?: unknown; agentId?: unknown };
-  const taskMode = typeof output?.taskId === "string";
+  expect(typeof output?.taskId).toBe("string");
 
   const dispatchStep = first.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
   const offered = new Set(dispatchStep.tools);
   expect(offered.has("agent")).toBe(true);
 
-  if (taskMode) {
+  {
     expect(offered.has("task_cancel")).toBe(true);
     expect(offered.has("task_update")).toBe(false);
     expect(offered.has("task_sleep")).toBe(false);
     expect(offered.has("task_peek")).toBe(false);
-  } else {
-    for (const name of TASK_TOOLS) expect(offered.has(name)).toBe(false);
   }
 
-  if (taskMode) {
-    expect(String(output.taskId)).toMatch(/^task_/);
-    expect(output.status).toBe("working");
-    expect(String(output.agentId)).toMatch(/^ag_/);
-    expect(JSON.stringify(delegation.output)).not.toContain(CHILD_ANSWER);
-  } else {
-    expect(JSON.stringify(delegation.output)).toContain(CHILD_ANSWER);
-  }
+  expect(String(output.taskId)).toMatch(/^task_/);
+  expect(output.status).toBe("working");
+  expect(String(output.agentId)).toMatch(/^ag_/);
+  expect(JSON.stringify(delegation.output)).not.toContain(CHILD_ANSWER);
 
   await waitFor(() => first.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step — the turn really ended");
 
-  const taskId = taskMode ? String(output.taskId) : "";
+  const taskId = String(output.taskId);
   const firstRequests: readonly RecordedRequest[] = [...first.requests];
   close(first);
   const second = open(
     registerScript({
-      parent: taskMode ? [{ say: "the worker is done" }] : [{ say: "nothing to do" }],
+      parent: [{ say: "the worker is done" }],
       child: [{ say: "nothing to do" }],
     }),
   );
 
-  if (taskMode) {
+  {
     const notification = await waitFor(
       () => second.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
       "the settled worker's completion, delivered as a new message naming the task id",
@@ -105,9 +96,6 @@ test("a background delegation ends the parent's turn, comes back as a message, a
 
     const cancels = [...firstRequests, ...second.requests].flatMap((r) => r.toolResults.filter((t) => t.name === "task_cancel"));
     expect(cancels).toEqual([]);
-  } else {
-    await sleep(5_000);
-    expect(second.requests.filter((r) => r.role === "parent")).toEqual([]);
   }
 
   const parentSurfaceKey = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;

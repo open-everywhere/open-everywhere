@@ -64,13 +64,15 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
   })();
   ok(executor !== undefined, "PIN 2: eve's INTERNAL task view still declares an `executor` shape");
   ok(
-    executor?.includes("childSessionId:") === true,
-    "PIN 2: eve's INTERNAL task view still carries `executor.childSessionId` — the id pin 1 proves OE never receives",
+    executor?.includes("binding:z.strictObject({") === true,
+    "PIN 2: the internal executor shape still carries its `binding` (the parse really found the shape)",
   );
-  ok(
-    /lifecycle:z\.enum\(\[`parked`,`terminal`\]\)/.test(executor ?? ""),
-    "PIN 2: the internal executor shape still carries `lifecycle` (`parked` / `terminal`)",
-  );
+  for (const gone of ["childSessionId:", "childTurnId:", "lifecycle:"]) {
+    ok(
+      executor?.includes(gone) === false,
+      `PIN 2 🔴: eve's internal task view no longer carries \`executor.${gone.replace(":", "")}\` — the per-worker road through the task view is GONE at 0.51.0 (OPE-1441)`,
+    );
+  }
 }
 
 {
@@ -79,8 +81,9 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
     transitions.includes("cannot change a terminal task"),
     "PIN 3 🔴: a terminal task still REJECTS every command but one — `cancel` at settlement changes nothing",
   );
-  const terminalArm = /isTerminalTaskStatus\([A-Za-z_$]{1,2}\.status\)\)\{if\([A-Za-z_$]{1,2}\.kind===`settle-executor`\)/.test(transitions);
-  ok(terminalArm, "PIN 3: `settle-executor` is still the ONE command a terminal task accepts");
+  const terminalArm = /isTerminalTaskStatus\([A-Za-z_$]{1,2}\.status\)\)return [A-Za-z_$]{1,2}\.kind===`cancel`&&[A-Za-z_$]{1,2}\.status===`cancelled`\?\{action:`noop`/.test(transitions);
+  ok(terminalArm, "PIN 3: a terminal task accepts NO command — a repeated `cancel` on a cancelled task is the one case, and it resolves to `noop`");
+  ok(!transitions.includes("`settle-executor`)"), "PIN 3: …and `settle-executor` is no longer carved out of the terminal arm either (eve 0.51.0)");
 }
 
 {
@@ -109,30 +112,29 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
 
 {
   const entry = read("execution/workflow-entry.js");
-  const finalizer = read("execution/finalize-terminal-session.js");
   const finalization = read("execution/workflow-entry-finalization.js");
 
   ok(
-    /await terminateChildSessionsStep\([^)]*\),await emitTerminalSessionCompletionStep\([^)]*\),[A-Za-z_$]{1,2}\.terminalState\.terminalEmitted=!0,[A-Za-z_$]{1,2}\.notifyCaller&&/.test(finalizer),
-    "PIN 6 🔴: the shared finalizer reaps, then emits the terminal completion UNCONDITIONALLY, and only then consults `notifyCaller`",
+    /async function finalizeExpiredSession\([A-Za-z_$]{1,2}\)\{return await terminateChildSessionsStep\([^)]*\),await emitTerminalSessionCompletionStep\(/.test(finalization),
+    "PIN 6 🔴: the shared finalizer reaps, then emits the terminal completion UNCONDITIONALLY — the emit is the FIRST thing after the reap, with no flag between them",
   );
   ok(
-    /[A-Za-z_$]{1,2}\.kind===`result`\?[A-Za-z_$]{1,2}\.result:await finalizeTerminalSession\(/.test(entry),
-    "PIN 6 🔴: the driver routes every non-`result` exit into `finalizeTerminalSession`",
+    !finalization.includes("notifyCaller") && !entry.includes("notifyCaller"),
+    "PIN 6 🔴: there is no `notifyCaller` flag left on either module — no arm can ask for a quiet retirement",
   );
-  for (const arm of ["expired", "reset", "closed"]) {
+  ok(
+    /[A-Za-z_$]{1,2}\.kind===`result`\?[A-Za-z_$]{1,2}\.result:await finalizeExpiredSession\(/.test(entry),
+    "PIN 6 🔴: the driver routes the `expired` exit into the shared finalizer",
+  );
+  for (const arm of ["reset", "closed"]) {
     ok(
-      new RegExp(`\\.kind===\`${arm}\`\\)return\\{kind:\`terminal\`,notifyCaller:!(0|1),`).test(entry),
-      `PIN 6 🔴: the \`${arm}\` arm returns a \`terminal\` kind — it reaches the shared finalizer`,
+      new RegExp(`\\.kind===\`${arm}\`\\)return\\{kind:\`result\`,result:await finalizeExpiredSession\\(`).test(entry),
+      `PIN 6 🔴: the \`${arm}\` arm calls the shared finalizer directly — it emits the terminal completion too`,
     );
   }
   ok(
     !entry.includes("emitTerminalSessionCompletionStep"),
-    "PIN 6: the terminal-completion emit no longer has a call site in `workflow-entry.js`",
-  );
-  ok(
-    (finalization.match(/finalizeExpiredSession/g) ?? []).length === 2,
-    "PIN 6: `finalizeExpiredSession` is dead — its only occurrences are its own declaration and its export",
+    "PIN 6: the terminal-completion emit has no call site in `workflow-entry.js`",
   );
 }
 
@@ -140,12 +142,12 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
   const entry = read("execution/workflow-entry.js");
   const finalization = read("execution/workflow-entry-finalization.js");
   ok(
-    /\.kind===`reset`\)return\{kind:`terminal`,notifyCaller:!1,/.test(entry),
-    "PIN 7 🔴: the `reset` arm retires with `notifyCaller: false` — which pin 6 proves does NOT suppress the terminal completion",
+    /\.kind===`reset`\)return\{kind:`result`,result:await finalizeExpiredSession\(/.test(entry),
+    "PIN 7 🔴: the `reset` arm retires through the shared finalizer — which pin 6 proves emits the terminal completion unconditionally",
   );
   ok(
-    /\.kind===`expired`\)return\{kind:`terminal`,notifyCaller:!0,/.test(entry),
-    "PIN 7: …while `expired` carries `notifyCaller: true` through the same finalizer — the flag is read, not hardcoded",
+    /\.kind===`expired`\)return\{kind:`expired`,/.test(entry),
+    "PIN 7: …while `expired` returns its own kind and is finalized by the driver — two roads, one finalizer",
   );
   ok(
     /async function finalizeDone\([A-Za-z_$]{1,2}\)\{[^]*?await terminateChildSessionsStep\(/.test(finalization) &&

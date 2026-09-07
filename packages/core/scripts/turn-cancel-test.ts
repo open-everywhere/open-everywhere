@@ -807,7 +807,7 @@ const NO_REQUESTER_BASELINE =
   ok(/function clearAllProxyInputRequests\(\w+\)\{return hasProxyInputRequests/.test(proxy), "clearAllProxyInputRequests still wipes the WHOLE map, not one child's entries");
   ok(/clearProxyInputRequestsForChild/.test(proxy) && !/clearProxyInputRequestsForChild/.test(settle), "…and the cancel path still does NOT use eve's per-child clear");
 
-  const hitl = eveDist("execution/subagent-hitl-proxy.js");
+  const hitl = eveDist("subagents/hitl-proxy.js");
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {

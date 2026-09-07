@@ -14,7 +14,6 @@ import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
-import { backgroundTasksEnabled } from "../access/delegation-flag.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
@@ -321,7 +320,7 @@ function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallR
     if (grain !== "standing" && grain !== "thread") return "";
     const workerOnly = grain === "thread" ? WORKER_ONLY_TOOLS_THREAD : WORKER_ONLY_TOOLS_STANDING;
     const asyncVerb = grain === "standing" && recall === "agent" ? ("spawn_thread_session" as const) : undefined;
-    return renderWorkerCapabilityIndex(workerOnly, recall, undefined, asyncVerb, backgroundTasksEnabled());
+    return renderWorkerCapabilityIndex(workerOnly, recall, undefined, asyncVerb);
   } catch {
     return "";
   }
