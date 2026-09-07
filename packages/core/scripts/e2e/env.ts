@@ -89,6 +89,8 @@ export const ENV = {
   routineConnectorFixture: "E2E_ROUTINE_CONNECTOR_FIXTURE",
   discordGrantOwner: "E2E_DISCORD_GRANT_OWNER",
   discordGrantTapped: "E2E_DISCORD_GRANT_TAPPED",
+  discordGrantThread: "E2E_DISCORD_GRANT_THREAD",
+  discordGrantThreadFile: "E2E_DISCORD_GRANT_THREAD_FILE",
   expectModels: "E2E_EXPECT_MODELS",
   expectModelsRequired: "E2E_EXPECT_MODELS_REQUIRED",
 } as const;

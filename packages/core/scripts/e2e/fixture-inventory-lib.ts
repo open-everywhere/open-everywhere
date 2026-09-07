@@ -127,8 +127,10 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
 
   E2E_TARGET_URL: "local",
   E2E_TEAMS_REFRESH_TOKEN_FILE: "local",
+  E2E_DISCORD_GRANT_THREAD_FILE: "local",
 
   E2E_GITHUB_ISSUE: "not-a-room",
+  E2E_DISCORD_GRANT_THREAD: "not-a-room",
   E2E_GITHUB_INSTALLATION_ID: "not-a-room",
   E2E_NOTION_ANCHOR_ONTOPIC: "not-a-room",
   E2E_NOTION_ANCHOR_ONTOPIC2: "not-a-room",

@@ -10,6 +10,8 @@ export interface FenceRowDetail {
   readonly owner?: unknown;
   readonly ownerPlatform?: unknown;
   readonly grantId?: unknown;
+  readonly askId?: unknown;
+  readonly expiresAt?: unknown;
   readonly outcome?: unknown;
   readonly gate?: unknown;
 }
@@ -66,12 +68,44 @@ export function discordOwnedAsks(rows: readonly AuditWireEntry[]): readonly Audi
   return rows.filter((e) => e.action === "grant.asked" && ownerPlatformOf(e) === "discord");
 }
 
-export function discordOwnedGrants(rows: readonly AuditWireEntry[]): readonly AuditWireEntry[] {
-  return rows.filter((e) => e.action === "grant.granted" && ownerPlatformOf(e) === "discord");
-}
-
 export function noticesForGrant(rows: readonly AuditWireEntry[], grantId: string): readonly AuditWireEntry[] {
   return rows.filter((e) => e.action === "grant.notified" && detailOf(e).grantId === grantId);
+}
+
+export function surfaceNamesChannel(surface: string | undefined, channelId: string): boolean {
+  if (surface === undefined || channelId.length === 0) return false;
+  return surface === channelId || surface.endsWith(`/${channelId}`);
+}
+
+export function discordOwnedAsksInChannel(rows: readonly AuditWireEntry[], channelId: string): readonly AuditWireEntry[] {
+  return discordOwnedAsks(rows).filter((e) => surfaceNamesChannel(e.surface, channelId));
+}
+
+export function askIdsOf(rows: readonly AuditWireEntry[]): readonly string[] {
+  return rows.map((e) => detailOf(e).askId).filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+export function grantsForAsks(rows: readonly AuditWireEntry[], askIds: readonly string[]): readonly AuditWireEntry[] {
+  const wanted = new Set(askIds);
+  return rows.filter((e) => e.action === "grant.granted" && typeof detailOf(e).askId === "string" && wanted.has(detailOf(e).askId as string));
+}
+
+export function grantIdsOf(rows: readonly AuditWireEntry[]): readonly string[] {
+  return rows.map((e) => detailOf(e).grantId).filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+export function unexpiredGrants(rows: readonly AuditWireEntry[], nowMs: number): readonly AuditWireEntry[] {
+  return rows.filter((e) => {
+    const expiresAt = detailOf(e).expiresAt;
+    if (typeof expiresAt !== "string") return true;
+    const ms = Date.parse(expiresAt);
+    return !Number.isFinite(ms) || ms > nowMs;
+  });
+}
+
+export function usesOfGrants(rows: readonly AuditWireEntry[], grantIds: readonly string[]): readonly AuditWireEntry[] {
+  const wanted = new Set(grantIds);
+  return rows.filter((e) => e.action === "grant.used" && typeof detailOf(e).grantId === "string" && wanted.has(detailOf(e).grantId as string));
 }
 
 export function refusedUnverifiedRequester(rows: readonly AuditWireEntry[]): readonly AuditWireEntry[] {

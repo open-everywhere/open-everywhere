@@ -23,13 +23,19 @@ import {
   allAttributedToRoutine,
   allNamePermissionKind,
   allNoticesDelivered,
+  askIdsOf,
   pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
-  discordOwnedGrants,
+  discordOwnedAsksInChannel,
+  grantIdsOf,
+  grantsForAsks,
   noticesForGrant,
   refusedUnverifiedRequester,
   splitFenceRows,
+  unexpiredGrants,
+  usesOfGrants,
 } from "./grant-fence-rows.js";
+import { DEFAULT_GRANT_THREAD_SINK, readGrantThreadRecord, resolveGrantThread, writeGrantThreadRecord } from "./grant-thread-record.js";
 import {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
@@ -4396,6 +4402,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const discord = ctx.discord!;
       const ownerId = ownerRaw!.includes("/") ? ownerRaw!.slice(ownerRaw!.lastIndexOf("/") + 1) : ownerRaw!;
       const tapped = process.env[ENV.discordGrantTapped] === "1";
+      const threadRecordPath = process.env[ENV.discordGrantThreadFile]?.trim() || DEFAULT_GRANT_THREAD_SINK;
       const token = factToken("dgrant");
       const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
@@ -4436,35 +4443,62 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       if (!tapped) {
+        const written = writeGrantThreadRecord(threadRecordPath, { threadId, raisedAt: new Date().toISOString() });
         ctx.log(
-          `S-DISCORD-GRANT: the Discord grant card is now live in the owner's DM. THE HARNESS CANNOT TAP IT — Discord signs interactions with Ed25519 and this deployment holds only the public key, so unlike every Slack card in this pack there is no forge. To prove the tap-approve half: a human taps Approve on that card, then re-runs this leg with ${ENV.discordGrantTapped}=1. Left unproven this run: tap-approve routing, the ephemeral answer, the components-strip on the decided card, and grant.notified.`,
+          `S-DISCORD-GRANT: the Discord grant card is now live in the owner's DM. THE HARNESS CANNOT TAP IT — Discord signs interactions with Ed25519 and this deployment holds only the public key, so unlike every Slack card in this pack there is no forge. To prove the tap-approve half a human taps Approve on that card and the leg is re-run — the exact steps are in packages/core/scripts/e2e/AUDIT.md § S-DISCORD-GRANT — operator procedure. THIS RUN'S ASK LIVES IN THREAD ${threadId}: the grant is scoped to that session, so the re-run needs ${ENV.discordGrantThread}=${threadId} ${ENV.discordGrantTapped}=1${written ? ` (also recorded in ${threadRecordPath}, which a re-run on THIS machine reads on its own)` : ` (the sidecar write failed, so the pin above is the only carrier)`}. Left unproven this run: tap-approve routing, the ephemeral answer, the components-strip on the decided card, and grant.notified.`,
         );
         return;
       }
 
+      const reentry = resolveGrantThread({ pin: process.env[ENV.discordGrantThread], record: readGrantThreadRecord(threadRecordPath), nowMs: Date.now() });
+      const grantThreadId =
+        reentry.kind === "pin" || reentry.kind === "record"
+          ? reentry.threadId
+          : reentry.kind === "expired"
+            ? ctx.skip(
+                `the recorded thread ${reentry.threadId} was raised ${Math.round(reentry.ageMs / 60_000)} minute(s) ago, past the ${Math.round(reentry.maxAgeMs / 60_000)}-minute ceiling (the ask's own TTL plus the "for this conversation" grant's — see grant-thread-record.ts). No grant that run raised can still be spent, so driving a call into it would red the grant.used gate over an expired fixture rather than over the product. Raise a fresh ask, tap it, and set ${ENV.discordGrantThread} to the thread that run prints.`,
+              )
+            : ctx.skip(
+                `${ENV.discordGrantTapped}=1 is set but NO thread is named, so there is no session to re-enter. A grant is scoped to the session that raised the ask, and on Discord that session is the ask's own auto-thread — a fresh mention would open a new one and hold no grant. Set ${ENV.discordGrantThread} to the thread id the RAISING run printed (it also writes ${threadRecordPath}, which is read here when both runs share a disk).`,
+              );
+      ctx.log(`S-DISCORD-GRANT: phase 2 re-enters thread ${grantThreadId} (source: ${reentry.kind === "pin" ? `the ${ENV.discordGrantThread} pin` : `the ${threadRecordPath} sidecar`}) — the session the tapped grant is scoped to.`);
+
       const lookback = lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS);
-      const granted = await auditRead({ sinceIso: lookback, actions: ["grant.granted"] });
-      const grantedDiscord = discordOwnedGrants(granted);
+      const asksInLookback = await auditRead({ sinceIso: lookback, actions: ["grant.asked"] });
+      const asksInThread = discordOwnedAsksInChannel(asksInLookback, grantThreadId);
+      if (asksInThread.length === 0) {
+        const seen = asksInLookback.map((e) => e.surface);
+        ctx.skip(
+          `no grant.asked row in the ${ARMING_ADVISORY_LOOKBACK_DAYS}-day lookback was raised in thread ${grantThreadId}, so this leg cannot tie a tap to the session it is re-entering. Either that thread never raised an ask — a stale ${ENV.discordGrantThread} pin, or a ${threadRecordPath} sidecar a later untapped run overwrote, in which case raise and tap again — or the row no longer stamps its surface with the room the ask was raised in. Surfaces seen on the asks read: ${JSON.stringify([...new Set(seen)])}.`,
+        );
+      }
+      const grantedDiscord = grantsForAsks(await auditRead({ sinceIso: lookback, actions: ["grant.granted"] }), askIdsOf(asksInThread));
       ctx.gate(
         grantedDiscord.length > 0,
-        `🔴 (hard, pinned by ${ENV.discordGrantTapped}): a grant.granted row whose owner key names the discord platform exists — the pin declares a human tapped Approve on the Discord card, and this row is the tap's own evidence. None found (${granted.length} grant.granted row(s) in the lookback), so either the tap never landed or the Discord grant-click door (packages/providers/discord/agent/access/discord-grant-click.ts) did not reach core's resolver.`,
+        `🔴 (hard, pinned by ${ENV.discordGrantTapped}): a grant.granted row ANSWERING one of thread ${grantThreadId}'s own asks exists — the pin declares a human tapped Approve on the card that thread raised, and this row is the tap's own evidence. None found for ask(s) ${JSON.stringify(askIdsOf(asksInThread))}, so either the tap never landed, or it landed on a DIFFERENT conversation's card, or the Discord grant-click door (packages/providers/discord/agent/access/discord-grant-click.ts) did not reach core's resolver.`,
       );
+      const liveGranted = unexpiredGrants(grantedDiscord, Date.now());
+      if (liveGranted.length === 0) {
+        ctx.skip(
+          `thread ${grantThreadId}'s grant WAS tapped, and every grant that tap minted has since expired (expiresAt ${JSON.stringify(grantedDiscord.map((e) => (e.detail as { expiresAt?: unknown } | undefined)?.expiresAt))}). A lapsed grant does not mount, so the granted call below would refuse and the grant.used gate would red over a timed-out fixture rather than over the product. Tap a fresh card and re-run inside the grant's own TTL — see AUDIT.md § S-DISCORD-GRANT — operator procedure.`,
+        );
+      }
       const useToken = factToken("dgrantuse");
       const useAsk = await discord.post(
         discord.mention(`Now use the Notion tool that was lent to this conversation to read that page, and tell me what you got. Reference ${useToken} in your answer.`),
+        grantThreadId,
       );
-      const useThreadId = await discord.awaitThread(useAsk.id, { timeoutMs: 300_000 });
-      const useReply = await discord.awaitReply(useThreadId, useAsk.id, { timeoutMs: 300_000 });
+      const useReply = await discord.awaitReply(grantThreadId, useAsk.id, { timeoutMs: 300_000 });
       ctx.gate(useReply.content.trim().length > 0, "S-DISCORD-GRANT: the granted-call ask drew a bot reply");
-      const used = (await auditRead({ sinceIso, actions: ["grant.used"] })).filter((e) => e.action === "grant.used");
-      ctx.gate(
-        used.length > 0,
-        `🔴 (hard): the granted tool was actually CALLED — a grant.used row in THIS run's window (found ${used.length}). Without one the notice gate below would be asserting over a call that never happened.`,
-      );
-      const grantIds = grantedDiscord.map((e) => (e.detail as GrantDetail | undefined)?.grantId).filter((id): id is string => typeof id === "string");
+      const grantIds = grantIdsOf(liveGranted);
       ctx.gate(
         grantIds.length > 0,
-        "🔴 (hard): the grant.granted row names its grantId — the notice row is keyed on it, and without one this leg cannot tell the notice for THIS grant from any other grant's",
+        "🔴 (hard): the grant.granted row names its grantId — every gate below is keyed on it, and without one this leg cannot tell its own grant's rows from any other grant's",
+      );
+      const used = usesOfGrants(await auditRead({ sinceIso, actions: ["grant.used"] }), grantIds);
+      ctx.gate(
+        used.length > 0,
+        `🔴 (hard): the granted tool was actually CALLED — a grant.used row in THIS run's window naming grant ${grantIds.join(", ")} (found ${used.length}). Without one the notice gate below would be asserting over a call that never happened.`,
       );
       const noticeRows = await auditRead({ sinceIso: lookback, actions: ["grant.notified"] });
       const notified = grantIds.flatMap((id) => noticesForGrant(noticeRows, id));

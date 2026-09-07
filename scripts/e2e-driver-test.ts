@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,7 +9,13 @@ import {
   allNoticesDelivered,
   pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
-  discordOwnedGrants,
+  askIdsOf,
+  discordOwnedAsksInChannel,
+  grantIdsOf,
+  grantsForAsks,
+  surfaceNamesChannel,
+  unexpiredGrants,
+  usesOfGrants,
   isUnattendedFenceRefusal,
   isUnattendedLift,
   noticesForGrant,
@@ -1108,17 +1114,59 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     }
     return bound;
   }
+  function postBindings(body: string): ReadonlyMap<string, string> {
+    const bound = new Map<string, string>();
+    for (const m of body.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*await\s+discord\.post\(/g)) {
+      bound.set(m[1]!, argsOf(body, m.index! + m[0].length - 1)[1] ?? "");
+    }
+    return bound;
+  }
+  function misjoinedWaits(body: string): readonly string[] {
+    const posts = postBindings(body);
+    const threads = threadBindings(body);
+    const out: string[] = [];
+    for (const w of discordWaits(body)) {
+      const msgVar = w.afterArg.endsWith(".id") ? w.afterArg.slice(0, -".id".length) : "";
+      const postChannel = posts.get(msgVar);
+      if (postChannel === undefined) {
+        out.push(`${w.channelArg} after ${w.afterArg} — no \`discord.post\` in this body bound ${w.afterArg}`);
+      } else if (postChannel.length > 0) {
+        if (w.channelArg !== postChannel) out.push(`${w.channelArg} after ${w.afterArg} — that message was posted into ${postChannel}`);
+      } else if (threads.get(w.channelArg) !== w.afterArg) {
+        out.push(`${w.channelArg} after ${w.afterArg} — a base-channel post, so the wait owes the thread \`awaitThread(${w.afterArg})\` bound`);
+      }
+    }
+    return out;
+  }
   const grantThreads = threadBindings(grantBody);
   const grantWaits = discordWaits(grantBody);
   ok(grantWaits.length === 2, `OPE-1479: S-DISCORD-GRANT still has its two reply waits — phase 1's grant ask and phase 2's granted call (found ${grantWaits.length})`);
-  ok(grantThreads.size === 2, `OPE-1479: S-DISCORD-GRANT binds a thread id per phase (found ${grantThreads.size}: ${JSON.stringify([...grantThreads])})`);
-  const misjoined = grantWaits.filter((w) => grantThreads.get(w.channelArg) !== w.afterArg);
+  ok(
+    grantThreads.size === 1,
+    `OPE-1483: S-DISCORD-GRANT derives EXACTLY ONE thread — phase 1's, off its base-channel mention. A second \`awaitThread\` means phase 2 went back to opening its own thread, which is a new session and holds no grant (found ${grantThreads.size}: ${JSON.stringify([...grantThreads])})`,
+  );
+  const misjoined = misjoinedWaits(grantBody);
   ok(
     misjoined.length === 0,
-    `OPE-1479: both S-DISCORD-GRANT reply waits poll the thread \`discord.awaitThread\` derived from ` +
-      `THE SAME message the wait polls after — the two-line shape J-DISC and S8 use. Bindings: ` +
-      `${JSON.stringify([...grantThreads])}; waits not joined to their own message: ` +
-      `${JSON.stringify(misjoined.map((w) => `${w.channelArg} after ${w.afterArg}`))}`,
+    `OPE-1479: every S-DISCORD-GRANT reply wait polls the channel its own message was POSTED into — ` +
+      `the auto-created thread for phase 1's base-channel mention, the re-entered thread for phase 2's ` +
+      `post into it. Thread bindings: ${JSON.stringify([...grantThreads])}; misjoined waits: ${JSON.stringify(misjoined)}`,
+  );
+
+  const resolverBindings = [...grantBody.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*resolveGrantThread\(/g)].map((m) => m[1]!);
+  ok(
+    resolverBindings.length === 1,
+    `OPE-1483: S-DISCORD-GRANT resolves its re-entry thread exactly once, through \`resolveGrantThread\` (found ${resolverBindings.length})`,
+  );
+  const resolved = new Set(
+    [...grantBody.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;]*?\b([A-Za-z_$][\w$]*)\.threadId\b/g)].filter((m) => resolverBindings.includes(m[2]!)).map((m) => m[1]!),
+  );
+  const targetedPosts = [...postBindings(grantBody)].filter(([, channel]) => channel.length > 0);
+  ok(
+    targetedPosts.length === 1 && resolved.has(targetedPosts[0]![1]),
+    `OPE-1483: S-DISCORD-GRANT makes exactly ONE channel-targeted post — phase 2's granted call — and it targets the thread \`resolveGrantThread\` named. ` +
+      `A post with no channel argument opens a fresh auto-thread, i.e. a fresh session with no grant mounted. ` +
+      `Resolved names: ${JSON.stringify([...resolved])}; targeted posts: ${JSON.stringify(targetedPosts)}`,
   );
 
   const defective = 'async ctx=>{const asked=await discord.post(x);const reply=await discord.awaitReply(asked.channelId,asked.id,{timeoutMs:3e5});}';
@@ -1128,22 +1176,26 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     `OPE-1479: NEGATIVE CONTROL — the walk splits the defective call into its own two arguments (read ${JSON.stringify(defectiveWaits)})`,
   );
   ok(defectiveWaits.some((w) => /\.channelId$/.test(w.channelArg)), "OPE-1479: NEGATIVE CONTROL — arm A's test flags the parent-channel wait a live run found");
-  ok(threadBindings(defective).size === 0, "OPE-1479: NEGATIVE CONTROL — arm B reads the defective body as binding NO thread id, so its wait is unjoined");
+  ok(misjoinedWaits(defective).length === 1, "OPE-1479: NEGATIVE CONTROL — arm B flags it too: a base-channel post owes an `awaitThread` binding, and this body has none");
   const crossPhase = 'async ctx=>{const a=await discord.post(x);const threadId=await discord.awaitThread(a.id,{timeoutMs:3e5});const b=await discord.post(y);const r=await discord.awaitReply(threadId,b.id,{timeoutMs:3e5});}';
   const crossWaits = discordWaits(crossPhase);
   ok(
     crossWaits.length === 1 && !/\.channelId$/.test(crossWaits[0]!.channelArg),
     "OPE-1479: NEGATIVE CONTROL — arm A is blind to the cross-phase mix-up (its first argument is no `.channelId`)",
   );
-  ok(
-    threadBindings(crossPhase).get(crossWaits[0]!.channelArg) !== crossWaits[0]!.afterArg,
-    "OPE-1479: NEGATIVE CONTROL — arm B DOES catch it: the polled thread was derived from `a.id`, but the wait polls after `b.id`",
-  );
+  ok(misjoinedWaits(crossPhase).length === 1, "OPE-1479: NEGATIVE CONTROL — arm B DOES catch it: `b` went to the base channel, so its wait owes `awaitThread(b.id)`, not `a`'s thread");
   const fixed = 'async ctx=>{const asked=await discord.post(x);const threadId=await discord.awaitThread(asked.id,{timeoutMs:3e5});const reply=await discord.awaitReply(threadId,asked.id,{timeoutMs:3e5});}';
   const fixedWaits = discordWaits(fixed);
   ok(
-    fixedWaits.length === 1 && !/\.channelId$/.test(fixedWaits[0]!.channelArg) && threadBindings(fixed).get(fixedWaits[0]!.channelArg) === fixedWaits[0]!.afterArg,
-    "OPE-1479: NEGATIVE CONTROL — the two-line fixed shape passes BOTH arms through the same scanner (so neither arm is unconditionally red)",
+    fixedWaits.length === 1 && !/\.channelId$/.test(fixedWaits[0]!.channelArg) && misjoinedWaits(fixed).length === 0,
+    "OPE-1479: NEGATIVE CONTROL — the two-line auto-thread shape passes BOTH arms through the same scanner",
+  );
+  const reentered = 'async ctx=>{const t=await discord.post(m,grantThreadId);const r=await discord.awaitReply(grantThreadId,t.id,{timeoutMs:3e5});}';
+  ok(misjoinedWaits(reentered).length === 0, "OPE-1483: NEGATIVE CONTROL — the post-into-a-known-thread shape passes arm B with no `awaitThread` anywhere in the body");
+  const reenteredWrong = 'async ctx=>{const t=await discord.post(m,grantThreadId);const r=await discord.awaitReply(otherThread,t.id,{timeoutMs:3e5});}';
+  ok(
+    misjoinedWaits(reenteredWrong).length === 1,
+    "OPE-1483: NEGATIVE CONTROL — arm B still catches a targeted post whose wait polls somewhere else, the failure mode the second shape introduces",
   );
 }
 
@@ -2741,8 +2793,46 @@ rmSync(dir, { recursive: true, force: true });
   ok(discordOwnedAsks([discordAsk, slackAsk, tenantScopedAsk]).length === 1, "discordOwnedAsks reads the OWNER's platform, not the driving surface — a Slack-owned ask raised from Discord is not the fixture OPE-1310 needs");
   ok(discordOwnedAsks([slackAsk]).length === 0, "NEGATIVE: a Slack-owned ask alone does not satisfy the Discord fixture gate");
   ok(discordOwnedAsks([discordGrant]).length === 0, "NEGATIVE: the reader is pinned to grant.asked — a granted row is a different event and must not stand in for the ask");
-  ok(discordOwnedGrants([discordGrant, slackGrant]).length === 1, "discordOwnedGrants isolates the Discord-owned tap evidence");
-  ok(discordOwnedGrants([discordAsk]).length === 0, "NEGATIVE: an ASK is not a grant — the tap pin must not be satisfied by the row an untapped run already wrote");
+
+  const inThread = (surface: string, detail: Record<string, unknown>): AuditWireEntry => ({ ...grantRow("grant.asked", detail), surface });
+  const askInA = inThread("111000111", { askId: "ask_a", connector: "notion", owner: "discord/900000000000000001" });
+  const askInB = inThread("222000222", { askId: "ask_b", connector: "notion", owner: "discord/900000000000000001" });
+  const askKeyedInA = inThread("discord/g1/111000111", { askId: "ask_k", connector: "notion", owner: "discord/900000000000000001" });
+  ok(surfaceNamesChannel("111000111", "111000111"), "surfaceNamesChannel accepts the BARE surface the grant flow stamps (`p.surface`)");
+  ok(surfaceNamesChannel("discord/g1/111000111", "111000111"), "…and the full surfaceKey spelling other audit call sites stamp — no live grant.asked row has settled which one this path writes, so both are read");
+  ok(!surfaceNamesChannel("discord/g1/222000222", "111000111"), "NEGATIVE: a key naming ANOTHER thread does not match — the join is what stops a fortnight-old tap answering for this run");
+  ok(!surfaceNamesChannel("xx111000111", "111000111"), "NEGATIVE: the `/` is load-bearing — a surface merely ENDING in the digits is not that channel");
+  ok(!surfaceNamesChannel(undefined, "111000111"), "NEGATIVE: a row with no surface joins to nothing, rather than to everything");
+  ok(!surfaceNamesChannel("discord/g1/111000111", ""), "VACUITY: an empty channel id matches nothing — an unresolved thread must not select every row");
+  ok(discordOwnedAsksInChannel([askInA, askInB], "111000111").length === 1, "discordOwnedAsksInChannel isolates the asks raised in ONE thread");
+  ok(discordOwnedAsksInChannel([askInA, askKeyedInA], "111000111").length === 2, "…in either surface spelling");
+  ok(discordOwnedAsksInChannel([inThread("111000111", { askId: "ask_s", owner: "slack/T1/U1" })], "111000111").length === 0, "NEGATIVE: a SLACK-owned ask raised in the same thread is not this fixture — ownership and locus are separate tests and both must hold");
+  ok(askIdsOf([askInA, askInB]).join(",") === "ask_a,ask_b", "askIdsOf reads the ids the tap join is keyed on");
+  ok(askIdsOf([inThread("111000111", { owner: "discord/900000000000000001" })]).length === 0, "NEGATIVE: a row with no askId contributes no id — a join key that fell back to a placeholder would match the wrong tap");
+
+  const tapOfA = grantRow("grant.granted", { askId: "ask_a", connector: "notion", grantId: "g_a", owner: "discord/900000000000000001" });
+  const tapOfB = grantRow("grant.granted", { askId: "ask_b", connector: "notion", grantId: "g_b", owner: "discord/900000000000000001" });
+  ok(grantsForAsks([tapOfA, tapOfB], ["ask_a"]).length === 1, "grantsForAsks isolates the tap ANSWERING this thread's own ask");
+  ok(grantsForAsks([tapOfB], ["ask_a"]).length === 0, "🔴 NEGATIVE, THE FINDING THIS CLOSES: another conversation's tap inside the same lookback does NOT satisfy the pin — the old reader asked only whether some Discord grant was tapped, which stays true forever once one has been");
+  ok(grantsForAsks([discordAsk], ["ask_1"]).length === 0, "NEGATIVE: an ASK is not a tap, however its ask id matches — the pin must not be satisfied by the row an untapped run already wrote");
+  ok(grantsForAsks([tapOfA], []).length === 0, "VACUITY: no ask ids select no taps");
+  ok(grantIdsOf([tapOfA, tapOfB]).join(",") === "g_a,g_b", "grantIdsOf reads the ids the use and notice gates are keyed on");
+
+  const NOW = Date.parse("2026-05-12T11:30:00.000Z");
+  const live = grantRow("grant.granted", { askId: "ask_a", expiresAt: "2026-05-12T22:30:00.000Z", grantId: "g_live", owner: "discord/900000000000000001" });
+  const lapsed = grantRow("grant.granted", { askId: "ask_a", expiresAt: "2026-05-12T00:30:00.000Z", grantId: "g_dead", owner: "discord/900000000000000001" });
+  ok(unexpiredGrants([live, lapsed], NOW).length === 1, "unexpiredGrants keeps the grant that can still be spent");
+  ok(unexpiredGrants([lapsed], NOW).length === 0, "🔴 NEGATIVE: a lapsed grant is not spendable — driving a call on it would red the use gate over a fixture that timed out");
+  ok(unexpiredGrants([live], NOW).length === 1, "NEGATIVE CONTROL: the reader is reading the clock, not answering `expired` to everything");
+  ok(unexpiredGrants([grantRow("grant.granted", { grantId: "g_x" })], NOW).length === 1, "🔴 an UNREADABLE expiry counts as LIVE — treating a field the leg failed to read as expiry is how a real failure gets filed away as a fixture problem");
+  ok(unexpiredGrants([grantRow("grant.granted", { expiresAt: "whenever", grantId: "g_y" })], NOW).length === 1, "…and so does an unparseable one, for the same reason");
+
+  const useOfA = grantRow("grant.used", { connector: "notion", grantId: "g_a", tier: "read" });
+  const useOfB = grantRow("grant.used", { connector: "notion", grantId: "g_b", tier: "read" });
+  ok(usesOfGrants([useOfA, useOfB], ["g_a"]).length === 1, "usesOfGrants isolates the call THIS grant paid for");
+  ok(usesOfGrants([useOfB], ["g_a"]).length === 0, "🔴 NEGATIVE: another grant spent in the same window does not prove this leg drove a call — unfiltered, the use gate passes on any borrow anywhere on the deployment");
+  ok(usesOfGrants([tapOfA], ["g_a"]).length === 0, "NEGATIVE: the reader is pinned to grant.used — the tap row carries the same grantId and must not stand in for the spend");
+  ok(usesOfGrants([useOfA], []).length === 0, "VACUITY: no grant ids select no uses");
 
   ok(refusedUnverifiedRequester([unverified, domainRefusal]).length === 1, "refusedUnverifiedRequester isolates the ONE refusal whose cause this pack cannot settle from the trail alone");
   ok(refusedUnverifiedRequester([domainRefusal]).length === 0, "NEGATIVE: every other gate value is a real refusal and is reported as one, never skipped past");
@@ -2756,6 +2846,55 @@ rmSync(dir, { recursive: true, force: true });
   ok(!allNoticesDelivered([sentNotice, failedNotice], "discord"), "NEGATIVE: a failed notice means the owner was NOT told — accepting it would invert the row's whole purpose");
   ok(!allNoticesDelivered([grantRow("grant.notified", { outcome: "sent", ownerPlatform: "slack" })], "discord"), "NEGATIVE: a notice delivered on Slack does not prove Discord's DM arm ran");
   ok(!allNoticesDelivered([], "discord"), "VACUITY: allNoticesDelivered([]) is FALSE");
+}
+
+{
+  const { GRANT_THREAD_RECORD_MAX_AGE_MS, parseGrantThreadRecord, readGrantThreadRecord, resolveGrantThread, serializeGrantThreadRecord, writeGrantThreadRecord } = await import(
+    "../packages/core/scripts/e2e/grant-thread-record.js"
+  );
+  const raisedAt = "2026-05-12T08:30:00.000Z";
+  const at = (ms: number): number => Date.parse(raisedAt) + ms;
+  const record = { threadId: "1234567890", raisedAt };
+
+  const { GRANT_ASK_TTL_MS, GRANT_SESSION_TTL_MS } = await import("../packages/core/agent/access/credential-grant.js");
+  ok(
+    GRANT_THREAD_RECORD_MAX_AGE_MS === GRANT_ASK_TTL_MS + GRANT_SESSION_TTL_MS,
+    `OPE-1483: the record's max age IS the product's ask TTL plus its session-grant TTL (${GRANT_THREAD_RECORD_MAX_AGE_MS} vs ${GRANT_ASK_TTL_MS + GRANT_SESSION_TTL_MS})`,
+  );
+
+  ok(parseGrantThreadRecord(serializeGrantThreadRecord(record))?.threadId === "1234567890", "OPE-1483: a written record reads back as itself");
+  ok(parseGrantThreadRecord(serializeGrantThreadRecord(record))?.raisedAt === raisedAt, "OPE-1483: the raise time round-trips — it is what makes the record expirable");
+  ok(parseGrantThreadRecord("not json") === undefined, "NEGATIVE: unparseable text is no record");
+  ok(parseGrantThreadRecord('["1234567890"]') === undefined, "NEGATIVE: an array is no record — a JSON.parse that merely succeeded is not enough");
+  ok(parseGrantThreadRecord(JSON.stringify({ raisedAt })) === undefined, "NEGATIVE: a record with no threadId is no record");
+  ok(parseGrantThreadRecord(JSON.stringify({ threadId: "   ", raisedAt })) === undefined, "NEGATIVE: a BLANK threadId is rejected — it would post to `/channels//messages`");
+  ok(parseGrantThreadRecord(JSON.stringify({ threadId: "1", raisedAt: "whenever" })) === undefined, "NEGATIVE: an unparseable raise time is no record — an un-ageable record is exactly the stale one this expiry exists to catch");
+  ok(parseGrantThreadRecord(JSON.stringify({ threadId: "1" })) === undefined, "NEGATIVE: a record with no raise time is no record, for the same reason");
+
+  const pinned = resolveGrantThread({ pin: " 999 ", record: { threadId: "111", raisedAt: new Date(at(0)).toISOString() }, nowMs: at(0) });
+  ok(pinned.kind === "pin" && pinned.threadId === "999", `OPE-1483: the operator's pin wins over the sidecar and is trimmed (read ${JSON.stringify(pinned)})`);
+  const empty = resolveGrantThread({ pin: "  ", record, nowMs: at(60_000) });
+  ok(empty.kind === "record" && empty.threadId === "1234567890", "OPE-1483: a blank pin is not a pin — an exported-but-empty shell variable falls through to the sidecar");
+  ok(resolveGrantThread({ record, nowMs: at(60_000) }).kind === "record", "OPE-1483: with no pin the sidecar carries the thread — the same-machine re-run needs no hand-copied id");
+  ok(resolveGrantThread({ nowMs: at(0) }).kind === "absent", "OPE-1483: neither carrier is `absent` — phase 2 skips with the remedy rather than driving a call into a session it guessed");
+
+  const fresh = resolveGrantThread({ record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS) });
+  ok(fresh.kind === "record", "OPE-1483: a record exactly AT the ceiling is still usable — the bound is the last moment a grant can live, not the first moment it cannot");
+  const stale = resolveGrantThread({ record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS + 1) });
+  ok(stale.kind === "expired" && stale.threadId === "1234567890", `OPE-1483: one millisecond past the ceiling the record is EXPIRED (read ${JSON.stringify(stale)})`);
+  ok(stale.kind === "expired" && stale.ageMs === GRANT_THREAD_RECORD_MAX_AGE_MS + 1, "OPE-1483: the expired arm carries the AGE — the skip has to say how stale, or the operator cannot tell a wrong path from a lapsed tap");
+  ok(resolveGrantThread({ record, nowMs: at(0) }).kind === "record", "OPE-1483: NEGATIVE CONTROL — a record raised this instant is NOT expired, so the arm above reads the clock rather than answering unconditionally");
+  ok(resolveGrantThread({ pin: "999", record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS * 10) }).kind === "pin", "OPE-1483: a pin is never aged — the harness never saw that raise, and the operator is asserting a live tap");
+
+  const sinkDir = mkdtempSync(join(tmpdir(), "oe-grant-thread-"));
+  const sink = join(sinkDir, "record.json");
+  ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a missing sidecar reads as no record, never a throw — the first raising run on a machine has none");
+  ok(writeGrantThreadRecord(sink, record), "OPE-1483: the raising run persists its thread id");
+  ok(readGrantThreadRecord(sink)?.threadId === "1234567890", "OPE-1483: and the next run reads it back off disk");
+  writeFileSync(sink, "{ half-writ");
+  ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a corrupt sidecar degrades to no record — the operator's pin is the carrier that matters, and a live run must not die on scratch state");
+  ok(!writeGrantThreadRecord(join(sinkDir, "no-such-dir", "record.json"), record), "OPE-1483: an unwritable path reports FALSE rather than throwing — the run has already earned phase 1's gates and must keep them");
+  rmSync(sinkDir, { recursive: true, force: true });
 }
 
 {
