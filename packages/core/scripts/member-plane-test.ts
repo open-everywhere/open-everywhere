@@ -6,12 +6,13 @@ import {
   personalConnectorWriteVerdict,
   personalWriteRefusalMessage,
   requesterFromAuth,
+  roomVouchedInternalFrom,
   type MemberPlaneInput,
   type PersonalConnectorWriteInput,
 } from "../agent/access/member-plane.js";
 import { expandConnectorGrant, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { memberGrantKey } from "../agent/access/member-grant.js";
-import { connectorOpApproval, unresolvableConnectionRefusalMessage } from "../agent/connections/connector-auth.js";
+import { connectorOpApproval, resolveDmPrincipal, unresolvableConnectionRefusalMessage } from "../agent/connections/connector-auth.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
@@ -31,6 +32,7 @@ const admitting: MemberPlaneInput = {
   granted: true,
   requester: { kind: "requester", principalId: ASKER },
   nonMemberWake: false,
+  roomVouchedInternal: true,
 };
 
 const base = memberPlaneVerdict(admitting);
@@ -48,7 +50,17 @@ ok(refusal({ granted: false }) === "member_plane_ungranted", "🔴 G2 no domain 
 ok(refusal({ requester: { kind: "unverified" } }) === "member_plane_unverified_requester", "🔴 G3 several people woke this turn ⇒ refused, never a pick from the candidates");
 ok(refusal({ requester: { kind: "none" } }) === "member_plane_unverified_requester", "🔴 G3 no evidence of an asker ⇒ refused too — `none` is not a pass");
 ok(refusal({ requester: { kind: "requester", principalId: "" } }) === "member_plane_unverified_requester", "🔴 G3 an EMPTY principal id refuses — a blank subject would mint against a vault row nobody owns");
-ok(refusal({ nonMemberWake: true }) === "member_plane_nonmember_wake", "🔴 G4 a wake carrying a non-member's bytes ⇒ refused (`member+, never guest`)");
+ok(refusal({ nonMemberWake: true }) === "member_plane_nonmember_wake", "🔴 G4a a wake carrying a non-member's bytes ⇒ refused (`member+, never guest`)");
+
+ok(base.admit === true, "🔴 G4b DECLARED INTERNAL + nobody refuted ⇒ ADMITTED (the positive control — without it the two refusals below would pass on a gate that refuses everything)");
+ok(refusal({ roomVouchedInternal: false }) === "member_plane_nonmember_wake", "🔴 G4b UNDECLARED room ⇒ refused `member_plane_nonmember_wake` — absence of a declaration infers `nobody here is a member`, it does not read as `not refuted`");
+ok(memberPlaneVerdict({ ...admitting, roomVouchedInternal: true, nonMemberWake: true }).admit === false, "🔴 G4b DECLARED INTERNAL + positively refuted (surface or the operator's register) ⇒ still refused — the declaration vouches for the ROOM, it never overrides a named refutation");
+ok(refusal({ nonMemberWake: true, roomVouchedInternal: false }) === "member_plane_nonmember_wake", "…and both halves failing names the same one gate");
+{
+  const msg = memberPlaneRefusalMessage("notion", "member_plane_nonmember_wake");
+  ok(msg.includes("declared this room internal") && msg.includes("agent/identity/surfaces.ts") && msg.includes("defineSurface"), "🔴 the refusal names the DECLARATION an operator has to add, and the file to add it in — a deployment that has declared nothing internal has no member plane, so it must read a cause rather than a bare denial");
+  ok(msg.includes("the container it sits in") && msg.includes("the whole workspace"), "🔴 …and it says a declaration counts at ANY rung, because the code accepts any rung — a message naming only the room would send an operator to write a line narrower than the gate requires");
+}
 ok(refusal({ opTier: "write" }) === "member_plane_write", "🔴 G5 a WRITE op ⇒ refused — v1 is reads only");
 ok(refusal({ opTier: "destructive" }) === "member_plane_write", "🔴 G5 a DESTRUCTIVE op ⇒ refused, same gate");
 
@@ -95,6 +107,7 @@ ok(
     granted: true,
     requester: requesterFromAuth(auth({ [REQ_ATTR]: ASKER }), REQ_ATTR, UNVERIFIED),
     nonMemberWake: nonMemberWakeFromAuth(auth({ [REQ_ATTR]: ASKER }), NONMEMBER_ATTR),
+    roomVouchedInternal: true,
   }).admit === true,
   "the readers compose into an admitting verdict",
 );
@@ -291,6 +304,49 @@ for (const reason of ["member_plane_write", "personal_write_unproven_dm", "perso
 ok(personalWriteRefusalMessage("notion", "member_plane_write") === memberPlaneRefusalMessage("notion", "member_plane_write"), "🔴 the shared-room sentence has ONE home — the personal-write message delegates to it verbatim");
 
 resetSettingsForTest();
+
+const { registerSurfaces, defineSurface, _resetSurfacesForTest } = await import("../agent/identity/trust.js");
+const { bindFrom } = await import("../agent/identity/binding.js");
+
+const roomAuth = (() => {
+  const p = { principalType: "service", principalId: ASKER, authenticator: "local", attributes: { channel_type: "channel" } };
+  return { current: p, initiator: p } as never;
+})();
+
+const ROOM_KEY = "local/dev/default";
+
+_resetSurfacesForTest();
+
+const undeclaredBinding = bindFrom({ auth: roomAuth } as never);
+ok(`${undeclaredBinding.platform}/${undeclaredBinding.workspace}/${undeclaredBinding.surface}` === ROOM_KEY, "§6 precondition: the room binds to the key the declaration below is written on");
+
+ok(undeclaredBinding.trust === "internal", "🔴 an UNDECLARED room's JOINED trust reads `internal` — the mapper/default said so, and nobody declared anything");
+ok(undeclaredBinding.declaredTrust === undefined, "🔴 …while its DECLARED trust is undefined. The two fields disagree in exactly this room, which is the whole reason G4b reads the second one");
+
+const undeclaredRoom = await resolveDmPrincipal(roomAuth);
+ok(undeclaredRoom.mode === "channel", "§6 precondition: the room resolves as a CHANNEL — the surface the member plane exists for (a DM never reaches this verdict)");
+ok(undeclaredRoom.declaredTrust === undefined, "🔴 G4b CARRIAGE: an undeclared room reaches the MINT SITE carrying no declaration");
+ok(
+  (() => {
+    const v = memberPlaneVerdict({ ...admitting, roomVouchedInternal: undeclaredRoom.declaredTrust === "internal" });
+    return !v.admit && v.reason === "member_plane_nonmember_wake";
+  })(),
+  "🔴 …and that absence REFUSES through the real verdict, naming the wake gate — absence infers non-member",
+);
+
+registerSurfaces([defineSurface({ key: ROOM_KEY, trust: "internal" })]);
+const declaredRoom = await resolveDmPrincipal(roomAuth);
+ok(declaredRoom.declaredTrust === "internal", "🔴 the SAME room, once the operator declares it, reaches the mint site as `declaredTrust: \"internal\"` (the positive control — nothing else about the wake moved)");
+ok(memberPlaneVerdict({ ...admitting, roomVouchedInternal: declaredRoom.declaredTrust === "internal" }).admit === true, "🔴 …and the declaration ADMITS through the real verdict");
+
+ok(roomVouchedInternalFrom("internal", "internal") === true, "🔴 declared internal AND not contradicted ⇒ vouched (the positive control)");
+ok(roomVouchedInternalFrom(undefined, "internal") === false, "🔴 UNDECLARED but the join says internal ⇒ NOT vouched. This is the community-workspace room: reading the join alone would admit it");
+ok(roomVouchedInternalFrom("internal", "external") === false, "🔴 DECLARED internal but the platform positively says external ⇒ NOT vouched. This is a tenant-grain declaration over a Slack Connect channel: reading the declaration alone would re-promote a room that spans another org, which identity/binding.ts forbids");
+ok(roomVouchedInternalFrom("public", "external") === false, "🔴 a `public` declaration is not a vouch");
+ok(roomVouchedInternalFrom("public", "internal") === false, "…and it is not one when the join disagrees either");
+ok(roomVouchedInternalFrom(undefined, undefined) === false, "🔴 an unresolvable binding ⇒ NOT vouched — absence infers non-member, on both fields at once");
+
+_resetSurfacesForTest();
 
 assert.equal(typeof passed, "number");
 console.log(`✓ member-plane: ${passed} assertions passed`);

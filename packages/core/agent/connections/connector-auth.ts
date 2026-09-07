@@ -32,6 +32,7 @@ import {
   personalConnectorWriteVerdict,
   personalWriteRefusalMessage,
   requesterFromAuth,
+  roomVouchedInternalFrom,
   type MemberPlaneAuthLike,
 } from "../access/member-plane.js";
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
@@ -189,12 +190,12 @@ export function connectorAuthRequiredUserMessage(connector: string, authorizeCla
 
 export async function resolveDmPrincipal(
   auth: import("eve/context").SessionAuth,
-): Promise<{ mode?: string; principalId?: string; platform?: string; workspace?: string; org?: string }> {
+): Promise<{ mode?: string; principalId?: string; platform?: string; workspace?: string; org?: string; trust?: string; declaredTrust?: string }> {
   const bindCtx = await surfaceContextFromAuth(auth);
   if (!bindCtx) return {};
   try {
     const b = bindFrom(bindCtx);
-    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, workspace: b.workspace, org: resolvePartition(bindCtx).org };
+    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, workspace: b.workspace, org: resolvePartition(bindCtx).org, trust: b.trust, declaredTrust: b.declaredTrust };
   } catch {
     return {};
   }
@@ -261,7 +262,7 @@ export function userAwareProviderToken(
         if (opts.directUrl !== undefined) {
           assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
         }
-        const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(ctx.session.auth);
+        const { mode, principalId, platform, workspace, org, trust, declaredTrust } = await resolveDmPrincipal(ctx.session.auth);
         if (!principalId) {
           throw new Error(
             `connection "${opts.connector}": cannot mint a per-user token — this surface has no ` +
@@ -282,6 +283,7 @@ export function userAwareProviderToken(
             granted: true,
             requester: requesterFromAuth(ctx.session.auth, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED),
             nonMemberWake: nonMemberWakeFromAuth(ctx.session.auth, OE_CHAT_NONMEMBER_ATTR),
+            roomVouchedInternal: roomVouchedInternalFrom(declaredTrust, trust),
           });
           if (!verdict.admit) {
             await auditMintOutcome(opts.connector, { subject: "user", plane: "member", outcome: "refused", reason: verdict.reason });

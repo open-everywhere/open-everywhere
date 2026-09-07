@@ -3,7 +3,7 @@ import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIden
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { seg, deploymentOrg } from "./deployment-org.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
-import { declaredSurfaceTrust } from "./trust.js";
+import { declaredSurfaceTrust, type SurfaceTrust } from "./trust.js";
 
 import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
@@ -26,6 +26,7 @@ export interface SurfaceBinding {
   readonly mode: SessionMode;
   readonly visibility: Visibility;
   readonly trust: Trust;
+  readonly declaredTrust?: SurfaceTrust;
   readonly principalId?: string;
   readonly principalAttested?: true;
   readonly target?: Readonly<Record<string, unknown>>;
@@ -513,6 +514,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
+    ...(declared === undefined ? {} : { declaredTrust: declared }),
     principalId: fire?.id ?? raw.principalId ?? local.principalId,
     ...(fire || unattended ? { principalAttested: true as const } : {}),
     target: raw.target,

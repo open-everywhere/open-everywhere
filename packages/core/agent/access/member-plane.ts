@@ -11,6 +11,7 @@ export interface MemberPlaneInput {
   readonly granted: boolean;
   readonly requester: MemberPlaneRequester;
   readonly nonMemberWake: boolean;
+  readonly roomVouchedInternal: boolean;
   readonly opTier?: MemberPlaneOpTier;
 }
 
@@ -33,11 +34,17 @@ export function memberPlaneVerdict(input: MemberPlaneInput): MemberPlaneVerdict 
   if (input.requester.kind !== "requester" || input.requester.principalId.length === 0) {
     return { admit: false, reason: "member_plane_unverified_requester" };
   }
-  if (input.nonMemberWake) return { admit: false, reason: "member_plane_nonmember_wake" };
+  if (input.nonMemberWake || !input.roomVouchedInternal) {
+    return { admit: false, reason: "member_plane_nonmember_wake" };
+  }
   if (input.opTier !== undefined && input.opTier !== "read") {
     return { admit: false, reason: "member_plane_write" };
   }
   return { admit: true, requesterPrincipalId: input.requester.principalId };
+}
+
+export function roomVouchedInternalFrom(declaredTrust: string | undefined, trust: string | undefined): boolean {
+  return declaredTrust === "internal" && trust === "internal";
 }
 
 export function memberPlaneRefusalMessage(connector: string, reason: MemberPlaneRefusal): string {
@@ -68,8 +75,12 @@ export function memberPlaneRefusalMessage(connector: string, reason: MemberPlane
       );
     case "member_plane_nonmember_wake":
       return (
-        `connection "${connector}": refusing to use a personal credential here — this conversation ` +
-        `includes a message from somebody the workspace could not vouch for as a member.`
+        `connection "${connector}": refusing to use a personal credential here — this room is not ` +
+        `vouched as a members-only room. Either this conversation includes a message from somebody ` +
+        `the workspace could not vouch for as a member, or nobody has declared this room internal. ` +
+        `A declaration is a defineSurface({ key: "…", trust: "internal" }) line in ` +
+        `agent/identity/surfaces.ts, written on this room, on the container it sits in, or on the ` +
+        `whole workspace. Without one, no personal credential is admitted here.`
       );
     case "member_plane_write":
       return (
