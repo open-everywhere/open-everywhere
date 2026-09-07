@@ -8,6 +8,8 @@ export const surfaces: readonly Surface[] = [
 
   ...teamsVouchedKeys().map((key) => defineSurface({ key, trust: "internal" })),
 
+  defineSurface({ key: "slack/T0EXAMPLE", trust: "internal" }),
+
   defineSurface({ key: "linear/1a000000-0000-4000-8000-000000000001", trust: "internal" }),
   defineSurface({ key: "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011", trust: "internal" }),
   defineSurface({ key: "notion/40000000-0000-4000-8000-000000000001", trust: "internal" }),
