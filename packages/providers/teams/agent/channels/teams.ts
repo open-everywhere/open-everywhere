@@ -1,6 +1,7 @@
 import { teamsChannel, splitTeamsMessageText, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
+import { teamsEngagedAdmits } from "./teams-engagement.js";
 import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js";
 import { admitTeamsInputResponse } from "./teams-input-response.js";
 import {
@@ -49,7 +50,7 @@ function auditPartitionForState(state: {
 }
 
 export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: TeamsMessageActivity): Promise<TeamsInboundResult> => {
-    if (message.scope !== "personal" && !message.isBotMentioned) return null;
+    if (message.scope !== "personal" && !message.isBotMentioned && !(await teamsEngagedAdmits(message))) return null;
 
     const userType = await resolveTeamsUserType(teamsHandleRosterProbe(ctx.teams), message.conversation.id, message.from.id);
 

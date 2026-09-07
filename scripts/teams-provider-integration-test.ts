@@ -305,6 +305,7 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
     scope: "channel",
     isBotMentioned: true,
     from: { id: "cap-user", name: "Cap User" },
+    recipient: { id: "28:cap-bot" },
     tenantId,
     conversation: { id: conversationId, tenantId },
     teamsChannelId: conversationId,
@@ -352,4 +353,51 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   provider.resetOperationalStore();
 }
 
-console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate)`);
+{
+  const { teamsOnMessage } = await import("@open-everywhere/provider-teams/agent/channels/teams.js");
+  const { buildTeamsAuth } = await import("@open-everywhere/provider-teams/agent/channels/teams-identity.js");
+  const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
+
+  const CONV = "19:engaged@thread.tacv2";
+  const TENANT = "TENENG";
+  const seamAuth = buildTeamsAuth({ userId: "seam-user", tenantId: TENANT, conversationId: CONV, teamId: "team-seam", serviceUrl: TEAMS_SERVICE_URL, scope: "channel" });
+  const seamPart = resolvePartition({ channel: { kind: "teams" as const }, session: { auth: { current: seamAuth } } });
+  const plain = (): unknown => ({
+    scope: "channel",
+    isBotMentioned: false,
+    from: { id: "seam-user", name: "Seam User" },
+    recipient: { id: "28:seam-bot" },
+    tenantId: TENANT,
+    conversation: { id: CONV, tenantId: TENANT },
+    teamsChannelId: CONV,
+    teamId: "team-seam",
+    serviceUrl: TEAMS_SERVICE_URL,
+    channelData: {},
+    text: "and what about the second item?",
+  });
+  const driveSeam = async () => {
+    const ctx = { teams: { request: async () => ({ ok: false, body: {} }) }, thread: { post: async () => ({ id: "p" }) }, isSubscribed: async () => false };
+    return await teamsOnMessage(ctx as never, plain() as never);
+  };
+
+  const store = getOperationalStore();
+  ok((await driveSeam()) === null, "engaged seam: a plain non-mention channel message in an UN-engaged conversation is DROPPED — the mention gate's old behaviour, unchanged");
+
+  await store.markEngaged(seamPart.org, seamPart.surfaceKey, CONV, new Date().toISOString(), { participating: true });
+  const admitted = await teamsOnMessage(
+    { teams: { request: async () => ({ ok: false, body: {} }) }, thread: { post: async () => ({ id: "p" }) }, isSubscribed: async () => false } as never,
+    plain() as never,
+  );
+  ok(admitted !== null && (admitted as { auth?: unknown }).auth !== undefined, "🔴 engaged seam: once the conversation is ENGAGED the SAME plain message is ADMITTED and runs a turn — the native gate really does ask the seam");
+
+  ok((await store.markStopped(seamPart.org, seamPart.surfaceKey, CONV)) === true, "engaged seam: markStopped flags the existing row (this is what stand_down does on Teams)");
+  ok((await driveSeam()) === null, "🔴 engaged seam: a stood-down conversation drops the same plain message again — the stop takes effect on the native path");
+
+  const reMention = await teamsOnMessage(
+    { teams: { request: async () => ({ ok: false, body: {} }) }, thread: { post: async () => ({ id: "p" }) }, isSubscribed: async () => false } as never,
+    { ...(plain() as Record<string, unknown>), isBotMentioned: true } as never,
+  );
+  ok(reMention !== null, "⭐ NEGATIVE CONTROL: an @mention in the SAME stood-down conversation still passes — the way back in is never closed");
+}
+
+console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate, engaged-seam admission on the native gate)`);

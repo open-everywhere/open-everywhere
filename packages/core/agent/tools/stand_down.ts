@@ -7,6 +7,12 @@ import { appendAudit } from "../audit/audit.js";
 
 export const STAND_DOWN_ACTION = "engagement.stood_down";
 
+export const DM_REFUSAL =
+  "stand_down: a direct message cannot be stood down, so nothing was marked — reply that you could NOT stop following here, because a DM has no @mention to bring you back.";
+
+export const GROUP_REFUSAL =
+  "stand_down: this surface answers every message in a group conversation without checking whether you asked it to stop, so nothing was marked — reply that you could NOT stop following here, and that this is a limit of how the agent is built on this surface rather than something anyone in the conversation can change.";
+
 export default defineTool({
   description:
     "Stop following this conversation — call it when the people here have asked you to stop, to go " +
@@ -28,11 +34,8 @@ export default defineTool({
   async execute(input, ctx) {
     const c = ctx as BindableContext;
     const binding = bindFrom(c);
-    if (binding.mode === "dm" || binding.mode === "mpim") {
-      throw new Error(
-        "stand_down: a direct message cannot be stood down, so nothing was marked — reply that you could NOT stop following here, because a DM has no @mention to bring you back.",
-      );
-    }
+    if (binding.mode === "dm") throw new Error(DM_REFUSAL);
+    if (binding.mode === "mpim" && !binding.engagementKey) throw new Error(GROUP_REFUSAL);
     const anchor = binding.engagementKey ?? binding.threadTs;
     if (!anchor) {
       throw new Error(

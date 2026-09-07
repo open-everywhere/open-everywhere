@@ -1,5 +1,5 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, type TeamsMessageActivity } from "eve/channels/teams";
+import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, isTeamsInputResponseActivity, type TeamsMessageActivity } from "eve/channels/teams";
 import { sendTeamsActivityBackedOff } from "./teams-connector.js";
 import {
   buildTeamsAuth,
@@ -12,6 +12,7 @@ import {
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
+import { markTeamsEngaged, resolveTeamsEngagement, teamsMachineAuthored, type TeamsEngagementVerdict } from "./teams-engagement.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -335,6 +336,8 @@ export interface TeamsFrontOptions {
   readonly dmDivert?: (a: TeamsMessageActivity, auth: OpenEverywhereTeamsAuth, partition: Partition, to: RouteHandlerArgs["to"]) => Promise<void>;
   readonly externalGate?: (a: TeamsMessageActivity) => Promise<boolean>;
   readonly stopReaction?: (rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => Promise<TeamsStopOutcome>;
+  readonly engagementSeam?: (a: TeamsMessageActivity, machineAuthored: boolean) => Promise<TeamsEngagementVerdict>;
+  readonly markEngaged?: (a: TeamsMessageActivity) => Promise<string | null>;
 }
 
 const OK = () => new Response("ok");
@@ -498,6 +501,8 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const dmDivert = opts.dmDivert ?? liveTeamsDmDivert;
   const externalGate = opts.externalGate ?? liveTeamsExternalGate;
   const stopReaction = opts.stopReaction ?? ((rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => routeTeamsStopReaction(rx, { attachSession }));
+  const engagementSeam = opts.engagementSeam ?? resolveTeamsEngagement;
+  const markEngaged = opts.markEngaged ?? ((a: TeamsMessageActivity) => markTeamsEngaged(a));
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -533,7 +538,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       return forward();
     }
 
-    const machineAuthored = activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:");
+    const machineAuthored = teamsMachineAuthored(activity);
 
     if (!machineAuthored && (await externalGate(activity))) return OK();
 
@@ -550,8 +555,33 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       );
     }
 
+    const seam: TeamsEngagementVerdict | null = machineAuthored ? null : await engagementSeam(activity, machineAuthored);
+    if (seam?.kind === "engage") {
+      const engageKey = `teams-engage:${activity.conversation.id}:${activity.id}`;
+      if (!dedupe.seen(engageKey, now())) {
+        dedupe.mark(engageKey, now());
+        if (await markEventSeen(seam.org, engageKey, new Date(now()).toISOString())) await markEngaged(activity);
+      }
+    }
+    if (seam?.kind === "hold" && seam.stopped) {
+      if (isTeamsInputResponseActivity(activity)) {
+        tlog(`activity ${activity.id} in ${activity.conversation.id}: stood down, but this is an answer to a parked question — forwarded`);
+        return forward();
+      }
+      tlog(`activity ${activity.id} in ${activity.conversation.id}: stood down here — suppressed on BOTH legs until an @mention`);
+      return OK();
+    }
+
     if (activity.scope === "personal" || activity.scope === "groupChat") {
       if (machineAuthored) return OK();
+      if (seam?.kind === "hold") {
+        if (isTeamsInputResponseActivity(activity)) {
+          tlog(`activity ${activity.id} in ${activity.conversation.id}: group chat not engaged, but this is an answer to a parked question — forwarded`);
+          return forward();
+        }
+        tlog(`activity ${activity.id} in ${activity.conversation.id}: group chat not engaged — ${seam.reason}`);
+        return OK();
+      }
       const dmKey = `teams:${activity.conversation.id}:${activity.id}`;
       if (dedupe.seen(dmKey, now())) return OK();
       dedupe.mark(dmKey, now());

@@ -21,6 +21,7 @@ import {
   teamsVendorExternal,
   type TeamsFrontPlan,
 } from "../agent/channels/teams-front.js";
+import type { TeamsEngagementVerdict } from "../agent/channels/teams-engagement.js";
 import { overrideSettingsForTest, resetSettingsForTest, EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   bindFrom,
@@ -400,7 +401,7 @@ const memCfg: MemoryResolveConfig = {
     return JSON.stringify(base);
   };
 
-  async function run(body: string): Promise<{ dm: number; dmSurface?: string; plan: number; forward: number }> {
+  async function run(body: string, seam?: TeamsEngagementVerdict): Promise<{ dm: number; dmSurface?: string; plan: number; forward: number }> {
     let dm = 0;
     let dmSurface: string | undefined;
     let plan = 0;
@@ -414,6 +415,7 @@ const memCfg: MemoryResolveConfig = {
       {
         verify: async () => body,
         markEventSeen: async () => true,
+        engagementSeam: async () => seam ?? { kind: "unanchored", reason: "not under test here" },
         planFor: (): TeamsFrontPlan | null => {
           plan++;
           return null;
@@ -436,8 +438,10 @@ const memCfg: MemoryResolveConfig = {
   ok(personal.forward === 0, "H2: …and is not forwarded to the native channel");
   ok(personal.dmSurface?.startsWith("teams/TENANT_H/") === true, "H2: the DM window is keyed on the DM's OWN surface key (real bindFrom → resolvePartition)");
 
-  const group = await run(activityBody("groupChat"));
-  ok(group.dm === 1 && group.plan === 0 && group.forward === 0, "H2: a GROUP chat diverts on the same terms (the predicate covers personal + groupChat, the Slack mpim parity)");
+  const groupEngaged = await run(activityBody("groupChat"), { kind: "deliver", anchor: "19:conv-h@thread.v2", reason: "engaged" });
+  ok(groupEngaged.dm === 1 && groupEngaged.plan === 0 && groupEngaged.forward === 0, "H2: an ENGAGED group chat diverts on the same terms as a DM (the predicate covers personal + groupChat, the Slack mpim parity)");
+  const groupOpen = await run(activityBody("groupChat"), { kind: "hold", anchor: "19:conv-h@thread.v2", reason: "thread is not engaged", stopped: false });
+  ok(groupOpen.dm === 0 && groupOpen.plan === 0 && groupOpen.forward === 0, "🔴 H2: an UN-ENGAGED group chat wakes NOTHING — the seam gates the group-chat branch (OPE-1500)");
 
   const channel = await run(activityBody("channel"));
   ok(channel.dm === 0, "H2: a CHANNEL activity does NOT take the DM branch");

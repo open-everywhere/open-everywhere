@@ -1641,6 +1641,102 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "J-ENGAGED-teams",
+    title: "Teams engaged seam (OPE-1500): an @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    optional: false,
+    timeoutMs: REPLY_WAIT * 4 + SILENCE_WINDOW * 3,
+    judged: true,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const RSC_GRANT = "ChannelMessage.Read.Group";
+      if (!ctx.auditRead) {
+        ctx.skip(
+          `J-ENGAGED-teams: the stop half is asserted on the deployment's own ${STOOD_DOWN_ACTION} and teams.dispatched rows ` +
+            "(a Teams message does not say which wake it answered, and a silent surface looks the same from outside), so the " +
+            "leg needs the audit read — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
+        );
+      }
+      const auditRead = ctx.auditRead!;
+      const dispatchedOn = async (rootId: string, sinceIso: string) =>
+        (await auditRead({ sinceIso, platform: "teams", actions: ["teams.dispatched"] })).filter((r) =>
+          String((r.detail as { conversationId?: unknown } | undefined)?.conversationId ?? "").includes(rootId),
+        );
+
+      const root = await teams.postMention("Let's use this thread for a quick check. Acknowledge in one line.");
+      const ack = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(ack.text.trim().length > 0, "engage: the @mention drew a reply — the chain is live, and the mention is what enrols it in the engagement registry");
+
+      const followUpFrom = new Date(Date.now() - 15_000).toISOString();
+      const markerE = factToken("teams-engaged");
+      const followUp = await teams.postReply(root.id, `and what is 7 plus 6? Answer with the number and include the token ${markerE}.`);
+      let answered = "";
+      try {
+        const reply = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: followUp.createdDateTime ?? ack.createdDateTime, contains: markerE });
+        answered = reply.text;
+      } catch {
+        answered = "";
+      }
+      const woke = await dispatchedOn(root.id, followUpFrom);
+      if (answered === "" && woke.length === 0) {
+        ctx.skip(
+          `J-ENGAGED-teams: a plain follow-up in a chain the bot had just been @mentioned in produced NO reply and NO ` +
+            `teams.dispatched row. TWO causes look identical here and this leg cannot separate them: (1) the tenant has not ` +
+            `consented to the ${RSC_GRANT} RSC grant, so Microsoft never delivered the message and the seam had nothing to ` +
+            `decide — a team owner consents at install, see docs/deploy/surfaces/teams.md; or (2) the message WAS delivered ` +
+            `and the seam did not admit it — a wrong anchor spelling, a failed mark, or a partition grain that disagrees with ` +
+            `the one stand_down writes. Telling them apart needs a receive-side audit row this deployment does not write. ` +
+            `Check the grant FIRST (Graph: GET /beta/teams/{team-group-id}/permissionGrants); if it is present, this is cause ` +
+            `(2) and a real defect. The @mention half above PASSED, so the surface itself is alive either way.`,
+        );
+      }
+      ctx.gate(answered.includes("13"), `engaged wake: the PLAIN follow-up (no @mention) woke the chain and it answered correctly — 13, token ${markerE}`);
+      ctx.log(`engaged wake: ${woke.length} teams.dispatched row(s) on this chain (a native-path surface writes none and answers only in Teams — the reply above is the portable signal)`);
+
+      const standDownFrom = new Date(Date.now() - 15_000).toISOString();
+      const stopAsk = await teams.postMentionReply(root.id, "thanks, you can stop following this thread now");
+      const stopAck = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: stopAsk.createdDateTime ?? undefined });
+      await ctx.judgePass(closedQA(STAND_DOWN_ACK_CRITERIA, {}), stopAck.text, "stand down: the reply accepts the ask to stop");
+      const stoodRows = (await auditRead({ sinceIso: standDownFrom, platform: "teams", actions: [STOOD_DOWN_ACTION] })).filter((r) =>
+        String((r.detail as { anchor?: unknown } | undefined)?.anchor ?? "").includes(root.id),
+      );
+      ctx.gate(
+        stoodRows.length > 0,
+        `stand down: an ${STOOD_DOWN_ACTION} row exists whose ANCHOR names this reply chain (found ${stoodRows.length}) — the ` +
+          "Teams engagement anchor, marked for real rather than acknowledged in words",
+      );
+      ctx.gate(
+        stoodRows.some((r) => (r.detail as { marked?: unknown } | undefined)?.marked === true),
+        "stand down: …stamped `marked: true`, so the flag landed on an existing row — `marked: false` is the refusal case, where the verb throws and the model must report a FAILED stop",
+      );
+
+      await sleep(SILENCE_WINDOW);
+      const quietFrom = new Date().toISOString();
+      await teams.postReply(root.id, "(one more note for the humans in this thread — no bot needed)");
+      await sleep(SILENCE_WINDOW);
+      const chain = await teams.replies(root.id);
+      const afterStop = chain.filter((m) => teams.isBotReply(m) && (m.createdDateTime ?? "") > quietFrom);
+      ctx.gate(afterStop.length === 0, `🔴 stand down: a further PLAIN message in the stood-down chain drew NO reply (saw ${afterStop.length})`);
+      const ambientAfterStop = await dispatchedOn(root.id, quietFrom);
+      if (woke.length > 0) {
+        ctx.gate(
+          ambientAfterStop.length === 0,
+          `🔴 stand down: …and woke NOTHING — 0 teams.dispatched rows on this chain after the stop (saw ${ambientAfterStop.length}). This ` +
+            "fixture writes dispatch rows (Leg 2 saw some), so it is a vouched single-window surface, and this is the half that had no " +
+            "mechanism before OPE-1500: Leg A's ambient wake read no engagement registry, so the stop marked a row nothing consulted",
+        );
+      } else {
+        ctx.log(
+          "stand down: the Leg A half was NOT exercised — this fixture wrote no teams.dispatched row for the engaged wake either, so it " +
+            "is on the native path and has no ambient leg for the stop to suppress. The reply-silence gate above carries the claim here.",
+        );
+      }
+    },
+  },
+  {
     id: "J-TEAMS-DM",
     title: "Teams 1:1 DM: a personal-scope Graph message wakes the bot and gets a reply — the DM plane's first live leg (OPE-972)",
     requires: ["teams"],

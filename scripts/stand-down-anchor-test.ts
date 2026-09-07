@@ -5,15 +5,17 @@ overrideSettingsForTest({ discord: { statusUx: false } });
 import assert from "node:assert/strict";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
+import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 registerDiscordProvider();
 registerSlackProvider();
+registerTeamsProvider();
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
 import { bindFrom } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
-import standDown, { STAND_DOWN_ACTION } from "@open-everywhere/core/agent/tools/stand_down.js";
+import standDown, { STAND_DOWN_ACTION, DM_REFUSAL, GROUP_REFUSAL } from "@open-everywhere/core/agent/tools/stand_down.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import {
   dispatchTurn,
@@ -216,7 +218,11 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   } catch (err) {
     message = (err as Error).message;
   }
-  ok(message.includes("direct message cannot be stood down"), "the group-DM refusal reads the same as the 1:1 DM refusal");
+  ok(!message.includes("no @mention to bring you back"), "🔴 the group-DM refusal does NOT reuse the 1:1 reason — a group DM CAN be @mentioned, so that sentence would be false about the platform");
+  ok(message.includes("without checking whether you asked it to stop"), "the group-DM refusal names the REAL cause: this surface's group wake never consults the engagement registry");
+  ok(message.includes("nothing was marked"), "…and still states that nothing was marked");
+  ok(message.includes("could NOT stop following"), "…and still tells the model to report a FAILED stop (the §3 shape)");
+  ok((message.match(/\./g) ?? []).length === 1 && message.trimEnd().endsWith("."), "the group refusal stays ONE sentence, like the other arms");
 }
 
 {
@@ -286,4 +292,66 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok((trail[0]!.detail as Record<string, unknown>).marked === false, "🔴 OPE-1333: …stamped `marked: false`, which is the field the refusal is derived from");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal)`);
+{
+  const chainCtx = windowCtx(
+    "teams",
+    { tenant_id: "T_MS", conversation_id: "19:chain@thread.tacv2", channel_id: "19:chan@thread.tacv2", scope: "channel", user_id: "29:u1" },
+    "29:u1",
+  );
+  const b = bindFrom(chainCtx);
+  ok(b.mode === "channel", "precondition: a Teams channel scope binds to SessionMode 'channel'");
+  ok(b.engagementKey === "19:chain@thread.tacv2", "🔴 OPE-1500: the Teams binding publishes the reply chain as the engagement anchor — before this it published none and the verb threw");
+  const p = resolvePartition(chainCtx);
+  await store.markEngaged(p.org, p.surfaceKey, "19:chain@thread.tacv2", "2026-09-07T10:00:00Z", { participating: true });
+  const res = await runStandDown(chainCtx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 OPE-1500: stand_down SUCCEEDS on a Teams reply chain");
+  const row = await store.getEngagement(p.org, p.surfaceKey, "19:chain@thread.tacv2");
+  ok(row !== null && row.stopped === true, "…and the mark lands on the row the seam's wake gate reads (teams-engagement.ts), so the stop actually suppresses");
+}
+
+{
+  const groupCtx = windowCtx("teams", { tenant_id: "T_MS", conversation_id: "19:group@thread.v2", scope: "groupChat", user_id: "29:u2" }, "29:u2");
+  const gb = bindFrom(groupCtx);
+  ok(gb.mode === "mpim", "precondition: a Teams groupChat binds to SessionMode 'mpim'");
+  ok(gb.engagementKey === "19:group@thread.v2", "OPE-1500: …and publishes the chat id as its anchor");
+  const gp = resolvePartition(groupCtx);
+  await store.markEngaged(gp.org, gp.surfaceKey, "19:group@thread.v2", "2026-09-07T10:00:00Z", { participating: true });
+  const gres = await runStandDown(groupCtx, "asked me to stop following");
+  ok(gres.standingDown === true, "🔴 OPE-1500: a Teams GROUP CHAT can be stood down — its wake gate reads the row, so the mark is not a write nobody reads");
+  const grow = await store.getEngagement(gp.org, gp.surfaceKey, "19:group@thread.v2");
+  ok(grow !== null && grow.stopped === true, "…and the flag is set");
+
+  const personalCtx = windowCtx("teams", { tenant_id: "T_MS", conversation_id: "19:1on1@thread.v2", scope: "personal", user_id: "29:u3" }, "29:u3");
+  const pb = bindFrom(personalCtx);
+  ok(pb.mode === "dm", "precondition: a Teams personal chat binds to SessionMode 'dm'");
+  ok(pb.engagementKey === undefined, "🔴 NEGATIVE CONTROL: a Teams 1:1 publishes NO anchor — the mapper's own omission, not the tool's guard");
+  let message = "";
+  try {
+    await runStandDown(personalCtx);
+    ok(false, "stand_down must still refuse a Teams 1:1 chat");
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  ok(message.includes("direct message cannot be stood down"), "🔴 the 1:1 refusal copy is unchanged — it is the same sentence LEG 8 pins on Slack");
+  ok(message.includes("no @mention to bring you back"), "…including the reason clause, which is exactly what stops being true in a group chat");
+  ok(message === DM_REFUSAL, "…byte-identical to the exported 1:1 string, so the group split above cannot drift it");
+
+  const slackMpim = windowCtx("slack", { team_id: "T_S", channel_id: "G_DM2", channel_type: "mpim", thread_ts: "1975.2", user_id: "US" }, "US");
+  ok(bindFrom(slackMpim).engagementKey === undefined, "🔴 NEGATIVE CONTROL: a Slack mpim carries a thread_ts but NO engagementKey — which is why it keeps refusing while Teams stops");
+  const sp = resolvePartition(slackMpim);
+  await store.markEngaged(sp.org, sp.surfaceKey, "1975.2", "2026-09-07T10:00:00Z", { participating: true });
+  let slackThrew = false;
+  let slackMessage = "";
+  try {
+    await runStandDown(slackMpim);
+  } catch (err) {
+    slackThrew = true;
+    slackMessage = (err as Error).message;
+  }
+  ok(slackThrew, "🔴 the Slack group DM still refuses, with a seeded row present — the guard reads the ANCHOR, never the thread ts");
+  ok(slackMessage === GROUP_REFUSAL, "…with the GROUP copy, not the 1:1 copy — two refusals, two true reasons");
+  const srow = await store.getEngagement(sp.org, sp.surfaceKey, "1975.2");
+  ok(srow !== null && srow.stopped === false, "…and nothing was marked there");
+}
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop)`);

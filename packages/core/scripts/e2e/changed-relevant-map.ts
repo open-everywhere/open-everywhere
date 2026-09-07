@@ -29,8 +29,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS", "J-TEAMS-DM"],
-    why: "J-TEAMS and J-TEAMS-DM are the two surface: \"teams\" scenarios (channel and 1:1 DM respectively); J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true) — J-TEAMS-DM is not (it self-skips until the driver's Chat.* Graph scope is consented, OPE-972).",
+    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams"],
+    why: "The three surface: \"teams\" scenarios — the channel, the 1:1 DM, and the ambient engagement seam (OPE-1500: @mention engages, a plain follow-up wakes, stand_down stops it). J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true); the other two are not — J-TEAMS-DM self-skips until the driver's Chat.* Graph scope is consented (OPE-972), and J-ENGAGED-teams self-skips when the tenant has not consented to the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the plain follow-up it asserts on.",
   },
   {
     area: "github-provider",

@@ -8,7 +8,7 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "read-adapter": "supported",
   "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
   "ancillary-ops": "supported",
-  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1500" },
+  "ambient-engagement-seam": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },
@@ -31,6 +31,6 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   stop: { supported: "the `angry` reaction — Teams' six fixed values carry no ✋" },
   ack_stop_glyph: { unsupported: "vendor limit — Teams' fixed six-value reaction vocabulary has no raised hand" },
   ack_cancel_note: "supported",
-  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1500)" },
+  stand_down: { supported: "marks the conversation row; refuses on a 1:1 and when no row exists" },
   post_file: { unsupported: "not built yet — no Teams attachment transport is wired (§7.3)" },
 };
