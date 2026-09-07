@@ -166,6 +166,27 @@ export class TeamsDriver {
     return { id: json.id ?? "", displayName: json.displayName ?? "" };
   }
 
+  async teamInfo(): Promise<{ id: string; displayName: string }> {
+    const json = (await this.graph("GET", `/teams/${this.cfg.teamId}`)) as { id?: string; displayName?: string };
+    return { id: json.id ?? "", displayName: json.displayName ?? "" };
+  }
+
+  async channels(): Promise<readonly { id: string; displayName: string }[]> {
+    const json = (await this.graph("GET", `/teams/${this.cfg.teamId}/channels`)) as {
+      value?: readonly { id?: string; displayName?: string }[];
+    };
+    return (json.value ?? []).map((c) => ({ id: c.id ?? "", displayName: c.displayName ?? "" }));
+  }
+
+  async createChannel(displayName: string, description: string): Promise<{ id: string; displayName: string }> {
+    const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels`, {
+      displayName,
+      description,
+      membershipType: "standard",
+    })) as { id?: string; displayName?: string };
+    return { id: json.id ?? "", displayName: json.displayName ?? displayName };
+  }
+
   async resolveDmChat(): Promise<{ chatId: string }> {
     const installed = (await this.graph("GET", "/me/teamwork/installedApps?$expand=teamsApp")) as {
       value?: readonly { id?: string; teamsApp?: { externalId?: string; displayName?: string } }[];

@@ -326,7 +326,17 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
   }
 }
 
+const INVENTORY_COMMANDS = new Set(["inventory", "provision"]);
+
 async function main(): Promise<void> {
+  if (args.length > 0 && INVENTORY_COMMANDS.has(args[0])) {
+    if (args.includes("--if-armed") && process.env.E2E_FIXTURE_TABLE_CHECK?.trim() !== "1") {
+      console.log("~ e2e:fixtures: not armed. Set E2E_FIXTURE_TABLE_CHECK=1 with the e2e credentials to compare docs/dev/e2e-fixtures.md against the live rooms.");
+      process.exit(0);
+    }
+    const { main: inventoryMain } = await import("./fixture-inventory.js");
+    process.exit(await inventoryMain(args));
+  }
   const env = process.env;
   const classified = classifyAll(env, FIXTURE_FAMILIES);
   const findings: FixtureFinding[] = [];

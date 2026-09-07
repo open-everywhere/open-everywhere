@@ -165,9 +165,22 @@ function reverseUsedNames(): Set<string> {
   return used;
 }
 
+const DOC_TABLES_NOT_ENV = new Map<string, string>([
+  ["docs/dev/e2e-fixtures.md", "a generated room inventory — its first column is a vendor room id, not an env name."],
+]);
+for (const file of DOC_TABLES_NOT_ENV.keys()) {
+  if (!existsSync(join(LINT_SOURCE_ROOT, file))) {
+    reds.push(
+      `STALE DOC_TABLES_NOT_ENV: ${file} is excluded from the reverse arm's row scan in scripts/env-docs-lint.ts ` +
+        `but no such file exists — it was renamed or deleted. Update the list, or its table columns are read as env rows again.`,
+    );
+  }
+}
+
 function documentedEnvNames(): Set<string> {
   const names = new Set<string>();
   for (const file of DOC_ROOTS.flatMap((root) => filesUnder(root, (name) => name.endsWith(".md")))) {
+    if (DOC_TABLES_NOT_ENV.has(file)) continue;
     for (const m of readFileSync(file, "utf8").matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)) names.add(m[1]);
   }
   for (const file of DOC_FILES) {
