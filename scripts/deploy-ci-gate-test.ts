@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { Env, Exec, ExecResult } from "./deploy/lib.js";
-import { EXEC_TIMEOUT_MS, REAL_EXEC_TIMEOUT_MS, withExecDeadline } from "./deploy/lib.js";
+import { EXEC_TIMEOUT_MS, GITHUB_API_BASE, REAL_EXEC_TIMEOUT_MS, resolveGithubApiBase, withExecDeadline } from "./deploy/lib.js";
 import {
   classifyCheckRuns,
   classifyCloudProofStatus,
@@ -10,7 +10,6 @@ import {
   fetchCheckRunsForSha,
   fetchCombinedStatusForSha,
   fetchGithubApi,
-  GITHUB_API_BASE,
   GITHUB_API_MAX_PAGES,
   GITHUB_API_TIMEOUT_MS,
   isTokenForbiddenResponse,
@@ -241,6 +240,30 @@ await check("fetchCombinedStatusForSha: gh ENOENT + a token falls back to REST a
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.statuses, [{ context: CLOUD_PROOF_CONTEXT, state: "success" }]);
   assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status?per_page=100&page=1`);
+});
+
+const GHES = "https://ghe.example.test/api/v3";
+
+check("resolveGithubApiBase: GITHUB_API_URL wins, is trimmed, loses a trailing slash, and an unset or blank value falls back to github.com", () => {
+  assert.equal(resolveGithubApiBase({}), GITHUB_API_BASE);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: GHES }), GHES);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: `  ${GHES}  ` }), GHES);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: `${GHES}/` }), GHES);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: `  ${GHES}///  ` }), GHES);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: "   " }), GITHUB_API_BASE);
+  assert.equal(resolveGithubApiBase({ GITHUB_API_URL: " / " }), GITHUB_API_BASE);
+});
+
+await check("fetchCheckRunsForSha: the REST fallback builds its URL on GITHUB_API_URL, not on the github.com constant", async () => {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: GREEN } } }, calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: { ...TOKEN_ENV, GITHUB_API_URL: GHES } });
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].url, `${GHES}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100&page=1`);
+  assert.ok(!calls[0].url.includes("api.github.com"), "the GHES read must not touch api.github.com");
+  const off: { url: string; headers: Record<string, string> }[] = [];
+  await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl: routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: GREEN } } }, off), env: TOKEN_ENV });
+  assert.equal(off[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100&page=1`);
 });
 
 await check("runCiGate: gh ENOENT + REST fallback → GREEN check-runs PASSES, same verdict as the gh path", async () => {

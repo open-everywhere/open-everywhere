@@ -111,8 +111,12 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
     ...overrides,
   });
 
+  const readUrls: string[] = [];
   const fetchStub = (record: Record<string, unknown>, commits: unknown[] = [signedCommit()], status = 200): GithubApiFetchLike =>
-    async (url) => ({ status, text: () => Promise.resolve(JSON.stringify(url.includes("/commits") ? commits : record)) });
+    async (url) => {
+      readUrls.push(url);
+      return { status, text: () => Promise.resolve(JSON.stringify(url.includes("/commits") ? commits : record)) };
+    };
 
   const baseEnv: Env = { ...process.env, GH_TOKEN: "test-token", GITHUB_REPOSITORY: "acme/oe", GITHUB_API_URL: `http://127.0.0.1:${port}` };
 
@@ -157,6 +161,11 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   const clean = await judge(["package.json", "docs/README.md"], prRecord(live));
   if (clean.verdict !== "clear") fail(`3: a clean diff must CLEAR the merge — got ${clean.verdict}: ${clean.message}\n${clean.detail}`);
   if (clean.fence !== "pass") fail(`3: a clean diff must report fence=pass — got ${clean.fence}`);
+
+  const apiRoot = `http://127.0.0.1:${port}`;
+  if (readUrls.length === 0) fail("3: the rung made no API read at all — the one-server assertion below would be vacuous");
+  const strayed = readUrls.filter((url) => !url.startsWith(apiRoot));
+  if (strayed.length > 0) fail(`3: every read the rung makes must go to GITHUB_API_URL (${apiRoot}) — these did not: ${strayed.join(", ")}`);
 
   const personAuthored = await judge(
     ["agent/access/bundles.ts"],

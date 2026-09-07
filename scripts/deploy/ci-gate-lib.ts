@@ -1,7 +1,7 @@
 import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
 import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
-import { EXEC_TIMEOUT_MS, type Env, type Exec, realExec, withExecDeadline } from "./lib.js";
+import { EXEC_TIMEOUT_MS, type Env, type Exec, realExec, resolveGithubApiBase, withExecDeadline } from "./lib.js";
 
 export type CheckRun = {
   name: string;
@@ -92,8 +92,6 @@ export type GithubApiFetchLike = (
   init: { headers: Record<string, string>; signal?: AbortSignal },
 ) => Promise<{ status: number; text(): Promise<string> }>;
 
-export const GITHUB_API_BASE = "https://api.github.com";
-
 export const GITHUB_API_TIMEOUT_MS = 30_000;
 
 export const realGithubApiFetch: GithubApiFetchLike = async (url, init) => {
@@ -178,7 +176,7 @@ export async function fetchGithubApi(input: {
   }
 
   const suffix = input.restPathSuffix ? `/${input.restPathSuffix}` : "";
-  const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}${suffix}`;
+  const url = `${resolveGithubApiBase(input.env)}/repos/${ownerRepo.owner}/${ownerRepo.repo}${suffix}`;
   const timeoutMs = input.timeoutMs ?? GITHUB_API_TIMEOUT_MS;
   const controller = new AbortController();
   let timedOut = false;

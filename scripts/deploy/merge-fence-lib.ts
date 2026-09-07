@@ -12,7 +12,7 @@ import {
   resolveGithubRestToken,
 } from "./ci-gate-lib.js";
 import { runDcoRung } from "./dco-lib.js";
-import { type Env, type Exec, realExec } from "./lib.js";
+import { type Env, type Exec, realExec, resolveGithubApiBase } from "./lib.js";
 
 const OVERRIDE_REMEDY = "protected path — requires orchestrator review-and-override";
 
@@ -157,8 +157,6 @@ export type MergeFenceDecision = {
   subject?: FenceSubject;
 };
 
-export const GITHUB_API_URL_DEFAULT = "https://api.github.com";
-
 function refuse(message: string, detail = "", subject?: FenceSubject): MergeFenceDecision {
   return { verdict: "refuse", fence: "unknown", dco: "unknown", message, detail, ...(subject ? { subject } : {}) };
 }
@@ -257,7 +255,7 @@ export async function runMergeFence(input: {
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_REPOSITORY: repo,
       GITHUB_TOKEN: token,
-      GITHUB_API_URL: env.GITHUB_API_URL?.trim() || GITHUB_API_URL_DEFAULT,
+      GITHUB_API_URL: resolveGithubApiBase(env),
     },
   });
 

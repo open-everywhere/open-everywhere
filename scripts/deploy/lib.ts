@@ -57,6 +57,12 @@ export function withExecDeadline(exec: Exec, timeoutMs: number = EXEC_TIMEOUT_MS
 
 export type Env = Record<string, string | undefined>;
 
+export const GITHUB_API_BASE = "https://api.github.com";
+
+export function resolveGithubApiBase(env: Env): string {
+  return env.GITHUB_API_URL?.trim().replace(/\/+$/, "") || GITHUB_API_BASE;
+}
+
 export type DeployEnv = {
   scope: string;
   alias: string;
