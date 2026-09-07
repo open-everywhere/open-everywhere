@@ -17,7 +17,7 @@ import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_
 import type { NotionDriver } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
-import { ARMING_ADVISORY_LOOKBACK_DAYS, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
+import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
@@ -1479,11 +1479,26 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const notion = ctx.notion!;
       const query = ctx.notionQuery ?? "team handbook";
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      const auditRead = ctx.auditRead!;
+      const armedBefore = await deriveConnectorArming(auditRead, { connector: NOTION_CONNECTOR, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) });
+      if (armedBefore.state !== "armed")
+        ctx.skip(
+          `OPE-1496 — ${armingNote(NOTION_CONNECTOR, armedBefore)}. This leg's connector-evidence gate can only be earned by the MCP plane, ` +
+            `and on the credential bound here (\`team-key\`, endpoint rule \`api.notion.com\`) the connection's \`mcp.notion.com\` host is refused ` +
+            `at the credential endpoint fence — so \`connector.op\` is unreachable and only a doomed call could write \`connector.use\`. ` +
+            `An OAuth-armed Notion MCP credential is what arms this leg; no env var does.`,
+        );
       const sinceIso = new Date(Date.now() - 15_000).toISOString();
       const { ts: askTs } = await notion.post(
-        notion.mention(`search Notion for "${query}" and tell me what you find — a page title plus a short summary is enough. If nothing matches, just say so plainly; don't guess.`),
+        notion.mention(
+          `look this up in Notion itself: search the connected Notion workspace for "${query}" and tell me what you find — a page title plus a short summary is enough. ` +
+            `Run the search live against Notion; do not answer from memory, from this channel's history, or from the web. ` +
+            `If the live search returns nothing, say so plainly; don't guess.`,
+        ),
       );
       const reply = await notion.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await arming.recheck();
       await ctx.judgePass(
         closedQA(
           "Is the reply a sane response to a Notion search request — either naming a real-sounding page/summary, " +
@@ -1493,8 +1508,8 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text,
         "Notion search reply is sane (found-or-honest-miss, never an error)",
       );
-      if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso, limit: 1000 });
+      {
+        const rows = await auditRead({ sinceIso, limit: 1000 });
         const connectorRows = rows.filter((r) => r.action.startsWith("connector."));
         const evidence = connectorRows.filter(
           (r) =>
@@ -1502,16 +1517,19 @@ export const SCENARIOS: readonly Scenario[] = [
             r.detail?.connection === "notion" &&
             (r.surface === undefined || r.surface === notion.channelId),
         );
+        const seen = [...new Set(connectorRows.map((r) => r.action))].sort();
+        const sawUseOnly = seen.includes("connector.use") && !seen.includes("connector.op");
+        const reading = sawUseOnly
+          ? `READING (OPE-1496): a connector.use row landed and no connector.op did — the MCP call reached the grant gate and the ` +
+            `CREDENTIAL ENDPOINT FENCE then refused the connection's host. Expected on the \`team-key\` binding; it is the credential, not this leg.`
+          : `READING (OPE-1496): no connector row at all — the answer came through one of this channel's OTHER live Notion routes ` +
+            `(direct REST over api.notion.com, or the notion-rest skill), and NEITHER writes an evidence row. A correct, complete answer ` +
+            `looks identical to no answer from here. That gap is the ticket's open observability question, not a product failure.`;
         ctx.gate(
           evidence.length > 0,
           `the connector itself was reached: ${evidence.length} connector.op/connector.use row(s) on this channel in the leg's window ` +
-            `(all connector rows seen: ${[...new Set(connectorRows.map((r) => r.action))].join(", ") || "none"}) — the reply alone ` +
-            `cannot tell a real connector search from a channel that mounts no connector`,
-        );
-      } else {
-        ctx.log(
-          "connector-plane check SKIPPED — it needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN). Without it " +
-            "this leg gates on the reply's WORDS only, which cannot tell a real connector search from an ungranted channel.",
+            `(all connector rows seen: ${seen.join(", ") || "none"}) — the reply alone ` +
+            `cannot tell a real connector search from a channel that mounts no connector. ${reading}`,
         );
       }
     },

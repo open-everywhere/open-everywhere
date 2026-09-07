@@ -1382,7 +1382,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "🔴 THE FIX, at the seam the legs hold: an auth-required mint row raised DURING the leg makes recheck skip — the honest refusal can no longer reach a judge gate and red",
   );
 
-  for (const id of ["S-DM-NOTION", "S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
+  for (const id of ["S-DM-NOTION", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S24"]) {
     const src = SCENARIOS.find((s) => s.id === id)!.run.toString();
     ok(src.includes("watchConnectorArming("), `🔴 REACHABILITY — ${id} opens an arming watch (a leg that dropped the call keeps every assertion above green)`);
     const judgeGates = (src.match(/judgePass\(/g) ?? []).length;
@@ -1407,6 +1407,51 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(
       !/await dm\.replies\(anchorTs\)/.test(src),
       "🔴 OPE-1027 — S-DM-NOTION's poll body no longer reads dm.replies(anchorTs) alone (the thread-only trap that redded a live run)",
+    );
+  }
+
+  {
+    const src = SCENARIOS.find((s) => s.id === "S24")!.run.toString();
+    ok(
+      /Run the search live against Notion/.test(src),
+      "🔴 OPE-1492 — S24's ask demands a LIVE read of the connected workspace, so a prose answer is no longer the path of least resistance",
+    );
+    ok(
+      /search the connected Notion workspace/.test(src),
+      "🔴 OPE-1492 — S24's ask names the CONNECTED WORKSPACE as the source, so a worker answering from anywhere else has been told it is answering the wrong question",
+    );
+    ok(
+      /do not answer from memory, from this channel's history, or from the web/.test(src),
+      "🔴 OPE-1492 — S24's ask closes the prose exits (memory / backscroll / web), which is what let the old lenient ask pass with a silent audit",
+    );
+    ok(
+      !/connection_search|notion__/.test(src),
+      "🔴 OPE-1492 (row 16's lesson) — S24's ask names NO tool the lean seat cannot hold: the seat must delegate, not refuse",
+    );
+
+    ok(
+      /armedBefore\.state\s*!==\s*"armed"/.test(src),
+      "🔴 OPE-1496 — S24 skips unless the derived arming is POSITIVELY `armed` (an `unknown` from a connector that has never minted is exactly this fixture)",
+    );
+    ok(
+      /OPE-1496/.test(src),
+      "🔴 OPE-1496 — S24's skip reason and its gate message both NAME the ticket, so a red or a skip is never nameless again",
+    );
+    ok(
+      !/E2E_CONNECTOR_OAUTH/.test(src),
+      "🔴 OPE-894 — S24 reads NO arming env var; the deployment's own connector.mint rows are the evidence",
+    );
+    ok(
+      /connector\.use.{0,400}connector\.op/s.test(src) && /notion-rest skill/.test(src),
+      "🔴 OPE-1492 — S24's gate message branches its reading: `connector.use` only = the endpoint fence refused; no rows at all = the REST/skill route answered and writes nothing",
+    );
+    ok(
+      /action\s*===\s*"connector\.op"\s*\|\|\s*\w+\.action\s*===\s*"connector\.use"/.test(src),
+      "🔴 OPE-1485 — S24 still gates on connector.op/connector.use only (connector.grant lands on every session.started and proves nothing)",
+    );
+    ok(
+      /detail\?\.connection\s*===\s*"notion"/.test(src),
+      "🔴 OPE-1485 — S24's evidence filter still NAMES the connection, so a second binding on that channel cannot make the gate vacuous",
     );
   }
 }
