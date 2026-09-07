@@ -124,6 +124,10 @@ export function unifiedEditLocus(origin: UnifiedWakeOrigin): EditLocus | null {
   }
 }
 
+export function terminalPostClosesConversation(origin: UnifiedWakeOrigin): boolean {
+  return origin.platform === "linear" && origin.ambient !== true;
+}
+
 export async function resolveUnifiedEditLocus(origin: UnifiedWakeOrigin): Promise<EditLocus | null> {
   const locus = unifiedEditLocus(origin);
   if (!locus) return null;

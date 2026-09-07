@@ -112,6 +112,22 @@ async function callReply(
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
+async function callReplyForced(
+  turnWake: string,
+  turnId: string,
+  wake: string,
+  text: string,
+  done: boolean,
+): Promise<{ posted?: boolean; note?: string; error?: string }> {
+  const ctx = ctxFor(turnWake, turnId);
+  const armed = arm(ctx);
+  if (!armed) return { error: "reply did not arm" };
+  return armed
+    .execute({ text, wake, done, force: true }, ctx)
+    .then((r) => r as { posted?: boolean; note?: string })
+    .catch((e: unknown) => ({ error: String(e) }));
+}
+
 async function wake(channelId: string): Promise<string> {
   const id = mintWakeId();
   await registerUnifiedWakeTarget(store, ORG, id, { platform: "slack", channelId }, new Date().toISOString(), TOKEN);
@@ -141,6 +157,19 @@ const postRows = async (): Promise<Record<string, unknown>[]> =>
   ok(second.error!.includes("you already replied to wake-id"), "§1: refused with the `answered` steer, not some incidental error");
   ok(second.error!.includes("NOTHING was posted"), "§1: the copy tells the model its retry posted nothing, so it does not retry again believing the first post failed");
   ok(second.error!.includes("done:false"), "§1/INSTRUCTIVE: the copy teaches the legitimate multi-part route — this is the whole reason the refusal is not silent");
+  ok(
+    second.error!.includes("A second message is DISCOURAGED, not blocked"),
+    "§1/VALVE: the refusal names itself as DISCOURAGED, never as a wall",
+  );
+  ok(second.error!.includes("`force: true`"), "§1/VALVE: …and names the flag that overrides it, which this variant does hold");
+  ok(
+    second.error!.includes("costs the room a near-duplicate"),
+    "§1/VALVE: …and states the COST, so the valve is not read as an invitation",
+  );
+  ok(
+    !second.error!.includes("anyway"),
+    "§1/VALVE: negative control — never the plain 'post it as a new message anyway' instruction OPE-1422 removed",
+  );
   ok(posted.length === 1, "§1/ROOM: STILL exactly one message — the duplicate never left. This is the assertion OPE-568 exists for");
 
   ok(posted[0].text.endsWith("with a closing sentence."), "§1: the message that survived is the FIRST, complete one");
@@ -242,6 +271,113 @@ const postRows = async (): Promise<Record<string, unknown>[]> =>
   const second = await callReply(w, "turn_60", w, "Answer with no session context, again.", true);
   ok(second.posted === true, "§6/FAIL-OPEN: and so does the repeat — an unavailable signal turns the guard OFF, it never turns a delivered answer into an error");
   ok(posted.length === before + 2, "§6/ROOM: two messages, which is the honest bound on this fix: it needs the turn's own state to work");
+}
+
+const forcedRows = async (): Promise<Record<string, unknown>[]> =>
+  (await readAudit({ org: ORG, action: "reply.forced" })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_VALVE");
+  const before = posted.length;
+
+  const first = await inTurn(() => callReply(w, "turn_70", w, "The answer, first time.", true));
+  ok(first.posted === true, "§7a: the first `done:true` reply posts");
+
+  const second = await inTurn(() => callReply(w, "turn_70", w, "The answer, and one more thing.", true));
+  ok(typeof second.error === "string", "§7a: the second call on the same wake draws the refusal — the steer still fires");
+  ok(posted.length === before + 1, "§7a/ROOM: and that refusal kept the duplicate out of the room");
+
+  const third = await inTurn(() => callReply(w, "turn_70", w, "The answer, and one more thing, sent again.", true));
+  ok(third.posted === true, "§7a/VALVE: sending the refused call AGAIN POSTS it — the guard refuses once per wake, it never blocks");
+  ok(third.error === undefined, "§7a/VALVE: …and it is a real return, not an error the caller could mistake for a post");
+  ok(posted.length === before + 2, "§7a/ROOM: the room now holds BOTH messages. This is the assertion OPE-1452 exists for");
+  ok(posted[posted.length - 1].text.endsWith("sent again."), "§7a/ROOM: and the message that landed is the one the model re-sent");
+
+  const refusedForW = (await refusedRows()).filter((d) => d["wakeId"] === w);
+  ok(refusedForW.length === 1, "§7a/AUDIT: exactly ONE refusal row — the guard spent its one refusal and stood aside, it did not refuse twice");
+  ok(refusedForW[0]["reason"] === "answered-this-turn", "§7a/AUDIT: under the same reason as before, so the habit stays countable");
+  ok((await postRows()).filter((d) => d["wakeId"] === w).length === 2, "§7a/AUDIT: two reply.post rows for this wake, matching the room");
+  ok(
+    (await forcedRows()).filter((d) => d["wakeId"] === w).length === 0,
+    "§7a/AUDIT: a re-send writes NO `reply.forced` row — nothing was overridden, the guard had already stepped aside",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_FORCE");
+  const before = posted.length;
+
+  const first = await inTurn(() => callReply(w, "turn_71", w, "The answer.", true));
+  ok(first.posted === true, "§7b: the first `done:true` reply posts");
+
+  const forced = await inTurn(() => callReplyForced(w, "turn_71", w, "A time-critical correction the room must be notified of.", true));
+  ok(forced.posted === true, "§7b/FORCE: `force: true` posts the second answer with no refusal at all");
+  ok(posted.length === before + 2, "§7b/ROOM: both messages reached the room");
+
+  ok(
+    (await refusedRows()).filter((d) => d["wakeId"] === w).length === 0,
+    "§7b/AUDIT: NO refusal row — the override was taken before the refusal, not after one",
+  );
+  const forcedForW = (await forcedRows()).filter((d) => d["wakeId"] === w);
+  ok(forcedForW.length === 1, "§7b/AUDIT: the override is a ROW, so (refusals, overrides) says whether the steer works");
+  ok(
+    forcedForW[0]["reason"] === "answered-this-turn-forced",
+    "§7b/AUDIT: under its OWN reason — a should-be-edit or staleness override counts a different decision",
+  );
+  ok(forcedForW[0]["route"] === "tool", "§7b/AUDIT: route stamped, matching the reply.post join shape");
+  ok(!JSON.stringify(forcedForW[0]).includes("time-critical correction"), "§7b/AUDIT: the forced TEXT never reaches the audit detail either");
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_REFUSE_THEN_FORCE");
+  const before = posted.length;
+
+  const first = await inTurn(() => callReply(w, "turn_73", w, "The answer.", true));
+  ok(first.posted === true, "§7d: the first `done:true` reply posts");
+
+  const refused = await inTurn(() => callReply(w, "turn_73", w, "The answer, with more.", true));
+  ok(typeof refused.error === "string", "§7d: the second call draws the refusal that names `force: true`");
+  ok(refused.error!.includes("the override is recorded"), "§7d: …and that refusal PROMISES the override is recorded — the promise these assertions hold to account");
+
+  const forced = await inTurn(() => callReplyForced(w, "turn_73", w, "The answer, with more — this one has to notify.", true));
+  ok(forced.posted === true, "§7d: passing `force: true` after the refusal POSTS");
+  ok(posted.length === before + 2, "§7d/ROOM: both messages reached the room");
+
+  const forcedForW = (await forcedRows()).filter((d) => d["wakeId"] === w);
+  ok(
+    forcedForW.length === 1,
+    `§7d/AUDIT: …and it writes ONE \`reply.forced\` row, so the refusal's own promise is true — expected 1, got ${forcedForW.length}`,
+  );
+  ok(forcedForW[0]["reason"] === "answered-this-turn-forced", "§7d/AUDIT: under this arm's own override reason");
+  ok(
+    (await refusedRows()).filter((d) => d["wakeId"] === w).length === 1,
+    "§7d/AUDIT: exactly one refusal row — the force did not draw a second one on its way through",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const wTurn = await wake("C_FORCE_FENCE");
+  const wStray = mintWakeId();
+  const before = posted.length;
+
+  const stray = await inTurn(() => callReplyForced(wTurn, "turn_72", wStray, "Forced answer to a wake we never held.", true));
+  ok(
+    typeof stray.error === "string" && stray.error.includes("is not a wake you can answer"),
+    "§7c: `force: true` does NOT override the authority fence — an unheld id still draws `mismatch`",
+  );
+  ok(posted.length === before, "§7c/ROOM: and nothing was posted. The valve opens a style gate, never a security one");
+
+  const part = await inTurn(() => callReply(wTurn, "turn_72", wTurn, "Working on it.", false));
+  ok(part.posted === true, "§7c: a `done:false` part posts");
+  ok(
+    (await refusedRows()).filter((d) => d["wakeId"] === wTurn).length === 0 &&
+      (await forcedRows()).filter((d) => d["wakeId"] === wTurn).length === 0,
+    "§7c/AUDIT: a multi-part answer draws neither a refusal nor an override — the guard stays out of its way entirely",
+  );
 }
 
 console.log(`✓ reply-done-teeth: ${passed} assertions passed`);

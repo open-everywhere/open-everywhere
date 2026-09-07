@@ -125,6 +125,16 @@ async function callReply(turnWake: string, turnId: string, text: string, done: b
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
+async function callReplyForced(turnWake: string, turnId: string, text: string, done: boolean): Promise<{ posted?: boolean; error?: string }> {
+  const ctx = ctxFor(turnWake, turnId);
+  const armed = arm(ctx);
+  if (!armed) return { error: "reply did not arm" };
+  return armed
+    .execute({ text, wake: turnWake, done, force: true }, ctx)
+    .then((r) => r as { posted?: boolean })
+    .catch((e: unknown) => ({ error: String(e) }));
+}
+
 async function completeSilently(): Promise<void> {
   await unifiedChannel.adapter["message.completed"]!(
     { finishReason: "stop", message: "NO_REPLY" },
@@ -135,6 +145,13 @@ async function completeSilently(): Promise<void> {
 async function mentionWake(): Promise<string> {
   const id = mintWakeId();
   const origin = { platform: "linear", issueId: ISSUE, agentSessionId: SESSION } as unknown as UnifiedWakeOrigin;
+  await registerUnifiedWakeTarget(store, ORG, id, origin, new Date().toISOString(), TOKEN);
+  return id;
+}
+
+async function ambientWake(): Promise<string> {
+  const id = mintWakeId();
+  const origin = { platform: "linear", issueId: ISSUE, ambient: true } as unknown as UnifiedWakeOrigin;
   await registerUnifiedWakeTarget(store, ORG, id, origin, new Date().toISOString(), TOKEN);
   return id;
 }
@@ -186,6 +203,64 @@ async function mentionWake(): Promise<string> {
   ok(
     closed.length === 2 && closed[1] === SESSION,
     `§2/DISCRIMINATOR: the wake this turn did NOT answer still gets its session closed — expected 2 closes, got ${closed.length}`,
+  );
+}
+
+{
+  const w = await mentionWake();
+  const inTurn = newSession(w, "turn_wall");
+  const before = dispatched.length;
+
+  const first = await inTurn(() => callReply(w, "turn_wall", "The grounded answer.", true));
+  ok(first.posted === true, "§3: the first `done:true` answer posts — the wall must never cost the real answer");
+  ok(dispatched.length === before + 1, "§3: one dispatch reached the arm");
+
+  const second = await inTurn(() => callReply(w, "turn_wall", "The grounded answer, with one more line.", true));
+  ok(typeof second.error === "string", "§3/WALL: the second `done:true` call on the same wake is REFUSED");
+  ok(second.error!.includes("you already replied to wake-id"), "§3/WALL: …with the `answered` copy, not some incidental error");
+  ok(
+    !second.error!.includes("DISCOURAGED"),
+    "§3/WALL: …and WITHOUT the valve sentence. The copy must not tell the model a re-send posts when this session is already closed",
+  );
+
+  const third = await inTurn(() => callReply(w, "turn_wall", "The grounded answer, sent again.", true));
+  ok(typeof third.error === "string", "§3/WALL: RE-SENDING is refused again — a wall refuses every time, where the valve stands aside after one");
+
+  const forced = await inTurn(() => callReplyForced(w, "turn_wall", "The grounded answer, forced.", true));
+  ok(typeof forced.error === "string", "§3/WALL: and `force: true` does NOT open it — the flag overrides a matter of style, never an impossibility");
+
+  ok(
+    dispatched.length === before + 1,
+    `§3/ROOM: still exactly ONE dispatch reached the arm across all four calls — expected ${before + 1}, got ${dispatched.length}`,
+  );
+
+  const wOpen = await mentionWake();
+  const openTurn = newSession(wOpen, "turn_open");
+  const partA = await openTurn(() => callReply(wOpen, "turn_open", "Checking — part one.", false));
+  const partB = await openTurn(() => callReply(wOpen, "turn_open", "Checking — part two.", false));
+  ok(
+    partA.posted === true && partB.posted === true,
+    "§3/CONTROL: two `done:false` parts both post on a mention wake — the wall arms on the answered mark, never on the surface",
+  );
+
+  const wAmb = await ambientWake();
+  const ambTurn = newSession(wAmb, "turn_ambient");
+  const beforeAmb = dispatched.length;
+
+  const amb1 = await ambTurn(() => callReply(wAmb, "turn_ambient", "The ambient answer.", true));
+  ok(amb1.posted === true, "§3/DISCRIMINATOR: the first ambient `done:true` answer posts");
+
+  const amb2 = await ambTurn(() => callReply(wAmb, "turn_ambient", "The ambient answer, with one more line.", true));
+  ok(
+    typeof amb2.error === "string" && amb2.error.includes("DISCOURAGED"),
+    "§3/DISCRIMINATOR: the second draws the VALVE copy — on this route a duplicate is discouraged, not impossible",
+  );
+
+  const amb3 = await ambTurn(() => callReply(wAmb, "turn_ambient", "The ambient answer, sent again.", true));
+  ok(amb3.posted === true, "§3/DISCRIMINATOR: and the re-send POSTS, where the same re-send on a mention wake is refused");
+  ok(
+    dispatched.length === beforeAmb + 2,
+    `§3/DISCRIMINATOR/ROOM: two dispatches reached the arm on the ambient route — expected ${beforeAmb + 2}, got ${dispatched.length}`,
   );
 }
 

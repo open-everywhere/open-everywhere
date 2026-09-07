@@ -17,15 +17,27 @@ import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
-import { markRepliedThisTurn, markWakeDoneThisTurn, markWakeRepliedThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
-import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
+import {
+  markRepliedThisTurn,
+  markWakeDoneThisTurn,
+  markWakeRepliedThisTurn,
+  isWakeDoneThisTurn,
+  isWakeDeclinedThisTurn,
+  markDoneRefusedThisTurn,
+  wasDoneRefusedThisTurn,
+  WAKE_DECLINED_REFUSAL_REASON,
+  WAKE_DONE_REFUSAL_REASON,
+  WAKE_DONE_FORCED_AUDIT_REASON,
+  wakeDeclinedRefusalMessage,
+} from "../channels/reply-signal.js";
+import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { postUnifiedReply, unifiedEditLocus } from "../channels/unified-reply.js";
+import { postUnifiedReply, unifiedEditLocus, terminalPostClosesConversation } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";
 
@@ -43,8 +55,9 @@ export const unifiedReplyEntry = defineTool({
       "else. Posting is an action, not turn-completion: reply, keep working, and finish with " +
       "`no_reply` when you're done — your terminal text is never posted. One answer is ONE " +
       "reply: once you answer a wake with `done: true`, replying to that same wake again in " +
-      "this turn is refused. When you plan a multi-part answer, pass `done: false` on the " +
-      "earlier parts.",
+      "this turn is refused. Wherever the conversation can still take one, a second message is " +
+      "discouraged rather than blocked. When you plan a multi-part answer, pass `done: false` on " +
+      "the earlier parts.",
     inputSchema: z.object({
       text: z.string().min(1).describe("The message to post (the target surface's markdown). One curated message, not a stack."),
       wake: z.string().min(1).describe("The `wake-id` from the envelope of the wake you are answering — your reply posts into that wake's conversation."),
@@ -53,14 +66,14 @@ export const unifiedReplyEntry = defineTool({
         .optional()
         .default(true)
         .describe(
-          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a hand-off note with `done: false` and answer when the report arrives.",
+          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing; a second message is discouraged rather than blocked, and `force: true` posts it at the cost of a near-duplicate in the room. On a surface where your answer CLOSES the conversation — a Linear @mention reply ends the agent session it answers — nothing further can land, so that refusal stands and `force` does not open it. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a hand-off note with `done: false` and answer when the report arrives.",
         ),
       force: z
         .boolean()
         .optional()
         .default(false)
         .describe(
-          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), or that your own last message here is still the newest one and this should be an edit. It posts your reply anyway. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
+          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), that your own last message here is still the newest one and this should be an edit, or that you already answered this wake in this turn. It posts your reply anyway. It does NOT override a refusal about what the room can still receive — where your answer closed the conversation, no flag reopens it. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
@@ -69,11 +82,6 @@ export const unifiedReplyEntry = defineTool({
       const turnWake = currentWakeId(bind);
       const windowToken = resolveOwnWindowToken(bind);
       const turnId = currentTurnId(bind);
-
-      if (isWakeDoneThisTurn(turnId, input.wake)) {
-        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_REFUSAL_REASON);
-        throw new Error(replyRefusalMessage("answered", input.wake));
-      }
 
       if (isWakeDeclinedThisTurn(turnId, input.wake)) {
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DECLINED_REFUSAL_REASON);
@@ -93,6 +101,20 @@ export const unifiedReplyEntry = defineTool({
         throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));
       }
       const origin = resolution.origin;
+
+      if (isWakeDoneThisTurn(turnId, input.wake)) {
+        if (terminalPostClosesConversation(origin)) {
+          await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_REFUSAL_REASON);
+          throw new Error(replyRefusalMessage("answered", input.wake));
+        }
+        if (input.force === true) {
+          await auditReplyForced(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_FORCED_AUDIT_REASON);
+        } else if (!wasDoneRefusedThisTurn(turnId, input.wake)) {
+          markDoneRefusedThisTurn(turnId, input.wake);
+          await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_REFUSAL_REASON);
+          throw new Error(answeredThisTurnRefusalMessage(input.wake));
+        }
+      }
 
       const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
       if (owingTask !== undefined && input.done !== false) {

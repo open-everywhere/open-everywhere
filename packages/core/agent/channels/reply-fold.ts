@@ -2,6 +2,7 @@ import { defineState } from "eve/context";
 import { postArm } from "./post-arms.js";
 import { isOwnPost, OWN_POST_TTL_MS, type OwnPostLedgerDeps, type OwnPostLocus } from "./own-post-ledger.js";
 import { auditReplyForced, auditReplyRefused, type ReplyAudit } from "./reply-post.js";
+import { secondMessageValve } from "./reply-signal.js";
 import type { SessionTailEntry } from "./session-tail.js";
 import type { TailWindow } from "./session-tail-record.js";
 
@@ -78,9 +79,7 @@ export async function replyFoldTarget(input: {
 }
 
 export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean): string {
-  const valve = canForce
-    ? "A second message is DISCOURAGED, not blocked: send this same call again, or pass `force: true`, and it posts. It costs the room a near-duplicate to read, and the override is recorded."
-    : "A second message is DISCOURAGED, not blocked: send this same call again and it posts. It costs the room a near-duplicate to read.";
+  const valve = secondMessageValve(canForce);
   return (
     "reply: your last message in this conversation is still the newest one — nobody has said anything since. " +
     "NOTHING was posted. The room already has your answer, so a second post beside it reads as noise. " +

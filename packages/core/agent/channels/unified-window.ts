@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { encodeSources } from "./window-sources.js";
 import { wakeOriginCodec } from "./wake-origin-codec.js";
+import { secondMessageValve } from "./reply-signal.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -141,6 +142,14 @@ export type AnswerableReplyResolution =
   | { readonly ok: true; readonly origin: UnifiedWakeOrigin; readonly via: "turn" | "same-conversation" | "pending" }
   | { readonly ok: false; readonly reason: "mismatch" | "expired" | "answered" };
 
+function answeredBody(named: string): string {
+  return `reply: you already replied to wake-id "${named}" and marked it done — NOTHING was posted this time. If that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`;
+}
+
+export function answeredThisTurnRefusalMessage(inputWake: string): string {
+  return `${answeredBody(inputWake.slice(0, 64))} ${secondMessageValve(true)}`;
+}
+
 export function replyRefusalMessage(
   reason: "mismatch" | "expired" | "answered",
   inputWake: string,
@@ -151,7 +160,7 @@ export function replyRefusalMessage(
     return `reply couldn't resolve wake-id "${named}" — the wake's reply target is no longer on record (expired). It can't be answered now.`;
   }
   if (reason === "answered") {
-    return `reply: you already replied to wake-id "${named}" and marked it done — NOTHING was posted this time. If that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`;
+    return answeredBody(named);
   }
   const steer =
     opts.silent !== true && opts.turnWake !== undefined && opts.turnWake.length > 0 && opts.turnWake !== inputWake

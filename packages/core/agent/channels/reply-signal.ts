@@ -51,6 +51,8 @@ export function markWakeDoneThisTurn(turnId: string | undefined, wake: string): 
 
 export const WAKE_DONE_REFUSAL_REASON = "answered-this-turn";
 
+export const WAKE_DONE_FORCED_AUDIT_REASON = "answered-this-turn-forced";
+
 export function isWakeDoneThisTurn(turnId: string | undefined, wake: string): boolean {
   if (turnId === undefined || turnId.length === 0) return false;
   try {
@@ -59,6 +61,42 @@ export function isWakeDoneThisTurn(turnId: string | undefined, wake: string): bo
   } catch {
     return false;
   }
+}
+
+interface DoneRefusedWakes {
+  readonly turnId: string;
+  readonly wakes: readonly string[];
+}
+
+const doneRefusedSlot = defineState<DoneRefusedWakes | null>("open-everywhere.reply-done-refused-wakes", () => null);
+
+export function markDoneRefusedThisTurn(turnId: string | undefined, wake: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  if (typeof wake !== "string" || wake.length === 0) return;
+  try {
+    doneRefusedSlot.update((prev) => {
+      const wakes = prev !== null && prev.turnId === turnId ? prev.wakes : [];
+      if (wakes.includes(wake) || wakes.length >= MAX_DONE_WAKES) return { turnId, wakes };
+      return { turnId, wakes: [...wakes, wake] };
+    });
+  } catch {
+  }
+}
+
+export function wasDoneRefusedThisTurn(turnId: string | undefined, wake: string): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const cur = doneRefusedSlot.get();
+    return cur !== null && cur.turnId === turnId && cur.wakes.includes(wake);
+  } catch {
+    return false;
+  }
+}
+
+export function secondMessageValve(canForce: boolean): string {
+  return canForce
+    ? "A second message is DISCOURAGED, not blocked: send this same call again, or pass `force: true`, and it posts. It costs the room a near-duplicate to read, and the override is recorded."
+    : "A second message is DISCOURAGED, not blocked: send this same call again and it posts. It costs the room a near-duplicate to read.";
 }
 
 interface DeclinedWakes {
