@@ -23,6 +23,7 @@ import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionDeliveryTrust } from "./notion-ancestry-trust.js";
 import type { NotionSessionState } from "./notion-webhook.js";
+import type { NotionVia } from "./notion-scope.js";
 import { markNotionEngaged, type NotionSeamFacts } from "./notion-engagement.js";
 
 export function notionSupervisorSentinel(generation: number): string {
@@ -193,6 +194,8 @@ export interface NotionSupervisorDispatch {
   readonly window?: UnifiedWindowWake;
   readonly trust?: NotionDeliveryTrust;
   readonly directMention?: boolean;
+  readonly engagedFollowUp?: boolean;
+  readonly domainVia?: NotionVia;
 }
 
 export interface NotionUntieredSupervisorDispatch extends Omit<NotionSupervisorDispatch, "trigger" | "threadComments"> {

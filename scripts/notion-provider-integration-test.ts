@@ -289,6 +289,107 @@ await inSession(async () => {
 }
 
 {
+  const { overrideSettingsForTest, resolvePartition } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
+  const { markNotionEngaged } = await import("@open-everywhere/provider-notion/agent/channels/notion-engagement.js");
+  const notionChannel = (await import("@open-everywhere/provider-notion/agent/channels/notion.js")).default as unknown as {
+    routes: ReadonlyArray<{ handler: (req: Request, args: unknown) => Promise<Response> }>;
+  };
+  const routeHandler = notionChannel.routes[0]!.handler;
+
+  overrideSettingsForTest({ webhooks: { allowUnverifiedNotion: true } });
+  delete process.env.NOTION_WEBHOOK_SECRET;
+
+  const BOT = "bot-user-id-777", AUTHOR = "author-user-id-222";
+  const WS = "WSENG";
+  const ENGAGED_PAGE = "PAGEENGAGED";
+  const AMBIENT_PAGE = "PAGEAMBIENT";
+  process.env.NOTION_BOT_USER_ID = BOT;
+
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => [
+      defineDomain({ name: "notion-addressed-only", channels: [`notion/${WS}/${ENGAGED_PAGE}`] }),
+      defineDomain({ name: "notion-ambient-on", channels: [`notion/${WS}/${AMBIENT_PAGE}`], ambientSupervisor: true }),
+    ],
+    loadSilos: () => [], domainsForSurface: () => [],
+    loadSpendBudgets: () => ({}),
+  });
+
+  await markNotionEngaged({ workspaceId: WS, pageId: ENGAGED_PAGE }, "seed-comment-1");
+
+  const plainRT = [{ type: "text", plain_text: "and what's that plus 6?", text: { content: "and what's that plus 6?" } }];
+  const event = (page: string): string =>
+    JSON.stringify({ type: "comment.created", workspace_id: WS, entity: { id: `comment-${page}`, type: "comment" }, data: { page_id: page, parent: { id: page, type: "page" } }, authors: [{ id: AUTHOR, type: "person" }] });
+
+  const realFetch = globalThis.fetch;
+  let currentPage = ENGAGED_PAGE;
+  globalThis.fetch = (async (input: unknown, init: { method?: string; body?: unknown } = {}) => {
+    const url = String(input), method = (init.method ?? "GET").toUpperCase();
+    const R = (b: unknown, s = 200) => ({ ok: s >= 200 && s < 300, status: s, json: async () => b, text: async () => JSON.stringify(b) }) as unknown as Response;
+    if (method === "GET" && /\/v1\/comments\/[^?]+$/.test(url))
+      return R({ id: `comment-${currentPage}`, discussion_id: `disc-${currentPage}`, parent: { type: "page", page_id: currentPage }, created_by: { id: AUTHOR, object: "user", type: "person" }, rich_text: plainRT });
+    if (method === "GET" && url.includes("/v1/comments?block_id=")) return R({ results: [] });
+    if (method === "GET" && url.endsWith("/v1/users/me")) return R({ id: BOT, type: "bot", name: "Aria" });
+    if (method === "POST" && url.endsWith("/v1/comments")) return R({ id: "reply-1" });
+    return R({ error: "unexpected host" }, 500);
+  }) as typeof fetch;
+
+  const args = () => ({
+    from: () => ({ send: async () => ({ id: "sess-eng" }) }),
+    resolveSession: async () => undefined,
+    waitUntil: (_p: Promise<unknown>) => {},
+    to: () => ({ send: async () => ({ id: "sess-eng" }) }),
+  });
+  const drive = async (page: string) => {
+    currentPage = page;
+    await routeHandler(new Request("http://x/eve/v1/notion", { method: "POST", body: event(page) }), args());
+  };
+  const addressingOn = async (page: string): Promise<readonly unknown[]> => {
+    const part = resolvePartition({ channel: { kind: "notion" as const }, session: { auth: { current: { attributes: { workspace_id: WS, page_id: page }, principalId: AUTHOR } } } } as never);
+    const rows = await readAudit({ org: part.org, action: "notion.dispatched" });
+    return rows.filter((r) => r.surface === page).map((r) => r.detail?.addressing);
+  };
+  const viaOn = async (page: string): Promise<readonly unknown[]> => {
+    const part = resolvePartition({ channel: { kind: "notion" as const }, session: { auth: { current: { attributes: { workspace_id: WS, page_id: page }, principalId: AUTHOR } } } } as never);
+    const rows = await readAudit({ org: part.org, action: "notion.dispatched" });
+    return rows.filter((r) => r.surface === page).map((r) => r.detail?.via);
+  };
+
+  try {
+    const { ambientSupervisorEnabled, getConfig } = await import("@open-everywhere/core/agent/adapter-api.js");
+    ok(
+      ambientSupervisorEnabled(`notion/${WS}/${ENGAGED_PAGE}`, getConfig().loadDomains()) === false &&
+        ambientSupervisorEnabled(`notion/${WS}/${AMBIENT_PAGE}`, getConfig().loadDomains()) === true,
+      "engaged-audit: precondition — the engaged page's domain has ambient OFF and the control page's has it ON, so the two rows differ by the engagement registry and not by the opt-in",
+    );
+
+    await drive(ENGAGED_PAGE);
+    const engagedSeen = await addressingOn(ENGAGED_PAGE);
+    ok(
+      engagedSeen.length === 1 && engagedSeen[0] === "thread-follow",
+      `🔴 engaged-audit: the REAL route's notion.dispatched row reports \`thread-follow\` for a plain follow-up on an engaged page (saw ${JSON.stringify(engagedSeen)}) — the value J-ENGAGED-notion's follow-up leg gates on`,
+    );
+    const engagedVia = await viaOn(ENGAGED_PAGE);
+    ok(
+      engagedVia.length === 1 && engagedVia[0] === "roster",
+      `🔴 engaged-audit: …and the same row records \`via: roster\` (saw ${JSON.stringify(engagedVia)}) — the domain origin the addressed door gated on, without which a workspace-wide claim reads like a page an operator listed`,
+    );
+
+    await drive(AMBIENT_PAGE);
+    const ambientSeen = await addressingOn(AMBIENT_PAGE);
+    ok(
+      ambientSeen.length === 1 && ambientSeen[0] === "channel-watch",
+      `🔴 engaged-audit: NEGATIVE CONTROL — ambient chatter on an UN-ENGAGED page still reports \`channel-watch\` (saw ${JSON.stringify(ambientSeen)}), so the promotion is the engagement row's doing and not the route's`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    overrideSettingsForTest({ webhooks: { allowUnverifiedNotion: false } });
+  }
+}
+
+{
   const { defineSurface, registerSurfaces, applySubtreeSurfaceClaims, _resetSurfacesForTest } = await import(
     "@open-everywhere/core/agent/adapter-api.js"
   );
@@ -323,4 +424,4 @@ await inSession(async () => {
   ok(notionTrustRoots().byWorkspace.size === 0, "subtree: dropping the register drops the root with it");
 }
 
-console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip, attended-mention spend gate, subtree-trust composition)`);
+console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip, attended-mention spend gate, the engaged wake's own dispatch-row addressing, subtree-trust composition)`);

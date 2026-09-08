@@ -61,6 +61,7 @@ import {
   type NotionUntieredSupervisorDispatch,
   type NotionUntieredWakeMessage,
 } from "./notion-supervisor.js";
+import { notionWakeAuditDetail } from "./notion-engagement.js";
 
 const ROUTE = "/eve/v1/notion";
 
@@ -387,7 +388,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           principalId: d.auth.principalId || undefined,
           action: "notion.dispatched",
           detail: {
-            addressing: d.addressing,
+            ...notionWakeAuditDetail(d.addressing, d.engagedFollowUp, d.domainVia),
             discussionId: d.discussionId,
             ...(window ? { singleWindow: true } : {}),
             ...(d.trust

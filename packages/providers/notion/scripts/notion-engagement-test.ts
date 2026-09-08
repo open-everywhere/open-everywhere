@@ -5,6 +5,8 @@ import {
   markNotionEngaged,
   notionEngagementAnchor,
   notionSeamPartition,
+  notionWakeAddressing,
+  notionWakeAuditDetail,
   resolveNotionEngagement,
   type NotionEngagementDeps,
   type NotionSeamFacts,
@@ -134,6 +136,56 @@ ok(notionEngagementAnchor({ ...FACTS, workspaceId: undefined }) === undefined, "
   ok(deps.writes.length === 2, "🔴 3g: NEGATIVE CONTROL — a SECOND, different comment marks again, so a real re-invitation still lands and still lifts a stop");
 }
 
+{
+  ok(
+    notionWakeAddressing("channel-watch", true) === "thread-follow",
+    "🔴 4a: an ENGAGED follow-up reports `thread-follow` — the one value that tells an engaged wake from ambient chatter in the audit trail",
+  );
+  ok(
+    notionWakeAddressing("channel-watch", undefined) === "channel-watch",
+    "🔴 4b: NEGATIVE CONTROL — the SAME classifier value with no seam verdict stays `channel-watch`, so ambient chatter is never dressed as a follow-up",
+  );
+  ok(
+    notionWakeAddressing("channel-watch", false) === "channel-watch",
+    "4c: NEGATIVE CONTROL — an explicit `false` reads like an absent one, so a caller that always passes the field cannot promote by accident",
+  );
+  ok(
+    notionWakeAddressing("direct", undefined) === "direct",
+    "4d: an ADDRESSED comment reports `direct` — the value `reportedDirectMention` accepts for the name-drop leg",
+  );
+  ok(
+    notionWakeAddressing("direct", true) === "direct",
+    "🔴 4e: NEGATIVE CONTROL — the flag cannot demote an ADDRESSED comment to a follow-up, which is what would silently lose the name-drop leg's own evidence",
+  );
+}
+
+{
+  ok(
+    notionWakeAuditDetail("direct", undefined, "container").via === "container",
+    "🔴 5a: a name-drop admitted by a `containers` CLAIM reports `container` — the one field that says the operator enumerated no page",
+  );
+  ok(
+    notionWakeAuditDetail("direct", undefined, "roster").via === "roster",
+    "🔴 5b: NEGATIVE CONTROL — the SAME name-drop on a LISTED page reports `roster`, so 5a measured the claim and not the addressing",
+  );
+  ok(
+    notionWakeAuditDetail("channel-watch", true, "roster").via === "roster",
+    "5c: an ENGAGED follow-up carries the origin too — the seam does not erase how the page was declared",
+  );
+  ok(
+    notionWakeAuditDetail("channel-watch", true, undefined).via === "none",
+    "🔴 5d: an ABSENT origin reads `none` — the conservative word, so a caller that omits the field cannot claim a declaration it never made",
+  );
+  ok(
+    notionWakeAuditDetail("channel-watch", true, "container").addressing === "thread-follow",
+    "🔴 5e: NEGATIVE CONTROL — the origin does not disturb what woke it, so the `thread-follow` leg still reads as before",
+  );
+  ok(
+    notionWakeAuditDetail("direct", undefined, "none").addressing === "direct" && notionWakeAuditDetail("direct", undefined, "none").via === "none",
+    "🔴 5f: NEGATIVE CONTROL — and an addressed wake on a page NO domain holds reports both words plainly, which is the row an operator reads as `step 8b let it through`",
+  );
+}
+
 console.log(
-  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard)`,
+  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard + the dispatch row's addressing and its domain origin)`,
 );

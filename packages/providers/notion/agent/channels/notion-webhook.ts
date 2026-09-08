@@ -199,8 +199,8 @@ async function deliver(
   };
   const seam = classification.addressing === "channel-watch" ? await resolveNotionEngagement(seamFacts, false, deps.engagement) : undefined;
 
-  const addressedInDeclaredDomain =
-    classification.addressing === "direct" && notionPageDomain(workspaceId, pageId, deps.domains).via !== "none";
+  const pageDomain = notionPageDomain(workspaceId, pageId, deps.domains);
+  const addressedInDeclaredDomain = classification.addressing === "direct" && pageDomain.via !== "none";
   if (!deps.ambientEnabled(surfaceKey) && !addressedInDeclaredDomain && seam?.kind !== "deliver") {
     return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey, signed, credentialId };
   }
@@ -260,6 +260,8 @@ async function deliver(
     trigger,
     threadComments,
     engagementTier,
+    ...(seam?.kind === "deliver" ? { engagedFollowUp: true } : {}),
+    domainVia: pageDomain.via,
     ...(trust.reason === "no-roots" ? {} : { trust }),
   });
 

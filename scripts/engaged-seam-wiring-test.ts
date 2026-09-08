@@ -293,27 +293,34 @@ const NOW = "2026-05-12T11:30:00.000Z";
       kind: "thread" as const,
     }) as Row;
 
-  const deliver = async (opts: { text: string; ambient: boolean; row: Row; declared?: boolean }) => {
+  const deliver = async (opts: { text: string; ambient: boolean; row: Row; declared?: boolean; claimed?: boolean }) => {
     ingressMarks = 0;
     let dispatched = false;
+    let sent: { readonly addressing?: string; readonly engagedFollowUp?: boolean; readonly domainVia?: string } | undefined;
     const raw = event();
     const out = await handleNotionDelivery(raw, sign(raw), {
       signingKeys: [{ credentialId: "channel-key", secret: SECRET }],
       allowUnverified: false,
       credentialFor: async () => ({ apiKey: "ntn_key" }),
       credentialForPage: () => undefined,
-      domains: opts.declared === false ? [] : [{ name: "e2e-engaged", match: "channels", channels: [`notion/${WS}/${PAGE}`] }],
+      domains:
+        opts.declared === false
+          ? []
+          : opts.claimed === true
+            ? [{ name: "e2e-engaged", containers: [`notion/${WS}`] }]
+            : [{ name: "e2e-engaged", channels: [`notion/${WS}/${PAGE}`] }],
       resolveBotUserId: async () => BOT,
       resolveBotName: async () => "Aria",
       ambientEnabled: () => opts.ambient,
       fetch: makeFetch(opts.text),
-      dispatch: async () => {
+      dispatch: async (d: { readonly addressing?: string; readonly engagedFollowUp?: boolean; readonly domainVia?: string }) => {
         dispatched = true;
+        sent = d;
       },
       attachSession: () => ({ cancel: async () => ({ status: "accepted" as const }) }),
       engagement: engagement(opts.row),
     } as unknown as Parameters<typeof handleNotionDelivery>[2]);
-    return { out, dispatched };
+    return { out, dispatched, sent };
   };
 
   {
@@ -323,15 +330,37 @@ const NOW = "2026-05-12T11:30:00.000Z";
   }
 
   {
-    const { out, dispatched } = await deliver({ text: "hey Aria, what's 12*12?", ambient: false, row: null });
+    const { out, dispatched, sent } = await deliver({ text: "hey Aria, what's 12*12?", ambient: false, row: null });
     ok(out.action === "dispatched" && dispatched, "🔴 notion: a NAME-DROP dispatches with ambient OFF — an addressed-only page can now be addressed at all");
     ok(out.detail === "direct", "notion: …classified `direct`, so the addressed stamp the link-claim hook reads is set");
     ok(ingressMarks === 0, "🔴 notion: …and the INGRESS marked NOTHING — zero calls to the injected writer, because the mark belongs below the external-author decision the dispatch core makes");
+    ok(
+      sent?.engagedFollowUp === undefined,
+      "🔴 notion: …and the dispatch carries NO `engagedFollowUp` — an ADDRESSED comment never asks the seam, so the row must report `direct` and not a follow-up",
+    );
+    ok(
+      sent?.domainVia === "roster",
+      "🔴 notion: …and the dispatch carries `domainVia: roster` — the door read the operator's own list, and the row must say so rather than leave the origin unrecorded",
+    );
   }
 
   {
-    const { out, dispatched } = await deliver({ text: "and what's that plus 6?", ambient: false, row: engagedRow(false) });
+    const { out, dispatched, sent } = await deliver({ text: "hey Aria, what's 12*12?", ambient: false, row: null, claimed: true });
+    ok(out.action === "dispatched" && dispatched, "notion: a NAME-DROP on a page a WORKSPACE CLAIM reaches dispatches too — a claim declares the page as much as a roster entry does");
+    ok(
+      sent?.domainVia === "container",
+      "🔴 notion: …and the dispatch carries `domainVia: container`, NOT `roster` — a claim reaches pages nobody enumerated, and it must not read like a page the operator listed",
+    );
+  }
+
+  {
+    const { out, dispatched, sent } = await deliver({ text: "and what's that plus 6?", ambient: false, row: engagedRow(false) });
     ok(out.action === "dispatched" && dispatched, "🔴 notion: a plain comment on an ENGAGED page dispatches with ambient OFF — the §2.5 posture, with no domain opt-in");
+    ok(sent?.addressing === "channel-watch", "notion: …still classified `channel-watch`, because the supervisor judges an engaged follow-up rather than answering it as an address");
+    ok(
+      sent?.engagedFollowUp === true,
+      "🔴 notion: …and the dispatch carries `engagedFollowUp` — the seam verdict the route turns into the row's `thread-follow`, which is the ONLY thing separating this wake from ambient chatter in the audit trail",
+    );
   }
 
   {
@@ -347,8 +376,21 @@ const NOW = "2026-05-12T11:30:00.000Z";
   }
 
   {
-    const { out, dispatched } = await deliver({ text: "can you summarise this page?", ambient: true, row: null });
+    const { out, dispatched, sent } = await deliver({ text: "can you summarise this page?", ambient: true, row: null });
     ok(out.action === "dispatched" && dispatched, "🔴 notion: NEGATIVE CONTROL — an ordinary comment on an ambient-ENABLED page still dispatches, so the seam narrowed nothing");
+    ok(
+      sent?.engagedFollowUp === undefined,
+      "🔴 notion: NEGATIVE CONTROL — ambient chatter on an UN-ENGAGED page carries no `engagedFollowUp`, so the row stays `channel-watch` and the two wakes remain distinguishable",
+    );
+  }
+
+  {
+    const { out, dispatched, sent } = await deliver({ text: "can you summarise this page?", ambient: true, row: null, declared: false });
+    ok(out.action === "dispatched" && dispatched, "notion: precondition — an ambient-ENABLED page in no declared domain still dispatches");
+    ok(
+      sent?.domainVia === "none",
+      "🔴 notion: NEGATIVE CONTROL — and the dispatch carries `domainVia: none`, so the field reports the domain read and is not a constant the other two cases could pass on",
+    );
   }
 
   {

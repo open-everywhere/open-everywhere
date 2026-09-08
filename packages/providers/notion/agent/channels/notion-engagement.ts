@@ -8,6 +8,7 @@ import {
   type Partition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildNotionAuth, notionConversationKey } from "./notion-identity.js";
+import type { NotionVia } from "./notion-scope.js";
 
 export interface NotionSeamFacts {
   readonly workspaceId: string | undefined;
@@ -84,6 +85,28 @@ export async function markNotionEngaged(f: NotionSeamFacts, commentId: string | 
   const mark = deps.markEngaged ?? ((p, key, at) => markThreadEngaged(p, key, at, { participating: true }));
   await mark(partition, anchor, atIso);
   return anchor;
+}
+
+export type NotionDispatchAddressing = "direct" | "channel-watch";
+
+export function notionWakeAddressing(
+  addressing: NotionDispatchAddressing,
+  engagedFollowUp: boolean | undefined,
+): "direct" | "channel-watch" | "thread-follow" {
+  return addressing === "channel-watch" && engagedFollowUp === true ? "thread-follow" : addressing;
+}
+
+export interface NotionWakeAuditDetail {
+  readonly addressing: "direct" | "channel-watch" | "thread-follow";
+  readonly via: NotionVia;
+}
+
+export function notionWakeAuditDetail(
+  addressing: NotionDispatchAddressing,
+  engagedFollowUp: boolean | undefined,
+  via: NotionVia | undefined,
+): NotionWakeAuditDetail {
+  return { addressing: notionWakeAddressing(addressing, engagedFollowUp), via: via ?? "none" };
 }
 
 const ENGAGE_DEDUPE_TTL_MS = 10 * 60_000;
