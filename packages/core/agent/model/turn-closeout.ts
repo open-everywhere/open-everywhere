@@ -1,22 +1,40 @@
 import { currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { readTurnState, turnPairKey, writeTurnState, type DurableCloseout } from "./turn-state.js";
 
 export const CLOSEOUT_REFUSAL_LIMIT = 1;
 
 const MAX_TRACKED_CLOSEOUTS = 512;
 
-interface CloseoutRecord {
-  count: number;
-  readonly reason: string;
-  reported: boolean;
-}
+type CloseoutRecord = DurableCloseout;
 
 const latches = new Map<string, CloseoutRecord>();
 
 function closeoutKey(sessionId: string | undefined, turnId: string): string {
-  return sessionId !== undefined ? `${sessionId}:${turnId}` : turnId;
+  return turnPairKey(sessionId, turnId);
 }
 
-export function noteTurnCloseoutRefusal(ctx: BindableContext, reason: string): number {
+function mergeLatch(key: string, durable: DurableCloseout | undefined): CloseoutRecord | undefined {
+  const cached = latches.get(key);
+  if (cached === undefined && durable === undefined) return undefined;
+  const merged: CloseoutRecord = {
+    count: Math.max(cached?.count ?? 0, durable?.count ?? 0),
+    reason: cached?.reason ?? durable?.reason ?? "",
+    reported: (cached?.reported ?? false) || (durable?.reported ?? false),
+  };
+  if (merged.reason.length === 0 || merged.count === 0) return undefined;
+  remember(key, merged);
+  return merged;
+}
+
+function remember(key: string, record: CloseoutRecord): void {
+  latches.set(key, record);
+  if (latches.size > MAX_TRACKED_CLOSEOUTS) {
+    const oldest = latches.keys().next();
+    if (!oldest.done && oldest.value !== key) latches.delete(oldest.value);
+  }
+}
+
+export async function noteTurnCloseoutRefusal(ctx: BindableContext, reason: string): Promise<number> {
   if (typeof reason !== "string" || reason.length === 0) return 0;
   let turnId: string | undefined;
   let sessionId: string | undefined;
@@ -28,17 +46,16 @@ export function noteTurnCloseoutRefusal(ctx: BindableContext, reason: string): n
   }
   if (turnId === undefined) return 0;
   const key = closeoutKey(sessionId, turnId);
-  const prev = latches.get(key);
-  if (prev !== undefined) {
-    prev.count += 1;
-    return prev.count;
-  }
-  latches.set(key, { count: 1, reason, reported: false });
-  if (latches.size > MAX_TRACKED_CLOSEOUTS) {
-    const oldest = latches.keys().next();
-    if (!oldest.done) latches.delete(oldest.value);
-  }
-  return 1;
+  const state = await readTurnState(key);
+  const prior = mergeLatch(key, state?.closeout);
+  const merged: CloseoutRecord = {
+    count: (prior?.count ?? 0) + 1,
+    reason: prior?.reason ?? reason,
+    reported: prior?.reported ?? false,
+  };
+  remember(key, merged);
+  if (state !== undefined) await writeTurnState(key, { steps: state.steps, closeout: merged });
+  return merged.count;
 }
 
 export function turnCloseoutFor(sessionId: string | undefined, turnId: string | undefined): { count: number; reason: string } | undefined {
@@ -52,15 +69,22 @@ export function turnCloseoutTripped(sessionId: string | undefined, turnId: strin
   return rec !== undefined && rec.count >= CLOSEOUT_REFUSAL_LIMIT;
 }
 
+export function turnCloseoutSnapshot(sessionId: string | undefined, turnId: string | undefined): DurableCloseout | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  return latches.get(closeoutKey(sessionId, turnId));
+}
+
 export function claimTurnCloseoutReport(
   sessionId: string | undefined,
   turnId: string | undefined,
+  durable?: DurableCloseout,
 ): { reason: string; count: number; first: boolean } | undefined {
   if (turnId === undefined || turnId.length === 0) return undefined;
-  const rec = latches.get(closeoutKey(sessionId, turnId));
+  const key = closeoutKey(sessionId, turnId);
+  const rec = mergeLatch(key, durable);
   if (rec === undefined || rec.count < CLOSEOUT_REFUSAL_LIMIT) return undefined;
   const first = !rec.reported;
-  rec.reported = true;
+  if (first) remember(key, { count: rec.count, reason: rec.reason, reported: true });
   return { reason: rec.reason, count: rec.count, first };
 }
 

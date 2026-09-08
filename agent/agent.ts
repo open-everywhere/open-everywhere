@@ -101,7 +101,7 @@ export default defineAgent({
     events: {
       "step.started": (() => {
         const gatewayResolve = gatewayModelResolver({ id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS });
-        return selectingResolver(async (event, ctx) => scriptedModelFor(event, ctx) ?? (await gatewayResolve(event, ctx)));
+        return selectingResolver(async (event, ctx) => (await scriptedModelFor(event, ctx)) ?? (await gatewayResolve(event, ctx)));
       })(),
     },
   }),

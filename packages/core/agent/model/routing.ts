@@ -265,7 +265,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   deps: RoutingDeps<TModel>,
   event?: unknown,
 ): Promise<TModel> {
-  const boundary = noteTurnStep(ctx, event);
+  const boundary = await noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);
   if (boundary.tier === "hard" || boundary.tier === "closed") {

@@ -134,7 +134,7 @@ for (const [rel, mod] of loaded) {
         "or ⑤ asserts nothing. (It is armed only inside the vitest integration forks.)",
     );
   } else {
-    if (scriptedModelFor(undefined, {}) !== null) {
+    if ((await scriptedModelFor(undefined, {})) !== null) {
       problems.push("SCRIPTED MODEL: scriptedModelFor() returned non-null with the env unset — the normal build would consult test scripts.");
     }
     let refused = false;
@@ -153,7 +153,7 @@ for (const [rel, mod] of loaded) {
       process.env.VERCEL = "1";
       let vercelRefused = false;
       try {
-        scriptedModelFor(undefined, {});
+        await scriptedModelFor(undefined, {});
       } catch {
         vercelRefused = true;
       }

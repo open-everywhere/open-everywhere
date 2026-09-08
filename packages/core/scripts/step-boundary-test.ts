@@ -21,10 +21,14 @@ const {
   clearTurnStepCount,
   noteTurnStep,
   stepBoundaryLimits,
+  stepCountKey,
   turnBackstopModel,
   withWrapUpNotice,
   wrapUpNotice,
 } = await import("../agent/model/step-boundary.js");
+const { EMPTY_TURN_STATE, deleteTurnState, parseTurnState, readTurnState, writeTurnState } = await import("../agent/model/turn-state.js");
+const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+const { registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type ModelBackend = import("../agent/model/routing.js").ModelBackend;
 type RoutedCallOptions = import("../agent/model/routing.js").RoutedCallOptions;
@@ -129,21 +133,21 @@ const smallSettings = (budget: number, multiple = 2): void => {
   const tiers: string[] = [];
   const crossings: number[] = [];
   for (let i = 0; i < 8; i++) {
-    const d = noteTurnStep(ctx, event);
+    const d = await noteTurnStep(ctx, event);
     tiers.push(d.tier);
     if (d.crossed) crossings.push(d.count);
   }
   eq(tiers, ["none", "none", "none", "soft", "soft", "soft", "hard", "hard"], "count: eight round-trips walk none×3 → soft×3 → hard, on a budget of 3 and a backstop of 6");
   eq(crossings, [4, 7], "count: `crossed` fires ONCE per tier edge (calls 4 and 7) — a 400-step turn writes two records, not four hundred");
 
-  const other = noteTurnStep(turnCtx(), stepEvent("turn-count-B"));
+  const other = await noteTurnStep(turnCtx(), stepEvent("turn-count-B"));
   eq(other.tier, "none", "isolation: a different turn id starts its own count at 1");
   eq(other.count, 1, "isolation: …and that count is 1, not the other turn's 9");
 
-  clearTurnStepCount(undefined, "turn-count-A");
-  eq(noteTurnStep(ctx, event).count, 1, "count: clearTurnStepCount drops a turn's counter (the stopped-turn cleanup path)");
+  await clearTurnStepCount(undefined, "turn-count-A");
+  eq((await noteTurnStep(ctx, event)).count, 1, "count: clearTurnStepCount drops BOTH halves of a turn's counter — the cache entry and the durable row (the stopped-turn cleanup path)");
 
-  const noTurn = noteTurnStep({ session: { auth: {} } } as unknown as BindableContext);
+  const noTurn = await noteTurnStep({ session: { auth: {} } } as unknown as BindableContext);
   eq(noTurn.tier, "none", "count: a ctx with no turn id AND no event is INERT — nothing to key a counter on, so the boundary can never trip (patch parity)");
   eq(noTurn.count, 0, "count: …and nothing is counted for it");
   ok(MAX_TRACKED_TURNS >= 128, "count: the tracked-turn map is LRU-bounded in place of the terminal-decision clear the patched loop had");
@@ -160,20 +164,93 @@ const smallSettings = (budget: number, multiple = 2): void => {
   const tiersA: string[] = [];
   const tiersB: string[] = [];
   for (let i = 0; i < 4; i++) {
-    tiersA.push(noteTurnStep(sessionA, turn0).tier);
-    tiersB.push(noteTurnStep(sessionB, turn0).tier);
+    tiersA.push((await noteTurnStep(sessionA, turn0)).tier);
+    tiersB.push((await noteTurnStep(sessionB, turn0)).tier);
   }
   eq(tiersA, ["none", "none", "none", "soft"], "session-scope: session A's four round-trips on turn_0 walk its OWN tiers (budget 3) — unaffected by B's identical turn id");
   eq(tiersB, ["none", "none", "none", "soft"], "session-scope: session B, ALSO on turn_0, gets the identical independent sequence — proof the two are not sharing one counter");
 
-  const again = noteTurnStep(sessionA, turn0);
+  const again = await noteTurnStep(sessionA, turn0);
   eq(again.count, 5, "session-scope: session A's count keeps advancing from its own 4, not from a combined 8");
   eq(again.sessionId, "sess-A", "session-scope: the decision carries the session id the count was keyed on");
   eq(again.turnId, "turn_0", "session-scope: …and the (colliding) turn id, for forensic readability alongside sessionId");
 
-  clearTurnStepCount("sess-A", "turn_0");
-  eq(noteTurnStep(sessionA, turn0).count, 1, "session-scope: clearTurnStepCount(sessionId, turnId) drops exactly A's counter…");
-  eq(noteTurnStep(sessionB, turn0).count, 5, "session-scope: …and leaves B's counter (still at 4 from the interleave) untouched, proving they were never the same map entry");
+  await clearTurnStepCount("sess-A", "turn_0");
+  eq((await noteTurnStep(sessionA, turn0)).count, 1, "session-scope: clearTurnStepCount(sessionId, turnId) drops exactly A's counter…");
+  eq((await noteTurnStep(sessionB, turn0)).count, 5, "session-scope: …and leaves B's counter (still at 4 from the interleave) untouched, proving they were never the same map entry");
+  resetSettingsForTest();
+}
+
+{
+  _resetStepBoundaryCountsForTest();
+  smallSettings(3, 2);
+  const ctx = turnCtx("sess-resumed");
+  const event = stepEvent("turn-resumed");
+  const pair = stepCountKey("sess-resumed", "turn-resumed");
+  await deleteTurnState(pair);
+
+  const tiersA: string[] = [];
+  for (let i = 0; i < 3; i++) tiersA.push((await noteTurnStep(ctx, event)).tier);
+  eq(tiersA, ["none", "none", "none"], "instance-change/CONTROL: instance A's three round-trips all sit inside a budget of 3");
+  eq((await readTurnState(pair))?.steps, 3, "instance-change: instance A's count reached the turn's DURABLE row, not only its process memory");
+
+  _resetStepBoundaryCountsForTest();
+
+  const resumed = await noteTurnStep(ctx, event);
+  eq(resumed.count, 4, "instance-change: the cold instance CONTINUES the count at 4 — before OPE-1522 it restarted at 1 and the turn ran a second budget");
+  eq(resumed.tier, "soft", "instance-change: …so the soft boundary fires on the round-trip that really is past the budget");
+  ok(resumed.crossed === true, "instance-change: and that round-trip is the crossing, so the turn still writes exactly one audit row for the edge");
+
+  await writeTurnState(pair, { steps: 1 });
+  const stale = await noteTurnStep(ctx, event);
+  eq(stale.count, 5, "instance-change: a STALE row loses at most a step — the count is max(cache, row) + 1, so a rewound row can never un-cross a boundary");
+  eq(stale.tier, "soft", "instance-change: …and the turn stays past the soft boundary it already crossed");
+
+  _resetStepBoundaryCountsForTest();
+  await deleteTurnState(pair);
+  eq((await noteTurnStep(ctx, event)).count, 1, "instance-change/CONTROL: with the durable row gone too, the count restarts at 1 — so the continuation above is carried by the row and by nothing else");
+  resetSettingsForTest();
+}
+
+{
+  _resetStepBoundaryCountsForTest();
+  smallSettings(3, 2);
+  const ctx = turnCtx("sess-unreadable");
+  const event = stepEvent("turn-unreadable");
+  const pair = stepCountKey("sess-unreadable", "turn-unreadable");
+  await deleteTurnState(pair);
+
+  eq(parseTurnState(null), EMPTY_TURN_STATE, "unreadable: no row at all is the EMPTY state — the first round-trip of every turn");
+  eq(parseTurnState("{not json"), undefined, "unreadable: bytes that will not parse answer `undefined`, never an empty count");
+  eq(parseTurnState("[1,2,3]"), undefined, "unreadable: …and so does a shape this build does not recognise — a richer row a newer build wrote during a rolling deploy must not be overwritten");
+
+  for (let i = 0; i < 3; i++) await noteTurnStep(ctx, event);
+  eq((await readTurnState(pair))?.steps, 3, "unreadable/CONTROL: the row really holds the turn's count before the store goes wrong");
+
+  let readsFail = false;
+  registerOperationalStore({
+    ...sqliteOperationalStore,
+    getTaskResult: async (org: string, key: string) => {
+      if (readsFail) throw new Error("operational store unavailable");
+      return sqliteOperationalStore.getTaskResult(org, key);
+    },
+  });
+  resetOperationalStore();
+  try {
+    _resetStepBoundaryCountsForTest();
+    readsFail = true;
+    const blind = await noteTurnStep(ctx, event);
+    eq(blind.count, 1, "unreadable: with no cache and no readable row the round-trip counts 1 — there is nothing else it could count");
+    eq(blind.tier, "none", "unreadable: …and the boundary answers on that count, which is the fail-soft direction");
+    readsFail = false;
+    eq((await readTurnState(pair))?.steps, 3, "unreadable: 🔴 the ROW IS UNTOUCHED — a count computed from a read that failed is never written back over the real one");
+  } finally {
+    registerOperationalStore(sqliteOperationalStore);
+    resetOperationalStore();
+  }
+
+  _resetStepBoundaryCountsForTest();
+  eq((await noteTurnStep(ctx, event)).count, 4, "unreadable: the turn resumes at 4 once the store answers again — the outage cost a round-trip's bookkeeping, not the turn's count");
   resetSettingsForTest();
 }
 
@@ -276,7 +353,7 @@ const smallSettings = (budget: number, multiple = 2): void => {
   const ctx = turnCtx("sess-off");
   const event = stepEvent("turn-off");
   let tripped = false;
-  for (let i = 0; i < 1000; i++) if (noteTurnStep(ctx, event).tier !== "none") tripped = true;
+  for (let i = 0; i < 1000; i++) if ((await noteTurnStep(ctx, event)).tier !== "none") tripped = true;
   ok(!tripped, "disabled: with `turn.stepBudget` at 0, a thousand round-trips never trip either tier (strict off)");
   const calls: FakeCall[] = [];
   const m = await resolvePrimaryModel(turnCtx("sess-off-2"), DEFAULTS, { domains: () => [], backend: fakeBackend(calls) }, stepEvent("turn-off-2"));

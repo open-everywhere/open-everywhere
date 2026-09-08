@@ -74,7 +74,7 @@ export default defineTool({
     noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();
     if (already !== null) {
-      noteTurnCloseoutRefusal(ctx as BindableContext, NO_REPLY_REDUNDANT_CLOSEOUT_REASON);
+      await noteTurnCloseoutRefusal(ctx as BindableContext, NO_REPLY_REDUNDANT_CLOSEOUT_REASON);
       if (auditSilencesEnabled()) {
         await auditToolAction(ctx, "reply.no_reply_redundant", {
           reason: input.reason,

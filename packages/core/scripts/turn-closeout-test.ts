@@ -30,7 +30,8 @@ const { registerSettings, resetSettingsForTest } = await import("../agent/settin
 const { resolvePartition } = await import("../agent/memory/partition.js");
 const { markThreadEngaged, isThreadStopped } = await import("../agent/channels/engagement.js");
 const { resolvePrimaryModel } = await import("../agent/model/routing.js");
-const { STEP_BOUNDARY_ACTION, STEP_BOUNDARY_MARKER } = await import("../agent/model/step-boundary.js");
+const { STEP_BOUNDARY_ACTION, STEP_BOUNDARY_MARKER, _resetStepBoundaryCountsForTest } = await import("../agent/model/step-boundary.js");
+const { deleteTurnState, turnPairKey } = await import("../agent/model/turn-state.js");
 const {
   CLOSEOUT_REFUSAL_LIMIT,
   _resetTurnCloseoutForTest,
@@ -285,6 +286,8 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
   ok(typeof again.error === "string", "§4: the NEXT post in the same turn is REFUSED");
   ok(again.posted !== true, "§4: …and reports no post");
   ok(/stand down/i.test(again.error!), "§4: refused with the stand-down steer, not some incidental error");
+  ok(/already posted here once this turn/i.test(again.error!), "§4/COPY: the refusal says the turn has already POSTED once — true whether or not that post acknowledged the stop");
+  ok(!/acknowledgement has already gone out/i.test(again.error!), "§4/COPY: …and never claims an acknowledgement went out, which is false in a turn that only posted an ordinary message into a stopped conversation");
   ok(posted.length === before + 1, "§4/ROOM: NOTHING further reached the room. This is the assertion the six live re-posts exist for");
 
   await settle();
@@ -382,7 +385,7 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
   const b = await callReply(w, "turn_700", w, "And so is this one.", false);
   ok(a.posted === true && b.posted === true, "§9: with no eve context BOTH posts land — a guard that cannot record its own state must never swallow an answer");
   ok(posted.length === before + 2, "§9/ROOM: both messages reached the room");
-  ok(noteTurnCloseoutRefusal({} as BindableContext, "anything") === 0, "§9: and the latch writer answers 0 rather than throwing on a context it cannot read");
+  ok((await noteTurnCloseoutRefusal({} as BindableContext, "anything")) === 0, "§9: and the latch writer answers 0 rather than throwing on a context it cannot read");
 }
 
 {
@@ -417,5 +420,46 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
 }
 
 resetSettingsForTest();
+
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const inTurn = newSession();
+  const w = await wake("C_RESUME");
+  const ctx = ctxFor(w, "turn_900");
+
+  await inTurn(() => callNoReply(w, "turn_900"));
+  await inTurn(() => callReply(w, "turn_900", w, "Answering a wake I declined."));
+  ok(turnCloseoutTripped("turn-closeout-test", "turn_900") === true, "§11/CONTROL: instance A really did arm the latch");
+
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  ok(turnCloseoutTripped("turn-closeout-test", "turn_900") === false, "§11/CONTROL: the fresh instance's cache holds no latch — the state that used to lose the arming outright");
+
+  const onB = await inTurn(() => oneRoundTrip(ctx));
+  ok(onB.backendCalls === 0, "§11a: the fresh instance's FIRST round-trip resolves the turn-ending stub — the arming refusal wrote the turn's durable row, so no round-trip on instance A was needed to save it");
+  ok(onB.text?.startsWith(STEP_BOUNDARY_MARKER) === true, "§11a: …and the stub says the harness ended the turn");
+  ok(onB.text?.includes(WAKE_DECLINED_REFUSAL_REASON) === true, "§11a: naming the refusal instance A drew, so the REASON survives the instance change too");
+
+  await settle();
+  const afterB = (await readAudit({ org: ORG, action: STEP_BOUNDARY_ACTION })).filter((r) => (r.detail ?? {})["turnId"] === "turn_900");
+  ok(afterB.length === 1, "§11a/AUDIT: one row, written by the instance that actually served the ending");
+
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const onC = await inTurn(() => oneRoundTrip(ctx));
+  ok(onC.backendCalls === 0, "§11b: a third instance still serves the stub");
+  await settle();
+  const afterC = (await readAudit({ org: ORG, action: STEP_BOUNDARY_ACTION })).filter((r) => (r.detail ?? {})["turnId"] === "turn_900");
+  ok(afterC.length === 1, "§11b/AUDIT: still exactly ONE row for the turn across all three instances — `reported` rides the row, so a cold instance does not re-record a boundary a warm one already wrote");
+
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  await deleteTurnState(turnPairKey("turn-closeout-test", "turn_900"));
+  const forgotten = await inTurn(() => oneRoundTrip(ctx));
+  ok(forgotten.backendCalls === 1, "§11c/CONTROL: with the durable row gone too, the turn keeps running against the real backend — so every assertion above is carried by the row and by nothing else in the fixture");
+}
+
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open)`);
+
+console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change)`);

@@ -38,7 +38,7 @@ function safeEcho(event: unknown): unknown {
   }
 }
 
-export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeof mockModel> | null {
+export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<ReturnType<typeof mockModel> | null> {
   if (!scriptedModelArmed()) return null;
   if (onVercel()) {
     throw new Error(
@@ -51,7 +51,7 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
 
   stampModelCall(SCRIPTED_MODEL_ID);
 
-  const boundary = noteTurnStep(bindable, event);
+  const boundary = await noteTurnStep(bindable, event);
   if (boundary.tier === "hard" || boundary.tier === "closed") {
     reportStepBoundary(bindable, boundary);
     return mockModel({

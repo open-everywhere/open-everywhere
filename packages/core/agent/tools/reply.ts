@@ -35,8 +35,8 @@ import {
   REPLY_STOPPED_REFUSAL_REASON,
   markStoppedAckThisTurn,
   wasStoppedAckSpentThisTurn,
-  stoppedRefusalMessage,
 } from "../channels/reply-signal.js";
+import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
@@ -58,6 +58,14 @@ interface StandDownState {
 }
 
 const STAND_DOWN_CLEAR: StandDownState = { stopped: false, refuse: false };
+
+function stoppedRefusalText(): string {
+  return (
+    "You were asked to stand down in this conversation and that stop is recorded, so nothing was posted. " +
+    "You have already posted here once this turn; anything further is exactly what the person asked you to stop doing. " +
+    `${END_TURN_WITH_SENTINEL_INSTRUCTION} Someone @mentioning you is what brings you back.`
+  );
+}
 
 async function standDownState(bind: BindableContext, turnId: string | undefined): Promise<StandDownState> {
   try {
@@ -108,7 +116,7 @@ export const unifiedReplyEntry = defineTool({
       const turnId = currentTurnId(bind);
 
       if (isWakeDeclinedThisTurn(turnId, input.wake)) {
-        noteTurnCloseoutRefusal(bind, WAKE_DECLINED_REFUSAL_REASON);
+        await noteTurnCloseoutRefusal(bind, WAKE_DECLINED_REFUSAL_REASON);
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DECLINED_REFUSAL_REASON);
         throw new Error(wakeDeclinedRefusalMessage());
       }
@@ -129,9 +137,9 @@ export const unifiedReplyEntry = defineTool({
 
       const standDown = input.wake === turnWake ? await standDownState(bind, turnId) : STAND_DOWN_CLEAR;
       if (standDown.refuse) {
-        noteTurnCloseoutRefusal(bind, REPLY_STOPPED_REFUSAL_REASON);
+        await noteTurnCloseoutRefusal(bind, REPLY_STOPPED_REFUSAL_REASON);
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STOPPED_REFUSAL_REASON);
-        throw new Error(stoppedRefusalMessage());
+        throw new Error(stoppedRefusalText());
       }
 
       if (isWakeDoneThisTurn(turnId, input.wake)) {
@@ -240,9 +248,9 @@ export const baseReplyEntry = defineTool({
           const baseTurnId = currentTurnId(bindBase);
           const standDownBase = await standDownState(bindBase, baseTurnId);
           if (standDownBase.refuse) {
-            noteTurnCloseoutRefusal(bindBase, REPLY_STOPPED_REFUSAL_REASON);
+            await noteTurnCloseoutRefusal(bindBase, REPLY_STOPPED_REFUSAL_REASON);
             await auditReplyRefused(replyAuditFor(bindBase, "tool"), REPLY_STOPPED_REFUSAL_REASON);
-            throw new Error(stoppedRefusalMessage());
+            throw new Error(stoppedRefusalText());
           }
           const foldWindow = tailWindow();
           if (foldWindow) {

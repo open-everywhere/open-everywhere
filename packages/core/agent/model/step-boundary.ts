@@ -2,7 +2,8 @@ import { currentTurnId, currentSessionId, type BindableContext } from "../identi
 import { resolvePartition } from "../memory/partition.js";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
-import { claimTurnCloseoutReport } from "./turn-closeout.js";
+import { claimTurnCloseoutReport, turnCloseoutSnapshot } from "./turn-closeout.js";
+import { deleteTurnState, EMPTY_TURN_STATE, readTurnState, turnPairKey, writeTurnState } from "./turn-state.js";
 import type { RoutableModel, RoutedCallOptions } from "./routing.js";
 
 export type StepBoundaryTier = "none" | "soft" | "hard" | "closed";
@@ -25,21 +26,24 @@ export const MAX_TRACKED_TURNS = 512;
 const counts = new Map<string, number>();
 
 export function stepCountKey(sessionId: string | undefined, turnId: string): string {
-  return sessionId !== undefined ? `${sessionId}:${turnId}` : turnId;
+  return turnPairKey(sessionId, turnId);
 }
 
-function bump(key: string): number {
-  const next = (counts.get(key) ?? 0) + 1;
+function bump(key: string, floor: number): number {
+  const next = Math.max(counts.get(key) ?? 0, floor) + 1;
   counts.set(key, next);
   if (counts.size > MAX_TRACKED_TURNS) {
     const oldest = counts.keys().next();
-    if (!oldest.done) counts.delete(oldest.value);
+    if (!oldest.done && oldest.value !== key) counts.delete(oldest.value);
   }
   return next;
 }
 
-export function clearTurnStepCount(sessionId: string | undefined, turnId: string | undefined): void {
-  if (turnId !== undefined) counts.delete(stepCountKey(sessionId, turnId));
+export async function clearTurnStepCount(sessionId: string | undefined, turnId: string | undefined): Promise<void> {
+  if (turnId === undefined) return;
+  const key = stepCountKey(sessionId, turnId);
+  counts.delete(key);
+  await deleteTurnState(key);
 }
 
 export function _resetStepBoundaryCountsForTest(): void {
@@ -64,7 +68,7 @@ function eventTurnId(event: unknown): string | undefined {
   return typeof turnId === "string" && turnId.length > 0 ? turnId : undefined;
 }
 
-export function noteTurnStep(ctx: BindableContext, event?: unknown, settings = getSettings()): StepBoundaryDecision {
+export async function noteTurnStep(ctx: BindableContext, event?: unknown, settings = getSettings()): Promise<StepBoundaryDecision> {
   let budget: number;
   let backstop: number;
   try {
@@ -81,8 +85,17 @@ export function noteTurnStep(ctx: BindableContext, event?: unknown, settings = g
     return INERT;
   }
   if (turnId === undefined) return INERT;
-  const count = budget > 0 ? bump(stepCountKey(sessionId, turnId)) : 0;
-  const closeout = claimTurnCloseoutReport(sessionId, turnId);
+  const key = stepCountKey(sessionId, turnId);
+  const stored = await readTurnState(key);
+  const durable = stored ?? EMPTY_TURN_STATE;
+  const count = budget > 0 ? bump(key, durable.steps) : 0;
+  const closeout = claimTurnCloseoutReport(sessionId, turnId, durable.closeout);
+  if (stored !== undefined && (budget > 0 || closeout?.first === true)) {
+    await writeTurnState(key, {
+      steps: budget > 0 ? count : durable.steps,
+      closeout: turnCloseoutSnapshot(sessionId, turnId),
+    });
+  }
   if (closeout !== undefined) {
     return { tier: "closed", count, budget, backstop, turnId, sessionId, crossed: closeout.first, closeoutReason: closeout.reason };
   }
