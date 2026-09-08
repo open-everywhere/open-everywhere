@@ -1,5 +1,5 @@
 import { currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
-import { readTurnState, turnPairKey, writeTurnState, type DurableCloseout } from "./turn-state.js";
+import { durableTurnKey, readTurnState, turnPairKey, writeTurnState, type DurableCloseout } from "./turn-state.js";
 
 export const CLOSEOUT_REFUSAL_LIMIT = 1;
 
@@ -46,7 +46,8 @@ export async function noteTurnCloseoutRefusal(ctx: BindableContext, reason: stri
   }
   if (turnId === undefined) return 0;
   const key = closeoutKey(sessionId, turnId);
-  const state = await readTurnState(key);
+  const rowKey = durableTurnKey(sessionId, turnId);
+  const state = rowKey === undefined ? undefined : await readTurnState(rowKey);
   const prior = mergeLatch(key, state?.closeout);
   const merged: CloseoutRecord = {
     count: (prior?.count ?? 0) + 1,
@@ -54,7 +55,7 @@ export async function noteTurnCloseoutRefusal(ctx: BindableContext, reason: stri
     reported: prior?.reported ?? false,
   };
   remember(key, merged);
-  if (state !== undefined) await writeTurnState(key, { steps: state.steps, closeout: merged });
+  if (rowKey !== undefined && state !== undefined) await writeTurnState(rowKey, { ...state, closeout: merged });
   return merged.count;
 }
 

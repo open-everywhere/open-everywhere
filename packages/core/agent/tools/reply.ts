@@ -1,9 +1,10 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentSessionId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { isThreadStopped } from "../channels/engagement.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
+import { durableTurnKey, noteStoppedAck, stoppedAckSpent } from "../model/turn-state.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, replyEditLocus, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
 import {
@@ -16,7 +17,7 @@ import {
 } from "../channels/reply-freshness.js";
 import { refuseIfShouldFold } from "../channels/reply-fold.js";
 import { tailWindow } from "../channels/session-tail-record.js";
-import { replierLabelFor } from "../channels/turn-delivery.js";
+import { replierLabelFor, PENDING_WORK_INSTRUCTION } from "../channels/turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
@@ -37,7 +38,7 @@ import {
   wasStoppedAckSpentThisTurn,
 } from "../channels/reply-signal.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
-import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage } from "../channels/unified-window.js";
+import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage, boundConversationOrigin, sameUnifiedConversation } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
@@ -67,14 +68,37 @@ function stoppedRefusalText(): string {
   );
 }
 
-async function standDownState(bind: BindableContext, turnId: string | undefined): Promise<StandDownState> {
+async function standDownState(
+  bind: BindableContext,
+  turnId: string | undefined,
+  namesBoundConversation?: () => Promise<boolean>,
+): Promise<StandDownState> {
   try {
     const binding = bindFrom(bind);
     const stopped = await isThreadStopped(resolvePartition(bind), binding.engagementKey ?? binding.threadTs);
-    return { stopped, refuse: stopped && wasStoppedAckSpentThisTurn(turnId) };
+    if (!stopped) return STAND_DOWN_CLEAR;
+    if (namesBoundConversation !== undefined && !(await namesBoundConversation())) return STAND_DOWN_CLEAR;
+    if (wasStoppedAckSpentThisTurn(turnId)) return { stopped, refuse: true };
+    const rowKey = standDownRowKey(bind, turnId);
+    return { stopped, refuse: rowKey !== undefined && (await stoppedAckSpent(rowKey)) };
   } catch {
     return STAND_DOWN_CLEAR;
   }
+}
+
+function standDownRowKey(bind: BindableContext, turnId: string | undefined): string | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  try {
+    return durableTurnKey(currentSessionId(bind), turnId);
+  } catch {
+    return undefined;
+  }
+}
+
+async function spendStoppedAck(bind: BindableContext, turnId: string | undefined): Promise<void> {
+  markStoppedAckThisTurn(turnId);
+  const rowKey = standDownRowKey(bind, turnId);
+  if (rowKey !== undefined) await noteStoppedAck(rowKey);
 }
 
 export const unifiedReplyEntry = defineTool({
@@ -135,7 +159,11 @@ export const unifiedReplyEntry = defineTool({
       }
       const origin = resolution.origin;
 
-      const standDown = input.wake === turnWake ? await standDownState(bind, turnId) : STAND_DOWN_CLEAR;
+      const standDown = await standDownState(bind, turnId, async () => {
+        if (input.wake === turnWake) return true;
+        const boundOrigin = await boundConversationOrigin(store, org, turnWake);
+        return boundOrigin !== undefined && sameUnifiedConversation(boundOrigin, origin);
+      });
       if (standDown.refuse) {
         await noteTurnCloseoutRefusal(bind, REPLY_STOPPED_REFUSAL_REASON);
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STOPPED_REFUSAL_REASON);
@@ -194,7 +222,7 @@ export const unifiedReplyEntry = defineTool({
         { terminal: input.done !== false },
       );
       markRepliedThisTurn(turnId);
-      if (standDown.stopped) markStoppedAckThisTurn(turnId);
+      if (standDown.stopped) await spendStoppedAck(bind, turnId);
       markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);
 
@@ -211,11 +239,7 @@ export const unifiedReplyEntry = defineTool({
         input.done !== false
           ? " This wake is now ANSWERED — do not reply to it again in this turn; a second call is refused."
           : " This wake stays OPEN (`done:false`) — reply to it again when the rest of the answer is ready.";
-      const pendingNote =
-        owingTask !== undefined
-          ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns." +
-            " Nothing is added to your message on its way out, so your own words are the only thing that tells this conversation where the work stands: say plainly that you are still working on it, and do not present what you have as the final result."
-          : "";
+      const pendingNote = owingTask !== undefined ? PENDING_WORK_INSTRUCTION : "";
       return {
         posted: true,
         id,
@@ -265,7 +289,7 @@ export const baseReplyEntry = defineTool({
           }
           const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
           markRepliedThisTurn(baseTurnId);
-          if (standDownBase.stopped) markStoppedAckThisTurn(baseTurnId);
+          if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId);
           noteTerminalCallGrain(bindBase);
           return { posted: true, id };
         },

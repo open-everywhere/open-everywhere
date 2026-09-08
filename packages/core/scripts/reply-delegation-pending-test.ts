@@ -152,6 +152,26 @@ async function callReply(
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
+const editTool = (await import("../agent/tools/edit_reply.js")).default;
+const armEdit = (ctx: unknown): { readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<unknown> } | null =>
+  (editTool as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events["session.started"]!({}, ctx) as never;
+
+async function callEdit(
+  turnWake: string,
+  turnId: string,
+  wake: string,
+  messageId: string,
+  text: string,
+): Promise<{ edited?: boolean; note?: string; error?: string }> {
+  const ctx = ctxFor(turnWake, turnId);
+  const armed = armEdit(ctx);
+  if (!armed) return { error: "edit_reply did not arm" };
+  return armed
+    .execute({ text, wake, message_id: messageId }, ctx)
+    .then((r) => r as { edited?: boolean; note?: string })
+    .catch((e: unknown) => ({ error: String(e) }));
+}
+
 async function wake(channelId: string, threadTs?: string): Promise<string> {
   const id = mintWakeId();
   await registerUnifiedWakeTarget(
@@ -460,6 +480,45 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       lastPosted() === HANDOFF,
       `🔴 §10a: the posted body is the model's text BYTE-IDENTICAL, even on the turn whose worker still owes the answer. The host asserts nothing in the room — that is what OPE-1516 removed, and a body longer than the model's text means it came back (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
     );
+  }
+
+  {
+    const inTurn = newSession();
+    const w = await wake("C_FRAME_EDIT", "1007.7");
+    const before = posted.length;
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_1544a", "task_1544a") } }, ctxFor(w, "turn_1544a"));
+      const ack = await callReply(w, "turn_1544a", w, HANDOFF, false);
+      ok(ack.posted === true, "§10g precondition: the `done:false` hand-off posts, so there is an own post to edit");
+
+      const edited = await callEdit(w, "turn_1544a", w, "ts-" + String(posted.length), "The hand-off, reworded.");
+      ok(edited.edited === true, "§10g precondition: the edit lands — the message is ours, at this locus, inside the window");
+      ok(
+        typeof edited.note === "string" && edited.note.includes("has NOT reported yet"),
+        "🔴 §10g/NOTE: the EDIT's tool result tells the model its worker has not reported — the same fact the reply door already carried",
+      );
+      ok(
+        typeof edited.note === "string" && edited.note.includes("do not present what you have as the final result"),
+        "🔴 §10g/NOTE: …and instructs it not to present what it has as the final result. Without this, editing the caveat away reds NOTHING",
+      );
+    });
+    ok(posted.length === before + 1, "§10g/ROOM: an edit adds no message to the room");
+  }
+
+  {
+    const inTurn = newSession();
+    const w = await wake("C_FRAME_EDIT_PLAIN", "1008.8");
+    await inTurn(async () => {
+      const first = await callReply(w, "turn_1544b", w, "An ordinary answer.", true);
+      ok(first.posted === true, "§10h precondition: the ordinary answer posts");
+      const edited = await callEdit(w, "turn_1544b", w, "ts-" + String(posted.length), "An ordinary answer, corrected.");
+      ok(edited.edited === true, "§10h precondition: the edit lands");
+      ok(
+        typeof edited.note === "string" && !edited.note.includes("has NOT reported yet"),
+        "🔴 §10h NEGATIVE CONTROL: a turn with no pending worker gets NO instruction — the note is a condition, not boilerplate on every edit",
+      );
+    });
   }
 
   {

@@ -145,7 +145,7 @@ const smallSettings = (budget: number, multiple = 2): void => {
   eq(other.count, 1, "isolation: …and that count is 1, not the other turn's 9");
 
   await clearTurnStepCount(undefined, "turn-count-A");
-  eq((await noteTurnStep(ctx, event)).count, 1, "count: clearTurnStepCount drops BOTH halves of a turn's counter — the cache entry and the durable row (the stopped-turn cleanup path)");
+  eq((await noteTurnStep(ctx, event)).count, 1, "count: clearTurnStepCount drops a SESSIONLESS turn's counter, which is a CACHE-ONLY drop — `durableTurnKey` answers undefined for a bare `turn_N` (OPE-1551), so such a turn has no durable row for the clear to reach");
 
   const noTurn = await noteTurnStep({ session: { auth: {} } } as unknown as BindableContext);
   eq(noTurn.tier, "none", "count: a ctx with no turn id AND no event is INERT — nothing to key a counter on, so the boundary can never trip (patch parity)");

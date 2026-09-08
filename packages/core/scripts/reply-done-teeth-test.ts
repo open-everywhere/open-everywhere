@@ -26,6 +26,8 @@ const { registerUnifiedWakeTarget, mintWakeId } = await import("../agent/channel
 const { unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { seedTailWindow, tailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
+const { secondMessageValve } = await import("../agent/channels/reply-signal.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
@@ -356,6 +358,61 @@ const forcedRows = async (): Promise<Record<string, unknown>[]> =>
     (await refusedRows()).filter((d) => d["wakeId"] === w).length === 1,
     "§7d/AUDIT: exactly one refusal row — the force did not draw a second one on its way through",
   );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_STANDING");
+  const before = posted.length;
+
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  ok(seat !== null, "§7e/CONTROL: the fixture's token really is a STANDING seat — the only grain that files a ring");
+
+  const errors = await inTurn(async () => {
+    seedTailWindow(seat);
+    ok(tailWindow() !== null, "§7e/CONTROL: the tail window is seeded, so the fold gate is LIVE for this turn — the state every leg above lacks");
+
+    const first = await callReply(w, "turn_75", w, "The answer, first time.", true);
+    ok(first.posted === true, "§7e: the first `done:true` reply posts");
+
+    const second = await callReply(w, "turn_75", w, "The answer, and one more thing.", true);
+    const third = await callReply(w, "turn_75", w, "The answer, and one more thing, sent again.", true);
+    const fourth = await callReply(w, "turn_75", w, "The answer, and one more thing, sent a third time.", true);
+    return { second, third, fourth };
+  });
+
+  ok(typeof errors.second.error === "string", "§7e: call 2 draws the same-turn `done` refusal");
+  ok(typeof errors.third.error === "string", "§7e: 🔴 call 3 is refused TOO — the bare re-send reached the fold gate, which is a second refusal the old copy did not account for");
+  ok(errors.third.error !== errors.second.error, "§7e: …and it is a DIFFERENT refusal, not the same gate firing twice");
+  ok(/edit_reply/.test(errors.third.error!), "§7e: the second refusal is the should-be-edit one, which steers at `edit_reply`");
+  ok(errors.fourth.posted === true, "§7e: call 4 posts — two gates, each refusing once, then standing aside. NOTHING is blocked");
+  ok(posted.length === before + 2, "§7e/ROOM: the room holds the first answer and the fourth call's message, and neither refused call reached it");
+
+  ok(/pass `force: true` and it posts/.test(errors.second.error!), "§7e/COPY: the valve sentence promises `force: true` as the route that posts");
+  ok(
+    /this check will not refuse it twice, though a later one still can/.test(errors.second.error!),
+    "§7e/COPY: 🔴 …and a bare re-send is promised only what THIS check will do — the old sentence promised a post, which this leg has just shown to be false for a standing seat",
+  );
+  ok(
+    !/send this same call again, or pass `force: true`, and it posts/.test(errors.second.error!),
+    "§7e/COPY: the retired sentence is gone — it named a cost of one step where this seat pays two",
+  );
+  ok(
+    secondMessageValve(false).includes("send this same call again and it posts"),
+    "§7e/COPY: 🔴 the per-surface branch is UNCHANGED — the fix is narrowed to the branch that stacks, and true copy is not weakened to match a sibling's defect",
+  );
+
+  const inTurn2 = newSession();
+  const w2 = await wake("C_STANDING_FORCE");
+  const forceBefore = posted.length;
+  const forced = await inTurn2(async () => {
+    seedTailWindow(seat);
+    const first = await callReply(w2, "turn_76", w2, "The answer.", true);
+    ok(first.posted === true, "§7e/FORCE: the first reply posts");
+    return await callReplyForced(w2, "turn_76", w2, "A time-critical correction the room must be notified of.", true);
+  });
+  ok(forced.posted === true, "§7e/FORCE: 🔴 `force: true` posts in ONE call — it passes BOTH gates, which is exactly what the copy now promises");
+  ok(posted.length === forceBefore + 2, "§7e/FORCE/ROOM: both messages reached the room");
 }
 
 {

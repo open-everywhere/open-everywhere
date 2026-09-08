@@ -95,7 +95,7 @@ export function wasDoneRefusedThisTurn(turnId: string | undefined, wake: string)
 
 export function secondMessageValve(canForce: boolean): string {
   return canForce
-    ? "A second message is DISCOURAGED, not blocked: send this same call again, or pass `force: true`, and it posts. It costs the room a near-duplicate to read, and the override is recorded."
+    ? "A second message is DISCOURAGED, not blocked: pass `force: true` and it posts, or send this same call again — this check will not refuse it twice, though a later one still can. It costs the room a near-duplicate to read, and the override is recorded."
     : "A second message is DISCOURAGED, not blocked: send this same call again and it posts. It costs the room a near-duplicate to read.";
 }
 

@@ -31,7 +31,7 @@ const { resolvePartition } = await import("../agent/memory/partition.js");
 const { markThreadEngaged, isThreadStopped } = await import("../agent/channels/engagement.js");
 const { resolvePrimaryModel } = await import("../agent/model/routing.js");
 const { STEP_BOUNDARY_ACTION, STEP_BOUNDARY_MARKER, _resetStepBoundaryCountsForTest } = await import("../agent/model/step-boundary.js");
-const { deleteTurnState, turnPairKey } = await import("../agent/model/turn-state.js");
+const { deleteTurnState, turnPairKey, turnStateRowKey, TURN_STATE_STORE_DEADLINE_MS } = await import("../agent/model/turn-state.js");
 const {
   CLOSEOUT_REFUSAL_LIMIT,
   _resetTurnCloseoutForTest,
@@ -39,7 +39,7 @@ const {
   turnCloseoutFor,
   turnCloseoutTripped,
 } = await import("../agent/model/turn-closeout.js");
-const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON } = await import("../agent/channels/reply-signal.js");
+const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON, wasStoppedAckSpentThisTurn } = await import("../agent/channels/reply-signal.js");
 const { NO_REPLY_REDUNDANT_CLOSEOUT_REASON } = await import("../agent/tools/no_reply.js");
 const { STAND_DOWN_ACTION } = await import("../agent/tools/stand_down.js");
 const { notePendingDelegation } = await import("../agent/access/pending-delegation-signal.js");
@@ -179,8 +179,25 @@ async function callReply(
   text: string,
   done = true,
   sessionId = "turn-closeout-test",
+  threadTs = THREAD,
 ): Promise<{ posted?: boolean; error?: string }> {
-  const ctx = ctxFor(turnWake, turnId, sessionId);
+  const ctx = ctxFor(turnWake, turnId, sessionId, threadTs);
+  const armed = arm(ctx);
+  if (!armed) return { error: "reply did not arm" };
+  return armed
+    .execute({ text, wake, done }, ctx)
+    .then((r) => r as { posted?: boolean })
+    .catch((e: unknown) => ({ error: String(e) }));
+}
+
+function sessionlessCtx(ctx: BindableContext): BindableContext {
+  const raw = ctx as unknown as Record<string, unknown>;
+  const session = raw["session"] as Record<string, unknown>;
+  return { ...raw, session: { ...session, id: undefined } } as unknown as BindableContext;
+}
+
+async function callReplySessionless(turnWake: string, turnId: string, wake: string, text: string, done = true): Promise<{ posted?: boolean; error?: string }> {
+  const ctx = sessionlessCtx(ctxFor(turnWake, turnId));
   const armed = arm(ctx);
   if (!armed) return { error: "reply did not arm" };
   return armed
@@ -381,10 +398,17 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
   ok((await isThreadStopped(partition, THREAD)) === true, "§9/CONTROL: §4's stored stop is still on this thread, so the guard has something to read");
 
   const before = posted.length;
-  const a = await callReply(w, "turn_700", w, "Posted because the valve could not be spent.", false);
-  const b = await callReply(w, "turn_700", w, "And so is this one.", false);
-  ok(a.posted === true && b.posted === true, "§9: with no eve context BOTH posts land — a guard that cannot record its own state must never swallow an answer");
-  ok(posted.length === before + 2, "§9/ROOM: both messages reached the room");
+  const a = await callReply(w, "turn_700", w, "The one allowed post.", false);
+  ok(a.posted === true, "§9: the ONE allowed post still lands with no eve context at all");
+  const b = await callReply(w, "turn_700", w, "And this one is refused.", false);
+  ok(b.posted !== true, "§9: 🔴 …and the SECOND is refused — the durable half needs no eve context, so this turn CAN record its valve and the stop is honoured (OPE-1551)");
+  ok(posted.length === before + 1, "§9/ROOM: exactly one message reached the stopped conversation");
+
+  const sessionlessBefore = posted.length;
+  const c = await callReplySessionless(w, "turn_701", w, "Nothing here can record a valve.", false);
+  const d = await callReplySessionless(w, "turn_701", w, "So this one lands too.", false);
+  ok(c.posted === true && d.posted === true, "§9: with NEITHER half able to record, BOTH posts land — a guard that cannot record its own state must never swallow an answer");
+  ok(posted.length === sessionlessBefore + 2, "§9/ROOM: both messages reached the room");
   ok((await noteTurnCloseoutRefusal({} as BindableContext, "anything")) === 0, "§9: and the latch writer answers 0 rather than throwing on a context it cannot read");
 }
 
@@ -460,6 +484,146 @@ resetSettingsForTest();
   ok(forgotten.backendCalls === 1, "§11c/CONTROL: with the durable row gone too, the turn keeps running against the real backend — so every assertion above is carried by the row and by nothing else in the fixture");
 }
 
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const inTurn = newSession();
+  const THREAD_12 = "1757400560.001200";
+  const wOld = await wake("C_SIB", THREAD_12);
+  const wTurn = await wake("C_SIB", THREAD_12);
+  const OTHER_THREAD = "1757400560.001290";
+  const wOther = await wake("C_SIB_OTHER", OTHER_THREAD);
+
+  const ctx = ctxFor(wTurn, "turn_1200", "turn-closeout-test", THREAD_12);
+  const partition = resolvePartition(ctx);
+  await markThreadEngaged(partition, THREAD_12, new Date().toISOString(), { participating: true });
+  const stop = await inTurn(() => standDownTool.execute({ reason: "asked me to stop" }, ctx).catch((e: unknown) => ({ error: String(e) })));
+  ok((stop as { standingDown?: boolean }).standingDown === true, "§12/WIRING: the real `stand_down` marked the bound thread");
+  ok((await isThreadStopped(partition, THREAD_12)) === true, "§12/WIRING: …and it is THREAD_12 that carries the stop — every reply below binds to that thread, so the stop this leg stages is the stop the gate reads");
+  ok((await isThreadStopped(partition, OTHER_THREAD)) === false, "§12/WIRING: …while the control's own conversation is NOT stopped, which is what makes its post a real negative control rather than an unstopped accident");
+
+  const before = posted.length;
+  const first = await inTurn(() => callReply(wTurn, "turn_1200", wOld, "Standing down — I'll stay quiet here.", false, "turn-closeout-test", THREAD_12));
+  ok(first.posted === true, "§12: the ONE acknowledgement still posts, even under a sibling wake id");
+  ok(posted.length === before + 1, "§12/ROOM: …and it reached the room");
+
+  const again = await inTurn(() => callReply(wTurn, "turn_1200", wOld, "Here is that same answer once more.", false, "turn-closeout-test", THREAD_12));
+  ok(typeof again.error === "string", "§12: 🔴 a SECOND post under a DIFFERENT wake naming the SAME conversation is REFUSED");
+  ok(again.posted !== true, "§12: …and reports no post");
+  ok(/stand down/i.test(again.error!), "§12: refused with the stand-down steer, not some incidental error");
+  ok(posted.length === before + 1, "§12/ROOM: nothing further reached the stopped conversation");
+  await settle();
+  ok((await refusedReasons(wOld)).includes(REPLY_STOPPED_REFUSAL_REASON), "§12/AUDIT: the refusal carries reason `stopped`, on the sibling wake's own row");
+
+  _resetTurnCloseoutForTest();
+  const inTurn2 = newSession("turn-closeout-test-12b");
+  const ctx2 = ctxFor(wTurn, "turn_1201", "turn-closeout-test-12b", THREAD_12);
+  const otherBefore = posted.length;
+  const elsewhere = await inTurn2(() => callReply(wTurn, "turn_1201", wOther, "Answering a different room.", false, "turn-closeout-test-12b", THREAD_12));
+  ok(elsewhere.posted === true, "§12/CONTROL: a sibling wake naming a DIFFERENT conversation still posts — the stop is about one conversation, not about the turn");
+  ok(posted.length === otherBefore + 1, "§12/CONTROL: …and that post reached its own room");
+
+  const elsewhereAgain = await inTurn2(() => callReply(wTurn, "turn_1201", wOther, "And one more for that same different room.", false, "turn-closeout-test-12b", THREAD_12));
+  ok(elsewhereAgain.posted === true, "§12/CONTROL: 🔴 a SECOND post to the UN-stopped conversation lands too — the stop in THREAD_12 never spent this turn's valve, which it would have had the gate read the wake id alone");
+  ok(elsewhereAgain.error === undefined, "§12/CONTROL: …and it was not refused for any other reason either");
+  ok(posted.length === otherBefore + 2, "§12/CONTROL: …and both posts really reached that room");
+  void ctx2;
+}
+
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const THREAD_13 = "1757400560.001300";
+  const w13 = await wake("C_RESUME_STOP", THREAD_13);
+  const ctx13 = ctxFor(w13, "turn_1300", "turn-closeout-test", THREAD_13);
+  const partition = resolvePartition(ctx13);
+  await markThreadEngaged(partition, THREAD_13, new Date().toISOString(), { participating: true });
+
+  const instanceA = newSession();
+  const stop = await instanceA(() => standDownTool.execute({ reason: "asked me to stop" }, ctx13).catch((e: unknown) => ({ error: String(e) })));
+  ok((stop as { standingDown?: boolean }).standingDown === true, "§13/WIRING: the thread is stopped");
+  ok((await isThreadStopped(partition, THREAD_13)) === true, "§13/WIRING: …and it is THREAD_13, the thread every reply below binds to");
+
+  const before = posted.length;
+  const ack = await instanceA(() => callReply(w13, "turn_1300", w13, "Standing down here.", false, "turn-closeout-test", THREAD_13));
+  ok(ack.posted === true, "§13/CONTROL: instance A spends the turn's ONE post");
+  ok(posted.length === before + 1, "§13/CONTROL: …and it really reached the room");
+
+  const instanceB = newSession();
+  ok(
+    (await instanceB(async () => wasStoppedAckSpentThisTurn("turn_1300"))) === false,
+    "§13/CONTROL: the fresh instance's turn slot holds NO valve — the state that used to re-grant the post",
+  );
+
+  const resumed = await instanceB(() => callReply(w13, "turn_1300", w13, "Here is that same answer once more.", false, "turn-closeout-test", THREAD_13));
+  ok(typeof resumed.error === "string", "§13: 🔴 the resumed instance's post is REFUSED — the valve rode the durable row across the instance change");
+  ok(resumed.posted !== true, "§13: …and reports no post");
+  ok(/stand down/i.test(resumed.error!), "§13: refused with the stand-down steer");
+  ok(posted.length === before + 1, "§13/ROOM: the stopped conversation received exactly ONE message across both instances");
+
+  const instanceC = newSession();
+  await deleteTurnState(turnPairKey("turn-closeout-test", "turn_1300"));
+  const forgotten = await instanceC(() => callReply(w13, "turn_1300", w13, "And again, with no record at all.", false, "turn-closeout-test", THREAD_13));
+  ok(forgotten.posted === true, "§13/CONTROL: with the durable row deleted too, the post lands — the row is what refused it above");
+  ok(posted.length === before + 2, "§13/CONTROL: …and that one really reached the room");
+}
+
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const inTurn = newSession();
+  const ctxNoSession = sessionlessCtx(ctxFor(await wake("C_NOSESSION"), "turn_1"));
+
+  await inTurn(() => noteTurnCloseoutRefusal(ctxNoSession, "declined-this-turn"));
+  ok(turnCloseoutTripped(undefined, "turn_1") === true, "§14/CONTROL: the sessionless turn's latch IS armed — in the CACHE, which still bounds it exactly as it did before the row existed");
+
+  const shared = await store.getTaskResult(ORG, turnStateRowKey(turnPairKey(undefined, "turn_1")));
+  ok(shared === null, "§14: 🔴 a sessionless turn writes NO durable row — the bare `turn_1` key is shared by every session's first turn");
+
+  _resetTurnCloseoutForTest();
+  const ctxKeyed = ctxFor(await wake("C_SESSIONED"), "turn_1", "session-14");
+  await inTurn(() => noteTurnCloseoutRefusal(ctxKeyed, "declined-this-turn"));
+  const keyed = await store.getTaskResult(ORG, turnStateRowKey(turnPairKey("session-14", "turn_1")));
+  ok(keyed !== null, "§14/CONTROL: a SESSION-keyed turn does write its row at its own key");
+
+  _resetTurnCloseoutForTest();
+  ok(turnCloseoutTripped(undefined, "turn_1") === false, "§14: a fresh instance's sessionless `turn_1` reads NO latch — session-14's arming cannot end it");
+  const reread = await inTurn(() => noteTurnCloseoutRefusal(ctxNoSession, "stopped"));
+  ok(reread === 1, "§14: …so its own first refusal counts as the FIRST, not as a second on top of a stranger's row");
+}
+
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const inTurn = newSession();
+  const w15 = await wake("C_HUNG");
+  const ctx15 = ctxFor(w15, "turn_1500");
+
+  const realGet = store.getTaskResult.bind(store);
+  const realPut = store.putTaskResult.bind(store);
+  const hang = <T>(): Promise<T> => new Promise<T>(() => {});
+  (store as unknown as Record<string, unknown>)["getTaskResult"] = hang;
+  (store as unknown as Record<string, unknown>)["putTaskResult"] = hang;
+  try {
+    const startedAt = Date.now();
+    const out = await inTurn(() => oneRoundTrip(ctx15));
+    const elapsed = Date.now() - startedAt;
+    ok(out.backendCalls === 1, "§15: 🔴 the model round-trip PROCEEDS against a store that never answers");
+    ok(out.text === undefined, "§15: …and it is a real model call, not a turn-ending stub");
+    ok(
+      elapsed < TURN_STATE_STORE_DEADLINE_MS * 4,
+      `§15: …and it cost at most the store deadline (${elapsed} ms against a ${TURN_STATE_STORE_DEADLINE_MS} ms budget), never the 800 s function cap`,
+    );
+    ok(elapsed >= TURN_STATE_STORE_DEADLINE_MS, "§15/CONTROL: it really did wait for the deadline — so the assertion above is about a raced call, not about a read that never happened");
+  } finally {
+    (store as unknown as Record<string, unknown>)["getTaskResult"] = realGet;
+    (store as unknown as Record<string, unknown>)["putTaskResult"] = realPut;
+  }
+
+  const healthy = await inTurn(() => oneRoundTrip(ctx15));
+  ok(healthy.backendCalls === 1, "§15/CONTROL: with the store answering again, the round-trip is unchanged");
+}
+
 rmSync(dir, { recursive: true, force: true });
 
-console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change)`);
+console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip)`);

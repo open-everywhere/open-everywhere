@@ -134,6 +134,15 @@ export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrig
   return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
 }
 
+export async function boundConversationOrigin(
+  store: UnifiedWakeTargetStore,
+  org: string,
+  turnWake: string | undefined,
+): Promise<UnifiedWakeOrigin | undefined> {
+  if (typeof turnWake !== "string" || turnWake.length === 0) return undefined;
+  return (await resolveUnifiedWakeTarget(store, org, turnWake)) ?? undefined;
+}
+
 export function sameUnifiedContainer(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {
   return unifiedThreadRef(a).channelKey === unifiedThreadRef(b).channelKey;
 }

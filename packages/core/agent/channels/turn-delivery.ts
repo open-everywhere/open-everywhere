@@ -94,6 +94,12 @@ export function withReplierPrefix(text: string, replier: ReplierLabel | undefine
   return replier ? `[${replier.taskLabel}] ${text}` : text;
 }
 
+export const PENDING_WORK_INSTRUCTION =
+  " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for" +
+  " — never write that answer out yourself; report what the worker returns." +
+  " Nothing is added to your message on its way out, so your own words are the only thing that tells this conversation" +
+  " where the work stands: say plainly that you are still working on it, and do not present what you have as the final result.";
+
 const MEMORY_MOUNT_SEGMENT = "workspace/memory/";
 
 const MARKDOWN_LINK_RE =

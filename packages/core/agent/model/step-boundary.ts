@@ -3,7 +3,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
 import { claimTurnCloseoutReport, turnCloseoutSnapshot } from "./turn-closeout.js";
-import { deleteTurnState, EMPTY_TURN_STATE, readTurnState, turnPairKey, writeTurnState } from "./turn-state.js";
+import { deleteTurnState, durableTurnKey, EMPTY_TURN_STATE, readTurnState, turnPairKey, writeTurnState } from "./turn-state.js";
 import type { RoutableModel, RoutedCallOptions } from "./routing.js";
 
 export type StepBoundaryTier = "none" | "soft" | "hard" | "closed";
@@ -41,9 +41,9 @@ function bump(key: string, floor: number): number {
 
 export async function clearTurnStepCount(sessionId: string | undefined, turnId: string | undefined): Promise<void> {
   if (turnId === undefined) return;
-  const key = stepCountKey(sessionId, turnId);
-  counts.delete(key);
-  await deleteTurnState(key);
+  counts.delete(stepCountKey(sessionId, turnId));
+  const rowKey = durableTurnKey(sessionId, turnId);
+  if (rowKey !== undefined) await deleteTurnState(rowKey);
 }
 
 export function _resetStepBoundaryCountsForTest(): void {
@@ -86,12 +86,14 @@ export async function noteTurnStep(ctx: BindableContext, event?: unknown, settin
   }
   if (turnId === undefined) return INERT;
   const key = stepCountKey(sessionId, turnId);
-  const stored = await readTurnState(key);
+  const rowKey = durableTurnKey(sessionId, turnId);
+  const stored = rowKey === undefined ? undefined : await readTurnState(rowKey);
   const durable = stored ?? EMPTY_TURN_STATE;
   const count = budget > 0 ? bump(key, durable.steps) : 0;
   const closeout = claimTurnCloseoutReport(sessionId, turnId, durable.closeout);
-  if (stored !== undefined && (budget > 0 || closeout?.first === true)) {
-    await writeTurnState(key, {
+  if (rowKey !== undefined && stored !== undefined && (budget > 0 || closeout?.first === true)) {
+    await writeTurnState(rowKey, {
+      ...durable,
       steps: budget > 0 ? count : durable.steps,
       closeout: turnCloseoutSnapshot(sessionId, turnId),
     });
