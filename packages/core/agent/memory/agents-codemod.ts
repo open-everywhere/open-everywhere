@@ -82,7 +82,7 @@ export function assertExposedAgentsCurated(
       continue;
     }
     if (domain.match !== undefined) {
-      bad.push(`  exposed agent "${spec.name}" resolves to a criteria (match "${domain.match}") domain — an exposed agent must be an explicit channels domain, never a pseudo-domain`);
+      bad.push(`  exposed agent "${spec.name}" resolves to a criteria (match "${domain.match}") domain — an exposed agent must be a domain with a reach, never a pseudo-domain`);
     }
     if (domain.includeOrg !== undefined) {
       bad.push(`  exposed agent "${spec.name}" sets includeOrg "${domain.includeOrg}" — an exposed agent may not inherit the org brain (that would leak internal memory to a wider audience)`);
@@ -128,7 +128,7 @@ function assertAgentConnectorGrants(what: string, value: unknown): void {
   }
 }
 
-const DOMAIN_FIELDS = new Set(["name", "title", "channels", "memory"]);
+const DOMAIN_FIELDS = new Set(["name", "title", "reach", "memory"]);
 const SILO_FIELDS = new Set(["name", "description", "provider", "container", "path", "readOnly", "skill", "recursive", "select"]);
 const BUNDLE_FIELDS = new Set(["name", "title", "connectors", "instructions"]);
 const BINDING_FIELDS = new Set(["bundle", "scope"]);
@@ -156,8 +156,13 @@ export function parseAgentsFile(value: unknown): AgentsFile {
     if (!isRecord(d) || typeof d.name !== "string" || d.name.length === 0) {
       throw new AgentsCodemodError(`every agents domain needs a name (got: ${JSON.stringify(d)})`);
     }
+    if (d.channels !== undefined && d.reach === undefined) {
+      throw new AgentsCodemodError(
+        `agents domain "${String(d.name)}" carries \`channels\`, which OPE-254 replaced with \`reach\` — one list holding exact keys and containers alike. The overlay is machine-owned, so rename that key in agent/memory/config/agents.generated.ts (the values are unchanged) or regenerate the file.`,
+      );
+    }
     refuseUnknownFields(`agents domain "${String(d.name)}"`, d, DOMAIN_FIELDS);
-    if (d.channels !== undefined && !isStringArray(d.channels)) throw new AgentsCodemodError(`agents domain "${d.name}" channels must be a string array`);
+    if (d.reach !== undefined && !isStringArray(d.reach)) throw new AgentsCodemodError(`agents domain "${d.name}" reach must be a string array`);
     if (d.memory !== undefined && typeof d.memory !== "string" && !isStringArray(d.memory)) {
       throw new AgentsCodemodError(`agents domain "${d.name}" memory must be a silo name or a list of silo names`);
     }
@@ -221,7 +226,7 @@ export function parseAgentsFile(value: unknown): AgentsFile {
   return { domains, silos, bundles, bindings, specs };
 }
 
-const DOMAIN_KEYS = ["name", "title", "channels", "memory"];
+const DOMAIN_KEYS = ["name", "title", "reach", "memory"];
 const SILO_KEYS = ["name", "description", "provider", "container", "path", "readOnly", "recursive", "skill", "select"];
 const BUNDLE_KEYS = ["name", "title", "connectors", "instructions"];
 const BINDING_KEYS = ["bundle", "scope"];
@@ -246,7 +251,7 @@ function canonicalSelection(sel: MemorySelection): Record<string, unknown> {
 
 function canonicalDomain(d: Domain): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...d };
-  if (d.channels) obj.channels = [...d.channels].sort();
+  if (d.reach) obj.reach = [...d.reach].sort();
   if (Array.isArray(d.memory)) obj.memory = [...d.memory].sort();
   return orderKeys(obj, DOMAIN_KEYS);
 }
@@ -348,7 +353,7 @@ export function applyAgentSpec(file: AgentsFile, spec: AgentSpec): ApplyAgentRes
   const domain: Domain = {
     name: spec.name,
     ...(spec.title !== undefined ? { title: spec.title } : {}),
-    channels: [...spec.channels],
+    reach: [...spec.channels],
     memory: siloName,
   };
 

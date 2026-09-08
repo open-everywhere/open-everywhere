@@ -36,8 +36,8 @@ const bind = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => ({
 
 const domains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_ADMIN"] }),
-  defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
-  defineDomain({ name: "no-admins", channels: ["slack/T1/C_PLAIN"] }),
+  defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
+  defineDomain({ name: "no-admins", reach: ["slack/T1/C_PLAIN"] }),
 ];
 
 {
@@ -159,7 +159,7 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
   );
   const exactDomains: Domain[] = [
     defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_EXACT_ORG"] }),
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_EXACT_TXN"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["slack/T1/U_EXACT_TXN"] }),
   ];
   assertDomainsValid(exactDomains);
   const exOrg = roleForBinding(bind({ principalId: "U_EXACT_ORG", surface: "C_TXN" }), exactDomains);
@@ -173,7 +173,7 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
 {
   const twoAdminDomains: Domain[] = [
     defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_A", "slack/T1/U_ORG_B"] }),
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
   ];
   registerConfig({
     loadBundles: () => [],

@@ -20,6 +20,6 @@ export function unmappedWakeCopy(platform: string, channelId: string): string {
   return (
     `⚠️ I can't work in this channel yet — it isn't mapped to a domain, so I can't tell which ${platform} ` +
     `workspace it belongs to (I'd answer from the wrong memory). Operator: add \`${platform}/<workspace-id>/${channelId}\` ` +
-    "to a domain's `channels` in `agent/memory/config/domains.ts`, then mention me again."
+    "to a domain's `reach` in `agent/memory/config/domains/<name>.ts`, then mention me again."
   );
 }

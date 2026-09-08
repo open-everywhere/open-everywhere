@@ -30,7 +30,7 @@ function grantFor(platform: string): readonly Domain[] {
   return [
     defineDomain({
       name: `d-${platform}`,
-      channels: [`${platform}/W1/${platform}`],
+      reach: [`${platform}/W1/${platform}`],
       credentials: [{ connector: platform, credential: WORK_ROLE, use: `${platform}-key` }],
     }),
   ];

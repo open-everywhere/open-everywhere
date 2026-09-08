@@ -9,6 +9,7 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "react",
   "update_status",
   "stand_down",
+  "halt",
   "set_dm_delivery",
   "agent",
   "spawn_thread_session",

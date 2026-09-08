@@ -68,6 +68,7 @@ import {
   type ReplierLabel,
   dmTrustTtlMs,
   swallowRoomOp,
+  domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
@@ -82,7 +83,7 @@ function teamIdFromDomainConfig(channelId: string | undefined): string | undefin
   try {
     const suffix = `/${channelId}`;
     for (const d of getConfig().loadDomains()) {
-      for (const c of d.channels ?? []) {
+      for (const c of domainRoster(d)) {
         if (c.startsWith("slack/") && c.endsWith(suffix)) {
           const team = c.split("/")[1];
           if (team) return team;

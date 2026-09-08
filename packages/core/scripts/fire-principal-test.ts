@@ -58,7 +58,7 @@ const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const domains = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", admins: [principalKey("slack", TEAM, CREATOR)] }),
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
-  defineDomain({ name: "eng", channels: [`slack/${TEAM}/C_ENG`], memory: "eng-silo" }),
+  defineDomain({ name: "eng", reach: [`slack/${TEAM}/C_ENG`], memory: "eng-silo" }),
 ];
 const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };

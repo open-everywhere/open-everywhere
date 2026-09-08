@@ -84,7 +84,7 @@ const codeSilos: MemorySilo[] = [
 ];
 const codeDomains: Domain[] = [
   { name: "org", match: "org", memory: "org-brain" },
-  { name: "eng", channels: ["slack/T1/C_ENG", "teams/W1/CONV_ENG"], memory: "org-brain" },
+  { name: "eng", reach: ["slack/T1/C_ENG", "teams/W1/CONV_ENG"], memory: "org-brain" },
 ];
 const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] }];
 const codeBindings: Binding[] = [];
@@ -114,7 +114,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => codeDomains,
   loadSilos: () => codeSilos,
-  domainsForSurface: ({ workspaceKey, surface }) => codeDomains.filter((d) => d.channels?.includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  domainsForSurface: ({ workspaceKey, surface }) => codeDomains.filter((d) => d.reach?.includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
   loadAccessRequests: () => arConfig({ dryRun: true }),
 });
 
@@ -339,7 +339,7 @@ function fakeDeps(state: FakeState) {
 
 {
   const clashSpec: AgentSpec = { name: "rival-agent", channels: ["slack/T1/C_SHARED"], memory: { kind: "new-readonly", provider: "notion" } };
-  const rivalDomains: Domain[] = [...codeDomains, { name: "rival-domain", channels: ["slack/T1/C_SHARED"], memory: "org-brain" }];
+  const rivalDomains: Domain[] = [...codeDomains, { name: "rival-domain", reach: ["slack/T1/C_SHARED"], memory: "org-brain" }];
   const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
   await rejectsWith(
     () => executeAgentCreate(argsFor(clashSpec), "U_TAP", { config: arConfig({ baseDomains: () => rivalDomains }), ...fakeDeps(state) }),

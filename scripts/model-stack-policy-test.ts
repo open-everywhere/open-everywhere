@@ -45,7 +45,7 @@ const CHANNEL = "slack/T1/C_GATE";
 function deps(policy: ModelPolicy, pickedId: string | undefined): RoutingDeps {
   const domains: Domain[] = [
     defineDomain({ name: "org", match: "org" }),
-    defineDomain({ name: "gate", channels: [CHANNEL] }),
+    defineDomain({ name: "gate", reach: [CHANNEL] }),
   ];
   const backend: ModelBackend = {
     model: (id) => ({ specificationVersion: "v4", provider: "gate", modelId: id, supportedUrls: {}, doGenerate: async () => ({}), doStream: async () => ({}) }),

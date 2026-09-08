@@ -60,22 +60,21 @@ const CLAIMED_PAGE = "dddddddd-1111-4111-8111-dddddddddddd";
 
 const granted = defineDomain({
   name: "soak",
-  channels: ["slack/T1/C_DEV", `notion/${WS}/${SPEC_PAGE}`, `notion/${WS}/${NOTES_PAGE}`],
+  reach: ["slack/T1/C_DEV", `notion/${WS}/${SPEC_PAGE}`, `notion/${WS}/${NOTES_PAGE}`],
   credentials: [{ connector: "notion", credential: NOTION_WORK_CREDENTIAL, use: "soak-work-key" }],
 });
 const ungranted = defineDomain({
   name: "eng",
-  channels: ["slack/T1/C_ENG", `notion/${WS}/${OTHER_PAGE}`],
+  reach: ["slack/T1/C_ENG", `notion/${WS}/${OTHER_PAGE}`],
 });
 const chatOnly = defineDomain({
   name: "billing",
-  channels: ["slack/T1/C_BILL"],
+  reach: ["slack/T1/C_BILL"],
   credentials: [{ connector: "notion", credential: "channel-key", use: "billing-chat-key" }],
 });
 const claimed = defineDomain({
   name: "claimed",
-  channels: ["slack/T1/C_CLAIM"],
-  containers: ["notion/ws-2"],
+  reach: ["slack/T1/C_CLAIM", "notion/ws-2"],
   credentials: [{ connector: "notion", credential: NOTION_WORK_CREDENTIAL, use: "claimed-work-key" }],
 });
 

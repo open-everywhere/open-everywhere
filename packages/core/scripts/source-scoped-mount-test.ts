@@ -23,11 +23,11 @@ function mk(kind: string, attrs: Record<string, string>, continuationToken?: str
 
 const payments = defineDomain({
   name: "payments",
-  channels: ["slack/T_ENG/C_TXN", "github/acme/api", "notion/W_ACME/P_PAY"],
+  reach: ["slack/T_ENG/C_TXN", "github/acme/api", "notion/W_ACME/P_PAY"],
   ambientSupervisor: true,
   mode: "unified",
 });
-const hr = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
+const hr = defineDomain({ name: "hr", reach: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, hr];
 
 {
@@ -61,9 +61,9 @@ const domains = [payments, hr];
 {
   const groupedDomain = defineDomain({
     name: "chatter-dom",
-    channels: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT", "notion/W_ENG/P_ALONE"],
+    reach: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT", "notion/W_ENG/P_ALONE"],
     ambientSupervisor: true,
-    windows: [{ name: "chatter", channels: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT"] }],
+    windows: [{ name: "chatter", reach: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT"] }],
   });
   const groupedRoster: readonly Domain[] = [...domains, groupedDomain];
   const groupWindow = mk("unified", { oe_platform: "slack" }, "oe-dom:chatter-dom:win:chatter:oe-sup:g1");

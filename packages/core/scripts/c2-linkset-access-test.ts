@@ -116,7 +116,7 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
 {
   const EXACT_DOMAINS: Domain[] = [
     defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U1"] }),
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["discord/D1"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["discord/D1"] }),
   ];
   assertDomainsValid(EXACT_DOMAINS);
   ok(roleForBinding(bind({ principalId: "U1" }), EXACT_DOMAINS).isOrgAdmin, "an exact `platform/<id>` org admin is an admin (roleForBinding)");

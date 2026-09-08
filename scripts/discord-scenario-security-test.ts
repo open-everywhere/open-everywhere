@@ -434,7 +434,7 @@ class FakeSession {
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "eng", channels: ["slack/T_SEC13/C_ENG13"] })],
+    loadDomains: () => [defineDomain({ name: "eng", reach: ["slack/T_SEC13/C_ENG13"] })],
     loadSilos: () => [],
     domainsForSurface: ({ surface }) => (surface === "C_ENG13" ? ["eng"] : []),
   });

@@ -50,6 +50,10 @@ export function surfaceKeyEntriesIntersect(a: SurfaceKeyEntry, b: SurfaceKeyEntr
   return a.prefix === b.prefix;
 }
 
+export function surfaceKeyEntriesEquivalent(a: SurfaceKeyEntry, b: SurfaceKeyEntry): boolean {
+  return surfaceKeyEntryContains(a, b) && surfaceKeyEntryContains(b, a);
+}
+
 export function surfaceKeyEntryContains(outer: SurfaceKeyEntry, inner: SurfaceKeyEntry): boolean {
   if (outer.platform !== inner.platform || outer.tenant !== inner.tenant) return false;
   if (outer.kind === "tenant") return true;

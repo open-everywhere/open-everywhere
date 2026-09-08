@@ -49,7 +49,7 @@ registerConfig({
   pluginRegistry: { "acme-plugin": { skills: ["granted-one"] } },
   skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing." } },
   loadDomains: () => [
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] }),
+    defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),
     defineDomain({ name: "org", match: "org" }),
   ],
   loadSilos: () => [],
@@ -124,7 +124,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   });
   const p = (surface: string): Partition => ({ org: "default", platform: "slack", workspace: "T", surface, workspaceKey: "slack/T", surfaceKey: `slack/T/${surface}`, key: `slack/T/${surface}` });
   const domains = [
-    defineDomain({ name: "eng", channels: ["slack/T/C_ENG"] }),
+    defineDomain({ name: "eng", reach: ["slack/T/C_ENG"] }),
     defineDomain({ name: "org", match: "org" }),
   ];
 

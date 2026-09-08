@@ -85,7 +85,7 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
-  const eng = defineDomain({ name: "eng", channels: ["teams/TENANT1/19-channel-eng-thread.tacv2", "teams/TENANT1/19-channel-standup-thread.tacv2", "slack/T/CS"] });
+  const eng = defineDomain({ name: "eng", reach: ["teams/TENANT1/19-channel-eng-thread.tacv2", "teams/TENANT1/19-channel-standup-thread.tacv2", "slack/T/CS"] });
   const scope = allowedTeamsChannelIds("teams/TENANT1/19-channel-eng-thread.tacv2", [eng]);
   ok(scope.ids.has("19-channel-eng-thread.tacv2") && scope.ids.has("19-channel-standup-thread.tacv2"), "allowedTeamsChannelIds: own + domain's other teams channel both in scope");
   ok(!scope.ids.has("CS"), "allowedTeamsChannelIds: a slack-prefixed domain entry is excluded (teams-only)");
@@ -107,7 +107,7 @@ registerConfig({
   loadDomains: () => [
     defineDomain({
       name: "eng",
-      channels: [`teams/TENANT1/${sanitizeTeamsChannelId(RAW_ENG)}`, `teams/TENANT1/${sanitizeTeamsChannelId(RAW_STANDUP)}`],
+      reach: [`teams/TENANT1/${sanitizeTeamsChannelId(RAW_ENG)}`, `teams/TENANT1/${sanitizeTeamsChannelId(RAW_STANDUP)}`],
     }),
   ],
   loadSilos: () => [],

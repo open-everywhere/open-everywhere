@@ -7,6 +7,7 @@ import {
   detectConsolidations,
   detectContradictions,
   detectStale,
+  restatesDonor,
   type MemoryOp,
 } from "./ops.js";
 import { salienceScores, type NodeSalience } from "./salience.js";
@@ -19,6 +20,7 @@ export interface TidyOptions {
   readonly now?: Date;
   readonly staleDays?: number;
   readonly consolidateThreshold?: number;
+  readonly restatementThreshold?: number;
 }
 
 export interface TidyResult {
@@ -93,10 +95,13 @@ export async function tidySiloJudged(
       rejected++;
       continue;
     }
-    const after =
-      c.kind === "consolidate" && verdict.keep !== undefined
-        ? conserveProvenanceOnMerge(verdict.keep, c.bullets)
-        : verdict.keep;
+    let after = verdict.keep;
+    if (
+      after !== undefined &&
+      (c.kind === "consolidate" || restatesDonor(after, c.bullets, opts.restatementThreshold))
+    ) {
+      after = conserveProvenanceOnMerge(after, c.bullets);
+    }
     proposals.push({
       kind: c.kind,
       file: c.file,

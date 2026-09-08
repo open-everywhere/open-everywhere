@@ -5,6 +5,7 @@ import { currentJobWakePosture } from "./job-session-state.js";
 import { restrictToolsetForLeanSeat } from "./lean-seat.js";
 import { currentLeanSeatIsDm, currentLeanSeatPosture } from "./lean-seat-state.js";
 import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
+import { currentHaltStamp } from "./halt-state.js";
 import { currentWorkerWake } from "./worker-seat-state.js";
 import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
@@ -78,6 +79,8 @@ export function recordWorkerToolset(tools: readonly string[], withheld: readonly
   }
 }
 
+export const HALTED_WITHHELD_TOOLS: readonly string[] = ["web_search", "web_fetch"];
+
 export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
@@ -85,6 +88,10 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   const workerWake = currentWorkerWake();
   const workerWithheld = workerWake ? restrictToolsetForWorkerSeat(toolset) : [];
   restrictToolsetForInvokerPosture(toolset, currentInvokerPosture(), workerWake);
+
+  if (currentHaltStamp() === true) {
+    for (const name of HALTED_WITHHELD_TOOLS) delete toolset[name];
+  }
 
   const agentAllowed = nativeAgentAllowedNow();
   if (toolset["agent"] !== undefined && !agentAllowed) {

@@ -14,6 +14,7 @@ import {
   type Domain,
   type ReadScopeAuditDeps,
   type WakeReadAddress,
+  domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { noteTeamsReadBoundary, teamsReadBoundary, _resetTeamsReadBoundaryForTest } from "./teams-graph-boundary.js";
 import { teamsReplyChainRoot } from "./teams-conversation-ref.js";
@@ -182,7 +183,7 @@ export function allowedTeamsChannelIds(channelGrainKey: string, domains: readonl
   if (own) ids.add(own);
   const domain = domainForChannel(channelGrainKey, domains);
   if (domain) {
-    for (const key of domain.channels ?? []) {
+    for (const key of domainRoster(domain)) {
       const parts = key.split("/");
       if (parts.length === 3 && parts[0] === "teams" && parts[2]) ids.add(parts[2]);
     }

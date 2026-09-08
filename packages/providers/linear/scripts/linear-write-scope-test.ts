@@ -44,9 +44,9 @@ const SLACK_PAY = "slack/T1/CPAY";
 const SLACK_ENG = "slack/T1/CENG";
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY] }),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`, SLACK_ENG] }),
-  defineDomain({ name: "wide", containers: [`linear/${ORG2}`] }),
+  defineDomain({ name: "payments", reach: [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY] }),
+  defineDomain({ name: "eng", reach: [`linear/${ORG}/${TEAM_ENG}`, SLACK_ENG] }),
+  defineDomain({ name: "wide", reach: [`linear/${ORG2}`] }),
 ];
 
 const keyFor = (org: string, surface: string): string => `linear/${org}/${surface}`;
@@ -74,7 +74,7 @@ const TEAM_OF: Record<string, string> = {
   ok(!fromPay(undefined).allowed && fromPay(undefined).reason === "target-unresolvable", "a team the lookup could not place is refused (fail closed)");
 
   const fromWide = linearTeamScope(keyFor(ORG2, TEAM_WIDE), TEAM_WIDE, DOMAINS);
-  ok(fromWide.allowed && fromWide.reason === "container", "a whole-org `containers` claim admits a team it never enumerated");
+  ok(fromWide.allowed && fromWide.reason === "container", "a whole-org container `reach` entry admits a team it never enumerated");
   ok(!linearTeamScope(keyFor(ORG, TEAM_PAY), TEAM_WIDE, DOMAINS).allowed, "a claim over ANOTHER org does not admit its team to this caller");
 
   const unassigned = linearTeamScope(keyFor(ORG, "some-issue-uuid-not-a-team"), TEAM_PAY, DOMAINS);
@@ -163,7 +163,8 @@ const ctxFor = (surface: string, issueId?: string): BindableContext =>
 
   const copy = linearScopeRefusal(ISSUE_ENG, linearTeamScope(keyFor(ORG, TEAM_PAY), TEAM_ENG, DOMAINS), "write");
   ok(copy.includes("write scope") && !copy.includes("read scope"), "the write refusal says WRITE scope");
-  ok(copy.includes("linear/<organization_id>/<team_id>") && copy.includes("containers"), "…and still tells the operator BOTH ways to grant it");
+  ok(copy.includes("linear/<organization_id>/<team_id>") && copy.includes("linear/<organization_id>"), "…and still tells the operator BOTH ways to grant it");
+  ok(copy.includes("`reach`") && !copy.includes("`containers`"), "…in the CURRENT vocabulary");
 }
 
 for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"]) {
@@ -189,12 +190,12 @@ for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API
 }
 
 const workGranted = (name: string, channels: readonly string[], org: string): Domain =>
-  defineDomain({ name, channels: [...channels], credentials: [{ connector: "linear", credential: "workspace", use: org }] });
+  defineDomain({ name, reach: [...channels], credentials: [{ connector: "linear", credential: "workspace", use: org }] });
 
 const GRANTED_DOMAINS: readonly Domain[] = [
   workGranted("payments", [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY], ORG),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`, SLACK_ENG] }),
-  defineDomain({ name: "wide", containers: [`linear/${ORG2}`] }),
+  defineDomain({ name: "eng", reach: [`linear/${ORG}/${TEAM_ENG}`, SLACK_ENG] }),
+  defineDomain({ name: "wide", reach: [`linear/${ORG2}`] }),
 ];
 
 {
@@ -208,7 +209,7 @@ const GRANTED_DOMAINS: readonly Domain[] = [
 
   const chatRoleOnly = defineDomain({
     name: "payments",
-    channels: [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY],
+    reach: [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY],
     credentials: [{ connector: "linear", credential: "channel-key", use: ORG }],
   });
   ok(
@@ -415,7 +416,7 @@ const GRANTED_DOMAINS: readonly Domain[] = [
       loadSilos: () => [],
       domainsForSurface: ({ workspaceKey, surface }) => {
         const key = `${workspaceKey}/${surface}`;
-        return domains.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
+        return domains.filter((d) => (d.reach ?? []).includes(key)).map((d) => d.name);
       },
     });
 
@@ -447,7 +448,7 @@ const GRANTED_DOMAINS: readonly Domain[] = [
       loadSilos: () => [],
       domainsForSurface: ({ workspaceKey, surface }) => {
         const key = `${workspaceKey}/${surface}`;
-        return domains.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
+        return domains.filter((d) => (d.reach ?? []).includes(key)).map((d) => d.name);
       },
     });
 

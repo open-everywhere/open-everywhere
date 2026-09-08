@@ -56,7 +56,7 @@ registerConfig({
   loadBindings: () => [{ bundle: "ops-tools", scope: { level: "domain", domain: "ops" } }],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [{ name: "ops", channels: [SURFACE_KEY] }],
+  loadDomains: () => [{ name: "ops", reach: [SURFACE_KEY] }],
   loadSilos: () => [],
   domainsForSurface: () => ["ops"],
 });

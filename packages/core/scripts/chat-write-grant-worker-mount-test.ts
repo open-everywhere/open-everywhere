@@ -30,7 +30,7 @@ const ELSEWHERE_ID = "C_ELSEWHERE";
 const ELSEWHERE = resourceAddress("slack", "channel", ELSEWHERE_ID);
 const DM_TARGET = personAddress("slack", "U_SARAH");
 
-const DOMAINS: readonly Domain[] = [defineDomain({ name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`] })];
+const DOMAINS: readonly Domain[] = [defineDomain({ name: "eng", reach: [HOME, `slack/T1/${ELSEWHERE_ID}`] })];
 
 const base = getConfig();
 registerConfig({

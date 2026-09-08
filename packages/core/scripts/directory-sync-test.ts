@@ -67,7 +67,7 @@ registerConfig({
   skillContent: {},
   loadSilos: () => [],
   domainsForSurface: () => [],
-  loadDomains: () => [defineDomain({ name: "eng", channels: [`slack/${T1}/C_ENG`] })],
+  loadDomains: () => [defineDomain({ name: "eng", reach: [`slack/${T1}/C_ENG`] })],
 });
 const RESOLVE_TENANT = (platform: string): string | undefined => tryLinkTenantOf(platform, undefined);
 const db = new PGlite();
@@ -680,7 +680,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     skillContent: {},
     loadSilos: () => [],
     domainsForSurface: () => [],
-    loadDomains: () => [defineDomain({ name: "eng", channels: [`slack/${T1}/C_ENG`, `slack/${T2}/C_ENG2`] })],
+    loadDomains: () => [defineDomain({ name: "eng", reach: [`slack/${T1}/C_ENG`, `slack/${T2}/C_ENG2`] })],
   });
 
   const priorPolicy = process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];

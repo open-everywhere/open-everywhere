@@ -222,20 +222,20 @@ const flakyProvider: MemoryProvider = {
 };
 registerProvider(flakyProvider);
 
-let domains: { name: string; channels?: string[]; match?: string; memory?: string[]; ambientSupervisor?: boolean }[] = [
+let domains: { name: string; reach?: string[]; match?: string; memory?: string[]; ambientSupervisor?: boolean }[] = [
   {
     name: "payments",
-    channels: ["slack/T1/C1"],
+    reach: ["slack/T1/C1"],
     memory: ["brain-silo", "baseline-silo", "noprobe-silo"],
     ambientSupervisor: true,
   },
   {
     name: "eng",
-    channels: ["slack/T1/C2"],
+    reach: ["slack/T1/C2"],
     memory: ["eng-silo"],
     ambientSupervisor: true,
   },
-  { name: "heal", channels: ["slack/T1/C3"], memory: ["flaky-silo"], ambientSupervisor: true },
+  { name: "heal", reach: ["slack/T1/C3"], memory: ["flaky-silo"], ambientSupervisor: true },
   { name: "public", match: "public", memory: ["public-silo"] },
 ];
 

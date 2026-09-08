@@ -73,6 +73,16 @@ export async function resolveLinearEngagement(
   return { kind: "hold", anchor, reason: decision.reason, stopped: row?.stopped === true };
 }
 
+export async function linearStandDownHolds(f: LinearSeamFacts, deps: LinearEngagementDeps = {}): Promise<string | null> {
+  const anchor = linearEngagementAnchor(f);
+  if (!anchor) return null;
+  const partition = linearSeamPartition(f);
+  if (!partition) return null;
+  const read = deps.getEngagement ?? ((p, key) => getThreadEngagement(p, key));
+  const row = await read(partition, anchor);
+  return row?.stopped === true ? anchor : null;
+}
+
 export async function markLinearEngaged(f: LinearSeamFacts, agentSessionId: string | undefined, deps: LinearEngagementDeps = {}): Promise<string | null> {
   const anchor = linearEngagementAnchor(f);
   if (!anchor) return null;

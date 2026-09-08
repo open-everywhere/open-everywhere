@@ -270,7 +270,7 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
     instruction: "Prove the wake id lands on the row.",
   });
 
-  const winDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], ambientSupervisor: true, mode: "unified" });
+  const winDomain = defineDomain({ name: "eng", reach: ["slack/T1/C1"], ambientSupervisor: true, mode: "unified" });
   registerConfig({
     loadWebhooks: () => [wakeHook],
     loadBundles: () => [],

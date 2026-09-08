@@ -71,8 +71,8 @@ const throws = (fn: () => unknown): string => {
 const HOME = "slack/T1/C_HOME";
 const DISCORD_HOME = "discord/G1/C_D_HOME";
 const DOMAINS: readonly Domain[] = [
-  { name: "eng", channels: [HOME, "slack/T1/C_ELSEWHERE"] },
-  { name: "ops", channels: [DISCORD_HOME] },
+  { name: "eng", reach: [HOME, "slack/T1/C_ELSEWHERE"] },
+  { name: "ops", reach: [DISCORD_HOME] },
 ];
 const SARAH_ID = "U_SARAH";
 const SARAH = personAddress("slack", SARAH_ID);
@@ -310,7 +310,7 @@ const ORG = "default";
     session: { auth: { current: { principalId: "U_ASKER", attributes: { team_id: "T1", channel_id: "C_HOME", channel_type: "channel" } } } },
   } as never;
   const LIVE_SURFACE = resolvePartition(ctx).surfaceKey;
-  const LIVE_DOMAINS: readonly Domain[] = [{ name: "eng", channels: [LIVE_SURFACE] }];
+  const LIVE_DOMAINS: readonly Domain[] = [{ name: "eng", reach: [LIVE_SURFACE] }];
 
   const withGrant = (grants: readonly ResourceGrant[]) => {
     registerConfig({
@@ -388,7 +388,7 @@ const ORG = "default";
     session: { auth: { current: { principalId: "U_ASKER", attributes: { team_id: "T1", channel_id: "C_HOME", channel_type: "channel" } } } },
   } as never;
   const LIVE_SURFACE = resolvePartition(ctx).surfaceKey;
-  const LIVE_DOMAINS: readonly Domain[] = [{ name: "eng", channels: [LIVE_SURFACE] }];
+  const LIVE_DOMAINS: readonly Domain[] = [{ name: "eng", reach: [LIVE_SURFACE] }];
   const KIT = personAddress("slack", "U_KIT");
   registerConfig({
     loadBundles: () => [{ name: "dm", resourceGrants: [{ connector: "slack", resources: [KIT] }] } as Bundle],

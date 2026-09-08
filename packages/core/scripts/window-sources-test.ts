@@ -23,11 +23,11 @@ const DISCORD = "discord/G_ACME/CH_PAY";
 const TEAMS = "teams/TEN_ACME/19-pay.tacv2";
 const payments = defineDomain({
   name: "payments",
-  channels: [SLACK_A, SLACK_B, GH, LINEAR, NOTION, DISCORD, TEAMS],
+  reach: [SLACK_A, SLACK_B, GH, LINEAR, NOTION, DISCORD, TEAMS],
   ambientSupervisor: true,
   mode: "unified",
 });
-const soloDomain = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
+const soloDomain = defineDomain({ name: "hr", reach: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, soloDomain];
 
 eq(
@@ -67,13 +67,12 @@ const CHATTER_B = "discord/G_ACME/CH_CHATTER";
 const ALONE = "slack/T_ENG/C_ALONE";
 const grouped = defineDomain({
   name: "chatter-dom",
-  channels: [CHATTER_A, CHATTER_B, ALONE, GH],
+  reach: [CHATTER_A, CHATTER_B, ALONE, GH, "github/acme-ships/*"],
   ambientSupervisor: true,
   windows: [
-    { name: "chatter", channels: [CHATTER_A, CHATTER_B] },
-    { name: "shipping", containers: ["github/acme-ships/*"] },
+    { name: "chatter", reach: [CHATTER_A, CHATTER_B] },
+    { name: "shipping", reach: ["github/acme-ships/*"] },
   ],
-  containers: ["github/acme-ships/*"],
 });
 const groupedDomains = [payments, soloDomain, grouped];
 
@@ -94,7 +93,7 @@ eq(
 );
 eq(sourcesForWindow("shipping", "chatter-dom", groupedDomains), [], "a CLAIM-only group yields the empty vector — claims are no more enumerable here than at the domain grain");
 eq(
-  sourcesForWindow("claim-only-dom", "claim-only-dom", [defineDomain({ name: "claim-only-dom", containers: ["github/acme-ships"], ambientSupervisor: true })]),
+  sourcesForWindow("claim-only-dom", "claim-only-dom", [defineDomain({ name: "claim-only-dom", reach: ["github/acme-ships"], ambientSupervisor: true })]),
   [],
   "…and a claim-only DOMAIN's own window is empty for the same reason",
 );

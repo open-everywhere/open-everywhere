@@ -45,9 +45,9 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN", "slack/TW/U_ORG_ADMIN"] }),
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
-    defineDomain({ name: "win", channels: ["slack/TW/C_WIN"], admins: ["slack/T1/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
-    defineDomain({ name: "dwin", channels: ["discord/GW/C_DWIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
+    defineDomain({ name: "win", reach: ["slack/TW/C_WIN"], admins: ["slack/T1/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "dwin", reach: ["discord/GW/C_DWIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

@@ -36,7 +36,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [{ name: "plain", channels: ["discord/G1/C1"] }],
+  loadDomains: () => [{ name: "plain", reach: ["discord/G1/C1"] }],
   loadSilos: () => [],
   domainsForSurface: () => [],
 });

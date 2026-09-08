@@ -41,7 +41,7 @@ registerConfig({
   loadBindings: () => [{ bundle: "policy", scope: { level: "domain", domain: "ops" } }],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [{ name: "bypassed", channels: ["slack/T1/C2"], approvalMode: { mode: "DANGEROUSLY_BYPASS" } }],
+  loadDomains: () => [{ name: "bypassed", reach: ["slack/T1/C2"], approvalMode: { mode: "DANGEROUSLY_BYPASS" } }],
   loadSilos: () => [],
   domainsForSurface: () => ["ops"],
 });

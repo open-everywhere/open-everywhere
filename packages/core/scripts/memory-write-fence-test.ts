@@ -75,7 +75,7 @@ function partition(): Partition {
   return { org: "default", platform: "slack", workspace: "T", surface: "C_PAY", workspaceKey: "slack/T", surfaceKey: CHANNEL, key: CHANNEL };
 }
 function planWith(silos: readonly MemorySilo[], memory: readonly string[]): MemoryPlan {
-  const domain = defineDomain({ name: "payments", channels: [CHANNEL], memory: [...memory] });
+  const domain = defineDomain({ name: "payments", reach: [CHANNEL], memory: [...memory] });
   return resolveMemoryPlan(binding("channel", "internal"), partition(), { domains: [domain], silos });
 }
 
@@ -139,7 +139,7 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
 
 {
   liveSilos = [ownedSilo, baselineSilo];
-  liveDomains = [defineDomain({ name: "local-payments", channels: ["local/ws1/c1"], memory: ["payments-brain"] })];
+  liveDomains = [defineDomain({ name: "local-payments", reach: ["local/ws1/c1"], memory: ["payments-brain"] })];
 
   const spyTool = (): ToolDefinition & { calls: unknown[] } => {
     const calls: unknown[] = [];
@@ -215,7 +215,7 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
   };
   const seatChannel = domainKeyOf(resolvePartition(seat as unknown as BindableContext));
   liveSilos = [ownedSilo];
-  liveDomains = [defineDomain({ name: "seat-payments", channels: [seatChannel], memory: ["payments-brain"] })];
+  liveDomains = [defineDomain({ name: "seat-payments", reach: [seatChannel], memory: ["payments-brain"] })];
 
   const kit = (await resolveWindowGated((await import("../agent/tools/sandbox_tools.js")).default, seat as unknown as BindableContext)) as Record<
     string,

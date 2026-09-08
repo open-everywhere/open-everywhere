@@ -110,16 +110,17 @@ export function carriersOf(line: string): LineCarriers {
   return { attribution, mark };
 }
 
-export function conserveProvenanceOnMerge(survivor: string, sources: readonly string[]): string {
-  let donor: LineCarriers | null = null;
-  for (const source of sources) {
+export function donorOf(sources: readonly string[]): string | undefined {
+  return sources.find((source) => {
     const carriers = carriersOf(source);
-    if (carriers.attribution !== null || carriers.mark !== null) {
-      donor = carriers;
-      break;
-    }
-  }
-  if (donor === null) return survivor;
+    return carriers.attribution !== null || carriers.mark !== null;
+  });
+}
+
+export function conserveProvenanceOnMerge(survivor: string, sources: readonly string[]): string {
+  const source = donorOf(sources);
+  if (source === undefined) return survivor;
+  const donor = carriersOf(source);
   const held = carriersOf(survivor);
   if (held.attribution !== null || held.mark !== null) return survivor;
   let out = survivor;

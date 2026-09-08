@@ -38,7 +38,7 @@ async function armSeams(): Promise<void> {
 
   const { loadDomains } = await import("../../../agent/memory/config/domains");
   const key = `slack/${SLACK_TEAM_ID}/${SLACK_WINDOW_CHANNEL_ID}`;
-  const home = loadDomains().find((d) => (d.channels ?? []).includes(key));
+  const home = loadDomains().find((d) => (d.reach ?? []).includes(key));
   expect(home, `${key} is in no domain — a mention there cannot reach a window seat`).toBeDefined();
   expect(home?.mode, `${home?.name} is not a window domain, so no window seat can mint a thread seat`).toBe("unified");
   expect(home?.ambientSupervisor, `${home?.name} must run an ambient supervisor for the mention divert to fire`).toBe(true);

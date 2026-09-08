@@ -44,7 +44,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [{ name: "plain", channels: [`slack/${TEAM}/C_PLAIN`] }],
+  loadDomains: () => [{ name: "plain", reach: [`slack/${TEAM}/C_PLAIN`] }],
   loadSilos: () => [],
   domainsForSurface: () => [],
 });

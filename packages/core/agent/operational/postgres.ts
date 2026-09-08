@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -90,6 +90,18 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      set_by         text,
      PRIMARY KEY (org_id, scope_key, level)
    )`,
+  `CREATE TABLE IF NOT EXISTS halt (
+     org_id     text    NOT NULL,
+     level      text    NOT NULL,            -- "" on an org-wide row: FILLER, never an address
+     scope_key  text    NOT NULL,            -- "" on an org-wide row, same reason
+     org_wide   boolean NOT NULL,            -- true = the org-wide MARKER; the column every match branches on first
+     active     boolean NOT NULL,            -- true = halted; a cleared row stays for the trail
+     set_by     text,
+     set_at     text    NOT NULL,            -- ISO-8601
+     cleared_by text,
+     cleared_at text,                        -- ISO-8601; NULL until a resume clears it
+     PRIMARY KEY (org_id, level, scope_key, org_wide)
+   )`,
   `CREATE TABLE IF NOT EXISTS connector_override (
      org_id    text    NOT NULL,
      scope_key text    NOT NULL,
@@ -108,7 +120,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      participating boolean NOT NULL DEFAULT false, -- true = invited participant; false = warm watcher
      silent_streak integer NOT NULL DEFAULT 0,     -- consecutive silent woken turns since last engage/participation
      stopped       boolean NOT NULL DEFAULT false, -- true = an explicit stop landed (window path); suppress non-mention wakes until re-invited
-     engaged_by    text,                           -- id of the event that last PROMOTED this row; a re-promotion from the SAME id never clears stopped
+     engaged_by    text,                           -- SEPARATOR-FRAMED list of the ids of events that PROMOTED this row, most recent last, bounded; a re-promotion from ANY id the list holds never clears stopped (store.ts PROMOTER_SEP)
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
   `CREATE TABLE IF NOT EXISTS channel_session (
@@ -491,6 +503,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'thread'`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS engaged_by text`,
+  `UPDATE thread_engagement SET engaged_by = chr(10) || engaged_by || chr(10) WHERE engaged_by IS NOT NULL AND engaged_by <> '' AND substr(engaged_by, 1, 1) <> chr(10)`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS input_tokens_total bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS last_input_tokens bigint`,
@@ -567,6 +580,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE spend_limit ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE halt ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
@@ -608,6 +622,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
   `DROP POLICY IF EXISTS audit_insert ON audit_entry`,
   `DROP POLICY IF EXISTS spend_limit_org_isolation ON spend_limit`,
+  `DROP POLICY IF EXISTS halt_org_isolation ON halt`,
   `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
@@ -652,6 +667,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY audit_select ON audit_entry FOR SELECT USING (true)`,
   `CREATE POLICY audit_insert ON audit_entry FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY spend_limit_org_isolation ON spend_limit
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY halt_org_isolation ON halt
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY connector_override_org_isolation ON connector_override
@@ -1062,6 +1080,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   spend_ledger: ["SELECT", "INSERT", "UPDATE"],
   routine: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   spend_limit: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  halt: ["SELECT", "INSERT", "UPDATE"],
   connector_override: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_engagement: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   channel_session: ["SELECT", "INSERT", "UPDATE"],
@@ -1753,6 +1772,47 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
+    async setHalt(org, address, meta) {
+      assertHaltAddress(address);
+      const a = haltAddressColumns(address);
+      await client.query(
+        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, cleared_by, cleared_at) VALUES ($1, $2, $3, $4, true, $5, $6, NULL, NULL)
+         ON CONFLICT (org_id, level, scope_key, org_wide) DO UPDATE SET
+           active     = true,
+           set_by     = excluded.set_by,
+           set_at     = excluded.set_at,
+           cleared_by = NULL,
+           cleared_at = NULL`,
+        [org, a.level, a.scopeKey, a.orgWide, meta?.setBy ?? null, new Date().toISOString()],
+      );
+    },
+
+    async clearHalt(org, address, meta) {
+      assertHaltAddress(address);
+      const a = haltAddressColumns(address);
+      const { rows } = await client.query(
+        "UPDATE halt SET active = false, cleared_by = $1, cleared_at = $2 WHERE org_id = $3 AND level = $4 AND scope_key = $5 AND org_wide = $6 AND active = true RETURNING org_id",
+        [meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide],
+      );
+      return rows.length > 0;
+    },
+
+    async activeHalts(org) {
+      const { rows } = await client.query(
+        "SELECT level, scope_key, org_wide, set_by, set_at, cleared_by, cleared_at FROM halt WHERE org_id = $1 AND active = true",
+        [org],
+      );
+      return (rows as { level: string; scope_key: string; org_wide: boolean; set_by: string | null; set_at: string; cleared_by: string | null; cleared_at: string | null }[]).map((r) => ({
+        org,
+        address: haltAddressFromColumns(r.level, r.scope_key, r.org_wide === true),
+        active: true,
+        setAt: r.set_at,
+        ...(r.set_by ? { setBy: r.set_by } : {}),
+        ...(r.cleared_by ? { clearedBy: r.cleared_by } : {}),
+        ...(r.cleared_at ? { clearedAt: r.cleared_at } : {}),
+      }));
+    },
+
     async setConnectorOverride(org, scopeKey, connector, granted, meta) {
       await client.query(
         `INSERT INTO connector_override (org_id, scope_key, connector, granted, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6)
@@ -1827,6 +1887,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async markEngaged(org, surfaceKey, threadTs, at, opts) {
+      const framed = opts?.participating && opts?.engagedBy ? framePromoterId(opts.engagedBy) : null;
       await client.query(
         `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped, engaged_by)
          VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, false, $9)
@@ -1837,9 +1898,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
            owner_token   = COALESCE(excluded.owner_token, thread_engagement.owner_token),
            stopped       = CASE
                              WHEN excluded.participating
-                              AND (thread_engagement.engaged_by IS NULL OR excluded.engaged_by IS NULL OR thread_engagement.engaged_by <> excluded.engaged_by)
+                              AND (excluded.engaged_by IS NULL
+                                   OR strpos(CASE WHEN thread_engagement.engaged_by IS NULL OR thread_engagement.engaged_by = '' THEN chr(10)
+                                                  WHEN substr(thread_engagement.engaged_by, 1, 1) = chr(10) THEN thread_engagement.engaged_by
+                                                  ELSE chr(10) || thread_engagement.engaged_by || chr(10) END,
+                                             excluded.engaged_by) = 0)
                              THEN false ELSE thread_engagement.stopped END,
-           engaged_by    = CASE WHEN excluded.participating THEN COALESCE(excluded.engaged_by, thread_engagement.engaged_by) ELSE thread_engagement.engaged_by END`,
+           engaged_by    = CASE
+                             WHEN excluded.participating AND excluded.engaged_by IS NOT NULL
+                             THEN replace(CASE WHEN thread_engagement.engaged_by IS NULL OR thread_engagement.engaged_by = '' THEN chr(10)
+                                               WHEN substr(thread_engagement.engaged_by, 1, 1) = chr(10) THEN thread_engagement.engaged_by
+                                               ELSE chr(10) || thread_engagement.engaged_by || chr(10) END,
+                                          excluded.engaged_by, chr(10)) || substr(excluded.engaged_by, 2)
+                             ELSE thread_engagement.engaged_by END`,
         [
           org,
           surfaceKey,
@@ -1849,8 +1920,17 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           opts?.participating ?? false,
           opts?.ownerToken ?? null,
           opts?.kind ?? "thread",
-          opts?.participating ? (opts?.engagedBy ?? null) : null,
+          framed,
         ],
+      );
+      if (framed === null) return;
+      await client.query(
+        `UPDATE thread_engagement
+            SET engaged_by = substr(engaged_by, strpos(substr(engaged_by, 2), chr(10)) + 1)
+          WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3
+            AND engaged_by IS NOT NULL
+            AND length(engaged_by) - length(replace(engaged_by, chr(10), '')) - 1 > $4`,
+        [org, surfaceKey, threadTs, PROMOTER_LIST_MAX],
       );
     },
 
@@ -1890,7 +1970,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
             ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
             kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
             stopped: r.stopped,
-            ...(r.engaged_by ? { engagedBy: r.engaged_by } : {}),
+            ...promoterListField(r.engaged_by),
           }
         : null;
     },
@@ -1930,7 +2010,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
         kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
         stopped: r.stopped,
-        ...(r.engaged_by ? { engagedBy: r.engaged_by } : {}),
+        ...promoterListField(r.engaged_by),
       }));
     },
 

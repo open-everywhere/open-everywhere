@@ -9,7 +9,7 @@ import { loadDomains, loadSilos, domainsForSurface } from "../agent/memory/confi
 import { loadRoles } from "../agent/roles/roles.js";
 import { loadWebhooks } from "../agent/webhooks/hooks.js";
 import { loadPrincipals } from "../agent/identity/principals.js";
-import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
+import { resolveDomainForChannel, domainRoster, domainContainers } from "@open-everywhere/core/agent/memory/domain.js";
 import { classifyPrimitiveSource } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
 import { mountedRowsFromLock } from "@open-everywhere/core/agent/scaffold/roster-plan.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
@@ -71,15 +71,15 @@ export function boundScopes(): BoundScope[] {
     }
     if (s.level === "domain") {
       const domain = domains.find((d) => d.name === s.domain);
-      for (const key of domain?.channels ?? []) {
+      for (const key of domain ? domainRoster(domain) : []) {
         const parts = splitSurfaceKey(key);
         if (parts) add(parts.platform, parts.workspace, parts.channel, `domain binding "${b.bundle}" via ${s.domain}`);
       }
-      for (const key of domain?.containers ?? []) {
+      for (const key of domain ? domainContainers(domain) : []) {
         const [platform, workspace, surface] = key.split("/");
         if (platform && workspace) {
           const probe = surface?.endsWith("*") ? `${surface.slice(0, -1)}C__PROBE__` : "C__PROBE__";
-          add(platform, workspace, probe, `domain binding "${b.bundle}" via ${s.domain} (containers claim "${key}", probe channel)`);
+          add(platform, workspace, probe, `domain binding "${b.bundle}" via ${s.domain} (container reach "${key}", probe channel)`);
         }
       }
     }

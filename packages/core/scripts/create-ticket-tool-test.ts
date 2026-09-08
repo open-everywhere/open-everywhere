@@ -41,18 +41,18 @@ for (const platform of ["tool-create-platform", "slack", "github", "notion"]) {
 const WORK_DOMAINS = [
   defineDomain({
     name: "filing",
-    channels: ["tool-create-platform/W1/tool-create-platform", "github/W1/github"],
+    reach: ["tool-create-platform/W1/tool-create-platform", "github/W1/github"],
     credentials: [{ connector: "tool-create-platform", credential: "project-key", use: "filing-key" }],
   }),
   defineDomain({
     name: "filing-slack",
-    channels: ["slack/W1/granted"],
+    reach: ["slack/W1/granted"],
     credentials: [{ connector: "tool-create-platform", credential: "project-key", use: "filing-key" }],
   }),
-  defineDomain({ name: "chatonly", channels: ["slack/W1/slack"] }),
+  defineDomain({ name: "chatonly", reach: ["slack/W1/slack"] }),
   defineDomain({
     name: "notion-entity",
-    channels: ["notion/W1/notion"],
+    reach: ["notion/W1/notion"],
     credentials: [{ connector: "notion", credential: "team-key", use: "notion-work-key" }],
   }),
 ];
@@ -64,7 +64,7 @@ registerConfig({
   loadDomains: () => WORK_DOMAINS,
   loadSilos: () => [],
   domainsForSurface: ({ workspaceKey, surface }) =>
-    WORK_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+    WORK_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 
 let n = 0;
@@ -154,7 +154,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
     async () => {
       await execTool(createTicketEntry)({ platform: "tool-create-platform", target: "T-1", title: "x", body: "y" }, ctx("tool-create-platform", {}) as never);
     },
-    /I can't file that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\.ts/s,
+    /I can't file that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*\.reach \(agent\/memory\/config\/domains\/.*\.ts\)/s,
     "a card-less proposing surface whose granted domain has no card venue refuses with the VENUE's copy (OPE-326) — its own verb plus the config change, not a flat 'this surface is not Slack'",
   );
   n++;

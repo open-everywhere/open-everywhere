@@ -56,8 +56,8 @@ const T_RAW_HOME = "19:engTeamsHome@thread.tacv2;messageid=17";
 const T_HOME = `teams/TENANT1/${surfaceKeySegment(T_RAW_HOME)}`;
 const T_OTHER_ID = surfaceKeySegment("19:financeTeamsConversation@thread.tacv2");
 const DOMAINS: readonly Domain[] = [
-  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`, D_HOME, `discord/G1/${D_ELSEWHERE_ID}`, T_HOME, `teams/TENANT1/${T_ELSEWHERE_ID}`] },
-  { name: "finance", channels: [`slack/T1/${OTHER_ID}`, `discord/G1/${D_OTHER_ID}`, `teams/TENANT1/${T_OTHER_ID}`] },
+  { name: "eng", reach: [HOME, `slack/T1/${ELSEWHERE_ID}`, D_HOME, `discord/G1/${D_ELSEWHERE_ID}`, T_HOME, `teams/TENANT1/${T_ELSEWHERE_ID}`] },
+  { name: "finance", reach: [`slack/T1/${OTHER_ID}`, `discord/G1/${D_OTHER_ID}`, `teams/TENANT1/${T_OTHER_ID}`] },
 ];
 const ELSEWHERE = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, ELSEWHERE_ID);
 const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
@@ -351,7 +351,7 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
   ok((dCrossErr as ChatWriteGrantError).boundary === "cross-domain", "the discord cross-domain refusal names the DOMAIN boundary, not the grant");
   ok((dCrossErr as ChatWriteGrantError).message.includes("memory/config/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
 
-  const slackOnly: readonly Domain[] = [{ name: "solo", channels: [HOME] }];
+  const slackOnly: readonly Domain[] = [{ name: "solo", reach: [HOME] }];
   ok(chatWriteTargetsFrom(HOME, dGranted, slackOnly).length === 0, "a caller whose domain rosters NO discord container names no discord target");
   let soloErr: unknown;
   try {

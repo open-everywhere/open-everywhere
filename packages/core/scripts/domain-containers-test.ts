@@ -16,6 +16,8 @@ import {
   assertDomainsValid,
   assertChannelExclusivity,
   assertGovernanceDomains,
+  domainRoster,
+  domainContainers,
   type Domain,
 } from "../agent/memory/domain.js";
 import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/ambient-skip.js";
@@ -44,8 +46,8 @@ const throws = (fn: () => void, needle: string, label: string) => {
 };
 
 {
-  const claimant = defineDomain({ name: "platform", containers: ["github/acme"], memory: "platform-silo" });
-  const carveOut = defineDomain({ name: "payments", channels: ["github/acme/billing"], memory: "payments-silo" });
+  const claimant = defineDomain({ name: "platform", reach: ["github/acme"], memory: "platform-silo" });
+  const carveOut = defineDomain({ name: "payments", reach: ["github/acme/billing"], memory: "payments-silo" });
   const domains: Domain[] = [claimant, carveOut];
 
   const swept = resolveDomainForChannel("github/acme/api", domains);
@@ -75,81 +77,84 @@ const throws = (fn: () => void, needle: string, label: string) => {
 
 {
   throws(
-    () => assertDomainsValid([defineDomain({ name: "d", containers: ["notion/ws123/db456/row789"] })]),
+    () => assertDomainsValid([defineDomain({ name: "d", reach: ["notion/ws123/db456/row789"] })]),
     "INTERMEDIATE containers are not supported",
     "a four-segment containers entry is refused by name",
   );
   throws(
-    () => assertDomainsValid([defineDomain({ name: "d", containers: ["notion/ws123/db456/row789"] })]),
+    () => assertDomainsValid([defineDomain({ name: "d", reach: ["notion/ws123/db456/row789"] })]),
     "ancestor walk",
     "…and the refusal states the reason that earns it, not a blanket depth rule",
   );
+  {
+    const exact = defineDomain({ name: "d", reach: ["notion/ws123/db456"] });
+    assertDomainsValid([exact]);
+    ok(resolveDomainForChannel("notion/ws123/db456", [exact]).via === "roster", "an exact three-segment reach entry is legal, and routes via the roster");
+    ok(domainRoster(exact).length === 1 && domainContainers(exact).length === 0, "…and it counts as the roster half of reach, never the container half");
+  }
   throws(
-    () => assertDomainsValid([defineDomain({ name: "d", containers: ["notion/ws123/db456"] })]),
-    "that is a roster entry",
-    "an exact three-segment containers entry is sent to `channels`",
-  );
-  throws(
-    () => assertDomainsValid([defineDomain({ name: "d", containers: ["github"] })]),
-    "neither a two-segment tenant key",
+    () => assertDomainsValid([defineDomain({ name: "d", reach: ["github"] })]),
+    "none of the three legal shapes",
     "a one-segment containers entry is refused",
   );
   throws(
-    () => assertDomainsValid([defineDomain({ name: "d", containers: ["github/"] })]),
-    "neither a two-segment tenant key",
+    () => assertDomainsValid([defineDomain({ name: "d", reach: ["github/"] })]),
+    "none of the three legal shapes",
     "an empty tenant segment is refused",
   );
 
-  assertDomainsValid([defineDomain({ name: "d", containers: ["github/acme"] })]);
+  assertDomainsValid([defineDomain({ name: "d", reach: ["github/acme"] })]);
   n++;
-  assertDomainsValid([defineDomain({ name: "d", channels: ["github/acme/api"], containers: ["github/other"] })]);
+  assertDomainsValid([defineDomain({ name: "d", reach: ["github/acme/api", "github/other"] })]);
   n++;
 
   throws(
-    () => assertDomainsValid([defineDomain({ name: "org", match: "org", containers: ["github/acme"] })]),
-    "must have EITHER explicit membership",
+    () => assertDomainsValid([defineDomain({ name: "org", match: "org", reach: ["github/acme"] })]),
+    "must have EITHER a reach list OR match",
     "containers on a match pseudo-domain is refused",
   );
 
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme"] }),
-        defineDomain({ name: "b", containers: ["github/acme"] }),
+        defineDomain({ name: "a", reach: ["github/acme"] }),
+        defineDomain({ name: "b", reach: ["github/acme"] }),
       ]),
-    "claimed in containers by both",
+    "is reached by both",
     "one tenant claimed by two domains is refused",
   );
 
+  {
+    const wide = defineDomain({ name: "platform", reach: ["github/acme"] });
+    const narrow = defineDomain({ name: "payments", reach: ["github/acme/billing"] });
+    assertChannelExclusivity([wide, narrow]);
+    ok(domainForChannel("github/acme/billing", [wide, narrow])?.name === "payments", "an exact key beats another domain's whole-tenant entry");
+    ok(domainForChannel("github/acme/billing", [narrow, wide])?.name === "payments", "…in either declaration order — the order is not the tiebreak");
+    ok(domainForChannel("github/acme/other", [wide, narrow])?.name === "platform", "…and the tenant keeps everything the exact key did not name");
+  }
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", channels: ["github/acme"] }),
-        defineDomain({ name: "b", containers: ["github/acme"] }),
+        defineDomain({ name: "a", reach: ["github/acme/pay-*"] }),
+        defineDomain({ name: "b", reach: ["github/acme/pay-*"] }),
       ]),
-    "say which you meant",
-    "a key that is both a channels entry and a containers claim is refused",
+    "match exactly the SAME keys",
+    "two entries of equal reach in two domains are refused",
   );
-
-  assertChannelExclusivity([
-    defineDomain({ name: "platform", containers: ["github/acme"] }),
-    defineDomain({ name: "payments", channels: ["github/acme/billing"] }),
-  ]);
-  n++;
 
   throws(
     () =>
       assertGovernanceDomains(
-        [defineDomain({ name: "gov", governance: true, channels: ["slack/T1/C_ADMIN"], containers: ["slack/T1"], admins: ["slack/T1/U_A"] })],
+        [defineDomain({ name: "gov", governance: true, reach: ["slack/T1/C_ADMIN", "slack/T1"], admins: ["slack/T1/U_A"] })],
         ["slack/T1"],
       ),
-    "claims container(s)",
+    "reaches container(s)",
     "a governance domain with a containers claim is refused",
   );
 }
 
 {
-  const claimOnly = defineDomain({ name: "platform", containers: ["github/acme"], memory: "platform-silo", admins: ["github/U_P"] });
+  const claimOnly = defineDomain({ name: "platform", reach: ["github/acme"], memory: "platform-silo", admins: ["github/U_P"] });
   const org = defineDomain({ name: "org", match: "org", memory: "org-brain" });
   ok(siloCoveringDomains("platform-silo", [claimOnly, org]).join(",") === "platform", "a claim-only domain covers its own silo");
   ok(siloCoveringDomains("org-brain", [claimOnly, org]).length === 0, "a criteria pseudo-domain still covers nothing");
@@ -157,8 +162,8 @@ const throws = (fn: () => void, needle: string, label: string) => {
 }
 
 {
-  const routed = defineDomain({ name: "platform", containers: ["github/acme"] });
-  const live = defineDomain({ name: "watched", channels: ["github/acme/watched"], ambientSupervisor: true });
+  const routed = defineDomain({ name: "platform", reach: ["github/acme"] });
+  const live = defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true });
   const domains: Domain[] = [routed, live];
 
   ok(ambientSupervisorEnabled("github/acme/watched", domains), "the gate is ON for an opted-in roster surface");
@@ -178,7 +183,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
 }
 
 {
-  const domains: Domain[] = [defineDomain({ name: "watched", channels: ["github/acme/watched"], ambientSupervisor: true })];
+  const domains: Domain[] = [defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true })];
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
@@ -199,7 +204,8 @@ const throws = (fn: () => void, needle: string, label: string) => {
   ok(second === "no-domain", "a repeat skip still reports its reason to the caller");
 
   ok(logged.length === 2, "the log line is UNCONDITIONAL — every skipped delivery says so");
-  ok(logged[0].includes("containers:"), "the log names the exact edit (add to channels, or claim the tenant), not the blockage");
+  ok(logged[0].includes("add it to a domain's reach"), "the log names the exact edit (add it to a reach list), not the blockage");
+  ok(logged[0].includes('the whole tenant "github/acme"'), "…and it spells out the container form too, so the wide fix is one paste");
 
   const rows = await readAudit({ action: "github.ambient_skipped" });
   ok(rows.length === 1, "the audit row is written ONCE per surface+reason, not once per delivery");
@@ -215,8 +221,8 @@ const throws = (fn: () => void, needle: string, label: string) => {
 {
   const payments = defineDomain({
     name: "payments",
-    containers: ["github/acme/pay-*"],
-    excludeContainers: ["github/acme/pay-secrets"],
+    reach: ["github/acme/pay-*"],
+    exclude: ["github/acme/pay-secrets"],
     memory: "payments-silo",
   });
   const domains: Domain[] = [payments];
@@ -234,22 +240,22 @@ const throws = (fn: () => void, needle: string, label: string) => {
   ok(resolveDomainForChannel("github/acme", domains).via === "none", "a glob does not claim the bare tenant key (only a tenant claim does)");
   ok(resolveDomainForChannel("github/acme/pay-api/sub", domains).via === "none", "a same-level glob never reaches a DEEPER key");
 
-  const listed = defineDomain({ name: "audit", channels: ["github/acme/pay-audit"] });
+  const listed = defineDomain({ name: "audit", reach: ["github/acme/pay-audit"] });
   const withRoster: Domain[] = [payments, listed];
   ok(resolveDomainForChannel("github/acme/pay-audit", withRoster).via === "roster", "the exact roster still beats any pattern");
   ok(resolveDomainForChannel("github/acme/pay-audit", withRoster).domain?.name === "audit", "…so a listed surface stays where it was listed");
   ok(resolveDomainForChannel("github/acme/pay-audit", [listed, payments] as Domain[]).domain?.name === "audit", "…regardless of declaration order");
 
-  const tenant: Domain[] = [defineDomain({ name: "platform", containers: ["github/acme"] })];
+  const tenant: Domain[] = [defineDomain({ name: "platform", reach: ["github/acme"] })];
   ok(resolveDomainForChannel("github/acme/api/deeper", tenant).domain?.name === "platform", "a TENANT claim still covers keys at any depth");
   ok(resolveDomainForChannel("github/acme", tenant).domain?.name === "platform", "…and still contains the bare tenant key");
 
-  const flat: Domain[] = [defineDomain({ name: "flat", containers: ["github/acme/*"] })];
+  const flat: Domain[] = [defineDomain({ name: "flat", reach: ["github/acme/*"] })];
   ok(resolveDomainForChannel("github/acme/anything", flat).domain?.name === "flat", "an empty-prefix glob matches every same-level surface");
   ok(resolveDomainForChannel("github/acme/anything/deeper", flat).via === "none", "…and is strictly narrower than the tenant claim: no deeper key");
 
-  const org = defineDomain({ name: "platform", containers: ["github/acme"], excludeContainers: ["github/acme/pay-*"] });
-  const pay = defineDomain({ name: "payments", containers: ["github/acme/pay-*"] });
+  const org = defineDomain({ name: "platform", reach: ["github/acme"], exclude: ["github/acme/pay-*"] });
+  const pay = defineDomain({ name: "payments", reach: ["github/acme/pay-*"] });
   assertChannelExclusivity([org, pay]);
   n++;
   assertDomainsValid([org, pay]);
@@ -260,83 +266,103 @@ const throws = (fn: () => void, needle: string, label: string) => {
 }
 
 {
+  const nested: Domain[] = [
+    defineDomain({ name: "wide", reach: ["github/acme/pay-*"] }),
+    defineDomain({ name: "narrow", reach: ["github/acme/pay-eu-*"] }),
+  ];
+  assertChannelExclusivity(nested);
+  n++;
+  ok(domainForChannel("github/acme/pay-eu-1", nested)?.name === "narrow", "a LONGER glob beats a shorter one");
+  ok(domainForChannel("github/acme/pay-eu-1", [...nested].reverse())?.name === "narrow", "…in either declaration order");
+  ok(domainForChannel("github/acme/pay-us-1", nested)?.name === "wide", "…and the shorter glob keeps what the longer one does not reach");
+  ok(resolveDomainForChannel("github/acme/pay-eu-1", nested).via === "container:github/acme/pay-eu-*", "the provenance names the WINNING entry, verbatim");
+
+  const tenantVsGlob: Domain[] = [
+    defineDomain({ name: "platform", reach: ["github/acme"] }),
+    defineDomain({ name: "payments", reach: ["github/acme/pay-*"] }),
+  ];
+  assertChannelExclusivity(tenantVsGlob);
+  n++;
+  ok(domainForChannel("github/acme/pay-1", tenantVsGlob)?.name === "payments", "a glob beats another domain's whole tenant");
+  ok(domainForChannel("github/acme/other", tenantVsGlob)?.name === "platform", "…and the tenant keeps the rest — no exclusion needed for the hand-over");
+
+  const ladder: Domain[] = [
+    defineDomain({ name: "tenant-domain", reach: ["github/acme"] }),
+    defineDomain({ name: "glob-domain", reach: ["github/acme/pay-*"] }),
+    defineDomain({ name: "long-glob-domain", reach: ["github/acme/pay-eu-*"] }),
+    defineDomain({ name: "exact-domain", reach: ["github/acme/pay-eu-1"] }),
+  ];
+  assertChannelExclusivity(ladder);
+  assertDomainsValid(ladder);
+  ok(domainForChannel("github/acme/pay-eu-1", ladder)?.name === "exact-domain", "ladder: the exact key wins");
+  ok(domainForChannel("github/acme/pay-eu-2", ladder)?.name === "long-glob-domain", "ladder: the longer glob wins the rest of its prefix");
+  ok(domainForChannel("github/acme/pay-us-2", ladder)?.name === "glob-domain", "ladder: the shorter glob wins the rest of its prefix");
+  ok(domainForChannel("github/acme/anything", ladder)?.name === "tenant-domain", "ladder: the tenant wins everything else");
+  const reversed = [...ladder].reverse();
+  ok(domainForChannel("github/acme/pay-eu-1", reversed)?.name === "exact-domain", "ladder reversed: still the exact key");
+  ok(domainForChannel("github/acme/pay-eu-2", reversed)?.name === "long-glob-domain", "ladder reversed: still the longer glob");
+  ok(domainForChannel("github/acme/pay-us-2", reversed)?.name === "glob-domain", "ladder reversed: still the shorter glob");
+  ok(domainForChannel("github/acme/anything", reversed)?.name === "tenant-domain", "ladder reversed: still the tenant");
+
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-        defineDomain({ name: "b", containers: ["github/acme/pay-eu-*"] }),
+        defineDomain({ name: "a", reach: ["github/acme/pay-*"] }),
+        defineDomain({ name: "b", reach: ["github/acme/pay-*"] }),
       ]),
-    "can match the SAME surface key",
-    "two patterns that could match one key are refused at config load",
+    "match exactly the SAME keys",
+    "the identical glob in two domains is refused",
   );
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-        defineDomain({ name: "b", containers: ["github/acme/pay-eu-*"] }),
+        defineDomain({ name: "a", reach: ["github/acme"] }),
+        defineDomain({ name: "b", reach: ["github/acme"] }),
       ]),
-    "excludeContainers",
-    "…and the refusal hands over the exact remedy",
+    "is reached by both",
+    "the identical tenant in two domains is refused, with its own remedy",
   );
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme"] }),
-        defineDomain({ name: "b", containers: ["github/acme/pay-*"] }),
+        defineDomain({ name: "a", reach: ["github/acme/api"] }),
+        defineDomain({ name: "b", reach: ["github/acme/api"] }),
       ]),
-    "can match the SAME surface key",
-    "a tenant claim overlapping another domain's pattern is refused",
+    "is in the reach of both",
+    "the identical exact key in two domains is refused",
   );
+  assertChannelExclusivity([
+    defineDomain({ name: "a", reach: ["github/acme/pay-*"], exclude: ["github/acme/pay-*"] }),
+    defineDomain({ name: "b", reach: ["github/acme/pay-*"] }),
+  ]);
+  n++;
+
   throws(
     () =>
       assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-        defineDomain({ name: "b", containers: ["github/acme/pay-*"] }),
+        defineDomain({ name: "a", reach: ["github/acme/api"], exclude: ["github/acme/api"] }),
       ]),
-    "can match the SAME surface key",
-    "the identical pattern in two domains is refused",
-  );
-  throws(
-    () =>
-      assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme"] }),
-        defineDomain({ name: "b", containers: ["github/acme"] }),
-      ]),
-    "claimed in containers by both",
-    "the duplicate-tenant message is unchanged",
-  );
-  throws(
-    () =>
-      assertChannelExclusivity([
-        defineDomain({ name: "a", containers: ["github/acme"], excludeContainers: ["github/acme/pay-secrets"] }),
-        defineDomain({ name: "b", containers: ["github/acme/pay-*"] }),
-      ]),
-    "can match the SAME surface key",
-    "an exclusion that covers only PART of the overlap does not make it legal",
+    "routes to NO domain",
+    "a room a domain names outright but excludes is refused — silence is not an outcome config may pick by accident",
   );
 
   assertChannelExclusivity([
-    defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-    defineDomain({ name: "b", containers: ["github/acme/ops-*"] }),
+    defineDomain({ name: "a", reach: ["github/acme/pay-*"] }),
+    defineDomain({ name: "b", reach: ["github/acme/ops-*"] }),
   ]);
   n++;
   assertChannelExclusivity([
-    defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-    defineDomain({ name: "b", containers: ["github/other/pay-*"] }),
+    defineDomain({ name: "a", reach: ["github/acme/pay-*"] }),
+    defineDomain({ name: "b", reach: ["github/other/pay-*"] }),
   ]);
   n++;
-  assertChannelExclusivity([defineDomain({ name: "a", containers: ["github/acme", "github/acme/pay-*"] })]);
-  n++;
-  assertChannelExclusivity([
-    defineDomain({ name: "a", containers: ["github/acme/pay-*"] }),
-    defineDomain({ name: "b", channels: ["github/acme/pay-audit"] }),
-  ]);
+  assertChannelExclusivity([defineDomain({ name: "a", reach: ["github/acme", "github/acme/pay-*"] })]);
   n++;
 }
 
 {
   const refuse = (entry: string, needle: string, label: string) =>
-    throws(() => assertDomainsValid([defineDomain({ name: "d", containers: [entry] })]), needle, label);
+    throws(() => assertDomainsValid([defineDomain({ name: "d", reach: [entry] })]), needle, label);
 
   refuse("github/acme/pay*x", "decidable at config load", "a mid-string `*` is refused");
   refuse("github/acme/pay-**", "decidable at config load", "`**` is refused");
@@ -345,61 +371,61 @@ const throws = (fn: () => void, needle: string, label: string) => {
   refuse("*/acme/pay-*", "decidable at config load", "a `*` in the PLATFORM segment is refused");
   refuse("github/acme/pay-*/sub", "INTERMEDIATE containers are not supported", "a pattern with a deeper path is still the intermediate case");
 
-  assertDomainsValid([defineDomain({ name: "d", containers: ["github/acme", "github/acme/pay-*", "github/acme/*"] })]);
+  assertDomainsValid([defineDomain({ name: "d", reach: ["github/acme", "github/acme/pay-*", "github/acme/*"] })]);
   n++;
 
   const refuseEx = (d: Domain, needle: string, label: string) => throws(() => assertDomainsValid([d]), needle, label);
   refuseEx(
-    defineDomain({ name: "d", containers: ["github/acme"], excludeContainers: ["github/acme"] }),
+    defineDomain({ name: "d", reach: ["github/acme"], exclude: ["github/acme"] }),
     "WHOLE TENANT",
     "a tenant-wide exclusion is refused (it cancels the claim or means nothing)",
   );
   refuseEx(
-    defineDomain({ name: "d", containers: ["github/acme"], excludeContainers: ["github/other/x"] }),
+    defineDomain({ name: "d", reach: ["github/acme"], exclude: ["github/other/x"] }),
     "dead exclusion",
     "an exclusion no claim of this domain can match is refused — it reads as a carve-out and grants everything",
   );
   refuseEx(
-    defineDomain({ name: "d", containers: ["github/acme/pay-*"], excludeContainers: ["github/acme/pay-*"] }),
+    defineDomain({ name: "d", reach: ["github/acme/pay-*"], exclude: ["github/acme/pay-*"] }),
     "cancels the WHOLE",
-    "an exclusion that cancels an entire containers entry is dead config",
+    "an exclusion that cancels an entire container reach entry is dead config",
   );
   refuseEx(
-    defineDomain({ name: "d", channels: ["github/acme/pay-audit"], containers: ["github/acme/pay-*"], excludeContainers: ["github/acme/pay-audit"] }),
-    "exclusions carve out of the CLAIM tier only",
+    defineDomain({ name: "d", reach: ["github/acme/pay-audit", "github/acme/pay-*"], exclude: ["github/acme/pay-audit"] }),
+    "an exclusion and the exact key it cancels are a contradiction",
     "an exclusion aimed at this domain's OWN roster entry is a contradiction, not a carve-out",
   );
   refuseEx(
-    defineDomain({ name: "d", containers: ["github/acme"], excludeContainers: ["github/acme/pay-secrets/deep"] }),
+    defineDomain({ name: "d", reach: ["github/acme"], exclude: ["github/acme/pay-secrets/deep"] }),
     "not a surface key",
     "a deeper exclusion is refused on the same same-level grounds as a claim",
   );
-  assertDomainsValid([defineDomain({ name: "d", containers: ["github/acme"], excludeContainers: ["github/acme/pay-secrets", "github/acme/tmp-*"] })]);
+  assertDomainsValid([defineDomain({ name: "d", reach: ["github/acme"], exclude: ["github/acme/pay-secrets", "github/acme/tmp-*"] })]);
   n++;
 
   throws(
     () =>
       assertGovernanceDomains(
-        [defineDomain({ name: "gov", governance: true, channels: ["slack/T1/C_ADMIN"], containers: ["slack/T1/C_ADMIN_*"], admins: ["slack/T1/U_A"] })],
+        [defineDomain({ name: "gov", governance: true, reach: ["slack/T1/C_ADMIN", "slack/T1/C_ADMIN_*"], admins: ["slack/T1/U_A"] })],
         ["slack/T1"],
       ),
-    "claims container(s)",
+    "reaches container(s)",
     "a governance domain with a PATTERN claim is refused, same as a tenant claim",
   );
   throws(
     () =>
       assertGovernanceDomains(
-        [defineDomain({ name: "gov", governance: true, channels: ["slack/T1/C_ADMIN"], excludeContainers: ["slack/T1/C_X"], admins: ["slack/T1/U_A"] })],
+        [defineDomain({ name: "gov", governance: true, reach: ["slack/T1/C_ADMIN"], exclude: ["slack/T1/C_X"], admins: ["slack/T1/U_A"] })],
         ["slack/T1"],
       ),
-    "sets excludeContainers",
+    "sets exclude",
     "a governance domain with an exclusion is refused too",
   );
 }
 
 {
   const domains: Domain[] = [
-    defineDomain({ name: "payments", containers: ["github/acme/pay-*"], excludeContainers: ["github/acme/pay-secrets"], ambientSupervisor: true }),
+    defineDomain({ name: "payments", reach: ["github/acme/pay-*"], exclude: ["github/acme/pay-secrets"], ambientSupervisor: true }),
   ];
   resetAmbientSkipSightings();
 
@@ -417,25 +443,25 @@ const throws = (fn: () => void, needle: string, label: string) => {
     domains,
   });
   ok(reason === "no-domain", "the recorder records the excluded surface");
-  ok(logged[0]?.includes("excludeContainers"), "the operator line names the EXCLUSION — the edit is 'drop it', not 'add a claim you already wrote'");
+  ok(logged[0]?.includes("exclude"), "the operator line names the EXCLUSION — the edit is 'drop it', not 'add a claim you already wrote'");
   const rows = await readAudit({ action: "github.ambient_skipped", surface: "github/acme/pay-secrets" });
   ok(String((rows[0]?.detail as Record<string, unknown>)?.via ?? "").startsWith("excluded:"), "…and the audit row carries the exclusion provenance");
 }
 
 {
   throws(
-    () => assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1/team:G9"] })]),
+    () => assertDomainsValid([defineDomain({ name: "eng", reach: ["teams/T1/team:G9"] })]),
     "GROUP rung",
-    "a `containers` entry using the group rung is refused BY NAME (it belongs to the trust registry, not to a memory domain)",
+    "a `reach` entry using the group rung is refused BY NAME (it belongs to the trust registry, not to a memory domain)",
   );
   throws(
-    () => assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1"], excludeContainers: ["teams/T1/team:G9"] })]),
+    () => assertDomainsValid([defineDomain({ name: "eng", reach: ["teams/T1"], exclude: ["teams/T1/team:G9"] })]),
     "GROUP rung",
-    "an `excludeContainers` entry using the group rung is refused the same way",
+    "an `exclude` entry using the group rung is refused the same way",
   );
-  assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1"], excludeContainers: ["teams/T1/G9"] })]);
+  assertDomainsValid([defineDomain({ name: "eng", reach: ["teams/T1"], exclude: ["teams/T1/G9"] })]);
   n++;
 }
 
 rmSync(tmp, { recursive: true, force: true });
-console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 the container tier + the audited ambient skip; OPE-417 same-level globs + exclusions; OPE-490 the group-rung refusal)\n`);
+console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 containers + the audited ambient skip; OPE-417 same-level globs + exclusions; OPE-490 the group-rung refusal; OPE-254 one reach list, most-specific-wins)\n`);

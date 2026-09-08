@@ -143,7 +143,7 @@ registerReadAdapter(fakeSlackAdapter);
   ]), "discord: normalized oldest-first, system/empty dropped, bot labelled by id");
   ok(discordLinesFromRaw("not-an-array").length === 0, "discord: a non-array response yields no lines (fail-soft parse)");
 
-  const eng = defineDomain({ name: "eng", channels: ["slack/T/CS", "discord/G/CD", "github/o/r"] });
+  const eng = defineDomain({ name: "eng", reach: ["slack/T/CS", "discord/G/CD", "github/o/r"] });
   const discordScope = allowedSurfaceIdsFrom("discord/G/CD", "discord", [eng]);
   ok(discordScope.ids.has("CD") && !discordScope.ids.has("CS") && discordScope.domain === "eng", "allowlist: discord scope = own + domain discord channels only (slack/github keys excluded)");
   const slackScope = allowedSurfaceIdsFrom("slack/T/CS", "slack", [eng]);

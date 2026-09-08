@@ -43,7 +43,7 @@ const SLACK_KEY = "slack/T_SPN/C_SPNA";
 const GH_KEY = "github/acme/payments-api";
 const spawnDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY],
+  reach: [SLACK_KEY, GH_KEY],
   ambientSupervisor: true,
   mode: "unified",
 });

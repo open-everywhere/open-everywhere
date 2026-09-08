@@ -55,7 +55,7 @@ registerIdentityMapper(PLATFORM, (c) => {
 });
 
 registerConfig({
-  loadDomains: () => [{ name: "d", channels: [`${PLATFORM}/T1/C1`] }],
+  loadDomains: () => [{ name: "d", reach: [`${PLATFORM}/T1/C1`] }],
 } as unknown as Parameters<typeof registerConfig>[0]);
 
 function turn(attrs: Record<string, string>): BindableContext {
@@ -65,7 +65,7 @@ function turn(attrs: Record<string, string>): BindableContext {
   } as unknown as BindableContext;
 }
 
-const DOMAINS = [{ name: "d", channels: [`${PLATFORM}/T1/C1`] }] as never;
+const DOMAINS = [{ name: "d", reach: [`${PLATFORM}/T1/C1`] }] as never;
 
 console.log("1. the tool surface:");
 {

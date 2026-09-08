@@ -181,6 +181,13 @@ export function isVouchedSurface(
   );
 }
 
+type FloorSuppliedRung = "tenantKey" | "surfaceKeys" | "groupKey";
+
+export const FLOOR_UNREACHABLE_RUNGS: Readonly<Record<Exclude<keyof SurfaceTrustQuery, FloorSuppliedRung>, string>> = {
+  enterpriseKey:
+    "a Grid enterprise id sits ABOVE the workspace and appears in no surface key, so a reader holding one key cannot derive it — `bindFrom` reads it off the event envelope instead (identity/binding.ts `trustEnterpriseKey`). FAIL-CLOSED: a Grid-only declaration binds every workspace under it internal, and this floor answers `false` for the same room.",
+};
+
 function tenantKeyOfSurfaceKey(surfaceKey: string): string {
   return surfaceKey.split("/").slice(0, 2).join("/");
 }

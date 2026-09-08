@@ -310,8 +310,8 @@ await inSession(async () => {
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
     loadDomains: () => [
-      defineDomain({ name: "notion-addressed-only", channels: [`notion/${WS}/${ENGAGED_PAGE}`] }),
-      defineDomain({ name: "notion-ambient-on", channels: [`notion/${WS}/${AMBIENT_PAGE}`], ambientSupervisor: true }),
+      defineDomain({ name: "notion-addressed-only", reach: [`notion/${WS}/${ENGAGED_PAGE}`] }),
+      defineDomain({ name: "notion-ambient-on", reach: [`notion/${WS}/${AMBIENT_PAGE}`], ambientSupervisor: true }),
     ],
     loadSilos: () => [], domainsForSurface: () => [],
     loadSpendBudgets: () => ({}),

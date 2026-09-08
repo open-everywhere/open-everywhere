@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
+  assertDomainsValid,
   defineDomain,
+  partitionTenantProblems,
   OperatorSecretNotSetError,
   registerBroker,
   registerConfig,
@@ -22,7 +24,7 @@ import {
   notionSignerServesDomain,
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
-import { notionRosterWorkspace } from "../agent/channels/notion-scope.js";
+import { notionReachWorkspace } from "../agent/channels/notion-scope.js";
 import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
@@ -48,11 +50,11 @@ const PAY_CRED = "payments-channel-key";
 const DOMAINS: readonly Domain[] = [
   defineDomain({
     name: "payments",
-    channels: [`notion/${WS}/${PAGE_PAY}`],
+    reach: [`notion/${WS}/${PAGE_PAY}`],
     ambientSupervisor: true,
     credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
   }),
-  defineDomain({ name: "support", channels: [`notion/${WS}/${PAGE_SUP}`], ambientSupervisor: true }),
+  defineDomain({ name: "support", reach: [`notion/${WS}/${PAGE_SUP}`], ambientSupervisor: true }),
 ];
 
 {
@@ -505,14 +507,13 @@ async function deliverFor(
   const CLAIMED: readonly Domain[] = [
     defineDomain({
       name: "security",
-      containers: [`notion/${WS_SEC}`],
+      reach: [`notion/${WS_SEC}`],
       ambientSupervisor: true,
       credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
     defineDomain({
       name: "payments",
-      channels: [`notion/${WS}/${PAGE_PAY}`],
-      containers: [`notion/${WS}`],
+      reach: [`notion/${WS}/${PAGE_PAY}`, `notion/${WS}`],
       ambientSupervisor: true,
       credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
@@ -595,7 +596,7 @@ async function deliverFor(
   const SHARED: readonly Domain[] = [
     defineDomain({
       name: "security",
-      containers: [`notion/${WS_SEC}`],
+      reach: [`notion/${WS_SEC}`],
       ambientSupervisor: true,
       credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED }],
     }),
@@ -629,13 +630,14 @@ async function deliverFor(
   const PAGE_A = "44444444-1111-4111-8111-444444444444";
   const PAGE_B = "55555555-1111-4111-8111-555555555555";
   const ROSTER_DOMAINS: readonly Domain[] = [
-    defineDomain({ name: "alpha-10", channels: [`notion/${WS_A}/${PAGE_A}`] }),
-    defineDomain({ name: "beta-10", channels: [`notion/${WS_B}/${PAGE_B}`] }),
+    defineDomain({ name: "alpha-10", reach: [`notion/${WS_A}/${PAGE_A}`] }),
+    defineDomain({ name: "beta-10", reach: [`notion/${WS_B}/${PAGE_B}`] }),
   ];
-  ok(notionRosterWorkspace(PAGE_A, ROSTER_DOMAINS) === WS_A, "the roster's OWN recorded workspace comes back for a page it lists");
-  ok(notionRosterWorkspace(PAGE_B, ROSTER_DOMAINS) === WS_B, "…and a DIFFERENT page in a different domain answers with ITS OWN entry, not alpha's");
-  ok(notionRosterWorkspace(PAGE_LOOSE, ROSTER_DOMAINS) === undefined, "a page in NO roster answers undefined");
-  ok(notionRosterWorkspace(PAGE_A, []) === undefined, "an EMPTY registry answers undefined (a config-load failure must not crash the lookup)");
+  ok(notionReachWorkspace(undefined, PAGE_A, ROSTER_DOMAINS) === WS_A, "the config's OWN recorded workspace comes back for a page a domain names outright");
+  ok(notionReachWorkspace(undefined, PAGE_B, ROSTER_DOMAINS) === WS_B, "…and a DIFFERENT page in a different domain answers with ITS OWN entry, not alpha's");
+  ok(notionReachWorkspace(WS_B, PAGE_A, ROSTER_DOMAINS) === WS_A, "…and a PAYLOAD workspace naming another domain's does not move the answer — it is read off config");
+  ok(notionReachWorkspace(undefined, PAGE_LOOSE, ROSTER_DOMAINS) === undefined, "a page in NO domain answers undefined");
+  ok(notionReachWorkspace(undefined, PAGE_A, []) === undefined, "an EMPTY registry answers undefined (a config-load failure must not crash the lookup)");
 
   const eventIn10 = (workspace: string, page: string): string =>
     JSON.stringify({ type: "comment.created", workspace_id: workspace, entity: { id: "cmt-10", type: "comment" }, data: { page_id: page } });
@@ -692,7 +694,7 @@ async function deliverFor(
     ...DOMAINS,
     defineDomain({
       name: "security-10",
-      containers: [`notion/${WS_SEC_10}`],
+      reach: [`notion/${WS_SEC_10}`],
       ambientSupervisor: true,
       credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED_10, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY_10" }],
     }),
@@ -708,14 +710,58 @@ async function deliverFor(
   const PAGE_CLAIM_11 = "cccccccc-9999-4999-8999-cccccccccccc";
   const MULTI_CRED = "multi-claim-channel-key-11";
   const MULTI_SECRET = "multi-claim-verification-token-11";
-  const MULTI_CLAIM_DOMAINS: readonly Domain[] = [
+  const multiWorkspace = defineDomain({
+    name: "multi-claim-11",
+    reach: [`notion/${WS_M1}`, `notion/${WS_M2}`],
+    ambientSupervisor: true,
+    credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: MULTI_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_MULTI_11" }],
+  });
+  let refusal = "";
+  try {
+    assertDomainsValid([multiWorkspace]);
+  } catch (err) {
+    refusal = err instanceof Error ? err.message : String(err);
+  }
+  ok(refusal.includes("reaches 2 notion tenants by container"), `a domain reaching TWO Notion workspaces BY CONTAINER is refused at config load (got: ${refusal || "<no throw>"})`);
+  ok(refusal.includes(WS_M1) && refusal.includes(WS_M2), "…and the refusal names both, so the split is one edit away from fixed");
+  ok(partitionTenantProblems([multiWorkspace]).length === 1, "partitionTenantProblems reports it as exactly one problem");
+
+  const WS_S = "dddddddd-9999-4999-8999-dddddddddddd";
+  const PAGE_S_11 = "eeeeeeee-9999-4999-8999-eeeeeeeeeeee";
+  const S_CRED = "single-claim-channel-key-11";
+  const S_SECRET = "single-claim-verification-token-11";
+  const SINGLE_CLAIM_DOMAINS: readonly Domain[] = [
     defineDomain({
-      name: "multi-claim-11",
-      containers: [`notion/${WS_M1}`, `notion/${WS_M2}`],
+      name: "single-claim-11",
+      reach: [`notion/${WS_S}`],
       ambientSupervisor: true,
-      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: MULTI_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_MULTI_11" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: S_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SINGLE_11" }],
     }),
   ];
+  assertDomainsValid(SINGLE_CLAIM_DOMAINS);
+  passed++;
+  ok(
+    partitionTenantProblems([
+      defineDomain({ name: "ws-one-11", reach: [`notion/${WS_M1}`] }),
+      defineDomain({ name: "ws-two-11", reach: [`notion/${WS_M2}`] }),
+    ]).length === 0,
+    "a DEPLOYMENT may still serve two Notion workspaces — one domain each; the rule is per domain",
+  );
+  ok(
+    partitionTenantProblems([defineDomain({ name: "two-orgs-11", reach: ["github/acme", "github/other"] })]).length === 0,
+    "…and it is Notion-only: on a platform whose delivery names its own tenant verifiably, two are fine",
+  );
+  ok(
+    partitionTenantProblems([defineDomain({ name: "two-pages-11", reach: [`notion/${WS_M1}/${PAGE_CLAIM_11}`, `notion/${WS_M2}/${PAGE_S_11}`] })]).length === 0,
+    "…and it is CONTAINERS only: a domain NAMING pages in two workspaces is fine — each exact entry carries its own tenant, so nothing is ambiguous",
+  );
+
+  ok(notionReachWorkspace(WS_S, PAGE_S_11, SINGLE_CLAIM_DOMAINS) === WS_S, "a container-reached page's partition workspace is the matched entry's own text");
+  const OTHER_WS_11 = "ffffffff-9999-4999-8999-ffffffffffff";
+  ok(
+    notionReachWorkspace(OTHER_WS_11, PAGE_S_11, SINGLE_CLAIM_DOMAINS) === undefined,
+    "a workspace no domain reaches answers undefined — config does not know the page, and a payload echo is never invented as config",
+  );
 
   interface ClaimRun {
     readonly action: string;
@@ -748,43 +794,15 @@ async function deliverFor(
     return { action: out.action, ...(surfaceKey ? { surfaceKey } : {}), dispatched };
   }
 
-  const viaW1 = await claimRun(WS_M1, PAGE_CLAIM_11, MULTI_SECRET, MULTI_CRED, MULTI_CLAIM_DOMAINS);
-  ok(viaW1.action === "dispatched" && viaW1.dispatched, "an honest delivery naming the domain's FIRST claimed workspace dispatches");
-  ok(viaW1.surfaceKey === `notion/${WS_M1}/${PAGE_CLAIM_11}`, "…on that workspace's own surface key");
-
-  const viaW2 = await claimRun(WS_M2, PAGE_CLAIM_11, MULTI_SECRET, MULTI_CRED, MULTI_CLAIM_DOMAINS);
-  ok(viaW2.action === "dispatched" && viaW2.dispatched, "an honest delivery for the SAME page naming the domain's SECOND claimed workspace ALSO dispatches");
-  ok(viaW2.surfaceKey === `notion/${WS_M2}/${PAGE_CLAIM_11}`, "…but on a DIFFERENT surface key");
-  ok(
-    viaW1.surfaceKey !== viaW2.surfaceKey,
-    "🔴 THE KNOWN GAP (OPE-537): one page's history can still split across a domain's own claimed workspaces, same domain, same signer, no boundary ever crossed. " +
-      "This assertion CHARACTERIZES today's accepted-for-now behaviour — if it goes red because the composition changed, that change moves live `channel_session`/memory " +
-      "keying and needs the same review OPE-536's own fix required, not a silent change.",
-  );
-
-  const WS_S = "dddddddd-9999-4999-8999-dddddddddddd";
-  const PAGE_S_11 = "eeeeeeee-9999-4999-8999-eeeeeeeeeeee";
-  const S_CRED = "single-claim-channel-key-11";
-  const S_SECRET = "single-claim-verification-token-11";
-  const SINGLE_CLAIM_DOMAINS: readonly Domain[] = [
-    defineDomain({
-      name: "single-claim-11",
-      containers: [`notion/${WS_S}`],
-      ambientSupervisor: true,
-      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: S_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SINGLE_11" }],
-    }),
-  ];
-
   const honestSingle = await claimRun(WS_S, PAGE_S_11, S_SECRET, S_CRED, SINGLE_CLAIM_DOMAINS);
-  ok(honestSingle.action === "dispatched", "a single-claim domain's own workspace dispatches normally");
-  ok(honestSingle.surfaceKey === `notion/${WS_S}/${PAGE_S_11}`, "…on the expected surface key");
+  ok(honestSingle.action === "dispatched", "a container-reached page dispatches normally");
+  ok(honestSingle.surfaceKey === `notion/${WS_S}/${PAGE_S_11}`, "…on the workspace the config recorded");
 
-  const OTHER_WS_11 = "ffffffff-9999-4999-8999-ffffffffffff";
   const mismatchedSingle = await claimRun(OTHER_WS_11, PAGE_S_11, S_SECRET, S_CRED, SINGLE_CLAIM_DOMAINS);
-  ok(mismatchedSingle.action === "dispatched", "a DIFFERENT, unclaimed workspace composes and (under the stubbed gate) dispatches");
+  ok(mismatchedSingle.action === "dispatched", "a workspace no domain reaches composes and (under the stubbed gate) dispatches");
   ok(
     mismatchedSingle.surfaceKey === `notion/${OTHER_WS_11}/${PAGE_S_11}`,
-    "…on the UNCLAIMED workspace's own key, never on the single-claim domain's recorded workspace",
+    "…on its own unreached key, never on the container domain's recorded workspace — config's answer is never invented for a page config does not know",
   );
   ok(mismatchedSingle.surfaceKey !== honestSingle.surfaceKey, "negative control: the two runs really do land on different keys, so the assertion above is not vacuous");
 }

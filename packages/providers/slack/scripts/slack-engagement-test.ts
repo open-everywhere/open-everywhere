@@ -92,7 +92,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "transactions", channels: ["slack/T_ENG/C_TXN", "slack/T_ENG/C_TXN_EMEA"], memory: "txn" }),
+    defineDomain({ name: "transactions", reach: ["slack/T_ENG/C_TXN", "slack/T_ENG/C_TXN_EMEA"], memory: "txn" }),
   ],
   loadSilos: () => [{ name: "txn", provider: "sqlite" }],
   domainsForSurface: ({ surface }) => (["C_TXN", "C_TXN_EMEA"].includes(surface) ? ["transactions"] : []),
@@ -1085,8 +1085,8 @@ registerConfig({
   ok(!shouldNameDropWake({ ...base, channelConfirmedInternal: false }).deliver, "unconfirmed/external channel → fail closed");
 
   const domains = [
-    defineDomain({ name: "opted-in", channels: ["slack/T1/C_IN"], nameDropWake: true }),
-    defineDomain({ name: "opted-out", channels: ["slack/T1/C_OUT"] }),
+    defineDomain({ name: "opted-in", reach: ["slack/T1/C_IN"], nameDropWake: true }),
+    defineDomain({ name: "opted-out", reach: ["slack/T1/C_OUT"] }),
     defineDomain({ name: "org-default", match: "org", nameDropWake: true }),
   ];
   ok(nameDropWakeEnabled("slack/T1/C_IN", domains), "explicit domain with the flag → on");
@@ -1095,8 +1095,8 @@ registerConfig({
   ok(!nameDropWakeEnabled("slack/T1/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
 
   const ambientDomains = [
-    defineDomain({ name: "ambient-on", channels: ["slack/T2/C_ON"], ambientSupervisor: true }),
-    defineDomain({ name: "ambient-off", channels: ["slack/T2/C_OFF"] }),
+    defineDomain({ name: "ambient-on", reach: ["slack/T2/C_ON"], ambientSupervisor: true }),
+    defineDomain({ name: "ambient-off", reach: ["slack/T2/C_OFF"] }),
     defineDomain({ name: "org-ambient", match: "org", ambientSupervisor: true }),
   ];
   ok(ambientSupervisorEnabled("slack/T2/C_ON", ambientDomains), "explicit domain with the flag → on");
@@ -1105,8 +1105,8 @@ registerConfig({
   ok(!ambientSupervisorEnabled("slack/T2/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
 
   const tierDomains = [
-    defineDomain({ name: "tier-set", channels: ["slack/T4/C_RES", "github/acme/widgets"], engagementTier: "reserved" }),
-    defineDomain({ name: "tier-unset", channels: ["slack/T4/C_PLAIN", "github/acme/plain"] }),
+    defineDomain({ name: "tier-set", reach: ["slack/T4/C_RES", "github/acme/widgets"], engagementTier: "reserved" }),
+    defineDomain({ name: "tier-unset", reach: ["slack/T4/C_PLAIN", "github/acme/plain"] }),
     defineDomain({ name: "org-tier", match: "org", engagementTier: "aggressive" }),
   ];
   ok(engagementTierFor("slack/T4/C_RES", tierDomains) === "reserved", "explicit domain tier wins");
@@ -1119,20 +1119,20 @@ registerConfig({
   ok(engagementTierFor("notion/ws-1/page-1", []) === "neutral", "notion platform default is neutral");
 
   const composedKeys = ["slack/T9/C_PAY", "github/acme/payments", "notion/ws-9/page-pay", "linear/org-9/team-pay"];
-  const composed = defineDomain({ name: "payments", channels: composedKeys, memory: "payments-brain", ambientSupervisor: true, engagementTier: "reserved" });
+  const composed = defineDomain({ name: "payments", reach: composedKeys, memory: "payments-brain", ambientSupervisor: true, engagementTier: "reserved" });
   for (const key of composedKeys) {
     ok(ambientSupervisorEnabled(key, [composed]), `cross-surface domain: ambient ON for ${key.split("/")[0]}`);
     ok(engagementTierFor(key, [composed]) === "reserved", `cross-surface domain: explicit tier applies to ${key.split("/")[0]}`);
   }
   ok(domainForChannel("github/acme/payments", [composed])?.memory === "payments-brain", "cross-surface domain: the GitHub repo shares the domain's silo");
   ok(domainForChannel("notion/ws-9/page-pay", [composed])?.memory === "payments-brain", "cross-surface domain: the Notion doc shares the same silo");
-  const composedNoTier = defineDomain({ name: "pay2", channels: ["slack/T9/C_PAY2", "github/acme/pay2"], ambientSupervisor: true });
+  const composedNoTier = defineDomain({ name: "pay2", reach: ["slack/T9/C_PAY2", "github/acme/pay2"], ambientSupervisor: true });
   ok(engagementTierFor("github/acme/pay2", [composedNoTier]) === "reserved", "composed domain w/o tier: the GitHub member platform-defaults reserved");
   ok(engagementTierFor("slack/T9/C_PAY2", [composedNoTier]) === "neutral", "composed domain w/o tier: the Slack member stays neutral");
 
   const awarenessDomains = [
-    defineDomain({ name: "aware-on", channels: ["slack/T3/C_ON"], awarenessWake: true }),
-    defineDomain({ name: "aware-off", channels: ["slack/T3/C_OFF"] }),
+    defineDomain({ name: "aware-on", reach: ["slack/T3/C_ON"], awarenessWake: true }),
+    defineDomain({ name: "aware-off", reach: ["slack/T3/C_OFF"] }),
     defineDomain({ name: "org-aware", match: "org", awarenessWake: true }),
   ];
   ok(awarenessWakeEnabled("slack/T3/C_ON", awarenessDomains), "explicit domain with the flag → on");
@@ -2085,7 +2085,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       loadDomains: () => [
         defineDomain({
           name: "uni",
-          channels: ["slack/T_ENG/C_UNI"],
+          reach: ["slack/T_ENG/C_UNI"],
           memory: "txn",
           ambientSupervisor: true,
           mode: "unified",
@@ -2322,19 +2322,19 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   ok(statusVerbsFor(K, orgExtend).includes("Yodelling") && statusVerbsFor(K, orgExtend).includes("Tinkering"), "org extends the defaults");
   const layered = [
     defineDomain({ name: "org", match: "org", statusVerbs: ["Yodelling"] }),
-    defineDomain({ name: "team", channels: [K], statusVerbs: ["Shipping it"] }),
+    defineDomain({ name: "team", reach: [K], statusVerbs: ["Shipping it"] }),
   ];
   const v = statusVerbsFor(K, layered);
   ok(v.includes("Tinkering") && v.includes("Yodelling") && v.includes("Shipping it"), "domain extends org extends defaults");
   const replaced = statusVerbsFor(K, [
     defineDomain({ name: "org", match: "org", statusVerbs: ["Yodelling"] }),
-    defineDomain({ name: "team", channels: [K], statusVerbs: ["Only this"], statusVerbsMode: "replace" }),
+    defineDomain({ name: "team", reach: [K], statusVerbs: ["Only this"], statusVerbsMode: "replace" }),
   ]);
   ok(replaced.length === 1 && replaced[0] === "Only this", "domain replace = its list IS the vocabulary");
   const orgReplaced = statusVerbsFor(K, [defineDomain({ name: "org", match: "org", statusVerbs: ["A", "B"], statusVerbsMode: "replace" })]);
   ok(orgReplaced.length === 2, "org replace drops the framework defaults");
   ok(
-    statusVerbsFor(K, [defineDomain({ name: "team", channels: [K], statusVerbs: [], statusVerbsMode: "replace" })]).length ===
+    statusVerbsFor(K, [defineDomain({ name: "team", reach: [K], statusVerbs: [], statusVerbsMode: "replace" })]).length ===
       DEFAULT_STATUS_VERBS.length,
     "replace-with-empty falls back to defaults (never verb-less)",
   );

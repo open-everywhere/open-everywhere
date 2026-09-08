@@ -195,12 +195,12 @@ const TEAMS_KEY = "teams/TEN_WIN/19-winchan.tacv2";
 const TEAMS_WS_KEY = "teams/TEN_WIN";
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY],
+  reach: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY],
   ambientSupervisor: true,
   mode: "unified",
 });
-const soloTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true, mode: "solo" });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true });
+const soloTwin = defineDomain({ name: "payments", reach: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true, mode: "solo" });
+const ambientTwin = defineDomain({ name: "payments", reach: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true });
 const org = defineDomain({ name: "org", match: "org" });
 
 registerConfig({
@@ -225,13 +225,13 @@ await withGate(true, () => {
   ok(crossSurfaceOn(SLACK_KEY, [winDomain, org]) && crossSurfaceOn(GH_KEY, [winDomain, org]), "code gate ON + mode:unified → cross-surface window ON for both containers");
   ok(windowedSupervisorEnabled(SLACK_KEY, [soloTwin, org]) && !crossSurfaceOn(SLACK_KEY, [soloTwin, org]), "mode:solo → windows per-channel, not cross-surface");
   ok(windowedSupervisorEnabled(SLACK_KEY, [ambientTwin, org]) && !crossSurfaceOn(SLACK_KEY, [ambientTwin, org]), "no mode ⇒ windows solo by default (gate ON)");
-  const noAmbient = defineDomain({ name: "payments", channels: [SLACK_KEY], mode: "unified" });
+  const noAmbient = defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" });
   ok(!windowedSupervisorEnabled(SLACK_KEY, [noAmbient, org]), "a domain without ambientSupervisor never windows (a window is a re-keyed ambient supervisor)");
 });
 
 ok((() => { assertUnifiedDomainTrust([winDomain, org]); return true; })(), "the documented single-window fixture passes assertUnifiedDomainTrust");
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", channels: [SLACK_KEY], mode: "unified" })]),
+  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" })]),
   "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
 );
 throws(
@@ -1668,7 +1668,7 @@ overrideSettingsForTest({ window: { topology: false } });
   const { loadDomains } = await import("../agent/memory/config/domains.js");
   const unified = loadDomains().find((d) => d.name === "e2e-unified");
   ok(unified !== undefined, "real config: the e2e-unified domain exists — without it this block measures nothing");
-  const teamsMembers = (unified?.channels ?? []).filter((c) => c.startsWith("teams/"));
+  const teamsMembers = (unified?.reach ?? []).filter((c) => c.startsWith("teams/"));
   ok(teamsMembers.length === 1, `real config: e2e-unified names exactly one Teams member (found ${teamsMembers.length})`);
 
   const teamsKey = teamsMembers[0]!;

@@ -43,7 +43,7 @@ function configWithSlackTenants(tenants: readonly string[]): void {
     skillContent: {},
     loadSilos: () => [],
     domainsForSurface: () => [],
-    loadDomains: () => tenants.map((t, i) => defineDomain({ name: `d${i}`, channels: [`slack/${t}/C1`] })),
+    loadDomains: () => tenants.map((t, i) => defineDomain({ name: `d${i}`, reach: [`slack/${t}/C1`] })),
   });
 }
 

@@ -18,7 +18,7 @@ const ORG = "org-1";
 const TEAM = "team-pay";
 const OWN_ISSUE = "issue-own";
 const OTHER_ISSUE = "issue-other";
-const DOMAINS: readonly Domain[] = [{ name: "pay", channels: [`linear/${ORG}/${TEAM}`] }] as unknown as readonly Domain[];
+const DOMAINS: readonly Domain[] = [{ name: "pay", reach: [`linear/${ORG}/${TEAM}`] }] as unknown as readonly Domain[];
 registerConfig({ loadDomains: () => DOMAINS } as unknown as Parameters<typeof registerConfig>[0]);
 
 let passed = 0;

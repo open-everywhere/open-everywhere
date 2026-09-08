@@ -42,7 +42,7 @@ function grantFor(...platforms: readonly string[]): readonly Domain[] {
   return [
     defineDomain({
       name: "filing",
-      channels: platforms.map((x) => `${x}/W1/${x}`),
+      reach: platforms.map((x) => `${x}/W1/${x}`),
       credentials: platforms.map((x) => ({ connector: x, credential: WORK_ROLE, use: `${x}-key` })),
     }),
   ];

@@ -11,9 +11,9 @@ import {
 import { callLinear, createLinearActivity, linearChannelApi, type LinearApi } from "./linear-graphql.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
-import { linearWakeAddressing, markLinearEngaged, resolveLinearEngagement, type LinearSeamFacts } from "./linear-engagement.js";
+import { linearStandDownHolds, linearWakeAddressing, markLinearEngaged, resolveLinearEngagement, type LinearSeamFacts } from "./linear-engagement.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
-import { postLinearSilenceAck, postLinearHostAck } from "./linear-silence-ack.js";
+import { postLinearSilenceAck, postLinearHostAck, LINEAR_STOOD_DOWN_ACK_BODY } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import { parseLinearReaction, routeLinearStopReaction } from "./linear-stop.js";
@@ -347,6 +347,76 @@ async function linearExternalSuppressed(
     `suppressed ${surfaceKey ?? `linear/${organizationId ?? "unknown"}/<team unresolved>`}: externalPolicy verdict "${verdict}"${agentSessionId === undefined ? "" : acked ? " — mention ack posted, session closed" : " — mention ack FAILED (spinner may persist)"}`,
   );
   return verdict;
+}
+
+async function linearStoodDownSuppressed(
+  action: string | undefined,
+  facts: LinearSeamFacts,
+  surfaceKey: string | undefined,
+  agentSessionId: string,
+  deliveryKey: string | undefined,
+): Promise<boolean> {
+  if (action !== "prompted") return false;
+  const anchor = await linearStandDownHolds(facts);
+  if (anchor === null) return false;
+  const duplicate = await standDownAckSeen(facts.organizationId, deliveryKey);
+  let acked = false;
+  if (!duplicate) {
+    acked = await postLinearHostAck(agentSessionId, LINEAR_STOOD_DOWN_ACK_BODY, facts.organizationId).then(
+      () => true,
+      () => false,
+    );
+    if (!acked) await releaseStandDownAck(facts.organizationId, deliveryKey);
+  }
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "linear",
+    workspace: facts.organizationId ?? "unknown",
+    ...(surfaceKey === undefined ? {} : { surface: surfaceKey }),
+    ...(facts.principalId ? { principalId: facts.principalId } : {}),
+    action: "linear.stand_down_suppressed",
+    detail: { anchor, agentSessionId, ...suppressionRendering(acked), ...(duplicate ? { ackSkipped: "redelivery" } : {}) },
+  }).catch(() => undefined);
+  slog(
+    `prompted follow-up on ${surfaceKey ?? `linear/${facts.organizationId ?? "unknown"}/<team unresolved>`} (${anchor}) suppressed: stood down — comment on the issue to pull the agent back in${duplicate ? " — ack skipped (redelivery of a delivery already acked)" : acked ? " — stand-down ack posted, session closed" : " — stand-down ack FAILED (spinner persists; the claim is released, so a redelivery acks)"}`,
+  );
+  return true;
+}
+
+const STAND_DOWN_ACK_DEDUPE_TTL_MS = 10 * 60_000;
+let warnedStandDownAckDedupe = false;
+const standDownAckKey = (organizationId: string | undefined, deliveryKey: string): string =>
+  `linear-standdown-ack:${organizationId ?? "unknown"}:${deliveryKey}`;
+
+async function standDownAckSeen(organizationId: string | undefined, deliveryKey: string | undefined): Promise<boolean> {
+  if (!deliveryKey) return false;
+  try {
+    const first = await getOperationalStore().markEventSeen(
+      deploymentOrg(),
+      standDownAckKey(organizationId, deliveryKey),
+      new Date().toISOString(),
+      STAND_DOWN_ACK_DEDUPE_TTL_MS,
+    );
+    return !first;
+  } catch (err) {
+    warnStandDownAckDedupe(err);
+    return false;
+  }
+}
+
+async function releaseStandDownAck(organizationId: string | undefined, deliveryKey: string | undefined): Promise<void> {
+  if (!deliveryKey) return;
+  try {
+    await getOperationalStore().forgetEventSeen(deploymentOrg(), standDownAckKey(organizationId, deliveryKey));
+  } catch (err) {
+    warnStandDownAckDedupe(err);
+  }
+}
+
+function warnStandDownAckDedupe(err: unknown): void {
+  if (warnedStandDownAckDedupe) return;
+  warnedStandDownAckDedupe = true;
+  console.warn(`[open-everywhere:linear-supervisor] stand-down ack dedupe unavailable — a redelivered prompt may ack twice: ${String(err)}`);
 }
 
 type LinearSend = (
@@ -683,13 +753,15 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       agentSessionId,
     );
     if (authorVerdict) return;
-    if (sig.action === "created") await markLinearEngaged({
+    const divertSeamFacts: LinearSeamFacts = {
       organizationId,
       teamId: c.teamId,
       issueId: c.issueId,
       ...(c.authorId ? { principalId: c.authorId } : {}),
       ...(c.teamPrivate === undefined ? {} : { isPrivate: c.teamPrivate }),
-    }, agentSessionId);
+    };
+    if (sig.action === "created") await markLinearEngaged(divertSeamFacts, agentSessionId);
+    if (await linearStoodDownSuppressed(sig.action, divertSeamFacts, `linear/${organizationId}/${c.teamId}`, agentSessionId, deliveryMemoKey(event))) return;
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (!grainUsesUnifiedWindow(grain)) throw new Error("no single-context window (crossSurface/solo) holds for the enriched team (config raced or team mismatch)");
     const vouched = linearTeamVouched(organizationId, c.teamId);
@@ -860,13 +932,15 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       if (authorVerdict) return null;
     }
 
-    if (event.action === "created") await markLinearEngaged({
+    const nativeSeamFacts: LinearSeamFacts = {
       organizationId: event.organizationId ?? s.organizationId ?? undefined,
       teamId,
       issueId: s.issueId ?? s.issue?.id ?? undefined,
       ...(creatorId ? { principalId: creatorId } : {}),
       ...(isPrivate === undefined ? {} : { isPrivate }),
-    }, agentSessionId);
+    };
+    if (event.action === "created") await markLinearEngaged(nativeSeamFacts, agentSessionId);
+    if (await linearStoodDownSuppressed(event.action, nativeSeamFacts, nativeSurfaceKey, agentSessionId, deliveryMemoKey(event))) return null;
 
     const auth = stampNonMemberChatAuth(
       buildLinearAuth({

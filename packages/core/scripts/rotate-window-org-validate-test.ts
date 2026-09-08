@@ -261,8 +261,8 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   const OTHER_SURFACE = "slack/TCFGGRD1/CCFGGRD02";
   const FAKE_DOMAIN = "slack";
   const domains = [
-    defineDomain({ name: REAL_DOMAIN, channels: [REAL_SURFACE, CORRECT_SURFACE], ambientSupervisor: true, mode: "solo" }),
-    defineDomain({ name: OTHER_DOMAIN, channels: [OTHER_SURFACE], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: REAL_DOMAIN, reach: [REAL_SURFACE, CORRECT_SURFACE], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: OTHER_DOMAIN, reach: [OTHER_SURFACE], ambientSupervisor: true, mode: "solo" }),
   ];
 
   const threw = async (fn: () => Promise<unknown>): Promise<{ message: string; refusal: boolean } | null> => {
@@ -338,7 +338,7 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
     const GRP_B = "slack/TCFGGRD1/CCFGGRD05";
     const groupedDomains = [
       ...domains,
-      defineDomain({ name: GROUPED_DOMAIN, channels: [GRP_A, GRP_B], ambientSupervisor: true, windows: [{ name: "guard-pair", channels: [GRP_A, GRP_B] }] }),
+      defineDomain({ name: GROUPED_DOMAIN, reach: [GRP_A, GRP_B], ambientSupervisor: true, windows: [{ name: "guard-pair", reach: [GRP_A, GRP_B] }] }),
     ];
     eq(checkWindowTargetAgainstConfig(GROUPED_DOMAIN, "guard-pair", groupedDomains).ok, true, "a declared window GROUP name is an accepted --window target");
     const unknown = checkWindowTargetAgainstConfig(GROUPED_DOMAIN, "no-such-group", groupedDomains);

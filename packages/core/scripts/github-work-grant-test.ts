@@ -42,8 +42,8 @@ const PAY_REPO_ROOM = "github/W1/api";
 const ENG_REPO_ROOM = "github/W1/other";
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [PAY_ROOM, PAY_REPO_ROOM] }),
-  defineDomain({ name: "eng", channels: [ENG_ROOM, ENG_REPO_ROOM] }),
+  defineDomain({ name: "payments", reach: [PAY_ROOM, PAY_REPO_ROOM] }),
+  defineDomain({ name: "eng", reach: [ENG_ROOM, ENG_REPO_ROOM] }),
 ];
 
 registerConfig({
@@ -55,7 +55,7 @@ registerConfig({
   loadSilos: () => [],
   domainsForSurface: ({ workspaceKey, surface }) => {
     const key = `${workspaceKey}/${surface}`;
-    return DOMAINS.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
+    return DOMAINS.filter((d) => (d.reach ?? []).includes(key)).map((d) => d.name);
   },
 });
 

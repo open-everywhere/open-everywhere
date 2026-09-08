@@ -26,20 +26,20 @@ const NOTION = "notion";
 const WORK_ROLE = "team-key";
 const CHAT_ROLE = "channel-key";
 
-const plain: Domain = { name: "support", channels: ["slack/T1/C1"] };
+const plain: Domain = { name: "support", reach: ["slack/T1/C1"] };
 const chatOnly: Domain = {
   name: "billing",
-  channels: ["slack/T1/C2"],
+  reach: ["slack/T1/C2"],
   credentials: [{ connector: NOTION, credential: CHAT_ROLE, use: "billing-chat-key" }],
 };
 const worker: Domain = {
   name: "payments",
-  channels: ["slack/T1/C3", "notion/WS/aaa"],
+  reach: ["slack/T1/C3", "notion/WS/aaa"],
   credentials: [{ connector: NOTION, credential: WORK_ROLE, use: "payments-work-key" }],
 };
 const otherProvider: Domain = {
   name: "platform",
-  channels: ["slack/T1/C4"],
+  reach: ["slack/T1/C4"],
   credentials: [{ connector: "linear", credential: WORK_ROLE, use: "platform-linear-key" }],
 };
 
@@ -65,7 +65,7 @@ passed++;
 
 const both: Domain = {
   name: "kb",
-  channels: ["notion/WS/bbb"],
+  reach: ["notion/WS/bbb"],
   credentials: [
     { connector: NOTION, credential: CHAT_ROLE, use: "kb-chat-key" },
     { connector: NOTION, credential: WORK_ROLE, use: "kb-work-key" },
@@ -88,12 +88,12 @@ ok(sorted.join(",") === "github,notion", `the list stays sorted with github in i
 
 const chatWorker: Domain = {
   name: "chat-worker",
-  channels: ["slack/T1/C1"],
+  reach: ["slack/T1/C1"],
   credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
 };
 ok(workGrantedConnectors([chatWorker]).includes("slack"), "🔴 OPE-959: a Slack work grant now appears in the prompt-facing summary, on the same terms as Notion's");
 ok(
-  workGrantedConnectors([{ name: "chat-plain", channels: ["slack/T1/C2"] } as Domain]).includes("slack") === false,
+  workGrantedConnectors([{ name: "chat-plain", reach: ["slack/T1/C2"] } as Domain]).includes("slack") === false,
   "NEGATIVE CONTROL: a domain with a Slack CHANNEL and no work declaration is told nothing (explicit false)",
 );
 
@@ -126,10 +126,10 @@ const GRANTED_KEY = `${WORK_CHAT}/W9/${GRANTED_ROOM}`;
 const BARE_KEY = `${WORK_CHAT}/W9/${BARE_ROOM}`;
 const grantedDomain: Domain = {
   name: "wg-granted",
-  channels: [GRANTED_KEY],
+  reach: [GRANTED_KEY],
   credentials: [{ connector: NOTION, credential: WORK_ROLE, use: "wg-work-key" }],
 };
-const bareDomain: Domain = { name: "wg-bare", channels: [BARE_KEY] };
+const bareDomain: Domain = { name: "wg-bare", reach: [BARE_KEY] };
 const wgDomains = (): readonly Domain[] => [grantedDomain, bareDomain];
 
 ok(callerWorkDomain(ctxIn(GRANTED_ROOM), wgDomains)?.name === "wg-granted", "callerWorkDomain resolves the caller's OWN domain from its ctx");

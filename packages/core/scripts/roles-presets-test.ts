@@ -89,37 +89,37 @@ throws(() => assertRolesValid([defineRole({ name: "  ", persona: "x" })]), "no n
 throws(() => assertRolesValid([defineRole({ name: "empty" })]), "presets nothing", "facet-less role throws at load");
 
 throws(
-  () => applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa-enginer" })], ROLES),
+  () => applyRoleDefaults([defineDomain({ name: "team", reach: [K], role: "qa-enginer" })], ROLES),
   'unknown role "qa-enginer"',
   "typo'd role: reference fails LOUD at config load",
 );
 
 {
-  const [d] = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa" })], ROLES);
+  const [d] = applyRoleDefaults([defineDomain({ name: "team", reach: [K], role: "qa" })], ROLES);
   ok(d.memory === "qa-silo" && d.sandbox?.vcpus === 4, "role fills absent memory/sandbox");
   ok(d.role === "qa", "resolved domain keeps its role name (runtime rungs + prompt need it)");
   ok(d.statusVerbs === undefined && d.models === undefined, "layered knobs (verbs/models) are NOT flattened at load — they merge at resolution");
 }
 {
   const [d] = applyRoleDefaults(
-    [defineDomain({ name: "team", channels: [K], role: "qa", memory: ["own-silo"], sandbox: { vcpus: 8 } })],
+    [defineDomain({ name: "team", reach: [K], role: "qa", memory: ["own-silo"], sandbox: { vcpus: 8 } })],
     ROLES,
   );
   ok(Array.isArray(d.memory) && d.memory[0] === "own-silo" && d.sandbox?.vcpus === 8, "the domain's own memory/sandbox WIN over the role's, field by field");
 }
 {
-  const [d] = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa", sandbox: { vcpus: 8 } })], ROLES);
+  const [d] = applyRoleDefaults([defineDomain({ name: "team", reach: [K], role: "qa", sandbox: { vcpus: 8 } })], ROLES);
   ok(d.sandbox?.vcpus === 8 && d.memory === "qa-silo", "overriding ONE single-valued knob keeps the role's value for the other");
 }
 {
-  const plain = defineDomain({ name: "plain", channels: [K] });
+  const plain = defineDomain({ name: "plain", reach: [K] });
   const [d] = applyRoleDefaults([plain], ROLES);
   ok(d === plain, "a role-less domain passes through untouched");
   ok(applyRoleDefaults([plain], []).length === 1, "role-less domains work with an empty role registry");
 }
 
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa", statusVerbs: ["Reviewing"] })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa", statusVerbs: ["Reviewing"] })];
   const verbs = statusVerbsFor(K, domains, ROLES);
   ok(verbs.includes("Probing") && verbs.includes("Breaking"), "role verbs join the vocabulary");
   ok(verbs.includes("Reviewing"), "domain verbs extend ON TOP of the role's");
@@ -127,12 +127,12 @@ throws(
   ok(DEFAULT_STATUS_VERBS.every((v) => verbs.includes(v)), "framework defaults survive (everyone extends)");
 }
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "replacer", statusVerbs: ["On top"] })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "replacer", statusVerbs: ["On top"] })];
   const verbs = statusVerbsFor(K, domains, ROLES);
   ok(verbs.length === 2 && verbs[0] === "Only this" && verbs[1] === "On top", "role replace resets the vocabulary; domain extends on top of the role");
 }
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa", statusVerbs: ["Solo"], statusVerbsMode: "replace" })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa", statusVerbs: ["Solo"], statusVerbsMode: "replace" })];
   const verbs = statusVerbsFor(K, domains, ROLES);
   ok(verbs.length === 1 && verbs[0] === "Solo", "domain replace beats the role rung (domain is the higher layer)");
 }
@@ -141,27 +141,27 @@ throws(
   ok(statusVerbsFor(K, domains, ROLES).includes("Probing"), "a role on the org pseudo-domain rungs in for unassigned channels");
 }
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa", statusVerbs: ["Reviewing"] })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa", statusVerbs: ["Reviewing"] })];
   const verbs = statusVerbsFor(K, domains);
   ok(!verbs.includes("Probing") && verbs.includes("Reviewing"), "roles omitted → pre-role behaviour (back-compat)");
-  const ghost = statusVerbsFor(K, [defineDomain({ name: "team", channels: [K], role: "nope" })], ROLES);
+  const ghost = statusVerbsFor(K, [defineDomain({ name: "team", reach: [K], role: "nope" })], ROLES);
   ok(ghost.length === DEFAULT_STATUS_VERBS.length, "unknown role at RUNTIME contributes no rung (fail-open; load already failed loud)");
 }
 
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa" })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa" })];
   const r = modelRouteFor("primary", K, domains, ROLES);
   ok(r.id === "vendor/qa-model" && r.reasoning === "high", "role's route applies when the domain sets nothing");
 }
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa", models: { primary: { reasoning: "low" } } })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa", models: { primary: { reasoning: "low" } } })];
   const r = modelRouteFor("primary", K, domains, ROLES);
   ok(r.id === "vendor/qa-model" && r.reasoning === "low", "domain field beats the role's, field by field (id inherited from the role)");
 }
 {
   const domains = [
     defineDomain({ name: "org", match: "org", models: { primary: { id: "vendor/org-model", providers: ["fireworks"] } } }),
-    defineDomain({ name: "team", channels: [K], role: "qa" }),
+    defineDomain({ name: "team", reach: [K], role: "qa" }),
   ];
   const r = modelRouteFor("primary", K, domains, ROLES);
   ok(r.id === "vendor/qa-model", "role rung beats the org layer");
@@ -171,20 +171,20 @@ throws(
   const pinOnly = defineRole({ name: "pin-only", models: { primary: { providers: ["baseten"] } } });
   const domains = [
     defineDomain({ name: "org", match: "org", models: { primary: { id: "vendor/org-model" } } }),
-    defineDomain({ name: "team", channels: [K], role: "pin-only" }),
+    defineDomain({ name: "team", reach: [K], role: "pin-only" }),
   ];
   const r = modelRouteFor("primary", K, domains, [pinOnly]);
   ok(r.id === "vendor/org-model" && r.providers?.[0] === "baseten", "role can pin providers while inheriting the org id");
 }
-ok(modelRouteFor("utility", K, [defineDomain({ name: "team", channels: [K], role: "qa" })], ROLES).id === undefined, "role rung is per model-role: qa presets primary only, utility inherits");
+ok(modelRouteFor("utility", K, [defineDomain({ name: "team", reach: [K], role: "qa" })], ROLES).id === undefined, "role rung is per model-role: qa presets primary only, utility inherits");
 
 {
   const domains = applyRoleDefaults(
-    [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", channels: [K], role: "qa" })],
+    [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", reach: [K], role: "qa" })],
     ROLES,
   );
   ok(effectiveRoleFor(bindingFor(), partitionFor(), domains, ROLES)?.name === "qa", "explicit domain's role wins");
-  const noRole = [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", channels: [K] })];
+  const noRole = [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", reach: [K] })];
   ok(effectiveRoleFor(bindingFor(), partitionFor(), noRole, ROLES)?.name === "pirate", "explicit domain without a role falls through to the org role (models doctrine)");
   ok(effectiveRoleFor(bindingFor(), partitionFor("C9"), noRole, ROLES)?.name === "pirate", "unassigned internal channel takes the org pseudo-domain's role");
 }
@@ -206,9 +206,9 @@ ok(modelRouteFor("utility", K, [defineDomain({ name: "team", channels: [K], role
     "external with no public pseudo-domain → no role (fail-closed scope, fail-open feature)",
   );
 }
-ok(effectiveRoleFor(bindingFor(), partitionFor(), [defineDomain({ name: "team", channels: [K], role: "gone" })], ROLES) === undefined, "unknown role name resolves to undefined at runtime (fail-open)");
+ok(effectiveRoleFor(bindingFor(), partitionFor(), [defineDomain({ name: "team", reach: [K], role: "gone" })], ROLES) === undefined, "unknown role name resolves to undefined at runtime (fail-open)");
 {
-  const domains = [defineDomain({ name: "team", channels: [K], role: "qa" })];
+  const domains = [defineDomain({ name: "team", reach: [K], role: "qa" })];
   const threadPartition = partitionFor("C1-thread-42", K);
   ok(roleScopeDomain(bindingFor(), threadPartition, domains)?.name === "team", "a thread resolves its parent channel's domain (domainKeyOf grain)");
 }
@@ -222,15 +222,15 @@ ok(effectiveRoleFor(bindingFor(), partitionFor(), [defineDomain({ name: "team", 
 }
 
 {
-  const domains = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa" })], ROLES);
+  const domains = applyRoleDefaults([defineDomain({ name: "team", reach: [K], role: "qa" })], ROLES);
   ok(sandboxPresetFor(bindingFor(), partitionFor(), domains)?.vcpus === 4, "role's sandbox preset reaches the resolved domain (via applyRoleDefaults)");
-  const orgSized = [defineDomain({ name: "org", match: "org", sandbox: { vcpus: 2 } }), defineDomain({ name: "team", channels: [K] })];
+  const orgSized = [defineDomain({ name: "org", match: "org", sandbox: { vcpus: 2 } }), defineDomain({ name: "team", reach: [K] })];
   ok(sandboxPresetFor(bindingFor(), partitionFor(), orgSized)?.vcpus === 2, "explicit domain without a preset falls through to org's");
   ok(sandboxPresetFor(bindingFor({ mode: "dm" }), partitionFor("D1"), orgSized) === undefined, "DMs don't inherit the org sandbox preset");
 }
 
 const seamDomains = applyRoleDefaults(
-  [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", channels: [K], role: "qa" })],
+  [defineDomain({ name: "org", match: "org", role: "pirate" }), defineDomain({ name: "team", reach: [K], role: "qa" })],
   ROLES,
 );
 registerConfig({

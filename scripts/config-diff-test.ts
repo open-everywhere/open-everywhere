@@ -48,10 +48,10 @@ ok(digestValue(longStr, hash).startsWith("<") && digestValue(longStr, hash).incl
 ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest CHANGES when the prompt text changes (else a prompt edit is invisible)");
 
 {
-  const rows = flattenEntity("payments", { name: "payments", bundle: "pay-tools", channels: ["slack/T/C2", "slack/T/C1"] }, hash);
+  const rows = flattenEntity("payments", { name: "payments", bundle: "pay-tools", reach: ["slack/T/C2", "slack/T/C1"] }, hash);
   const m = new Map(rows.map((r) => [r.key, r.value]));
   ok(m.get("payments.bundle") === '"pay-tools"', "flattenEntity emits a scalar field as its own row");
-  ok(m.get("payments.channels") === "[slack/T/C1, slack/T/C2]", "a scalar array flattens to ONE order-insensitive set row");
+  ok(m.get("payments.reach") === "[slack/T/C1, slack/T/C2]", "a scalar array flattens to ONE order-insensitive set row");
   const withNew = flattenEntity("payments", { name: "payments", somethingAddedTomorrow: true }, hash);
   ok(
     withNew.some((r) => r.key === "payments.somethingAddedTomorrow"),

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { CAP_LEVELS } from "../operational/store.js";
 import { appendAudit } from "../audit/audit.js";
 import { foreignOrgDenial, scopeDenial } from "./auth.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -17,7 +18,8 @@ import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
 import { disarmApprovalJudge, rearmApprovalJudge } from "../approvals/judge-contradiction.js";
-import { whereFromScope } from "../approvals/actions.js";
+import { orgWideWhere, whereFromScope } from "../approvals/actions.js";
+import { haltAddressFields, haltAddressFromParts } from "../access/halt.js";
 import { supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
@@ -41,6 +43,8 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "decide_pending_action",
   "disarm_approval_judge",
   "rearm_approval_judge",
+  "halt",
+  "resume",
   "link_sets_list",
   "suspend_link_set",
   "reactivate_link_set",
@@ -75,6 +79,32 @@ function judgeOperatorOrgDenial(a: JudgeOperatorScopeArgs): string | undefined {
 
 function judgeOperatorAddress(a: JudgeOperatorScopeArgs): { domain: string } | { orgWide: true } {
   return a.domain === undefined ? { orgWide: true } : { domain: a.domain };
+}
+
+const haltOperatorScopeSchema = z
+  .object({
+    org: z.string().min(1),
+    level: z.enum(CAP_LEVELS).optional(),
+    scopeKey: z.string().min(1).optional(),
+    orgWide: z.literal(true).optional(),
+  })
+  .refine((a) => (a.level === undefined) === (a.scopeKey === undefined), {
+    message: 'an addressed halt needs BOTH "level" and "scopeKey" — a level with no key addresses nothing.',
+  })
+  .refine((a) => (a.level === undefined) !== (a.orgWide === undefined), {
+    message: 'name exactly one address: a ("level", "scopeKey") pair, or "orgWide": true for the whole org — never both, never neither.',
+  });
+
+type HaltOperatorScopeArgs = z.infer<typeof haltOperatorScopeSchema>;
+
+function haltOperatorScopeRequest(a: HaltOperatorScopeArgs): { org: string; domain?: string } {
+  return a.level === "domain" && a.scopeKey !== undefined ? { org: a.org, domain: a.scopeKey } : { org: a.org };
+}
+
+function haltOperatorOrgDenial(a: HaltOperatorScopeArgs): string | undefined {
+  const mine = deploymentOrg();
+  if (a.org === mine) return undefined;
+  return `org "${a.org}" is not this deployment's org ("${mine}"). Every halt arrow reads the halt rows for its own org, so a row written under another org would stop nothing — the call is refused rather than silently doing nothing.`;
 }
 
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
@@ -374,6 +404,60 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, org: a.org, ...address, rearmed: true });
       } catch (e) {
         return errorResult(`rearm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "halt",
+    {
+      title: "Halt everything consequential at one address (break-glass)",
+      description:
+        "Stop every consequential act at one address, now. While halted: no gated verb passes the approver chain, no routine fires on either leg, no connector op and no borrowed credential grant is spendable, the sandbox firewall is deny-all and every host-side fetch is refused. It does NOT silence the agent — it still reads and replies, and says it is halted. Name EXACTLY ONE address: a (`level`, `scopeKey`) pair — level is one of surface/workspace/domain/user, scopeKey the matching scope key — or `orgWide: true` for the whole org. Halted if ANY covering row is active, so an org-wide halt covers everything regardless of the addressed rows. It LASTS UNTIL SOMEBODY RESUMES; no clock lifts it. 🔴 `org` MUST be this deployment's own org, or the call is refused by name rather than writing a row no arrow would read.",
+      inputSchema: haltOperatorScopeSchema,
+    },
+    async (a) => {
+      const denial = haltOperatorOrgDenial(a) ?? scopeDenial(roles, haltOperatorScopeRequest(a));
+      if (denial) return errorResult(denial);
+      try {
+        const address = haltAddressFromParts(a);
+        await getOperationalStore().setHalt(a.org, address, { setBy: actor });
+        await appendAudit({
+          ...(address.orgWide ? orgWideWhere(a.org) : whereFromScope(a.org, address.scopeKey)),
+          principalId: actor,
+          action: "admin.halt.set",
+          detail: { ...haltAddressFields(address), door: "control-mcp" },
+        });
+        return jsonResult({ ok: true, org: a.org, ...haltAddressFields(address), halted: true });
+      } catch (e) {
+        return errorResult(`halt failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "resume",
+    {
+      title: "Lift the break-glass halt at one address",
+      description:
+        "Lift a halt at one address, now — the symmetric partner of `halt` and the door that works when the in-chat one does not (that one is carded and needs an admin present). Name EXACTLY ONE address, the same two `halt` takes: a (`level`, `scopeKey`) pair, or `orgWide: true`. 🔴 The addresses are a strict partition: lifting the org-wide halt does not lift an addressed one, and vice versa — if both cover a call, both must be resumed. `cleared: false` means nothing was halted there; that is not an error. 🔴 `org` MUST be this deployment's own org.",
+      inputSchema: haltOperatorScopeSchema,
+    },
+    async (a) => {
+      const denial = haltOperatorOrgDenial(a) ?? scopeDenial(roles, haltOperatorScopeRequest(a));
+      if (denial) return errorResult(denial);
+      try {
+        const address = haltAddressFromParts(a);
+        const cleared = await getOperationalStore().clearHalt(a.org, address, { clearedBy: actor });
+        await appendAudit({
+          ...(address.orgWide ? orgWideWhere(a.org) : whereFromScope(a.org, address.scopeKey)),
+          principalId: actor,
+          action: "admin.halt.cleared",
+          detail: { ...haltAddressFields(address), door: "control-mcp", cleared },
+        });
+        return jsonResult({ ok: true, org: a.org, ...haltAddressFields(address), cleared });
+      } catch (e) {
+        return errorResult(`resume failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

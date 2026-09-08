@@ -29,18 +29,24 @@ export interface GrantClickInput extends GrantAuditStamps {
 }
 
 export async function resolveGrantCardClick(input: GrantClickInput): Promise<GrantClickResult> {
+  let noted = false;
+  const note = async (outcome: GrantClickResult["outcome"], failure?: GrantClickFailure): Promise<void> => {
+    if (noted) return;
+    noted = true;
+    await noteClick(input, outcome, failure);
+  };
   try {
     const store = getOperationalStore();
     const ask = await store.getCredentialGrantAsk(input.org, input.askId);
     const clickerKey = tryPrincipalKey(input.clicker.platform, input.clicker.tenant, input.clicker.nativeId);
     if (ask === null || clickerKey === undefined || ask.ownerPrincipalId !== clickerKey) {
-      await noteClick(input, "not-yours");
+      await note("not-yours");
       return { outcome: "not-yours", text: "That request is not yours to answer, or it is no longer open." };
     }
 
     if (input.answer === "decline") {
       const declined = await declineCredentialGrant(input, ask.id, clickerKey, input.nowMs);
-      await noteClick(input, declined ? "declined" : "gone");
+      await note(declined ? "declined" : "gone");
       return declined
         ? { outcome: "declined", text: "Declined. Nothing was granted, and the conversation that asked has been told." }
         : { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
@@ -49,18 +55,28 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
     const mode: CredentialGrantMode = input.answer;
     const approved = await approveCredentialGrant(input, ask.id, mode, clickerKey, input.nowMs);
     if (!approved.approved) {
-      await noteClick(input, approved.reason === "not_pending_or_expired" ? "gone" : "failed");
       if (approved.reason === "not_pending_or_expired") {
+        await note("gone");
         return { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
       }
-      return { outcome: "failed", text: grantApproveFailureText(approved.reason, approved.prompted === true) };
+      const prompted = approved.prompted === true;
+      await note("failed", approved.reason === "consent_required" ? { linkDelivered: prompted, reason: approved.reason } : { reason: approved.reason });
+      return { outcome: "failed", text: grantApproveFailureText(approved.reason, prompted) };
     }
-    await noteClick(input, "approved");
+    await note("approved");
     return { outcome: "approved", text: grantApprovedClickText(approved.grant, input.nowMs) };
   } catch (err) {
     console.log(`[open-everywhere:grant] card click for ask ${input.askId} did not resolve: ${String(err)}`);
+    await note("failed", { reason: "click_threw" });
     return { outcome: "failed", text: "That could not be answered right now. Nothing changed, and nothing was granted. Try the button again." };
   }
+}
+
+export type GrantClickFailureReason = Exclude<GrantApproveFailure["reason"], "not_pending_or_expired"> | "click_threw";
+
+interface GrantClickFailure {
+  readonly reason: GrantClickFailureReason;
+  readonly linkDelivered?: boolean;
 }
 
 export function grantApprovedClickText(grant: Pick<CredentialGrantRow, "connector" | "mcpTool" | "expiresAt">, nowMs: number): string {
@@ -142,11 +158,18 @@ export async function handleGrantCardClick(payload: unknown, deps: { readonly ep
   }
 }
 
-async function noteClick(input: GrantClickInput, outcome: string): Promise<void> {
+async function noteClick(input: GrantClickInput, outcome: GrantClickResult["outcome"], failure?: GrantClickFailure): Promise<void> {
   try {
     await appendAudit({
       action: GRANT_CARD_CLICK_ACTION,
-      detail: { answer: input.answer, askId: input.askId, clicker: input.clicker.nativeId, outcome },
+      detail: {
+        answer: input.answer,
+        askId: input.askId,
+        clicker: input.clicker.nativeId,
+        outcome,
+        ...(failure === undefined ? {} : { reason: failure.reason }),
+        ...(failure?.linkDelivered === undefined ? {} : { linkDelivered: failure.linkDelivered }),
+      },
       org: input.org,
       platform: input.platform,
       workspace: input.workspace,

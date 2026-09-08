@@ -5,6 +5,7 @@ import replyDynamic from "../../agent/tools/reply.js";
 import noReplyTool from "../../agent/tools/no_reply.js";
 import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
+import haltTool from "../../agent/tools/halt.js";
 import reactDynamic from "../../agent/tools/react.js";
 import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
 import readChannelDynamic from "../../agent/tools/read_channel.js";
@@ -35,7 +36,7 @@ export function registerSyntheticConfig(opts: { readonly unified: boolean }): vo
     loadDomains: () => [
       defineDomain({
         name: DOMAIN,
-        channels: [`slack/${SLACK_TEAM}/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
+        reach: [`slack/${SLACK_TEAM}/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
         memory: "payments-notes",
         ambientSupervisor: true,
         ...(opts.unified ? { mode: "unified" as const } : {}),
@@ -189,6 +190,7 @@ export async function buildLeanSeatToolset(opts: {
     no_reply: rec("no_reply", noReplyTool as MountableEntry),
     update_status: rec("update_status", updateStatusTool as MountableEntry),
     stand_down: rec("stand_down", standDownTool as MountableEntry),
+    halt: rec("halt", haltTool as MountableEntry),
   };
   if (opts.allowNoReply) {
     const entry = await tryReplyEntryForSeat(opts.ctx);

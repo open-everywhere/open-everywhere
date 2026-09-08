@@ -207,7 +207,7 @@ export const SETTINGS = {
       shipped: 24,
       validate: positiveNumber,
       summary:
-        "TTL for the session-checkpoint continue/asked memos, in hours. Also a GC bound, not the death mechanism.",
+        "TTL for the session-checkpoint memos of a LIVE session, in hours. A GC bound, not the death mechanism — the memo's session id embeds the window generation, so a rotation drops it regardless. It does NOT bound a ROUTINE fire's continue grant, which carries no expiry: approving a durable job's checkpoint records the cost at that moment as the approved mark, and the next card fires only once the session spends a fresh threshold's worth on top of it. It still bounds that fire's \"asked\" marker, which is what lets a declined job be asked again.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     routineCardWaitSeconds: {
@@ -682,7 +682,7 @@ export const SETTINGS = {
       path: "webhooks.allowUnverifiedNotion",
       shipped: false,
       summary:
-        "Accept a Notion delivery when no verification token is configured. Off (shipped) rejects it. On, the delivery reaches the ambient supervisor but identifies NO SIGNER, so a page a domain reaches only through a `containers` claim is still refused, and the delivery deliberately never enters the routine-trigger plane — an acceptance proved only by possession of the URL must not start member-authored work. Local development only.",
+        "Accept a Notion delivery when no verification token is configured. Off (shipped) rejects it. On, the delivery reaches the ambient supervisor but identifies NO SIGNER, so a page a domain reaches only through a container entry is still refused, and the delivery deliberately never enters the routine-trigger plane — an acceptance proved only by possession of the URL must not start member-authored work. Local development only.",
     } satisfies SettingSpec<boolean>,
   },
   window: {

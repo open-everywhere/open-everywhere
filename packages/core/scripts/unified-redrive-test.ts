@@ -156,7 +156,7 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "payments", channels: [PAY_SLACK], ambientSupervisor: true, mode: "unified" })],
+    loadDomains: () => [defineDomain({ name: "payments", reach: [PAY_SLACK], ambientSupervisor: true, mode: "unified" })],
     loadSilos: () => [],
     domainsForSurface: ({ surface }) => (surface === "C_PAY" ? ["payments"] : []),
   });

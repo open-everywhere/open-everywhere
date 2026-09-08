@@ -62,9 +62,9 @@ registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async 
 registerSlackFixtureCodec();
 registerSlackFixtureMapper();
 
-const winDomain = defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" });
-const healDomain = defineDomain({ name: HEAL_DOMAIN, channels: [HEAL_SURFACE], ambientSupervisor: true, mode: "unified" });
-const rotaDomain = defineDomain({ name: ROTA_DOMAIN, channels: [ROTA_SURFACE], ambientSupervisor: true, mode: "unified" });
+const winDomain = defineDomain({ name: DOMAIN, reach: [SURFACE], ambientSupervisor: true, mode: "unified" });
+const healDomain = defineDomain({ name: HEAL_DOMAIN, reach: [HEAL_SURFACE], ambientSupervisor: true, mode: "unified" });
+const rotaDomain = defineDomain({ name: ROTA_DOMAIN, reach: [ROTA_SURFACE], ambientSupervisor: true, mode: "unified" });
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],

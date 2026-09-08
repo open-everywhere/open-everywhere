@@ -30,8 +30,8 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 const WINDOWED_KEY = "slack/T_ROUTE/C_WINDOWED";
 const PLAIN_KEY = "slack/T_ROUTE/C_PLAIN";
-const windowedDomain = defineDomain({ name: "payments", channels: [WINDOWED_KEY], ambientSupervisor: true, mode: "unified" });
-const plainDomain = defineDomain({ name: "sundries", channels: [PLAIN_KEY] });
+const windowedDomain = defineDomain({ name: "payments", reach: [WINDOWED_KEY], ambientSupervisor: true, mode: "unified" });
+const plainDomain = defineDomain({ name: "sundries", reach: [PLAIN_KEY] });
 const domains = [windowedDomain, plainDomain];
 
 registerConfig({

@@ -27,6 +27,7 @@ export interface AccessRequestArgs {
   readonly permalink?: string;
   readonly configRepo: string;
   readonly universe?: string;
+  readonly exposure?: readonly string[];
 }
 
 export interface AccessRequestExecuteDeps {
@@ -76,6 +77,7 @@ function prBody(args: AccessRequestArgs, decidedBy: string): string {
     grantSentence(args.delta) + ".",
     "",
     ...(args.universe ? [args.universe, ""] : []),
+    ...(args.exposure?.length ? [...args.exposure, ""] : []),
     ...renderDelta(args.delta).join("\n").split("\n"),
     "",
     `Requested by \`${args.requestedBy}\` · sent by \`${decidedBy}\` · scope \`${args.scopeKey}\``,
@@ -202,6 +204,7 @@ const accessRequest: ActionKind<AccessRequestArgs> = {
     return [
       `Request wider access — ${grantSentence(args.delta)}`,
       ...(args.universe ? [args.universe] : []),
+      ...(args.exposure ?? []),
       ...renderDelta(args.delta),
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is granted until they do.`,

@@ -100,7 +100,7 @@ _setDeploymentIdentityForTest({ org: CTL_ORG });
 {
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");
-  const domains = [defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] })];
+  const domains = [defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] })];
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],

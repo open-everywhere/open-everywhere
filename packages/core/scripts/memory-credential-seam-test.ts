@@ -49,14 +49,14 @@ const cfg: MemoryResolveConfig = {
   domains: [
     defineDomain({
       name: "payments",
-      channels: ["slack/T/C_PAY"],
+      reach: ["slack/T/C_PAY"],
       memory: "pay-brain",
       includeOrg: "readonly",
       credentials: [{ connector: NOTION, credential: MEMORY_ROLE, use: PAY_MEMORY_CRED }],
     }),
-    defineDomain({ name: "support", channels: ["slack/T/C_SUP"], memory: "sup-brain" }),
-    defineDomain({ name: "alpha", channels: ["slack/T/C_A"], memory: "shared" }),
-    defineDomain({ name: "beta", channels: ["slack/T/C_B"], memory: "shared" }),
+    defineDomain({ name: "support", reach: ["slack/T/C_SUP"], memory: "sup-brain" }),
+    defineDomain({ name: "alpha", reach: ["slack/T/C_A"], memory: "shared" }),
+    defineDomain({ name: "beta", reach: ["slack/T/C_B"], memory: "shared" }),
     defineDomain({ name: "org", match: "org", memory: "org-base" }),
     defineDomain({ name: "public", match: "public", memory: "pub-faq" }),
     defineDomain({ name: "dm", match: "dm", memory: "dm-shared" }),

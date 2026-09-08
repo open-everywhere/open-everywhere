@@ -317,7 +317,7 @@ const computed = (section: string, parts: Partial<Extract<ConfigFacts["sections"
         removed: [{ section: "access", key: "slack/T1/C2 · connectors", value: "[notion]" }],
       }),
       computed("domains", {
-        changed: [{ key: "eng.channels", before: "[slack/T1/C1]", after: "[slack/T1/C1, slack/T1/C9]" }],
+        changed: [{ key: "eng.reach", before: "[slack/T1/C1]", after: "[slack/T1/C1, slack/T1/C9]" }],
       }),
       computed("webhooks", { added: [{ section: "webhooks", key: "deploys.instruction", value: '"Post a deploy summary"' }] }),
       { kind: "not-computable" as const, section: "plugins", reason: "the base revision does not declare it" },
@@ -333,7 +333,29 @@ const computed = (section: string, parts: Partial<Extract<ConfigFacts["sections"
   eq(br.scopes.find((s) => s.scope === "slack/T1/C1")?.opaque.length, 1, "a non-set row (routing) is carried as opaque rather than dropped");
   eq(br.scopes.find((s) => s.scope === "slack/T1/C9")?.newlyBound, true, "a scope whose every row is ADDED is reported as newly BOUND");
   eq(br.scopes.find((s) => s.scope === "slack/T1/C2")?.unbound, true, "…and one whose every row is REMOVED as unbound");
-  eq(br.rosters, [{ domain: "eng", field: "channels", gained: ["slack/T1/C9"], lost: [] }], "a domain roster gain is read out of the domains section");
+  eq(br.rosters, [{ domain: "eng", field: "reach", gained: ["slack/T1/C9"], lost: [] }], "a domain roster gain is read out of the domains section");
+  {
+    const removedCarveOut = computeBlastRadius(
+      facts([computed("domains", { changed: [{ key: "payments.exclude", before: "[github/acme/payments-secrets]", after: "[]" }] })]),
+    );
+    eq(
+      removedCarveOut.rosters,
+      [{ domain: "payments", field: "exclude", gained: [], lost: ["github/acme/payments-secrets"] }],
+      "an exclude DELETION is read out of the domains section as a loss",
+    );
+    ok(removedCarveOut.widens, "🔴 …and it counts as WIDENING — the carve-out is gone, so the repo inherits the domain's bundles again");
+
+    const addedCarveOut = computeBlastRadius(
+      facts([computed("domains", { changed: [{ key: "payments.exclude", before: "[]", after: "[github/acme/payments-secrets]" }] })]),
+    );
+    eq(addedCarveOut.rosters[0]?.gained, ["github/acme/payments-secrets"], "an exclude ADDITION is read as a gain on that list");
+    ok(!addedCarveOut.widens, "…and it does NOT count as widening — a new carve-out takes access away (negative control for the line above)");
+
+    const removedReach = computeBlastRadius(
+      facts([computed("domains", { changed: [{ key: "eng.reach", before: "[slack/T1/C1, slack/T1/C9]", after: "[slack/T1/C1]" }] })]),
+    );
+    ok(!removedReach.widens, "a reach LOSS does not widen — the two lists move access in opposite directions");
+  }
   eq(br.standingPrompts.length, 1, "a webhook instruction landing is a standing-prompt delta");
   eq(br.standingPrompts[0].change, "added", "…reported as added");
   eq(br.notComputable, [{ section: "plugins", reason: "the base revision does not declare it" }], "a not-computable section is carried through, never swallowed");

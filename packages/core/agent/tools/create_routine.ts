@@ -249,13 +249,13 @@ export default defineTool({
       const configured = reportChannelFor(domainKeyOf(p), getConfig().loadDomains());
       if (!configured) {
         throw new Error(
-          `A routine created here couldn't post anything — "${binding.platform}" has no wired post-back, so it would come due forever and never report. Set \`reportChannel\` on this channel's domain (agent/config/domains.ts) to one of that domain's own Slack/Discord channels, and I can run it from here and report there; or ask me in a channel that can post.`,
+          `A routine created here couldn't post anything — "${binding.platform}" has no wired post-back, so it would come due forever and never report. Set \`reportChannel\` on this channel's domain (agent/memory/config/domains/<name>.ts) to one of that domain's own Slack/Discord channels, and I can run it from here and report there; or ask me in a channel that can post.`,
         );
       }
       const reportTarget = reportTargetForSurface(configured);
       if (!reportTarget) {
         throw new Error(
-          `This domain's \`reportChannel\` is "${configured}", but that surface's post-back target can't be derived from its key alone (Teams needs a stored conversation reference), so a routine reporting there would never post. Point \`reportChannel\` at a Slack or Discord channel in the same domain (agent/config/domains.ts).`,
+          `This domain's \`reportChannel\` is "${configured}", but that surface's post-back target can't be derived from its key alone (Teams needs a stored conversation reference), so a routine reporting there would never post. Point \`reportChannel\` at a Slack or Discord channel in the same domain (agent/memory/config/domains/<name>.ts).`,
         );
       }
       report = { kind: "surface", surfaceKey: configured, target: reportTarget };

@@ -1,5 +1,5 @@
 import { dmSurfaceKeyFromAnchorDomain, isTaskWindowId } from "./window-key.js";
-import type { Domain } from "../memory/domain.js";
+import { domainRoster, type Domain } from "../memory/domain.js";
 
 function platformOf(surfaceKey: string): string {
   return surfaceKey.split("/", 1)[0] ?? "";
@@ -30,13 +30,13 @@ export function sourcesForWindow(windowId: string, domain: string, domains: read
   }
   if (windowId === domain) {
     const d = domains.find((dm) => dm.name === domain);
-    return distinctPlatforms(d?.channels ?? []);
+    return distinctPlatforms(d ? domainRoster(d) : []);
   }
   if (!windowId.includes("/")) {
     const d = domains.find((dm) => dm.name === domain);
     const group = d?.windows?.find((g) => g.name === windowId);
     if (group === undefined) return [];
-    return distinctPlatforms(group.channels ?? []);
+    return distinctPlatforms(domainRoster(group));
   }
   const p = platformOf(windowId);
   return p.length > 0 ? [p] : [];

@@ -15,12 +15,12 @@ const ORG = "org-1";
 const TEAM_OWN = "team-own";
 const TEAM_OTHER = "team-other";
 
-const rostered: Domain = defineDomain({ name: "d1", channels: ["slack/T1/C1", `linear/${ORG}/${TEAM_OWN}`, `linear/other-org/${TEAM_OTHER}`] });
+const rostered: Domain = defineDomain({ name: "d1", reach: ["slack/T1/C1", `linear/${ORG}/${TEAM_OWN}`, `linear/other-org/${TEAM_OTHER}`] });
 const ids = domainOwnTeamIds(rostered, ORG);
 ok(ids.has(TEAM_OWN), "a rostered linear channel for the ASKED org's team is in the set");
 ok(ids.has(TEAM_OTHER) === false, "NEGATIVE CONTROL: a roster entry for a DIFFERENT org's team is excluded — the org argument actually filters");
-ok(domainOwnTeamIds(defineDomain({ name: "d2", channels: ["slack/T1/C2"] }), ORG).size === 0, "NEGATIVE CONTROL: a domain with no Linear roster entries owns NOTHING");
-ok(domainOwnTeamIds(defineDomain({ name: "d3", containers: [`linear/${ORG}`] }), ORG).size === 0, "a whole-workspace CLAIM (no per-team roster entry) also owns nothing extra to narrow to — documented, not silently ignored");
+ok(domainOwnTeamIds(defineDomain({ name: "d2", reach: ["slack/T1/C2"] }), ORG).size === 0, "NEGATIVE CONTROL: a domain with no Linear roster entries owns NOTHING");
+ok(domainOwnTeamIds(defineDomain({ name: "d3", reach: [`linear/${ORG}`] }), ORG).size === 0, "a whole-workspace CLAIM (no per-team roster entry) also owns nothing extra to narrow to — documented, not silently ignored");
 
 const PLATFORM = "linearworksearchtestplatform";
 registerIdentityMapper(PLATFORM, (c) => {
@@ -36,7 +36,7 @@ function ctxIn(room: string): BindableContext {
 
 const domain: Domain = defineDomain({
   name: "lws-domain",
-  channels: [`${PLATFORM}/W1/CROOM`, `linear/${ORG}/${TEAM_OWN}`],
+  reach: [`${PLATFORM}/W1/CROOM`, `linear/${ORG}/${TEAM_OWN}`],
   credentials: [{ connector: "linear", credential: "workspace", use: ORG }],
 });
 
@@ -84,7 +84,7 @@ try {
   ok(scoped[0]!.title === "Our own issue" && scoped[0]!.connector === "linear" && scoped[0]!.url === "https://linear.app/x/issue/OWN-1", "the surviving hit carries identifier, title, url and connector — never a description/body");
 
   await assert.rejects(
-    linearWorkSearchAdapter.search(ctxIn("CROOM"), defineDomain({ name: "lws-nogrant", channels: [`${PLATFORM}/W1/CBARE`] }), "bug", { limit: 10, insideDomain: false }),
+    linearWorkSearchAdapter.search(ctxIn("CROOM"), defineDomain({ name: "lws-nogrant", reach: [`${PLATFORM}/W1/CBARE`] }), "bug", { limit: 10, insideDomain: false }),
     /holds no Linear work grant/u,
     "NEGATIVE CONTROL: a domain with no Linear work grant refuses rather than silently returning empty",
   );

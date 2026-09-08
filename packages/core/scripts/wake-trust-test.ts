@@ -27,7 +27,7 @@ function ok(cond: boolean, label: string): void {
 
 const DOMAINS: readonly Domain[] = [
   defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN"] }),
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
+  defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
 ];
 
 ok(wakeTrustFor({ authorIsBot: true, authorId: "B1", surfaceInternal: true, authorIsAdmin: true }) === "relay", "bot author → relay, even a rostered one (machine-authored never speaks with standing)");
@@ -66,7 +66,7 @@ ok(wakeAuthorIsAdmin("U_ENG_ADMIN", "slack/T1/C_ENG", DOMAINS), "an exact domain
 
 const COLLIDING: readonly Domain[] = [
   defineDomain({ name: "org", match: "org", admins: ["discord/300000000000000104"] }),
-  defineDomain({ name: "tm", channels: ["teams/W1/C_TM"], admins: ["teams/900900900"] }),
+  defineDomain({ name: "tm", reach: ["teams/W1/C_TM"], admins: ["teams/900900900"] }),
 ];
 ok(wakeAuthorIsAdmin("300000000000000104", "discord/G1/C_ANY", COLLIDING), "the digit-string id IS an org admin on discord, its own namespace");
 ok(!wakeAuthorIsAdmin("300000000000000104", "teams/W1/C_TM", COLLIDING), "🔴 …and the SAME digits on teams are NOT — a bare-id roster would have granted a stranger principal-tier standing");

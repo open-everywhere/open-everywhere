@@ -22,29 +22,29 @@ const MEMBER_ROLE = "user-oauth";
 const CHAT_ROLE = "channel-key";
 const WORK_ROLE = "team-key";
 
-const plain: Domain = { name: "support", channels: ["slack/T1/C1"] };
+const plain: Domain = { name: "support", reach: ["slack/T1/C1"] };
 
 const chatOnly: Domain = {
   name: "billing",
-  channels: ["slack/T1/C2"],
+  reach: ["slack/T1/C2"],
   credentials: [{ connector: NOTION, credential: CHAT_ROLE, use: "billing-chat-key" }],
 };
 
 const workOnly: Domain = {
   name: "platform",
-  channels: ["slack/T1/C3"],
+  reach: ["slack/T1/C3"],
   credentials: [{ connector: NOTION, credential: WORK_ROLE, use: "platform-team-key" }],
 };
 
 const memberGranted: Domain = {
   name: "product",
-  channels: ["slack/T1/C4"],
+  reach: ["slack/T1/C4"],
   credentials: [{ connector: NOTION, credential: MEMBER_ROLE, use: "product-personal" }],
 };
 
 const otherConnector: Domain = {
   name: "growth",
-  channels: ["slack/T1/C5"],
+  reach: ["slack/T1/C5"],
   credentials: [{ connector: "linear", credential: MEMBER_ROLE, use: "growth-personal" }],
 };
 
@@ -77,7 +77,7 @@ ok(memberPlaneGrants([]).length === 0, "no domains ⇒ no grants");
 
 const twoDomains: Domain = {
   name: "second",
-  channels: ["slack/T1/C6"],
+  reach: ["slack/T1/C6"],
   credentials: [{ connector: NOTION, credential: MEMBER_ROLE, use: "second-personal" }],
 };
 const union = memberPlaneGrants([memberGranted, twoDomains]);

@@ -16,7 +16,7 @@ const UNMOVED = [
 type Snapshot = {
   readonly resolved: Record<string, string | null>;
   readonly names: readonly string[];
-  readonly channels: Record<string, readonly string[]>;
+  readonly reach: Record<string, readonly string[]>;
   readonly ceilings: Record<string, string | null>;
 };
 
@@ -33,8 +33,8 @@ if (process.argv.includes("--probe")) {
   const snapshot: Snapshot = {
     resolved: Object.fromEntries(PROBE_KEYS.map((k) => [k, resolve(k)])),
     names: domains.map((d) => d.name),
-    channels: Object.fromEntries(
-      domains.filter((d) => ["e2e-unified", "e2e-memory", "e2e-b"].includes(d.name)).map((d) => [d.name, [...(d.channels ?? [])]]),
+    reach: Object.fromEntries(
+      domains.filter((d) => ["e2e-unified", "e2e-memory", "e2e-b"].includes(d.name)).map((d) => [d.name, [...(d.reach ?? [])]]),
     ),
     ceilings: Object.fromEntries(
       domains.filter((d) => ["e2e-unified", "e2e-memory"].includes(d.name)).map((d) => [d.name, d.reasoningCeiling ?? null]),
@@ -78,14 +78,14 @@ ok(true, "domains.ts loads clean with OE_MEMORY_EVAL=1 (channel exclusivity + un
   ok(off.resolved[NOTION] === "e2e-unified", `flag off: Notion surface resolves to e2e-unified (got ${off.resolved[NOTION]})`);
   ok(!off.names.includes("e2e-memory"), "flag off: the e2e-memory battery domain is not registered at all");
   ok(off.resolved[SLACK_MEM] === "e2e-b", `flag off: the battery's Slack channel belongs to e2e-b (got ${off.resolved[SLACK_MEM]})`);
-  ok((off.channels["e2e-unified"] ?? []).includes(NOTION), "flag off: e2e-unified lists the Notion surface");
+  ok((off.reach["e2e-unified"] ?? []).includes(NOTION), "flag off: e2e-unified lists the Notion surface");
 }
 
 {
   ok(on.resolved[NOTION] === "e2e-memory", `flag on: Notion surface resolves to e2e-memory (got ${on.resolved[NOTION]}) — M4 can inject`);
   ok(on.resolved[NOTION] !== "e2e-unified", "flag on: the Notion surface is NOT still on e2e-unified");
-  ok(!(on.channels["e2e-unified"] ?? []).includes(NOTION), "flag on: e2e-unified has dropped the Notion surface (exclusivity is why M4 was dead)");
-  const mem = on.channels["e2e-memory"] ?? [];
+  ok(!(on.reach["e2e-unified"] ?? []).includes(NOTION), "flag on: e2e-unified has dropped the Notion surface (exclusivity is why M4 was dead)");
+  const mem = on.reach["e2e-memory"] ?? [];
   ok(mem.includes(NOTION), "flag on: e2e-memory lists the Notion surface");
   ok(mem.includes(SLACK_MEM), "flag on: e2e-memory still lists the battery Slack channel");
   ok(new Set(mem.map((k) => k.split("/")[0])).size >= 2, "flag on: e2e-memory spans >1 PLATFORM — the precondition M4's one-brain claim needs");

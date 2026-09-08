@@ -57,7 +57,7 @@ const CREATOR = "U_CREATOR";
 
 registerSlackTestBridge({ channel: { __fixture: "slack" } as never, confirmChannelInternal: async () => true });
 registerSlackFixtureMapper();
-const domain = defineDomain({ name: "eligibility", channels: [SURFACE] });
+const domain = defineDomain({ name: "eligibility", reach: [SURFACE] });
 const DOMAINS: readonly Domain[] = [domain];
 registerConfig({
   loadBundles: () => [],

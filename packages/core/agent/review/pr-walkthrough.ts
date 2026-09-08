@@ -48,7 +48,7 @@ export const SNAPSHOT_BLIND_SPOTS: readonly { readonly headline: string; readonl
   },
   {
     headline: "UNENUMERABLE BREADTH",
-    gloss: "a domain's `containers` tenant claim is a predicate over surfaces that do not exist yet. It is probed, so its reach is shown — but who it will confer that reach on can never be listed.",
+    gloss: "a container `reach` entry is a predicate over surfaces that do not exist yet. It is probed, so its reach is shown — but who it will confer that reach on can never be listed.",
   },
   {
     headline: "DM / `principal` SCOPES",
@@ -417,12 +417,19 @@ function renderBlastRadius(facts: FactsSource): string[] {
   }
 
   if (br.rosters.length === 0) {
-    out.push("**Domain rosters** — _computed: no domain gained or lost a channel or a tenant claim._", "");
+    out.push("**Domain rosters** — _computed: no domain gained or lost reach._", "");
   } else {
     out.push("**Domain rosters** — which rooms inherit a domain's access:", "");
     for (const r of br.rosters) {
-      for (const g of r.gained) out.push(`- 🔴 \`${r.domain}\`.${r.field} **gains** \`${g}\`${r.field === "containers" ? " — a WHOLE-TENANT claim: it confers on surfaces that do not exist yet, and cannot be enumerated (§5.6)" : ""}`);
-      for (const l of r.lost) out.push(`- \`${r.domain}\`.${r.field} loses \`${l}\``);
+      const widens = r.field === "reach";
+      const mark = (wide: boolean): string => (wide ? "🔴 " : "");
+      for (const g of r.gained) {
+        const unbounded = widens && (g.split("/").length === 2 || g.endsWith("*"));
+        out.push(`- ${mark(widens)}\`${r.domain}\`.${r.field} **gains** \`${g}\`${unbounded ? " — a CONTAINER: it confers on surfaces that do not exist yet, and cannot be enumerated (§5.6)" : ""}`);
+      }
+      for (const l of r.lost) {
+        out.push(`- ${mark(!widens)}\`${r.domain}\`.${r.field} loses \`${l}\`${widens ? "" : " — the carve-out is GONE, so this surface inherits the domain's bundles again (§5.6)"}`);
+      }
     }
     out.push("");
   }

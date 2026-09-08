@@ -12,12 +12,7 @@ export function admittedTenants(platform: string, domains: readonly Domain[]): R
   const admitted = new Set<string>();
   const prefix = `${platform}/`;
   for (const d of domains) {
-    for (const key of d.channels ?? []) {
-      if (!key.startsWith(prefix)) continue;
-      const tenant = key.slice(prefix.length).split("/")[0];
-      if (tenant) admitted.add(tenant);
-    }
-    for (const key of d.containers ?? []) {
+    for (const key of d.reach ?? []) {
       if (!key.startsWith(prefix)) continue;
       const tenant = key.slice(prefix.length).split("/")[0];
       if (tenant) admitted.add(tenant);
@@ -51,7 +46,7 @@ export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Doma
   if (multiTenantPrincipalsAllowed()) return;
   const platforms = new Set<string>();
   for (const d of domains) {
-    for (const key of [...(d.channels ?? []), ...(d.containers ?? [])]) {
+    for (const key of d.reach ?? []) {
       const platform = key.split("/")[0];
       if (platform && isTenantScopedPlatform(platform)) platforms.add(platform);
     }

@@ -197,7 +197,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    { name: "plain", channels: ["slack/T1/C_PLAIN"] },
+    { name: "plain", reach: ["slack/T1/C_PLAIN"] },
     { name: "bypassdomain", approvalMode: { mode: "DANGEROUSLY_BYPASS" as const } },
   ],
   loadSilos: () => [],

@@ -11,6 +11,7 @@ export const OPERATIONAL_TABLES = [
   "routine_prompt_revisions",
   "audit_entry",
   "spend_limit",
+  "halt",
   "connector_override",
   "thread_engagement",
   "channel_session",
@@ -226,6 +227,38 @@ export function assertSpendLimitAmount(limit: SpendLimitAmount): void {
   }
 }
 
+export type HaltAddress =
+  | { readonly orgWide: true }
+  | { readonly orgWide: false; readonly level: CapLevel; readonly scopeKey: string };
+
+export interface HaltRow {
+  readonly org: string;
+  readonly address: HaltAddress;
+  readonly active: boolean;
+  readonly setAt: string;
+  readonly setBy?: string;
+  readonly clearedAt?: string;
+  readonly clearedBy?: string;
+}
+
+export function haltAddressColumns(address: HaltAddress): { level: string; scopeKey: string; orgWide: boolean } {
+  return address.orgWide ? { level: "", scopeKey: "", orgWide: true } : { level: address.level, scopeKey: address.scopeKey, orgWide: false };
+}
+
+export function haltAddressFromColumns(level: string, scopeKey: string, orgWide: boolean): HaltAddress {
+  return orgWide ? { orgWide: true } : { orgWide: false, level: level as CapLevel, scopeKey };
+}
+
+export function assertHaltAddress(address: HaltAddress): void {
+  if (address.orgWide) return;
+  if (!CAP_LEVELS.includes(address.level)) {
+    throw new Error(`halt level must be one of ${CAP_LEVELS.join(", ")}, got ${JSON.stringify(address.level)}`);
+  }
+  if (address.scopeKey.trim().length === 0) {
+    throw new Error('halt scopeKey must be non-blank — an org-wide halt is addressed with { orgWide: true }, never with a blank scope key');
+  }
+}
+
 export interface ConnectorOverrideRow {
   readonly connector: string;
   readonly granted: boolean;
@@ -401,6 +434,24 @@ export interface CompiledAnalyticsQuery {
   readonly limit: number;
 }
 
+export const PROMOTER_SEP = "\n";
+
+export const PROMOTER_LIST_MAX = 32;
+
+export function framePromoterId(raw: string): string {
+  return PROMOTER_SEP + raw.split(PROMOTER_SEP).join(" ") + PROMOTER_SEP;
+}
+
+export function decodePromoterList(stored: string | null | undefined): string[] {
+  if (!stored) return [];
+  return stored.split(PROMOTER_SEP).filter((id) => id.length > 0);
+}
+
+export function promoterListField(stored: string | null | undefined): { recentPromoters?: readonly string[] } {
+  const ids = decodePromoterList(stored);
+  return ids.length > 0 ? { recentPromoters: ids } : {};
+}
+
 export interface EngagementRow {
   readonly org: string;
   readonly surfaceKey: string;
@@ -412,7 +463,7 @@ export interface EngagementRow {
   readonly ownerToken?: string;
   readonly kind: "thread" | "spawned";
   readonly stopped: boolean;
-  readonly engagedBy?: string;
+  readonly recentPromoters?: readonly string[];
 }
 
 export interface TurnAnchorWrite {
@@ -656,6 +707,10 @@ export interface OperationalStore {
   setSpendLimit(org: string, scopeKey: string, level: CapLevel, limit: SpendLimitAmount, meta?: OverrideMeta): Promise<void>;
   clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;
   spendLimits(org: string): Promise<SpendLimitRow[]>;
+
+  setHalt(org: string, address: HaltAddress, meta?: { readonly setBy?: string }): Promise<void>;
+  clearHalt(org: string, address: HaltAddress, meta?: { readonly clearedBy?: string }): Promise<boolean>;
+  activeHalts(org: string): Promise<HaltRow[]>;
 
   setConnectorOverride(org: string, scopeKey: string, connector: string, granted: boolean, meta?: Omit<OverrideMeta, "expiresAt">): Promise<void>;
   clearConnectorOverride(org: string, scopeKey: string, connector: string): Promise<boolean>;

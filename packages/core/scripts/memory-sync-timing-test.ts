@@ -156,8 +156,8 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    { name: "payments", channels: ["slack/T1/C1"], memory: ["timing-brain-silo", "timing-ro-silo"] },
-    { name: "broken", channels: ["slack/T1/C2"], memory: ["timing-broken-silo"] },
+    { name: "payments", reach: ["slack/T1/C1"], memory: ["timing-brain-silo", "timing-ro-silo"] },
+    { name: "broken", reach: ["slack/T1/C2"], memory: ["timing-broken-silo"] },
   ],
   loadSilos: () => [
     { name: "timing-brain-silo", provider: "timing-brain" },

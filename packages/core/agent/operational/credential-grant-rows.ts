@@ -215,7 +215,8 @@ export type CredentialGrantRefusal =
   | "no_transport"
   | "owner_unresolvable"
   | "unverified_requester"
-  | "unattended_wake";
+  | "unattended_wake"
+  | "halted";
 
 export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: string): CredentialGrantRefusal | undefined {
   if (row.status === "revoked") return "revoked";
@@ -253,6 +254,12 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
       return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":
       return `Refused: this turn names no single verified requester, so nobody can be recorded as having spent ${row.ownerSlug}'s credential. Do not retry.`;
+    case "halted":
+      return (
+        `Refused: everything consequential is paused for this deployment right now — someone pulled the break-glass halt, ` +
+        `so no credential is spendable, ${row.ownerSlug}'s included. ${what} stays granted and works again once an admin ` +
+        `runs \`resume\`. Do not retry, and do not look for another route: the same halt covers them.`
+      );
     case "unattended_wake":
       return (
         `Refused: the scheduler started this turn and nobody is in the room. A grant is spendable only where a person asked for it: ` +

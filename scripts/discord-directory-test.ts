@@ -86,7 +86,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "payments", channels: [`discord/${GUILD_A}/C_ONE`, `discord/${GUILD_B}/C_TWO`] })],
+  loadDomains: () => [defineDomain({ name: "payments", reach: [`discord/${GUILD_A}/C_ONE`, `discord/${GUILD_B}/C_TWO`] })],
   loadSilos: () => [],
   domainsForSurface: () => ["payments"],
 });
@@ -178,7 +178,7 @@ ok(canDeliverDirectMessage("discord") === true, "🔴 §1 REACHABILITY: register
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "slack-only", channels: ["slack/T1/C1"] })],
+    loadDomains: () => [defineDomain({ name: "slack-only", reach: ["slack/T1/C1"] })],
     loadSilos: () => [],
     domainsForSurface: () => ["slack-only"],
   });

@@ -17,7 +17,7 @@ import {
 } from "../channels/reply-freshness.js";
 import { refuseIfShouldFold } from "../channels/reply-fold.js";
 import { tailWindow } from "../channels/session-tail-record.js";
-import { replierLabelFor, PENDING_WORK_INSTRUCTION } from "../channels/turn-delivery.js";
+import { replierLabelFor, PENDING_WORK_INSTRUCTION, PER_SURFACE_PENDING_WORK_PROBE } from "../channels/turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
@@ -260,7 +260,7 @@ export const baseReplyEntry = defineTool({
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
         }),
-        outputSchema: z.object({ posted: z.boolean(), id: z.string() }),
+        outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
         async execute(input, ctx) {
           const target = resolveReplyTarget(ctx);
           if (!target) {
@@ -276,6 +276,7 @@ export const baseReplyEntry = defineTool({
             await auditReplyRefused(replyAuditFor(bindBase, "tool"), REPLY_STOPPED_REFUSAL_REASON);
             throw new Error(stoppedRefusalText());
           }
+          const owingTask = pendingDelegationOwing(baseTurnId, PER_SURFACE_PENDING_WORK_PROBE, addressedWakeThisTurn(baseTurnId));
           const foldWindow = tailWindow();
           if (foldWindow) {
             await refuseIfShouldFold({
@@ -291,7 +292,11 @@ export const baseReplyEntry = defineTool({
           markRepliedThisTurn(baseTurnId);
           if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId);
           noteTerminalCallGrain(bindBase);
-          return { posted: true, id };
+          return {
+            posted: true,
+            id,
+            note: `Posted to ${target.platform}.${owingTask !== undefined ? PENDING_WORK_INSTRUCTION : ""}`,
+          };
         },
 });
 preRegisterDynamicVariants("reply", { _base: baseReplyEntry, _single: unifiedReplyEntry });

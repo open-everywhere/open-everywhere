@@ -84,7 +84,7 @@ const app = new GitHubApp(
       session: { auth: { current: { attributes: { ws: "W1", room }, principalId: "U_GWS", principalType: "test-user" } } },
     } as unknown as BindableContext;
   }
-  const domain: Domain = defineDomain({ name: "gws-domain", channels: [`${PLATFORM}/W1/CROOM`] });
+  const domain: Domain = defineDomain({ name: "gws-domain", reach: [`${PLATFORM}/W1/CROOM`] });
   registerConfig({
     loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/web"] })],
     loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "domain", domain: "gws-domain" } })],
@@ -92,7 +92,7 @@ const app = new GitHubApp(
     skillContent: {},
     loadDomains: () => [domain],
     loadSilos: () => [],
-    domainsForSurface: ({ workspaceKey, surface }) => ([domain].filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name)),
+    domainsForSurface: ({ workspaceKey, surface }) => ([domain].filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name)),
   });
 
   const SAVED: Record<string, string | undefined> = {};

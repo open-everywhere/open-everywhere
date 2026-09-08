@@ -20,6 +20,7 @@ import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
+import { NOT_HALTED, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
 import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
@@ -36,7 +37,7 @@ import {
   type DeliveryArm,
   type SeatKind,
 } from "./seat-prompt.js";
-import type { Domain } from "../memory/domain.js";
+import { domainRoster, type Domain } from "../memory/domain.js";
 import {
   channelPlatform,
   isUnifiedWindowContext,
@@ -234,7 +235,7 @@ async function unifiedSurfaceHandle(
 
 function wiredPlatforms(domain: Domain): string[] {
   const seen: string[] = [];
-  for (const key of domain.channels ?? []) {
+  for (const key of domainRoster(domain)) {
     const platform = key.split("/")[0];
     if (platform && !seen.includes(platform)) seen.push(platform);
   }
@@ -242,7 +243,7 @@ function wiredPlatforms(domain: Domain): string[] {
 }
 
 function domainAnchor(domain: Domain): { binding: SurfaceBinding; partition: Partition; channel: string } | undefined {
-  const key = (domain.channels ?? [])[0];
+  const key = domainRoster(domain)[0];
   if (!key) return undefined;
   const [platform, workspace, ...rest] = key.split("/");
   const surface = rest.join("/");
@@ -437,8 +438,10 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
 export async function renderScopeMarkdown(ctx: BindableContext): Promise<string> {
   const scope = await (isUnifiedWindowContext(ctx) ? renderUnifiedScope(ctx) : renderPerSurfaceScope(ctx));
   const cancelNote = renderPendingCancelNote();
-  if (!cancelNote) return scope;
-  return scope.length > 0 ? `${scope}\n\n${cancelNote}` : cancelNote;
+  const haltNote = haltSeatParagraph(await resolveHalt(haltScopeForCtx(ctx)).catch(() => NOT_HALTED));
+  const appended = [cancelNote, haltNote].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
+  if (appended.length === 0) return scope;
+  return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");
 }
 
 async function resolve(ctx: BindableContext) {

@@ -66,25 +66,25 @@ ok(
 );
 ok(lintBroadGrants([credentialed], [defineBinding({ bundle: "ghost", scope: { level: "org" } })]).length === 0, "an unknown bundle ref is assertBindingsValid's problem, not this lint's");
 
-const rosterDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1", "github/acme/web"] });
-const claimDomain = defineDomain({ name: "eng", containers: ["github/acme"] });
-const bothDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], containers: ["github/acme"] });
-const otherClaimDomain = defineDomain({ name: "ops", containers: ["github/other"] });
+const rosterDomain = defineDomain({ name: "eng", reach: ["slack/T1/C1", "github/acme/web"] });
+const claimDomain = defineDomain({ name: "eng", reach: ["github/acme"] });
+const bothDomain = defineDomain({ name: "eng", reach: ["slack/T1/C1", "github/acme"] });
+const otherClaimDomain = defineDomain({ name: "ops", reach: ["github/other"] });
 
 ok(
   lintBroadGrants([credentialed], [at("creds", "domain")], [rosterDomain]).length === 0,
   "a domain binding onto a ROSTER domain stays clean — an enumerated membership is the intended narrow path",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain claim")),
+  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain container")),
   "a domain binding onto a TENANT-CLAIMING domain FAILS — the width is real even though the binding reads as narrow",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("github/acme") && p.includes("containers")),
-  "…and the failure names the claimed tenant AND the field, because the fix may be in the domain file rather than the binding",
+  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("github/acme") && p.includes("`reach`")),
+  "…and the failure names the reached tenant AND the field, because the fix may be in the domain file rather than the binding",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "domain")], [bothDomain]).some((p) => p.includes("via domain claim")),
+  lintBroadGrants([credentialed], [at("creds", "domain")], [bothDomain]).some((p) => p.includes("via domain container")),
   "a domain with BOTH a roster and a claim is broad — width is decided by the widest part, never excused by the narrow part",
 );
 ok(
@@ -100,11 +100,20 @@ ok(
   "an empty allowBroad fails on a claim-broad domain exactly as it does at tenant scope",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "stale" })], [rosterDomain]).some((p) => p.includes("claims none")),
-  "allowBroad left behind after `containers` was REMOVED fails, and says why — otherwise narrowing your own domain looks like an unrelated regression",
+  lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "stale" })], [rosterDomain]).some((p) => p.includes("reaches none")),
+  "allowBroad left behind after the container entry was REMOVED fails, and says why — otherwise narrowing your own domain looks like an unrelated regression",
 );
+{
+  const broadCopy = lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).join("\n");
+  ok(broadCopy.includes("container `reach` entries"), "the broad-grant remedy names the CURRENT field");
+  ok(broadCopy.includes("agent/memory/config/domains/<name>.ts"), "…and the per-domain config directory that holds it");
+  ok(!broadCopy.includes("domains/eng.ts"), "…and never GUESSES the filename from the domain name — nothing ties the two, so a guessed path opens nothing");
+  ok(!broadCopy.includes("`containers`") && !broadCopy.includes("`channels`"), "…and never a field the config no longer has");
+  const narrowCopy = lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "stale" })], [rosterDomain]).join("\n");
+  ok(!narrowCopy.includes("`containers`"), "the stale-allowBroad remedy is on the same vocabulary");
+}
 ok(
-  lintBroadGrants([credentialless], [at("safe", "domain")], [defineDomain({ name: "eng", containers: ["github/acme"] })]).length === 0,
+  lintBroadGrants([credentialless], [at("safe", "domain")], [defineDomain({ name: "eng", reach: ["github/acme"] })]).length === 0,
   "a credential-LESS bundle on a claim-broad domain stays warn-only, exactly as it does at org/tenant scope",
 );
 ok(
@@ -117,7 +126,7 @@ ok(
   "an unknown/absent domain name contributes no claim rather than a spurious failure",
 );
 ok(
-  lintAccessConfig([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain claim")),
+  lintAccessConfig([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain container")),
   "lintAccessConfig threads the registry through — the CI gate sees claim-broadness, not just the unit test",
 );
 

@@ -65,8 +65,8 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [
     defineDomain({ name: "org", match: "org", admins: ["discord/U_ORG_ADMIN"] }),
-    defineDomain({ name: "eng", channels: ["discord/G1/C_ENG"], admins: ["discord/U_ENG_ADMIN"] }),
-    defineDomain({ name: "dwin", channels: ["discord/G1/C_WIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "eng", reach: ["discord/G1/C_ENG"], admins: ["discord/U_ENG_ADMIN"] }),
+    defineDomain({ name: "dwin", reach: ["discord/G1/C_WIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

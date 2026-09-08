@@ -60,8 +60,8 @@ function ctx(attrs: Record<string, string> = {}): BindableContext {
 }
 
 const FENCE_DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "soak-domain", containers: [`linear/${SOAK_ORG}`] }),
-  defineDomain({ name: "dev-fallback-domain", channels: ["linear/dev/default"] }),
+  defineDomain({ name: "soak-domain", reach: [`linear/${SOAK_ORG}`] }),
+  defineDomain({ name: "dev-fallback-domain", reach: ["linear/dev/default"] }),
 ];
 
 try {

@@ -38,7 +38,7 @@ const callJson = async (client: InstanceType<typeof Client>, name: string, args:
 const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo" }),
+  defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], memory: "eng-silo" }),
   defineDomain({ name: "org", match: "org", memory: "org-brain" }),
 ];
 registerConfig({
@@ -242,7 +242,7 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [...domains, defineDomain({ name: "nodelete", channels: ["slack/T1/C_ND"], memory: "no-delete-silo" })],
+    loadDomains: () => [...domains, defineDomain({ name: "nodelete", reach: ["slack/T1/C_ND"], memory: "no-delete-silo" })],
     loadSilos: () => [engSilo, orgSilo, noDeleteSilo],
     domainsForSurface: () => [],
   });
@@ -283,7 +283,7 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [...domains, defineDomain({ name: "throwsdelete", channels: ["slack/T1/C_TD"], memory: "throwing-delete-silo" })],
+    loadDomains: () => [...domains, defineDomain({ name: "throwsdelete", reach: ["slack/T1/C_TD"], memory: "throwing-delete-silo" })],
     loadSilos: () => [engSilo, orgSilo, throwingSilo],
     domainsForSurface: () => [],
   });

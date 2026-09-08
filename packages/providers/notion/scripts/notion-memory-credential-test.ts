@@ -47,11 +47,11 @@ const BROKER = "test";
 const DOMAINS: readonly Domain[] = [
   defineDomain({
     name: "payments",
-    channels: ["slack/T/C_PAY"],
+    reach: ["slack/T/C_PAY"],
     memory: "pay-brain",
     credentials: [{ connector: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: PAY_CRED }],
   }),
-  defineDomain({ name: "support", channels: ["slack/T/C_SUP"], memory: "sup-brain" }),
+  defineDomain({ name: "support", reach: ["slack/T/C_SUP"], memory: "sup-brain" }),
 ];
 const BOUND: MemoryAccess = { domain: DOMAINS[0] };
 const UNBOUND: MemoryAccess = { domain: DOMAINS[1] };
@@ -158,7 +158,7 @@ function recordingFetch(): { fetchFn: HttpFetch; auth: string[] } {
   const { fetchFn, auth } = recordingFetch();
   const broken = defineDomain({
     name: "broken",
-    channels: ["slack/T/C_BAD"],
+    reach: ["slack/T/C_BAD"],
     memory: "bad-brain",
     credentials: [{ connector: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: "never-declared" }],
   });

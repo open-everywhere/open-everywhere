@@ -52,7 +52,7 @@ registerConfig({
   loadDomains: () => [
     defineDomain({
       name: "eng",
-      channels: [`discord/${GUILD}/${CHAN_ENG}`, `discord/${GUILD}/${CHAN_STANDUP}`, `discord/${GUILD}/${THREAD_ENG}`],
+      reach: [`discord/${GUILD}/${CHAN_ENG}`, `discord/${GUILD}/${CHAN_STANDUP}`, `discord/${GUILD}/${THREAD_ENG}`],
     }),
   ],
   loadSilos: () => [],

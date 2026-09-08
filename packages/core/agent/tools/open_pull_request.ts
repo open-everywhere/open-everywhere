@@ -25,10 +25,15 @@ import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { haltScopeFor, resolveHalt } from "../access/halt.js";
 import { proposingSessionId } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
+
+export function sessionMemoAdmissible(input: { readonly sessionId?: string; readonly tainted: boolean; readonly halted: boolean }): boolean {
+  return Boolean(input.sessionId) && !input.tainted && !input.halted;
+}
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -179,9 +184,11 @@ export default windowGated("open_pull_request", defineTool({
       ...(sessionId ? { sessionId } : {}),
     };
 
+    const halt = await resolveHalt(haltScopeFor({ org: p.org, scopeKey: p.surfaceKey, principalId: requestedBy }));
     const store = getOperationalStore();
-    const memo =
-      sessionId && !tainted ? await store.getSessionApproval(p.org, sessionId, "pr.open", new Date().toISOString()).catch(() => null) : null;
+    const memo = sessionMemoAdmissible({ sessionId, tainted, halted: halt.halted })
+      ? await store.getSessionApproval(p.org, sessionId!, "pr.open", new Date().toISOString()).catch(() => null)
+      : null;
     if (memo) {
       const outcome = await executePrOpen(args, memo.grantedBy, {}, { sessionApproved: true });
       if (originChannelId) {

@@ -333,7 +333,7 @@ export function configSnippet(
     "// domain: a channel lives in at most one (assertChannelExclusivity), so if another fixture already",
     "// claims one of these, hand it over under the same OE_MEMORY_EVAL gate — see the e2e-b/e2e-unified",
     "// yields in agent/memory/config/domains.ts.",
-    `  defineDomain({ name: ${JSON.stringify(domain)}, channels: [${JSON.stringify(channel)}, ${JSON.stringify(crossSurfaceChannel)}], memory: [${memoryRefs}], ambientSupervisor: true, mode: "unified" }),`,
+    `  defineDomain({ name: ${JSON.stringify(domain)}, reach: [${JSON.stringify(channel)}, ${JSON.stringify(crossSurfaceChannel)}], memory: [${memoryRefs}], ambientSupervisor: true, mode: "unified" }),`,
   ].join("\n");
 }
 

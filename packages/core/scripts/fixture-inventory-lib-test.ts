@@ -60,10 +60,10 @@ ok(teamsSegment("00000000-1111-4222-8333-444444444444") === "00000000-1111-4222-
 
 const DOMAINS: DomainLike[] = [
   { name: "org" },
-  { name: "e2e-unified", channels: ["slack/T1/CA", "github/acme/api"] },
-  { name: "e2e-other", channels: ["slack/T1/CA"] },
-  { name: "e2e-smoke", containers: ["linear/org1/smoke-*"] },
-  { name: "it-memory", channels: ["discord/G1/999000001"] },
+  { name: "e2e-unified", reach: ["slack/T1/CA", "github/acme/api"] },
+  { name: "e2e-other", reach: ["slack/T1/CA"] },
+  { name: "e2e-smoke", reach: ["linear/org1/smoke-*"] },
+  { name: "it-memory", reach: ["discord/G1/999000001"] },
 ];
 const BINDINGS: BindingLike[] = [
   { bundle: "coding", scope: { level: "surface", surface: "slack/T1/CB" } },
@@ -125,7 +125,7 @@ ok(!flag("unresolved").some((f) => f.surface === "github"), "a never-probed room
 
 const clean = buildInventory({
   envValues: { E2E_SLACK_CHANNEL: "CA" },
-  declared: collectDeclaredRooms([{ name: "e2e-unified", channels: ["slack/T1/CA"] }], []),
+  declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
   resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#general", detail: "info" } as Resolution]]),
   unresolvableSurfaces: [],
   teamsRosterVisible: true,
@@ -134,7 +134,7 @@ ok(clean.flags.length === 0, "one resolved, singly-claimed room raises no flag a
 
 const blind = buildInventory({
   envValues: { E2E_SLACK_CHANNEL: "CA" },
-  declared: collectDeclaredRooms([{ name: "e2e-unified", channels: ["slack/T1/CA"] }], []),
+  declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
   resolutions: new Map(),
   unresolvableSurfaces: ["slack"],
   teamsRosterVisible: true,
@@ -165,7 +165,7 @@ ok(doc.endsWith("\n") && !doc.includes("\n\n\n"), "the document ends with one ne
 const piped = renderInventoryDoc(
   buildInventory({
     envValues: { E2E_SLACK_CHANNEL: "CA" },
-    declared: collectDeclaredRooms([{ name: "e2e-unified", channels: ["slack/T1/CA"] }], []),
+    declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
     resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#a|b", detail: "x" } as Resolution]]),
     unresolvableSurfaces: [],
     teamsRosterVisible: true,

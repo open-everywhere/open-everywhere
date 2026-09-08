@@ -145,15 +145,15 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
 }
 
 {
-  const eng = defineDomain({ name: "eng", channels: ["linear/org/team-1"], memory: ["acme-eng", "handbook"], ambientSupervisor: true, mode: "unified" });
+  const eng = defineDomain({ name: "eng", reach: ["linear/org/team-1"], memory: ["acme-eng", "handbook"], ambientSupervisor: true, mode: "unified" });
   const orgD = defineDomain({ name: "org", match: "org", memory: "org-baseline" });
   const silos = sessionReadSilos("linear/org/team-1", [eng, orgD]);
   ok(silos.length === 2 && silos.some((s) => s.siloName === "acme-eng") && silos.some((s) => s.siloName === "handbook"), "sessionReadSilos: an explicit domain resolves its own memory silos");
-  const engInclOrg = defineDomain({ name: "eng", channels: ["linear/org/team-1"], memory: "acme-eng", includeOrg: "readonly" });
+  const engInclOrg = defineDomain({ name: "eng", reach: ["linear/org/team-1"], memory: "acme-eng", includeOrg: "readonly" });
   const withOrg = sessionReadSilos("linear/org/team-1", [engInclOrg, orgD]);
   ok(withOrg.some((s) => s.siloName === "org-baseline"), "sessionReadSilos: includeOrg pulls the org pseudo-domain's silos");
   ok(sessionReadSilos("linear/org/unassigned", [orgD]).some((s) => s.siloName === "org-baseline"), "sessionReadSilos: an unassigned surface falls back to the org default silos");
-  ok(sessionReadSilos("linear/org/team-1", [defineDomain({ name: "eng", channels: ["linear/org/team-1"] })]).length === 0, "sessionReadSilos: a memory-less domain resolves no silos");
+  ok(sessionReadSilos("linear/org/team-1", [defineDomain({ name: "eng", reach: ["linear/org/team-1"] })]).length === 0, "sessionReadSilos: a memory-less domain resolves no silos");
 }
 
 function indexRow(over: { ts: string; healed?: string[]; continuationToken?: string }): AuditEntry {

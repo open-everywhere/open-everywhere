@@ -25,12 +25,12 @@ const OWN_PAGE = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
 const OTHER_PAGE = "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb";
 
 const OTHER_WS_PAGE = "cccccccc-2222-4222-8222-cccccccccccc";
-const rostered: Domain = defineDomain({ name: "d1", channels: ["slack/T1/C1", `notion/${WS}/${OWN_PAGE}`, `notion/other-ws/${OTHER_WS_PAGE}`] });
+const rostered: Domain = defineDomain({ name: "d1", reach: ["slack/T1/C1", `notion/${WS}/${OWN_PAGE}`, `notion/other-ws/${OTHER_WS_PAGE}`] });
 const ids = domainOwnPageIds(rostered);
 ok(ids.has(OWN_PAGE.replace(/-/g, "")), "a rostered notion channel's page id is in the set, canonicalised");
 ok(ids.has(OTHER_WS_PAGE.replace(/-/g, "")), "a roster entry under a DIFFERENT workspace segment still counts — no workspace cross-check is needed (the roster already belongs to exactly one domain)");
 ok(ids.has(OTHER_PAGE.replace(/-/g, "")) === false, "NEGATIVE CONTROL: a page never rostered to this domain is NOT in the set");
-ok(domainOwnPageIds(defineDomain({ name: "d2", channels: ["slack/T1/C2"] })).size === 0, "NEGATIVE CONTROL: a domain with no Notion roster entries owns NOTHING (empty set, not everything)");
+ok(domainOwnPageIds(defineDomain({ name: "d2", reach: ["slack/T1/C2"] })).size === 0, "NEGATIVE CONTROL: a domain with no Notion roster entries owns NOTHING (empty set, not everything)");
 ok(domainOwnPageIds(defineDomain({ name: "d3" })).size === 0, "NEGATIVE CONTROL: a domain with no channels at all owns nothing (no throw)");
 {
   const bare = OWN_PAGE.replace(/-/g, "");
@@ -51,7 +51,7 @@ function ctxIn(room: string): BindableContext {
 
 const domain: Domain = defineDomain({
   name: "nws-domain",
-  channels: [`${PLATFORM}/W1/CROOM`, `notion/${WS}/${OWN_PAGE}`],
+  reach: [`${PLATFORM}/W1/CROOM`, `notion/${WS}/${OWN_PAGE}`],
   credentials: [{ connector: "notion", credential: "team-key", use: "nws-work-key" }],
 });
 
@@ -97,7 +97,7 @@ try {
   ok(scoped[0]!.title === "Our own spec" && scoped[0]!.connector === "notion", "the surviving hit carries its title and connector, never a page body");
 
   await assert.rejects(
-    notionWorkSearchAdapter.search(ctxIn("CROOM"), defineDomain({ name: "nws-nogrant", channels: [`${PLATFORM}/W1/CBARE`] }), "spec", { limit: 10, insideDomain: false }),
+    notionWorkSearchAdapter.search(ctxIn("CROOM"), defineDomain({ name: "nws-nogrant", reach: [`${PLATFORM}/W1/CBARE`] }), "spec", { limit: 10, insideDomain: false }),
     /holds no Notion work grant/u,
     "NEGATIVE CONTROL: a domain with no Notion work grant refuses rather than silently returning empty",
   );

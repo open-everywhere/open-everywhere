@@ -78,7 +78,7 @@ const CH = "slack/T1/C_PAY";
 const GH = "github/acme/payments-api";
 const payments = defineDomain({
   name: "payments",
-  channels: [CH, GH],
+  reach: [CH, GH],
   ambientSupervisor: true,
   mode: "unified",
 });
@@ -91,7 +91,7 @@ withEnv(false, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) ===
 withEnv(true, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON + ambient explicit domain ⇒ windowed");
   ok(windowedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "windowing applies to every channel in the domain");
-  const noAmbient = defineDomain({ name: "x", channels: ["slack/T1/C_X"], mode: "unified" });
+  const noAmbient = defineDomain({ name: "x", reach: ["slack/T1/C_X"], mode: "unified" });
   ok(windowedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === false, "mode without ambientSupervisor ⇒ not windowed");
   ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === false, "unassigned channel never windows");
 });
@@ -105,25 +105,25 @@ withEnv(undefined, () => ok(windowedDomainFor(CH, [payments, orgNoGate]) === und
 
 const paymentsSolo = defineDomain({
   name: "payments",
-  channels: [CH, GH],
+  reach: [CH, GH],
   ambientSupervisor: true,
   mode: "solo",
 });
 ok(windowModeFor(CH, [payments, orgNoGate]) === "unified", "windowModeFor reads a domain's explicit mode (unified)");
 ok(windowModeFor(CH, [paymentsSolo, orgNoGate]) === "solo", "windowModeFor reads a domain's explicit mode (solo)");
-const noMode = defineDomain({ name: "y", channels: ["slack/T1/C_Y"], ambientSupervisor: true });
+const noMode = defineDomain({ name: "y", reach: ["slack/T1/C_Y"], ambientSupervisor: true });
 ok(windowModeFor("slack/T1/C_Y", [noMode, orgNoGate]) === "solo", "a domain with NO mode defaults to solo (no third topology / no per-platform merge)");
 ok(windowModeFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === "solo", "an unassigned channel resolves the harmless default solo (it cannot window anyway)");
 
 noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: explicit mode:unified domain + ambientSupervisor");
 noThrow(() => assertUnifiedDomainTrust([paymentsSolo, orgNoGate]), "valid: explicit mode:solo domain + ambientSupervisor");
-noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", channels: ["slack/T/C"] })]), "valid: a domain with no mode is unaffected");
+noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", reach: ["slack/T/C"] })]), "valid: a domain with no mode is unaffected");
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "u", channels: ["slack/T/C"], mode: "unified" })]),
+  () => assertUnifiedDomainTrust([defineDomain({ name: "u", reach: ["slack/T/C"], mode: "unified" })]),
   "mode WITHOUT ambientSupervisor ⇒ fail loud (a window is a re-keyed ambient supervisor)",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], mode: "solo" })]),
+  () => assertUnifiedDomainTrust([defineDomain({ name: "s", reach: ["slack/T/C"], mode: "solo" })]),
   "mode:solo WITHOUT ambientSupervisor ⇒ fail loud too",
 );
 throws(
@@ -451,9 +451,9 @@ withEnv(true, () => {
   const C = "slack/T9/C_C";
   const grouped = defineDomain({
     name: "chatter-dom",
-    channels: [A, B, C],
+    reach: [A, B, C],
     ambientSupervisor: true,
-    windows: [{ name: "chatter", channels: [A, B] }],
+    windows: [{ name: "chatter", reach: [A, B] }],
   });
   const orgGate = defineDomain({ name: "org", match: "org" });
 
@@ -466,11 +466,11 @@ withEnv(true, () => {
 
   const twoGroups = defineDomain({
     name: "claims-dom",
-    containers: ["github/acme-multi"],
+    reach: ["github/acme-multi"],
     ambientSupervisor: true,
     windows: [
-      { name: "front", containers: ["github/acme-multi/web-*"], excludeContainers: ["github/acme-multi/web-legacy"] },
-      { name: "back", containers: ["github/acme-multi"] },
+      { name: "front", reach: ["github/acme-multi/web-*"], exclude: ["github/acme-multi/web-legacy"] },
+      { name: "back", reach: ["github/acme-multi"] },
     ],
   });
   ok(windowGroupFor("github/acme-multi/web-shop", twoGroups)?.name === "front", "election: the first group whose claim admits the key wins");
@@ -481,10 +481,10 @@ withEnv(true, () => {
   ok(windowGroupFor("github/acme-multi/api", twoGroups)?.name === "back", "election: a broader later group takes what the narrower earlier one does not");
 
   const PINNED = "github/acme-multi/pay-core";
-  const broad = { name: "broad", containers: ["github/acme-multi/pay-*"] } as const;
-  const focus = { name: "focus", channels: [PINNED] } as const;
-  const claimFirst = defineDomain({ name: "tier-a", channels: [PINNED], containers: ["github/acme-multi"], ambientSupervisor: true, windows: [broad, focus] });
-  const rosterFirst = defineDomain({ name: "tier-b", channels: [PINNED], containers: ["github/acme-multi"], ambientSupervisor: true, windows: [focus, broad] });
+  const broad = { name: "broad", reach: ["github/acme-multi/pay-*"] } as const;
+  const focus = { name: "focus", reach: [PINNED] } as const;
+  const claimFirst = defineDomain({ name: "tier-a", reach: [PINNED, "github/acme-multi"], ambientSupervisor: true, windows: [broad, focus] });
+  const rosterFirst = defineDomain({ name: "tier-b", reach: [PINNED, "github/acme-multi"], ambientSupervisor: true, windows: [focus, broad] });
   ok(windowGroupFor(PINNED, claimFirst)?.name === "focus", "tier order: an exact roster entry beats another group's glob even when the glob is declared FIRST");
   ok(windowGroupFor(PINNED, rosterFirst)?.name === "focus", "tier order: …and the answer is the same when the roster group is declared first — array order cannot change it");
   ok(windowGroupFor("github/acme-multi/pay-edge", claimFirst)?.name === "broad", "tier order: a key no roster lists still falls to the claim tier");
@@ -507,10 +507,10 @@ withEnv(true, () => {
 
   const carved = defineDomain({
     name: "carved-dom",
-    channels: [A, B, C],
+    reach: [A, B, C],
     ambientSupervisor: true,
     mode: "unified",
-    windows: [{ name: "carve", channels: [A] }],
+    windows: [{ name: "carve", reach: [A] }],
   });
   withEnv(true, () => {
     const ga = supervisorGrainFor(A, [carved, orgGate]);
@@ -547,20 +547,20 @@ withEnv(true, () => {
   noThrow(() => assertUnifiedDomainTrust([grouped, orgGate]), "valid: an explicit ambient domain may declare windows");
   noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: a domain with no windows is unaffected by the new rules");
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "np", channels: [A], windows: [{ name: "w", channels: [A] }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "np", reach: [A], windows: [{ name: "w", reach: [A] }] })]),
     "refused: windows without ambientSupervisor (a window is a re-keyed ambient supervisor)",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, windows: [{ name: "w", channels: [A] }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, windows: [{ name: "w", reach: [A] }] })]),
     "refused: windows on an org/public/dm pseudo-domain (the 'window everything' footgun)",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "e", channels: [A], ambientSupervisor: true, windows: [] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "e", reach: [A], ambientSupervisor: true, windows: [] })]),
     "refused: an EMPTY windows list (grants nothing, reads as if it did)",
   );
   for (const badName of ["Chatter", "chat/ter", "chat:ter", "-chat", "chat-", "chat--ter", "", "chat ter", "a".repeat(65)]) {
     throws(
-      () => assertUnifiedDomainTrust([defineDomain({ name: "n", channels: [A], ambientSupervisor: true, windows: [{ name: badName, channels: [A] }] })]),
+      () => assertUnifiedDomainTrust([defineDomain({ name: "n", reach: [A], ambientSupervisor: true, windows: [{ name: badName, reach: [A] }] })]),
       `refused: the illegal window-group name ${JSON.stringify(badName)} (a name travels as a windowId through two colon/slash grammars)`,
     );
   }
@@ -570,38 +570,46 @@ withEnv(true, () => {
   throws(
     () =>
       assertUnifiedDomainTrust([
-        defineDomain({ name: "d", channels: [A, B], ambientSupervisor: true, windows: [{ name: "dup", channels: [A] }, { name: "dup", channels: [B] }] }),
+        defineDomain({ name: "d", reach: [A, B], ambientSupervisor: true, windows: [{ name: "dup", reach: [A] }, { name: "dup", reach: [B] }] }),
       ]),
     "refused: the same group name declared TWICE in one domain (the second could never be elected)",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", channels: [A], ambientSupervisor: true, windows: [{ name: "empty" }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: [A], ambientSupervisor: true, windows: [{ name: "empty" }] })]),
     "refused: a group that names no members",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", channels: [A], ambientSupervisor: true, windows: [{ name: "x", channels: [A], excludeContainers: ["github/a/b"] }] })]),
-    "refused: excludeContainers with no containers (dead config — an exclusion carves out of a CLAIM)",
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: [A], ambientSupervisor: true, windows: [{ name: "x", exclude: ["github/a/b"] }] })]),
+    "refused: a group with an exclude and no reach (dead config — an exclusion carves out of a REACH)",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", containers: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", containers: ["github/other-b"] }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: [A], ambientSupervisor: true, windows: [{ name: "x", reach: [A], exclude: [A] }] })]),
+    "refused: a group excluding a key its own reach names outright",
+  );
+  noThrow(
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["github/acme-a/pay-*"], exclude: ["github/acme-a/pay-secrets"] }] })]),
+    "valid: an exclusion carving a key out of the group's own CONTAINER — the negative control for the line above",
+  );
+  throws(
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["github/other-b"] }] })]),
     "refused: a group claiming containers outside its domain's own claim",
   );
   noThrow(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", containers: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", containers: ["github/acme-a/pay-*"] }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["github/acme-a/pay-*"] }] })]),
     "valid: a group narrows WITHIN its domain's own claim",
   );
-  throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", containers: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", containers: ["github/acme-a/exact-repo"] }] })]),
-    "refused: a group claiming ONE exact surface (that is a roster entry — put it in the group's channels)",
+  noThrow(
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["github/acme-a/exact-repo"] }] })]),
+    "valid: a group naming ONE exact surface — the enumerable half of the same one list",
   );
   throws(
-    () => assertUnifiedDomainTrust([defineDomain({ name: "d", containers: ["teams/tenant-a"], ambientSupervisor: true, windows: [{ name: "x", containers: ["teams/tenant-a/team:abc"] }] })]),
+    () => assertUnifiedDomainTrust([defineDomain({ name: "d", reach: ["teams/tenant-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["teams/tenant-a/team:abc"] }] })]),
     "refused: a group claiming the TRUST-plane group rung (`<marker>:<id>`), which no memory key carries",
   );
   throws(
     () =>
       assertUnifiedDomainTrust([
-        defineDomain({ name: "d", containers: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", containers: ["github/acme-a/pay-*"], excludeContainers: ["github/acme-a"] }] }),
+        defineDomain({ name: "d", reach: ["github/acme-a"], ambientSupervisor: true, windows: [{ name: "x", reach: ["github/acme-a/pay-*"], exclude: ["github/acme-a"] }] }),
       ]),
     "refused: a whole-tenant exclusion inside a group (it cancels the claim outright or means nothing)",
   );
@@ -611,63 +619,60 @@ withEnv(true, () => {
   throws(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "d1", channels: [A], ambientSupervisor: true, windows: [{ name: "ops", channels: [A] }] }),
-        defineDomain({ name: "d2", channels: [B], ambientSupervisor: true, windows: [{ name: "ops", channels: [B] }] }),
+        defineDomain({ name: "d1", reach: [A], ambientSupervisor: true, windows: [{ name: "ops", reach: [A] }] }),
+        defineDomain({ name: "d2", reach: [B], ambientSupervisor: true, windows: [{ name: "ops", reach: [B] }] }),
       ]),
     "refused: two domains declaring the SAME group name (they would share one channel_session row)",
   );
   throws(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "payments", channels: [A], ambientSupervisor: true, mode: "unified" }),
-        defineDomain({ name: "d2", channels: [B], ambientSupervisor: true, windows: [{ name: "payments", channels: [B] }] }),
+        defineDomain({ name: "payments", reach: [A], ambientSupervisor: true, mode: "unified" }),
+        defineDomain({ name: "d2", reach: [B], ambientSupervisor: true, windows: [{ name: "payments", reach: [B] }] }),
       ]),
     "refused: a group name that equals a DOMAIN name (the same registry row, reached from the other side)",
   );
   throws(
-    () => assertWindowGroupExclusivity([defineDomain({ name: "self", channels: [A], ambientSupervisor: true, windows: [{ name: "self", channels: [A] }] })]),
+    () => assertWindowGroupExclusivity([defineDomain({ name: "self", reach: [A], ambientSupervisor: true, windows: [{ name: "self", reach: [A] }] })]),
     "refused: a group named after its OWN domain",
   );
   throws(
-    () => assertWindowGroupExclusivity([defineDomain({ name: "d", channels: [A], ambientSupervisor: true, windows: [{ name: "x", channels: ["slack/T9/C_ELSEWHERE"] }] })]),
+    () => assertWindowGroupExclusivity([defineDomain({ name: "d", reach: [A], ambientSupervisor: true, windows: [{ name: "x", reach: ["slack/T9/C_ELSEWHERE"] }] })]),
     "refused: a group listing a channel in no domain at all",
   );
   throws(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "claimer", containers: ["github/shared-org"], ambientSupervisor: true, windows: [{ name: "mine", channels: ["github/shared-org/repo"] }] }),
-        defineDomain({ name: "rosterer", channels: ["github/shared-org/repo"], ambientSupervisor: true }),
+        defineDomain({ name: "claimer", reach: ["github/shared-org"], ambientSupervisor: true, windows: [{ name: "mine", reach: ["github/shared-org/repo"] }] }),
+        defineDomain({ name: "rosterer", reach: ["github/shared-org/repo"], ambientSupervisor: true }),
       ]),
     "refused: a group listing a key its domain merely CLAIMS while another domain rosters it",
   );
   noThrow(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "claimer", containers: ["github/solo-org"], ambientSupervisor: true, windows: [{ name: "mine", channels: ["github/solo-org/repo"] }] }),
+        defineDomain({ name: "claimer", reach: ["github/solo-org"], ambientSupervisor: true, windows: [{ name: "mine", reach: ["github/solo-org/repo"] }] }),
       ]),
     "valid: a group listing a key its domain claims and nobody else rosters",
   );
   throws(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "d", channels: [A], ambientSupervisor: true, windows: [{ name: "g1", channels: [A] }, { name: "g2", channels: [A] }] }),
+        defineDomain({ name: "d", reach: [A], ambientSupervisor: true, windows: [{ name: "g1", reach: [A] }, { name: "g2", reach: [A] }] }),
       ]),
     "refused: one channel listed by two groups of the same domain",
   );
-  throws(
-    () => assertWindowGroupExclusivity([twoGroups]),
-    "refused: two group CLAIMS that can match the same surface key (front's web-* sits inside back's tenant claim)",
-  );
+  noThrow(() => assertWindowGroupExclusivity([twoGroups]), "valid: a group's glob nested inside another group's tenant is ordered, not ambiguous");
   noThrow(
     () =>
       assertWindowGroupExclusivity([
         defineDomain({
           name: "d",
-          containers: ["github/acme-multi"],
+          reach: ["github/acme-multi"],
           ambientSupervisor: true,
           windows: [
-            { name: "front", containers: ["github/acme-multi/web-*"] },
-            { name: "back", containers: ["github/acme-multi"], excludeContainers: ["github/acme-multi/web-*"] },
+            { name: "front", reach: ["github/acme-multi/web-*"] },
+            { name: "back", reach: ["github/acme-multi"], exclude: ["github/acme-multi/web-*"] },
           ],
         }),
       ]),
@@ -676,8 +681,8 @@ withEnv(true, () => {
   noThrow(
     () =>
       assertWindowGroupExclusivity([
-        defineDomain({ name: "d1", channels: [A], ambientSupervisor: true, windows: [{ name: "g1", channels: [A] }] }),
-        defineDomain({ name: "d2", channels: [B], ambientSupervisor: true, windows: [{ name: "g2", channels: [B] }] }),
+        defineDomain({ name: "d1", reach: [A], ambientSupervisor: true, windows: [{ name: "g1", reach: [A] }] }),
+        defineDomain({ name: "d2", reach: [B], ambientSupervisor: true, windows: [{ name: "g2", reach: [B] }] }),
       ]),
     "valid: distinct group names in distinct domains",
   );

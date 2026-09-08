@@ -174,12 +174,19 @@ const NOW = "2026-05-12T11:30:00.000Z";
 
   const resp = (status: number, body: unknown): Response =>
     ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
+  const activities: string[] = [];
+  let refuseNextActivity = false;
   const fakeLinear = (async (url: unknown, init: { body?: unknown }) => {
     const u = String(url);
     const body = String(init?.body ?? "");
     if (!u.includes("api.linear.app")) return resp(500, { error: "unexpected host" });
     if (body.includes("OeUserGuest")) return resp(200, { data: { user: { guest: false } } });
     if (body.includes("OeIssueTeam")) return resp(200, { data: { issue: { team: { id: TEAM, private: true } } } });
+    if (refuseNextActivity && body.includes("AgentActivityCreate")) {
+      refuseNextActivity = false;
+      return resp(200, { data: { agentActivityCreate: { success: false } } });
+    }
+    activities.push(body);
     return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
   }) as typeof fetch;
 
@@ -210,17 +217,79 @@ const NOW = "2026-05-12T11:30:00.000Z";
 
     ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — the issue is stood down");
     _resetLinearGuestCache();
-    await linearOnAgentSession({} as never, { ...(event("sess-2") as Record<string, unknown>), action: "prompted" } as never);
+    activities.length = 0;
+    const stoodDownPrompt = await linearOnAgentSession({} as never, { ...(event("sess-2") as Record<string, unknown>), action: "prompted" } as never);
     const afterPrompt = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
     ok(
       afterPrompt !== null && afterPrompt.stopped === true,
       "🔴 linear: a `prompted` follow-up leaves the STOP in place — a reply in the agent's own thread is not a fresh invitation, so it cannot lift a stand-down",
     );
+    ok(
+      stoodDownPrompt === null,
+      "🔴 OPE-1548 linear: a `prompted` follow-up on a STOOD-DOWN issue is SUPPRESSED — the addressed leg reads back the row it wrote, so the agent's own thread is silenced like every top-level comment",
+    );
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+      "🔴 OPE-1548 linear: …and the already-materialised Agent Session is CLOSED with the fixed host line, exactly once — Linear has no invisible close, so a suppression that posted nothing would hang the requester's spinner",
+    );
 
     _resetLinearGuestCache();
-    await linearOnAgentSession({} as never, event("sess-3") as never);
+    const replayedPrompt = await linearOnAgentSession({} as never, { ...(event("sess-2") as Record<string, unknown>), action: "prompted" } as never);
+    ok(replayedPrompt === null, "🔴 OPE-1548 linear: a REDELIVERED `prompted` is still suppressed — the ack guard never gates the suppression itself");
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+      "🔴 OPE-1548 linear: …and it posts NO second line — the ack is keyed on the DELIVERY, so a redelivery cannot double up on an issue that asked for quiet",
+    );
+
+    activities.length = 0;
+    ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — the issue is stood down for the failed-ack arm");
+    refuseNextActivity = true;
+    _resetLinearGuestCache();
+    const failedAckPrompt = await linearOnAgentSession({} as never, { ...(event("sess-ack-fail") as Record<string, unknown>), action: "prompted" } as never);
+    ok(
+      failedAckPrompt === null,
+      "🔴 OPE-1548 linear: a `prompted` follow-up whose ack FAILS is still SUPPRESSED — the ack guard never gates the suppression, so a broken post can never dispatch a turn",
+    );
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 0,
+      "linear: precondition — the refused post landed NO line, which is the state the redelivery below must repair",
+    );
+    _resetLinearGuestCache();
+    const retriedAckPrompt = await linearOnAgentSession({} as never, { ...(event("sess-ack-fail") as Record<string, unknown>), action: "prompted" } as never);
+    ok(retriedAckPrompt === null, "OPE-1548 linear: the REDELIVERY of that same webhook is suppressed too");
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+      "🔴 OPE-1548 linear: …and it POSTS THE LINE — a failed post gives the claim back, so the guard is spent by a line that landed and never by one that did not",
+    );
+
+    _resetLinearGuestCache();
+    await linearOnAgentSession({} as never, { ...(event("sess-ack-fail") as Record<string, unknown>), action: "prompted" } as never);
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+      "🔴 OPE-1548 linear: NEGATIVE CONTROL — a redelivery AFTER a successful ack posts no second line, so the release fires on failure only",
+    );
+
+    _resetLinearGuestCache();
+    const createdOnStoodDown = await linearOnAgentSession({} as never, event("sess-3") as never);
+    ok(
+      createdOnStoodDown !== null && (createdOnStoodDown as { auth?: unknown }).auth !== undefined,
+      "🔴 OPE-1548 linear: a `created` session on a STOOD-DOWN issue still DISPATCHES — a fresh assign or @mention is the way back in, so the gate must never reach it",
+    );
     const afterCreated = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
     ok(afterCreated !== null && afterCreated.stopped === false, "🔴 linear: NEGATIVE CONTROL — a fresh `created` session CLEARS the stop, which is the documented way back in");
+
+    _resetLinearGuestCache();
+    activities.length = 0;
+    const livePrompt = await linearOnAgentSession({} as never, { ...(event("sess-3b") as Record<string, unknown>), action: "prompted" } as never);
+    ok(
+      livePrompt !== null && (livePrompt as { auth?: unknown }).auth !== undefined,
+      "🔴 OPE-1548 linear: NEGATIVE CONTROL — a `prompted` follow-up on a LIVE issue still dispatches, so the suppression is driven by the stored stop and not by the action",
+    );
+    ok(
+      !activities.some((b) => b.includes("Standing down on this issue")),
+      "🔴 OPE-1548 linear: NEGATIVE CONTROL — …and it posts no stand-down line, so the ack rides the suppression rather than every follow-up",
+    );
+
     ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — stopped again");
     _resetLinearGuestCache();
     await linearOnAgentSession({} as never, event("sess-3") as never);
@@ -307,8 +376,8 @@ const NOW = "2026-05-12T11:30:00.000Z";
         opts.declared === false
           ? []
           : opts.claimed === true
-            ? [{ name: "e2e-engaged", containers: [`notion/${WS}`] }]
-            : [{ name: "e2e-engaged", channels: [`notion/${WS}/${PAGE}`] }],
+            ? [{ name: "e2e-engaged", reach: [`notion/${WS}`] }]
+            : [{ name: "e2e-engaged", reach: [`notion/${WS}/${PAGE}`] }],
       resolveBotUserId: async () => BOT,
       resolveBotName: async () => "Aria",
       ambientEnabled: () => opts.ambient,

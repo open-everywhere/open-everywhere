@@ -646,5 +646,151 @@ function fakeDeps(state: FakeState) {
   ok((await resolveMessagePermalink("brokenlink", { channelId: "C1", messageId: "M1" })) === undefined, "permalink: a THROWING composer degrades to undefined — it is display-only and may not fail the request");
 }
 
+{
+  const { domainExposureLines } = await import("../agent/approvals/domain-exposure.js");
+  const { wideningSubject } = await import("../agent/tools/request_access.js");
+  const { summarizeFrozenRow } = await import("../agent/approvals/actions.js");
+
+  const LISTED_ROOMS = ["slack/T1/C1", "teams/W1/CH1"];
+  const withDomain = (over: Partial<Domain> = {}) => {
+    domains.push({ name: "payments", title: "Payments", reach: LISTED_ROOMS, memory: "payments-silo", ...over } as Domain);
+    return () => {
+      domains.pop();
+    };
+  };
+  const noReach = async () => [];
+  const connectorSubject = { label: "the Notion connector", reachTags: ["connector:notion"], opaqueSources: ["Notion"] };
+
+  {
+    const undo = withDomain();
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text.includes('This lands in the "Payments" domain, which lists 2 rooms on Slack and Microsoft Teams.'), `exposure: names how far the domain reaches, in surface names not keys (${text})`);
+    ok(text.includes("share one memory"), "exposure: says the rooms share one memory when the domain declares a silo");
+    ok(text.includes("No room in this domain can reach the Notion connector today, so this widens the domain itself."), "exposure: flags an addition no room in the domain holds");
+    ok(text.includes("Open Everywhere cannot list who else can read Notion"), "exposure: states the audience it CANNOT enumerate — the honest half");
+    ok(!/slack\/T1\/C1|teams\/W1/u.test(text), "exposure: no raw surface keys reach the card copy");
+    undo();
+  }
+  {
+    const undo = withDomain();
+    const reachOf = async (room: string) => (room === "slack/T1/C1" ? ["connector:notion"] : []);
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf })).join("\n");
+    ok(text.includes("1 room in this domain can already reach the Notion connector."), `exposure: counts the rooms that already hold it (${text})`);
+    ok(!text.includes("widens the domain itself"), "exposure: negative control — no widening claim when another room already holds the reach");
+    undo();
+  }
+  {
+    const undo = withDomain({ memory: undefined });
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(!text.includes("share one memory"), "exposure: negative control — a domain that declares no silo makes no shared-memory claim");
+    undo();
+    const undo2 = withDomain({ memory: "payments-silo", ambientSupervisor: false } as Partial<Domain>);
+    const text2 = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text2.includes("share one memory"), "exposure: a domain with a silo shares memory whatever the window topology says");
+    undo2();
+  }
+  {
+    const undo = withDomain({ reach: ["slack/T1"] });
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text.includes("lists no rooms — it admits every room in a whole workspace on Slack by a rule"), `exposure: a claim-only domain says its rooms cannot be listed, and names the claim's grain (${text})`);
+    ok(!/\b0 rooms\b/u.test(text), "exposure: it never prints a room count it could not enumerate");
+    ok(!text.includes("widens the domain itself"), "exposure: and never the widening claim that count would have produced");
+    ok(text.includes("Every room it admits shares one memory"), "exposure: the shared-memory fact still lands — it is declared, not counted");
+    undo();
+    const undo2 = withDomain({ reach: ["slack/T1/proj-*"] });
+    const globbed = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(globbed.includes("lists no rooms — it admits every room matching a pattern on Slack by a rule"), `exposure: a pattern is not an enumerable room — it is a container entry, and the card names its grain (${globbed})`);
+    ok(!/\b0 rooms\b/u.test(globbed), "exposure: …and a pattern-only domain still never prints a room count");
+    undo2();
+    const undo3 = withDomain({ reach: [] });
+    const silent = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(silent.includes("does not list its rooms"), `exposure: a domain with no reach entries gets the short form (${silent})`);
+    ok(!silent.includes("by a rule"), "exposure: negative control — and claims nothing by a rule");
+    undo3();
+  }
+  {
+    const undo = withDomain({ reach: [...LISTED_ROOMS, "slack/T1"] });
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text.includes("lists 2 rooms on Slack and Microsoft Teams"), `exposure: a mixed domain still reports the rooms it does list (${text})`);
+    ok(text.includes("It also admits every room in a whole workspace on Slack by a rule") && text.includes("the count above is a floor"), `exposure: and says the count is a floor because of the claim (${text})`);
+    ok(text.includes("No room this domain LISTS can reach the Notion connector today."), "exposure: the uniqueness sentence is scoped to the listed rooms");
+    ok(!text.includes("widens the domain itself"), "exposure: and withholds the domain-wide widening verdict a partial set cannot earn");
+    undo();
+    const undo2 = withDomain({ reach: [...LISTED_ROOMS, "slack/T1"] });
+    const held = async (room: string) => (room === "slack/T1/C1" ? ["connector:notion"] : []);
+    const text2 = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: held })).join("\n");
+    ok(text2.includes("1 of the rooms it lists can already reach the Notion connector."), `exposure: a holder count on a mixed domain is scoped to the listed rooms (${text2})`);
+    ok(!text2.includes("1 room of the rooms it lists"), "exposure: …and the singular reads as a sentence, not as a count spliced into a partitive");
+    undo2();
+    const undo3 = withDomain({ reach: [...LISTED_ROOMS, "github/acme/payments-*"] });
+    const text3 = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text3.includes("every room matching a pattern on GitHub by a rule"), `exposure: a glob claim is described by its shape, never as the raw entry — and the sentence says "by a rule" once (${text3})`);
+    ok(!/github\/acme/u.test(text3), "exposure: the claim entry itself never reaches the card");
+    undo3();
+  }
+  {
+    const lines = await domainExposureLines({ org: "default", domain: null, subject: connectorSubject, reachOf: noReach });
+    ok(lines[0].includes("in no memory domain"), "exposure: a room in no domain gets the complete short answer, not a failure");
+  }
+  {
+    const lines = await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, landsOnARoom: false, reachOf: noReach });
+    ok(lines.length === 1 && lines[0].includes("cannot list who else can read Notion"), `exposure: a grant that lands in DMs states only the not-enumerable half (${lines.join(" | ")})`);
+  }
+  {
+    const text = (await domainExposureLines({ org: "default", domain: "no-such-domain", subject: connectorSubject, reachOf: noReach })).join("\n");
+    ok(text.includes("could not read the rooms"), `exposure: an unreadable domain states that plainly (${text})`);
+    ok(text.includes("Open Everywhere cannot list who else can read Notion"), "exposure: the not-enumerable statement survives a failed read");
+  }
+  {
+    const undo = withDomain();
+    const brokenReach = async () => {
+      throw new Error("resolver unavailable");
+    };
+    const text = (await domainExposureLines({ org: "default", domain: "payments", subject: connectorSubject, reachOf: brokenReach })).join("\n");
+    ok(text.includes("could not check which rooms already reach the Notion connector"), `exposure: a failed reach check says so (${text})`);
+    ok(!text.includes("widens the domain itself"), "exposure: a failed reach check never asserts the widening it could not verify");
+    ok(text.includes("lists 2 rooms"), "exposure: a failed reach check keeps the facts it DID prove");
+    undo();
+  }
+
+  {
+    const connector = wideningSubject({ kind: "grant-connector", scope: { level: "surface", surfaceKey: "slack/T1/C1" }, connector: "notion", credential: "notion-workspace" } as never);
+    ok(connector.reachTags.join() === "connector:notion", "wideningSubject: a grant-connector ask compares on the connector's own reach tag");
+    ok(connector.label === "the Notion connector" && connector.opaqueSources.join() === "Notion", "wideningSubject: it names the connector for a person, through the one surface namer");
+    const widen = wideningSubject({ kind: "widen-connection", scope: { level: "surface", surfaceKey: "slack/T1/C1" }, connectionId: "notion-rest", addMethods: [], addPathPrefixes: ["/v1/pages"], baseConnection: notionRest } as never);
+    const expectedHosts = notionRest.allowedWebsites.map((h) => h.trim().toLowerCase());
+    ok(widen.reachTags.join() === expectedHosts.map((h) => `host:${h}`).join(), `wideningSubject: a widen-connection ask compares on the connection's hosts, tag for tag (${widen.reachTags.join()})`);
+    ok(widen.opaqueSources.join() === expectedHosts.join(), "wideningSubject: those hosts are the audiences it cannot enumerate");
+    const shouty = wideningSubject({
+      kind: "widen-connection",
+      scope: { level: "surface", surfaceKey: "slack/T1/C1" },
+      connectionId: "notion-rest",
+      addMethods: [],
+      addPathPrefixes: [],
+      baseConnection: { ...notionRest, allowedWebsites: [" API.Notion.com "] },
+    } as never);
+    ok(shouty.reachTags.join() === "host:api.notion.com", `wideningSubject: host tags are trimmed and lower-cased, as the resolver compares them (${shouty.reachTags.join()})`);
+    ok(shouty.label === "api.notion.com", "wideningSubject: the label a person reads is the normalised host too");
+  }
+
+  {
+    const rendered = summarizeFrozenRow({
+      kind: "access.request",
+      argsJson: JSON.stringify({
+        org: "default",
+        scopeKey: "slack/T1/C1",
+        requestId: "r1",
+        delta: { kind: "grant-connector", scope: { level: "surface", surfaceKey: "slack/T1/C1" }, connector: "notion", credential: "notion-workspace" },
+        requestedBy: "U1",
+        channelId: "C1",
+        threadTs: null,
+        configRepo: "acme/config",
+        exposure: ["EXPOSURE-LINE-ONE", "EXPOSURE-LINE-TWO"],
+      }),
+    } as never).join("\n");
+    ok(rendered.includes("EXPOSURE-LINE-ONE") && rendered.includes("EXPOSURE-LINE-TWO"), `access.request card: the frozen exposure lines render on the card (${rendered})`);
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`access-request-test: ${n} assertions passed`);

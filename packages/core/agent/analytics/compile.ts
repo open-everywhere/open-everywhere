@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DATASETS, DATASET_NAMES, type DatasetName, type DatasetSpec, type TsBucket } from "./registry.js";
 import type { AnalyticsScope } from "../access/analytics-scope.js";
 import type { CompiledAnalyticsQuery } from "../operational/store.js";
-import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
+import { domainForChannel, criteriaDomain, domainRoster, type Domain } from "../memory/domain.js";
 
 export type { CompiledAnalyticsQuery } from "../operational/store.js";
 
@@ -79,7 +79,7 @@ function tsSubstrLen(bucket: TsBucket): number {
 
 function domainChannels(domainName: string, domains: readonly Domain[]): string[] {
   const d = domains.find((x) => x.name === domainName);
-  return d?.channels ? [...d.channels] : [];
+  return d ? domainRoster(d) : [];
 }
 
 function channelScopeConjunct(spec: DatasetSpec, channels: readonly string[], params: unknown[]): string {

@@ -223,7 +223,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadDomains: () => [
       defineDomain({
         name: "payments",
-        channels: ["slack/T_PAY/C_PAY", "notion/W_PAY/P_PAY", "github/acme/payments-api"],
+        reach: ["slack/T_PAY/C_PAY", "notion/W_PAY/P_PAY", "github/acme/payments-api"],
         memory: "payments-notes",
         ambientSupervisor: true,
         mode: "unified",
@@ -273,7 +273,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadDomains: () => [
       defineDomain({
         name: "solo-dom",
-        channels: ["slack/T_S/C_SOLO"],
+        reach: ["slack/T_S/C_SOLO"],
         memory: "solo-notes",
         ambientSupervisor: true,
         mode: "unified",
@@ -430,7 +430,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "ope544task", channels: ["slack/T_TASK/C_TASK"], mode: "unified" })],
+    loadDomains: () => [defineDomain({ name: "ope544task", reach: ["slack/T_TASK/C_TASK"], mode: "unified" })],
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
@@ -454,14 +454,14 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadDomains: () => [
       defineDomain({
         name: "xsurf",
-        channels: ["slack/T_X/C_X", "teams/W_X/CH_X"],
+        reach: ["slack/T_X/C_X", "teams/W_X/CH_X"],
         memory: "xsurf-notes",
         ambientSupervisor: true,
         mode: "unified",
       }),
       defineDomain({
         name: "slackonly",
-        channels: ["slack/T_S/C_S"],
+        reach: ["slack/T_S/C_S"],
         memory: "xsurf-notes",
         ambientSupervisor: true,
         mode: "unified",
@@ -681,7 +681,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "ope771", channels: ["slack/T_771/C_771"], ambientSupervisor: true })],
+    loadDomains: () => [defineDomain({ name: "ope771", reach: ["slack/T_771/C_771"], ambientSupervisor: true })],
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
@@ -756,7 +756,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "ope784", channels: ["slack/T_784/C_784"], ambientSupervisor: true })],
+    loadDomains: () => [defineDomain({ name: "ope784", reach: ["slack/T_784/C_784"], ambientSupervisor: true })],
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
@@ -812,7 +812,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "ope787", channels: ["notion/ws1/page1"], ambientSupervisor: true })],
+    loadDomains: () => [defineDomain({ name: "ope787", reach: ["notion/ws1/page1"], ambientSupervisor: true })],
     loadSilos: () => [],
     domainsForSurface: () => [],
   });

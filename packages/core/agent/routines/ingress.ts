@@ -10,6 +10,7 @@ import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
 import { recheckFireCreator, type CreatorStandingCheck } from "./fire-creator.js";
 import { routinePartition } from "./partition.js";
+import { routineFireHalted } from "./fire-halt.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { getSettings } from "../settings/settings.js";
 import type { Trust } from "../identity/binding.js";
@@ -175,6 +176,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   let unwired = 0;
   let overCap = 0;
   let overBudget = 0;
+  let halted = 0;
   let ungranted = 0;
   let drifted = 0;
   let hydrated = 0;
@@ -249,6 +251,11 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       ...(deps.confirmCreatorInternal ? { check: deps.confirmCreatorInternal } : {}),
     }).catch(() => undefined);
     const fireTrust: Trust = (dest.mode === "dm" ? creatorInternal === true : internal) ? "internal" : "external";
+    if (await routineFireHalted(r, { event: ev.event, ...(ev.action ? { action: ev.action } : {}) }, { audit: auditDeps })) {
+      halted++;
+      log(`event ${ev.summary} matched ${r.id} but a break-glass halt is in force — SKIPPED (audited; an event has no "later")`);
+      continue;
+    }
     try {
       const verdict = await scopeOverBudget(routinePartition(r), dest.mode, (deps.now?.() ?? new Date()).toISOString(), fireTrust, r.createdBy);
       if (verdict.over) {
@@ -333,14 +340,14 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   if (matches.length > 0 || invalid > 0) {
     log(
       `event "${ev.summary}": ${matches.length} matched -> ${fired - lostFires} fired (${hydrated} hydrated), ${ungranted} ungranted, ` +
-        `${withheld} audience-withheld, ${overBudget} over-budget, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
+        `${withheld} audience-withheld, ${overBudget} over-budget, ${halted} halted, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
         `${invalid} invalid-filter`,
     );
   }
   return {
     matched: matches.length,
     fired: fired - lostFires,
-    skipped: ungranted + unwired + overCap + overBudget + withheld + drifted + lostFires,
+    skipped: ungranted + unwired + overCap + overBudget + halted + withheld + drifted + lostFires,
   };
 }
 

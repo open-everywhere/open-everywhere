@@ -50,9 +50,9 @@ const ok = (cond: boolean, label: string) => {
 };
 
 {
-  const gov = defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] });
+  const gov = defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] });
   const org = defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] });
-  const plain = defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_A"] });
+  const plain = defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], admins: ["slack/T1/U_A"] });
 
   assert.doesNotThrow(() => assertGovernanceDomains([gov, org, plain], []), "valid governance domain (slack = binding-trusted) passes the lint");
   n++;
@@ -74,17 +74,17 @@ const ok = (cond: boolean, label: string) => {
     }
     ok(threw, `${label}: throws`);
   };
-  throwsGov(defineDomain({ name: "g", governance: true, match: "org", admins: ["slack/T1/U_A"] } as never), /explicit channels domain/, "a match/pseudo governance domain");
-  throwsGov(defineDomain({ name: "g", governance: true, channels: ["slack/T1/C"] }), /empty admins roster/, "a governance domain with no admins");
+  throwsGov(defineDomain({ name: "g", governance: true, match: "org", admins: ["slack/T1/U_A"] } as never), /is governance but has no reach/, "a match/pseudo governance domain");
+  throwsGov(defineDomain({ name: "g", governance: true, reach: ["slack/T1/C"] }), /empty admins roster/, "a governance domain with no admins");
   throwsGov(
-    defineDomain({ name: "g", governance: true, channels: Array.from({ length: GOVERNANCE_CHANNEL_MAX + 1 }, (_, i) => `slack/T1/C${i}`), admins: ["slack/T1/U_A"] }),
+    defineDomain({ name: "g", governance: true, reach: Array.from({ length: GOVERNANCE_CHANNEL_MAX + 1 }, (_, i) => `slack/T1/C${i}`), admins: ["slack/T1/U_A"] }),
     /exceeds the .* governance cap/,
     "a governance domain over the channel cap",
   );
-  throwsGov(defineDomain({ name: "g", governance: true, channels: ["notion/ws/pg"], admins: ["notion/U_A"] }), /not operator-vouched-internal/, "a governance domain with an un-vouched non-binding-trusted channel");
+  throwsGov(defineDomain({ name: "g", governance: true, reach: ["notion/ws/pg"], admins: ["notion/U_A"] }), /not operator-vouched-internal/, "a governance domain with an un-vouched non-binding-trusted channel");
 
   assert.doesNotThrow(
-    () => assertGovernanceDomains([defineDomain({ name: "g", governance: true, channels: ["notion/ws/pg"], admins: ["notion/U_A"] })], ["notion/ws"]),
+    () => assertGovernanceDomains([defineDomain({ name: "g", governance: true, reach: ["notion/ws/pg"], admins: ["notion/U_A"] })], ["notion/ws"]),
     "a governance domain whose non-slack channel is operator-vouched passes",
   );
   n++;
@@ -111,13 +111,13 @@ const ok = (cond: boolean, label: string) => {
   ok(/isn't on the roster/.test(floorBreachNotice(nonAdmin.breach!)), "floorBreachNotice names the off-roster member for a non-admin breach");
 
   const domains = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A"] }),
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] }),
   ];
   const set = governanceAdminSet("slack/T1/C_ADMIN", domains);
   ok(set.has("U_A") && set.has("U_ORG") && set.size === 2, "governanceAdminSet = domain admins ∪ org admins, PROJECTED to bare ids in the channel's own platform namespace (a RoomRoster speaks the platform's ids, not qualified keys)");
   const crossPlatform = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A"] }),
     defineDomain({ name: "org", match: "org", admins: ["discord/U_A", "teams/U_ORG"] }),
   ];
   const projected = governanceAdminSet("slack/T1/C_ADMIN", crossPlatform);
@@ -127,7 +127,7 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const domains = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] }),
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] }),
   ];
   const attestCtx = { org: "gov-test", platform: "slack", workspace: "T1", surface: "C_ADMIN", principalId: "U_A" };
@@ -200,7 +200,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
 
 {
   const govDomains: Domain[] = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] }),
   ];
 
@@ -265,7 +265,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
 
 {
   const govDomains: Domain[] = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] }),
   ];
   registerConfig(baseConfig(govDomains) as never);
@@ -289,7 +289,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
   {
     let threw = false;
     try {
-      assertGovernanceDomains([defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], governanceDelivery: "dm-fallback" })], []);
+      assertGovernanceDomains([defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], governanceDelivery: "dm-fallback" })], []);
     } catch (err) {
       threw = true;
       ok(/single ORG-WIDE knob/.test(String(err)), "the governanceDelivery lint explains it belongs on the org pseudo-domain");
@@ -429,7 +429,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
     sent.length = 0;
     registerConfig(
       baseConfig([
-        defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
+        defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_ORG"] }),
         defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"], governanceDelivery: "dm-fallback" }),
       ]) as never,
     );

@@ -95,8 +95,8 @@ const ORG = "default";
 
 {
   const defineDomain = domainMod.defineDomain;
-  const eng = defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "slack/T1/C_OPS"] });
-  const orphan = defineDomain({ name: "other", channels: ["slack/T1/C_X"] });
+  const eng = defineDomain({ name: "eng", reach: ["teams/W1/CONV1", "slack/T1/C_OPS"] });
+  const orphan = defineDomain({ name: "other", reach: ["slack/T1/C_X"] });
   const partitionFor = (surfaceKey: string) => {
     const [platform = "", workspace = "", ...rest] = surfaceKey.split("/");
     return { org: ORG, platform, workspace, surface: rest.join("/"), workspaceKey: `${platform}/${workspace}`, surfaceKey, key: surfaceKey };
@@ -111,13 +111,17 @@ const ORG = "default";
   ok("venue" in routed && !routed.venue.sameRoom, "venue: a Teams channel can't host a card, so the card is ROUTED rather than the request refused — this is what makes Teams creatable at all");
   ok("venue" in routed && routed.venue.platform === "slack" && routed.venue.channelId === "C_OPS" && routed.venue.surfaceKey === "slack/T1/C_OPS", "venue: …into the card-capable channel in the SAME domain, whose third segment is its channel id");
 
-  const noCard = cardVenue.approvalVenueFor(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [defineDomain({ name: "eng", channels: ["teams/W1/CONV1"] })]);
+  const noCard = cardVenue.approvalVenueFor(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [defineDomain({ name: "eng", reach: ["teams/W1/CONV1"] })]);
   ok("refusal" in noCard && noCard.refusal.reason === "no-card-channel" && noCard.refusal.domain === "eng", "venue: a domain with no card-capable channel REFUSES, naming the domain");
   ok(cardVenue.describeVenueRefusal((noCard as { refusal: never }).refusal, "teams").includes("eng"), "venue: the refusal text names the domain to edit — a blocked user gets an action, not a description of the blockage");
 
   const noDomain = cardVenue.approvalVenueFor(binding("teams", "W1", "CONV_X"), partitionFor("teams/W1/CONV_X") as never, () => [orphan]);
   ok("refusal" in noDomain && noDomain.refusal.reason === "no-domain", "venue: a channel in NO explicit domain gets no venue — a match/pseudo-domain is not a destination an operator chose");
-  ok(cardVenue.describeVenueRefusal((noDomain as { refusal: never }).refusal, "teams").includes("domains.ts"), "venue: …and that refusal names the config file too");
+  {
+    const noDomainCopy = cardVenue.describeVenueRefusal((noDomain as { refusal: never }).refusal, "teams");
+    ok(noDomainCopy.includes("agent/memory/config/domains/"), "venue: …and that refusal names the per-domain config file to edit");
+    ok(!noDomainCopy.includes(".channels") && !noDomainCopy.includes("`containers`"), "venue: …and never names a field the config no longer has");
+  }
 }
 
 {
@@ -138,7 +142,7 @@ const ORG = "default";
   };
   const deps = { floor: async (key: string) => floorFor(key) } as never;
 
-  const mixed = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
+  const mixed = defineDomain({ name: "partners", reach: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
   const pure = cardVenue.approvalVenueFor(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [mixed]);
   ok("venue" in pure && pure.venue.channelId === "C_SHARED", "venue-floor: the PURE walk is floor-blind and takes the first listing — this is the state the check has to improve on, pinned so the test can't pass vacuously");
 
@@ -147,19 +151,21 @@ const ORG = "default";
   ok("venue" in checked && checked.venue.channelId === "C_CLEAN", "venue-floor: 🔴 a candidate venue that is ITSELF externally shared is SKIPPED and the walk continues — a redirect that omitted this would just move the leak");
   ok(asked[0] === "slack/T1/C_SHARED" && asked.length === 2, "venue-floor: …and it asked in declaration order, stopping at the first candidate that passed (no wasted roster fetches behind it)");
 
-  const allShared = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_SHARED2"] });
+  const allShared = defineDomain({ name: "partners", reach: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_SHARED2"] });
   const none = await cardVenue.checkApprovalVenue(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [allShared], deps);
   ok("refusal" in none && none.refusal.reason === "no-internal-card-channel" && none.refusal.domain === "partners", "venue-floor: a domain whose every card-capable channel is shared refuses with its OWN reason — distinct from no-card-channel, because the config change is a different one");
   const copy = cardVenue.describeVenueRefusal((none as { refusal: never }).refusal, "teams");
-  ok(copy.includes("partners") && copy.includes("domains.ts"), "venue-floor: …and the copy names the domain and the file to edit");
+  ok(copy.includes("partners") && copy.includes("agent/memory/config/domains/<name>.ts"), "venue-floor: …and the copy names the domain and the per-domain config directory to edit");
+  ok(!copy.includes("domains/partners.ts"), "venue-floor: …and never GUESSES the filename from the domain name — nothing ties the two, so a guessed path opens nothing");
+  ok(copy.includes('"partners".reach') && !copy.includes(".channels"), "venue-floor: …and names the CURRENT field — an operator who pastes `channels` hits refuseUnknownFields");
   ok(!copy.includes("Ask me again in a channel"), "venue-floor: …but NOT the card-disclosure 'ask somewhere not shared' line — the reader is on Teams, not in the shared room, so that instruction would misdirect them (this is the bug the arm fixes)");
 
-  const unknown = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_UNKNOWN"] });
+  const unknown = defineDomain({ name: "partners", reach: ["teams/W1/CONV1", "slack/T1/C_UNKNOWN"] });
   const inert = await cardVenue.checkApprovalVenue(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [unknown], deps);
   ok("venue" in inert && inert.venue.channelId === "C_UNKNOWN", "venue-floor: an UNOBSERVABLE roster ADMITS the candidate — 'we could not ask' must never become a silent outage (the polarity rule every floor consumer shares)");
 
   asked.length = 0;
-  const ownShared = defineDomain({ name: "partners", channels: ["slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
+  const ownShared = defineDomain({ name: "partners", reach: ["slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
   const own = await cardVenue.checkApprovalVenue(binding("slack", "T1", "C_SHARED"), partitionFor("slack/T1/C_SHARED") as never, () => [ownShared], deps);
   ok("venue" in own && own.venue.sameRoom && own.venue.channelId === "C_SHARED", "venue-floor: a card-capable OWN room keeps its own card even when the floor would refuse it — the redirect-away move is the one this must not make");
   ok(asked.length === 0, "venue-floor: …and the own-room path touches the roster seam ZERO times, so the common path reads no config and does no I/O, exactly as before OPE-148");
@@ -191,7 +197,7 @@ const ORG = "default";
 
 {
   const defineDomain = domainMod.defineDomain;
-  const good = defineDomain({ name: "eng", channels: ["linear/W1/ISSUE1", "slack/T1/C_OPS"], reportChannel: "slack/T1/C_OPS" });
+  const good = defineDomain({ name: "eng", reach: ["linear/W1/ISSUE1", "slack/T1/C_OPS"], reportChannel: "slack/T1/C_OPS" });
   let threw: string | null = null;
   try {
     domainMod.assertReportChannels([good]);
@@ -203,13 +209,13 @@ const ORG = "default";
   ok(domainMod.reportChannelFor("slack/T9/C_ELSE", [good]) === undefined, "config-lint: a channel outside the domain gets NO redirect — it is deliberately not inherited or org-wide");
 
   await refuses(
-    () => domainMod.assertReportChannels([defineDomain({ name: "eng", channels: ["linear/W1/ISSUE1"], reportChannel: "slack/T1/C_OTHER" })]),
-    /not one of its own channels/,
+    () => domainMod.assertReportChannels([defineDomain({ name: "eng", reach: ["linear/W1/ISSUE1"], reportChannel: "slack/T1/C_OTHER" })]),
+    /not one of its own exact reach entries/,
     "config-lint: a redirect OUT of the domain is refused — that is the audience-expansion vector the config-not-creator decision exists to prevent",
   );
   await refuses(
     () => domainMod.assertReportChannels([defineDomain({ name: "org", match: "org", reportChannel: "slack/T1/C_OPS" })]),
-    /not an explicit channels domain/,
+    /sets reportChannel but has no reach/,
     "config-lint: a match/pseudo-domain may not carry a reportChannel — nobody enumerated its membership",
   );
 }

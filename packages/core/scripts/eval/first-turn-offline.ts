@@ -277,7 +277,8 @@ const PROBE_CHANNEL = TICKETING
 const WAKE_PLATFORM = TICKETING ? PLATFORM : "slack";
 const WAKE_CONTAINER_NOUN: string | undefined = TICKETING ? (PLATFORM === "github" ? "repo" : "team") : undefined;
 
-export const replyPostedResult = (id: string): { readonly posted: true; readonly id: string } => ({ posted: true, id });
+export const replyPostedResult = (id: string): { readonly posted: true; readonly id: string; readonly note?: string } =>
+  BASE_REPLY ? { posted: true, id, note: `Posted to ${WAKE_PLATFORM}.` } : { posted: true, id };
 
 function warmPrefix(i: number, w: (typeof WARRANTED_PROBES)[number]): readonly ModelMessage[] {
   const now = (): string => new Date().toISOString();

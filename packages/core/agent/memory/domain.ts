@@ -3,6 +3,7 @@ import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import {
   isGroupSegment,
   parseSurfaceKeyEntry,
+  surfaceKeyEntriesEquivalent,
   surfaceKeyEntriesIntersect,
   surfaceKeyEntryContains,
   surfaceKeyEntryMatches,
@@ -23,9 +24,8 @@ export type WindowMode = "solo" | "unified";
 
 export interface WindowGroup {
   readonly name: string;
-  readonly channels?: readonly string[];
-  readonly containers?: readonly string[];
-  readonly excludeContainers?: readonly string[];
+  readonly reach?: readonly string[];
+  readonly exclude?: readonly string[];
 }
 
 export const WINDOW_GROUP_NAME_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -65,9 +65,8 @@ export interface SandboxPreset {
 export interface Domain {
   readonly name: string;
   readonly title?: string;
-  readonly channels?: readonly string[];
-  readonly containers?: readonly string[];
-  readonly excludeContainers?: readonly string[];
+  readonly reach?: readonly string[];
+  readonly exclude?: readonly string[];
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
@@ -113,41 +112,87 @@ export interface DomainRouting {
   readonly via: DomainVia;
 }
 
-type ContainerEntry = SurfaceKeyEntry;
+type ReachEntry = SurfaceKeyEntry;
 
-const parseContainerEntry = parseSurfaceKeyEntry;
+const parseReachEntry = parseSurfaceKeyEntry;
 
 const entryMatchesKey = surfaceKeyEntryMatches;
 
-function firstMatching(entries: readonly string[] | undefined, channelKey: string): string | undefined {
-  for (const entry of entries ?? []) {
-    const parsed = parseContainerEntry(entry);
-    if (parsed && entryMatchesKey(parsed, channelKey)) return entry;
-  }
-  return undefined;
+const entryContains = surfaceKeyEntryContains;
+
+interface ParsedEntry {
+  readonly entry: string;
+  readonly parsed: ReachEntry;
 }
 
-export function domainClaimVerdict(
+function parseEntries(entries: readonly string[] | undefined): ParsedEntry[] {
+  const out: ParsedEntry[] = [];
+  for (const entry of entries ?? []) {
+    const parsed = parseReachEntry(entry);
+    if (parsed) out.push({ entry, parsed });
+  }
+  return out;
+}
+
+function mostSpecificMatch(entries: readonly ParsedEntry[], channelKey: string): ParsedEntry | undefined {
+  let best: ParsedEntry | undefined;
+  for (const candidate of entries) {
+    if (!entryMatchesKey(candidate.parsed, channelKey)) continue;
+    if (best === undefined || entryContains(best.parsed, candidate.parsed)) {
+      if (best !== undefined && surfaceKeyEntriesEquivalent(best.parsed, candidate.parsed)) continue;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+export function domainRoster(domain: { readonly reach?: readonly string[] }): string[] {
+  const out: string[] = [];
+  for (const entry of domain.reach ?? []) {
+    const parsed = parseReachEntry(entry);
+    if (parsed?.kind === "surface" && !parsed.glob) out.push(entry);
+  }
+  return out;
+}
+
+export function domainContainers(domain: { readonly reach?: readonly string[] }): string[] {
+  const out: string[] = [];
+  for (const entry of domain.reach ?? []) {
+    const parsed = parseReachEntry(entry);
+    if (parsed && (parsed.kind !== "surface" || parsed.glob)) out.push(entry);
+  }
+  return out;
+}
+
+export function domainReachVerdict(
   domain: Domain,
   channelKey: string,
 ): { readonly kind: "admits" | "excluded"; readonly entry: string } | undefined {
-  const admits = firstMatching(domain.containers, channelKey);
+  const admits = mostSpecificMatch(parseEntries(domain.reach), channelKey);
   if (admits === undefined) return undefined;
-  const excluded = firstMatching(domain.excludeContainers, channelKey);
-  return excluded === undefined ? { kind: "admits", entry: admits } : { kind: "excluded", entry: excluded };
+  const excluded = mostSpecificMatch(parseEntries(domain.exclude), channelKey);
+  return excluded === undefined ? { kind: "admits", entry: admits.entry } : { kind: "excluded", entry: excluded.entry };
 }
 
 export function resolveDomainForChannel(channelKey: string, domains: readonly Domain[]): DomainRouting {
-  const roster = domains.find((d) => d.channels?.includes(channelKey));
-  if (roster) return { domain: roster, via: "roster" };
+  let winner: { readonly domain: Domain; readonly parsed: ReachEntry; readonly entry: string } | undefined;
   let vetoed: DomainVia | undefined;
   for (const d of domains) {
-    const verdict = domainClaimVerdict(d, channelKey);
+    const verdict = domainReachVerdict(d, channelKey);
     if (!verdict) continue;
-    if (verdict.kind === "admits") return { domain: d, via: `container:${verdict.entry}` };
-    vetoed ??= `excluded:${d.name}:${verdict.entry}`;
+    if (verdict.kind === "excluded") {
+      vetoed ??= `excluded:${d.name}:${verdict.entry}`;
+      continue;
+    }
+    const parsed = parseReachEntry(verdict.entry);
+    if (!parsed) continue;
+    if (winner === undefined || (entryContains(winner.parsed, parsed) && !surfaceKeyEntriesEquivalent(winner.parsed, parsed))) {
+      winner = { domain: d, parsed, entry: verdict.entry };
+    }
   }
-  return { domain: undefined, via: vetoed ?? "none" };
+  if (!winner) return { domain: undefined, via: vetoed ?? "none" };
+  const exact = winner.parsed.kind === "surface" && !winner.parsed.glob;
+  return { domain: winner.domain, via: exact ? "roster" : `container:${winner.entry}` };
 }
 
 export function domainForChannel(channelKey: string, domains: readonly Domain[]): Domain | undefined {
@@ -190,7 +235,7 @@ export function warnSilentRoomGrainWithoutPublicSignal(
   const warn = deps.warn ?? ((m: string) => console.warn(m));
   const checked = new Set<string>();
   for (const d of domains) {
-    for (const ch of d.channels ?? []) {
+    for (const ch of domainRoster(d)) {
       if (checked.has(ch)) continue;
       checked.add(ch);
       const override = externalPolicyOverrideFor(ch, domains);
@@ -253,16 +298,16 @@ export function windowModeFor(channelKey: string, domains: readonly Domain[]): W
 }
 
 export function windowGroupFor(channelKey: string, domain: Domain): WindowGroup | undefined {
-  const groups = domain.windows ?? [];
-  for (const group of groups) {
-    if (group.channels?.includes(channelKey)) return group;
+  let winner: { readonly group: WindowGroup; readonly parsed: ReachEntry } | undefined;
+  for (const group of domain.windows ?? []) {
+    const admits = mostSpecificMatch(parseEntries(group.reach), channelKey);
+    if (admits === undefined) continue;
+    if (mostSpecificMatch(parseEntries(group.exclude), channelKey) !== undefined) continue;
+    if (winner === undefined || (entryContains(winner.parsed, admits.parsed) && !surfaceKeyEntriesEquivalent(winner.parsed, admits.parsed))) {
+      winner = { group, parsed: admits.parsed };
+    }
   }
-  for (const group of groups) {
-    if (firstMatching(group.containers, channelKey) === undefined) continue;
-    if (firstMatching(group.excludeContainers, channelKey) !== undefined) continue;
-    return group;
-  }
-  return undefined;
+  return winner?.group;
 }
 
 export function windowIdFor(channelKey: string, domains: readonly Domain[]): string | undefined {
@@ -298,44 +343,49 @@ function windowGroupShapeProblems(d: Domain): string[] {
       continue;
     }
     seen.add(g.name);
-    const hasMembers = (g.channels?.length ?? 0) > 0 || (g.containers?.length ?? 0) > 0;
-    if (!hasMembers) {
-      bad.push(`  window group "${g.name}" of "${d.name}" names no members — give it channels and/or containers, or drop it (an empty group elects nobody)`);
+    if ((g.reach?.length ?? 0) === 0) {
+      bad.push(`  window group "${g.name}" of "${d.name}" names no members — give it a reach list, or drop it (an empty group elects nobody)`);
     }
-    if ((g.excludeContainers?.length ?? 0) > 0 && (g.containers?.length ?? 0) === 0) {
-      bad.push(`  window group "${g.name}" of "${d.name}" sets excludeContainers with no containers — exclusions carve out of a CLAIM, so this pair is dead config; delete it`);
+    if ((g.exclude?.length ?? 0) > 0 && (g.reach?.length ?? 0) === 0) {
+      bad.push(`  window group "${g.name}" of "${d.name}" sets exclude with no reach — an exclusion carves out of a REACH, so this pair is dead config; delete it`);
     }
-    for (const entry of g.excludeContainers ?? []) {
-      const parsed = parseContainerEntry(entry);
+    for (const entry of g.exclude ?? []) {
+      const parsed = parseReachEntry(entry);
       if (!parsed || parsed.kind === "group") {
         bad.push(`  window group "${g.name}" of "${d.name}" excludes "${entry}", which is not a legal exclusion entry (a surface key, or a same-level \`prefix*\` glob)`);
-      } else if (parsed.kind === "tenant") {
-        bad.push(`  window group "${g.name}" of "${d.name}" excludes the whole tenant "${entry}" — a tenant-wide exclusion either cancels the group's claim outright or means nothing; name the surfaces`);
+        continue;
+      }
+      if (parsed.kind === "tenant") {
+        bad.push(`  window group "${g.name}" of "${d.name}" excludes the whole tenant "${entry}" — a tenant-wide exclusion either cancels the group's reach outright or means nothing; name the surfaces`);
+        continue;
+      }
+      const ownExact = domainRoster(g).find((ch) => entryMatchesKey(parsed, ch));
+      if (ownExact !== undefined) {
+        bad.push(
+          `  window group "${g.name}" of "${d.name}" excludes "${entry}" but also reaches "${ownExact}" outright — an exclusion and the exact key it cancels are a contradiction, and the key would silently fall through to this domain's \`mode\` residue instead of the group: delete the reach entry, or the exclusion.`,
+        );
       }
     }
-    for (const entry of g.containers ?? []) {
-      const parsed = parseContainerEntry(entry);
+    for (const entry of g.reach ?? []) {
+      const parsed = parseReachEntry(entry);
       if (parsed?.kind === "group") {
         bad.push(
-          `  window group "${g.name}" of "${d.name}" claims container "${entry}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a window group`,
+          `  window group "${g.name}" of "${d.name}" reaches "${entry}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a window group`,
         );
         continue;
       }
-      if (parsed?.kind === "surface" && !parsed.glob) {
-        bad.push(`  window group "${g.name}" of "${d.name}" claims container "${entry}", which names ONE exact surface — list it in this group's \`channels\` instead`);
-        continue;
-      }
       if (!parsed) {
-        bad.push(`  window group "${g.name}" of "${d.name}" claims container "${entry}", which is not a legal container entry (see Domain.containers)`);
+        bad.push(`  window group "${g.name}" of "${d.name}" reaches "${entry}", which is not a legal reach entry (see Domain.reach)`);
         continue;
       }
-      const withinDomainClaim = (d.containers ?? []).some((own) => {
-        const ownParsed = parseContainerEntry(own);
+      if (parsed.kind === "surface" && !parsed.glob) continue;
+      const withinDomainReach = domainContainers(d).some((own) => {
+        const ownParsed = parseReachEntry(own);
         return ownParsed !== undefined && surfaceKeyEntriesIntersect(ownParsed, parsed);
       });
-      if (!withinDomainClaim) {
+      if (!withinDomainReach) {
         bad.push(
-          `  window group "${g.name}" of "${d.name}" claims container "${entry}", which intersects none of that domain's own containers — a window narrows WITHIN its domain's claim and can never reach past it`,
+          `  window group "${g.name}" of "${d.name}" reaches container "${entry}", which intersects none of that domain's own containers — a window narrows WITHIN its domain's reach and can never reach past it`,
         );
       }
     }
@@ -379,7 +429,7 @@ function vouchedPredicate(vouched: readonly string[] | VouchedInternalFor): Vouc
 
 function windowMemberSets(d: Domain): ReadonlyMap<string, readonly string[]> {
   const out = new Map<string, string[]>();
-  for (const ch of d.channels ?? []) {
+  for (const ch of domainRoster(d)) {
     const windowId = windowGroupFor(ch, d)?.name ?? (d.mode === "unified" ? d.name : ch);
     const members = out.get(windowId);
     if (members) members.push(ch);
@@ -436,7 +486,7 @@ export function isGovernanceChannel(channelKey: string, domains: readonly Domain
 }
 
 export function governanceChannelFor(domains: readonly Domain[], fallback?: string): string | undefined {
-  const first = governanceDomains(domains)[0]?.channels?.[0];
+  const first = governanceDomains(domains).flatMap((d) => domainRoster(d))[0];
   return first ?? fallback;
 }
 
@@ -455,18 +505,19 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       );
     }
     if (d.governance !== true) continue;
-    const channels = d.channels ?? [];
-    if (d.match !== undefined || d.channels === undefined) {
-      bad.push(`  "${d.name}" is governance but not an explicit channels domain — a governance venue must list concrete channels, never a match/pseudo-domain`);
+    const channels = domainRoster(d);
+    if (d.match !== undefined || d.reach === undefined) {
+      bad.push(`  "${d.name}" is governance but has no reach — a governance venue must list concrete channels, never a match/pseudo-domain`);
     }
     if (!d.admins || d.admins.length === 0) {
       bad.push(`  "${d.name}" is governance but has an empty admins roster — a governance venue with no admins unlocks nothing (add the org's admin principal ids to its admins list)`);
     }
-    if (d.containers !== undefined) {
-      bad.push(`  "${d.name}" is governance but claims container(s) [${d.containers.join(", ")}] — a governance venue is a SMALL, enumerated, individually-vouched audience, and neither the ${GOVERNANCE_CHANNEL_MAX}-channel cap nor the per-channel vouch can be decided over an unbounded claim, whether it is a whole tenant or a \`prefix*\` glob (list the concrete channels, or drop governance from this domain)`);
+    const governanceContainers = domainContainers(d);
+    if (governanceContainers.length > 0) {
+      bad.push(`  "${d.name}" is governance but reaches container(s) [${governanceContainers.join(", ")}] — a governance venue is a SMALL, enumerated, individually-vouched audience, and neither the ${GOVERNANCE_CHANNEL_MAX}-channel cap nor the per-channel vouch can be decided over an unbounded container, whether it is a whole tenant or a \`prefix*\` glob (list the concrete channels, or drop governance from this domain)`);
     }
-    if (d.excludeContainers !== undefined) {
-      bad.push(`  "${d.name}" is governance but sets excludeContainers [${d.excludeContainers.join(", ")}] — an exclusion carves surfaces out of a CLAIM, and a governance venue may not claim at all; its audience is the enumerated \`channels\` roster and nothing else (drop excludeContainers)`);
+    if (d.exclude !== undefined) {
+      bad.push(`  "${d.name}" is governance but sets exclude [${d.exclude.join(", ")}] — an exclusion carves surfaces out of a CONTAINER, and a governance venue may not reach one at all; its audience is the exact keys of its \`reach\` and nothing else (drop exclude)`);
     }
     if (channels.length > GOVERNANCE_CHANNEL_MAX) {
       bad.push(`  "${d.name}" is governance with ${channels.length} channels — that exceeds the ${GOVERNANCE_CHANNEL_MAX}-channel governance cap (a governance domain is a SMALL uniformly-privileged venue; split it or re-tag)`);
@@ -499,12 +550,13 @@ export function assertReportChannels(domains: readonly Domain[]): void {
   for (const d of domains) {
     const rc = d.reportChannel;
     if (rc === undefined) continue;
-    if (d.channels === undefined || d.match !== undefined) {
-      bad.push(`  "${d.name}" sets reportChannel but is not an explicit channels domain — a report redirect must name a concrete room inside a concrete domain, never a match/pseudo-domain`);
+    if (d.reach === undefined || d.match !== undefined) {
+      bad.push(`  "${d.name}" sets reportChannel but has no reach — a report redirect must name a concrete room inside a concrete domain, never a match/pseudo-domain`);
       continue;
     }
-    if (!d.channels.includes(rc)) {
-      bad.push(`  "${d.name}" sets reportChannel "${rc}", which is not one of its own channels — a routine may only be redirected INSIDE its domain (add "${rc}" to "${d.name}".channels, or point reportChannel at one of: ${d.channels.join(", ")})`);
+    const roster = domainRoster(d);
+    if (!roster.includes(rc)) {
+      bad.push(`  "${d.name}" sets reportChannel "${rc}", which is not one of its own exact reach entries — a routine may only be redirected INSIDE its domain, to a room config names outright (add "${rc}" to "${d.name}".reach, or point reportChannel at one of: ${roster.join(", ")})`);
     }
   }
   if (bad.length > 0) {
@@ -669,70 +721,50 @@ export function reasoningCeilingForDomain(
 
 const entriesIntersect = surfaceKeyEntriesIntersect;
 
-const entryContains = surfaceKeyEntryContains;
-
-function exclusionCovering(domain: Domain, set: ContainerEntry): string | undefined {
-  for (const entry of domain.excludeContainers ?? []) {
-    const parsed = parseContainerEntry(entry);
+function exclusionCovering(domain: Domain, set: ReachEntry): string | undefined {
+  for (const entry of domain.exclude ?? []) {
+    const parsed = parseReachEntry(entry);
     if (parsed && entryContains(parsed, set)) return entry;
   }
   return undefined;
 }
 
 export function assertChannelExclusivity(domains: readonly Domain[]): void {
-  const owner = new Map<string, string>();
   const clashes: string[] = [];
-  for (const d of domains) {
-    for (const ch of d.channels ?? []) {
-      const prev = owner.get(ch);
-      if (prev !== undefined && prev !== d.name) {
-        clashes.push(`  "${ch}" is in both "${prev}" and "${d.name}"`);
-      } else {
-        owner.set(ch, d.name);
-      }
-    }
-  }
-  const claims = domains.map((d) => ({
-    domain: d,
-    entries: (d.containers ?? []).flatMap((entry) => {
-      const parsed = parseContainerEntry(entry);
-      return parsed ? [{ entry, parsed }] : [];
-    }),
-  }));
-  for (const { domain: d, entries } of claims) {
-    for (const { entry } of entries) {
-      const roster = owner.get(entry);
-      if (roster !== undefined) {
-        clashes.push(
-          `  "${entry}" is claimed as a container by "${d.name}" but is also a channels entry of "${roster}" — a roster entry and a tenant claim are different things; say which you meant`,
-        );
-      }
-    }
-  }
-  for (let i = 0; i < claims.length; i++) {
-    for (let j = i + 1; j < claims.length; j++) {
-      const a = claims[i]!;
-      const b = claims[j]!;
+  const reach = domains.map((d) => ({ domain: d, entries: parseEntries(d.reach) }));
+  for (let i = 0; i < reach.length; i++) {
+    for (let j = i + 1; j < reach.length; j++) {
+      const a = reach[i]!;
+      const b = reach[j]!;
       if (a.domain.name === b.domain.name) continue;
       for (const ae of a.entries) {
         for (const be of b.entries) {
-          if (!entriesIntersect(ae.parsed, be.parsed)) continue;
-          const overlap = entryContains(ae.parsed, be.parsed) ? be.parsed : ae.parsed;
-          if (exclusionCovering(a.domain, overlap) !== undefined) continue;
-          if (exclusionCovering(b.domain, overlap) !== undefined) continue;
-          const overlapText = entryContains(ae.parsed, be.parsed) ? be.entry : ae.entry;
+          if (!surfaceKeyEntriesEquivalent(ae.parsed, be.parsed)) continue;
+          if (exclusionCovering(a.domain, be.parsed) !== undefined) continue;
+          if (exclusionCovering(b.domain, ae.parsed) !== undefined) continue;
           clashes.push(
-            ae.entry === be.entry && ae.parsed.kind === "tenant"
-              ? `  the tenant "${ae.entry}" is claimed in containers by both "${a.domain.name}" and "${b.domain.name}"`
-              : `  the containers entries "${ae.entry}" ("${a.domain.name}") and "${be.entry}" ("${b.domain.name}") can match the SAME surface key, so which domain owns it would depend on declaration order — narrow one of them, or add excludeContainers: ["${overlapText}"] to the domain that should NOT get the overlap`,
+            ae.parsed.kind === "surface" && !ae.parsed.glob
+              ? `  "${ae.entry}" is in the reach of both "${a.domain.name}" and "${b.domain.name}"`
+              : ae.parsed.kind === "tenant"
+                ? `  the tenant "${ae.entry}" is reached by both "${a.domain.name}" and "${b.domain.name}", so which domain owns a key under it would depend on declaration order — narrow one of them to a \`<prefix>*\` glob or to exact keys`
+                : `  the reach entries "${ae.entry}" ("${a.domain.name}") and "${be.entry}" ("${b.domain.name}") match exactly the SAME keys, so which domain owns them would depend on declaration order — narrow one of them, or add exclude: ["${be.entry}"] to the domain that should NOT get them`,
           );
         }
       }
     }
   }
+  for (const d of domains) {
+    for (const key of domainRoster(d)) {
+      const owner = resolveDomainForChannel(key, domains);
+      if (owner.domain?.name === d.name) continue;
+      clashes.push(
+        `  "${key}" is named by "${d.name}" but routes to ${owner.domain ? `"${owner.domain.name}"` : `NO domain (via: ${owner.via})`} — a room config names outright must land in the domain that named it, or it gets no memory, no bundle and no ambient supervisor, and says so only by staying silent`,
+      );
+    }
+  }
   if (clashes.length > 0) {
     throw new Error(
-      "open-everywhere: a channel may belong to at most one memory domain, but:\n" +
+      "open-everywhere: a channel belongs to at most one memory domain, and a room a domain names outright belongs to that one, but:\n" +
         clashes.join("\n") +
         "\nRemove the channel from all but one domain (docs/capabilities/memory.md).",
     );
@@ -751,11 +783,11 @@ export function assertWindowGroupExclusivity(domains: readonly Domain[]): void {
           `  window group "${g.name}" of "${d.name}" has the same name as the domain "${g.name}" — a domain name is itself a window id (the id-equals-domain form), so the two would share the session registry row "oe-domain::${g.name}"`,
         );
       }
-      for (const ch of g.channels ?? []) {
+      for (const ch of domainRoster(g)) {
         const owner = domainForChannel(ch, domains);
         if (owner?.name !== d.name) {
           clashes.push(
-            `  window group "${g.name}" of "${d.name}" lists "${ch}", which config routes to ${owner ? `domain "${owner.name}"` : "no domain"} — a window slices a domain it cannot widen, so add the key to "${d.name}".channels first (or list it in a group of the domain that does own it)`,
+            `  window group "${g.name}" of "${d.name}" lists "${ch}", which config routes to ${owner ? `domain "${owner.name}"` : "no domain"} — a window slices a domain it cannot widen, so add the key to "${d.name}".reach first (or list it in a group of the domain that does own it)`,
           );
         }
       }
@@ -774,28 +806,16 @@ export function assertWindowGroupExclusivity(domains: readonly Domain[]): void {
         const a = groups[i]!;
         const b = groups[j]!;
         if (a.name === b.name) continue;
-        for (const ch of a.channels ?? []) {
-          if (b.channels?.includes(ch) === true) {
-            clashes.push(`  "${ch}" is listed by both window groups "${a.name}" and "${b.name}" of "${d.name}"`);
-          }
-        }
-        for (const ae of a.containers ?? []) {
-          const ap = parseContainerEntry(ae);
-          if (!ap) continue;
-          for (const be of b.containers ?? []) {
-            const bp = parseContainerEntry(be);
-            if (!bp) continue;
-            if (!surfaceKeyEntriesIntersect(ap, bp)) continue;
-            const overlap = surfaceKeyEntryContains(ap, bp) ? bp : ap;
-            const covers = (g: WindowGroup): boolean =>
-              (g.excludeContainers ?? []).some((x) => {
-                const xp = parseContainerEntry(x);
-                return xp !== undefined && surfaceKeyEntryContains(xp, overlap);
-              });
-            if (covers(a) || covers(b)) continue;
-            const overlapText = surfaceKeyEntryContains(ap, bp) ? be : ae;
+        for (const ae of parseEntries(a.reach)) {
+          for (const be of parseEntries(b.reach)) {
+            if (!surfaceKeyEntriesEquivalent(ae.parsed, be.parsed)) continue;
+            const covers = (g: WindowGroup, set: ReachEntry): boolean =>
+              parseEntries(g.exclude).some((x) => surfaceKeyEntryContains(x.parsed, set));
+            if (covers(a, be.parsed) || covers(b, ae.parsed)) continue;
             clashes.push(
-              `  the containers entries "${ae}" (window group "${a.name}") and "${be}" (window group "${b.name}") of "${d.name}" can match the SAME surface key, so which WINDOW owns it would depend on declaration order — narrow one of them, or add excludeContainers: ["${overlapText}"] to the group that should NOT get the overlap`,
+              ae.parsed.kind === "surface" && !ae.parsed.glob
+                ? `  "${ae.entry}" is in the reach of both window groups "${a.name}" and "${b.name}" of "${d.name}"`
+                : `  the reach entries "${ae.entry}" (window group "${a.name}") and "${be.entry}" (window group "${b.name}") of "${d.name}" match exactly the SAME keys, so which WINDOW owns them would depend on declaration order — narrow one of them, or add exclude: ["${be.entry}"] to the group that should NOT get them`,
             );
           }
         }
@@ -823,67 +843,62 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
     }
     bad.push(...domainCredentialProblems(d));
     bad.push(...credentialGrantDeclarationProblems(d));
-    const hasExplicit = d.channels !== undefined || d.containers !== undefined;
+    const hasExplicit = d.reach !== undefined;
     const hasMatch = d.match !== undefined;
     if (hasExplicit === hasMatch) {
-      bad.push(`  "${d.name}" must have EITHER explicit membership (channels and/or containers) OR match (criteria), not ${hasExplicit ? "both" : "neither"}`);
+      bad.push(`  "${d.name}" must have EITHER a reach list OR match (criteria), not ${hasExplicit ? "both" : "neither"}`);
     }
-    const claimEntries: { readonly entry: string; readonly parsed: ContainerEntry }[] = [];
-    for (const key of [...(d.containers ?? []), ...(d.excludeContainers ?? [])]) {
+    const reachEntries: ParsedEntry[] = [];
+    for (const key of [...(d.reach ?? []), ...(d.exclude ?? [])]) {
       const seg3 = key.split("/")[2];
       if (seg3 !== undefined && isGroupSegment(seg3)) {
         bad.push(
-          `  "${d.name}" names container "${key}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a memory domain. A memory key is \`platform/<tenant>\` or \`platform/<tenant>/<surface>\`, and no surface segment can contain a colon, so this entry could never match anything.`,
+          `  "${d.name}" names "${key}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a memory domain. A memory key is \`platform/<tenant>\` or \`platform/<tenant>/<surface>\`, and no surface segment can contain a colon, so this entry could never match anything.`,
         );
       }
     }
-    for (const key of d.containers ?? []) {
-      const parsed = parseContainerEntry(key);
+    for (const key of d.reach ?? []) {
+      const parsed = parseReachEntry(key);
       if (parsed?.kind === "group") continue;
       if (parsed) {
-        if (parsed.kind === "surface" && !parsed.glob) {
-          bad.push(
-            `  "${d.name}" claims container "${key}", which names ONE exact surface — that is a roster entry, so list it in \`channels\` instead (containers is the unbounded CLAIM tier: a two-segment tenant key \`platform/<tenant>\`, or a same-level glob \`platform/<tenant>/<prefix>*\`)`,
-          );
-          continue;
-        }
-        claimEntries.push({ entry: key, parsed });
+        reachEntries.push({ entry: key, parsed });
         continue;
       }
       const segs = key.split("/");
       bad.push(
         segs.length > 3
-          ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported — a containers entry is a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>") or a THREE-segment same-level glob \`platform/<tenant>/<prefix>*\` (e.g. "github/acme/payments-*"), never a deeper path. A deeper claim ("every row under this database") needs an ancestor walk the webhook payload cannot prove and an API call per level, so it is refused BY NAME rather than admitted with no reader. List the concrete surfaces in channels instead.`
-          : `  "${d.name}" claims container "${key}", which is neither a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>") nor a same-level glob \`platform/<tenant>/<prefix>*\` (e.g. "github/acme/payments-*"). The glob is deliberately ONE trailing \`*\` on the LAST segment — never \`**\`, never mid-string, never in the platform or tenant segment, never a regex — because overlap between two entries has to be decidable at config load (assertChannelExclusivity), and an undecidable overlap is an at-most-one-domain hole.`,
+          ? `  "${d.name}" reaches "${key}", but INTERMEDIATE containers are not supported — a reach entry is an exact surface key \`platform/<tenant>/<surface>\`, a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>"), or a three-segment same-level glob \`platform/<tenant>/<prefix>*\` (e.g. "github/acme/payments-*") — never a deeper path. A deeper container ("every row under this database") needs an ancestor walk the webhook payload cannot prove and an API call per level, so it is refused BY NAME rather than admitted with no reader. List the concrete surfaces instead.`
+          : `  "${d.name}" reaches "${key}", which is none of the three legal shapes: an exact surface key \`platform/<tenant>/<surface>\`, a tenant key \`platform/<tenant>\`, or a same-level glob \`platform/<tenant>/<prefix>*\`. The glob is deliberately ONE trailing \`*\` on the LAST segment — never \`**\`, never mid-string, never in the platform or tenant segment, never a regex — because overlap between two entries has to be decidable at config load (assertChannelExclusivity), and an undecidable overlap is an at-most-one-domain hole.`,
       );
     }
-    for (const key of d.excludeContainers ?? []) {
-      const parsed = parseContainerEntry(key);
+    for (const key of d.exclude ?? []) {
+      const parsed = parseReachEntry(key);
       if (parsed?.kind === "group") continue;
       if (!parsed || parsed.kind === "tenant") {
         bad.push(
           parsed
-            ? `  "${d.name}" excludes "${key}", which is a WHOLE TENANT — an exclusion carves surfaces out of a claim, so it is a three-segment surface key ("github/acme/payments-secrets") or a same-level glob ("github/acme/payments-secret-*"). A tenant-wide exclusion either cancels the claim outright or means nothing; drop the containers entry instead.`
-            : `  "${d.name}" excludes "${key}", which is not a surface key \`platform/<tenant>/<surface>\` nor a same-level glob \`platform/<tenant>/<prefix>*\` (one trailing \`*\` on the last segment only — see the containers rule)`,
+            ? `  "${d.name}" excludes "${key}", which is a WHOLE TENANT — an exclusion carves surfaces out of a domain's reach, so it is a three-segment surface key ("github/acme/payments-secrets") or a same-level glob ("github/acme/payments-secret-*"). A tenant-wide exclusion either cancels the reach outright or means nothing; drop the reach entry instead.`
+            : `  "${d.name}" excludes "${key}", which is not a surface key \`platform/<tenant>/<surface>\` nor a same-level glob \`platform/<tenant>/<prefix>*\` (one trailing \`*\` on the last segment only — see the reach rule)`,
         );
         continue;
       }
-      const ownRoster = (d.channels ?? []).find((ch) => entryMatchesKey(parsed, ch));
-      if (ownRoster !== undefined) {
+      const ownExact = domainRoster(d).find((ch) => entryMatchesKey(parsed, ch));
+      if (ownExact !== undefined) {
         bad.push(
-          `  "${d.name}" excludes "${key}" but also lists "${ownRoster}" in its own \`channels\` — exclusions carve out of the CLAIM tier only, and the roster wins regardless, so this is a contradiction: delete the channels entry, or the exclusion.`,
+          `  "${d.name}" excludes "${key}" but also reaches "${ownExact}" outright — an exclusion and the exact key it cancels are a contradiction: delete the reach entry, or the exclusion.`,
         );
+        continue;
       }
-      const cancels = claimEntries.find((c) => entryContains(parsed, c.parsed));
+      const cancels = reachEntries.find((c) => entryContains(parsed, c.parsed));
       if (cancels) {
         bad.push(
-          `  "${d.name}" excludes "${key}", which cancels the WHOLE of its containers entry "${cancels.entry}" — that pair is dead config (the claim can never admit anything). Delete both, or narrow the exclusion.`,
+          `  "${d.name}" excludes "${key}", which cancels the WHOLE of its reach entry "${cancels.entry}" — that pair is dead config (the reach can never admit anything). Delete both, or narrow the exclusion.`,
         );
         continue;
       }
-      if (!claimEntries.some((c) => entriesIntersect(parsed, c.parsed))) {
+      if (!reachEntries.some((c) => entriesIntersect(parsed, c.parsed))) {
         bad.push(
-          `  "${d.name}" excludes "${key}", but none of its \`containers\` entries [${(d.containers ?? []).join(", ") || "<none>"}] can match it — a dead exclusion reads like a carve-out and grants everything it was meant to withhold. Fix the key, or drop it.`,
+          `  "${d.name}" excludes "${key}", but none of its \`reach\` entries [${(d.reach ?? []).join(", ") || "<none>"}] can match it — a dead exclusion reads like a carve-out and grants everything it was meant to withhold. Fix the key, or drop it.`,
         );
       }
     }
@@ -920,9 +935,33 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       bad.push(`  "${d.name}" sets includeOrg but no { match: "org" } domain is defined to include`);
     }
   }
+  bad.push(...partitionTenantProblems(domains));
   if (bad.length > 0) {
     throw new Error(
       "open-everywhere: invalid memory domain(s):\n" + bad.join("\n") + "\n(memory/domain.ts / docs/capabilities/memory.md)",
     );
   }
+}
+
+const CONFIG_DERIVED_TENANT_PLATFORMS: ReadonlySet<string> = new Set(["notion"]);
+
+export function partitionTenantProblems(domains: readonly Domain[]): string[] {
+  const bad: string[] = [];
+  for (const d of domains) {
+    const byPlatform = new Map<string, Set<string>>();
+    for (const entry of domainContainers(d)) {
+      const parsed = parseReachEntry(entry);
+      if (!parsed || !CONFIG_DERIVED_TENANT_PLATFORMS.has(parsed.platform)) continue;
+      const tenants = byPlatform.get(parsed.platform) ?? new Set<string>();
+      tenants.add(parsed.tenant);
+      byPlatform.set(parsed.platform, tenants);
+    }
+    for (const [platform, tenants] of [...byPlatform].sort(([a], [b]) => a.localeCompare(b))) {
+      if (tenants.size < 2) continue;
+      bad.push(
+        `  "${d.name}" reaches ${tenants.size} ${platform} tenants by container (${[...tenants].sort().map((t) => JSON.stringify(t)).join(", ")}) — on ${platform} the session partition's tenant segment comes from the matched \`reach\` entry, because the delivery's own tenant field is unauthenticated and no API call can confirm it. A container states no tenant for the surfaces it sweeps in, so with two of them one surface's history can key under either depending on what a payload says. Split this into one domain per ${platform} tenant, or name the surfaces outright (an exact entry carries its own tenant and is never ambiguous).`,
+      );
+    }
+  }
+  return bad;
 }

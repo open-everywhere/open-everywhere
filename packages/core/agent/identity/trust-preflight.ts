@@ -8,6 +8,8 @@ export interface SurfaceTraffic {
   readonly firstSeen: string;
   readonly lastSeen: string;
   readonly enterpriseKey?: string;
+  readonly groupKey?: string;
+  readonly containerKey?: string;
 }
 
 export interface SurfaceTrustPreflightInput {
@@ -81,7 +83,13 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
   for (const t of input.traffic) {
     const segs = t.surfaceKey.split("/");
     const tenantKey = segs.slice(0, 2).join("/");
-    const rungs = [t.surfaceKey, tenantKey, ...(t.enterpriseKey === undefined ? [] : [t.enterpriseKey])];
+    const rungs = [
+      t.surfaceKey,
+      ...(t.containerKey === undefined || t.containerKey === t.surfaceKey ? [] : [t.containerKey]),
+      ...(t.groupKey === undefined ? [] : [t.groupKey]),
+      tenantKey,
+      ...(t.enterpriseKey === undefined ? [] : [t.enterpriseKey]),
+    ];
     const hits = parsed.filter(({ entry }) => rungs.some((k) => surfaceKeyEntryMatches(entry, k)));
     if (hits.length === 0) {
       undeclared.push(t.surfaceKey);
@@ -89,7 +97,7 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
     }
     for (const h of hits) matchedEntries.add(h.surface.key);
     const decider = hits.reduce((a, b) => (surfaceKeyEntrySpecificity(b.entry) > surfaceKeyEntrySpecificity(a.entry) ? b : a));
-    const isPattern = decider.entry.kind === "tenant" || decider.entry.glob;
+    const isPattern = decider.entry.kind === "tenant" || decider.entry.kind === "group" || decider.entry.glob;
     const age = ageDays(input.now, t.firstSeen);
     if (isPattern && age !== undefined && age <= newDays) {
       matchedByPattern.set(decider.surface.key, [...(matchedByPattern.get(decider.surface.key) ?? []), t.surfaceKey]);
@@ -120,7 +128,7 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
       detail: `${dead.length} declaration(s) matched no traffic in the last ${deadDays} days: ${nameList(dead)}`,
       fix:
         "a room can be archived, a repo transferred, a Linear team deleted — the key then stops matching and the surface falls back to fail-closed external, which is correct but silent. " +
-        "🔴 CHECK THE RUNG BEFORE YOU DELETE ANYTHING. A live declaration written ABOVE the grain traffic is keyed at matches no traffic row and still lands here: a Slack Enterprise Grid line (`slack/E…`) vouches workspaces, while every traffic row names a workspace and a room, so a working Grid declaration reports as dead (OPE-1508; OPE-1560 carries the audit-row half that would let this check walk the rung). Deleting one silently returns every workspace under it to non-member. " +
+        "🔴 CHECK THE GRAIN BEFORE YOU DELETE ANYTHING. A traffic row names ONE workspace and ONE room, so a live declaration written at any CONTAINER matches no row and still lands here. THREE shapes do that. (1) A Slack Enterprise Grid line (`slack/E…`) vouches whole workspaces (OPE-1508). (2) A Teams group line (`teams/<tenant>/team:…`) vouches a team's channels (OPE-490). (3) A Teams CHANNEL line (`teams/<tenant>/<channelId>`) vouches the reply chains inside that channel — and a traffic row names the reply CHAIN, because the deployment records the conversation id as the room. This check reads all three, but only when the traffic row carries them, and the live loader carries none of them yet — OPE-1560 holds that half. So a working Grid, group or channel declaration reports as dead. Deleting one silently returns every workspace, channel or reply chain under it to non-member. " +
         "Confirm each is intentional, then delete the line or fix the key.",
     });
   }

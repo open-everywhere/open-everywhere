@@ -35,16 +35,16 @@ const ISSUE_PAY = "22222222-2222-4222-8222-222222222222";
 const ISSUE_ENG = "33333333-3333-4333-8333-333333333333";
 
 const UNGRANTED_DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`, "slack/T1/CPAY"] }),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`] }),
+  defineDomain({ name: "payments", reach: [`linear/${ORG}/${TEAM_PAY}`, "slack/T1/CPAY"] }),
+  defineDomain({ name: "eng", reach: [`linear/${ORG}/${TEAM_ENG}`] }),
 ];
 const GRANTED_DOMAINS: readonly Domain[] = [
   defineDomain({
     name: "payments",
-    channels: [`linear/${ORG}/${TEAM_PAY}`, "slack/T1/CPAY"],
+    reach: [`linear/${ORG}/${TEAM_PAY}`, "slack/T1/CPAY"],
     credentials: [{ connector: "linear", credential: "workspace", use: ORG }],
   }),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`] }),
+  defineDomain({ name: "eng", reach: [`linear/${ORG}/${TEAM_ENG}`] }),
 ];
 
 function withDomains(domains: readonly Domain[]): void {

@@ -322,7 +322,7 @@ function ok(cond: boolean, label: string): void {
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "ope817", channels: ["slack/T8/C8", "notion/ws/pg"], mode: "unified", ambientSupervisor: true })],
+    loadDomains: () => [defineDomain({ name: "ope817", reach: ["slack/T8/C8", "notion/ws/pg"], mode: "unified", ambientSupervisor: true })],
     loadSilos: () => [],
     domainsForSurface: () => [],
   });

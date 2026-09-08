@@ -40,7 +40,7 @@ function ctxIn(room: string): BindableContext {
 const NOTION_ROOM = "CNOTION";
 const notionGranted: Domain = defineDomain({
   name: "ws-notion",
-  channels: [`${PLATFORM}/W1/${NOTION_ROOM}`],
+  reach: [`${PLATFORM}/W1/${NOTION_ROOM}`],
   credentials: [{ connector: "notion", credential: "team-key", use: "ws-notion-key" }],
 });
 ok(
@@ -98,8 +98,8 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 }
 
 const BARE_ROOM = "CBARE";
-const bareDomain: Domain = defineDomain({ name: "ws-bare", channels: [`${PLATFORM}/W1/${BARE_ROOM}`] });
-const gitGranted: Domain = defineDomain({ name: "ws-git", channels: [`${PLATFORM}/W1/CGIT`] });
+const bareDomain: Domain = defineDomain({ name: "ws-bare", reach: [`${PLATFORM}/W1/${BARE_ROOM}`] });
+const gitGranted: Domain = defineDomain({ name: "ws-git", reach: [`${PLATFORM}/W1/CGIT`] });
 const DOMAINS: readonly Domain[] = [notionGranted, bareDomain, gitGranted];
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -110,7 +110,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => DOMAINS,
   loadSilos: () => [],
-  domainsForSurface: ({ workspaceKey, surface }) => DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  domainsForSurface: ({ workspaceKey, surface }) => DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 
 ok((await armed(searchDefault, ctxIn(NOTION_ROOM))) !== null, "search MOUNTS for a domain holding ANY work grant (Notion here)");
@@ -121,7 +121,7 @@ const exec = (input: Parameters<typeof execRaw>[0], c: BindableContext) => execR
 
 const bothGranted: Domain = defineDomain({
   name: "ws-both",
-  channels: [`${PLATFORM}/W1/CBOTH`],
+  reach: [`${PLATFORM}/W1/CBOTH`],
   credentials: [{ connector: "notion", credential: "team-key", use: "both-notion-key" }],
 });
 const BOTH_DOMAINS: readonly Domain[] = [bothGranted, gitGranted, bareDomain];
@@ -132,11 +132,11 @@ registerConfig({
   skillContent: {},
   loadDomains: () => BOTH_DOMAINS,
   loadSilos: () => [],
-  domainsForSurface: ({ workspaceKey, surface }) => BOTH_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  domainsForSurface: ({ workspaceKey, surface }) => BOTH_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 const bothGrantedTwo: Domain = defineDomain({
   name: "ws-both",
-  channels: [`${PLATFORM}/W1/CBOTH2`],
+  reach: [`${PLATFORM}/W1/CBOTH2`],
   credentials: [
     { connector: "notion", credential: "team-key", use: "both-notion-key" },
     { connector: "linear", credential: "workspace", use: "both-linear-key" },
@@ -150,7 +150,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => BOTH2_DOMAINS,
   loadSilos: () => [],
-  domainsForSurface: ({ workspaceKey, surface }) => BOTH2_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  domainsForSurface: ({ workspaceKey, surface }) => BOTH2_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 
 const bothCtx = ctxIn("CBOTH2");

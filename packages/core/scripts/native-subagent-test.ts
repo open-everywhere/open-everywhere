@@ -974,7 +974,7 @@ eq(
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [{ name: "ns", channels: ["slack/T0EXAMPLE/C0EXCHAN003"], memory: ["ns-brain-silo"] }],
+    loadDomains: () => [{ name: "ns", reach: ["slack/T0EXAMPLE/C0EXCHAN003"], memory: ["ns-brain-silo"] }],
     loadSilos: () => [{ name: "ns-brain-silo", provider: "ns-brain" }],
     domainsForSurface: () => ["ns"],
   } as never);

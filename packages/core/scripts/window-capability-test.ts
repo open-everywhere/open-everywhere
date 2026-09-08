@@ -159,7 +159,7 @@ withWindowEnv(() => {
   const orgGate = defineDomain({ name: "org", match: "org" });
   const multiSourceWindow = defineDomain({
     name: "payments",
-    channels: [SLACK, GH],
+    reach: [SLACK, GH],
     ambientSupervisor: true,
     mode: "unified",
   });
@@ -190,7 +190,7 @@ _resetSurfacesForTest();
   const orgGate = defineDomain({ name: "org", match: "org" });
   const multiSourceUnvouched = defineDomain({
     name: "payments",
-    channels: ["slack/T1/C_VOUCHED", "github/acme/secret"],
+    reach: ["slack/T1/C_VOUCHED", "github/acme/secret"],
     ambientSupervisor: true,
     mode: "unified",
   });
@@ -211,7 +211,7 @@ _resetSurfacesForTest();
   n++;
   const soloUnvouched = defineDomain({
     name: "solo",
-    channels: ["github/acme/secret"],
+    reach: ["github/acme/secret"],
     ambientSupervisor: true,
     mode: "unified",
   });
@@ -246,7 +246,7 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
 {
   const orgGate = defineDomain({ name: "org", match: "org" });
   const win = (channels: string[], name = "win") =>
-    defineDomain({ name, channels, ambientSupervisor: true, mode: "unified" });
+    defineDomain({ name, reach: channels, ambientSupervisor: true, mode: "unified" });
 
   noThrow(
     () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], ["github/acme", "notion/ws"]),
@@ -321,15 +321,15 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
   }
   noThrow(() => assertWindowSourcesVouched([win(["github/a/x"], "solo"), orgGate], []), "[P0-e] solo (1-channel) window over an unvouched source does NOT throw");
   noThrow(
-    () => assertWindowSourcesVouched([defineDomain({ name: "plain", channels: ["github/a/x", "github/b/y"] }), orgGate], []),
+    () => assertWindowSourcesVouched([defineDomain({ name: "plain", reach: ["github/a/x", "github/b/y"] }), orgGate], []),
     "[P0-e] a non-window (no crossSurfaceWindow) multi-channel domain is never vouch-checked",
   );
 
-  const groupedWin = (windows: readonly { name: string; channels: readonly string[] }[], channels: string[], mode?: "solo" | "unified") =>
-    defineDomain({ name: "grouped", channels, ambientSupervisor: true, ...(mode ? { mode } : {}), windows });
+  const groupedWin = (windows: readonly { name: string; reach: readonly string[] }[], channels: string[], mode?: "solo" | "unified") =>
+    defineDomain({ name: "grouped", reach: channels, ambientSupervisor: true, ...(mode ? { mode } : {}), windows });
 
   assert.throws(
-    () => assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []),
+    () => assertWindowSourcesVouched([groupedWin([{ name: "pair", reach: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []),
     /window "pair" of domain "grouped"[\s\S]*github\/a\/x[\s\S]*notion\/b\/y/,
     "[P0-e/1167] a named GROUP merging two unvouched sources throws even though the domain's mode is the solo residue",
   );
@@ -337,7 +337,7 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
   {
     let message = "";
     try {
-      assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []);
+      assertWindowSourcesVouched([groupedWin([{ name: "pair", reach: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []);
     } catch (e) {
       message = (e as Error).message;
     }
@@ -345,18 +345,18 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
   }
   noThrow(
     () =>
-      assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], [
+      assertWindowSourcesVouched([groupedWin([{ name: "pair", reach: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], [
         "github/a/x",
         "notion/b/y",
       ]),
     "[P0-e/1167] vouching the GROUP's members satisfies the gate; the unvouched solo member is irrelevant",
   );
   noThrow(
-    () => assertWindowSourcesVouched([groupedWin([{ name: "lone", channels: ["github/a/x"] }], ["github/a/x", "github/c/z"]), orgGate], []),
+    () => assertWindowSourcesVouched([groupedWin([{ name: "lone", reach: ["github/a/x"] }], ["github/a/x", "github/c/z"]), orgGate], []),
     "[P0-e/1167] a ONE-member group is exempt (a window with one source cannot bleed cross-context)",
   );
   noThrow(
-    () => assertWindowSourcesVouched([groupedWin([{ name: "mix", channels: ["slack/T1/C_X", "github/a/x"] }], ["slack/T1/C_X", "github/a/x"]), orgGate], ["github/a/x"]),
+    () => assertWindowSourcesVouched([groupedWin([{ name: "mix", reach: ["slack/T1/C_X", "github/a/x"] }], ["slack/T1/C_X", "github/a/x"]), orgGate], ["github/a/x"]),
     "[P0-e/1167] the binding-trusted-platform exemption applies inside a group too",
   );
   {
@@ -376,7 +376,7 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
   noThrow(
     () =>
       assertWindowSourcesVouched(
-        [defineDomain({ name: "carved", channels: ["github/a/x", "notion/b/y"], ambientSupervisor: true, mode: "unified", windows: [{ name: "carve", channels: ["github/a/x"] }] }), orgGate],
+        [defineDomain({ name: "carved", reach: ["github/a/x", "notion/b/y"], ambientSupervisor: true, mode: "unified", windows: [{ name: "carve", reach: ["github/a/x"] }] }), orgGate],
         [],
       ),
     "[P0-e/1167] carving a member into its own group shrinks the residue window to one source, which is exempt",
@@ -426,7 +426,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   eq(await resolveWindowGated(sandboxKit, perContainerCtx), null, "[P0-f] the sandbox six resolve NULL on a per-container standing seat");
   eq(await resolveWindowGated(gatedModules.spawn_thread_session, perContainerCtx), null, "[P0-f] spawn_thread_session is ABSENT on a per-container standing seat, delegation disarmed (the flag half; P0-a(1b) proves the token half with the flag armed)");
 
-  const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
+  const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", reach: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
   ok(standingGrain.unified === false, "[P0-f] a plain ambient channel resolves a per-container (non-unified) standing grain");
   eq(Object.keys(standingGrain).sort(), ["registryKey", "unified"], "[P0-f] the standing-seat grain carries no tool field — narrowing lives at windowGrainOf/session.started");
 }

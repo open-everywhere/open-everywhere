@@ -112,14 +112,14 @@ console.log("1. token grammar (dm anchor pseudo-domain):");
 
 console.log("2. reserved-namespace exclusivity:");
 {
-  assertDomainsValid([defineDomain({ name: "payments", channels: ["slack/T1/C1"] })]);
+  assertDomainsValid([defineDomain({ name: "payments", reach: ["slack/T1/C1"] })]);
   n++;
   throws(
-    () => assertDomainsValid([defineDomain({ name: `${DM_ANCHOR_DOMAIN_PREFIX}slack/T1/D_ASKER`, channels: ["slack/T1/C1"] })]),
+    () => assertDomainsValid([defineDomain({ name: `${DM_ANCHOR_DOMAIN_PREFIX}slack/T1/D_ASKER`, reach: ["slack/T1/C1"] })]),
     "assertDomainsValid REFUSES a domain name in the reserved oe-dm/ namespace — the exclusivity that makes the inversion unambiguous",
   );
   try {
-    assertDomainsValid([defineDomain({ name: "oe-dm/x", channels: ["slack/T1/C1"] })]);
+    assertDomainsValid([defineDomain({ name: "oe-dm/x", reach: ["slack/T1/C1"] })]);
     assert.fail("expected a throw");
   } catch (e) {
     ok(String((e as Error).message).includes(DM_ANCHOR_DOMAIN_PREFIX), "…and it names the reserved prefix in the error, so an operator can act on it");
@@ -156,7 +156,7 @@ for (const flag of [true, false]) {
 
 console.log("4. inherit-never-escalate:");
 {
-  const domains = [defineDomain({ name: "payments", channels: ["slack/T1/C1"], ambientSupervisor: true, mode: "unified" })];
+  const domains = [defineDomain({ name: "payments", reach: ["slack/T1/C1"], ambientSupervisor: true, mode: "unified" })];
   const anchorDomain = dmAnchorDomain(DM_SURFACE_KEY);
   ok(anchorDomain !== "payments", "a DM's anchor domain is not the named domain that exists in config");
   eq(domainForChannel(DM_SURFACE_KEY, domains), undefined, "the DM's own surface is in NO domain's channel roster — so a DM-spawned worker, whose binding resolves off that surface, picks up no named domain's bundle grants");
@@ -165,7 +165,7 @@ console.log("4. inherit-never-escalate:");
   eq(domainForChannel("slack/T1/C1", domains), domains[0], "…while a real channel still resolves its real domain (no over-reach in the other direction)");
 
   const discordDmKey = "discord/U_bob/D_bob";
-  const discordGuildDomains = [defineDomain({ name: "eng", channels: ["discord/G_ACME/C_ENG"], mode: "unified" })];
+  const discordGuildDomains = [defineDomain({ name: "eng", reach: ["discord/G_ACME/C_ENG"], mode: "unified" })];
   const discordAnchorDomain = dmAnchorDomain(discordDmKey);
   eq(domainForChannel(discordDmKey, discordGuildDomains), undefined, "a DISCORD DM surface (workspace = the caller's user id, not a guild) is in no domain's roster either");
   eq(domainForChannel(discordAnchorDomain, discordGuildDomains), undefined, "…and its anchor domain matches no roster — the channel→domain hop cannot turn a per-user DM key into a guild domain");
@@ -216,7 +216,7 @@ console.log("6. OPE-351 fences (capacity only — nothing mints a DM window toke
   ok(isDmAnchoredTaskToken(dmWorker) && !isDmAnchorWindowToken(dmWorker), "…and the reverse holds for a worker — the two predicates partition the pseudo-domain");
   eq(dmAnchorSurfaceForToken(dmWindow), dmAnchorSurfaceForToken(dmWorker), "both resolve the SAME admission surface — a DM's seat and its workers are deliverable to exactly one place, that DM");
 
-  const named = [defineDomain({ name: "payments", channels: ["slack/T1/C_PAY"], mode: "unified" })];
+  const named = [defineDomain({ name: "payments", reach: ["slack/T1/C_PAY"], mode: "unified" })];
   eq(domainForChannel(parseWindowToken(dmWindow)!.domain, named), undefined, "a DM SEAT window's domain matches no configured domain — the seat inherits the DM's partition, never a named domain's grants");
   eq(domainForChannel(DM_SURFACE_KEY, named), undefined, "…and the DM surface it names is in no roster either (both halves of the fence)");
 

@@ -33,7 +33,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "guild", channels: ["discord/G1/TH1"], nameDropWake: true })],
+  loadDomains: () => [defineDomain({ name: "guild", reach: ["discord/G1/TH1"], nameDropWake: true })],
   loadSilos: () => [],
   domainsForSurface: ({ surface }) => (surface === "TH1" ? ["guild"] : []),
 });

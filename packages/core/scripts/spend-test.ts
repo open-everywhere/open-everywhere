@@ -184,7 +184,7 @@ ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s")
   const { domainNameForScope, resolveCaps } = await import("../agent/spend/caps.js");
 
   const domains = [
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"] }),
     defineDomain({ name: "dm-layer", match: "dm" }),
     defineDomain({ name: "public-layer", match: "public" }),
   ];
@@ -733,7 +733,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const store3 = await import("../agent/spend/store.js");
 
   const domains = [
-    defineDomain({ name: "txn-team", channels: ["slack/T8/C_TXN"] }),
+    defineDomain({ name: "txn-team", reach: ["slack/T8/C_TXN"] }),
     defineDomain({ name: "dm-crit", match: "dm" }),
     defineDomain({ name: "public-crit", match: "public" }),
   ];

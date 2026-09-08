@@ -57,7 +57,7 @@ registerConfig({
   loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "eng", channels: ["slack/T1/C1"], memory: "eng" })],
+  loadDomains: () => [defineDomain({ name: "eng", reach: ["slack/T1/C1"], memory: "eng" })],
   loadSilos: () => [{ name: "eng", provider: "sqlite" }],
   domainsForSurface: ({ surface }) => (surface === "C1" ? ["eng"] : []),
 });

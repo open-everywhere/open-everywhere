@@ -1,4 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
+import { haltAddressFields, haltAddressFromParts } from "../access/halt.js";
 import { appendAudit } from "../audit/audit.js";
 import { parseScopeKey } from "../access/scope-key.js";
 import { principalKey } from "../identity/principal-key.js";
@@ -290,7 +291,42 @@ const connectorClear: ActionKind<ConnectorClearArgs> = {
   },
 };
 
+export interface HaltResumeArgs {
+  readonly org: string;
+  readonly orgWide?: true;
+  readonly level?: CapLevel;
+  readonly scopeKey?: string;
+  readonly scopeLabel?: string;
+}
+
+const haltResume: ActionKind<HaltResumeArgs> = {
+  kind: "halt.resume",
+  policy: "admin",
+  summarize(args) {
+    const where = args.orgWide === true ? "everywhere in this org" : `\`${args.scopeKey}\` (${args.level})`;
+    return [
+      `Resume — lift the break-glass halt ${where}`,
+      "Consequential acts start working again: approvals, routine fires, connector calls, credential grants and outbound network access.",
+      ...(args.scopeLabel ? [`Scope: ${args.scopeLabel}`] : []),
+    ];
+  },
+  async execute(args, decidedBy) {
+    const address = haltAddressFromParts(args);
+    const cleared = await getOperationalStore().clearHalt(args.org, address, { clearedBy: decidedBy });
+    await appendAudit({
+      ...(address.orgWide ? orgWideWhere(args.org) : whereFromScope(args.org, address.scopeKey)),
+      principalId: decidedBy,
+      action: "admin.halt.cleared",
+      detail: { ...haltAddressFields(address), cleared },
+    });
+    return cleared
+      ? `halt cleared${args.orgWide === true ? " org-wide" : ` for \`${args.scopeKey}\``} — consequential acts work again`
+      : `no halt was in force${args.orgWide === true ? " org-wide" : ` for \`${args.scopeKey}\``} — nothing to clear`;
+  },
+};
+
 registerActionKind(spendSet);
 registerActionKind(spendClear);
 registerActionKind(connectorRevoke);
 registerActionKind(connectorClear);
+registerActionKind(haltResume);

@@ -63,7 +63,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "payments", channels: ["discord/G1/C1"] })],
+  loadDomains: () => [defineDomain({ name: "payments", reach: ["discord/G1/C1"] })],
   loadSilos: () => [],
   domainsForSurface: () => ["payments"],
 });

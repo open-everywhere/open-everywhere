@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
-import { resolvePartition } from "../memory/partition.js";
+import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
@@ -11,7 +11,7 @@ import { roleForBinding } from "../access/roles.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 import type { Binding, Bundle } from "../access/bundle.js";
-import type { Domain } from "../memory/domain.js";
+import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
@@ -19,6 +19,8 @@ import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVen
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
+import { domainExposureLines, joinWords, normalizeHost, type WideningSubject } from "../approvals/domain-exposure.js";
+import { surfaceDisplayName } from "../instructions/seat-prompt.js";
 
 export interface RequestAccessArgs {
   readonly org: string;
@@ -32,6 +34,20 @@ export interface RequestAccessArgs {
   readonly permalink?: string;
   readonly configRepo: string;
   readonly universe?: string;
+  readonly exposure?: readonly string[];
+}
+
+export function wideningSubject(delta: AccessDelta): WideningSubject {
+  if (delta.kind === "grant-connector") {
+    const name = surfaceDisplayName(delta.connector);
+    return { label: `the ${name} connector`, reachTags: [`connector:${delta.connector}`], opaqueSources: [name] };
+  }
+  const hosts = delta.baseConnection.allowedWebsites.map(normalizeHost);
+  return {
+    label: hosts.length > 0 ? joinWords(hosts) : "this connection",
+    reachTags: hosts.map((h) => `host:${h}`),
+    opaqueSources: hosts,
+  };
 }
 
 export type RequestTarget = "channel" | "personal" | "group";
@@ -265,13 +281,22 @@ const requestAccessEntry = defineTool({
               })
             : undefined;
 
-          const args = planRequestAccess(binding, planCtx, input, {
+          const planned = planRequestAccess(binding, planCtx, input, {
             scopeKey: partition.surfaceKey,
             channelId,
             configRepo: ar.configRepo,
             permalink,
             domains: cfg.loadDomains(),
           });
+
+          const memoryDomain = domainForChannel(domainKeyOf(partition), cfg.loadDomains())?.name ?? null;
+          const exposure = await domainExposureLines({
+            org: planned.org,
+            domain: memoryDomain,
+            subject: wideningSubject(planned.delta),
+            landsOnARoom: planned.delta.scope.level === "surface",
+          });
+          const args: RequestAccessArgs = { ...planned, exposure };
 
           const venueResult = await checkApprovalVenue(binding, partition, () => cfg.loadDomains());
           if ("refusal" in venueResult) {

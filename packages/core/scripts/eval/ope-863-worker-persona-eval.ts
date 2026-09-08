@@ -31,7 +31,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "ope863", channels: ["slack/T_E/C_E"], mode: "unified" }),
+    defineDomain({ name: "ope863", reach: ["slack/T_E/C_E"], mode: "unified" }),
     defineDomain({ name: "org", match: "org" }),
   ],
   loadSilos: () => [],

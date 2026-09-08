@@ -67,8 +67,8 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
-    defineDomain({ name: "other", channels: ["slack/T1/C_OTHER"] }),
+    defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
+    defineDomain({ name: "other", reach: ["slack/T1/C_OTHER"] }),
     defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN"] }),
   ],
   loadSilos: () => [],
@@ -129,7 +129,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
 {
   const domains = [
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] }),
+    defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),
     defineDomain({ name: "org", match: "org" }),
   ];
   ok(domainOfUsageRow("slack/T1/C_ENG", "channel", domains) === "eng", "domainOfUsageRow: explicit domain wins");

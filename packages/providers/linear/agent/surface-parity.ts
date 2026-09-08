@@ -31,6 +31,9 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   stop: { supported: "the ✋ reaction" },
   ack_stop_glyph: "supported",
   ack_cancel_note: "supported",
-  stand_down: { supported: "marks the issue row; refuses when no row exists" },
+  stand_down: {
+    supported:
+      "marks the issue row; drops a top-level comment and suppresses a `prompted` agent-session follow-up on the native leg; an unclassified future action is ungated and the divert leg's copy is unpinned; refuses when no row exists",
+  },
   post_file: { unsupported: "vendor limit — a Linear comment carries no file-attachment API OE can drive" },
 };

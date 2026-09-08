@@ -50,7 +50,7 @@ const CHANNEL_ID = "C1";
 const domains = [
   defineDomain({
     name: DOMAIN,
-    channels: [SURFACE],
+    reach: [SURFACE],
     ambientSupervisor: true,
     mode: "unified",
   }),
@@ -206,7 +206,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   const notionSurface = "notion/W1/P1";
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
-    loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE, notionSurface], ambientSupervisor: true, mode: "unified" })],
+    loadDomains: () => [defineDomain({ name: DOMAIN, reach: [SURFACE, notionSurface], ambientSupervisor: true, mode: "unified" })],
     loadSilos: () => [], loadRoles: () => [], domainsForSurface: () => [],
   });
   const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, INJECT_SECRET);
@@ -352,7 +352,7 @@ const SOLO_DOMAIN = "e2e-solo";
 const SOLO_SURFACE = "slack/T2/C2";
 const soloOrigin = { platform: "slack", channelId: "C2" } as const;
 const soloDomains = [
-  defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, mode: "solo" }),
+  defineDomain({ name: SOLO_DOMAIN, reach: [SOLO_SURFACE], ambientSupervisor: true, mode: "solo" }),
 ];
 function useDomains(ds: ReturnType<typeof defineDomain>[]): void {
   registerConfig({

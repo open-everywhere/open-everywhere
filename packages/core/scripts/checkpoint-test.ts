@@ -43,6 +43,7 @@ const {
   resolveCheckpoint,
   sessionUsage,
   requireSessionContinuation,
+  checkpointCardLines,
 } = await import("../agent/spend/checkpoint.js");
 
 assertSpendCheckpointsValid({});
@@ -81,7 +82,7 @@ ok(checkpointConfigured({ sessionUsd: 1 }), "checkpointConfigured: any component
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"] })],
+    loadDomains: () => [defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"] })],
     loadSilos: () => [],
     domainsForSurface: () => [],
     loadSpendCheckpoints: () => checkpoints,
@@ -219,6 +220,121 @@ passed++;
   await throws(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "guard: after a deny the session stays soft-blocked");
   const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
   ok(pendingAfter === pendingBefore, "guard: after a deny no fresh card is posted (deny keeps the block quietly)");
+}
+
+{
+  const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+  const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("../agent/routines/declared-permissions.js");
+  const { CHECKPOINT_KIND } = await import("../agent/approvals/session-checkpoint.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  const jobCtx = (sessionId: string) =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        id: sessionId,
+        auth: {
+          current: {
+            attributes: {
+              team_id: "T1",
+              channel_id: "C1",
+              [ROUTINE_MARKER.id]: "job-1",
+              [ROUTINE_MARKER.surface]: "slack/T1/C1",
+              [ROUTINE_MARKER.org]: "default",
+            },
+            principalId: "U1",
+            principalType: "slack-user",
+          },
+        },
+      },
+    }) as never;
+
+  const sid = "sess-job";
+  await seed(sid, 2000);
+  await throws(() => requireSessionContinuation(jobCtx(sid), "open_pull_request"), "OPE-261: a job's first crossing blocks and cards");
+  const pending = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(sid));
+  ok(pending !== undefined, "OPE-261: the job's crossing posted a card to decide");
+  const frozen = JSON.parse(pending!.argsJson) as { durableSession?: true };
+  ok(frozen.durableSession === true, "OPE-261: the frozen args mark the memo key as a durable session");
+
+  const { DURABLE_GRANT_DISCLOSURE } = await import("../agent/approvals/session-checkpoint.js");
+  const planOf = (over: Record<string, unknown>) =>
+    ({
+      decision: "block",
+      org: "default",
+      surfaceKey: "slack/T1/C1",
+      workspaceKey: "slack/T1",
+      domain: null,
+      memoKey: sid,
+      usage: { tokens: 2000, modelCalls: 1 },
+      checkpoint: { sessionTokens: 1000 },
+      reason: "r",
+      durable: false,
+      ...over,
+    }) as never;
+  const firstDurable = checkpointCardLines(planOf({ durable: true }), "#proj-chat").join("\n");
+  ok(firstDurable.includes(DURABLE_GRANT_DISCLOSURE), `OPE-261: the FIRST durable card discloses that the approval does not lapse (${firstDurable})`);
+  ok(checkpointCardLines(planOf({ durable: true, approvedAt: new Date().toISOString() }), "#proj-chat").join("\n").includes(DURABLE_GRANT_DISCLOSURE), "OPE-261: so does the rebased durable card");
+  ok(!checkpointCardLines(planOf({}), "#proj-chat").join("\n").includes(DURABLE_GRANT_DISCLOSURE), "OPE-261 control: a LIVE session's card carries no no-expiry disclosure — it grants nothing that lasts");
+  ok(firstDurable.includes("In #proj-chat.") && !firstDurable.includes("slack/T1/C1"), "checkpoint card: the room's NAME, never the raw scope key, when a label resolved");
+  ok(checkpointCardLines(planOf({ durable: true })).join("\n").includes("In slack/T1/C1."), "checkpoint card: the raw key is the fail-open fallback when no label resolved");
+  ok(actionKind(CHECKPOINT_KIND)!.summarize(frozen as never).some((l) => l === DURABLE_GRANT_DISCLOSURE), "OPE-261: summarize() carries the same disclosure, word for word");
+
+  await store.decidePendingAction("default", pending!.id, "approved", "U-APPROVER", new Date().toISOString());
+  await actionKind(CHECKPOINT_KIND)!.execute(frozen as never, "U-APPROVER");
+  const cardsAfterApproval = (await store.listPendingActions("default")).filter((r) => r.kind === CHECKPOINT_KIND).length;
+
+  const wayLater = new Date(Date.now() + 365 * 24 * 3_600_000).toISOString();
+  const grantRow = await store.getSessionApproval("default", sid, CHECKPOINT_GRANT_MEMO, wayLater);
+  ok(grantRow !== null, "OPE-261: a routine fire's continue grant is still live long past the checkpoint TTL");
+  ok(grantRow!.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "OPE-261: it carries the no-expiry sentinel, not a wall-clock TTL");
+
+  await requireSessionContinuation(jobCtx(sid), "open_pull_request");
+  passed++;
+  ok(
+    (await store.listPendingActions("default")).filter((r) => r.kind === CHECKPOINT_KIND).length === cardsAfterApproval,
+    "OPE-261: an approved job with no fresh spend posts no new card",
+  );
+
+  await seed(sid, 2000);
+  await throws(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "OPE-261: a fresh increment blocks again — and a NON-routine turn on the job's memo key is held to the same rebase");
+  const cardsAfterSecondCrossing = (await store.listPendingActions("default")).filter((r) => r.kind === CHECKPOINT_KIND).length;
+  ok(cardsAfterSecondCrossing === cardsAfterApproval + 1, "OPE-261: the fresh crossing posts a NEW card rather than stalling silently");
+  const reCard = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(sid));
+  ok((JSON.parse(reCard!.argsJson) as { durableSession?: true }).durableSession === true, "OPE-261: the re-card stays marked durable, so answering it cannot restore the daily re-block");
+
+  const liveSid = "sess-live-grant";
+  await seed(liveSid, 2000);
+  await throws(() => requireSessionContinuation(ctxFor(liveSid), "open_pull_request"), "OPE-261 control: a live session's first crossing blocks");
+  const livePending = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(liveSid));
+  const liveArgs = JSON.parse(livePending!.argsJson) as { durableSession?: true };
+  ok(liveArgs.durableSession === undefined, "OPE-261 control: a live session's frozen args carry no durable mark");
+  ok(!actionKind(CHECKPOINT_KIND)!.summarize(liveArgs as never).some((l) => l === DURABLE_GRANT_DISCLOSURE), "OPE-261 control: nor does summarize() disclose a no-expiry grant for a live session's row");
+  await store.decidePendingAction("default", livePending!.id, "approved", "U-APPROVER", new Date().toISOString());
+  await actionKind(CHECKPOINT_KIND)!.execute(liveArgs as never, "U-APPROVER");
+  const liveGrant = await store.getSessionApproval("default", liveSid, CHECKPOINT_GRANT_MEMO, new Date().toISOString());
+  ok(liveGrant !== null && liveGrant.expiresAt !== ROUTINE_PERMISSION_NO_EXPIRY, "OPE-261 control: a live session's grant keeps its wall-clock TTL");
+  await seed(liveSid, 2000);
+  await requireSessionContinuation(ctxFor(liveSid), "open_pull_request");
+  passed++;
+}
+
+{
+  const sid = "sess-since";
+  await seed(sid, 100);
+  const mark = new Date().toISOString();
+  await new Promise((r) => setTimeout(r, 5));
+  await seed(sid, 250);
+  const whole = await sessionUsage("default", sid);
+  const after = await sessionUsage("default", sid, mark);
+  ok(whole.tokens === 350, "sessionUsage: unbounded still sums the whole session");
+  ok(after.tokens === 250 && after.modelCalls === 1, "sessionUsage: a `since` bound counts only the rows stamped after it");
+  ok((await sessionUsage("default", sid, new Date(Date.now() + 60_000).toISOString())).tokens === 0, "sessionUsage: a bound in the future counts nothing");
+  ok((await sessionUsage("default", sid, "not-a-date")).tokens === 350, "sessionUsage: an unparseable bound counts every row (the wide, safe answer)");
+
+  const whole261 = checkCheckpoint({ tokens: 10, modelCalls: 0 }, { sessionTokens: 10 });
+  ok(whole261.reason!.includes("this session reached its cost checkpoint"), "checkCheckpoint: the default subject names the whole session");
+  const since261 = checkCheckpoint({ tokens: 10, modelCalls: 0 }, { sessionTokens: 10 }, "spent more since approval");
+  ok(since261.reason!.startsWith("spent more since approval ("), "checkCheckpoint: a supplied subject replaces the clause and keeps the numbers");
 }
 
 {

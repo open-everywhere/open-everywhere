@@ -17,6 +17,9 @@ import {
   contentWords,
   factText,
   jaccard,
+  factTokens,
+  restatesDonor,
+  RESTATEMENT_THRESHOLD,
   SAFE_KINDS,
   type MemoryOp,
 } from "../agent/memory/dream/ops.js";
@@ -260,6 +263,82 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
   ok(staleProposal !== undefined, "OPE-1247 fixture: a STALE proposal exists (else the control below asserts nothing)");
   ok(!staleProposal!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1247 negative control: a STALE survivor is NOT stamped with the superseded bullet's mark — supersession is not restatement, and a mark it never earned is an overclaim");
   ok(!staleProposal!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1247 negative control: …and takes no in-sentence attribution either");
+
+  ok(!restatesDonor(newerPlain, [oldMarked, newerPlain]), "🔴 OPE-1444: a same-shape REPLACEMENT is not a re-typing — it DROPS a donor token, which is what the bare survivor above depends on");
+}
+
+{
+  const wording = renderProvenanceWording(["web", "github"]);
+  const wrap = (line: string): string => markAddedBullets({}, { "m.md": `${line}\n` }, wording).files["m.md"]!.trim();
+
+  const oldMarked = wrap("- 2020-01-05: Adams owns the billing renewal cadence for enterprise accounts");
+  const superseder = "- 2026-08-22: Adams owns the billing renewal cadence for every enterprise account";
+  const files: MemoryFiles = { "m.md": `## People\n${oldMarked}\n${superseder}\n` };
+  const at = { now: new Date("2026-09-01T00:00:00Z") };
+
+  const reTyped = "- 2020-01-05: Adams owns the billing renewal cadence for enterprise accounts";
+  ok(!reTyped.includes(EXTERNAL_PROVENANCE_PREFIX) && !reTyped.includes(EXTERNAL_CLAIM_PREFIX), "OPE-1444 fixture: the re-typed `keep` carries NEITHER carrier — it is the launder itself");
+  eq(jaccard(factTokens(reTyped), factTokens(oldMarked)), 1, "🔴 OPE-1444 fixture: a re-typing scores 1.00 against the marked bullet — `factText` strips the carriers, so only the FACT is compared");
+
+  const reTyping: DreamJudge = { judge: async () => ({ confirm: true, keep: reTyped, note: "superseded" }), distill: async () => [] };
+  const staleReTyped = (await tidySiloJudged(files, "brain", reTyping, at)).proposals.find((p) => p.kind === "stale");
+  ok(staleReTyped !== undefined, "OPE-1444 fixture: a STALE proposal exists (else the assertions below prove nothing)");
+  ok(staleReTyped!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1444: a STALE survivor that RE-TYPES the marked bullet CARRIES the suffix — the same fact cannot be laundered by proposing it under a supersession's label");
+  ok(staleReTyped!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1444: …and the in-sentence attribution, which is the half a reader carries away");
+  eq((staleReTyped!.after!.match(/\[external-provenance:/g) ?? []).length, 1, "OPE-1444: exactly one suffix — the conservation never stacks a carrier");
+
+  const different = "- 2026-08-22: Brent owns the billing renewal cadence for enterprise accounts";
+  const replacing: DreamJudge = { judge: async () => ({ confirm: true, keep: different, note: "superseded" }), distill: async () => [] };
+  const staleReplaced = (await tidySiloJudged(files, "brain", replacing, at)).proposals.find((p) => p.kind === "stale");
+  ok(staleReplaced !== undefined, "OPE-1444 fixture: the replacement judge also produced a STALE proposal");
+  ok(!staleReplaced!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1444: a STALE survivor stating a DIFFERENT fact stays bare — a taint claim it never earned is the overclaim direction");
+  ok(!staleReplaced!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1444: …and takes no in-sentence attribution either");
+
+  const staleAtUnreachableBar = (await tidySiloJudged(files, "brain", reTyping, { ...at, restatementThreshold: 1.01 })).proposals.find((p) => p.kind === "stale");
+  ok(staleAtUnreachableBar?.after !== undefined, "OPE-1444 fixture: the raised-bar run still produced a STALE proposal");
+  ok(!staleAtUnreachableBar!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), "🔴 OPE-1444: raise the bar past 1.00 and the SAME re-typing conserves nothing — the identity test decides, not the kind");
+
+  for (const [what, oldFact, newFact] of [
+    ["a value revision", "- 2020-01-05: Adams reviews the billing renewal every 30 days", "- 2026-08-22: Adams reviews the billing renewal every 60 days"],
+    ["a hand-over", "- 2020-01-05: Amy owns the billing renewal cadence", "- 2026-08-22: Bob owns the billing renewal cadence"],
+  ] as const) {
+    const marked = wrap(oldFact);
+    eq(jaccard(contentWords(marked), contentWords(newFact)), 1, `🔴 OPE-1444 fixture: ${what} scores 1.00 on the SUBJECT kernel — the changed token is under its length floor`);
+    ok(jaccard(factTokens(marked), factTokens(newFact)) < 1, `OPE-1444 fixture: …and below 1.00 once every token counts`);
+
+    const revising: DreamJudge = { judge: async () => ({ confirm: true, keep: newFact, note: "superseded" }), distill: async () => [] };
+    const revised = (await tidySiloJudged({ "m.md": `## People\n${marked}\n${newFact}\n` }, "brain", revising, at)).proposals.find((p) => p.kind === "stale");
+    ok(revised?.after !== undefined, `OPE-1444 fixture: ${what} produced a STALE proposal (else the assertion below proves nothing)`);
+    ok(!revised!.after!.includes(EXTERNAL_PROVENANCE_PREFIX), `🔴 OPE-1444: ${what} takes NO suffix — it substitutes a token the donor said, so it is a new fact and not a re-typing`);
+    ok(!revised!.after!.includes(EXTERNAL_CLAIM_PREFIX), `🔴 OPE-1444: ${what} takes no in-sentence attribution either`);
+  }
+
+  {
+    const longOld = wrap("- 2020-01-05: Adams owns the billing renewal cadence for enterprise accounts across the payments platform and the invoicing service in region 1 today");
+    const longNew = "- 2026-08-22: Adams owns the billing renewal cadence for enterprise accounts across the payments platform and the invoicing service in region 2 today";
+    ok(jaccard(factTokens(longOld), factTokens(longNew)) >= RESTATEMENT_THRESHOLD, "🔴 OPE-1444 fixture: a one-token swap in a long fact CLEARS the overlap bar — the bar alone cannot refuse a replacement");
+    ok(!restatesDonor(longNew, [longOld, longNew]), "🔴 OPE-1444: …and containment refuses it anyway — the survivor drops a token the donor said");
+
+    const swapping: DreamJudge = { judge: async () => ({ confirm: true, keep: longNew, note: "superseded" }), distill: async () => [] };
+    const swapped = (await tidySiloJudged({ "m.md": `## People\n${longOld}\n${longNew}\n` }, "brain", swapping, at)).proposals.find((p) => p.kind === "stale");
+    ok(swapped?.after !== undefined, "OPE-1444 fixture: the long-swap pair produced a STALE proposal");
+    ok(!swapped!.after!.includes(EXTERNAL_PROVENANCE_PREFIX) && !swapped!.after!.includes(EXTERNAL_CLAIM_PREFIX), "🔴 OPE-1444: a long-fact replacement takes NO carrier through the real gate");
+  }
+
+  ok(restatesDonor(`${reTyped} only`, [oldMarked]), "OPE-1444: a one-token addition that drops nothing IS read as a re-typing — the documented limit of the kernel");
+  ok(!restatesDonor(`${reTyped} under the standing agreement`, [oldMarked]), "OPE-1444: …and a larger addition is not — the overlap bar is what bounds how much a re-typing may add");
+
+  const positive = wrap("- 2020-01-05: Adams does own the billing renewal cadence for enterprise accounts");
+  const negated = "- 2026-08-22: Adams does not own the billing renewal cadence for enterprise accounts";
+  const positiveTokens = factTokens(positive);
+  ok([...positiveTokens].every((t) => factTokens(negated).has(t)), "🔴 OPE-1444 fixture: the contradiction CONTAINS every donor token — containment cannot refuse it");
+  ok(jaccard(positiveTokens, factTokens(negated)) >= RESTATEMENT_THRESHOLD, "🔴 OPE-1444 fixture: …and it clears the overlap bar too — one inserted token in a long sentence");
+  ok(isNegated(negated) && !isNegated(positive), "OPE-1444 fixture: …so the polarity signal is the only thing that separates them");
+  ok(!restatesDonor(negated, [positive, negated]), "🔴 OPE-1444: a survivor that NEGATES the donor is never a re-typing of it, however its words score");
+  const positivePlain = "- 2020-01-05: Adams does own the billing renewal cadence for enterprise accounts";
+  ok(restatesDonor(positivePlain, [positive]), "OPE-1444 positive control: the same donor, re-typed without its carriers, IS a re-typing");
+
+  ok(!restatesDonor(reTyped, [reTyped, superseder]), "OPE-1444: no source discloses ⇒ no donor ⇒ not a restatement (the guard, not an exception)");
 }
 
 {

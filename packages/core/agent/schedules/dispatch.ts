@@ -22,6 +22,7 @@ import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedu
 import { isClockScheduled, isJobRoutine, routinePermissionGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { routinePartition } from "../routines/partition.js";
+import { routineFireHalted } from "../routines/fire-halt.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Trust } from "../identity/binding.js";
 import type { Partition } from "../memory/partition.js";
@@ -92,6 +93,7 @@ export async function dispatchTick(
   let deferred = 0;
   let declined = 0;
   let ineligible = 0;
+  let halted = 0;
   let retired = 0;
   for (const r of due) {
     const bound = checkBound(r, now);
@@ -128,6 +130,11 @@ export async function dispatchTick(
     const teamsChannelId = firePlatform === "teams" && typeof dest.attributes["channel_id"] === "string" ? dest.attributes["channel_id"] : undefined;
     const teamsTeamId = firePlatform === "teams" && typeof dest.attributes["team_id"] === "string" ? dest.attributes["team_id"] : undefined;
     const teamsAadObjectId = firePlatform === "teams" && typeof dest.attributes["aad_object_id"] === "string" ? dest.attributes["aad_object_id"] : undefined;
+    if (await routineFireHalted(r, { trigger: r.trigger.kind })) {
+      halted++;
+      log(`SKIPPED (halted): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
+      continue;
+    }
     const internal =
       slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
     const creatorInternal = await recheckFireCreator({
@@ -262,7 +269,7 @@ export async function dispatchTick(
   }
   log(
     `tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${ineligible} ineligible, ${deferred} deferred` +
-      `${retired > 0 ? `, ${retired} retired at ceiling` : ""} (cap ${cap})`,
+      `${halted > 0 ? `, ${halted} halted` : ""}${retired > 0 ? `, ${retired} retired at ceiling` : ""} (cap ${cap})`,
   );
 }
 

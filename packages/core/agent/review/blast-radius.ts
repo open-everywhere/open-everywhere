@@ -134,7 +134,7 @@ export function computeBlastRadius(facts: ConfigFacts): BlastRadius {
   const domains = sectionByName(facts, "domains");
   if (domains?.kind === "computed") {
     const rosterField = (key: string): { domain: string; field: string } | undefined => {
-      const m = /^(.*)\.(channels|containers)$/.exec(key);
+      const m = /^(.*)\.(reach|exclude)$/.exec(key);
       return m ? { domain: m[1], field: m[2] } : undefined;
     };
     for (const r of domains.added) {
@@ -187,7 +187,9 @@ export function computeBlastRadius(facts: ConfigFacts): BlastRadius {
   }
   prompts.sort((a, b) => `${a.section}/${a.key}`.localeCompare(`${b.section}/${b.key}`));
 
-  const widens = scopeDeltas.some((s) => s.gained.length > 0) || rosters.some((r) => r.gained.length > 0);
+  const widensReach = rosters.some((r) => r.field === "reach" && r.gained.length > 0);
+  const widensByUnexcluding = rosters.some((r) => r.field === "exclude" && r.lost.length > 0);
+  const widens = scopeDeltas.some((s) => s.gained.length > 0) || widensReach || widensByUnexcluding;
 
   return {
     widens,

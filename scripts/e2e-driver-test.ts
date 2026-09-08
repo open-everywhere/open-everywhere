@@ -2880,8 +2880,8 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 
   const A = "slack/T1/C0UNIA";
   const B = "slack/T1/C0UNIB";
-  const fixture = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, mode: "unified" });
-  const ambientTwin = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true });
+  const fixture = defineDomain({ name: "e2e-unified", reach: [A, B], ambientSupervisor: true, mode: "unified" });
+  const ambientTwin = defineDomain({ name: "e2e-unified", reach: [A, B], ambientSupervisor: true });
   const org = defineDomain({ name: "org", match: "org" });
 
   overrideSettingsForTest({ window: { topology: false } });
@@ -2920,7 +2920,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     "mode on the public/dm pseudo-domains → load fails loud",
   );
   ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], mode: "unified" })])),
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", reach: [A, B], mode: "unified" })])),
     "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
   );
 

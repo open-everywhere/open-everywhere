@@ -29,29 +29,29 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const domains: Domain[] = [
-    defineDomain({ name: "eng", channels: ["slack/T_ONE/C_A", "slack/T_ONE/C_B", "discord/G9/C_DEV"], memory: "brain" }),
-    defineDomain({ name: "repos", containers: ["github/acme", "slack/T_ONE"], memory: "brain" }),
+    defineDomain({ name: "eng", reach: ["slack/T_ONE/C_A", "slack/T_ONE/C_B", "discord/G9/C_DEV"], memory: "brain" }),
+    defineDomain({ name: "repos", reach: ["github/acme", "slack/T_ONE"], memory: "brain" }),
   ];
   ok([...admittedTenants("slack", domains)].join(",") === "T_ONE", "the admitted set is the DISTINCT tenants of the platform's channel keys + container claims");
   ok([...admittedTenants("discord", domains)].join(",") === "G9", "…per platform, so one platform's tenants never admit another's");
   ok(admittedTenants("teams", domains).size === 0, "a platform with nothing declared admits nothing (which the classifier reads as `fence inert`, never `refuse all`)");
 
-  const malformed: Domain[] = [defineDomain({ name: "x", channels: ["slack/"], memory: "brain" })];
+  const malformed: Domain[] = [defineDomain({ name: "x", reach: ["slack/"], memory: "brain" })];
   ok(admittedTenants("slack", malformed).size === 0, "a key that names no tenant contributes none — inventing one from a broken string would hide the real bug");
 
-  const globOnly: Domain[] = [defineDomain({ name: "pay", containers: ["github/acme/pay-*", "slack/T_ONE/C_PAY_*"], memory: "brain" })];
+  const globOnly: Domain[] = [defineDomain({ name: "pay", reach: ["github/acme/pay-*", "slack/T_ONE/C_PAY_*"], memory: "brain" })];
   ok([...admittedTenants("github", globOnly)].join(",") === "acme", "a glob-only claim admits its tenant (the `*` can only ever be in the LAST segment, so the tenant read is never a pattern)");
   ok([...admittedTenants("slack", globOnly)].join(",") === "T_ONE", "…on every platform, not just the one the two-segment form was written for");
 }
 
 {
-  const oneTenant: Domain[] = [defineDomain({ name: "eng", channels: ["slack/T_ONE/C_A", "slack/T_ONE/C_B"], memory: "brain" })];
+  const oneTenant: Domain[] = [defineDomain({ name: "eng", reach: ["slack/T_ONE/C_A", "slack/T_ONE/C_B"], memory: "brain" })];
   assertSingleTenantPerTenantScopedPlatform(oneTenant);
   ok(true, "ONE Slack tenant across many channels loads — the ordinary deployment is untouched");
 
   const twoTenants: Domain[] = [
-    defineDomain({ name: "eng", channels: ["slack/T_ONE/C_A"], memory: "brain" }),
-    defineDomain({ name: "ops", channels: ["slack/T_TWO/C_B"], memory: "brain" }),
+    defineDomain({ name: "eng", reach: ["slack/T_ONE/C_A"], memory: "brain" }),
+    defineDomain({ name: "ops", reach: ["slack/T_TWO/C_B"], memory: "brain" }),
   ];
   let msg = "";
   try {
@@ -65,15 +65,15 @@ const ok = (cond: boolean, label: string) => {
   ok(msg.includes(MULTI_TENANT_ENV), "…and names the one escape hatch, so the message is actionable rather than a dead end");
 
   const claimAndRoster: Domain[] = [
-    defineDomain({ name: "eng", channels: ["slack/T_ONE/C_A"], memory: "brain" }),
-    defineDomain({ name: "ops", containers: ["slack/T_TWO"], memory: "brain" }),
+    defineDomain({ name: "eng", reach: ["slack/T_ONE/C_A"], memory: "brain" }),
+    defineDomain({ name: "ops", reach: ["slack/T_TWO"], memory: "brain" }),
   ];
   assert.throws(() => assertSingleTenantPerTenantScopedPlatform(claimAndRoster), /multi-tenant principal exposure/, "a CONTAINER claim admits a tenant like a roster entry — a second one is the same exposure, not a loophole");
   n++;
 
   const twoGithubOrgs: Domain[] = [
-    defineDomain({ name: "a", containers: ["github/acme"], memory: "brain" }),
-    defineDomain({ name: "b", containers: ["github/other"], memory: "brain" }),
+    defineDomain({ name: "a", reach: ["github/acme"], memory: "brain" }),
+    defineDomain({ name: "b", reach: ["github/other"], memory: "brain" }),
   ];
   assertSingleTenantPerTenantScopedPlatform(twoGithubOrgs);
   ok(true, "🔴 two GitHub owners load fine — the fence is about tenant-SCOPED ids, not about multi-tenancy as such");

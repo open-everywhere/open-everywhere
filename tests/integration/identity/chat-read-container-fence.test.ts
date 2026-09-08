@@ -49,11 +49,11 @@ async function armSeams(): Promise<void> {
   const { loadDomains } = await import("../../../agent/memory/config/domains");
   const wakeKey = `slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`;
   const siblingKey = `slack/${SLACK_TEAM_ID}/${SIBLING_CHANNEL_ID}`;
-  const home = loadDomains().find((d) => (d.channels ?? []).includes(wakeKey));
+  const home = loadDomains().find((d) => (d.reach ?? []).includes(wakeKey));
   expect(home, `the wake channel ${wakeKey} is in no domain — this fixture cannot reach a window seat`).toBeDefined();
   expect(home?.mode, `${home?.name} is not a window domain, so a mention there reaches no delegating seat`).toBe("unified");
   expect(home?.ambientSupervisor, `${home?.name} must run an ambient supervisor for the mention divert to fire`).toBe(true);
-  expect(home?.channels ?? [], `${siblingKey} must share ${home?.name} with the wake channel, else the allowlist masks the fence`).toContain(siblingKey);
+  expect(home?.reach ?? [], `${siblingKey} must share ${home?.name} with the wake channel, else the allowlist masks the fence`).toContain(siblingKey);
 
   if (stub) return;
   const installed = installSlackWebApiStub((method, params) => {
@@ -220,7 +220,7 @@ test("③ the delegated worker holds the WORK-plane chat reads its domain is gra
 
   const { loadDomains } = await import("../../../agent/memory/config/domains");
   const { domainHoldsSurfaceWorkGrant } = await import("@open-everywhere/core/agent/access/surface-work-grant.js");
-  const home = loadDomains().find((d) => (d.channels ?? []).includes(`slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`));
+  const home = loadDomains().find((d) => (d.reach ?? []).includes(`slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`));
   expect(home, "the wake channel is in no domain — this arm cannot measure a mount").toBeDefined();
   expect(
     domainHoldsSurfaceWorkGrant(home, "slack"),

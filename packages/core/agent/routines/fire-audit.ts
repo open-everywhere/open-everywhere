@@ -21,7 +21,8 @@ export type RoutineSkipReason =
   | "grant_drift"
   | "audience_floor"
   | "creator_removed_from_room"
-  | "creator_account_inactive";
+  | "creator_account_inactive"
+  | "halted";
 
 export const SKIP_WINDOW_MS = 60 * 60_000;
 

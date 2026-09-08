@@ -142,9 +142,9 @@ ok(clampReasoning("high", "xhigh") === "high", "clamp: request at/under a raised
 {
   const domains: Domain[] = [
     defineDomain({ name: "org", match: "org" }),
-    defineDomain({ name: "engineering", channels: ["slack/T1/C_ENG"], reasoningCeiling: "high" }),
-    defineDomain({ name: "finance", channels: ["slack/T1/C_FIN"], reasoningCeiling: "low" }),
-    defineDomain({ name: "support", channels: ["slack/T1/C_SUP"] }),
+    defineDomain({ name: "engineering", reach: ["slack/T1/C_ENG"], reasoningCeiling: "high" }),
+    defineDomain({ name: "finance", reach: ["slack/T1/C_FIN"], reasoningCeiling: "low" }),
+    defineDomain({ name: "support", reach: ["slack/T1/C_SUP"] }),
   ];
   const roles: NamedKnobLayer[] = [];
   ok(reasoningCeilingFor("slack/T1/C_ENG", domains, roles, undefined, "medium") === "high", "ceiling: engineering domain RAISES medium → high");
@@ -154,12 +154,12 @@ ok(clampReasoning("high", "xhigh") === "high", "clamp: request at/under a raised
 }
 
 {
-  const good: Domain[] = [defineDomain({ name: "a", channels: ["slack/T1/Ca"], models: { primary: { id: "zai/glm-5.2" } } })];
+  const good: Domain[] = [defineDomain({ name: "a", reach: ["slack/T1/Ca"], models: { primary: { id: "zai/glm-5.2" } } })];
   assertRoutesWithinPolicy(good, [], POLICY);
   passed++;
-  const badId: Domain[] = [defineDomain({ name: "b", channels: ["slack/T1/Cb"], models: { primary: { id: "openai/gpt-6" } } })];
+  const badId: Domain[] = [defineDomain({ name: "b", reach: ["slack/T1/Cb"], models: { primary: { id: "openai/gpt-6" } } })];
   throws(() => assertRoutesWithinPolicy(badId, [], POLICY), "routes: a domain naming a non-allow-listed concrete model throws at config load");
-  const badTier: Domain[] = [defineDomain({ name: "c", channels: ["slack/T1/Cc"], models: { primary: { tier: "high" } } })];
+  const badTier: Domain[] = [defineDomain({ name: "c", reach: ["slack/T1/Cc"], models: { primary: { tier: "high" } } })];
   const noHighPolicy: ModelPolicy = defineModelPolicy({ allow: [{ id: "deepseek/deepseek-v4-flash", tier: "low" }] });
   throws(() => assertRoutesWithinPolicy(badTier, [], noHighPolicy), "routes: a domain asking a tier the allow-list can't fulfil throws");
   assertRoutesWithinPolicy(badId, [], undefined);
@@ -167,7 +167,7 @@ ok(clampReasoning("high", "xhigh") === "high", "clamp: request at/under a raised
   const badRole: NamedKnobLayer[] = [{ name: "r", models: { primary: { id: "openai/gpt-6" } } }];
   throws(() => assertRoutesWithinPolicy([], badRole, POLICY), "routes: a ROLE naming a non-allow-listed model throws too");
   const denyPolicy: ModelPolicy = defineModelPolicy({ deny: ["zai/glm-5.2"] });
-  const denied: Domain[] = [defineDomain({ name: "d", channels: ["slack/T1/Cd"], models: { primary: { id: "zai/glm-5.2" } } })];
+  const denied: Domain[] = [defineDomain({ name: "d", reach: ["slack/T1/Cd"], models: { primary: { id: "zai/glm-5.2" } } })];
   throws(() => assertRoutesWithinPolicy(denied, [], denyPolicy), "routes: a domain naming a per-model-denied id throws at config load");
 }
 

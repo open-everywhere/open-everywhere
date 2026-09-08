@@ -9,10 +9,11 @@ import { resolveNotionCredential, searchNotion } from "./notion-api.js";
 import { notionWorkGrant } from "./notion-work.js";
 import { assertNotionActingIdentity } from "./notion-acting-identity.js";
 import { canonicalNotionId } from "./notion-scope.js";
+import { domainRoster } from "@open-everywhere/core/agent/adapter-api.js";
 
 export function domainOwnPageIds(domain: Domain): ReadonlySet<string> {
   const ids = new Set<string>();
-  for (const key of domain.channels ?? []) {
+  for (const key of domainRoster(domain)) {
     const parts = key.split("/");
     if (parts.length === 3 && parts[0] === "notion" && parts[2].length > 0) ids.add(canonicalNotionId(parts[2]));
   }

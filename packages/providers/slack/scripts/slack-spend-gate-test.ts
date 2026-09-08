@@ -23,7 +23,7 @@ for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_
   delete process.env[k];
 }
 
-let domains = [defineDomain({ name: "transactions", channels: ["slack/T_ENG/C_TXN"], memory: "txn" })];
+let domains = [defineDomain({ name: "transactions", reach: ["slack/T_ENG/C_TXN"], memory: "txn" })];
 
 registerIdentityMapper("slack", bindSlack);
 registerConfig({
@@ -261,7 +261,7 @@ ok(/consult\.gated = true;/.test(mentionDoor), "the mention door's gate consult 
   const OTHER_BOT = "B0BZZZOTHER";
   const CHANNEL = "C0EXCHAN006";
   process.env.OE_TEST_DRIVER_IDS = `${TEAM}:${DRIVER_BOT}`;
-  domains = [defineDomain({ name: "transactions", channels: [`slack/${TEAM}/C_TXN`], memory: "txn" })];
+  domains = [defineDomain({ name: "transactions", reach: [`slack/${TEAM}/C_TXN`], memory: "txn" })];
   const store = getOperationalStore();
 
   const ambient = (over: Record<string, unknown>, ts: string) =>

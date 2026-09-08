@@ -36,8 +36,8 @@ function reposOnOrigin(platform: string, workspace: string, channel: string): re
 const domain = domains.find((d) => d.name === "e2e-unified");
 ok(domain !== undefined, "the e2e-unified domain is defined — without it this whole file measures nothing");
 ok(domain?.mode === "unified", "e2e-unified is still mode: \"unified\" — a per-container domain would make this file's claim meaningless");
-ok(domain?.channels?.includes("slack/T0EXAMPLE/C0EXCHAN003") === true, "the Slack anchor channel is still a member of the domain");
-ok(domain?.channels?.includes("github/example-owner/e2e-scratch") === true, "the GitHub repo channel is still a member of the same domain");
+ok(domain?.reach?.includes("slack/T0EXAMPLE/C0EXCHAN003") === true, "the Slack anchor channel is still a member of the domain");
+ok(domain?.reach?.includes("github/example-owner/e2e-scratch") === true, "the GitHub repo channel is still a member of the same domain");
 
 const slackRepos = reposOnOrigin("slack", "T0EXAMPLE", "C0EXCHAN003");
 ok(slackRepos.includes("example-owner/e2e-scratch"), "a Slack-shaped wake on the domain's anchor channel resolves the e2e-scratch repo grant");

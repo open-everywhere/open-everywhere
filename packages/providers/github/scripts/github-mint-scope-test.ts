@@ -176,7 +176,7 @@ delete process.env.GITHUB_TOKEN;
 
 registerGithubProvider();
 registerConfig({
-  loadDomains: () => [{ name: "d", channels: ["github/acme/api"] }],
+  loadDomains: () => [{ name: "d", reach: ["github/acme/api"] }],
 } as unknown as Parameters<typeof registerConfig>[0]);
 
 function githubTurn(opts: { issue?: number; pr?: number; kind?: string; review?: number }): BindableContext {

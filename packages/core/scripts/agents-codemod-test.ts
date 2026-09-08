@@ -66,7 +66,7 @@ const existingSiloSpec: AgentSpec = {
 
   const d = r1.file.domains[0];
   ok(d.name === "handbook-bot" && d.title === "Handbook Bot", "apply: domain carries name + title");
-  ok(JSON.stringify(d.channels) === JSON.stringify(["slack/T1/C_ASK"]), "apply: domain channels = the asking surface key(s)");
+  ok(JSON.stringify(d.reach) === JSON.stringify(["slack/T1/C_ASK"]), "apply: domain channels = the asking surface key(s)");
   ok(d.memory === "handbook-bot-silo" && d.memory === agentSiloName(newReadonlySpec), "apply: domain memory points at the derived silo name");
   ok(d.match === undefined && d.includeOrg === undefined, "apply: derived domain is a plain channels domain (no match/includeOrg)");
 
@@ -157,7 +157,7 @@ const existingSiloSpec: AgentSpec = {
   throwsWith(() => parseAgentsFile({ domains: [], silos: [], bundles: [], bindings: [], specs: [], extra: 1 }), "unknown top-level key", "parse: unknown top-level key refuses");
   throwsWith(() => parseAgentsFile({ domains: [], silos: [], bundles: [], bindings: [] }), "needs a `specs` array", "parse: a missing array refuses");
   throwsWith(
-    () => parseAgentsFile({ domains: [{ name: "x", channels: ["slack/T/C"], memory: "x-silo", bogus: 1 }], silos: [], bundles: [], bindings: [], specs: [] }),
+    () => parseAgentsFile({ domains: [{ name: "x", reach: ["slack/T/C"], memory: "x-silo", bogus: 1 }], silos: [], bundles: [], bindings: [], specs: [] }),
     'has field "bogus"',
     "parse: an unknown domain field refuses",
   );
@@ -216,7 +216,7 @@ const existingSiloSpec: AgentSpec = {
   }
   {
     const specs: AgentSpec[] = [{ name: "leaky", channels: ["slack/T/C"], memory: { kind: "existing-silo", silo: "handbook-cache" }, exposed: true }];
-    const domains: Domain[] = [{ name: "leaky", channels: ["slack/T/C"], memory: "handbook-cache", includeOrg: "readonly" }];
+    const domains: Domain[] = [{ name: "leaky", reach: ["slack/T/C"], memory: "handbook-cache", includeOrg: "readonly" }];
     throwsWith(() => assertExposedAgentsCurated(domains, [roSilo], specs), "includeOrg", "assertExposedAgentsCurated: an exposed agent with includeOrg is REFUSED");
   }
   {
@@ -226,12 +226,12 @@ const existingSiloSpec: AgentSpec = {
   }
   {
     const specs: AgentSpec[] = [{ name: "rw", channels: ["slack/T/C"], memory: { kind: "existing-silo", silo: "team-brain" }, exposed: true }];
-    const domains: Domain[] = [{ name: "rw", channels: ["slack/T/C"], memory: "team-brain" }];
+    const domains: Domain[] = [{ name: "rw", reach: ["slack/T/C"], memory: "team-brain" }];
     throwsWith(() => assertExposedAgentsCurated(domains, [rwSilo], specs), "WRITABLE", "assertExposedAgentsCurated: an exposed agent reading a writable merged silo is REFUSED");
   }
   {
     const specs: AgentSpec[] = [{ name: "rw", channels: ["slack/T/C"], memory: { kind: "existing-silo", silo: "team-brain" } }];
-    const domains: Domain[] = [{ name: "rw", channels: ["slack/T/C"], memory: "team-brain" }];
+    const domains: Domain[] = [{ name: "rw", reach: ["slack/T/C"], memory: "team-brain" }];
     assertExposedAgentsCurated(domains, [rwSilo], specs);
     ok(true, "assertExposedAgentsCurated: a NON-exposed writable agent is unconstrained");
   }

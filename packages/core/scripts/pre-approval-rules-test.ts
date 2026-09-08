@@ -181,8 +181,8 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    { name: "payments", channels: ["slack/T1/C_PAY"] },
-    { name: "unrelated", channels: ["slack/T1/C_OTHER"] },
+    { name: "payments", reach: ["slack/T1/C_PAY"] },
+    { name: "unrelated", reach: ["slack/T1/C_OTHER"] },
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

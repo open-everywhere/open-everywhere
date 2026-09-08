@@ -252,7 +252,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "eng", channels: ["slack/T123/C456"] })],
+  loadDomains: () => [defineDomain({ name: "eng", reach: ["slack/T123/C456"] })],
   loadSilos: () => [],
   domainsForSurface: () => [],
 });
@@ -415,7 +415,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
 
     _resetModelPricingForTest();
     registerModelPricing({ "test/priced-model": { inPerMtok: 1, outPerMtok: 2 } });
-    const domainsForCoverage = [defineDomain({ name: "eng", channels: ["slack/T123/C456"] }), defineDomain({ name: "dm", match: "dm" })];
+    const domainsForCoverage = [defineDomain({ name: "eng", reach: ["slack/T123/C456"] }), defineDomain({ name: "dm", match: "dm" })];
     const registerDomains = (list: ReturnType<typeof defineDomain>[]): void => {
       registerConfig({ loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {}, loadDomains: () => list, loadSilos: () => [], domainsForSurface: () => [] });
     };
@@ -549,7 +549,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     }
 
     _resetModelPricingForTest();
-    registerDomains([defineDomain({ name: "eng", channels: ["slack/T123/C456"] })]);
+    registerDomains([defineDomain({ name: "eng", reach: ["slack/T123/C456"] })]);
   }
 
   delete process.env.OE_EGRESS_SPOOF;

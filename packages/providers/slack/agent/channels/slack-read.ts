@@ -12,6 +12,7 @@ import {
   type ReadScopeAuditDeps,
   type RenderedLine,
   type WakeReadAddress,
+  domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackAuthorIsMember, type SlackMemberProbe } from "./slack-events.js";
 
@@ -30,7 +31,7 @@ export function allowedChannelIds(ctx: BindableContext): { ids: Set<string>; dom
   if (own) ids.add(own);
   const domain = domainForChannel(p.surfaceKey, getConfig().loadDomains());
   if (domain) {
-    for (const key of domain.channels ?? []) {
+    for (const key of domainRoster(domain)) {
       const id = channelIdFromKey(key);
       if (id) ids.add(id);
     }

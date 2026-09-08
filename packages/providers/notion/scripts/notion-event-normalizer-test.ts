@@ -343,7 +343,7 @@ function normalize(body: string): NormalizedEvent | null {
   ok(tenantOnly.scope.length === 1 && tenantOnly.scope[0]!.kind === "tenant", "…the tenant-only delivery really does prove only a tenant");
   ok(checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("payments") }).ok === false, "a workspace-only delivery is refused — the delivery never said WHICH surface it was about");
 
-  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`notion/${WS}`] })];
+  CLAIM_REGISTRY = [defineDomain({ name: "eng", reach: [`notion/${WS}`] })];
 
   const claimedPage = normalize(structural({ type: "page.created", entity: { id: "page-never-listed", type: "page" }, data: { parent: { id: "db-never-listed", type: "database" } } }))!;
   ok(
@@ -358,7 +358,7 @@ function normalize(body: string): NormalizedEvent | null {
   ok(
     checkEventReadGrant(listedPage, [PARTITION], { resolve: () => accessIn("eng") }).ok === false &&
       checkEventReadGrant(listedPage, [PARTITION], { resolve: () => accessIn("payments") }).ok === true,
-    "a page in another domain's `channels` stays with its roster owner even under a workspace claim (tier order, memory/domain.ts)",
+    "a page another domain names outright stays with that domain even under a workspace container (most specific wins, memory/domain.ts)",
   );
   ok(
     checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("eng") }).ok === false,
@@ -444,12 +444,12 @@ function normalize(body: string): NormalizedEvent | null {
   const FENCED: readonly Domain[] = [
     defineDomain({
       name: "payments",
-      channels: [`notion/${WS}/${PAY_PAGE}`],
+      reach: [`notion/${WS}/${PAY_PAGE}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
-      channels: [`notion/${WS}/${SEC_PAGE}`],
+      reach: [`notion/${WS}/${SEC_PAGE}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
@@ -484,12 +484,12 @@ function normalize(body: string): NormalizedEvent | null {
   const CLAIMED: readonly Domain[] = [
     defineDomain({
       name: "payments",
-      channels: [`notion/${WS}/${PAY_PAGE}`],
+      reach: [`notion/${WS}/${PAY_PAGE}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
-      containers: ["notion/ws-security"],
+      reach: ["notion/ws-security"],
       credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
@@ -506,12 +506,12 @@ function normalize(body: string): NormalizedEvent | null {
   const NESTED: readonly Domain[] = [
     defineDomain({
       name: "payments",
-      channels: [`notion/${WS}/${PAY_PAGE}`],
+      reach: [`notion/${WS}/${PAY_PAGE}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
-      channels: [`notion/${WS}/${DB}`],
+      reach: [`notion/${WS}/${DB}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
@@ -536,7 +536,7 @@ function normalize(body: string): NormalizedEvent | null {
   const SHARED: readonly Domain[] = [
     defineDomain({
       name: "eng",
-      channels: [`notion/${WS}/${PAY_PAGE}`],
+      reach: [`notion/${WS}/${PAY_PAGE}`],
       credentials: [{ connector: "notion", credential: "channel-key", use: "notion-eng" }],
     }),
   ];

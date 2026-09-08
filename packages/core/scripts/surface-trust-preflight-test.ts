@@ -150,6 +150,112 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
 }
 
 {
+  const groupEntry = [defineSurface({ key: "teams/T_ACME/team:ENG", trust: "internal" })];
+  const inTeam = { ...seen("teams/T_ACME/19_channel", 60, 1), groupKey: "teams/T_ACME/team:ENG" };
+
+  const walked = run(groupEntry, [inTeam]);
+  eq(
+    find(walked, "undeclared surfaces")?.status,
+    "ok",
+    "🔴 group rung: a room whose traffic row names a DECLARED group is covered — the check walks the same rungs the resolver walks",
+  );
+  eq(
+    find(walked, "dead declarations"),
+    undefined,
+    "🔴 group rung: the group's own line is ALIVE — it matched traffic through the rung, so the operator is never told to delete a working declaration",
+  );
+
+  const unwalked = run(groupEntry, [seen("teams/T_ACME/19_channel", 60, 1)]);
+  eq(
+    find(unwalked, "undeclared surfaces")?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: with no groupKey on the row, the same traffic reports UNDECLARED — the rung is what covers it, not the register",
+  );
+  ok(
+    find(unwalked, "dead declarations")?.fix?.includes("team:…") === true,
+    "…and the dead-declaration remedy WARNS about the group rung before it says delete, exactly as it does for the Grid rung",
+  );
+
+  const otherTeam = run(groupEntry, [{ ...seen("teams/T_ACME/19_other", 60, 1), groupKey: "teams/T_ACME/team:SALES" }]);
+  eq(
+    find(otherTeam, "undeclared surfaces")?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: traffic in an UNDECLARED group is still undeclared — the rung admits what the operator named, nothing else",
+  );
+
+  const publicGroup = run(
+    [defineSurface({ key: "teams/T_ACME/team:ENG", trust: "public" })],
+    [inTeam],
+  );
+  eq(
+    find(publicGroup, "undeclared surfaces")?.status,
+    "ok",
+    "group rung: a `public` group declaration covers the room too — check 1 is about silence, not about trust",
+  );
+
+  const bothRungs = { ...seen("slack/T_SIB/C_ROOM", 60, 1), groupKey: "slack/T_SIB/team:X", enterpriseKey: "slack/E_GRID" };
+  eq(
+    find(run([defineSurface({ key: "slack/E_GRID", trust: "internal" })], [bothRungs]), "undeclared surfaces")?.status,
+    "ok",
+    "both container rungs on one row: the ENTERPRISE declaration still covers it",
+  );
+  eq(
+    find(run([defineSurface({ key: "slack/T_SIB/team:X", trust: "internal" })], [bothRungs]), "undeclared surfaces")?.status,
+    "ok",
+    "…and the GROUP declaration covers the same row on its own — adding a rung never shadows the other",
+  );
+}
+
+{
+  const channelEntry = [defineSurface({ key: "teams/T_ACME/19_chan", trust: "internal" })];
+  const chain = { ...seen("teams/T_ACME/19_chan-messageid-1", 60, 1), containerKey: "teams/T_ACME/19_chan" };
+
+  const walked = run(channelEntry, [chain]);
+  eq(
+    find(walked, "undeclared surfaces")?.status,
+    "ok",
+    "🔴 container grain: a reply chain whose row names its DECLARED channel is covered — the check reads both grains, as bindFrom and the window floor do",
+  );
+  eq(
+    find(walked, "dead declarations"),
+    undefined,
+    "🔴 container grain: the channel's own line is ALIVE — a working channel-grain declaration is never reported dead",
+  );
+
+  eq(
+    find(run(channelEntry, [seen("teams/T_ACME/19_chan-messageid-1", 60, 1)]), "undeclared surfaces")?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: with no containerKey on the row, the same reply chain reports UNDECLARED — the second grain is what covers it",
+  );
+
+  const deadFix = find(run(channelEntry, [seen("teams/T_ACME/19_chan-messageid-1", 60, 1)]), "dead declarations")?.fix;
+  ok(
+    deadFix?.includes("teams/<tenant>/<channelId>") === true,
+    "🔴 the dead-declaration remedy names the CHANNEL grain as the third shape that reports dead — the shape this deployment actually hits, because a traffic row names the reply chain",
+  );
+  ok(
+    deadFix?.includes("THREE shapes") === true,
+    "…and it counts them, so a later rung cannot be added while the sentence still says two",
+  );
+
+  eq(
+    find(
+      run(channelEntry, [{ ...seen("teams/T_ACME/19_other-messageid-1", 60, 1), containerKey: "teams/T_ACME/19_other" }]),
+      "undeclared surfaces",
+    )?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: a reply chain in an UNDECLARED channel is still undeclared",
+  );
+
+  eq(
+    find(run(channelEntry, [{ ...seen("teams/T_ACME/19_chan", 60, 1), containerKey: "teams/T_ACME/19_chan" }]), "undeclared surfaces")
+      ?.status,
+    "ok",
+    "container grain: a container equal to the surface key is dropped, and the room is covered by its own key exactly as before",
+  );
+}
+
+{
   const checks = run(
     [
       defineSurface({ key: "github/acme/payments-*", trust: "internal" }),
@@ -179,6 +285,40 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
   ok(
     find(tenantDiff, "new matches")?.detail.includes("slack/T0/C_BRAND_NEW") === true,
     "a TENANT declaration is a pattern too — a room created yesterday inherits `internal` with no config change, which is exclude mode's fail-open",
+  );
+
+  const groupDiff = run(
+    [defineSurface({ key: "teams/T_ACME/team:ENG", trust: "internal" })],
+    [{ ...seen("teams/T_ACME/19_brand_new", 1), groupKey: "teams/T_ACME/team:ENG" }],
+  );
+  ok(
+    find(groupDiff, "new matches")?.detail.includes("teams/T_ACME/19_brand_new") === true,
+    "🔴 a GROUP declaration is a pattern too — a channel added to a declared team yesterday inherits its trust with no config change, and the detector must still see it",
+  );
+  ok(
+    find(groupDiff, "new matches")?.name.includes("teams/T_ACME/team:ENG") === true,
+    "…and the row names the GROUP line responsible, which is the line an operator would have to narrow",
+  );
+  const groupOverTenant = run(
+    [defineSurface({ key: "teams/T_ACME", trust: "internal" }), defineSurface({ key: "teams/T_ACME/team:ENG", trust: "internal" })],
+    [{ ...seen("teams/T_ACME/19_brand_new", 1), groupKey: "teams/T_ACME/team:ENG" }],
+  );
+  eq(
+    find(groupOverTenant, "new matches")?.name.includes("teams/T_ACME/team:ENG"),
+    true,
+    "🔴 with a tenant line ABOVE the group line the row still fires, and names the GROUP — the more specific decider, exactly as the resolver ranks them",
+  );
+  const enumerated = run(
+    [
+      defineSurface({ key: "teams/T_ACME/team:ENG", trust: "internal" }),
+      defineSurface({ key: "teams/T_ACME/19_brand_new", trust: "internal" }),
+    ],
+    [{ ...seen("teams/T_ACME/19_brand_new", 1), groupKey: "teams/T_ACME/team:ENG" }],
+  );
+  eq(
+    find(enumerated, "new matches"),
+    undefined,
+    "🔴 NEGATIVE CONTROL: an EXACT entry beats the group entry and emits no row — a surface the operator enumerated was not annexed by anything",
   );
 
   const settled = run([defineSurface({ key: "github/acme/payments-*", trust: "internal" })], [seen("github/acme/payments-api", 200)]);

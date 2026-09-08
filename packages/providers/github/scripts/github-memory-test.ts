@@ -216,7 +216,7 @@ try {
   ok(cap.subject === "app-principal", "capability: 🔴 the subject is pinned app-principal — a shared brain is never projected through a user-subject token");
   ok(connectorMemoryCapabilities().some((c) => c.provider === "github"), "capability: it shows up in the roster contribution view");
 
-  const domain = { name: "transactions", channels: ["slack/T/A"], memory: ["txn-silo"] } as never;
+  const domain = { name: "transactions", reach: ["slack/T/A"], memory: ["txn-silo"] } as never;
   const silos: MemorySilo[] = [{ name: "txn-silo", provider: "github", container: "acme/brain", path: "memory" }];
   assertConnectorMemoryGrants([domain], silos, () => granted);
   ok(true, "config load: a granted github silo validates clean");

@@ -1,6 +1,7 @@
 import { callLinear } from "./linear-graphql.js";
 import {
   registerWorkSearchAdapter,
+  domainRoster,
   type WorkSearchAdapter,
   type WorkSearchHit,
   type BindableContext,
@@ -20,7 +21,7 @@ interface IssueSearchNode {
 
 export function domainOwnTeamIds(domain: Domain, org: string): ReadonlySet<string> {
   const ids = new Set<string>();
-  for (const key of domain.channels ?? []) {
+  for (const key of domainRoster(domain)) {
     const parts = key.split("/");
     if (parts.length === 3 && parts[0] === "linear" && parts[1] === org && parts[2].length > 0) ids.add(parts[2]);
   }

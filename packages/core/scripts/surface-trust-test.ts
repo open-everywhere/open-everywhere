@@ -9,6 +9,7 @@ import {
   declaredWorkspaceTrust,
   isVouchedInternal,
   isVouchedSurface,
+  FLOOR_UNREACHABLE_RUNGS,
   registerSubtreePlatform,
   applySubtreeSurfaceClaims,
   subtreeSurfaceKeys,
@@ -565,6 +566,7 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
       mode: (a.mode as "channel" | "dm" | "mpim" | undefined) ?? "channel",
       ...(a.verdict ? { trust: a.verdict as "internal" | "external" } : {}),
       ...(a.group ? { trustGroup: a.group } : {}),
+      ...(a.enterprise ? { trustEnterprise: a.enterprise } : {}),
     };
   };
   registerIdentityMapper("vendortest", vendor);
@@ -621,6 +623,29 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     bind({ ws: "W1", sf: "C_ANY", group: "not a key segment", verdict: "internal" }),
     "internal",
     "PRECEDENCE: a MALFORMED trustGroup contributes no rung at all (refused, never repaired — a repaired segment could collide with a real key)",
+  );
+
+  registerSurfaces([defineSurface({ key: "vendortest/E_GRID", trust: "internal" })]);
+  eq(
+    bind({ ws: "W_SIB", sf: "C_ROOM", enterprise: "E_GRID" }),
+    "internal",
+    "PRECEDENCE: an ENTERPRISE declaration promotes a room in a workspace nobody declared — bindFrom passes the rung it reads off the envelope",
+  );
+  ok(
+    !isVouchedSurface("vendortest/W_SIB/C_ROOM"),
+    "🔴 THE DIVERGENCE, PINNED (OPE-1584): the single-window privacy floor answers FALSE for the room the binding just bound INTERNAL — it holds one surface key and cannot derive the Grid. FAIL-CLOSED, and the header may never claim key-for-key parity again",
+  );
+  eq(
+    Object.keys(FLOOR_UNREACHABLE_RUNGS),
+    ["enterpriseKey"],
+    "🔴 …and the enterprise rung is the ONLY one this floor records as out of reach — the record forces the next author to CLASSIFY a new query field; the two arms above are what prove the classification, because the type cannot",
+  );
+
+  registerSurfaces([defineSurface({ key: "vendortest/W_SIB", trust: "internal" })]);
+  eq(bind({ ws: "W_SIB", sf: "C_ROOM" }), "internal", "positive control: the TENANT rung binds the same room internal…");
+  ok(
+    isVouchedSurface("vendortest/W_SIB/C_ROOM"),
+    "…and the floor AGREES there, because it derives the tenant from the key — only the enterprise rung diverges",
   );
 
   registerSurfaces([defineSurface({ key: "vendortest/W1/D_PARTNER", trust: "public" })]);

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -110,6 +110,18 @@ function getDb(): DatabaseSync {
       set_by        TEXT,
       PRIMARY KEY (org_id, scope_key, level)
     );
+    CREATE TABLE IF NOT EXISTS halt (
+      org_id     TEXT    NOT NULL,
+      level      TEXT    NOT NULL,            -- "" on an org-wide row: FILLER, never an address (store.ts haltAddressColumns)
+      scope_key  TEXT    NOT NULL,            -- "" on an org-wide row, same reason
+      org_wide   INTEGER NOT NULL,            -- 1 = the org-wide MARKER; the column every match branches on first
+      active     INTEGER NOT NULL,            -- 1 = halted; a cleared row stays for the trail
+      set_by     TEXT,
+      set_at     TEXT    NOT NULL,            -- ISO-8601
+      cleared_by TEXT,
+      cleared_at TEXT,                        -- ISO-8601; NULL until a resume clears it
+      PRIMARY KEY (org_id, level, scope_key, org_wide)
+    );
     CREATE TABLE IF NOT EXISTS connector_override (
       org_id    TEXT NOT NULL,
       scope_key TEXT NOT NULL,
@@ -128,7 +140,7 @@ function getDb(): DatabaseSync {
       participating INTEGER NOT NULL DEFAULT 0, -- 1 = invited participant (replied/@mentioned); 0 = warm watcher
       silent_streak INTEGER NOT NULL DEFAULT 0, -- consecutive silent woken turns since last engage/participation
       stopped       INTEGER NOT NULL DEFAULT 0, -- 1 = an explicit stop landed (window path); suppress non-mention wakes until re-invited
-      engaged_by    TEXT,                       -- id of the event that last PROMOTED this row; a re-promotion from the SAME id never clears stopped
+      engaged_by    TEXT,                       -- SEPARATOR-FRAMED list of the ids of events that PROMOTED this row, most recent last, bounded; a re-promotion from ANY id the list holds never clears stopped (store.ts PROMOTER_SEP)
       PRIMARY KEY (org_id, surface_key, thread_ts)
     );
     CREATE TABLE IF NOT EXISTS channel_session (
@@ -616,6 +628,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE thread_engagement ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0",
 
     "ALTER TABLE thread_engagement ADD COLUMN engaged_by TEXT",
+    "UPDATE thread_engagement SET engaged_by = char(10) || engaged_by || char(10) WHERE engaged_by IS NOT NULL AND engaged_by <> '' AND substr(engaged_by, 1, 1) <> char(10)",
 
     "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
@@ -1434,6 +1447,47 @@ export const sqliteOperationalStore: OperationalStore = {
     }));
   },
 
+  async setHalt(org, address, meta) {
+    assertHaltAddress(address);
+    const a = haltAddressColumns(address);
+    getDb()
+      .prepare(
+        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, cleared_by, cleared_at) VALUES (?, ?, ?, ?, 1, ?, ?, NULL, NULL)
+         ON CONFLICT(org_id, level, scope_key, org_wide) DO UPDATE SET
+           active     = 1,
+           set_by     = excluded.set_by,
+           set_at     = excluded.set_at,
+           cleared_by = NULL,
+           cleared_at = NULL`,
+      )
+      .run(org, a.level, a.scopeKey, a.orgWide ? 1 : 0, meta?.setBy ?? null, new Date().toISOString());
+  },
+
+  async clearHalt(org, address, meta) {
+    assertHaltAddress(address);
+    const a = haltAddressColumns(address);
+    return (
+      getDb()
+        .prepare("UPDATE halt SET active = 0, cleared_by = ?, cleared_at = ? WHERE org_id = ? AND level = ? AND scope_key = ? AND org_wide = ? AND active = 1")
+        .run(meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide ? 1 : 0).changes > 0
+    );
+  },
+
+  async activeHalts(org) {
+    const rows = getDb()
+      .prepare("SELECT level, scope_key, org_wide, set_by, set_at, cleared_by, cleared_at FROM halt WHERE org_id = ? AND active = 1")
+      .all(org) as { level: string; scope_key: string; org_wide: number; set_by: string | null; set_at: string; cleared_by: string | null; cleared_at: string | null }[];
+    return rows.map((r) => ({
+      org,
+      address: haltAddressFromColumns(r.level, r.scope_key, r.org_wide === 1),
+      active: true,
+      setAt: r.set_at,
+      ...(r.set_by ? { setBy: r.set_by } : {}),
+      ...(r.cleared_by ? { clearedBy: r.cleared_by } : {}),
+      ...(r.cleared_at ? { clearedAt: r.cleared_at } : {}),
+    }));
+  },
+
   async setConnectorOverride(org, scopeKey, connector, granted, meta) {
     getDb()
       .prepare(
@@ -1515,7 +1569,7 @@ export const sqliteOperationalStore: OperationalStore = {
     const participating = opts?.participating ? 1 : 0;
     const ownerToken = opts?.ownerToken ?? null;
     const kind = opts?.kind ?? "thread";
-    const engagedBy = opts?.engagedBy ?? null;
+    const framed = participating === 1 && opts?.engagedBy ? framePromoterId(opts.engagedBy) : null;
     getDb()
       .prepare(
         `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped, engaged_by)
@@ -1527,11 +1581,31 @@ export const sqliteOperationalStore: OperationalStore = {
            owner_token   = COALESCE(excluded.owner_token, owner_token),
            stopped       = CASE
                              WHEN excluded.participating = 1
-                              AND (engaged_by IS NULL OR excluded.engaged_by IS NULL OR engaged_by <> excluded.engaged_by)
+                              AND (excluded.engaged_by IS NULL
+                                   OR instr(CASE WHEN engaged_by IS NULL OR engaged_by = '' THEN char(10)
+                                                 WHEN substr(engaged_by, 1, 1) = char(10) THEN engaged_by
+                                                 ELSE char(10) || engaged_by || char(10) END,
+                                            excluded.engaged_by) = 0)
                              THEN 0 ELSE stopped END,
-           engaged_by    = CASE WHEN excluded.participating = 1 THEN COALESCE(excluded.engaged_by, engaged_by) ELSE engaged_by END`,
+           engaged_by    = CASE
+                             WHEN excluded.participating = 1 AND excluded.engaged_by IS NOT NULL
+                             THEN replace(CASE WHEN engaged_by IS NULL OR engaged_by = '' THEN char(10)
+                                               WHEN substr(engaged_by, 1, 1) = char(10) THEN engaged_by
+                                               ELSE char(10) || engaged_by || char(10) END,
+                                          excluded.engaged_by, char(10)) || substr(excluded.engaged_by, 2)
+                             ELSE engaged_by END`,
       )
-      .run(org, surfaceKey, threadTs, at, at, participating, ownerToken, kind, participating === 1 ? engagedBy : null);
+      .run(org, surfaceKey, threadTs, at, at, participating, ownerToken, kind, framed);
+    if (framed === null) return;
+    getDb()
+      .prepare(
+        `UPDATE thread_engagement
+            SET engaged_by = substr(engaged_by, instr(substr(engaged_by, 2), char(10)) + 1)
+          WHERE org_id = ? AND surface_key = ? AND thread_ts = ?
+            AND engaged_by IS NOT NULL
+            AND length(engaged_by) - length(replace(engaged_by, char(10), '')) - 1 > ?`,
+      )
+      .run(org, surfaceKey, threadTs, PROMOTER_LIST_MAX);
   },
 
   async markStopped(org, surfaceKey, threadTs) {
@@ -1566,7 +1640,7 @@ export const sqliteOperationalStore: OperationalStore = {
           ...(row.owner_token ? { ownerToken: row.owner_token } : {}),
           kind: (row.kind as "thread" | "spawned" | null) ?? "thread",
           stopped: row.stopped === 1,
-          ...(row.engaged_by ? { engagedBy: row.engaged_by } : {}),
+          ...promoterListField(row.engaged_by),
         }
       : null;
   },
@@ -1601,7 +1675,7 @@ export const sqliteOperationalStore: OperationalStore = {
       ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
       kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
       stopped: r.stopped === 1,
-      ...(r.engaged_by ? { engagedBy: r.engaged_by } : {}),
+      ...promoterListField(r.engaged_by),
     }));
   },
 

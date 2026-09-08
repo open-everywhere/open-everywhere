@@ -360,7 +360,7 @@ registerEventScopeGrant(linearEventScopeGrant);
 }
 
 {
-  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`linear/${ORG}`] })];
+  CLAIM_REGISTRY = [defineDomain({ name: "eng", reach: [`linear/${ORG}`] })];
 
   const claimedTeam = normalize(issueBody({ data: { id: ISSUE, teamId: "team-never-listed" } }))!;
   ok(
@@ -375,7 +375,7 @@ registerEventScopeGrant(linearEventScopeGrant);
   ok(
     checkEventReadGrant(listedTeam, [PARTITION], { resolve: () => accessIn("eng") }).ok === false &&
       checkEventReadGrant(listedTeam, [PARTITION], { resolve: () => accessIn("payments") }).ok === true,
-    "a team in another domain's `channels` stays with its roster owner even under a workspace claim (tier order, memory/domain.ts)",
+    "a team another domain names outright stays with that domain even under a workspace container (most specific wins, memory/domain.ts)",
   );
   const tenantOnly = normalize(issueBody({ data: {} }))!;
   ok(

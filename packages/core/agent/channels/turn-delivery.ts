@@ -100,6 +100,8 @@ export const PENDING_WORK_INSTRUCTION =
   " Nothing is added to your message on its way out, so your own words are the only thing that tells this conversation" +
   " where the work stands: say plainly that you are still working on it, and do not present what you have as the final result.";
 
+export const PER_SURFACE_PENDING_WORK_PROBE = "oe:per-surface-bound-conversation";
+
 const MEMORY_MOUNT_SEGMENT = "workspace/memory/";
 
 const MARKDOWN_LINK_RE =

@@ -48,7 +48,7 @@ const domains: Domain[] = [
     match: "org",
     models: { primary: { id: DEFAULT_ID, providers: ["fireworks"], reasoning: "medium" }, utility: { id: "zai/glm-4.5-air" } },
   }),
-  defineDomain({ name: "txn", channels: [C_TXN], models: { primary: { reasoning: "high" } } }),
+  defineDomain({ name: "txn", reach: [C_TXN], models: { primary: { reasoning: "high" } } }),
 ];
 
 ok(
@@ -64,17 +64,17 @@ ok(JSON.stringify(modelRouteFor("primary", C_TXN, [])) === "{}", "no domains →
 
 const domains2: Domain[] = [
   defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, providers: ["fireworks"] } } }),
-  defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } }),
+  defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } }),
 ];
 const swapped = modelRouteFor("primary", C_TXN, domains2);
 ok(swapped.id === "anthropic/claude-sonnet-5" && swapped.providers === undefined, "changing id DROPS the inherited pin (an upstream pinned for one model is wrong for another)");
 const repinned = modelRouteFor("primary", C_TXN, [
   domains2[0],
-  defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5", providers: ["anthropic"] } } }),
+  defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5", providers: ["anthropic"] } } }),
 ]);
 ok(JSON.stringify(repinned.providers) === JSON.stringify(["anthropic"]), "a route may pin its own providers with its own id");
 
-ok(modelRouteFor("primary", C_TXN, [defineDomain({ name: "txn", channels: [C_TXN] })]).id === undefined, "domain without models + no org → empty route");
+ok(modelRouteFor("primary", C_TXN, [defineDomain({ name: "txn", reach: [C_TXN] })]).id === undefined, "domain without models + no org → empty route");
 
 ok(domainMatchFor("dm", "internal") === "dm", "internal DM partner classifies to the dm criteria layer");
 ok(domainMatchFor("dm", "external") === "public", "external DM partner classifies to the public criteria layer");
@@ -99,7 +99,7 @@ const dmDomains: Domain[] = [
 {
   const withExplicit: Domain[] = [
     ...dmDomains,
-    defineDomain({ name: "explicit", channels: [D_PARTNER], models: { primary: { id: "vendor/explicit-model" } } }),
+    defineDomain({ name: "explicit", reach: [D_PARTNER], models: { primary: { id: "vendor/explicit-model" } } }),
   ];
   const r = modelRouteFor("primary", D_PARTNER, withExplicit, [], "dm");
   ok(r.id === "vendor/explicit-model", "an explicit domain still overrides the dm criteria layer");
@@ -115,7 +115,7 @@ const dmDomains: Domain[] = [
 }
 
 {
-  const domains = [defineDomain({ name: "team", channels: [C_TXN], statusVerbs: ["Reviewing"] })];
+  const domains = [defineDomain({ name: "team", reach: [C_TXN], statusVerbs: ["Reviewing"] })];
   const withoutParam = statusVerbsFor(C_TXN, domains);
   const withUndefinedMatch = statusVerbsFor(C_TXN, domains, [], undefined);
   ok(JSON.stringify(withoutParam) === JSON.stringify(withUndefinedMatch), "statusVerbsFor: an explicit undefined surfaceMatch reproduces the no-arg call exactly");
@@ -299,7 +299,7 @@ const PRIMARY_DEFAULTS = { primary: { id: DEFAULT_ID } };
 }
 {
   const calls: FakeCall[] = [];
-  const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+  const onlyExec = () => [defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
   const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_DEFAULTS, fakeDeps(onlyExec, calls, true));
   ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: a surface that routes to nothing returns the DEFAULT model concretely — never null (OPE-412)");
   await m.doGenerate(turnCall);
@@ -308,7 +308,7 @@ const PRIMARY_DEFAULTS = { primary: { id: DEFAULT_ID } };
 }
 {
   const calls: FakeCall[] = [];
-  const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+  const onlyExec = () => [defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
   const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_DEFAULTS, fakeDeps(onlyExec, calls, true));
   ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: an identity-less ctx does not throw (fail-soft → the default model, no matching domain)");
   await m.doGenerate(turnCall);
@@ -382,7 +382,7 @@ const supDomains: Domain[] = [
     match: "org",
     models: { primary: { id: DEFAULT_ID, reasoning: "medium" }, supervisor: { id: UTILITY_ID, reasoning: "low" } },
   }),
-  defineDomain({ name: "txn", channels: [C_TXN], models: { primary: { reasoning: "high" } } }),
+  defineDomain({ name: "txn", reach: [C_TXN], models: { primary: { reasoning: "high" } } }),
 ];
 {
   const calls: FakeCall[] = [];
@@ -455,7 +455,7 @@ const supDomains: Domain[] = [
       ok(readModelStamp() === "anthropic/claude-sonnet-5", "regression: resolvePrimaryModel stamps the routed id at RESOLVE time — the spend hook sees it without the wrapper's doGenerate running");
     });
     await contextStorage.run(new ContextContainer(), async () => {
-      const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+      const onlyExec = () => [defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
       const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_DEFAULTS, fakeDeps(onlyExec, []));
       ok(m.modelId === DEFAULT_ID, "regression: an unrouted surface returns the default model concretely (OPE-412 — eve 0.33 throws on a null return)");
       ok(readModelStamp() === DEFAULT_ID, "regression: the default/no-op path stamps the default id (row still priced)");

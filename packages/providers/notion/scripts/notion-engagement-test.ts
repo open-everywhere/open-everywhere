@@ -162,7 +162,7 @@ ok(notionEngagementAnchor({ ...FACTS, workspaceId: undefined }) === undefined, "
 {
   ok(
     notionWakeAuditDetail("direct", undefined, "container").via === "container",
-    "🔴 5a: a name-drop admitted by a `containers` CLAIM reports `container` — the one field that says the operator enumerated no page",
+    "🔴 5a: a name-drop admitted by a CONTAINER entry reports `container` — the one field that says the operator enumerated no page",
   );
   ok(
     notionWakeAuditDetail("direct", undefined, "roster").via === "roster",

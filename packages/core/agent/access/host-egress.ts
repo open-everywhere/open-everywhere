@@ -7,6 +7,7 @@ import { resolveAccessFor } from "./request.js";
 import { narrowByConnectorOverride } from "./connector-scope.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostCallAuditFields } from "./egress.js";
+import { haltScopeForCtx, resolveHalt } from "./halt.js";
 
 export type HostLookup = (hostname: string) => Promise<readonly string[]>;
 let lookupImpl: HostLookup | undefined;
@@ -196,7 +197,7 @@ export const EGRESS_REPORT_PROTOCOL =
   "it (a `domains` entry for an uncredentialed host, or a connection's `allowedWebsites` for a " +
   "credentialed one). It then lands on the session's next turn.";
 
-export type ReachDenyReason = "not-allowlisted" | "connector-revoked";
+export type ReachDenyReason = "not-allowlisted" | "connector-revoked" | "halted";
 
 export type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
 
@@ -213,7 +214,9 @@ export function egressReachDenial(tool: string, host: string, reason: ReachDenyR
   const cause =
     reason === "not-allowlisted"
       ? `host "${host}" is not on this session's egress allow-list`
-      : `host "${host}" is reachable only through a connection that has been revoked (break-glass \`revoke_connector\`)`;
+      : reason === "halted"
+        ? `a break-glass halt is in force for this deployment, so NO host is reachable until an admin runs \`resume\` — this is not about "${host}"`
+        : `host "${host}" is reachable only through a connection that has been revoked (break-glass \`revoke_connector\`)`;
   return `${tool}: ${cause}, so the request was refused before it was made. ${EGRESS_REPORT_PROTOCOL}`;
 }
 
@@ -223,6 +226,7 @@ export interface ReachDeps {
   readonly tool?: string;
   readonly hosts?: (ctx: BindableContext) => readonly ReachableHost[];
   readonly narrow?: (ctx: BindableContext, ids: readonly string[]) => Promise<readonly string[] | null>;
+  readonly halted?: (ctx: BindableContext) => Promise<boolean>;
   readonly rowFields?: Readonly<Record<string, unknown>>;
 }
 
@@ -240,6 +244,8 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
     });
     throw new Error(egressReachDenial(tool, url.hostname, reason));
   };
+  const halted = deps.halted ?? ((c: BindableContext) => resolveHalt(haltScopeForCtx(c)).then((s) => s.halted));
+  if (await halted(ctx)) return deny("halted");
   if (!entry) return deny("not-allowlisted");
   if (entry.viaConnection !== null) {
     const narrow = deps.narrow ?? narrowByConnectorOverride;

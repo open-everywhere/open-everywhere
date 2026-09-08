@@ -423,7 +423,7 @@ export type {
 } from "./access/external-policy.js";
 export { externalPolicyOverrideFor } from "./memory/domain.js";
 
-export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainClaimVerdict, ambientSkipFor } from "./memory/domain.js";
+export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainReachVerdict, domainRoster, domainContainers, ambientSkipFor, assertDomainsValid, partitionTenantProblems } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";
 export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";

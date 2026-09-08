@@ -1,8 +1,9 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { join, dirname, relative, sep } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { z } from "zod";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
@@ -67,7 +68,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" })],
+  loadDomains: () => [defineDomain({ name: DOMAIN, reach: [SURFACE], ambientSupervisor: true, mode: "unified" })],
   loadSilos: () => [],
   domainsForSurface: ({ surface }) => (surface === CHAN ? [DOMAIN] : []),
 });
@@ -699,6 +700,264 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(
       (await readAudit({ org: ORG, action: TASK_WAKE_RETARGET_ACTION })).length === retargetsBefore + 1,
       "§11c/AUDIT: the move wrote exactly one `unified.task_wake_retarget` row, so a re-point stays countable in production",
+    );
+  }
+}
+
+{
+  const { baseReplyEntry } = await import("../agent/tools/reply.js");
+  const { registerSlackFixtureManifest } = await import("./_slack-test-stubs.js");
+  registerSlackFixtureManifest();
+
+  function baseCtxFor(turnId: string, threadTs: string): BindableContext {
+    return {
+      channel: { kind: "channel:slack" },
+      session: {
+        id: "reply-delegation-pending-test-base",
+        turn: { id: turnId, sequence: 1 },
+        auth: {
+          current: {
+            attributes: {
+              oe_platform: "slack",
+              oe_grain: "standing",
+              channel_id: CHAN,
+              channel_type: "channel",
+              team_id: "T1",
+              trust_checked: "true",
+              thread_ts: threadTs,
+            },
+            principalId: "U1",
+            principalType: "slack-user",
+          },
+        },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    } as unknown as BindableContext;
+  }
+
+  async function callBaseReply(turnId: string, threadTs: string, text: string): Promise<{ posted?: boolean; note?: string; error?: string }> {
+    const ctx = baseCtxFor(turnId, threadTs);
+    const armed = arm(ctx);
+    if (!armed) return { error: "reply did not arm" };
+    return armed
+      .execute({ text }, ctx)
+      .then((r) => r as { posted?: boolean; note?: string })
+      .catch((e: unknown) => ({ error: String(e) }));
+  }
+
+  async function callBaseEdit(turnId: string, threadTs: string, messageId: string, text: string): Promise<{ edited?: boolean; note?: string; error?: string }> {
+    const ctx = baseCtxFor(turnId, threadTs);
+    const armed = armEdit(ctx);
+    if (!armed) return { error: "edit_reply did not arm" };
+    return armed
+      .execute({ text, message_id: messageId }, ctx)
+      .then((r) => r as { edited?: boolean; note?: string })
+      .catch((e: unknown) => ({ error: String(e) }));
+  }
+
+  const lastPosted = (): string => posted[posted.length - 1]?.text ?? "";
+  const HANDOFF = "I've handed this to a worker and will report back.";
+
+  {
+    const ctx = baseCtxFor("turn_1575_mount", "1201.0");
+    ok(
+      (arm(ctx) as unknown) === (baseReplyEntry as unknown),
+      "🔴 §12f/PREMISE: this ctx mounts the PER-SURFACE `reply` entry — the legs below would silently measure the unified pair otherwise",
+    );
+    const armedEdit = armEdit(ctx) as unknown as { inputSchema?: { shape?: Record<string, unknown> } } | null;
+    ok(armedEdit !== null, "§12f/PREMISE: `edit_reply` arms on a per-surface seat at all — it mounts on every surface, editable or not");
+    ok(
+      armedEdit?.inputSchema?.shape !== undefined && !("wake" in armedEdit.inputSchema.shape),
+      "🔴 §12f/PREMISE: …and it is the PER-SURFACE edit entry — the unified one takes a `wake` argument, and this one takes none",
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    const before = posted.length;
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_1575a", "task_1575a") } }, baseCtxFor("turn_1575a", "1201.1"));
+      const ack = await callBaseReply("turn_1575a", "1201.1", HANDOFF);
+      ok(ack.posted === true, "§12a precondition: the per-surface hand-off posts");
+      ok(
+        typeof ack.note === "string" && ack.note.includes("has NOT reported yet"),
+        "🔴 §12a/NOTE: the PER-SURFACE reply result tells the model its worker has not reported. Before OPE-1575 this door had no `note` field at all, so there was nowhere for the sentence to go",
+      );
+      ok(
+        typeof ack.note === "string" && ack.note.includes("still working on it") && ack.note.includes("do not present what you have as the final result"),
+        "🔴 §12a/NOTE: …and instructs it to SAY SO in its own words — one word, one meaning across all four doors",
+      );
+    });
+
+    ok(posted.length === before + 1, "§12a/ROOM: exactly one message reached the room");
+    ok(
+      lastPosted() === HANDOFF,
+      `🔴 §12a: the posted body is the model's text BYTE-IDENTICAL. The instruction rides the TOOL RESULT, never the room — a body longer than the model's text is a host line coming back (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    const before = posted.length;
+    const TEXT = "Here is the answer, retrieved and checked.";
+
+    const plain = await inTurn(() => callBaseReply("turn_1575b", "1202.2", TEXT));
+    ok(plain.posted === true, "§12b precondition: the ordinary per-surface answer posts");
+    ok(posted.length === before + 1, "§12b/ROOM: one message reached the room");
+    ok(lastPosted() === TEXT, "🔴 §12b NEGATIVE CONTROL: an ordinary per-surface reply is delivered BYTE-IDENTICAL to what the model wrote");
+    ok(
+      typeof plain.note === "string" && !plain.note.includes("has NOT reported yet"),
+      "🔴 §12b: …and the note carries NO instruction on a turn that delegated nothing. Without this leg a door that appended the sentence to EVERY reply would pass §12a",
+    );
+    ok(
+      typeof plain.note === "string" && plain.note.length > 0,
+      "§12b: the note is still a sentence on an ordinary reply — the shared constant opens with a leading space and appends to one, so an empty note would render a stray space when the condition fires",
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    const before = posted.length;
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_1575c", "task_1575c") } }, baseCtxFor("turn_1575c", "1203.3"));
+      const ack = await callBaseReply("turn_1575c", "1203.3", HANDOFF);
+      ok(ack.posted === true, "§12c precondition: the hand-off posts, so there is an own post to edit");
+      const edited = await callBaseEdit("turn_1575c", "1203.3", "ts-" + String(posted.length), "The hand-off, reworded.");
+      ok(edited.edited === true, "§12c precondition: the per-surface edit lands — the message is ours, at this locus, inside the window");
+      ok(
+        typeof edited.note === "string" && edited.note.includes("has NOT reported yet"),
+        "🔴 §12c/NOTE: the PER-SURFACE EDIT result tells the model its worker has not reported. This is the door that rewrites the very message carrying the caveat, and notifies nobody while it does",
+      );
+      ok(
+        typeof edited.note === "string" && edited.note.includes("do not present what you have as the final result"),
+        "🔴 §12c/NOTE: …and instructs it not to present what it has as the final result. Without this, editing the caveat away reds NOTHING",
+      );
+      ok(
+        typeof edited.note === "string" && edited.note.includes("Nobody was notified"),
+        "§12c/NOTE: …and the edit's own sentence is still there — the instruction is APPENDED to it, never a replacement for what the door already said",
+      );
+    });
+    ok(posted.length === before + 1, "§12c/ROOM: the edit added no message to the room");
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      const first = await callBaseReply("turn_1575d", "1204.4", "An ordinary answer.");
+      ok(first.posted === true, "§12d precondition: the ordinary answer posts");
+      const edited = await callBaseEdit("turn_1575d", "1204.4", "ts-" + String(posted.length), "An ordinary answer, corrected.");
+      ok(edited.edited === true, "§12d precondition: the edit lands");
+      ok(
+        typeof edited.note === "string" && !edited.note.includes("has NOT reported yet"),
+        "🔴 §12d NEGATIVE CONTROL: a per-surface turn with no pending worker gets NO instruction on the edit door either",
+      );
+    });
+  }
+
+  {
+    const outputSchema = (baseReplyEntry as unknown as { outputSchema?: z.ZodTypeAny }).outputSchema;
+    ok(outputSchema !== undefined, "§12e/PREMISE: the per-surface `reply` entry declares an output schema at all");
+    const shape = (outputSchema as unknown as { shape?: Record<string, unknown> }).shape;
+    ok(
+      shape !== undefined && "note" in shape,
+      "🔴 §12e: the per-surface `reply` DECLARES `note` on its output schema. An undeclared key is one the model may never be shown, so the instruction would ride nowhere",
+    );
+
+    const inTurn = newSession();
+    const live = await inTurn(() => callBaseReply("turn_1575e", "1205.5", "A result to drive both schemas with."));
+    ok(live.posted === true, "§12e/PREMISE: the call that produced the result under test really posted");
+
+    const eveSchema = (await import(abs("dist/src/tools/schema.js"))) as {
+      serializeOutputSchema(s: unknown): unknown;
+      toOutputSchema(s: unknown): { readonly "~standard": { validate(v: unknown): { issues?: readonly unknown[] } } };
+    };
+    const rebuild = (s: unknown): { issues?: readonly unknown[] } =>
+      eveSchema.toOutputSchema(eveSchema.serializeOutputSchema(s))["~standard"].validate(live);
+
+    const replayedOld = rebuild(z.object({ posted: z.boolean(), id: z.string() }));
+    ok(
+      replayedOld.issues !== undefined && replayedOld.issues.length > 0,
+      "🔴 §12e/REPLAY: the OLD schema, round-tripped the way eve replays one, REJECTS the new result. `serializeOutputSchema` emits `additionalProperties: false`, so the rebuilt schema is STRICT — it does not strip the third key, and any belief that it does is wrong about this pairing",
+    );
+    const replayedLive = rebuild(outputSchema as z.ZodTypeAny);
+    ok(
+      replayedLive.issues === undefined,
+      "🔴 §12e/CONTROL: the LIVE schema round-trips and ACCEPTS the same result. Without this, a rejection from any cause at all would satisfy the assertion above",
+    );
+
+    const eveSrc = (rel: string): string => readFileSync(join(eveRoot, rel), "utf8");
+    const dynamicToolBuild = eveSrc("dist/src/context/build-dynamic-tools.js");
+    ok(
+      dynamicToolBuild.includes("toOutputSchema") && dynamicToolBuild.includes("execute"),
+      "🔴 §12e/CONTROL: eve's dynamic-tool REBUILD path still both attaches the output schema (`toOutputSchema`) and wires the tool's `execute` — so this reader is looking at the live code the tripwire below asserts about, not at a moved, split or emptied file",
+    );
+    ok(
+      !/~standard|\.validate\(|safeParse|\.parse\(/.test(dynamicToolBuild),
+      "🔴 §12e/TRIPWIRE: eve's dynamic-tool rebuild path names NO validation seam (`~standard`, `.validate(`, `safeParse`, `.parse(`), so the strict schema it attaches is never applied to a tool RESULT. This is the only reason the strict replay schema above is harmless — when it goes red, adding a key to a live tool's output schema is a breaking change for every in-flight session",
+    );
+  }
+
+  {
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    const coreAgentRoot = join(repoRoot, "packages", "core", "agent");
+    const SKIP_DIRS = new Set(["node_modules", "dist", "coverage", ".turbo"]);
+    const isGateScript = (rel: string): boolean => rel.split(sep).includes("scripts");
+    const productFiles: string[] = [];
+    const gateScriptFiles: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!SKIP_DIRS.has(e.name)) walk(p);
+        } else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) {
+          const rel = relative(repoRoot, p);
+          (isGateScript(rel) ? gateScriptFiles : productFiles).push(rel);
+        }
+      }
+    };
+    for (const root of [join(repoRoot, "packages"), join(repoRoot, "agent")]) walk(root);
+    const SLACK_CHANNEL = join("packages", "providers", "slack", "agent", "channels", "slack.ts");
+    ok(
+      productFiles.includes(SLACK_CHANNEL),
+      `🔴 §12g/CONTROL: the walk reached ${SLACK_CHANNEL}, the provider channel handler named above. A walk that misses it says nothing about the packages that import the writer through the exports map, and every assertion below would be vacuous`,
+    );
+    ok(
+      gateScriptFiles.includes(relative(repoRoot, fileURLToPath(import.meta.url))),
+      "§12g/CONTROL: the gate-script rule classifies THIS file as a gate script. Without a known member the rule could match nothing, and a product path would then be excluded by accident rather than by the stated rule",
+    );
+
+    const callSites: { readonly file: string; readonly count: number }[] = [];
+    let declarations = 0;
+    for (const rel of productFiles) {
+      const src = readFileSync(join(repoRoot, rel), "utf8");
+      const total = src.split("claimTasksForAddressedWake(").length - 1;
+      if (total === 0) continue;
+      const declared = src.split("export function claimTasksForAddressedWake(").length - 1;
+      declarations += declared;
+      if (total - declared > 0) callSites.push({ file: rel, count: total - declared });
+    }
+    ok(
+      declarations === 1,
+      `🔴 §12g/CONTROL: exactly ONE declaration of \`claimTasksForAddressedWake\` was found in the product tree (saw ${declarations}). Without this the count below could be zero because the reader or the name broke, not because the writer is unique`,
+    );
+    ok(
+      callSites.length === 1 && callSites[0]?.file === join("packages", "core", "agent", "tools", "reply.ts") && callSites[0]?.count === 1,
+      `🔴 §12g: \`claimTasksForAddressedWake\` is called from EXACTLY ONE site in the product tree, and that site is packages/core/agent/tools/reply.ts. Saw ${JSON.stringify(callSites)}. A second caller reachable from a per-surface turn sets \`addressed\`, arm 3 of \`pendingDelegationOwing\` then fails open on the probe, and the pending-work instruction silently stops reaching BOTH per-surface doors`,
+    );
+
+    const replySrc = readFileSync(join(coreAgentRoot, "tools", "reply.ts"), "utf8");
+    const unifiedAt = replySrc.indexOf("export const unifiedReplyEntry");
+    const baseAt = replySrc.indexOf("export const baseReplyEntry");
+    const callAt = replySrc.indexOf("claimTasksForAddressedWake(");
+    ok(
+      unifiedAt >= 0 && baseAt > unifiedAt,
+      "§12g/CONTROL: both reply entries were located, and the unified one is declared first — the offsets below only mean something if this holds",
+    );
+    ok(
+      callAt > unifiedAt && callAt < baseAt,
+      "🔴 §12g: the sole call sits inside `unifiedReplyEntry`, between its declaration and `baseReplyEntry`'s. Moved into the per-surface entry it would set `addressed` on exactly the turns arm 3 must not see it on",
     );
   }
 }

@@ -32,11 +32,11 @@ const ENG_ROOM = `${CHAT}/W1/CENG`;
 const OPS_ROOM = `${CHAT}/W1/COPS`;
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [PAY_ROOM], credentials: [{ connector: "notion", credential: "team-key", use: "payments-work-key" }] }),
-  defineDomain({ name: "eng", channels: [ENG_ROOM] }),
+  defineDomain({ name: "payments", reach: [PAY_ROOM], credentials: [{ connector: "notion", credential: "team-key", use: "payments-work-key" }] }),
+  defineDomain({ name: "eng", reach: [ENG_ROOM] }),
   defineDomain({
     name: "ops",
-    channels: [OPS_ROOM],
+    reach: [OPS_ROOM],
     credentials: [
       { connector: "bugtracker", credential: "project-key", use: "ops-bugtracker" },
       { connector: "noworkspace", credential: "project-key", use: "ops-noworkspace" },
@@ -53,7 +53,7 @@ registerConfig({
   loadSilos: () => [],
   domainsForSurface: ({ workspaceKey, surface }) => {
     const key = `${workspaceKey}/${surface}`;
-    return DOMAINS.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
+    return DOMAINS.filter((d) => (d.reach ?? []).includes(key)).map((d) => d.name);
   },
 });
 

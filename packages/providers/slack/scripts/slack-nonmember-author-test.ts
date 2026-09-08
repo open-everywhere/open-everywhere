@@ -225,7 +225,7 @@ _resetAuthorTrustForTest();
 
 {
   registerConfig({
-    loadDomains: () => [defineDomain({ name: "join-fixture", channels: ["slack/T1/C1"] })],
+    loadDomains: () => [defineDomain({ name: "join-fixture", reach: ["slack/T1/C1"] })],
     loadSilos: () => [],
     loadBundles: () => [],
     loadBindings: () => [],

@@ -14,6 +14,8 @@ import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { setConnectorContentOrigin, type ConnectorContentOriginMap } from "../access/connector-content-origin-state.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { stampEnforcement } from "../access/enforcement.js";
+import { stampHalted } from "../access/halt-state.js";
+import { haltScopeFor, resolveHalt } from "../access/halt.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import {
   publishEgressStatus,
@@ -35,14 +37,19 @@ export interface ResolvedEgressPolicy {
   readonly connectorContentOrigin: ConnectorContentOriginMap;
   readonly reachableHosts: readonly ReachableHost[];
   readonly compileError?: string;
+  readonly halted?: true;
 }
 
 export async function computeEgressPolicy(
   resolve: () => EffectiveAccess,
   compile: (access: EffectiveAccess) => Promise<SandboxNetworkPolicy>,
+  halted?: () => Promise<boolean>,
 ): Promise<ResolvedEgressPolicy> {
   try {
     const access = resolve();
+    if (halted !== undefined && (await halted())) {
+      return { policy: "deny-all", scopeKey: access.scopeKey, connectors: [], connectorContentOrigin: {}, reachableHosts: [], halted: true };
+    }
     const policy = await compile(access);
     return {
       policy,
@@ -123,6 +130,8 @@ export interface EgressEnforcementDeps {
   readonly lastConnectors: () => string | undefined;
   readonly rememberConnectors: (key: string) => void;
   readonly scope: () => EgressAuditScope;
+  readonly halted?: () => Promise<boolean>;
+  readonly stampHalted?: (halted: boolean) => void;
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly stamp?: (enforced: boolean) => void;
   readonly publish?: (input: EgressStatusInput) => Promise<void>;
@@ -145,24 +154,32 @@ export interface EgressEnforcementResult {
 export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementDeps): Promise<EgressEnforcementResult> {
   const audit = deps.audit ?? appendAudit;
 
-  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError } = await computeEgressPolicy(
+  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError, halted } = await computeEgressPolicy(
     deps.resolve,
     deps.compile,
+    deps.halted,
   );
+
+  if (deps.halted !== undefined) (deps.stampHalted ?? stampHalted)(halted === true || compileError !== undefined);
 
   (deps.stampConnectorContentOrigin ?? setConnectorContentOrigin)(connectorContentOrigin);
 
   if (compileError) {
     log(`compile FAILED — applying deny-all (fail-closed): ${compileError}`);
   }
+  if (halted) {
+    log(`break-glass HALT in force — applying deny-all (lift it with resume)`);
+  }
 
   const hostCount = typeof policy === "string" ? 0 : Object.keys(policy.allow ?? {}).length;
   const writeHosts = openWriteHosts(policy, reachableHosts);
   const summary = compileError
     ? `deny-all (compile error)`
-    : typeof policy === "string"
-      ? policy
-      : `allow ${hostCount} host(s), default-deny`;
+    : halted
+      ? `deny-all (break-glass halt)`
+      : typeof policy === "string"
+        ? policy
+        : `allow ${hostCount} host(s), default-deny`;
 
   const fingerprint = egressPolicyFingerprint(policy, compileError);
 
@@ -376,6 +393,14 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
         surface: p.surface,
         principalId: bindFrom(ctx).principalId,
       };
+    },
+    halted: async () => {
+      try {
+        const p = resolvePartition(ctx);
+        return (await resolveHalt(haltScopeFor({ org: p.org, scopeKey: p.surfaceKey, ...(bindFrom(ctx).principalId ? { principalId: bindFrom(ctx).principalId } : {}) }))).halted;
+      } catch {
+        return true;
+      }
     },
   };
 }

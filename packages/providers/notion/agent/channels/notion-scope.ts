@@ -1,7 +1,8 @@
 import {
   appendAudit,
   bindFrom,
-  domainClaimVerdict,
+  domainReachVerdict,
+  domainRoster,
   resolvePartition,
   ChannelScopeError,
   type BindableContext,
@@ -13,6 +14,7 @@ export type NotionVia = "roster" | "container" | "none";
 export interface NotionPageRouting {
   readonly domain?: Domain;
   readonly via: NotionVia;
+  readonly entry?: string;
 }
 
 export type NotionScopeReason =
@@ -43,33 +45,32 @@ function splitNotionKey(surfaceKey: string): { workspace?: string; page?: string
 export function notionPageDomain(workspace: string | undefined, pageId: string, domains: readonly Domain[]): NotionPageRouting {
   const wanted = canonicalNotionId(pageId);
   if (wanted.length === 0) return { via: "none" };
-  const roster = domains.find((d) =>
-    (d.channels ?? []).some((key) => {
+  for (const d of domains) {
+    const exact = domainRoster(d).find((key) => {
       const parts = key.split("/");
       return parts.length === 3 && parts[0] === "notion" && canonicalNotionId(parts[2] ?? "") === wanted;
-    }),
-  );
-  if (roster) return { domain: roster, via: "roster" };
+    });
+    if (exact === undefined) continue;
+    const entryWorkspace = exact.split("/")[1] ?? "";
+    if (domainReachVerdict(canonicalDomainReach(d), `notion/${entryWorkspace}/${wanted}`)?.kind === "excluded") continue;
+    return { domain: d, via: "roster", entry: exact };
+  }
   if (!workspace) return { via: "none" };
   const key = `notion/${workspace}/${wanted}`;
   for (const d of domains) {
-    if (domainClaimVerdict(canonicalDomainClaims(d), key)?.kind === "admits") return { domain: d, via: "container" };
+    const verdict = domainReachVerdict(canonicalDomainReach(d), key);
+    if (verdict?.kind === "admits") return { domain: d, via: "container", entry: verdict.entry };
   }
   return { via: "none" };
 }
 
-export function notionRosterWorkspace(pageId: string, domains: readonly Domain[]): string | undefined {
-  const routing = notionPageDomain(undefined, pageId, domains);
-  if (routing.via !== "roster" || !routing.domain) return undefined;
-  const wanted = canonicalNotionId(pageId);
-  for (const key of routing.domain.channels ?? []) {
-    const { workspace, page } = splitNotionKey(key);
-    if (page !== undefined && canonicalNotionId(page) === wanted) return workspace;
-  }
-  return undefined;
+export function notionReachWorkspace(workspace: string | undefined, pageId: string, domains: readonly Domain[]): string | undefined {
+  const routing = notionPageDomain(workspace, pageId, domains);
+  if (routing.entry === undefined) return undefined;
+  return routing.entry.split("/")[1] || undefined;
 }
 
-function canonicalDomainClaims(d: Domain): Domain {
+function canonicalDomainReach(d: Domain): Domain {
   const fix = (entry: string): string => {
     const parts = entry.split("/");
     if (parts.length !== 3 || !parts[2]) return entry;
@@ -77,11 +78,11 @@ function canonicalDomainClaims(d: Domain): Domain {
     const body = glob ? parts[2].slice(0, -1) : parts[2];
     return `${parts[0]}/${parts[1]}/${canonicalNotionId(body)}${glob ? "*" : ""}`;
   };
-  if (!d.containers && !d.excludeContainers) return d;
+  if (!d.reach && !d.exclude) return d;
   return {
     ...d,
-    ...(d.containers ? { containers: d.containers.map(fix) } : {}),
-    ...(d.excludeContainers ? { excludeContainers: d.excludeContainers.map(fix) } : {}),
+    ...(d.reach ? { reach: d.reach.map(fix) } : {}),
+    ...(d.exclude ? { exclude: d.exclude.map(fix) } : {}),
   };
 }
 
@@ -154,7 +155,7 @@ export function notionBlockRefusal(blockId: string, callerDomain: string | undef
   return (
     `Notion block "${blockId}" could not be resolved to a page in ${scope} read scope, so it is refused. ` +
     "A block is only readable through a page the agent's memory domain owns — pass `page` (and let the " +
-    "sweep find the discussion), or add the owning page to the domain's `channels`."
+    "sweep find the discussion), or add the owning page to the domain's `reach`."
   );
 }
 
@@ -162,8 +163,8 @@ export function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict):
   const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this page's (no domain owns this session's page)";
   return (
     `Notion page "${pageId}" is not in ${scope} read scope. The agent may only read pages in its ` +
-    "memory domain (memory/config/domains.ts). Add the page to the domain's `channels` as " +
-    "`notion/<workspace>/<page>`, or claim the workspace in `containers`, to grant it."
+    "memory domain (memory/config/domains/<name>.ts). Add the page to the domain's `reach` as " +
+    "`notion/<workspace>/<page>`, or reach the whole workspace with `notion/<workspace>`, to grant it."
   );
 }
 
@@ -172,8 +173,8 @@ export function notionPageOrBlockRefusal(id: string, verdict: NotionScopeVerdict
     const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this session's";
     return (
       `Notion id "${id}" resolved to its parent page "${resolvedPage}", but that page is not in ${scope} read scope either ` +
-      `(${verdict.reason}). Add "${resolvedPage}" to the domain's \`channels\` as \`notion/<workspace>/<page>\`, or claim the ` +
-      "workspace in `containers`, to grant it."
+      `(${verdict.reason}). Add "${resolvedPage}" to the domain's \`reach\` as \`notion/<workspace>/<page>\`, or reach the whole ` +
+      "workspace with `notion/<workspace>`, to grant it."
     );
   }
   return (

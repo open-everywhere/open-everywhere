@@ -1,4 +1,4 @@
-import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+import { domainRoster, type Domain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { DomainMemoryGrants } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
@@ -14,7 +14,7 @@ function splitSurfaceKey(key: string): { platform: string; workspace: string; ch
 }
 
 export function domainMemoryGrants(domain: Domain): DomainMemoryGrants | null {
-  const first = (domain.channels ?? []).find((c) => typeof c === "string" && c.length > 0);
+  const first = domainRoster(domain).find((c) => c.length > 0);
   if (!first) return null;
   const coords = splitSurfaceKey(first);
   if (!coords) return null;

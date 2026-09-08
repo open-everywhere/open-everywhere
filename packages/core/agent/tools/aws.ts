@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { approvalModeForDomain, resolveApproverChain } from "../access/approver-chain.js";
+import { haltScopeForCtx, resolveHalt } from "../access/halt.js";
 import { awsCommandVerdict } from "../access/aws-screen.js";
 import { redactAwsOutput, redactionCount, renderAwsResultForModel } from "../access/aws-output.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -64,6 +65,7 @@ export default defineTool({
       principalId: actingPrincipalIdOf(ctx),
       unattended,
       ...(plan.domain !== undefined ? { domain: plan.domain, mode: approvalModeForDomain(plan.domain) } : {}),
+      halted: (await resolveHalt(haltScopeForCtx(ctx as BindableContext))).halted,
       aws: { argv: input.args, allow: plan.grant.allow },
     });
 

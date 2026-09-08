@@ -20,7 +20,7 @@ const FOREIGN_TEAM = "T_FOREIGN";
 const HOME_CHANNEL = "C0EXCHAN005";
 const FOREIGN_CHANNEL = "C0BFOREIGN";
 
-let domains = [defineDomain({ name: "mapped", channels: [`slack/${HOME_TEAM}/${HOME_CHANNEL}`], memory: "brain" })];
+let domains = [defineDomain({ name: "mapped", reach: [`slack/${HOME_TEAM}/${HOME_CHANNEL}`], memory: "brain" })];
 
 registerIdentityMapper("slack", bindSlack);
 registerConfig({

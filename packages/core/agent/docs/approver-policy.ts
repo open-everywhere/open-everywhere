@@ -12,6 +12,7 @@ export interface AdminKindFamily {
 export const ADMIN_KIND_FAMILIES: readonly AdminKindFamily[] = [
   { prefix: "connector.", noun: "connector" },
   { prefix: "spend.", noun: "spend" },
+  { prefix: "halt.", noun: "halt" },
 ];
 
 const BEGIN = "<!-- BEGIN GENERATED: approver-policy (scripts/approver-policy-docs.ts) -->";
@@ -20,7 +21,7 @@ const END = "<!-- END GENERATED: approver-policy -->";
 export const APPROVER_POLICY_BEGIN = BEGIN;
 export const APPROVER_POLICY_END = END;
 
-export const ADMIN_RULE_ANCHOR = "**Admin kinds are the org config and spend mutations**";
+export const ADMIN_RULE_ANCHOR = "**Admin kinds are the org config, spend and break-glass mutations**";
 export const MEMBER_RULE_ANCHOR = "**Every other kind is a member kind.**";
 
 export function isAdminFamily(kind: string): boolean {

@@ -27,8 +27,8 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [
     defineDomain({ name: "org", match: "org", models: { utility: { id: "zai/glm-5.2-air" } } }),
-    defineDomain({ name: "payments", channels: ["slack/T1/C_PAY"], memory: "payments-brain", models: { utility: { reasoning: "low" } } }),
-    defineDomain({ name: "misc", channels: ["slack/T1/C_MISC"], memory: ["misc-brain"] }),
+    defineDomain({ name: "payments", reach: ["slack/T1/C_PAY"], memory: "payments-brain", models: { utility: { reasoning: "low" } } }),
+    defineDomain({ name: "misc", reach: ["slack/T1/C_MISC"], memory: ["misc-brain"] }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

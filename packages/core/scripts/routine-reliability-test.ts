@@ -96,7 +96,7 @@ const OTHER_ORG = "other-tenant";
 registerSlackTestBridge({ channel: { __fixture: "slack" } as never, confirmChannelInternal: async () => true });
 registerSlackFixtureMapper();
 
-const relDomain = defineDomain({ name: "payments", channels: [SURFACE] });
+const relDomain = defineDomain({ name: "payments", reach: [SURFACE] });
 const DOMAINS: readonly Domain[] = [relDomain];
 registerConfig({
   loadBundles: () => [],

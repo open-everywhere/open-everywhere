@@ -42,8 +42,8 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    { name: "fastlane", channels: ["slack/T1/C_FAST"] },
-    { name: "eng", channels: ["slack/T1/C_ENG"] },
+    { name: "fastlane", reach: ["slack/T1/C_FAST"] },
+    { name: "eng", reach: ["slack/T1/C_ENG"] },
   ],
   loadSilos: () => [],
   domainsForSurface: ({ surface }: { surface: string }) => (surface === "C_FAST" ? ["fastlane"] : surface === "C_ENG" ? ["eng"] : []),

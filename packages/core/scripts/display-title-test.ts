@@ -24,8 +24,8 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "payments", title: "Payments Platform", channels: ["slack/T1/C1"] }),
-    defineDomain({ name: "platform", channels: ["slack/T1/C2"] }),
+    defineDomain({ name: "payments", title: "Payments Platform", reach: ["slack/T1/C1"] }),
+    defineDomain({ name: "platform", reach: ["slack/T1/C2"] }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

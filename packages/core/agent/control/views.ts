@@ -10,7 +10,7 @@ import { describeBound } from "../routines/bound.js";
 import { describeStall } from "../routines/stall.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { windowedSupervisorEnabled, windowIdFor, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
+import { windowedSupervisorEnabled, windowIdFor, windowModeFor, resolveDomainForChannel, domainRoster } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
 import { unionPrincipals } from "../identity/link-resolve.js";
 import { confirmedLinkSetPrincipals } from "../identity/link-store.js";
@@ -619,7 +619,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     const have = domains.map((d) => d.name).join(", ") || "(none)";
     throw new Error(`no domain named "${q.domain}" (configured domains: ${have}).`);
   }
-  const channels = [...(domain.channels ?? [])];
+  const channels = domainRoster(domain);
   const unified = channels.length > 0 && windowedSupervisorEnabled(channels[0], domains);
   const residueUnified = unified && windowModeFor(channels[0] ?? "", domains) === "unified";
   const byWindow = new Map<string, { kind: UnifiedWindowRow["kind"]; members: string[] }>();

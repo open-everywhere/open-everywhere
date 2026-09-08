@@ -10,11 +10,13 @@ import { getConfig } from "../access/config.js";
 import { domainNameForScope } from "./caps.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { approvalPostDeps, hasApprovalCardPath } from "../tools/set_spend_limit.js";
 import { routineMarker } from "../routines/routine.js";
 import { recordCheckpointStall } from "../routines/outcome-fold.js";
 import "../approvals/session-checkpoint.js";
-import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, checkpointTtlHours } from "../approvals/session-checkpoint.js";
+import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, DURABLE_GRANT_DISCLOSURE, checkpointTtlHours } from "../approvals/session-checkpoint.js";
+import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
 
 export interface Checkpoint {
   readonly sessionTokens?: number;
@@ -110,15 +112,18 @@ export interface CheckpointVerdict {
   readonly reason?: string;
 }
 
-export function checkCheckpoint(usage: SessionUsage, cp: Checkpoint): CheckpointVerdict {
+const WHOLE_SESSION_SUBJECT = "this session reached its cost checkpoint";
+const SINCE_APPROVAL_SUBJECT = "this session spent another checkpoint's worth since a member approved it";
+
+export function checkCheckpoint(usage: SessionUsage, cp: Checkpoint, subject: string = WHOLE_SESSION_SUBJECT): CheckpointVerdict {
   if (cp.sessionTokens != null && usage.tokens >= cp.sessionTokens) {
-    return { crossed: true, reason: `this session reached its cost checkpoint (${usage.tokens.toLocaleString()} / ${cp.sessionTokens.toLocaleString()} tokens)` };
+    return { crossed: true, reason: `${subject} (${usage.tokens.toLocaleString()} / ${cp.sessionTokens.toLocaleString()} tokens)` };
   }
   if (cp.sessionModelCalls != null && usage.modelCalls >= cp.sessionModelCalls) {
-    return { crossed: true, reason: `this session reached its cost checkpoint (${usage.modelCalls.toLocaleString()} / ${cp.sessionModelCalls.toLocaleString()} model calls)` };
+    return { crossed: true, reason: `${subject} (${usage.modelCalls.toLocaleString()} / ${cp.sessionModelCalls.toLocaleString()} model calls)` };
   }
   if (cp.sessionUsd != null && (usage.usd ?? 0) >= cp.sessionUsd) {
-    return { crossed: true, reason: `this session reached its cost checkpoint (~$${(usage.usd ?? 0).toFixed(2)} of $${cp.sessionUsd.toFixed(2)})` };
+    return { crossed: true, reason: `${subject} (~$${(usage.usd ?? 0).toFixed(2)} of $${cp.sessionUsd.toFixed(2)})` };
   }
   return { crossed: false };
 }
@@ -127,13 +132,19 @@ export function checkpointConfigured(cp: Checkpoint): boolean {
   return CHECKPOINT_FIELDS.some((f) => cp[f] != null);
 }
 
-export async function sessionUsage(org: string, sessionId: string): Promise<SessionUsage> {
+export async function sessionUsage(org: string, sessionId: string, sinceIso?: string): Promise<SessionUsage> {
   const rows = await usageForSession(org, sessionId);
   const assumed = resolveAssumedModel();
+  const sinceMs = sinceIso !== undefined ? Date.parse(sinceIso) : Number.NaN;
+  const bounded = Number.isFinite(sinceMs);
   let tokens = 0;
   let modelCalls = 0;
   let usd: number | undefined;
   for (const r of rows) {
+    if (bounded) {
+      const at = Date.parse(r.ts);
+      if (Number.isFinite(at) && at <= sinceMs) continue;
+    }
     if (r.kind === "sandbox") continue;
     modelCalls++;
     tokens += r.inputTokens + r.outputTokens;
@@ -153,7 +164,7 @@ function windowMemoKey(ctx: BindableContext): string | undefined {
   return bareTokenFromEveContext(raw) ?? currentWindowToken(ctx) ?? sessionEventKey(ctx);
 }
 
-type CheckpointPlan =
+export type CheckpointPlan =
   | { readonly decision: "proceed" }
   | {
       readonly decision: "block";
@@ -165,7 +176,14 @@ type CheckpointPlan =
       readonly usage: SessionUsage;
       readonly checkpoint: Checkpoint;
       readonly reason: string;
+      readonly durable: boolean;
+      readonly approvedAt?: string;
     };
+
+function routineIdOf(ctx: BindableContext): string | undefined {
+  const fireAuth = ctx.session?.auth;
+  return routineMarker(fireAuth?.current?.attributes ?? fireAuth?.initiator?.attributes)?.id;
+}
 
 async function evaluateCheckpoint(ctx: BindableContext): Promise<CheckpointPlan> {
   const p: Partition = resolvePartition(ctx);
@@ -179,13 +197,17 @@ async function evaluateCheckpoint(ctx: BindableContext): Promise<CheckpointPlan>
   const eventKey = sessionEventKey(ctx);
   if (!memoKey || !eventKey) return { decision: "proceed" };
 
+  const routineId = routineIdOf(ctx);
   const store = getOperationalStore();
   const now = new Date().toISOString();
   const grant = await store.getSessionApproval(p.org, memoKey, CHECKPOINT_GRANT_MEMO, now).catch(() => null);
-  if (grant) return { decision: "proceed" };
 
-  const usage = await sessionUsage(p.org, eventKey);
-  const verdict = checkCheckpoint(usage, cp);
+  const durableGrant = grant?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY;
+  if (grant && !durableGrant) return { decision: "proceed" };
+
+  const since = grant?.createdAt;
+  const usage = await sessionUsage(p.org, eventKey, since);
+  const verdict = checkCheckpoint(usage, cp, since !== undefined ? SINCE_APPROVAL_SUBJECT : WHOLE_SESSION_SUBJECT);
   if (!verdict.crossed) return { decision: "proceed" };
 
   return {
@@ -197,20 +219,28 @@ async function evaluateCheckpoint(ctx: BindableContext): Promise<CheckpointPlan>
     memoKey,
     usage,
     checkpoint: cp,
-    reason: verdict.reason ?? "this session reached its cost checkpoint",
+    reason: verdict.reason ?? WHOLE_SESSION_SUBJECT,
+    durable: routineId !== undefined || durableGrant,
+    ...(since !== undefined ? { approvedAt: since } : {}),
   };
 }
 
-function checkpointCardLines(plan: Extract<CheckpointPlan, { decision: "block" }>): string[] {
+export function checkpointCardLines(plan: Extract<CheckpointPlan, { decision: "block" }>, scopeLabel?: string): string[] {
   const cp = plan.checkpoint;
-  const lines = ["Continue this session past its cost checkpoint?", `Scope: \`${plan.surfaceKey}\``];
-  lines.push(`So far this session: ${plan.usage.tokens.toLocaleString()} tokens, ${plan.usage.modelCalls.toLocaleString()} model calls${plan.usage.usd !== undefined ? `, ~$${plan.usage.usd.toFixed(2)}` : ""}.`);
+  const rebased = plan.approvedAt !== undefined;
+  const spent = `${plan.usage.tokens.toLocaleString()} tokens, ${plan.usage.modelCalls.toLocaleString()} model calls${plan.usage.usd !== undefined ? `, about $${plan.usage.usd.toFixed(2)}` : ""}`;
+  const lines = [
+    rebased ? "Keep this session going past its cost checkpoint again?" : "Keep this session going past its cost checkpoint?",
+    `In ${scopeLabel ?? plan.surfaceKey}.`,
+    rebased ? `Since a member approved this, it has used ${spent}.` : `So far this session: ${spent}.`,
+  ];
   const limits: string[] = [];
   if (cp.sessionTokens != null) limits.push(`${cp.sessionTokens.toLocaleString()} tokens`);
   if (cp.sessionModelCalls != null) limits.push(`${cp.sessionModelCalls.toLocaleString()} model calls`);
   if (cp.sessionUsd != null) limits.push(`$${cp.sessionUsd.toFixed(2)}`);
-  if (limits.length) lines.push(`Checkpoint: ${limits.join(" / ")}.`);
-  lines.push("Approve to let the agent resume consequential actions (PRs, memory writes, …) for the rest of this session. Decline to keep them paused — reads and replies are unaffected either way.");
+  if (limits.length) lines.push(rebased ? `The checkpoint is another ${limits.join(" or ")}.` : `The checkpoint is ${limits.join(" or ")}.`);
+  lines.push("Approve to let the agent do consequential work again — pull requests, memory writes and the like. Decline to keep that paused. Reading and replying carry on either way.");
+  if (plan.durable) lines.push(DURABLE_GRANT_DISCLOSURE);
   return lines;
 }
 
@@ -252,21 +282,24 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + checkpointTtlHours() * 3_600_000).toISOString();
 
-  const alreadyAsked = await store.getSessionApproval(plan.org, plan.memoKey, CHECKPOINT_ASK_MEMO, nowIso).catch(() => null);
+  const askRow = await store.getSessionApproval(plan.org, plan.memoKey, CHECKPOINT_ASK_MEMO, nowIso).catch(() => null);
+  const askedAfterApproval = askRow !== null && (plan.approvedAt === undefined || Date.parse(askRow.createdAt) > Date.parse(plan.approvedAt));
+  const alreadyAsked = askedAfterApproval ? askRow : null;
+  const scopeLabel = alreadyAsked ? undefined : await friendlyScopeLabel(plan.surfaceKey);
   if (!alreadyAsked) {
     try {
       await requestApproval(
         {
           org: plan.org,
           kind: CHECKPOINT_KIND,
-          args: { org: plan.org, scopeKey: plan.surfaceKey, sessionId: plan.memoKey },
+          args: { org: plan.org, scopeKey: plan.surfaceKey, sessionId: plan.memoKey, ...(plan.durable ? { durableSession: true as const } : {}), ...(scopeLabel ? { scopeLabel } : {}) },
           scopeKey: plan.surfaceKey,
           domain: plan.domain,
           requestedBy: requestedBy!,
           channelId: channelId!,
           threadTs: binding.threadTs ?? null,
           postedTo: postedToSurfaceKey(binding, channelId!),
-          summaryLines: checkpointCardLines(plan),
+          summaryLines: checkpointCardLines(plan, scopeLabel),
         },
         approvalPostDeps(binding.platform),
       );

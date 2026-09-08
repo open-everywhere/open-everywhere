@@ -5,7 +5,7 @@ import {
   type BindableContext,
 } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
-import { domainForChannel, externalPolicyOverrideFor } from "../memory/domain.js";
+import { domainForChannel, domainRoster, externalPolicyOverrideFor } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import type { IngestionSource } from "../access/taint-tiers.js";
@@ -98,7 +98,7 @@ export function allowedSurfaceIdsFrom(
   if (own) ids.add(own);
   const domain = domainForChannel(surfaceKey, domains);
   if (domain) {
-    for (const key of domain.channels ?? []) {
+    for (const key of domainRoster(domain)) {
       const id = surfaceIdFromKey(key, platform);
       if (id) ids.add(id);
     }

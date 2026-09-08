@@ -23,6 +23,7 @@ import {
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
+import { haltScopeFor, resolveHalt } from "../access/halt.js";
 import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
@@ -265,6 +266,7 @@ export async function requestApproval(
       unattended: input.chain?.unattended ?? true,
       ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
       ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
+      halted: (await resolveHalt(haltScopeFor({ org: input.org, scopeKey: input.scopeKey, domain: input.domain, ...(input.requestedBy !== undefined ? { principalId: input.requestedBy } : {}) }))).halted,
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
     const resolution = await resolveApproverChain(chainReq, {

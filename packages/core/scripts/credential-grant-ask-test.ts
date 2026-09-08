@@ -7,7 +7,7 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-ask-")), 
 delete process.env.OE_PLATFORM;
 delete process.env.OE_EGRESS_SPOOF;
 
-import { GRANT_CARD_CLICK_ACTION, handleGrantCardClick, resolveGrantCardClick } from "../agent/access/credential-grant-click.js";
+import { GRANT_CARD_CLICK_ACTION, handleGrantCardClick, resolveGrantCardClick, type GrantClickFailureReason } from "../agent/access/credential-grant-click.js";
 import { grantCardActionId, grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "../agent/access/credential-grant-card.js";
 import { resolveGrantOwner } from "../agent/access/credential-grant-ask.js";
 import { askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
@@ -19,7 +19,9 @@ import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import type { ReplyTarget } from "../agent/channels/reply-post.js";
 import { _resetAccountDisplayNamesForTest, registerAccountDisplayName } from "../agent/identity/account-display-name.js";
-import { getOperationalStore } from "../agent/operational/provider.js";
+import { getOperationalStore, registerOperationalStore, resetOperationalStore } from "../agent/operational/provider.js";
+import type { OperationalStore } from "../agent/operational/store.js";
+import type { CredentialGrantAskRow } from "../agent/operational/credential-grant-rows.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
 import { allowedOnLeanSeat } from "../agent/access/lean-seat.js";
@@ -27,6 +29,7 @@ import { allowedOnWorkerSeat } from "../agent/access/worker-seat.js";
 import { WORKER_ONLY_TOOLS_STANDING } from "../agent/access/worker-capability-index.generated.js";
 import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { credentialGrantConnectors } from "../agent/access/credential-grant.js";
+import { classifyConnectorOpTier } from "../agent/access/consequence.js";
 import { defaultGrantTool, requestCredentialGrantEntry } from "../agent/tools/request_credential_grant.js";
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { registerConfig } from "../agent/access/config.js";
@@ -90,13 +93,14 @@ setRegisteredConnectorCredentials([
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
-registerUserAuthFlow({
+const USER_AUTH_FLOW = {
   environmentClaim: async () => "test",
   isUserAuthRequired: () => false,
   mintServiceToken: async () => ({ token: "SERVICE" }),
   mintUserToken: async () => ({ token: "OWNER-TOKEN" }),
   startAuthorization: async () => ({ url: "https://connect.example/consent" }),
-});
+};
+registerUserAuthFlow(USER_AUTH_FLOW);
 const vendor = fakeMcpServer({ tools: [{ inputSchema: VENDOR_SCHEMA, name: VENDOR_TOOL }] });
 
 async function raise(
@@ -408,6 +412,203 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
   );
 });
 
+console.log("6b. a failed tap names its reason on the audit row (OPE-1588):");
+{
+  const drove: Record<GrantClickFailureReason, boolean> = {
+    catalogue_unreachable: false,
+    click_threw: false,
+    consent_required: false,
+    frozen_args_unknown: false,
+    mint_refused: false,
+    owner_unresolvable: false,
+    tool_absent: false,
+  };
+
+  const clickRow = async (askId: string, label: string): Promise<Record<string, unknown>> => {
+    const rows = (await readAudit({ org: ORG, limit: 500 })).filter(
+      (r) => r.action === GRANT_CARD_CLICK_ACTION && (r.detail as Record<string, unknown>).askId === askId,
+    );
+    eq(rows.length, 1, `${label}: the tap wrote exactly ONE click row`);
+    return (rows[0]?.detail ?? {}) as Record<string, unknown>;
+  };
+
+  const tap = async (askId: string, clicker: { nativeId: string; platform: string; tenant?: string }): ReturnType<typeof resolveGrantCardClick> =>
+    await resolveGrantCardClick({ answer: "once", askId, clicker, nowMs: clock, ...stamps });
+
+  const OWNER_CLICKER = { nativeId: "U-owner", platform: "slack", tenant: WS };
+
+  const failedTap = async (askId: string, reason: GrantClickFailureReason, label: string, run: () => Promise<{ outcome: string; text: string }>): Promise<Record<string, unknown>> => {
+    const result = await run();
+    eq(result.outcome, "failed", `${label}: the tap resolves to failed`);
+    ok(result.text.length > 0, `${label}: …and the owner still gets a sentence`);
+    const detail = await clickRow(askId, label);
+    eq(detail.outcome, "failed", `${label}: …the row records the same outcome`);
+    eq(detail.reason, reason, `🔴 ${label}: …and the row NAMES the reason — the whole of OPE-1588`);
+    drove[reason] = true;
+    return detail;
+  };
+
+  const craftAsk = async (over: Partial<CredentialGrantAskRow> & { readonly id: string }): Promise<string> => {
+    await store.addCredentialGrantAsk(ORG, {
+      connector: "notion",
+      createdAt: new Date(clock).toISOString(),
+      expiresAt: new Date(clock + 30 * 60 * 1000).toISOString(),
+      frozenArgs: { id: "abc123" },
+      mcpTool: VENDOR_TOOL,
+      ownerNativeId: "U-owner",
+      ownerPlatform: "slack",
+      ownerPrincipalId: OWNER,
+      ownerSlug: "rowan",
+      purpose: "read it for me",
+      requestedMode: "once",
+      requesterPrincipalId: REQ,
+      resource: "Launch page",
+      scopeKey: "sess-crafted",
+      status: "pending",
+      toolName: `grant__rowan_notion__${over.id}`,
+      verb: "notion_fetch",
+      ...over,
+    });
+    return over.id;
+  };
+
+  {
+    const ask = await raise({ frozenArgs: { id: "reason-consent" }, scope: "sess-reason-consent" });
+    ok(ask.sent, "consent_required: the ask was raised through the shipped path");
+    const dmsBefore = dmed.length;
+    registerUserAuthFlow({ ...USER_AUTH_FLOW, hasFreshGrant: async () => false });
+    let detail: Record<string, unknown>;
+    try {
+      detail = await failedTap(ask.askId ?? "", "consent_required", "consent_required", async () =>
+        await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(ask.askId ?? "", OWNER_CLICKER)),
+      );
+    } finally {
+      registerUserAuthFlow(USER_AUTH_FLOW);
+    }
+    eq(detail.linkDelivered, dmed.length > dmsBefore, "…and `linkDelivered` says what the DM arm actually did");
+    eq(detail.linkDelivered, true, "…which on this fixture is: the connect link reached the owner");
+    eq((await store.getCredentialGrantAsk(ORG, ask.askId ?? ""))?.status, "pending", "…and the ask stays PENDING, so pressing Approve after connecting still works");
+  }
+
+  {
+    const DISCORD_OWNER = "discord/U-owner-d";
+    const askId = await craftAsk({ id: "ask-consent-nodm", ownerNativeId: "U-owner-d", ownerPlatform: "discord", ownerPrincipalId: DISCORD_OWNER, scopeKey: "sess-reason-consent-nodm" });
+    const dmsBefore = dmed.length;
+    registerUserAuthFlow({ ...USER_AUTH_FLOW, hasFreshGrant: async () => false });
+    let detail: Record<string, unknown>;
+    try {
+      detail = await failedTap(askId, "consent_required", "consent_required (no DM arm)", async () =>
+        await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(askId, { nativeId: "U-owner-d", platform: "discord" })),
+      );
+    } finally {
+      registerUserAuthFlow(USER_AUTH_FLOW);
+    }
+    eq(dmed.length, dmsBefore, "no DM went out — this deployment cannot cold-address that owner");
+    eq(detail.linkDelivered, false, "🔴 …and the row says so, rather than claiming a link the owner never got");
+  }
+
+  {
+    const ask = await raise({ frozenArgs: { id: "reason-unreachable" }, scope: "sess-reason-unreachable" });
+    ok(ask.sent, "catalogue_unreachable: the ask was raised");
+    const dead = fakeMcpServer({ failWithStatus: 503, tools: [{ inputSchema: VENDOR_SCHEMA, name: VENDOR_TOOL }] });
+    const detail = await failedTap(ask.askId ?? "", "catalogue_unreachable", "catalogue_unreachable", async () =>
+      await withPatchedFetch(dead.fetch as unknown as typeof globalThis.fetch, async () => await tap(ask.askId ?? "", OWNER_CLICKER)),
+    );
+    eq(detail.linkDelivered, undefined, "…and NO `linkDelivered` — that fact belongs to consent_required alone");
+    eq((await store.getCredentialGrantAsk(ORG, ask.askId ?? ""))?.status, "pending", "…and a blip costs a retry, never the owner's decision");
+  }
+
+  {
+    const ask = await raise({ frozenArgs: { id: "reason-absent" }, scope: "sess-reason-absent", tool: "notion-fetch-absent" });
+    ok(ask.sent, "tool_absent: an ask naming a tool the connection does not publish is still ADMITTED at ask time");
+    await failedTap(ask.askId ?? "", "tool_absent", "tool_absent", async () =>
+      await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(ask.askId ?? "", OWNER_CLICKER)),
+    );
+    eq((await store.getCredentialGrantAsk(ORG, ask.askId ?? ""))?.status, "expired", "…and this one CLOSES the ask — the owner said yes and it could not be honoured");
+  }
+
+  {
+    const ask = await raise({ frozenArgs: { id: "reason-frozen", nope: true }, scope: "sess-reason-frozen" });
+    ok(ask.sent, "frozen_args_unknown: the ask was raised");
+    await failedTap(ask.askId ?? "", "frozen_args_unknown", "frozen_args_unknown", async () =>
+      await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(ask.askId ?? "", OWNER_CLICKER)),
+    );
+    eq((await store.getCredentialGrantAsk(ORG, ask.askId ?? ""))?.status, "expired", "…and it CLOSES the ask too");
+  }
+
+  {
+    const WRITE_TOOL = "notion-create-pages";
+    ok(classifyConnectorOpTier(`notion__${WRITE_TOOL}`) !== "read", "the fixture tool really does classify as a NON-read — without this the arm would prove nothing");
+    const askId = await craftAsk({ frozenArgs: { id: "reason-mint" }, id: "ask-mint-refused", mcpTool: WRITE_TOOL, scopeKey: "sess-reason-mint" });
+    const writeVendor = fakeMcpServer({ tools: [{ inputSchema: VENDOR_SCHEMA, name: WRITE_TOOL }] });
+    await failedTap(askId, "mint_refused", "mint_refused", async () =>
+      await withPatchedFetch(writeVendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(askId, OWNER_CLICKER)),
+    );
+  }
+
+  {
+    const RAW = "U owner d";
+    const askId = await craftAsk({ id: "ask-owner-unresolvable", ownerNativeId: RAW, ownerPlatform: "discord", ownerPrincipalId: `discord/${RAW}`, scopeKey: "sess-reason-owner" });
+    await failedTap(askId, "owner_unresolvable", "owner_unresolvable", async () =>
+      await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(askId, { nativeId: RAW, platform: "discord" })),
+    );
+  }
+
+  {
+    const askId = await craftAsk({ id: "ask-click-threw", scopeKey: "sess-reason-threw" });
+    const real = store;
+    const throwing = new Proxy(real, {
+      get: (target, prop) => {
+        if (prop === "getCredentialGrantAsk") return async (): Promise<never> => { throw new Error("the operational store is unwell"); };
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    }) as OperationalStore;
+    registerOperationalStore(throwing);
+    resetOperationalStore();
+    let result: { outcome: string; text: string };
+    try {
+      result = await tap(askId, OWNER_CLICKER);
+    } finally {
+      registerOperationalStore(real);
+      resetOperationalStore();
+    }
+    eq(getOperationalStore(), real, "the real store is back before anything else reads it");
+    eq(result.outcome, "failed", "click_threw: a throw inside the route resolves to failed, never to an exception at the surface");
+    const detail = await clickRow(askId, "click_threw");
+    eq(detail.outcome, "failed", "…and it leaves a row");
+    eq(detail.reason, "click_threw", "🔴 …naming the route's own failure — an unaudited tap reads exactly like a tap that never happened");
+    drove.click_threw = true;
+  }
+
+  {
+    const undriven = Object.entries(drove)
+      .filter(([, seen]) => !seen)
+      .map(([reason]) => reason);
+    eq(undriven, [], `every reason in the enum has an arm that drives it (undriven: ${undriven.join(", ") || "none"})`);
+
+    const nonFailed = (await readAudit({ org: ORG, limit: 500 }))
+      .filter((r) => r.action === GRANT_CARD_CLICK_ACTION)
+      .map((r) => r.detail as Record<string, unknown>)
+      .filter((d) => d.outcome !== "failed");
+    ok(nonFailed.length >= 4, `there really are non-failed click rows to control against (${nonFailed.length})`);
+    ok(
+      nonFailed.every((d) => d.reason === undefined && d.linkDelivered === undefined),
+      "…and not one of them carries a reason or a linkDelivered — those fields belong to a failed row alone",
+    );
+
+    const reasons = new Set(Object.keys(drove));
+    const failed = (await readAudit({ org: ORG, limit: 500 }))
+      .filter((r) => r.action === GRANT_CARD_CLICK_ACTION)
+      .map((r) => r.detail as Record<string, unknown>)
+      .filter((d) => d.outcome === "failed");
+    ok(
+      failed.every((d) => typeof d.reason === "string" && reasons.has(d.reason)),
+      "every failed row's reason is one of the closed enum's values — never free text",
+    );
+  }
+}
+
 console.log("7. the ask verb: a tainted turn may not ask, and both a seat and a delegated worker hold it:");
 {
   ok(allowedOnLeanSeat("request_credential_grant"), "a DELEGATING conversational seat keeps the ask verb");
@@ -543,7 +744,7 @@ console.log("9. an ask composes with no vendor tool name to look up:");
     const grantCtx = (sessionId: string): BindableContext =>
       ({ session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId } }) as unknown as BindableContext;
     const FIXTURE = resolvePartition(grantCtx("sess-probe"));
-    const GRANT_DOMAINS = [defineDomain({ name: "grant-ask-fixture", channels: [FIXTURE.surfaceKey], credentialGrants: ["notion"] })];
+    const GRANT_DOMAINS = [defineDomain({ name: "grant-ask-fixture", reach: [FIXTURE.surfaceKey], credentialGrants: ["notion"] })];
     registerConfig({
       loadBundles: () => [],
       loadBindings: () => [],
@@ -551,7 +752,7 @@ console.log("9. an ask composes with no vendor tool name to look up:");
       skillContent: {},
       loadDomains: () => GRANT_DOMAINS,
       loadSilos: () => [],
-      domainsForSurface: ({ workspaceKey, surface }) => GRANT_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+      domainsForSurface: ({ workspaceKey, surface }) => GRANT_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
     });
     const ENVELOPE = '<message trigger="true" from="human" author-id="U-req">read the launch page</message>';
     const drive = async (sessionId: string, over: Record<string, unknown>): Promise<{ asked: boolean; message: string }> =>

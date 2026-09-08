@@ -33,7 +33,7 @@ const SLACK = "slack/T1/C_PAY";
 const GH = "github/acme/repo";
 const payments = defineDomain({
   name: "payments",
-  channels: [SLACK, GH],
+  reach: [SLACK, GH],
   ambientSupervisor: true,
   mode: "unified",
   admins: ["slack/T1/U_ADMIN"],
@@ -44,9 +44,9 @@ const GRP_DISCORD = "discord/G1/CH_CHATTER";
 const GRP_SOLO = "slack/T1/C_ALONE";
 const grouped = defineDomain({
   name: "grouped",
-  channels: [GRP_SLACK, GRP_DISCORD, GRP_SOLO],
+  reach: [GRP_SLACK, GRP_DISCORD, GRP_SOLO],
   ambientSupervisor: true,
-  windows: [{ name: "chatter", channels: [GRP_SLACK, GRP_DISCORD] }],
+  windows: [{ name: "chatter", reach: [GRP_SLACK, GRP_DISCORD] }],
 });
 const domains = [payments, grouped, org];
 

@@ -20,7 +20,7 @@ import {
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ancestry-trust.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
-import { notionPageDomain, notionRosterWorkspace } from "./notion-scope.js";
+import { notionPageDomain, notionReachWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
 import { resolveNotionEngagement, type NotionEngagementDeps, type NotionSeamFacts } from "./notion-engagement.js";
@@ -165,7 +165,7 @@ async function deliver(
     return { status: 200, body: "ok", action: "scope-refused", detail: scope.reason, signed, credentialId };
   }
 
-  const workspaceId = notionRosterWorkspace(pageId, deps.domains) ?? payloadWorkspaceId;
+  const workspaceId = notionReachWorkspace(payloadWorkspaceId, pageId, deps.domains) ?? payloadWorkspaceId;
 
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 

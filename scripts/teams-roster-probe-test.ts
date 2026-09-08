@@ -502,7 +502,7 @@ async function runDm(probe: TeamsRosterProbe | undefined): Promise<Received> {
 
 {
   const roomDomain = (override?: { authorGrain?: "taint" | "withhold" }) => [
-    defineDomain({ name: "org", match: "org", channels: [], memory: "brain", ...(override ? { externalPolicy: override } : {}) }),
+    defineDomain({ name: "org", match: "org", reach: [], memory: "brain", ...(override ? { externalPolicy: override } : {}) }),
   ];
   const useConfig = (domains: ReturnType<typeof roomDomain>) =>
     registerConfig({

@@ -140,12 +140,27 @@ ok(
       "mode:DANGEROUSLY_BYPASS",
       "mode:APPROVE_ALL",
       "mode:DENY_ALL",
+      "mode:HALT",
       "unattended",
       "taint:ask",
       "beneficiary-clicker-floor",
     ]),
-    "pin3: the transform table declares exactly the six known arrows (OPE-318 phase 2 removed judge:AUTO — a judge verdict is resolution, not a transform)",
+    "pin3: the transform table declares exactly the seven known arrows (OPE-318 phase 2 removed judge:AUTO — a judge verdict is resolution, not a transform; OPE-1602 added mode:HALT beside mode:DENY_ALL in the SAME stage, because a halt is a runtime SOURCE for the same question, not a second plane)",
   );
+  {
+    const haltArrow = TRANSFORM_TABLE.find((t) => t.name === "mode:HALT")!;
+    ok(haltArrow.stage === "mode", "pin3: the halt arrow is in the `mode` stage — one question, one stage, two sources");
+    ok(haltArrow.reason === "halt", "pin3: the halt arrow's audited reason is `halt`, distinct from `mode-deny-all`");
+    ok(JSON.stringify(haltArrow.from) === JSON.stringify(["allow", "ask"]), "pin3: the halt arrow moves both allow and ask");
+    ok(haltArrow.to({ tool: "post_message", unattended: false, halted: true }, "ask") === "deny", "pin3: the halt arrow denies");
+    ok(haltArrow.fires({ tool: "post_message", unattended: false, halted: true }), "pin3: the halt arrow fires on a halted request");
+    ok(!haltArrow.fires({ tool: "resume", unattended: false, halted: true }), "pin3: the halt arrow does NOT fire on `resume` — the one exempt name");
+    ok(
+      haltArrow.fires({ tool: "halt", unattended: false, halted: true }),
+      "pin3: the exemption is EXACTLY ONE NAME — `halt` is not exempt (it is `open`-tier and never reaches the chain, so this is about the predicate, not about that verb)",
+    );
+    ok(!haltArrow.fires({ tool: "post_message", unattended: false }), "pin3: an unresolved halt (absent field) fires nothing — today's behaviour");
+  }
   ok(!names.includes("judge:AUTO"), "pin3: there is NO judge arrow — the armed judge resolves before the pipeline, it does not ride it");
   ok(!names.includes("taint:card"), "pin3: there is NO taint:card arrow — a taint marking does not move a verdict (OPE-307)");
   ok(!names.includes("taint:refuse"), "pin3: there is NO taint:refuse arrow — taint floors a sink at ask and lets a human decide (OPE-438)");

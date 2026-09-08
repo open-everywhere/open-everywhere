@@ -37,7 +37,7 @@ for (const platform of ["tool-test-platform", "slack", "linear", "notion"]) {
 const VERB_DOMAINS = [
   defineDomain({
     name: "filing",
-    channels: ["tool-test-platform/W1/tool-test-platform", "linear/W1/linear"],
+    reach: ["tool-test-platform/W1/tool-test-platform", "linear/W1/linear"],
     credentials: [
       { connector: "tool-test-platform", credential: WORK_ROLE, use: "filing-key" },
       { connector: "linear", credential: "workspace", use: "filing-linear" },
@@ -45,10 +45,10 @@ const VERB_DOMAINS = [
   }),
   defineDomain({
     name: "filing-slack",
-    channels: ["slack/W1/granted"],
+    reach: ["slack/W1/granted"],
     credentials: [{ connector: "tool-test-platform", credential: WORK_ROLE, use: "filing-key" }],
   }),
-  defineDomain({ name: "chat", channels: ["slack/W1/slack", "notion/W1/notion"] }),
+  defineDomain({ name: "chat", reach: ["slack/W1/slack", "notion/W1/notion"] }),
 ];
 registerConfig({
   loadBundles: () => [],
@@ -58,7 +58,7 @@ registerConfig({
   loadDomains: () => VERB_DOMAINS,
   loadSilos: () => [],
   domainsForSurface: ({ workspaceKey, surface }) =>
-    VERB_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+    VERB_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 
 let n = 0;
@@ -150,7 +150,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
     async () => { await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
-    /I can't change that ticket's status from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\.ts/s,
+    /I can't change that ticket's status from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "set_state on a card-less origin refuses with the VENUE's copy (OPE-326) — its own verb, and the config change that would unblock it, not a flat 'this surface is not Slack'",
   );
   n++;
@@ -177,7 +177,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 {
   await assert.rejects(
     async () => { await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, assignee: "alice" }, ctx("tool-test-platform", {}) as never); },
-    /I can't assign that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\.ts/s,
+    /I can't assign that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "assign refuses with the same venue copy and its own verb",
   );
   n++;

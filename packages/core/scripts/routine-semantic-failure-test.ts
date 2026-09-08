@@ -177,7 +177,7 @@ const { defineDomain } = await import("../agent/memory/domain.js");
 
 registerSlackTestBridge({ channel: { __fixture: "slack" } as never, confirmChannelInternal: async () => true });
 registerSlackFixtureMapper();
-const semDomain = defineDomain({ name: "payments", channels: [SURFACE] });
+const semDomain = defineDomain({ name: "payments", reach: [SURFACE] });
 const DOMAINS: readonly Domain[] = [semDomain];
 registerConfig({
   loadBundles: () => [],

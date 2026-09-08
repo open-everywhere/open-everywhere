@@ -284,8 +284,7 @@ export interface DeclaredRoom {
 
 export interface DomainLike {
   readonly name: string;
-  readonly channels?: readonly string[];
-  readonly containers?: readonly string[];
+  readonly reach?: readonly string[];
 }
 
 export interface BindingLike {
@@ -309,8 +308,10 @@ export function collectDeclaredRooms(domains: readonly DomainLike[], bindings: r
   };
 
   for (const d of domains) {
-    for (const key of d.channels ?? []) add(key, d.name, true, false);
-    for (const key of d.containers ?? []) add(key, d.name, true, true);
+    for (const key of d.reach ?? []) {
+      const container = key.split("/").length === 2 || key.endsWith("*");
+      add(key, d.name, true, container);
+    }
   }
   for (const b of bindings) {
     if (b.scope.level === "surface" && b.scope.surface) add(b.scope.surface, `bundle:${b.bundle}`, false, false);

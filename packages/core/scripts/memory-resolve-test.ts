@@ -54,15 +54,15 @@ const pubFaq: MemorySilo = defineMemorySilo({ name: "pub-faq", provider: "sqlite
 
 const cfg: MemoryResolveConfig = {
   domains: [
-    defineDomain({ name: "transactions", channels: ["slack/T/C_TXN"], memory: "txn" }),
-    defineDomain({ name: "watercooler", channels: ["slack/T/C_CHAT"] }),
-    defineDomain({ name: "readonly-dom", channels: ["slack/T/C_RO"], memory: "baseline" }),
-    defineDomain({ name: "multi", channels: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),
-    defineDomain({ name: "multi2", channels: ["slack/T/C_MULTI2"], memory: ["baseline"] }),
-    defineDomain({ name: "nkb-dom", channels: ["slack/T/C_NKB"], memory: "nkb" }),
-    defineDomain({ name: "inc-ro", channels: ["slack/T/C_INC"], memory: "txn", includeOrg: "readonly" }),
-    defineDomain({ name: "inc-inherit", channels: ["slack/T/C_INH"], includeOrg: "inherit" }),
-    defineDomain({ name: "inc-dedup", channels: ["slack/T/C_DUP"], memory: ["org-rw"], includeOrg: "readonly" }),
+    defineDomain({ name: "transactions", reach: ["slack/T/C_TXN"], memory: "txn" }),
+    defineDomain({ name: "watercooler", reach: ["slack/T/C_CHAT"] }),
+    defineDomain({ name: "readonly-dom", reach: ["slack/T/C_RO"], memory: "baseline" }),
+    defineDomain({ name: "multi", reach: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),
+    defineDomain({ name: "multi2", reach: ["slack/T/C_MULTI2"], memory: ["baseline"] }),
+    defineDomain({ name: "nkb-dom", reach: ["slack/T/C_NKB"], memory: "nkb" }),
+    defineDomain({ name: "inc-ro", reach: ["slack/T/C_INC"], memory: "txn", includeOrg: "readonly" }),
+    defineDomain({ name: "inc-inherit", reach: ["slack/T/C_INH"], includeOrg: "inherit" }),
+    defineDomain({ name: "inc-dedup", reach: ["slack/T/C_DUP"], memory: ["org-rw"], includeOrg: "readonly" }),
     defineDomain({ name: "org", match: "org", memory: ["org-base", "org-rw"] }),
     defineDomain({ name: "public", match: "public", memory: "pub-faq" }),
     defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
@@ -157,20 +157,20 @@ ok(criteriaDomain("dm", [])  === undefined, "criteriaDomain → undefined when a
 assertChannelExclusivity(cfg.domains);
 ok(true, "exclusivity: disjoint domains pass (criteria domains skipped)");
 throws(
-  () => assertChannelExclusivity([defineDomain({ name: "a", channels: ["slack/T/C1"] }), defineDomain({ name: "b", channels: ["slack/T/C1"] })]),
+  () => assertChannelExclusivity([defineDomain({ name: "a", reach: ["slack/T/C1"] }), defineDomain({ name: "b", reach: ["slack/T/C1"] })]),
   "exclusivity: a channel in two domains throws",
 );
 
 assertDomainsValid(cfg.domains);
 ok(true, "validation: a valid domain set passes");
-throws(() => assertDomainsValid([{ name: "both", channels: [], match: "org" } as never]), "validation: channels AND match → throws");
+throws(() => assertDomainsValid([{ name: "both", reach: [], match: "org" } as never]), "validation: reach AND match → throws");
 throws(() => assertDomainsValid([{ name: "neither" } as never]), "validation: neither channels nor match → throws");
 throws(
   () => assertDomainsValid([defineDomain({ name: "o1", match: "org" }), defineDomain({ name: "o2", match: "org" })]),
   "validation: two domains with the same match → throws",
 );
 throws(
-  () => assertDomainsValid([defineDomain({ name: "d", channels: ["slack/T/C"], includeOrg: "readonly" })]),
+  () => assertDomainsValid([defineDomain({ name: "d", reach: ["slack/T/C"], includeOrg: "readonly" })]),
   "validation: includeOrg with no org domain → throws",
 );
 throws(
@@ -192,10 +192,10 @@ throws(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["300000000000000104"] })]),
   "validation: a bare DIGIT-STRING admin id → throws (the exact shape a cross-platform digit-id collision needs)",
 );
-assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]);
+assertDomainsValid([defineDomain({ name: "eng", reach: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]);
 ok(true, "validation: a three-segment admin key on a TENANT-SCOPED platform validates (OPE-309 — it is the person, not a surface)");
 throws(
-  () => assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/U_ADMIN"] })]),
+  () => assertDomainsValid([defineDomain({ name: "eng", reach: ["slack/T/C"], admins: ["slack/U_ADMIN"] })]),
   "validation: a PRE-RUNG two-segment slack admin key → throws (it names no workspace, so it can never match)",
 );
 

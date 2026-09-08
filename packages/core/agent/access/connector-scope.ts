@@ -8,6 +8,7 @@ import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { haltAuditDetail, haltRefusalMessage, haltScopeForCtx, resolveHalt } from "./halt.js";
 import { getSettings } from "../settings/settings.js";
 import { connectorOpTieringEnabled } from "../connections/connector-flags.js";
 
@@ -207,6 +208,11 @@ async function auditConnectorGate(
 
 export async function assertConnectorGranted(connectionName: string, auth: SessionAuth): Promise<void> {
   const ctx = await surfaceContextFromAuth(auth);
+  const haltState = ctx ? await resolveHalt(haltScopeForCtx(ctx)) : await resolveHalt({ org: deploymentOrg() });
+  if (haltState.halted) {
+    await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "halted", ...haltAuditDetail(haltState) });
+    throw new ConnectorScopeError(haltRefusalMessage(haltState, `connection "${connectionName}"`));
+  }
   const granted = ctx ? await grantedForCtx(ctx) : null;
   if (granted === null) {
     await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "unresolved_surface" });

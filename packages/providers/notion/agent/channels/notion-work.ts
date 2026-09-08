@@ -49,7 +49,7 @@ export function notionWorkCredential(domain: Domain | undefined): string | undef
 
 export function notionWorkspacesOf(domain: Domain): readonly string[] {
   const out = new Set<string>();
-  for (const key of [...(domain.channels ?? []), ...(domain.containers ?? [])]) {
+  for (const key of domain.reach ?? []) {
     const parts = key.split("/");
     if (parts[0] === "notion" && parts.length >= 2 && parts[1]) out.add(parts[1]);
   }

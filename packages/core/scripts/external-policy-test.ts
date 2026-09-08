@@ -104,8 +104,8 @@ console.log("1b. the domain hop:");
 
 const DOMAINS: readonly Domain[] = [
   { name: "org", match: "org", externalPolicy: { roomGrain: "silent" } },
-  { name: "payments", channels: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } },
-  { name: "support", channels: [`${GUILD}/C_SUP`] },
+  { name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } },
+  { name: "support", reach: [`${GUILD}/C_SUP`] },
 ];
 
 eq(
@@ -130,7 +130,7 @@ eq(
   "🔴 NO CHANNEL KEY reads the `org` pseudo-domain's declaration — an unnameable room is not a reason to skip the question",
 );
 eq(
-  externalPolicyOverrideFor(undefined, [{ name: "payments", channels: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } }]),
+  externalPolicyOverrideFor(undefined, [{ name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } }]),
   undefined,
   "NO CHANNEL KEY never reads an EXPLICIT domain's declaration (negative control) — an unnameable room can never be in one",
 );
@@ -447,9 +447,9 @@ console.log("7. silent-room-grain reachability signal:");
   const ENGAGE_CH = `${WARN_GUILD}/C_ENGAGE`;
 
   const WARN_DOMAINS: readonly Domain[] = [
-    { name: "open-room", channels: [OPEN_CH], externalPolicy: { roomGrain: "silent" } },
-    { name: "dark-room", channels: [DARK_CH], externalPolicy: { roomGrain: "silent" } },
-    { name: "engaged-room", channels: [ENGAGE_CH] },
+    { name: "open-room", reach: [OPEN_CH], externalPolicy: { roomGrain: "silent" } },
+    { name: "dark-room", reach: [DARK_CH], externalPolicy: { roomGrain: "silent" } },
+    { name: "engaged-room", reach: [ENGAGE_CH] },
   ];
 
   const declaredPublic = (workspaceKey: string, surfaceKey: string): boolean =>
@@ -473,7 +473,7 @@ console.log("7. silent-room-grain reachability signal:");
     "negative control: a channel whose resolved grain stays `engage` never warns — there is nothing to arm",
   );
 
-  const ORG_ONLY_DOMAINS: readonly Domain[] = [{ name: "org", match: "org" }, { name: "dark-room", channels: [DARK_CH] }];
+  const ORG_ONLY_DOMAINS: readonly Domain[] = [{ name: "org", match: "org" }, { name: "dark-room", reach: [DARK_CH] }];
   const orgWarnings = collectWarnings(ORG_ONLY_DOMAINS, "silent");
   ok(
     orgWarnings.length === 1 && orgWarnings[0]!.includes(DARK_CH),
@@ -484,7 +484,7 @@ console.log("7. silent-room-grain reachability signal:");
 
   ok(collectWarnings([]).length === 0, "negative control: no domains ⇒ nothing to walk ⇒ no warnings");
 
-  const NEVER_SILENT: readonly Domain[] = [{ name: "dark-room", channels: [DARK_CH], externalPolicy: { roomGrain: "engage" } }];
+  const NEVER_SILENT: readonly Domain[] = [{ name: "dark-room", reach: [DARK_CH], externalPolicy: { roomGrain: "engage" } }];
   ok(collectWarnings(NEVER_SILENT, "silent").length === 0, "an EXPLICIT `engage` override wins over a `silent` org default — no warning");
 
   const originalWarn = console.warn;

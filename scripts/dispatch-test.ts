@@ -278,7 +278,7 @@ ok(
   ok(onceCappedAfter?.nextRunAt === null, "a budget-declined once routine's nextRunAt is null (never retried — recreate a fresh one-shot instead)");
 }
 
-const testDomains = [defineDomain({ name: "watched", channels: ["slack/T9/C9"] })];
+const testDomains = [defineDomain({ name: "watched", reach: ["slack/T9/C9"] })];
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
@@ -451,7 +451,7 @@ await seed({ id: "r-dc-legacy", surfaceKey: "discord/G2/CH2", target: { channelI
   const { planFireWindow } = await import("@open-everywhere/core/agent/routines/fire-window.js");
   const { isThreadSeatWindowToken } = await import("@open-everywhere/core/agent/channels/window-key.js");
   overrideSettingsForTest({ window: { topology: true } });
-  const windowedDomain = defineDomain({ name: "discord-win", channels: ["discord/G3/CH3"], ambientSupervisor: true, mode: "unified" });
+  const windowedDomain = defineDomain({ name: "discord-win", reach: ["discord/G3/CH3"], ambientSupervisor: true, mode: "unified" });
 
   const guildRoutine: Routine = {
     id: "r-dc-window",

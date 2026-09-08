@@ -29,9 +29,9 @@ const ORG2 = "org-2";
 const TEAM_WIDE = "team-wide-4444";
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`] }),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`] }),
-  defineDomain({ name: "wide", containers: [`linear/${ORG2}`] }),
+  defineDomain({ name: "payments", reach: [`linear/${ORG}/${TEAM_PAY}`] }),
+  defineDomain({ name: "eng", reach: [`linear/${ORG}/${TEAM_ENG}`] }),
+  defineDomain({ name: "wide", reach: [`linear/${ORG2}`] }),
 ];
 
 const keyFor = (org: string, surface: string): string => `linear/${org}/${surface}`;
@@ -93,8 +93,8 @@ const TEAM_OF: Record<string, string> = {
   ok(!fallbackUnderRoster.allowed && fallbackUnderRoster.reason === "caller-unassigned", "…and under a ROSTER it fails CLOSED, never open");
 
   const overlapping: readonly Domain[] = [
-    defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`] }),
-    defineDomain({ name: "orgwide", containers: [`linear/${ORG}`] }),
+    defineDomain({ name: "payments", reach: [`linear/${ORG}/${TEAM_PAY}`] }),
+    defineDomain({ name: "orgwide", reach: [`linear/${ORG}`] }),
   ];
   const annex = linearIssueScope(keyFor(ORG, TEAM_LOOSE), [], ISSUE_SIBLING, TEAM_PAY, overlapping);
   ok(!annex.allowed && annex.reason === "cross-domain", "a claiming domain cannot read an issue on a team another domain listed");
@@ -170,7 +170,8 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   ok(rows[0]!.detail?.callerSurfaceKey === keyFor(ORG, TEAM_LOOSE), "the row records the caller's surface key, so the fix is obvious from the audit alone");
 
   const copy = linearScopeRefusal(ISSUE_ENG, linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS));
-  ok(copy.includes("linear/<organization_id>/<team_id>") && copy.includes("containers"), "the refusal tells the operator BOTH ways to grant it");
+  ok(copy.includes("linear/<organization_id>/<team_id>") && copy.includes("linear/<organization_id>"), "the refusal tells the operator BOTH ways to grant it — the exact team, or the whole workspace");
+  ok(copy.includes("`reach`") && !copy.includes("`channels`") && !copy.includes("`containers`"), "…in the CURRENT vocabulary; an operator who pastes a removed field hits refuseUnknownFields");
 }
 
 {
@@ -206,12 +207,12 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   ok(!notFound.includes("containers"), "…and does NOT offer the domain-grant remedy, which would not work");
 
   const noWorkspace = linearScopeRefusal("PAY-9", { allowed: false, reason: "target-unresolvable", callerDomain: "payments" }, "read", true);
-  ok(noWorkspace.includes("memory/config/domains.ts") && noWorkspace.includes("containers"), "a caller with NO workspace still gets the domain remedy");
+  ok(noWorkspace.includes("memory/config/domains/<name>.ts") && noWorkspace.includes("linear/<organization_id>"), "a caller with NO workspace still gets the domain remedy");
   ok(noWorkspace.includes('credential: "workspace"'), "…and the work-grant remedy, which for it is real");
   ok(!noWorkspace.includes("could not be resolved in this workspace"), "…and never the not-found copy");
 
   const crossDomain = linearScopeRefusal(ISSUE_ENG, linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS), "read", false, true);
-  ok(crossDomain.includes("memory/config/domains.ts") && !crossDomain.includes("could not be resolved in this workspace"), "a cross-domain refusal keeps its own copy");
+  ok(crossDomain.includes("memory/config/domains/<name>.ts") && !crossDomain.includes("could not be resolved in this workspace"), "a cross-domain refusal keeps its own copy");
 
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
   const resolver = async (ref: string): Promise<string | undefined> => TEAM_OF[ref];

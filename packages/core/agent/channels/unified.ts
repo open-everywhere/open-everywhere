@@ -4,7 +4,7 @@ import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchC
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, authPrincipalId, attestedFireCreatorId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { windowedSupervisorEnabled } from "../memory/domain.js";
+import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
@@ -94,9 +94,10 @@ function pickRedriveSurfaceKey(domain: string | undefined, platform: string): st
   const dmSurface = dmSurfaceKeyFromAnchorDomain(domain);
   if (dmSurface) return dmSurface;
   try {
-    const d = getConfig().loadDomains().find((dm) => dm.name === domain && dm.channels && dm.channels.length > 0);
-    if (!d?.channels || d.channels.length === 0) return null;
-    return d.channels.find((c) => c.startsWith(`${platform}/`)) ?? d.channels[0];
+    const d = getConfig().loadDomains().find((dm) => dm.name === domain && domainRoster(dm).length > 0);
+    const roster = d ? domainRoster(d) : [];
+    if (roster.length === 0) return null;
+    return roster.find((c) => c.startsWith(`${platform}/`)) ?? roster[0]!;
   } catch {
     return null;
   }

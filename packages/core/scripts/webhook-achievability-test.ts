@@ -27,8 +27,8 @@ const throwsWith = (fn: () => unknown, match: RegExp, label: string) => {
 };
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] }),
-  defineDomain({ name: "payments", channels: ["slack/T1/C_PAY"] }),
+  defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),
+  defineDomain({ name: "payments", reach: ["slack/T1/C_PAY"] }),
 ];
 
 const HOOK = defineWebhook({

@@ -135,9 +135,9 @@ export function linearScopeRefusal(
     : "";
   return (
     `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
-    `The agent ${may} in its memory domain (memory/config/domains.ts). Add the team to ` +
-    "the domain's `channels` as `linear/<organization_id>/<team_id>`, or claim the whole workspace in " +
-    `\`containers\` as \`linear/<organization_id>\`, to grant it.${workGrant}`
+    `The agent ${may} in its memory domain (memory/config/domains/<name>.ts). Add the team to ` +
+    "the domain's `reach` as `linear/<organization_id>/<team_id>`, or reach the whole workspace with " +
+    `\`linear/<organization_id>\`, to grant it.${workGrant}`
   ).replace(/\s{2,}/g, " ");
 }
 

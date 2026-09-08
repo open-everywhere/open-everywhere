@@ -69,7 +69,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" }),
+    defineDomain({ name: DOMAIN, reach: [SURFACE], ambientSupervisor: true, mode: "unified" }),
   ],
   loadSilos: () => [],
   loadRoles: () => [],

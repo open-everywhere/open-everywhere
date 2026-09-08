@@ -17,7 +17,7 @@ registerNotionProvider();
 const WS = "ws-1";
 const PAGE = "page-own";
 const OTHER_PAGE = "page-other";
-const DOMAINS: readonly Domain[] = [{ name: "docs", channels: [`notion/${WS}/${PAGE}`] }] as unknown as readonly Domain[];
+const DOMAINS: readonly Domain[] = [{ name: "docs", reach: [`notion/${WS}/${PAGE}`] }] as unknown as readonly Domain[];
 registerConfig({ loadDomains: () => DOMAINS } as unknown as Parameters<typeof registerConfig>[0]);
 
 let passed = 0;

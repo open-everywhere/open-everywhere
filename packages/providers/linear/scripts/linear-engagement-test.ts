@@ -4,6 +4,7 @@ registerLinearProvider();
 import {
   linearEngagementAnchor,
   linearSeamPartition,
+  linearStandDownHolds,
   markLinearEngaged,
   resolveLinearEngagement,
   type LinearEngagementDeps,
@@ -152,6 +153,18 @@ ok(linearEngagementAnchor({ ...FACTS, issueId: "" }) === undefined, "1c: NEGATIV
   ok(anchor === "ISSUE_L" && writes.length === 1, "3i: a guard that answers 'not seen' MARKS — the polarity, pinned. The store-error fail-open in `liveMarkEngageSeen` is unreached by any offline test");
 }
 
+{
+  ok((await linearStandDownHolds(FACTS, stubDeps(engagedRow({ stopped: true })))) === "ISSUE_L", "🔴 4a: a STOPPED row answers with the anchor — this is what silences a reply in the agent's own thread");
+  ok((await linearStandDownHolds(FACTS, stubDeps(engagedRow({ stopped: false })))) === null, "4b: NEGATIVE CONTROL — an engaged, un-stopped issue holds no stop, so the follow-up dispatches");
+  ok((await linearStandDownHolds(FACTS, stubDeps(null))) === null, "4c: NEGATIVE CONTROL — an issue with NO row holds no stop either");
+
+  const readsNull: LinearEngagementDeps = { getEngagement: async () => null };
+  ok((await linearStandDownHolds(FACTS, readsNull)) === null, "4d: a read that answers `null` reads as NOT stopped — the polarity the fail-open rests on. The store-error catch itself is in core's `getThreadEngagement` and is unreached by any offline assertion here");
+
+  ok((await linearStandDownHolds({ ...FACTS, issueId: undefined }, stubDeps(engagedRow({ stopped: true })))) === null, "4e: NEGATIVE CONTROL — no issue, no anchor, so nothing to have been stopped");
+  ok((await linearStandDownHolds({ ...FACTS, teamId: undefined }, stubDeps(engagedRow({ stopped: true })))) === null, "4f: NEGATIVE CONTROL — no team, no partition, so no row to read");
+}
+
 console.log(
-  `✓ linear-engagement: ${n} assertions passed (issue anchor + team partition + the decision table with a negative control on every boolean + the mention leg's mark landing on the comment leg's key + the mark's redelivery guard)`,
+  `✓ linear-engagement: ${n} assertions passed (issue anchor + team partition + the decision table with a negative control on every boolean + the mention leg's mark landing on the comment leg's key + the mark's redelivery guard + the agent-session legs' stop predicate and its null-reads-as-live polarity)`,
 );

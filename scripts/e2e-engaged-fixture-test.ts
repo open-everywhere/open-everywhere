@@ -57,7 +57,7 @@ if (process.argv.includes("--probe")) {
     names: domains.map((x) => x.name),
     engaged: d
       ? {
-          channels: [...(d.channels ?? [])],
+          channels: [...(d.reach ?? [])],
           memory: d.memory ?? null,
           nameDropWake: d.nameDropWake ?? null,
           engagementTier: d.engagementTier ?? null,

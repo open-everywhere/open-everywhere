@@ -252,7 +252,7 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
     "OPE-486/teams: the origin names the routine's real conversation reference",
   );
 
-  const windowedDomain = defineDomain({ name: "teams-win", channels: ["teams/TEN1/19-eng-thread.tacv2"], ambientSupervisor: true, mode: "unified" });
+  const windowedDomain = defineDomain({ name: "teams-win", reach: ["teams/TEN1/19-eng-thread.tacv2"], ambientSupervisor: true, mode: "unified" });
   const teamsPlan = planFireWindow({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: chTarget!.origin!, seatKey: "run/tm-1", domains: [windowedDomain], generation: 1, armed: true });
   ok(teamsPlan !== null, "OPE-486/teams: a channel fire's origin is enough to take the divert path — pre-fix it never was");
   ok(isThreadSeatWindowToken(teamsPlan!.token), "OPE-486/teams: the diverted fire's window token is a thread-seat token, same shape a Slack fire's divert mints");

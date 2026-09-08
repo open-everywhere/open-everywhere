@@ -42,9 +42,9 @@ const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const salesSilo = defineMemorySilo({ name: "sales-silo", provider: "sqlite" });
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["slack/T1/U_ENG_ADMIN"] }),
-  defineDomain({ name: "sales", channels: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["slack/T1/U_SALES_ADMIN"] }),
-  defineDomain({ name: "governance", channels: ["slack/T1/C_GOV"], governance: true, admins: ["slack/T1/U_ORG_ADMIN"] }),
+  defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["slack/T1/U_ENG_ADMIN"] }),
+  defineDomain({ name: "sales", reach: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["slack/T1/U_SALES_ADMIN"] }),
+  defineDomain({ name: "governance", reach: ["slack/T1/C_GOV"], governance: true, admins: ["slack/T1/U_ORG_ADMIN"] }),
   defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_ADMIN"] }),
 ];
 const configWith = (ds: readonly ReturnType<typeof defineDomain>[], silos: readonly ReturnType<typeof defineMemorySilo>[]) => ({
@@ -280,7 +280,7 @@ const read = (ctx: BindableContext, silo: string, relPath: string) => execTool(m
 
 {
   const bigSilo = defineMemorySilo({ name: "big-silo", provider: "sqlite" });
-  const domainsWithBig = [...domains, defineDomain({ name: "big", channels: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["slack/T1/U_BIG_ADMIN"] })];
+  const domainsWithBig = [...domains, defineDomain({ name: "big", reach: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["slack/T1/U_BIG_ADMIN"] })];
   registerConfig(configWith(domainsWithBig, [engSilo, salesSilo, orgSilo, bigSilo]) as never);
   await providerById("sqlite").ensureTier(controlPartition(org), siloTier("big-silo"), bigSilo);
   await providerById("sqlite").writeTier(controlPartition(org), siloTier("big-silo"), { "MEMORY.md": "x".repeat(64 * 1024 + 1) }, "seed", bigSilo);

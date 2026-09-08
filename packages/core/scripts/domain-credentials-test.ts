@@ -18,15 +18,15 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const unbound: Domain = { name: "support", channels: ["notion/WS/aaa"] };
+const unbound: Domain = { name: "support", reach: ["notion/WS/aaa"] };
 const bound: Domain = {
   name: "payments",
-  channels: ["notion/WS/bbb"],
+  reach: ["notion/WS/bbb"],
   credentials: [{ connector: "notion", credential: "channel-key", use: "payments-channel-key", inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
 };
 const boundNoInbound: Domain = {
   name: "legal",
-  channels: ["notion/WS/ccc"],
+  reach: ["notion/WS/ccc"],
   credentials: [{ connector: "notion", credential: "channel-key", use: "legal-channel-key" }],
 };
 
@@ -54,7 +54,7 @@ const boundNoInbound: Domain = {
   const solo = connectorIntegrations([unbound], "notion", "channel-key", "NOTION_WEBHOOK_SECRET");
   ok(solo.length === 1 && solo[0]!.credentialId === "channel-key", "an all-unbound deployment yields the single org integration");
 
-  const twin: Domain = { name: "payments-eu", channels: ["notion/WS/ddd"], credentials: [{ ...bound.credentials![0]! }] };
+  const twin: Domain = { name: "payments-eu", reach: ["notion/WS/ddd"], credentials: [{ ...bound.credentials![0]! }] };
   const deduped = connectorIntegrations([bound, twin], "notion", "channel-key", "NOTION_WEBHOOK_SECRET");
   ok(deduped.length === 2, "two domains sharing one integration contribute ONE entry, not two");
 }
@@ -63,12 +63,12 @@ const boundNoInbound: Domain = {
   ok(domainCredentialProblems(unbound).length === 0, "a domain with no overrides has no shape problems");
   ok(domainCredentialProblems(bound).length === 0, "a well-formed override has no shape problems");
 
-  const selfRef: Domain = { name: "x", channels: ["notion/WS/e"], credentials: [{ connector: "notion", credential: "channel-key", use: "channel-key" }] };
+  const selfRef: Domain = { name: "x", reach: ["notion/WS/e"], credentials: [{ connector: "notion", credential: "channel-key", use: "channel-key" }] };
   ok(domainCredentialProblems(selfRef).some((p) => p.includes("does nothing")), "an override whose `use` IS the replaced credential is refused as dead config");
 
   const dupe: Domain = {
     name: "y",
-    channels: ["notion/WS/f"],
+    reach: ["notion/WS/f"],
     credentials: [
       { connector: "notion", credential: "channel-key", use: "a" },
       { connector: "notion", credential: "channel-key", use: "b" },
@@ -76,10 +76,10 @@ const boundNoInbound: Domain = {
   };
   ok(domainCredentialProblems(dupe).some((p) => p.includes("more than once")), "two overrides of the SAME (connector, credential) are a contradiction, not a precedence question");
 
-  const blank = { name: "z", channels: ["notion/WS/g"], credentials: [{ connector: "notion", credential: "", use: "a" }] } as Domain;
+  const blank = { name: "z", reach: ["notion/WS/g"], credentials: [{ connector: "notion", credential: "", use: "a" }] } as Domain;
   ok(domainCredentialProblems(blank).some((p) => p.includes("`credential` must be a non-empty string")), "an empty field is refused");
 
-  const badInbound = { name: "w", channels: ["notion/WS/h"], credentials: [{ connector: "notion", credential: "channel-key", use: "a", inboundSecret: "  " }] } as Domain;
+  const badInbound = { name: "w", reach: ["notion/WS/h"], credentials: [{ connector: "notion", credential: "channel-key", use: "a", inboundSecret: "  " }] } as Domain;
   ok(domainCredentialProblems(badInbound).some((p) => p.includes("inboundSecret")), "a blank inboundSecret is refused (omit it to share the default)");
 
   assert.doesNotThrow(() => assertDomainsValid([bound]), "a valid override passes assertDomainsValid");
@@ -107,13 +107,13 @@ const boundNoInbound: Domain = {
   );
 
   assert.throws(
-    () => assertDomainCredentialsResolvable([{ name: "q", channels: ["notion/WS/i"], credentials: [{ connector: "ghost", credential: "channel-key", use: "x" }] }], catalogues),
+    () => assertDomainCredentialsResolvable([{ name: "q", reach: ["notion/WS/i"], credentials: [{ connector: "ghost", credential: "channel-key", use: "x" }] }], catalogues),
     /has no credential catalogue/,
     "a binding naming an unknown CONNECTOR is refused at boot",
   );
 
   assert.throws(
-    () => assertDomainCredentialsResolvable([{ name: "r", channels: ["notion/WS/j"], credentials: [{ connector: "notion", credential: "no-such-role", use: "payments-channel-key" }] }], catalogues),
+    () => assertDomainCredentialsResolvable([{ name: "r", reach: ["notion/WS/j"], credentials: [{ connector: "notion", credential: "no-such-role", use: "payments-channel-key" }] }], catalogues),
     /declares no such credential/,
     "a binding replacing a credential the connector does not declare is refused at boot",
   );

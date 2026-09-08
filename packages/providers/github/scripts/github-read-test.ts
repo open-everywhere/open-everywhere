@@ -18,7 +18,7 @@ process.env.GITHUB_TOKEN = "gh-test-token";
 
 registerGithubProvider();
 registerConfig({
-  loadDomains: () => [{ name: "d", channels: ["github/acme/api"] }],
+  loadDomains: () => [{ name: "d", reach: ["github/acme/api"] }],
 } as unknown as Parameters<typeof registerConfig>[0]);
 
 let passed = 0;
@@ -77,7 +77,7 @@ const COMMENTS_7 = [
 ok(supportedReadPlatforms().includes("github"), "registerGithubProvider registers the github read adapter");
 ok(READ_ADAPTERS["github"] === githubReadAdapter, "…and the registered adapter IS this bundle's");
 {
-  const resolved = resolveReadAdapter(githubTurn({ issue: 7 }), undefined, [{ name: "d", channels: ["github/acme/api"] }]);
+  const resolved = resolveReadAdapter(githubTurn({ issue: 7 }), undefined, [{ name: "d", reach: ["github/acme/api"] }]);
   ok(resolved.platform === "github", "a github turn resolves the github platform");
   ok(resolved.adapter === githubReadAdapter, "…and resolves this adapter, not a 'not supported' throw");
 }

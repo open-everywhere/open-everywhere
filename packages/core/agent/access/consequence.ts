@@ -193,6 +193,8 @@ const admin = (action: string, taint: TaintTolerance, reason: string): Consequen
 const deferToJudge = (entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, judgeDefer: true });
 const postTurn = (surface: PostTurnSurface, entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, postTurnSurface: surface });
 
+export const RESUME_TOOL = "resume";
+
 export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   bash: open("sandbox execution; reach is bounded by the egress plane (L1), not by this table"),
   aws: open(
@@ -432,6 +434,14 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   clear_spend_limit: admin("spend.clear", "disclose", "reverts a spend control — same bar as setting one"),
   revoke_connector: admin("connector.revoke", "disclose", "kills a live capability for a scope — an org-level control change"),
   clear_connector_override: admin("connector.clear", "disclose", "re-arms a revoked capability — same bar as the revoke"),
+  halt: open(
+    "THE BRAKE PEDAL (OPE-1602): stops every consequential act at an address, at once, with no card. `open` for the reason `task_cancel`, `set_dm_delivery` and `stand_down` are open, at deployment scale — a card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed, so a carded brake is a brake that works only when you do not need it. After it runs the agent can do strictly LESS: it takes no address from the model (a two-value enum; the key is derived host-side from the seat's own binding), spends nothing, sends nothing, and reads no memory. The accepted cost, stated rather than hidden: an `open` verb is one a poisoned turn can call, so a halt is a denial of service the model can trigger — loud (every seat says it is halted), visible (one `admin.halt.set` row) and reversible by an admin. The reverse direction is `resume`, which widens and is therefore carded",
+  ),
+  [RESUME_TOOL]: admin(
+    "halt.resume",
+    "disclose",
+    "lifts the break-glass halt — the WIDENING half of the pair, so it is carded where `halt` is not (WIDEN-SLOW / NARROW-FAST). 🔴 It is the one verb the halt arrow in access/approver-chain.ts EXEMPTS by name: it routes through the chain, which is the place the halt denies, so without the exemption a halt would deny its own lift and no chat door could reopen the deployment. The control MCP's own `resume` is the independent second door and never touches the chain",
+  ),
   memory_admin_list: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },

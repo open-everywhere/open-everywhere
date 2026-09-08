@@ -1,4 +1,4 @@
-import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { taintMode, type TaintMode } from "./taint-enforcement.js";
@@ -40,6 +40,7 @@ export interface ApprovalChainRequest {
   readonly unattended: boolean;
   readonly tainted?: boolean;
   readonly mode?: ApprovalModeConfig;
+  readonly halted?: boolean;
   readonly aws?: AwsScreenInput;
   readonly connectorOpRaise?: "write" | "destructive";
   readonly beneficiaryClicker?: boolean;
@@ -150,7 +151,7 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     name: "mode:DANGEROUSLY_BYPASS",
     stage: "mode",
     from: ["ask"],
-    fires: (req) => req.mode?.mode === "DANGEROUSLY_BYPASS",
+    fires: (req) => req.mode?.mode === "DANGEROUSLY_BYPASS" && req.tool !== RESUME_TOOL,
     to: () => "allow",
   },
   {
@@ -166,6 +167,14 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     from: ["allow", "ask"],
     reason: "mode-deny-all",
     fires: (req) => req.mode?.mode === "DENY_ALL",
+    to: () => "deny",
+  },
+  {
+    name: "mode:HALT",
+    stage: "mode",
+    from: ["allow", "ask"],
+    reason: "halt",
+    fires: (req) => req.halted === true && req.tool !== RESUME_TOOL,
     to: () => "deny",
   },
   {
@@ -484,6 +493,7 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
       (supplied ? ` — supplied by the caller, not this turn's own signal (this turn: ${liveTainted}${liveKinds.length > 0 ? ` (${liveKinds.join(", ")})` : ""})` : "") +
       (taintMode() === "off" ? " — taint.mode: off (the model is not running)" : ""),
     ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : []),
+    ...(req.halted === true ? ["halt: ON"] : []),
   ];
   lines.push(`context: ${context.join(" · ")}`);
   return lines;

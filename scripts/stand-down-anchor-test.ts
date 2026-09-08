@@ -1,8 +1,14 @@
-process.env.OE_SQLITE_PATH = ":memory:";
+
+const sqlitePath = `${tmpdir()}/oe-stand-down-anchor-${process.pid}-${Date.now()}.sqlite3`;
+process.env.OE_SQLITE_PATH = sqlitePath;
 overrideSettingsForTest({ discord: { autoThread: false } });
 overrideSettingsForTest({ discord: { statusUx: false } });
 
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
+import { PROMOTER_LIST_MAX } from "@open-everywhere/core/agent/operational/store.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
@@ -18,7 +24,7 @@ registerNotionProvider();
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
-import { roomEngagementAddress, shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
+import { getThreadEngagement, markThreadEngaged, roomEngagementAddress, shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
 import { bindFrom } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import standDown, { STAND_DOWN_ACTION, DM_REFUSAL, GROUP_REFUSAL } from "@open-everywhere/core/agent/tools/stand_down.js";
@@ -32,7 +38,7 @@ import {
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import { clearTeamsRoomStop } from "@open-everywhere/provider-teams/agent/channels/teams-engagement.js";
 import { resolveGitHubEngagement } from "@open-everywhere/provider-github/agent/channels/github-engagement.js";
-import { resolveLinearEngagement } from "@open-everywhere/provider-linear/agent/channels/linear-engagement.js";
+import { linearStandDownHolds, resolveLinearEngagement } from "@open-everywhere/provider-linear/agent/channels/linear-engagement.js";
 import { markNotionEngaged, resolveNotionEngagement } from "@open-everywhere/provider-notion/agent/channels/notion-engagement.js";
 
 let n = 0;
@@ -409,6 +415,19 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(verdict.kind === "hold" && verdict.stopped, "🔴 OPE-1501: linear-engagement.ts reads the mark back as a STOP on the ambient comment path");
   const other = await resolveLinearEngagement({ ...facts, issueId: "ISSUE_OTHER" }, false);
   ok(other.kind === "hold" && other.stopped === false, "🔴 NEGATIVE CONTROL: a different issue in the same team is untouched — the stop is per issue");
+
+  ok(
+    (await linearStandDownHolds(facts)) === "ISSUE_L",
+    "🔴 OPE-1548: the AGENT-SESSION legs' predicate reads the same mark back, and answers with the anchor it read",
+  );
+  ok(
+    (await linearStandDownHolds({ ...facts, issueId: "ISSUE_OTHER" })) === null,
+    "🔴 NEGATIVE CONTROL: it is per issue too — a different issue in the same team holds no stop",
+  );
+  ok(
+    (await linearStandDownHolds({ ...facts, issueId: undefined })) === null,
+    "🔴 NEGATIVE CONTROL: an anchorless delivery holds no row to have been marked, so it never reads as stopped",
+  );
 }
 
 {
@@ -481,7 +500,7 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   await clearTeamsRoomStop(p, "2026-09-08T11:00:00Z", "mention-back-1");
   const lifted = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
   ok(lifted !== null && lifted.stopped === false, "🔴 OPE-1511: an @mention's clear LIFTS the room stop on the room row itself — the stop is not a trap");
-  ok(lifted !== null && lifted.engagedBy === "mention-back-1", "…and it records the mention's activity id, so the room clear carries the OPE-1527 guard too");
+  ok(lifted !== null && [...(lifted.recentPromoters ?? [])].join(",") === "mention-back-1", "…and it records the mention's activity id, so the room clear carries the OPE-1527 guard too");
 
   ok(await store.markStopped(room.partition.org, room.partition.surfaceKey, room.anchor), "precondition: the room is stood down again");
   await clearTeamsRoomStop(p, "2026-09-08T12:00:00Z", "mention-back-1");
@@ -490,6 +509,41 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   await clearTeamsRoomStop(p, "2026-09-08T12:05:00Z", "mention-back-2");
   const newRoom = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
   ok(newRoom !== null && newRoom.stopped === false, "🔴 NEGATIVE CONTROL: a NEW @mention still lifts the room stop — the room grain is not a one-way door");
+
+  ok(await store.markStopped(room.partition.org, room.partition.surfaceKey, room.anchor), "precondition: the room is stood down after TWO distinct mentions");
+  await clearTeamsRoomStop(p, "2026-09-08T12:10:00Z", "mention-back-1");
+  const supersededRoom = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
+  ok(supersededRoom !== null && supersededRoom.stopped === true, "🔴 OPE-1562 (sqlite): replaying the SUPERSEDED @mention does not lift the room stop — the list guards every promoter it holds");
+  ok([...(supersededRoom!.recentPromoters ?? [])].join(",") === "mention-back-2,mention-back-1", "…and the row carries both promoters, the replayed one re-ordered last, never duplicated");
+  await clearTeamsRoomStop(p, "2026-09-08T12:15:00Z", "mention-back-3");
+  ok((await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor))!.stopped === false, "🔴 NEGATIVE CONTROL: a THIRD, genuine @mention still lifts it — the widened guard is not a one-way door");
+
+  const bk = { ...p, surfaceKey: "teams/T_BOUND/room", key: "teams/T_BOUND/room" };
+  await markThreadEngaged(bk, "bound.1", "2026-09-08T13:00:00Z", { participating: true, engagedBy: "drop-me" });
+  ok((await getThreadEngagement(bk, "bound.1"))!.recentPromoters!.join(",") === "drop-me", "precondition (sqlite): `drop-me` IS on the list before the fill");
+  for (let i = 0; i < PROMOTER_LIST_MAX; i++) {
+    await markThreadEngaged(bk, "bound.1", `2026-09-08T13:${String(i).padStart(2, "0")}:01Z`, { participating: true, engagedBy: `fill-${i}` });
+  }
+  const sqliteBounded = [...(await getThreadEngagement(bk, "bound.1"))!.recentPromoters!];
+  ok(sqliteBounded.length === PROMOTER_LIST_MAX, `🔴 OPE-1562 (sqlite): the promoter list is BOUNDED at ${PROMOTER_LIST_MAX} — the sqlite TRIM statement runs`);
+  ok(sqliteBounded[0] === "fill-0" && !sqliteBounded.includes("drop-me"), "…and it drops the OLDEST id — the window slid by exactly one");
+  ok(await store.markStopped(bk.org, bk.surfaceKey, "bound.1"), "precondition (sqlite): the bounded row is stood down");
+  await markThreadEngaged(bk, "bound.1", "2026-09-08T14:00:00Z", { participating: true, engagedBy: "drop-me" });
+  ok((await getThreadEngagement(bk, "bound.1"))!.stopped === false, "🔴 RESIDUAL (sqlite), pinned not claimed: a promoter the BOUND dropped can be replayed again");
+
+  await markThreadEngaged(bk, "legacy.1", "2026-09-08T15:00:00Z", { participating: true, engagedBy: "act-old" });
+  const raw = new DatabaseSync(sqlitePath);
+  raw.prepare("UPDATE thread_engagement SET engaged_by = 'act-old' WHERE surface_key = ? AND thread_ts = 'legacy.1'").run(bk.surfaceKey);
+  const planted = raw.prepare("SELECT engaged_by FROM thread_engagement WHERE surface_key = ? AND thread_ts = 'legacy.1'").get(bk.surfaceKey) as { engaged_by: string };
+  raw.close();
+  ok(planted.engaged_by === "act-old", "precondition (sqlite): a BARE pre-OPE-1562 id is planted, exactly as OPE-1527 wrote one");
+  ok(await store.markStopped(bk.org, bk.surfaceKey, "legacy.1"), "precondition (sqlite): the legacy row is stood down");
+  await markThreadEngaged(bk, "legacy.1", "2026-09-08T15:01:00Z", { participating: true, engagedBy: "act-old" });
+  const legacyRow = (await getThreadEngagement(bk, "legacy.1"))!;
+  ok(legacyRow.stopped === true, "🔴 OPE-1562 (sqlite): a redelivery cannot lift the stand-down on an UNMIGRATED bare-id row — markEngaged frames the stored value itself");
+  ok(legacyRow.recentPromoters!.join(",") === "act-old", "🔴 …and the bare id is NOT concatenated onto the new one — one entry, not a junk `act-oldact-old`");
+  await markThreadEngaged(bk, "legacy.1", "2026-09-08T15:02:00Z", { participating: true, engagedBy: "act-fresh" });
+  ok((await getThreadEngagement(bk, "legacy.1"))!.stopped === false, "🔴 NEGATIVE CONTROL (sqlite): a genuine new mention still clears it on the same unmigrated row");
 
   const discordCtx = windowCtx("discord", { guild_id: "G_R", channel_id: "C_UNENROLLED", parent_channel_id: "C_PARENT", user_id: "u_r" }, "u_r");
   ok(bindFrom(discordCtx).roomEngagementKey === undefined, "🔴 NEGATIVE CONTROL: Discord publishes NO room key — a mapper opts in, the tool never assumes");
@@ -529,4 +583,6 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(slackRow !== null && slackRow.stopped === false, "🔴 OPE-1527 NEGATIVE CONTROL: a promotion with NO id clears the stop exactly as before — no surface that opted out changed");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the GitHub/Linear/Notion anchors and their own seams' round trips)`);
+for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${sqlitePath}${suffix}`, { force: true });
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the promoter list's bound and its legacy bare-id row on the sqlite statements + the GitHub/Linear/Notion anchors and their own seams' round trips)`);

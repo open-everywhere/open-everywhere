@@ -95,7 +95,7 @@ const REPO = resolve(HERE, "../../..");
     return roster;
   });
   const domains: Domain[] = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] }),
+    defineDomain({ name: "governance", governance: true, reach: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] }),
     defineDomain({ name: "org", match: "org", admins: [] }),
   ];
   const admins = new Set(["U_A", "U_B"]);
@@ -329,7 +329,7 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   assert.doesNotThrow(() => assertComplianceDomains(plainDomains), "an unset flag passes the lint");
   n++;
   assert.throws(
-    () => assertComplianceDomains([defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], requestorEntitlementChecks: true })]),
+    () => assertComplianceDomains([defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], requestorEntitlementChecks: true })]),
     /ORG-LEVEL compliance opt-in/,
     "requestorEntitlementChecks on a ROOM domain fails the lint loudly",
   );

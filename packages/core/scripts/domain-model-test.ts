@@ -45,8 +45,8 @@ const C_FIN = "slack/T1/C_FIN";
 const DEFAULT_ID = "zai/glm-5.2";
 const domains: Domain[] = [
   defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, reasoning: "medium" } } }),
-  defineDomain({ name: "eng", channels: [C_ENG], reasoningCeiling: "high" }),
-  defineDomain({ name: "finance", channels: [C_FIN], reasoningCeiling: "low" }),
+  defineDomain({ name: "eng", reach: [C_ENG], reasoningCeiling: "high" }),
+  defineDomain({ name: "finance", reach: [C_FIN], reasoningCeiling: "low" }),
 ];
 registerConfig({
   loadBundles: () => [],

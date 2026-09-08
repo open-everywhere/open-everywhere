@@ -132,7 +132,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "payments", channels: ["slack/T1/C1"], memory: [SILO], mode: "unified" })],
+  loadDomains: () => [defineDomain({ name: "payments", reach: ["slack/T1/C1"], memory: [SILO], mode: "unified" })],
   loadSilos: () => [{ name: SILO, provider: "fake-brain-join" }],
   domainsForSurface: () => ["payments"],
 } as Parameters<typeof registerConfig>[0]);

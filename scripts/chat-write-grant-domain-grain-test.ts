@@ -50,7 +50,7 @@ const DOMAIN_NAME = "grain-fixture";
 const domains: readonly Domain[] = [
   defineDomain({
     name: DOMAIN_NAME,
-    channels: [`teams/${TENANT}/${wakeChannelId}`, `teams/${TENANT}/${otherChannelId}`, `slack/${SLACK_TEAM}/${SLACK_CHANNEL}`],
+    reach: [`teams/${TENANT}/${wakeChannelId}`, `teams/${TENANT}/${otherChannelId}`, `slack/${SLACK_TEAM}/${SLACK_CHANNEL}`],
   }),
 ];
 
@@ -62,7 +62,7 @@ function arm(granted: readonly { readonly connector: string; readonly resources:
     skillContent: {},
     loadDomains: () => domains,
     loadSilos: () => [],
-    domainsForSurface: ({ workspaceKey, surface }) => domains.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+    domainsForSurface: ({ workspaceKey, surface }) => domains.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
   });
 }
 

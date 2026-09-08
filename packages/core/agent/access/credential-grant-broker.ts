@@ -23,6 +23,8 @@ import {
 } from "./grant-room-notice-registry.internal.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
 import { currentJobWakePosture } from "./job-session-state.js";
+import { haltScopeFor, resolveHalt, resolveHaltUnaddressed, type HaltScope } from "./halt.js";
+import { surfaceKeyOf, tenantKeyOf } from "./resolver.js";
 
 export interface GrantBorrowCall {
   readonly mcpTool: string;
@@ -54,6 +56,33 @@ export interface GrantCallContext extends GrantAuditStamps {
   readonly nowMs: number;
 }
 
+export function grantCallHaltScope(ctx: GrantCallContext): HaltScope {
+  const roomKey =
+    ctx.surface === undefined || ctx.surface === ""
+      ? tenantKeyOf({ platform: ctx.platform, workspace: ctx.workspace })
+      : surfaceKeyOf({ platform: ctx.platform, workspace: ctx.workspace, channel: ctx.surface });
+  return haltScopeFor({
+    org: ctx.org,
+    scopeKey: roomKey,
+    ...(ctx.requesterPrincipalId !== undefined ? { principalKey: ctx.requesterPrincipalId } : {}),
+  });
+}
+
+const UNRESOLVED_PARTITION = "unknown";
+
+export function grantCallRoomUnresolved(ctx: GrantCallContext): boolean {
+  return (
+    ctx.org === UNRESOLVED_PARTITION ||
+    ctx.platform === UNRESOLVED_PARTITION ||
+    ctx.workspace === UNRESOLVED_PARTITION ||
+    ctx.surface === undefined ||
+    ctx.surface === ""
+  );
+}
+
+export const HALT_UNRESOLVED_ROOM_NOTE =
+  "This deployment could not resolve which conversation this call is running in, so the halt was applied to be safe: a halt anywhere in this organisation stops a call whose room cannot be read.";
+
 export type GrantCallResult =
   | { readonly ok: true; readonly disclosure: string; readonly result: unknown }
   | { readonly ok: false; readonly refused: CredentialGrantRefusal; readonly message: string };
@@ -67,17 +96,24 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     await auditGrant(ctx, "grant.refused", ctx.requesterPrincipalId, { gate: "revoked", grantId });
     return { message: credentialGrantRefusalMessage(shape, "revoked"), ok: false, refused: "revoked" };
   }
-  const refuse = async (reason: CredentialGrantRefusal): Promise<GrantCallResult> => {
+  const refuse = async (reason: CredentialGrantRefusal, note?: string): Promise<GrantCallResult> => {
     await auditGrant(ctx, "grant.refused", ctx.requesterPrincipalId, {
       gate: reason,
       grantId: grant.id,
       owner: grant.ownerPrincipalId,
       verb: grant.verb,
     });
-    return { message: credentialGrantRefusalMessage(grant, reason), ok: false, refused: reason };
+    const message = credentialGrantRefusalMessage(grant, reason);
+    return { message: note === undefined ? message : `${message} ${note}`, ok: false, refused: reason };
   };
 
   if (currentJobWakePosture() === "restricted") return refuse("unattended_wake");
+
+  const roomUnresolved = grantCallRoomUnresolved(ctx);
+  const haltState = roomUnresolved ? await resolveHaltUnaddressed(ctx.org) : await resolveHalt(grantCallHaltScope(ctx));
+  if (haltState.halted) {
+    return refuse("halted", roomUnresolved ? HALT_UNRESOLVED_ROOM_NOTE : undefined);
+  }
 
   const stateRefusal = credentialGrantStateRefusal(grant, nowIso);
   if (stateRefusal !== undefined) return refuse(stateRefusal);

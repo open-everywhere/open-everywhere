@@ -29,7 +29,7 @@ registerConfig({
   loadDomains: () => [
     defineDomain({
       name: "replay",
-      channels: [`notion/${WORK_WS}/${WORK_PAGE}`],
+      reach: [`notion/${WORK_WS}/${WORK_PAGE}`],
       credentials: [{ connector: "notion", credential: "team-key", use: "team-key" }],
     }),
   ],

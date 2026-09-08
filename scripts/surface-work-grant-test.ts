@@ -43,11 +43,11 @@ function workRoleForTestConnector(connector: string): string {
   return WORK_ROLE;
 }
 function granted(name: string, channels: readonly string[], connector: string): Domain {
-  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: workRoleForTestConnector(connector), use: CHAT_ROLE }] });
+  return defineDomain({ name, reach: [...channels], credentials: [{ connector, credential: workRoleForTestConnector(connector), use: CHAT_ROLE }] });
 }
 function chatOnly(name: string, channels: readonly string[], connector: string): Domain {
   const role = connector === "notion" ? "channel-key" : connector === "linear" ? "not-the-work-role" : CHAT_ROLE;
-  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: role, use: "some-other-key" }] });
+  return defineDomain({ name, reach: [...channels], credentials: [{ connector, credential: role, use: "some-other-key" }] });
 }
 
 function slackCtx(sources?: string): BindableContext {
@@ -145,7 +145,7 @@ for (const [platform, channel] of [
 ] as const) {
   const g = granted(`g-${platform}`, [channel], platform);
   const c = chatOnly(`c-${platform}`, [channel], platform);
-  const plain = defineDomain({ name: `p-${platform}`, channels: [channel] });
+  const plain = defineDomain({ name: `p-${platform}`, reach: [channel] });
   const other = granted(`o-${platform}`, [channel], platform === "slack" ? "discord" : "slack");
 
   ok(domainHoldsSurfaceWorkGrant(g, platform) === true, `${platform}: a declared work role IS the grant`);
@@ -166,7 +166,7 @@ for (const [platform, channel] of [
   ] as const;
   for (const c of cases) {
     const g = [granted(`m-${c.platform}`, [c.channel], c.platform)];
-    const plain = [defineDomain({ name: `mp-${c.platform}`, channels: [c.channel] })];
+    const plain = [defineDomain({ name: `mp-${c.platform}`, reach: [c.channel] })];
     ok(surfaceWorkReadPlatforms(c.ctx(), g).join(",") === c.platform, `${c.platform}: a granted solo window reads exactly its own surface`);
     ok(surfaceWorkReadPlatforms(c.ctx(), plain).length === 0, `${c.platform}: an ungranted domain reads nothing (explicit empty)`);
     ok(surfaceWorkReadMount(c.ctx(), () => g) === true, `${c.platform}: the granted domain MOUNTS the work reads`);
@@ -175,7 +175,7 @@ for (const [platform, channel] of [
     const elsewhere = [
       defineDomain({
         name: `me-${c.platform}`,
-        channels: [c.channel, c.foreign],
+        reach: [c.channel, c.foreign],
         credentials: [{ connector: c.foreignPlatform, credential: WORK_ROLE, use: CHAT_ROLE }],
       }),
     ];
@@ -188,7 +188,7 @@ for (const [platform, channel] of [
   const mixed = [
     defineDomain({
       name: "mixed",
-      channels: [SLACK_CHANNEL, DISCORD_CHANNEL],
+      reach: [SLACK_CHANNEL, DISCORD_CHANNEL],
       credentials: [{ connector: "slack", credential: WORK_ROLE, use: CHAT_ROLE }],
     }),
   ];

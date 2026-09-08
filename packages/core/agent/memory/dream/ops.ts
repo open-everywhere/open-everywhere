@@ -1,5 +1,5 @@
 import { buildGraph, resolveNode } from "../graph.js";
-import { conserveProvenanceOnMerge, provenanceCarrierPattern } from "../provenance-mark.js";
+import { conserveProvenanceOnMerge, donorOf, provenanceCarrierPattern } from "../provenance-mark.js";
 import type { MemoryFiles } from "../store.js";
 import { salienceMap } from "./salience.js";
 
@@ -185,6 +185,27 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   let inter = 0;
   for (const w of a) if (b.has(w)) inter++;
   return inter / (a.size + b.size - inter);
+}
+
+export function factTokens(line: string): Set<string> {
+  const body = factText(line)
+    .replace(DATE_PREFIX, "")
+    .replace(/^\s*-\s+/, "")
+    .toLowerCase();
+  return new Set(body.split(/[^a-z0-9]+/).filter((t) => t.length > 0));
+}
+
+export const RESTATEMENT_THRESHOLD = 0.9;
+
+export function restatesDonor(survivor: string, sources: readonly string[], threshold = RESTATEMENT_THRESHOLD): boolean {
+  const donor = donorOf(sources);
+  if (donor === undefined) return false;
+  if (isNegated(survivor) !== isNegated(donor)) return false;
+  const survivorTokens = factTokens(survivor);
+  const donorTokens = factTokens(donor);
+  if (survivorTokens.size === 0 || donorTokens.size === 0) return false;
+  for (const token of donorTokens) if (!survivorTokens.has(token)) return false;
+  return jaccard(survivorTokens, donorTokens) >= threshold;
 }
 
 export function detectConsolidations(files: MemoryFiles, threshold = 0.7, exclude?: ReadonlySet<string>): MemoryOp[] {

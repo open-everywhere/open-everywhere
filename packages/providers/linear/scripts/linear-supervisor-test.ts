@@ -546,7 +546,7 @@ for (const [label, err] of [
 
   const windowDomain = defineDomain({
     name: "payments",
-    channels: [skFor(T_PRIV), skFor(T_FREE), skFor(T_PUB)],
+    reach: [skFor(T_PRIV), skFor(T_FREE), skFor(T_PUB)],
     ambientSupervisor: true,
     mode: "unified",
   });

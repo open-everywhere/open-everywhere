@@ -1,6 +1,7 @@
 
 import { readFileSync } from "node:fs";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
+import { PROMOTER_LIST_MAX } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 import {
@@ -559,9 +560,10 @@ const store = makeOperationalPostgresStore(client);
 
 {
   const sk = "teams/T/CE";
+  const promoters = async (thread: string): Promise<string[]> => [...((await store.getEngagement("acme", sk, thread))!.recentPromoters ?? [])];
 
   await store.markEngaged("acme", sk, "e.1", "2026-09-08T10:00:00Z", { participating: true, engagedBy: "act-1" });
-  ok((await store.getEngagement("acme", sk, "e.1"))!.engagedBy === "act-1", "pg: a promotion records the promoting event id");
+  ok((await promoters("e.1")).join(",") === "act-1", "pg: a promotion records the promoting event id");
   ok(await store.markStopped("acme", sk, "e.1"), "pg: …and the row can then be stopped");
 
   await store.markEngaged("acme", sk, "e.1", "2026-09-08T11:00:00Z", { participating: true, engagedBy: "act-1" });
@@ -571,29 +573,56 @@ const store = makeOperationalPostgresStore(client);
 
   await store.markEngaged("acme", sk, "e.1", "2026-09-08T12:00:00Z", { participating: true, engagedBy: "act-2" });
   const fresh = (await store.getEngagement("acme", sk, "e.1"))!;
-  ok(fresh.stopped === false && fresh.engagedBy === "act-2", "🔴 pg: a NEW id clears the stop and becomes the recorded promoter");
+  ok(fresh.stopped === false, "🔴 pg: a NEW id clears the stop");
+  ok((await promoters("e.1")).join(",") === "act-1,act-2", "pg: …and joins the promoter list, most recent LAST — it does not replace what was there");
 
   ok(await store.markStopped("acme", sk, "e.1"), "pg: stopped again");
   await store.markEngaged("acme", sk, "e.1", "2026-09-08T13:00:00Z", { participating: true });
   const unknown = (await store.getEngagement("acme", sk, "e.1"))!;
   ok(unknown.stopped === false, "🔴 pg: a promotion with NO id clears the stop — the pre-OPE-1527 rule, kept for every caller that opts out");
-  ok(unknown.engagedBy === "act-2", "pg: …and it does not erase the recorded promoter (COALESCE), so an id-less refresh cannot blind the guard");
+  ok((await promoters("e.1")).join(",") === "act-1,act-2", "pg: …and it does not erase the list, so an id-less refresh cannot blind the guard");
 
   ok(await store.markStopped("acme", sk, "e.1"), "pg: stopped once more");
   await store.markEngaged("acme", sk, "e.1", "2026-09-08T14:00:00Z", { participating: false, engagedBy: "act-9" });
   const warm = (await store.getEngagement("acme", sk, "e.1"))!;
-  ok(warm.stopped === true && warm.engagedBy === "act-2", "🔴 pg: a WARM refresh carrying an id neither clears the stop nor rewrites the promoter");
+  ok(warm.stopped === true, "🔴 pg: a WARM refresh carrying an id does not clear the stop");
+  ok((await promoters("e.1")).join(",") === "act-1,act-2", "pg: …and does not record its id either — the list only ever grows on a promotion");
 
   await store.markEngaged("acme", sk, "e.2", "2026-09-08T15:00:00Z", { participating: true, engagedBy: "act-A" });
   await store.markEngaged("acme", sk, "e.2", "2026-09-08T15:01:00Z", { participating: true, engagedBy: "act-B" });
   ok(await store.markStopped("acme", sk, "e.2"), "pg: two mentions, then a stand-down");
   await store.markEngaged("acme", sk, "e.2", "2026-09-08T16:00:00Z", { participating: true, engagedBy: "act-B" });
-  ok((await store.getEngagement("acme", sk, "e.2"))!.stopped === true, "pg: replaying the LATEST mention leaves the stop — the shipped guard");
+  ok((await store.getEngagement("acme", sk, "e.2"))!.stopped === true, "pg: replaying the LATEST mention leaves the stop — the OPE-1527 guard");
   await store.markEngaged("acme", sk, "e.2", "2026-09-08T16:01:00Z", { participating: true, engagedBy: "act-A" });
   ok(
-    (await store.getEngagement("acme", sk, "e.2"))!.stopped === false,
-    "🔴 pg RESIDUAL, pinned not claimed: replaying a SUPERSEDED mention DOES clear the stop — one slot holds one promoter (OPE-1562)",
+    (await store.getEngagement("acme", sk, "e.2"))!.stopped === true,
+    "🔴 pg OPE-1562: replaying a SUPERSEDED mention leaves the stop TOO — the list guards every promoter it still holds",
   );
+  ok((await promoters("e.2")).join(",") === "act-B,act-A", "pg: a repeat promotion RE-ORDERS the list rather than duplicating the id — it stays a set");
+
+  await store.markEngaged("acme", sk, "e.2", "2026-09-08T16:02:00Z", { participating: true, engagedBy: "act-C" });
+  ok((await store.getEngagement("acme", sk, "e.2"))!.stopped === false, "🔴 pg NEGATIVE CONTROL: a THIRD, genuine mention still clears the stop — the list is not a one-way door");
+
+  await store.markEngaged("acme", sk, "e.3", "2026-09-08T17:00:00Z", { participating: true, engagedBy: "old-1" });
+  ok((await promoters("e.3")).join(",") === "old-1", "precondition: `old-1` IS on the list before the fill — otherwise 'it was dropped' proves nothing");
+  for (let i = 0; i < PROMOTER_LIST_MAX; i++) {
+    await store.markEngaged("acme", sk, "e.3", `2026-09-08T17:${String(i).padStart(2, "0")}:01Z`, { participating: true, engagedBy: `fill-${i}` });
+  }
+  const bounded = await promoters("e.3");
+  ok(bounded.length === PROMOTER_LIST_MAX, `🔴 pg: the promoter list is BOUNDED at ${PROMOTER_LIST_MAX} — an unbounded list on a hot row is its own defect`);
+  ok(!bounded.includes("old-1") && bounded[0] === "fill-0" && bounded[bounded.length - 1] === `fill-${PROMOTER_LIST_MAX - 1}`, "pg: …and it drops the OLDEST id, keeping the most recent — the window slid by exactly one");
+  ok(await store.markStopped("acme", sk, "e.3"), "pg: the bounded row is stood down");
+  await store.markEngaged("acme", sk, "e.3", "2026-09-08T18:00:00Z", { participating: true, engagedBy: "old-1" });
+  ok((await store.getEngagement("acme", sk, "e.3"))!.stopped === false, "🔴 pg RESIDUAL, pinned not claimed: a promoter the BOUND dropped can be replayed again — the guard reaches exactly as far as the list");
+
+  await store.markEngaged("acme", sk, "e.4", "2026-09-08T19:00:00Z", { participating: true, engagedBy: "act-bare" });
+  await client.query(`UPDATE thread_engagement SET engaged_by = 'act-bare' WHERE org_id = 'acme' AND surface_key = $1 AND thread_ts = 'e.4'`, [sk]);
+  ok(await store.markStopped("acme", sk, "e.4"), "precondition: an UNMIGRATED bare-id row, stood down");
+  await store.markEngaged("acme", sk, "e.4", "2026-09-08T19:01:00Z", { participating: true, engagedBy: "act-bare" });
+  ok((await store.getEngagement("acme", sk, "e.4"))!.stopped === true, "🔴 pg: a redelivery cannot lift the stand-down on a row the boot reframe never reached — markEngaged frames the stored value itself");
+  ok((await promoters("e.4")).join(",") === "act-bare", "🔴 pg: …and the bare id is NOT concatenated onto the new one — one entry, not a junk `act-bareact-bare`");
+  await store.markEngaged("acme", sk, "e.4", "2026-09-08T19:02:00Z", { participating: true, engagedBy: "act-new" });
+  ok((await store.getEngagement("acme", sk, "e.4"))!.stopped === false, "🔴 pg NEGATIVE CONTROL: a genuine new mention still clears it on the same unmigrated row");
 }
 
 {
@@ -799,6 +828,20 @@ const store = makeOperationalPostgresStore(client);
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "pg migration: promotion works on the migrated table");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T02:00:00Z", { ownerToken: "T:oe-sup:1" });
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.ownerToken === "T:oe-sup:1", "pg migration: ownerToken can be set on a migrated pre-T1.1 row");
+
+  await oldClient.query(
+    `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, kind, stopped, engaged_by)
+     VALUES ('orgM', 'teams/T/CL', 'legacy.1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', true, 0, 'thread', true, 'act-legacy')`,
+  );
+  await initOperationalSchema(oldClient);
+  const legacy = await migStore.getEngagement("orgM", "teams/T/CL", "legacy.1");
+  ok(legacy !== null && [...(legacy.recentPromoters ?? [])].join(",") === "act-legacy", "pg migration: the id itself survives the reframe");
+  const framedRows = (await oldClient.query(`SELECT engaged_by FROM thread_engagement WHERE thread_ts = 'legacy.1'`)).rows as { engaged_by: string }[];
+  ok(framedRows[0]?.engaged_by === "\nact-legacy\n", "🔴 pg migration: a bare pre-OPE-1562 promoter id is FRAMED in place — the encoding changes, the id does not");
+  await migStore.markEngaged("orgM", "teams/T/CL", "legacy.1", "2026-07-01T04:00:00Z", { participating: true, engagedBy: "act-legacy" });
+  ok((await migStore.getEngagement("orgM", "teams/T/CL", "legacy.1"))!.stopped === true, "🔴 pg migration: …so a REDELIVERY of that id still cannot lift the migrated row's stand-down");
+  await initOperationalSchema(oldClient);
+  ok([...((await migStore.getEngagement("orgM", "teams/T/CL", "legacy.1"))!.recentPromoters ?? [])].join(",") === "act-legacy", "🔴 pg migration: the reframe is IDEMPOTENT — a second boot leaves a framed list alone");
 
   ok((await migStore.getChannelSession("orgM", "slack/T/CM")) === null, "pg migration: channel_session table exists and starts empty on a migrated DB");
   const rotated = await migStore.rotateChannelSession("orgM", "slack/T/CM", "T:oe-sup:1", "2026-07-01T03:00:00Z");

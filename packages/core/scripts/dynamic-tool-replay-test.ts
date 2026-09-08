@@ -56,7 +56,7 @@ const SLACK_FIXTURE_ELSEWHERE = `${SLACK_FIXTURE_PARTITION.workspaceKey}/${SLACK
 const REPLAY_DOMAINS = [
   defineDomain({
     name: "replay-fixture",
-    channels: [SLACK_FIXTURE_SURFACE, SLACK_FIXTURE_ELSEWHERE],
+    reach: [SLACK_FIXTURE_SURFACE, SLACK_FIXTURE_ELSEWHERE],
     credentialGrants: ["notion"],
     credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
   }),
@@ -78,7 +78,7 @@ registerConfig({
   loadDomains: () => REPLAY_DOMAINS,
   loadSilos: () => [],
   domainsForSurface: ({ workspaceKey, surface }) =>
-    REPLAY_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+    REPLAY_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 const slackDmCtx = { channel: { kind: "slack" }, session: { auth: { current: { principalId: "U_PARTNER", attributes: { channel_type: "im" } } } } };
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };

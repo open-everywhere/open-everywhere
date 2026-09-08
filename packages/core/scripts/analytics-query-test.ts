@@ -19,8 +19,8 @@ const ok = (cond: boolean, label: string) => {
 
 const domains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG"] }),
-  defineDomain({ name: "eng", channels: ["slack/T1/CA"], admins: ["slack/T1/U_ENG"] }),
-  defineDomain({ name: "fin", channels: ["slack/T1/CB"], admins: ["slack/T1/U_FIN"] }),
+  defineDomain({ name: "eng", reach: ["slack/T1/CA"], admins: ["slack/T1/U_ENG"] }),
+  defineDomain({ name: "fin", reach: ["slack/T1/CB"], admins: ["slack/T1/U_FIN"] }),
 ];
 
 const ORG = "acme";

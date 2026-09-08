@@ -136,7 +136,7 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
 {
   const domains: Domain[] = [
     defineDomain({ name: "org", match: "org", memory: "org-brain" }),
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"] }),
   ];
   ok("\"admin\" covers any scope, incl. an unscoped org-wide ask", roleCoversScope(["admin"], { org: "default" }, domains));
   ok(
