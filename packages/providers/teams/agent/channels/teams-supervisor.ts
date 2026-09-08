@@ -130,6 +130,7 @@ export interface TeamsSupervisorDeps {
 
 export interface TeamsSupervisorDispatch {
   readonly surfaceKey: string;
+  readonly containerKey: string;
   readonly channelId: string;
   readonly auth: OpenEverywhereTeamsAuth;
   readonly trigger: TeamsSupervisorWakeInput["trigger"];
@@ -169,7 +170,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
         authorId: d.trigger.authorId,
         id: d.trigger.id,
         platform: "teams",
-        container: d.surfaceKey,
+        container: d.containerKey,
         ...(d.threadRootId ? { threadRoot: d.threadRootId } : {}),
         text: d.trigger.text,
       },

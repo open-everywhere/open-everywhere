@@ -99,6 +99,8 @@ import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/reg
 import { channelPlatform, isUnifiedWindowContext, turnOriginPlatform, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { registerPostArm, postArm, type PostArm } from "@open-everywhere/core/agent/channels/post-arms.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
+import { tailWindowFor } from "@open-everywhere/core/agent/channels/session-tail-record.js";
+import type { SessionTailEntry } from "@open-everywhere/core/agent/channels/session-tail.js";
 import { recordSpend } from "@open-everywhere/core/agent/spend/store.js";
 import { periodOf } from "@open-everywhere/core/agent/spend/spend.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
@@ -692,8 +694,12 @@ const teamsWindow = planTeamsSingleWindow(true, true, vouchedFacts, {
   tenantId: "TEN_WIN",
 })!;
 ok(teamsWindow !== undefined && teamsWindow.addressing === "direct-mention", "teams: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED channel");
+const teamsWakeRows: SessionTailEntry[] = [];
 const teamsDeps: TeamsSupervisorDeps = {
   getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
+  recordWake: async (entry) => {
+    teamsWakeRows.push(entry);
+  },
   wake: async ({ token, auth, message, context, window }) => {
     await divertToUnifiedWindow(captureReceive, {
       message,
@@ -707,9 +713,11 @@ const teamsDeps: TeamsSupervisorDeps = {
   now: () => "2026-01-14T02:00:11Z",
 };
 const teamsIdx = received.length;
+const teamsPartition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: teamsAuth } } } as never);
 await handleTeamsSingleWindowDispatch(
   {
     surfaceKey: TEAMS_KEY,
+    containerKey: teamsPartition.surfaceKey,
     channelId: "19:winchan@thread.tacv2",
     auth: teamsAuth,
     trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE what was the deploy window token we agreed?", trust: "peer" },
@@ -737,6 +745,30 @@ await handleTeamsSingleWindowDispatch(
     "teams: the frozen origin names the conversation + reply-chain root + connector host (the reply target)",
   );
   ok(typeof a.conversation_id === "string" && a.conversation_id === "19:winchan.tacv2;messageid=170001", "teams: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+}
+
+{
+  ok(teamsWakeRows.length === 1, "teams container: the dispatch recorded exactly one wake row (the trigger, never the backscroll)");
+  const postWindow = tailWindowFor({
+    org: teamsPartition.org,
+    domainKey: domainKeyOf(teamsPartition),
+    surfaceKey: teamsPartition.surfaceKey,
+    rawToken: RAW_TOKEN,
+    platform: "teams",
+  });
+  ok(postWindow !== null, "teams container: a standing Teams seat files a tail window, so its posts DO reach the ring");
+  ok(
+    teamsWakeRows[0].container === postWindow!.container,
+    `💥 TEAMS CONTAINER CONTRACT: the wake row and the post that answers it carry ONE container — wake ${String(teamsWakeRows[0].container)} vs post ${String(postWindow!.container)}`,
+  );
+  ok(
+    domainKeyOf(teamsPartition) !== teamsPartition.surfaceKey,
+    "🔴 teams container/CONTROL: the domain key and the surface key really are different strings on Teams — recording the wrong one is a reachable mistake",
+  );
+  ok(
+    teamsWakeRows[0].container !== domainKeyOf(teamsPartition),
+    "🔴 teams container: the wake row does NOT carry the domain key — that spelling is the gate/registry/audit key, never the ring's",
+  );
 }
 
 {

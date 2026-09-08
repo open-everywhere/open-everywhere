@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -171,6 +172,10 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
 const entry = (e: Partial<SessionTailEntry> & Pick<SessionTailEntry, "kind" | "at">): SessionTailEntry =>
   ({ from: e.kind === "post" ? "self" : "human", trust: "principal", author: "x", platform: "slack", container: SURFACE, text: "t", ...e }) as SessionTailEntry;
 
+const FIXTURE_WAKE = "wk-fixture";
+const selfPost = (e: Partial<SessionTailEntry> & Pick<SessionTailEntry, "at">): SessionTailEntry => entry({ kind: "post", wake: FIXTURE_WAKE, ...e });
+const PURE = { container: SURFACE, platform: "slack", answeringWake: FIXTURE_WAKE, canEdit: () => true } as const;
+
 {
   const inTurn = newSession();
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
@@ -285,23 +290,23 @@ let foldedMessageId = "";
   ok(platformCanEdit("no-such-surface") === false, "§7: an unregistered platform cannot edit");
   ok(platformCanEdit("another-unregistered-surface") === false, "§7: …and neither can a second one — the predicate is the registry lookup, not a hardcoded list");
 
-  const ring = [entry({ kind: "post", at: new Date().toISOString(), id: "m1" })];
-  ok(foldTargetInTail(ring, { container: SURFACE, platform: "slack", canEdit: () => true })?.messageId === "m1", "§7: with an edit arm, our own last post IS the fold target");
-  ok(foldTargetInTail(ring, { container: SURFACE, platform: "slack", canEdit: () => false }) === null, "🔴 §7: without one, there is NO fold target and the post goes through");
+  const ring = [selfPost({ at: new Date().toISOString(), id: "m1" })];
+  ok(foldTargetInTail(ring, PURE)?.messageId === "m1", "§7: with an edit arm, our own last post IS the fold target");
+  ok(foldTargetInTail(ring, { ...PURE, canEdit: () => false }) === null, "🔴 §7: without one, there is NO fold target and the post goes through");
 }
 
 {
   const now = Date.now();
-  const fresh = [entry({ kind: "post", at: new Date(now - 60_000).toISOString(), id: "m1" })];
-  const stale = [entry({ kind: "post", at: new Date(now - OWN_POST_TTL_MS - 60_000).toISOString(), id: "m1" })];
-  ok(foldTargetInTail(fresh, { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now })?.messageId === "m1", "§8: a post inside the edit window folds");
-  ok(foldTargetInTail(stale, { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null, "🔴 §8: a post past the edit window does NOT — the redirect must land somewhere that works");
+  const fresh = [selfPost({ at: new Date(now - 60_000).toISOString(), id: "m1" })];
+  const stale = [selfPost({ at: new Date(now - OWN_POST_TTL_MS - 60_000).toISOString(), id: "m1" })];
+  ok(foldTargetInTail(fresh, { ...PURE, nowMs: now })?.messageId === "m1", "§8: a post inside the edit window folds");
+  ok(foldTargetInTail(stale, { ...PURE, nowMs: now }) === null, "🔴 §8: a post past the edit window does NOT — the redirect must land somewhere that works");
   ok(
-    foldTargetInTail([entry({ kind: "post", at: "not-a-date", id: "m1" })], { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null,
+    foldTargetInTail([selfPost({ at: "not-a-date", id: "m1" })], { ...PURE, nowMs: now }) === null,
     "§8: an unparseable timestamp answers no-fold — fail-open, like every other unknown",
   );
   ok(
-    foldTargetInTail([entry({ kind: "post", at: new Date(now).toISOString() })], { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null,
+    foldTargetInTail([selfPost({ at: new Date(now).toISOString() })], { ...PURE, nowMs: now }) === null,
     "§8: a post with no recorded platform id answers no-fold — there is no id to name to `edit_reply`",
   );
 }
@@ -309,44 +314,45 @@ let foldedMessageId = "";
 {
   const now = Date.now();
   const ring = [
-    entry({ kind: "post", at: new Date(now - 2000).toISOString(), id: "mine" }),
+    selfPost({ at: new Date(now - 2000).toISOString(), id: "mine" }),
     entry({ kind: "wake", at: new Date(now - 1000).toISOString(), container: "slack/T1/C_OTHER" }),
   ];
   ok(
-    foldTargetInTail(ring, { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now })?.messageId === "mine",
+    foldTargetInTail(ring, { ...PURE, nowMs: now })?.messageId === "mine",
     "🔴 §9: a message in a SIBLING room does not clear the fold in this one",
   );
   ok(
-    foldTargetInTail(ring, { container: "slack/T1/C_OTHER", platform: "slack", canEdit: () => true, nowMs: now }) === null,
+    foldTargetInTail(ring, { ...PURE, container: "slack/T1/C_OTHER", nowMs: now }) === null,
     "§9: and our post in THIS room is not a fold target for a post into the sibling",
   );
   ok(
-    foldTargetInTail([entry({ kind: "post", at: new Date(now).toISOString(), id: "m1", platform: "discord" })], {
-      container: SURFACE,
-      platform: "slack",
-      canEdit: () => true,
-      nowMs: now,
-    }) === null,
+    foldTargetInTail([selfPost({ at: new Date(now).toISOString(), id: "m1", platform: "discord" })], { ...PURE, nowMs: now }) === null,
     "§9: a fold target recorded on another SURFACE is another room too",
   );
 }
 
 {
   const now = Date.now();
-  ok((await replyFoldTarget({ store, window: null, platform: "slack", locus: LOCUS })) === null, "§10: NO TAIL WINDOW (a worker, a task session, a native seat) ⇒ no fold");
-  ok((await replyFoldTarget({ store, window: TAIL_WINDOW, platform: "slack", locus: null })) === null, "§10: NO EDITABLE ADDRESS for this surface ⇒ no fold");
   ok(
-    foldTargetInTail([entry({ kind: "post", at: new Date(now).toISOString(), id: "m1" })], { container: undefined, platform: "slack", canEdit: () => true, nowMs: now }) === null,
+    (await replyFoldTarget({ store, window: null, platform: "slack", locus: LOCUS, answeringWake: FIXTURE_WAKE })) === null,
+    "§10: NO TAIL WINDOW (a worker, a task session, a native seat) ⇒ no fold",
+  );
+  ok(
+    (await replyFoldTarget({ store, window: TAIL_WINDOW, platform: "slack", locus: null, answeringWake: FIXTURE_WAKE })) === null,
+    "§10: NO EDITABLE ADDRESS for this surface ⇒ no fold",
+  );
+  ok(
+    foldTargetInTail([selfPost({ at: new Date(now).toISOString(), id: "m1" })], { ...PURE, container: undefined, nowMs: now }) === null,
     "§10: NO CONTAINER ⇒ the rooms cannot be told apart ⇒ no fold",
   );
-  ok(foldTargetInTail([], { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null, "§10: an EMPTY ring ⇒ no fold");
+  ok(foldTargetInTail([], { ...PURE, nowMs: now }) === null, "§10: an EMPTY ring ⇒ no fold");
   const brokenStore = { readSessionTail: async (): Promise<SessionTailEntry[]> => { throw new Error("store down"); } };
   ok(
-    (await replyFoldTarget({ store: brokenStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS })) === null,
+    (await replyFoldTarget({ store: brokenStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS, answeringWake: FIXTURE_WAKE })) === null,
     "🔴 §10: an UNREADABLE store ⇒ no fold, and the reply posts",
   );
-  const tied = [entry({ kind: "post", at: new Date(now).toISOString(), id: "m1" }), entry({ kind: "wake", at: new Date(now).toISOString() })];
-  ok(foldTargetInTail(tied, { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null, "§10: a same-millisecond TIE reads as 'the room spoke' ⇒ no fold");
+  const tied = [selfPost({ at: new Date(now).toISOString(), id: "m1" }), entry({ kind: "wake", at: new Date(now).toISOString() })];
+  ok(foldTargetInTail(tied, { ...PURE, nowMs: now }) === null, "§10: a same-millisecond TIE reads as 'the room spoke' ⇒ no fold");
 }
 
 {
@@ -372,8 +378,14 @@ let foldedMessageId = "";
 
 {
   const target = { messageId: "ts-9", platform: "slack" };
-  const unified = foldIntoEditRefusalMessage(target, true);
+  const unified = foldIntoEditRefusalMessage(target, true, "wk-9");
   const perSurface = foldIntoEditRefusalMessage(target, false);
+
+  ok(unified.includes("wake `wk-9`"), "🔴 §12/ARGUMENTS: a wake-addressed refusal names the `wake` argument `edit_reply` needs");
+  ok(unified.includes("message_id `ts-9`"), "§12/ARGUMENTS: …beside the message id, so the whole call is in the copy");
+  ok(!perSurface.includes("wake `"), "🔴 §12/ARGUMENTS: the per-surface copy names NO wake — that variant's `edit_reply` takes none");
+  ok(perSurface.includes("message_id `ts-9`"), "§12/ARGUMENTS: …and it still names the one argument that variant does take");
+
   ok(unified.includes("force: true"), "§12: the unified copy names the `force` valve it actually has");
   ok(!perSurface.includes("force"), "🔴 §12: the per-surface copy does NOT — that variant takes no `force` input, and naming one would teach a call that fails");
   ok(perSurface.includes("send this same call again"), "§12: …it names the valve it does have");
@@ -390,14 +402,14 @@ let foldedMessageId = "";
 }
 
 {
-  const ringOnly: SessionTailEntry[] = [entry({ kind: "post", at: new Date().toISOString(), id: "never-in-the-ledger" })];
+  const ringOnly: SessionTailEntry[] = [selfPost({ at: new Date().toISOString(), id: "never-in-the-ledger" })];
   const fakeStore = { readSessionTail: async (): Promise<SessionTailEntry[]> => ringOnly };
   ok(
-    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS })) === null,
+    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS, answeringWake: FIXTURE_WAKE })) === null,
     "🔴 §13: a ring row with NO ledger row is NOT a fold target — the redirect must land somewhere `edit_reply` accepts",
   );
   ok(
-    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS, ledgerDeps: { hasEventSeen: async () => true } }))
+    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS, answeringWake: FIXTURE_WAKE, ledgerDeps: { hasEventSeen: async () => true } }))
       ?.messageId === "never-in-the-ledger",
     "§13/CONTROL: with the ledger confirming, the SAME ring row IS the fold target — the ledger read is the only difference",
   );
@@ -529,13 +541,24 @@ let foldedMessageId = "";
     "§15/BURST/CONTROL: the SAME burst ring answering wake A still folds — the wake id is the only variable",
   );
 
+  const legacyRow = [entry({ kind: "post", at, id: "mLegacy" })];
   ok(
-    foldTargetInTail([entry({ kind: "post", at, id: "mLegacy" })], { ...base, answeringWake: "wk-B" })?.messageId === "mLegacy",
-    "🔴 §15/LEGACY: a ring row written before the wake was recorded still folds — a pre-change ring does not change behaviour",
+    foldTargetInTail(legacyRow, { ...base, answeringWake: "wk-B" }) === null,
+    "§15/TARGET-UNKNOWN: a ring row carrying NO wake is not a fold target — an absent id proves nothing (already true pre-OPE-1528, via the cross-wake arm)",
   );
   ok(
+    foldTargetInTail(legacyRow, { ...base, answeringWake: undefined }) === null,
+    "🔴 §15/TARGET-UNKNOWN/BOTH-WAKELESS: …and a wake-less CALLER no longer rescues it. THE OPE-1528 DELTA: this shape folded unconditionally before, and it is the per-surface `reply` seat, whose policy is therefore off",
+  );
+
+  ok(
     foldTargetInTail(ringA, { ...base, answeringWake: undefined })?.messageId === "mA",
-    "🔴 §15/PER-SURFACE: a caller with NO wake (the per-surface `reply`) compares nothing and folds exactly as before",
+    "🔴 §15/CALLER-UNKNOWN: a caller with NO wake compares nothing and keeps the pre-OPE-905 verdict — unchanged by OPE-1528",
+  );
+
+  ok(
+    foldTargetInTail([entry({ kind: "post", at, id: "mEarlier", wake: "wk-earlier" })], { ...base, answeringWake: "wk-new" }) === null,
+    "§15/ENGAGED-CHAIN: a mention whose room's last message is this seat's answer to an EARLIER wake draws NO fold verdict",
   );
 }
 
@@ -560,6 +583,7 @@ let foldedMessageId = "";
   const refusals = await rowsFor("reply.refused", wB);
   ok(refusals.length === 1 && refusals[0]!["reason"] === REPLY_FOLD_REFUSAL_REASON, "§16/CONTROL/AUDIT: one `should-be-edit` row, and it names wake B");
   ok(String(third.error).includes(second.id as string), "🔴 §16/CONTROL/COPY: …and it steers at wake B's OWN post, not at wake A's");
+  ok(String(third.error).includes(`wake \`${wB}\``), "🔴 §16/CONTROL/COPY: the live refusal names the `wake` argument too — the call it steers to is one the seat can actually make");
 }
 
 console.log(`✓ reply-fold: ${passed} assertions passed`);

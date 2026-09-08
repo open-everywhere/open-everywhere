@@ -385,6 +385,7 @@ export async function liveTeamsDispatch(
   await handleTeamsSingleWindowDispatch(
     {
       surfaceKey: plan.surfaceKey,
+      containerKey: plan.partition.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
       auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
         surfaceKey: plan.surfaceKey,

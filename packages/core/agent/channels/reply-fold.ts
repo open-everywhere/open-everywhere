@@ -41,7 +41,8 @@ export function foldTargetInTail(
   const last = ordered[ordered.length - 1];
   if (last.kind !== "post" || last.from !== "self") return null;
   if (!last.id) return null;
-  if (last.wake !== undefined && input.answeringWake !== undefined && last.wake !== input.answeringWake) return null;
+  if (last.wake === undefined) return null;
+  if (input.answeringWake !== undefined && last.wake !== input.answeringWake) return null;
   const platform = last.platform ?? input.platform;
   if (platform !== input.platform) return null;
   if (!(input.canEdit ?? platformCanEdit)(platform)) return null;
@@ -78,13 +79,14 @@ export async function replyFoldTarget(input: {
   return (await isOwnPost(window.org, locus, target.messageId, input.ledgerDeps ?? {})) ? target : null;
 }
 
-export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean): string {
+export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean, answeringWake?: string | undefined): string {
   const valve = secondMessageValve(canForce);
+  const args = answeringWake === undefined ? `message_id \`${target.messageId}\`` : `wake \`${answeringWake}\` and message_id \`${target.messageId}\``;
   return (
     "reply: your last message in this conversation is still the newest one — nobody has said anything since. " +
     "NOTHING was posted. The room already has your answer, so a second post beside it reads as noise. " +
     "Fold this into that message instead: call `edit_reply` with " +
-    `message_id \`${target.messageId}\`. ` +
+    `${args}. ` +
     "🔴 An edit REPLACES the message outright, so write the FULL message — everything the old one said that still " +
     "holds, plus what you are adding — never only the new part. " +
     valve
@@ -117,7 +119,7 @@ export async function refuseIfShouldFold(input: {
   }
   markFoldRefusedThisTurn(input.turnId, room);
   await auditReplyRefused(input.audit, REPLY_FOLD_REFUSAL_REASON);
-  throw new Error(foldIntoEditRefusalMessage(target, input.force !== undefined));
+  throw new Error(foldIntoEditRefusalMessage(target, input.force !== undefined, input.answeringWake));
 }
 
 interface FoldRefusedRooms {

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-teams-roster-")), "ops.sqlite3");
 delete process.env.OE_ORG;
@@ -26,7 +28,13 @@ import { buildTeamsAuth, type OpenEverywhereTeamsAuth } from "@open-everywhere/p
 import { planTeamsSingleWindow } from "@open-everywhere/provider-teams/agent/channels/teams-supervisor.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
-import { supervisorGrainFor } from "@open-everywhere/core/agent/channels/unified-supervisor.js";
+import { supervisorGrainFor, effectiveEveToken, UNIFIED_CHANNEL_NAME } from "@open-everywhere/core/agent/channels/unified-supervisor.js";
+import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
+import { seedTailWindow, tailWindowFor } from "@open-everywhere/core/agent/channels/session-tail-record.js";
+import { recordLandedPost, type ReplyAudit } from "@open-everywhere/core/agent/channels/reply-post.js";
+import { unifiedEditLocus } from "@open-everywhere/core/agent/channels/unified-reply.js";
+import { refuseIfShouldFold, REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-fold.js";
+import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "@open-everywhere/core/agent/access/taint-signal.js";
 import { registerConfig, defineDomain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
@@ -179,16 +187,18 @@ const CHANNEL = "19:chan-r@thread.tacv2";
 const TEAM = "TEAM-R";
 const AUTHOR = "29:example-owner";
 
-function channelActivity(): TeamsMessageActivity {
+function channelActivity(
+  over: { readonly id?: string; readonly text?: string; readonly from?: { id: string; name: string; aadObjectId: string } } = {},
+): TeamsMessageActivity {
   const parsed = parseTeamsActivity({
     type: "message",
-    id: "act-r-1",
+    id: over.id ?? "act-r-1",
     serviceUrl: SERVICE_URL,
-    from: { id: AUTHOR, name: "example-owner", aadObjectId: "a0d00000-0000-4000-8000-00000000a0d1" },
+    from: over.from ?? { id: AUTHOR, name: "example-owner", aadObjectId: "a0d00000-0000-4000-8000-00000000a0d1" },
     recipient: { id: "28:bot" },
     conversation: { id: CONVERSATION, conversationType: "channel", tenantId: TENANT },
     channelData: { channel: { id: CHANNEL, membershipType: "standard" }, team: { id: TEAM } },
-    text: "hello, what can you do?",
+    text: over.text ?? "hello, what can you do?",
     isBotMentioned: true,
   });
   assert.ok(parsed && parsed.type === "message", "fixture must parse as a message activity");
@@ -225,9 +235,14 @@ function captureTo(received: Received[]): RouteHandlerArgs["to"] {
   })) as unknown as RouteHandlerArgs["to"];
 }
 
-async function runChannel(probe: TeamsRosterProbe | undefined): Promise<Received> {
+async function driveWake(input: {
+  readonly id?: string;
+  readonly text?: string;
+  readonly from?: { id: string; name: string; aadObjectId: string };
+  readonly probe?: TeamsRosterProbe | undefined;
+}): Promise<{ readonly received: Received; readonly partition: ReturnType<typeof resolvePartition>; readonly wakeId: string }> {
   _resetTeamsUserTypeCacheForTest();
-  const a = channelActivity();
+  const a = channelActivity(input);
   const auth = captureFor(a);
   const partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
   const surfaceKey = domainKeyOf(partition);
@@ -240,9 +255,13 @@ async function runChannel(probe: TeamsRosterProbe | undefined): Promise<Received
   assert.ok(window, "the fixture must mint a window (an addressed mention on a vouched standard channel)");
   const plan: TeamsFrontPlan = { window, surfaceKey, partition, grain: supervisorGrainFor(surfaceKey, []), auth };
   const received: Received[] = [];
-  await liveTeamsDispatch(a, plan, captureTo(received), () => probe);
+  await liveTeamsDispatch(a, plan, captureTo(received), () => input.probe);
   assert.equal(received.length, 1, "exactly one dispatch into the unified channel");
-  return received[0]!;
+  return { received: received[0]!, partition, wakeId: window.wakeId };
+}
+
+async function runChannel(probe: TeamsRosterProbe | undefined): Promise<Received> {
+  return (await driveWake({ probe })).received;
 }
 
 {
@@ -274,6 +293,157 @@ async function runChannel(probe: TeamsRosterProbe | undefined): Promise<Received
   const gKeys = Object.keys(guest.auth.attributes ?? {}).filter((k) => k !== "user_type" && k !== OE_CHAT_NONMEMBER_ATTR).sort();
   const sKeys = Object.keys(silent.auth.attributes ?? {}).sort();
   eq(gKeys, sKeys, "🔴 the probe adds user_type (and the taint mark it earns) and NOTHING else — no other attribute moves");
+}
+
+{
+  const auth = captureFor(channelActivity());
+  const partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
+  const grain = supervisorGrainFor(domainKeyOf(partition), []);
+  const store = getOperationalStore();
+  const session = await store.getChannelSession(partition.org, grain.registryKey);
+  ok(session !== undefined && session !== null, "2b precondition: the dispatches above created the generation row this ring hangs off");
+  const ring = await store.readSessionTail(partition.org, grain.registryKey, session!.token);
+  const wakes = ring.filter((e) => e.kind === "wake");
+  ok(wakes.length > 0, "2b precondition: the REAL front recorded its delivered wakes on that generation's ring");
+  eq(
+    [...new Set(wakes.map((e) => e.container))],
+    [partition.surfaceKey],
+    "🔴 2b: every wake row the REAL liveTeamsDispatch filed carries partition.surfaceKey — the same container a POST files under, so the fold policy can see the room's own messages",
+  );
+  ok(
+    domainKeyOf(partition) !== partition.surfaceKey,
+    "🔴 2b/CONTROL: the domain key and the surface key really are different strings on this Teams fixture — so the assertion above is a measurement, not a tautology",
+  );
+}
+
+const nodeRequire = createRequire(import.meta.url);
+const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+const eveAbs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+const { ContextContainer, contextStorage } = await import(eveAbs("dist/src/context/container.js"));
+const { SessionKey } = await import(eveAbs("dist/src/context/keys.js"));
+function newTurn(turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
+  const c = new ContextContainer();
+  c.set(SessionKey, { sessionId: `teams-roster-probe-${turnId}`, auth: null, turn: 1, parent: undefined });
+  return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+}
+
+{
+  const store = getOperationalStore();
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
+  const POST_ID = "1772534450913";
+
+  const first = await driveWake({ id: "act-2c-1", text: "what is the status of the migration?" });
+  const partition = first.partition;
+  const grain = supervisorGrainFor(domainKeyOf(partition), []);
+  const session = await store.getChannelSession(partition.org, grain.registryKey);
+  ok(session !== undefined && session !== null, "2c precondition: the front's dispatch has a generation row to hang a ring off");
+
+  const turnPartition = resolvePartition({
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: first.received.auth } },
+  } as unknown as Parameters<typeof resolvePartition>[0]);
+  ok(
+    turnPartition.surfaceKey === partition.surfaceKey && domainKeyOf(turnPartition) === domainKeyOf(partition),
+    `🔴 2c: the auth eve hands the TURN resolves the same conversation the ingress dispatch resolved — both grains. Got ${turnPartition.surfaceKey} / ${domainKeyOf(turnPartition)} vs ${partition.surfaceKey} / ${domainKeyOf(partition)}`,
+  );
+  const window = tailWindowFor({
+    org: turnPartition.org,
+    domainKey: domainKeyOf(turnPartition),
+    surfaceKey: turnPartition.surfaceKey,
+    rawToken: effectiveEveToken(UNIFIED_CHANNEL_NAME, first.received.target.token),
+    platform: "teams",
+  });
+  ok(window !== null, "2c precondition: the generation token classifies as a STANDING seat, so this turn files its posts on a ring");
+  ok(window!.registryKey === grain.registryKey, "2c precondition: the turn's window reads the SAME ring the front wrote to");
+  ok(
+    window!.token === session!.token,
+    `🔴 2c: the generation the TURN derives from eve's continuation token IS the one the front recorded under — the other half of the ingress/turn join. Got ${String(window!.token)} vs ${String(session!.token)}`,
+  );
+
+  const locus = unifiedEditLocus(first.received.target.origin as unknown as Parameters<typeof unifiedEditLocus>[0]);
+  ok(locus !== null, "2c precondition: a Teams conversation has an editable address, so the policy has somewhere to steer an edit");
+
+  const auditFor = (turnId: string): ReplyAudit => ({
+    org: partition.org,
+    platform: partition.platform,
+    workspace: partition.workspace,
+    surface: partition.surface,
+    wakeId: first.wakeId,
+    turnId,
+    route: "tool",
+  });
+  const foldRefusals = async (): Promise<number> =>
+    (await readAudit({ org: partition.org, action: "reply.refused" })).filter(
+      (r) => ((r.detail ?? {}) as Record<string, unknown>)["reason"] === REPLY_FOLD_REFUSAL_REASON,
+    ).length;
+  const forcedRows = async (): Promise<number> => (await readAudit({ org: partition.org, action: "reply.forced" })).length;
+  const attemptSecondPost = async (turnId: string): Promise<string | undefined> =>
+    newTurn(turnId)(async () => {
+      try {
+        await refuseIfShouldFold({
+          store,
+          window,
+          platform: "teams",
+          locus,
+          turnId,
+          audit: auditFor(turnId),
+          answeringWake: first.wakeId,
+          force: false,
+        });
+        return undefined;
+      } catch (e) {
+        return String(e);
+      }
+    });
+
+  await tick();
+  await newTurn("post")(async () => {
+    seedTailWindow(window);
+    await recordLandedPost({
+      org: partition.org,
+      editLocus: locus,
+      messageId: POST_ID,
+      body: "the migration finished at 19:20.",
+      platform: "teams",
+      wake: first.wakeId,
+    });
+  });
+
+  await tick();
+  const beforeControl = await foldRefusals();
+  const control = await attemptSecondPost("teams-2c-control");
+  ok(
+    control !== undefined && control.includes("edit_reply"),
+    `🔴 2c/CONTROL: with nothing said since, the policy DOES refuse a second post on this REAL ring — so the leg below measures the human message, not an inert policy. Got: ${String(control)}`,
+  );
+  ok((await foldRefusals()) === beforeControl + 1, "2c/CONTROL: …and the refusal wrote its `should-be-edit` row");
+
+  await tick();
+  const human = await driveWake({
+    id: "act-2c-2",
+    text: "just a note for the humans in this thread",
+    from: { id: "29:someone-else", name: "someone else", aadObjectId: "00000000-0000-4000-8000-000000000016" },
+  });
+  ok(human.partition.surfaceKey === partition.surfaceKey, "2c: the second activity is the SAME conversation — one chain, one room");
+  const ring = await store.readSessionTail(partition.org, window!.registryKey, window!.token);
+  ok(
+    ring.some((e) => e.kind === "post" && e.id === POST_ID),
+    "2c precondition: the seat's post is STILL on the ring the next attempt reads — the human message did not rotate the generation out from under it",
+  );
+
+  await tick();
+  const beforeSecond = await foldRefusals();
+  const forcedBefore = await forcedRows();
+  const second = await attemptSecondPost("teams-2c-second");
+  ok(
+    second === undefined,
+    `🔴 2c: post → human message in the same chain → second post is NOT refused. This is a live run's shape, driven through the REAL Teams front. Got: ${String(second)}`,
+  );
+  ok((await foldRefusals()) === beforeSecond, "🔴 2c/AUDIT: and NO new `should-be-edit` row — the refusal did not happen quietly");
+  ok(
+    (await forcedRows()) === forcedBefore,
+    "🔴 2c/AUDIT: and NO `reply.forced` row — nothing pushed the seat to force past a verdict, which is what the 15-minute a live run runaway did",
+  );
 }
 
 const DM_CONVERSATION = "19:1on1-r@thread.v2";
