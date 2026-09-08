@@ -9,6 +9,7 @@ import {
   renderSeatPersona,
   renderSurface,
   renderSurfaceGuide,
+  standDownAckSentence,
   renderUnifiedSurfaceGuides,
   renderUnifiedSurfaces,
   surfaceDisplayName,
@@ -125,6 +126,27 @@ function ok(cond: boolean, label: string): void {
   ok(!replyOnly.includes("wake-id"), "negative control: …and never asks that seat for a wake-id");
   ok(dual.includes("posts into the channel mid-turn"), "negative control: the dual-mode arm still states the mid-turn post");
   ok(!dual.includes("DISCARDED"), "negative control: …and never claims a drop that surface does not do");
+}
+
+{
+  const wakeAck = standDownAckSentence("wake-addressed");
+  const replyOnlyAck = standDownAckSentence("reply-only");
+  const dualAck = standDownAckSentence("dual-mode");
+  const closingAck = standDownAckSentence("closing-text");
+
+  ok(/`reply`/.test(wakeAck) && /wake-id/.test(wakeAck), "the wake-addressed sentence names `reply` AND the wake-id its reply needs");
+  ok(/`reply`/.test(replyOnlyAck) && !/wake-id/.test(replyOnlyAck), "the reply-only sentence names `reply` and asks for NO address");
+  ok(/final text/.test(dualAck), "the dual-mode sentence names the turn's final text — the route that seat actually has");
+  ok(dualAck === closingAck, "closing-text reads the same sentence: on both arms the closing text is what posts");
+
+  ok(!/`reply`/.test(dualAck), "🔴 negative control: the dual-mode sentence does not ALSO offer `reply`");
+  ok(!/as your final text/.test(wakeAck), "🔴 negative control: the wake-addressed sentence does not offer the final text its host drops");
+  ok(/discarded/.test(wakeAck) && /discarded/.test(replyOnlyAck), "both prose-dropping arms say the closing text is discarded");
+  ok(!/discard/.test(dualAck), "🔴 negative control: …and the arm that POSTS its closing text never claims that drop");
+  ok(
+    new Set([wakeAck, replyOnlyAck, dualAck]).size === 3,
+    "the three live arms read three different sentences — the renderer has not flattened them",
+  );
 }
 
 {

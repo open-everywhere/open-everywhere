@@ -1,8 +1,10 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { markThreadStopped, roomEngagementAddress } from "../channels/engagement.js";
+import { markStoodDownThisTurn, peekDeliveryArm } from "../channels/reply-signal.js";
+import { standDownAckSentence, type DeliveryArm } from "../instructions/seat-prompt.js";
 import { appendAudit } from "../audit/audit.js";
 
 export const STAND_DOWN_ACTION = "engagement.stood_down";
@@ -13,6 +15,19 @@ export const DM_REFUSAL =
 export const GROUP_REFUSAL =
   "stand_down: this surface answers every message in a group conversation without checking whether you asked it to stop, so nothing was marked — reply that you could NOT stop following here, and that this is a limit of how the agent is built on this surface rather than something anyone in the conversation can change.";
 
+const DELIVERY_ARM_KINDS: Readonly<Record<DeliveryArm["kind"], true>> = {
+  "wake-addressed": true,
+  "reply-only": true,
+  "closing-text": true,
+  "dual-mode": true,
+};
+
+export function standDownAckRoute(): string {
+  const stamped = peekDeliveryArm();
+  const kind = stamped !== null && Object.hasOwn(DELIVERY_ARM_KINDS, stamped) ? (stamped as DeliveryArm["kind"]) : "dual-mode";
+  return standDownAckSentence(kind);
+}
+
 export default defineTool({
   description:
     "Stop following this conversation — call it when the people here have asked you to stop, to go " +
@@ -20,8 +35,8 @@ export default defineTool({
     "nothing; you simply stop being woken by messages here until somebody @mentions you again. " +
     "Reach for it on a clear ask to stop, not on a lull — silence is already your normal output, " +
     "and `no_reply` is the right ending for a message that merely wasn't for you. After calling " +
-    "this, send a one-line acknowledgement with the `reply` tool — trailing prose is discarded — " +
-    "then end the turn.",
+    "this, acknowledge it in one short line and end the turn — this tool's own result names the " +
+    "route that acknowledgement leaves by on this seat, and `no_reply` is not it.",
   inputSchema: z.object({
     reason: z
       .string()
@@ -69,13 +84,14 @@ export default defineTool({
         "stand_down: nothing was marked, so this stop did not take — reply that you could NOT stop following here, because either this conversation was never enrolled, which an @mention fixes, or the registry could not be written to just now.",
       );
     }
+    markStoodDownThisTurn(currentTurnId(c));
     return {
       standingDown: true,
-      note: stoppedRoom
-        ? "Standing down here — you won't be woken by messages anywhere in this room until someone " +
-          "@mentions you again. Acknowledge it in one short line and end the turn."
-        : "Standing down here — you won't be woken by messages in this conversation until someone " +
-          "@mentions you again. Acknowledge it in one short line and end the turn.",
+      note:
+        (stoppedRoom
+          ? "Standing down here — you won't be woken by messages anywhere in this room until someone @mentions you again. "
+          : "Standing down here — you won't be woken by messages in this conversation until someone @mentions you again. ") +
+        `This turn still owes a one-line acknowledgement. ${standDownAckRoute()}`,
     };
   },
 });

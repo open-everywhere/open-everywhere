@@ -20,6 +20,7 @@ import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
+import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
 import { classifySessionId, windowTokenPlatform } from "../channels/window-key.js";
@@ -194,6 +195,16 @@ function workerHasMidTurnPost(ctx: BindableContext): boolean {
 }
 
 function resolveDeliveryArm(
+  ctx: BindableContext,
+  kind: string,
+  opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
+): DeliveryArm {
+  const arm = readDeliveryArm(ctx, kind, opts);
+  markDeliveryArm(arm.kind);
+  return arm;
+}
+
+function readDeliveryArm(
   ctx: BindableContext,
   kind: string,
   opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },

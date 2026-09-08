@@ -27,6 +27,16 @@ export function consumeRepliedThisTurn(turnId: string | undefined): boolean {
   }
 }
 
+export function hasRepliedThisTurn(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const cur = slot.get();
+    return cur !== null && cur.turnId === turnId;
+  } catch {
+    return false;
+  }
+}
+
 interface DoneWakes {
   readonly turnId: string;
   readonly wakes: readonly string[];
@@ -182,6 +192,76 @@ export function stoppedRefusalMessage(): string {
     "Your acknowledgement has already gone out; anything further here is exactly what the person asked you to stop doing. " +
     `${END_TURN_WITH_SENTINEL_INSTRUCTION} Someone @mentioning you is what brings you back.`
   );
+}
+
+interface StoodDownThisTurn {
+  readonly turnId: string;
+  readonly stoodDown: true;
+  readonly postedBefore: boolean;
+}
+
+const stoodDownSlot = defineState<StoodDownThisTurn | null>("open-everywhere.stood-down-this-turn", () => null);
+
+export const NO_REPLY_AFTER_STAND_DOWN_ACTION = "reply.no_reply_after_stand_down";
+
+export function markStoodDownThisTurn(turnId: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  try {
+    const postedBefore = hasRepliedThisTurn(turnId);
+    stoodDownSlot.update(() => ({ turnId, stoodDown: true, postedBefore }));
+  } catch {
+  }
+}
+
+export function wasStoodDownThisTurn(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const cur = stoodDownSlot.get();
+    return cur !== null && cur.turnId === turnId;
+  } catch {
+    return false;
+  }
+}
+
+export function standDownAckOwedThisTurn(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  let mark: StoodDownThisTurn | null;
+  try {
+    mark = stoodDownSlot.get();
+  } catch {
+    return false;
+  }
+  if (mark === null || mark.turnId !== turnId) return false;
+  if (wasStoppedAckSpentThisTurn(turnId)) return false;
+  return mark.postedBefore || !hasRepliedThisTurn(turnId);
+}
+
+export function standDownAckOwedMessage(ackRoute: string): string {
+  return (
+    "You stood down in this turn, so this turn still owes the one-line acknowledgement the person asked for — " +
+    "silence was NOT recorded and nothing was posted. A `no_reply` turn is delivered as silence whatever " +
+    "you write after it, which is how this acknowledgement gets lost. " +
+    `${ackRoute} ` +
+    "Call `no_reply` only once that acknowledgement has gone out."
+  );
+}
+
+const armSlot = defineState<string | null>("open-everywhere.seat-delivery-arm", () => null);
+
+export function markDeliveryArm(kind: string): void {
+  if (typeof kind !== "string" || kind.length === 0) return;
+  try {
+    armSlot.update(() => kind);
+  } catch {
+  }
+}
+
+export function peekDeliveryArm(): string | null {
+  try {
+    return armSlot.get();
+  } catch {
+    return null;
+  }
 }
 
 interface RepliedWakes {

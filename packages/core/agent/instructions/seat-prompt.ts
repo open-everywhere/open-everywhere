@@ -64,6 +64,18 @@ one. A \`reply\` notifies the channel, so keep those for a result, a question, o
 never a mere progress tick. Prefer one curated message over a stack of new ones.`;
 }
 
+export function standDownAckSentence(arm: DeliveryArm["kind"]): string {
+  switch (arm) {
+    case "wake-addressed":
+      return "Send the acknowledgement with `reply`, naming this wake's `wake-id`, then end the turn — your turn-final text is discarded on this seat.";
+    case "reply-only":
+      return "Send the acknowledgement with `reply` — it takes no address here — then end the turn, because your turn-final text is discarded on this seat.";
+    case "closing-text":
+    case "dual-mode":
+      return "End the turn with the acknowledgement as your final text — that text is what posts on this seat.";
+  }
+}
+
 export function renderDeliverySection(arm: DeliveryArm): string {
   switch (arm.kind) {
     case "wake-addressed": {

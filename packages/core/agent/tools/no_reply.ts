@@ -5,7 +5,13 @@ import "../channels/turn-terminal-actions.js";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION, NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
-import { markWakeDeclinedThisTurn } from "../channels/reply-signal.js";
+import {
+  markWakeDeclinedThisTurn,
+  standDownAckOwedThisTurn,
+  standDownAckOwedMessage,
+  NO_REPLY_AFTER_STAND_DOWN_ACTION,
+} from "../channels/reply-signal.js";
+import { standDownAckRoute } from "./stand_down.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { auditSilencesEnabled } from "../audit/audit.js";
@@ -70,6 +76,14 @@ export default defineTool({
         "Don't conclude from silence that `reply` is gone — if you believe it can't deliver, " +
           "call it and read the error; otherwise pick a named reason for silence.",
       );
+    }
+    const standDownTurnId = currentTurnId(ctx as BindableContext);
+    if (standDownAckOwedThisTurn(standDownTurnId)) {
+      await auditToolAction(ctx, NO_REPLY_AFTER_STAND_DOWN_ACTION, {
+        reason: input.reason,
+        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+      });
+      throw new Error(standDownAckOwedMessage(standDownAckRoute()));
     }
     noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();
