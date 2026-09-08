@@ -17,6 +17,7 @@ import {
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { markGitHubConversationPosted } from "./github-reaction-scope.js";
 
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 type GitHubReactTarget = Extract<ReactTarget, { platform: "github" }>;
@@ -123,6 +124,7 @@ export async function liveGitHubPost(origin: GitHubOrigin, text: string): Promis
     throw Object.assign(new Error(`reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
   }
   const json = (await res.json().catch(() => ({}))) as { id?: number };
+  await markGitHubConversationPosted(origin.owner, origin.repo, origin.issueNumber, new Date().toISOString());
   return json.id !== undefined ? String(json.id) : "unknown";
 }
 

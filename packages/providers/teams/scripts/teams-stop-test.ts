@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseTeamsReaction, routeTeamsStopReaction, TEAMS_STOP_REACTION, type TeamsStopDeps } from "../agent/channels/teams-stop.js";
+import { parseTeamsReaction, routeTeamsStopReaction, TEAMS_FEEDBACK_SETTLE_TIMEOUT_MS, TEAMS_STOP_REACTION, type TeamsStopDeps } from "../agent/channels/teams-stop.js";
 import { buildTeamsFrontHandler, PUBLIC_TEAMS_ROUTE } from "../agent/channels/teams-front.js";
 import { bindTeams, buildTeamsAuth } from "../agent/channels/teams-identity.js";
 import type { CancelAnchoredTurnInput, CancelResult } from "@open-everywhere/core/agent/adapter-api.js";
@@ -161,4 +161,24 @@ function recordingDeps(): { deps: TeamsStopDeps; calls: CancelAnchoredTurnInput[
   ok(bound.anchorChannelId !== bound.target?.["channelId"], "🔴 the two are DIFFERENT values — which is why the registry needs its own field");
 }
 
-console.log(`\n✓ teams-stop: ${passed} assertions passed (activity parse, the cancel key, the fail-closed reactor guard with negative controls, the five reactions that must not cancel, front reachability, and the binding's anchor address)`);
+{
+  const { deps } = recordingDeps();
+  const stuck: TeamsStopDeps = {
+    ...deps,
+    feedback: { sink: { record: () => new Promise<void>(() => undefined), telemetry: () => undefined } },
+  };
+  const mixed = parseTeamsReaction(reactionActivity({ reactionsAdded: [{ type: TEAMS_STOP_REACTION }, { type: "like" }] }))!;
+  ok(mixed.added.length === 2, "(precondition) the activity carries the stop glyph AND a feedback reaction");
+
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const verdict = await Promise.race([
+    routeTeamsStopReaction(mixed, stuck).then((out) => (out.stopped ? "returned" : "returned-without-stopping")),
+    new Promise<"hung">((resolve) => {
+      deadline = setTimeout(() => resolve("hung"), TEAMS_FEEDBACK_SETTLE_TIMEOUT_MS * 3);
+    }),
+  ]);
+  clearTimeout(deadline);
+  ok(verdict === "returned", `🔴 a feedback sink that never settles does NOT hold the stop arm open (verdict: ${verdict})`);
+}
+
+console.log(`\n✓ teams-stop: ${passed} assertions passed (activity parse, the cancel key, the fail-closed reactor guard with negative controls, the five reactions that must not cancel, front reachability, the binding's anchor address, and the bounded feedback settle)`);

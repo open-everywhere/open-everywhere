@@ -61,6 +61,7 @@ const {
   parseGitHubReactionPollTarget,
   routeGitHubReactionFeedback,
 } = await import("../agent/channels/github-reaction-feedback.js");
+const { markGitHubConversationPosted } = await import("../agent/channels/github-reaction-scope.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -95,13 +96,16 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
   recorded: IngestedReaction[];
   telem: IngestedReaction[];
   asked: number[];
+  claims: Set<string>;
 } {
   const s = captureSink();
   const asked: number[] = [];
+  const claims = new Set<string>();
   return {
     recorded: s.recorded,
     telem: s.telem,
     asked,
+    claims,
     deps: {
       sink: s.sink,
       botLogin: BOT_LOGIN,
@@ -110,7 +114,10 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
         asked.push(id);
         return [{ content: "+1", userLogin: "octocat" }];
       },
-      seenKeys: async () => new Set<string>(),
+      recorded: async (_p, key) => claims.has(key),
+      markRecorded: async (_p, key) => void claims.add(key),
+      inScope: async () => true,
+      spendBudget: async () => true,
       ...over,
     },
   };
@@ -193,25 +200,68 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
 
 {
   const key = githubReactionKey(String(AGENT_COMMENT), "octocat", "+1");
-  const already = stubDeps({ seenKeys: async () => new Set([key]) });
-  ok((await routeGitHubReactionFeedback(TARGET, already.deps)).length === 0, "🔴 a reaction the audit log already carries is NOT recorded twice");
+  const already = stubDeps();
+  already.claims.add(key);
+  ok((await routeGitHubReactionFeedback(TARGET, already.deps)).length === 0, "🔴 a reaction the claim store already holds is NOT recorded twice");
   ok(already.recorded.length === 0, "…and reaches no sink");
 
-  const twice = stubDeps({
-    listComments: async () => [AGENT_COMMENT_ROW, AGENT_COMMENT_ROW],
-    seenKeys: async () => new Set<string>(),
-  });
+  const elsewhere = stubDeps();
+  elsewhere.claims.add(githubReactionKey("999999", "octocat", "+1"));
+  ok((await routeGitHubReactionFeedback(TARGET, elsewhere.deps)).length === 1, "a claim on another comment's reaction silences nothing here");
+
+  const twice = stubDeps({ listComments: async () => [AGENT_COMMENT_ROW, AGENT_COMMENT_ROW] });
   ok((await routeGitHubReactionFeedback(TARGET, twice.deps)).length === 1, "the same comment listed twice in one poll records once");
 
   const other = stubDeps({
-    seenKeys: async () => new Set([key]),
     listReactions: async () => [
       { content: "+1", userLogin: "octocat" },
       { content: "heart", userLogin: "octocat" },
     ],
   });
+  other.claims.add(key);
   ok((await routeGitHubReactionFeedback(TARGET, other.deps)).length === 1, "negative control: a different glyph from the same person IS a new row");
   ok(other.recorded[0]!.emoji === "heart", "…and it is the new one");
+
+  const twoPolls = stubDeps();
+  ok((await routeGitHubReactionFeedback(TARGET, twoPolls.deps)).length === 1, "the first poll records the reaction");
+  ok(twoPolls.claims.has(key), "…and claims its key");
+  ok((await routeGitHubReactionFeedback(TARGET, twoPolls.deps)).length === 0, "🔴 …so the second poll over the same state records nothing");
+
+  const lost = stubDeps({
+    sink: {
+      record: async () => {
+        throw new Error("audit store down");
+      },
+      telemetry: () => undefined,
+    },
+  });
+  const lostOut = await routeGitHubReactionFeedback(TARGET, lost.deps);
+  ok(lostOut.length === 1 && lostOut[0]!.recorded === false, "a failing sink yields an outcome that says the row was not recorded");
+  ok(lost.claims.size === 0, "🔴 …and claims NOTHING, so the next poll tries the reaction again");
+
+  const audits: number[] = [];
+  const unreadable = stubDeps({
+    recorded: async () => {
+      throw new Error("store down");
+    },
+    listReactions: async () => [
+      { content: "+1", userLogin: "octocat" },
+      { content: "heart", userLogin: "hubot" },
+      { content: "rocket", userLogin: "monalisa" },
+    ],
+    auditClaimUnreadable: async (_t, _p, _at, skipped) => void audits.push(skipped),
+  });
+  ok((await routeGitHubReactionFeedback(TARGET, unreadable.deps)).length === 0, "🔴 an unreadable claim store records nothing — the dedupe fails CLOSED");
+  ok(audits.length === 1, `🔴 …and writes exactly ONE audit row for the poll, not one per reaction (got ${audits.length})`);
+  ok(audits[0] === 3, `…naming how many reactions it skipped (got ${String(audits[0])})`);
+
+  const healthy = stubDeps({ auditClaimUnreadable: async () => void audits.push(-1) });
+  await routeGitHubReactionFeedback(TARGET, healthy.deps);
+  ok(audits.length === 1, "negative control: a claim store that answers writes no unreadable row");
+
+  const held = stubDeps({ recorded: async () => true, auditClaimUnreadable: async () => void audits.push(-1) });
+  await routeGitHubReactionFeedback(TARGET, held.deps);
+  ok(audits.length === 1, "🔴 negative control: an ALREADY-RECORDED answer is not an unreadable store");
 }
 
 {
@@ -234,6 +284,41 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
   ok(classifyEmoji("laugh") === "positive", "github `laugh` buckets positive");
   ok(classifyEmoji("confused") === "negative", "github `confused` buckets negative");
   ok(classifyEmoji("eyes") === "other", "negative control: github `eyes` stays `other` — it is a status glyph, not sentiment");
+}
+
+{
+  let listed = 0;
+  const countingList = async (): Promise<GitHubPolledComment[]> => {
+    listed++;
+    return [AGENT_COMMENT_ROW];
+  };
+
+  const stranger = stubDeps({ inScope: async () => false, listComments: countingList });
+  ok((await routeGitHubReactionFeedback(TARGET, stranger.deps)).length === 0, "a conversation the arm is told is out of scope records nothing");
+  ok(listed === 0 && stranger.asked.length === 0, "🔴 …and costs ZERO reads — the refusal is ahead of the first request");
+
+  listed = 0;
+  const inConversation = stubDeps({ inScope: async () => true, listComments: countingList });
+  ok((await routeGitHubReactionFeedback(TARGET, inConversation.deps)).length === 1, "negative control: a conversation the arm is told is in scope still polls and records");
+  ok(listed === 1, "…having actually read the comment page");
+
+  listed = 0;
+  let budgetAsked = 0;
+  const spent = stubDeps({
+    listComments: countingList,
+    spendBudget: async () => {
+      budgetAsked++;
+      return false;
+    },
+  });
+  ok((await routeGitHubReactionFeedback(TARGET, spent.deps)).length === 0, "a repository out of hourly budget records nothing");
+  ok(listed === 0 && spent.asked.length === 0, "🔴 …and costs ZERO reads");
+  ok(budgetAsked === 1, "…and the budget was actually consulted, not skipped");
+
+  budgetAsked = 0;
+  const strangerAgain = stubDeps({ inScope: async () => false, spendBudget: async () => (budgetAsked++, true) });
+  await routeGitHubReactionFeedback(TARGET, strangerAgain.deps);
+  ok(budgetAsked === 0, "🔴 a conversation the agent is not in spends no budget — the cheap gate runs first");
 }
 
 {
@@ -275,12 +360,22 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
   }
 
   let before = 0;
+  let afterUnmarked = 0;
   let afterPoll = 0;
   let afterPush = 0;
+  let readsWhileUnmarked = 0;
   try {
     console.error = () => undefined;
     console.warn = () => undefined;
     before = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+
+    const callsBefore = calls.length;
+    await drive(delivery(), "issue_comment");
+    afterUnmarked = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+    readsWhileUnmarked = calls.slice(callsBefore).filter((c) => c.url.includes(`/repos/${OWNER}/${REPO}/issues/`)).length;
+
+    await markGitHubConversationPosted(OWNER, REPO, NUMBER, new Date().toISOString());
+
     await drive(delivery(), "issue_comment");
     afterPoll = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
     await drive(delivery(), "push");
@@ -297,7 +392,9 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
     else process.env.GITHUB_APP_PRIVATE_KEY = saved.pem;
   }
 
-  ok(afterPoll === before + 1, "🔴 REACHABILITY: the real webhook route polls and records a durable audit row");
+  ok(afterUnmarked === before, "🔴 REACHABILITY (gate 1): an unmarked conversation records nothing through the real route");
+  ok(readsWhileUnmarked === 0, "🔴 …and made ZERO reads against the repository — the whole point of OPE-1540");
+  ok(afterPoll === before + 1, "🔴 REACHABILITY: once the reply path's own mark is written, the real route polls and records a durable audit row");
   ok(afterPush === afterPoll, "negative control: a `push` delivery names no conversation, so it records nothing");
 
   const rows = await readAudit({ action: REACTION_FEEDBACK_ACTION });

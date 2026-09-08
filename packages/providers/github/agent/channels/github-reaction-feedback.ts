@@ -1,10 +1,10 @@
 import {
   buildIngestedReaction,
+  deploymentOrg,
+  getOperationalStore,
   ingestReaction,
   liveReactionSink,
-  readAudit,
   resolvePartition,
-  REACTION_FEEDBACK_ACTION,
   type ReactionIngestOutcome,
   type PrFetchFn,
   type ReactionSinkDeps,
@@ -12,6 +12,7 @@ import {
 import { buildGitHubAuth } from "./github-identity.js";
 import { GITHUB_API_BASE, installationTokenFor } from "./github-post-arm.js";
 import { getJson, liveGithubReadFetch } from "./github-read.js";
+import { auditGitHubReactionClaimUnreadable, githubConversationInScope, spendGitHubPollBudget } from "./github-reaction-scope.js";
 
 const POLL_EVENT_TYPES: ReadonlySet<string> = new Set(["issue_comment", "issues"]);
 
@@ -40,8 +41,13 @@ export interface GitHubReactionFeedbackDeps {
   readonly botLogin?: string;
   readonly listComments: (target: GitHubReactionPollTarget) => Promise<readonly GitHubPolledComment[]>;
   readonly listReactions: (target: GitHubReactionPollTarget, commentId: number) => Promise<readonly GitHubPolledReaction[]>;
-  readonly seenKeys: (partition: GitHubReactionPartition) => Promise<ReadonlySet<string>>;
+  readonly recorded: (partition: GitHubReactionPartition, key: string) => Promise<boolean>;
+  readonly markRecorded: (partition: GitHubReactionPartition, key: string, atIso: string) => Promise<void>;
+  readonly inScope: (target: GitHubReactionPollTarget, partition: GitHubReactionPartition) => Promise<boolean>;
+  readonly spendBudget: (target: GitHubReactionPollTarget, partition: GitHubReactionPartition, atIso: string) => Promise<boolean>;
+  readonly auditClaimUnreadable?: (target: GitHubReactionPollTarget, partition: GitHubReactionPartition, atIso: string, skipped: number) => Promise<void>;
   readonly commentBudget?: number;
+  readonly now?: () => string;
 }
 
 export interface GitHubReactionPartition {
@@ -111,12 +117,6 @@ export async function routeGitHubReactionFeedback(
   const botLogin = deps.botLogin?.trim().toLowerCase();
   if (!botLogin) return [];
 
-  const comments = await deps.listComments(target).catch(() => []);
-  const own = comments
-    .filter((c) => githubCommentIsOwn(c, botLogin) && (c.reactionCount ?? 0) > 0)
-    .slice(0, deps.commentBudget ?? GITHUB_REACTION_POLL_COMMENT_BUDGET);
-  if (own.length === 0) return [];
-
   const partition = resolvePartition({
     channel: { kind: "github" },
     session: {
@@ -132,7 +132,20 @@ export async function routeGitHubReactionFeedback(
     },
   });
   const coords: GitHubReactionPartition = { org: partition.org, workspace: partition.workspace, surfaceKey: partition.surfaceKey };
-  const seen = new Set<string>(await deps.seenKeys(coords).catch(() => new Set<string>()));
+
+  const atIso = deps.now?.() ?? new Date().toISOString();
+  if (!(await deps.inScope(target, coords).catch(() => true))) return [];
+  if (!(await deps.spendBudget(target, coords, atIso).catch(() => true))) return [];
+
+  const comments = await deps.listComments(target).catch(() => []);
+  const own = comments
+    .filter((c) => githubCommentIsOwn(c, botLogin) && (c.reactionCount ?? 0) > 0)
+    .slice(0, deps.commentBudget ?? GITHUB_REACTION_POLL_COMMENT_BUDGET);
+  if (own.length === 0) return [];
+
+  const asked = new Set<string>();
+
+  let claimUnreadable = 0;
 
   const outcomes: ReactionIngestOutcome[] = [];
   for (const comment of own) {
@@ -142,7 +155,13 @@ export async function routeGitHubReactionFeedback(
       if (!reactorId || reactorId.toLowerCase() === botLogin) continue;
       const messageId = String(comment.id);
       const key = githubReactionKey(messageId, reactorId, reaction.content);
-      if (seen.has(key)) continue;
+      if (asked.has(key)) continue;
+      asked.add(key);
+      const claimed = await deps.recorded(coords, key).catch(() => {
+        claimUnreadable++;
+        return true;
+      });
+      if (claimed) continue;
       const ingested = buildIngestedReaction({
         surface: "github",
         verb: "added",
@@ -152,32 +171,25 @@ export async function routeGitHubReactionFeedback(
         onBotReply: true,
         partition,
       });
-      outcomes.push(await ingestReaction(ingested, deps.sink).catch(() => ({ recorded: false, onBotReply: true, reason: "sink failed" })));
-      seen.add(key);
+      const outcome = await ingestReaction(ingested, deps.sink).catch(() => ({ recorded: false, onBotReply: true, reason: "sink failed" }));
+      outcomes.push(outcome);
+      if (outcome.recorded) await deps.markRecorded(coords, key, atIso).catch(() => undefined);
     }
   }
+  if (claimUnreadable > 0) await deps.auditClaimUnreadable?.(target, coords, atIso, claimUnreadable).catch(() => undefined);
   return outcomes;
 }
 
-export const REACTION_SEEN_WINDOW = 2000;
+export function githubReactionClaimKey(p: GitHubReactionPartition, key: string): string {
+  return `github-reaction:${p.surfaceKey}\u001f${key}`;
+}
 
-export async function liveGitHubReactionSeenKeys(p: GitHubReactionPartition, limit = REACTION_SEEN_WINDOW): Promise<ReadonlySet<string>> {
-  const rows = await readAudit({
-    org: p.org,
-    platform: "github",
-    workspace: p.workspace,
-    surface: p.surfaceKey,
-    action: REACTION_FEEDBACK_ACTION,
-    limit,
-  }).catch(() => []);
-  const keys = new Set<string>();
-  for (const row of rows) {
-    const detail = row.detail as unknown;
-    const messageId = str(pick(detail, "messageId"));
-    const emoji = str(pick(detail, "emoji"));
-    if (messageId && emoji && row.principalId) keys.add(githubReactionKey(messageId, row.principalId, emoji));
-  }
-  return keys;
+export async function liveGitHubReactionRecorded(p: GitHubReactionPartition, key: string): Promise<boolean> {
+  return getOperationalStore().noticeClaimed(deploymentOrg(), githubReactionClaimKey(p, key));
+}
+
+export async function liveGitHubReactionMarkRecorded(p: GitHubReactionPartition, key: string, atIso: string): Promise<void> {
+  await getOperationalStore().claimNotice(deploymentOrg(), githubReactionClaimKey(p, key), atIso);
 }
 
 const GITHUB_COMMENT_PAGE = 100;
@@ -251,6 +263,10 @@ export function liveGitHubReactionFeedbackDeps(appSlug: string | undefined, fetc
           ...(r.user?.login ? { userLogin: r.user.login } : {}),
         }));
     },
-    seenKeys: (partition) => liveGitHubReactionSeenKeys(partition),
+    recorded: (partition, key) => liveGitHubReactionRecorded(partition, key),
+    markRecorded: (partition, key, atIso) => liveGitHubReactionMarkRecorded(partition, key, atIso),
+    inScope: (target, partition) => githubConversationInScope(partition.surfaceKey, target.owner, target.repo, target.number),
+    spendBudget: async (target, _partition, atIso) => (await spendGitHubPollBudget(target.owner, target.repo, atIso)).admitted,
+    auditClaimUnreadable: (target, _partition, atIso, skipped) => auditGitHubReactionClaimUnreadable(target.owner, target.repo, atIso, skipped),
   };
 }

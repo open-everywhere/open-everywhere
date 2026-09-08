@@ -512,10 +512,10 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key);
-    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice). No TTL and NO prune, on
-    -- purpose: the one thing it records is "this was already said", and expiring that would make the
-    -- announcement periodic. Bounded by configuration (one row per room per notice kind), not by
-    -- traffic.
+    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice), five key families. No TTL
+    -- and NO prune, on purpose: the one thing it records is "this already happened", and expiring
+    -- that would make an announcement periodic and a recorded reaction repeatable. Two families are
+    -- traffic-derived; store.ts's own section states what bounds each.
     CREATE TABLE IF NOT EXISTS notice_claim (
       org_id     TEXT NOT NULL,
       key        TEXT NOT NULL,

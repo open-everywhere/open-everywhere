@@ -166,12 +166,12 @@ function captureSink(): { deps: { sink: ReactionSinkDeps }; recorded: IngestedRe
     },
   });
   ok(out.stopped === true, "a mixed activity still cancels with the feedback sink still writing");
-  ok(cancelledAt === 1 && recordedAt === 0, "🔴 …the cancel ran FIRST — a SLOW feedback row never costs a person their stop");
-  ok(recorded.length === 0, "…and the arm returned before the durable row was written");
+  ok(cancelledAt === 1, "🔴 …the cancel ran FIRST — a SLOW feedback row never costs a person their stop");
+  ok(recorded.length === 1 && recorded[0]!.emoji === "like", "🔴 …and the arm returned with the durable row already written — a suspending host cannot drop it");
+  ok(recordedAt === 2, "…the row landed AFTER the cancel, which is the whole ordering");
 
   await out.feedback;
-  ok(recorded.length === 1 && recorded[0]!.emoji === "like", "negative control: the fired write still lands — the row is deferred, never dropped");
-  ok(recordedAt === 2, "…and it lands AFTER the cancel, which is the whole ordering");
+  ok(recorded.length === 1, "negative control: the rider was already settled — awaiting it records nothing further");
 }
 
 {

@@ -96,6 +96,22 @@ async function writeTeamsReactionFeedback(feedback: TeamsReactionActivity, deps:
   await routeTeamsReactionFeedback(feedback, deps.feedback ?? liveTeamsReactionFeedbackDeps()).catch(() => undefined);
 }
 
+export const TEAMS_FEEDBACK_SETTLE_TIMEOUT_MS = 5000;
+
+async function settleFeedback(pending: Promise<void> | undefined): Promise<void> {
+  if (!pending) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ceiling = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, TEAMS_FEEDBACK_SETTLE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([pending, ceiling]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: TeamsStopDeps): Promise<TeamsStopOutcome> {
   const feedback: TeamsReactionActivity = { ...rx, added: rx.added.filter((type) => type !== TEAMS_STOP_REACTION) };
   const carries = feedback.added.length > 0 || feedback.removed.length > 0;
@@ -104,7 +120,7 @@ export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: Te
   const rider = pending ? { feedback: pending } : {};
 
   if (!guard.stop) {
-    await pending;
+    await settleFeedback(pending);
     return { stopped: false, reason: guard.reason, ...rider };
   }
 
@@ -125,7 +141,7 @@ export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: Te
   });
   const channelKey = turnChannelKey("teams", guard.conversationId);
   if (!channelKey) {
-    await pending;
+    await settleFeedback(pending);
     return { stopped: false, reason: "stop: no conversation key", ...rider };
   }
   const result = await (deps.cancel ?? cancelAnchoredTurn)({
@@ -137,5 +153,6 @@ export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: Te
     query: { channelKey },
     attachSession: deps.attachSession,
   });
+  await settleFeedback(pending);
   return { stopped: true, outcome: result.outcome, ...rider };
 }
