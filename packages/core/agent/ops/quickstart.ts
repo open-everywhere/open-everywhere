@@ -6,6 +6,16 @@ export interface Check {
   readonly fix?: string;
 }
 
+export const CREDENTIAL_KEY_ENV_NAME = "OE_CREDENTIAL_ENCRYPTION_KEY";
+export const CREDENTIAL_KEY_BYTES = 32;
+
+export type CredentialKeyStatus = "ok" | "absent" | "malformed";
+
+export function credentialKeyStatus(raw: string | undefined): CredentialKeyStatus {
+  if (raw === undefined || raw === "") return "absent";
+  return Buffer.from(raw, "base64").length === CREDENTIAL_KEY_BYTES ? "ok" : "malformed";
+}
+
 export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check[]; ready: boolean } {
   const checks: Check[] = [];
   const set = (v: string | undefined) => v !== undefined && v !== "";
@@ -56,6 +66,22 @@ export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check
       fix: "deploying to Vercel? set OE_MEMORY_PROVIDER=postgres, OE_OPERATIONAL_PROVIDER=postgres and DATABASE_URL first — docs/extending/database.md",
     });
   }
+
+  const keyStatus = credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]);
+  checks.push({
+    name: `credential store key (${CREDENTIAL_KEY_ENV_NAME})`,
+    status: keyStatus === "ok" ? "ok" : keyStatus === "malformed" ? "missing" : "info",
+    detail:
+      keyStatus === "ok"
+        ? "armed — the encrypted credential store accepts secrets"
+        : keyStatus === "malformed"
+          ? `set, but it does not decode to a ${CREDENTIAL_KEY_BYTES}-byte key — the store fails closed on every read and write`
+          : "unset — `secret_set`, the `oe secret` CLI and every `broker: \"db\"` credential refuse; only `broker: \"env\"` credentials resolve",
+    fix:
+      keyStatus === "ok"
+        ? undefined
+        : `set ${CREDENTIAL_KEY_ENV_NAME} to a base64-encoded ${CREDENTIAL_KEY_BYTES}-byte key — the ops MCP tool \`scaffold_credential_key\` mints one into .env.local without printing it`,
+  });
 
   const hasAdminAuth =
     (set(env.OE_ADMIN_OIDC_ISSUER) && set(env.OE_ADMIN_OIDC_AUDIENCE)) ||
@@ -136,8 +162,30 @@ export function quickstartPlan(goal: Goal, env: NodeJS.ProcessEnv = process.env)
       detail: "The remote admin MCP is an OAuth resource server — point it at any OIDC provider, or use a static token.",
       command: authOk ? undefined : "set OE_ADMIN_OIDC_ISSUER/_AUDIENCE or OE_ADMIN_STATIC_TOKEN",
     });
+    const keyOk = credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]) === "ok";
+    steps.push({
+      id: "credential-key",
+      title: "Credential store key",
+      status: keyOk ? "done" : "todo",
+      detail: "Every secret past the root-of-trust pair lives in the deployment's encrypted store. This AES-256-GCM key arms it.",
+      command: keyOk ? undefined : "call the ops tool `scaffold_credential_key` — it mints the key into .env.local and never prints it",
+    });
     steps.push({ id: "build", title: "Build", status: "todo", detail: "Compile the Eve app.", command: "npm run build" });
+    steps.push({
+      id: "env-push",
+      title: "Push the root-of-trust env to the deployment",
+      status: "todo",
+      detail: ".env.local is gitignored and never ships. The hosted functions read their own environment.",
+      command: `vercel env add DATABASE_URL production — repeat for ${CREDENTIAL_KEY_ENV_NAME}, AI_GATEWAY_API_KEY and OE_PUBLIC_BASE_URL`,
+    });
     steps.push({ id: "deploy", title: "Deploy to Vercel", status: "todo", detail: "Ship it; wire the webhook URLs back to Slack/GitHub.", command: "vercel deploy --prod" });
+    steps.push({
+      id: "verify",
+      title: "Prove the agent answers",
+      status: "todo",
+      detail: "A moved alias is not proof: a deployment whose function dies at cold start still shows Ready. Only a request the agent itself serves is proof. Needs the OE_DEPLOY_* probe env plus OE_VERCEL_API_TOKEN.",
+      command: "npm run deploy:verify -- --no-rollback",
+    });
   } else {
     steps.push({
       id: "run",
