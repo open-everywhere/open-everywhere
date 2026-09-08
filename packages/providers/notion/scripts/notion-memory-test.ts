@@ -1,4 +1,4 @@
-import { renderBlocks, pageTitle, type BlockNode } from "../agent/memory/blocks.js";
+import { renderBlocks, pageTitle, contentLines, blocksFromMarkdown, type BlockNode } from "../agent/memory/blocks.js";
 import { NotionClient, makeNotionProvider, type HttpFetch } from "../agent/memory/memory.js";
 import type { Partition } from "@open-everywhere/core/agent/adapter-api.js";
 import { siloTier, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
@@ -110,9 +110,18 @@ ok("MEMORY.md" in subsetFiles, "select: root (A) included");
 ok("Onboarding.md" in subsetFiles && "Onboarding/Deep-Dive.md" in subsetFiles, "select: Onboarding subtree (B + D) included");
 ok(!("Archive.md" in subsetFiles), "select: Archive sibling (C) excluded");
 
-ok((await provider.writeTier(p, TIER, { "MEMORY.md": "x" }, "nope", silo)) === null, "writeTier is a no-op (read-only)");
+try {
+  await provider.writeTier(p, TIER, { "MEMORY.md": "x" }, "nope", silo);
+  ok(false, "a write to a read-only silo must throw");
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  ok(msg.includes("READ-ONLY"), "read-only writeTier: throws rather than returning null");
+  ok(msg.includes("NOTHING was saved"), "read-only writeTier: the refusal says the bytes were not saved");
+  ok(msg.includes("Notion tools"), "read-only writeTier: the refusal names the update route");
+}
+const callsBeforeDelete = calls;
 await provider.deleteTier(p, TIER, silo);
-ok(true, "deleteTier is a no-op (read-only)");
+ok(calls === callsBeforeDelete, "deleteTier is a no-op on a read-only silo (no API call, nothing of ours to erase)");
 
 const callsAfterFirst = calls;
 await provider.readTier(p, TIER, silo);
@@ -176,4 +185,211 @@ try {
   ok(slept.length === 3 && slept.every((ms) => ms === 1000), "backoff exhaustion: three waits under the shared default");
 }
 
-console.log(`✓ notion-memory: ${passed} assertions passed (blocks→MD codec + recursive read-only pull, offline fake)`);
+{
+  ok(contentLines("a\n\n  b  \n") .join("|") === "a|  b", "contentLines: blanks dropped, trailing space trimmed, indent kept");
+
+  const shapes = ["# H1", "## H2", "### H3", "- bullet", "- [ ] todo", "- [x] done", "1. first", "> quoted", "---", "plain text", "  nested"];
+  const blocks = blocksFromMarkdown(shapes);
+  const types = blocks.map((b) => b.type);
+  ok(
+    types.join(",") === "heading_1,heading_2,heading_3,bulleted_list_item,to_do,to_do,numbered_list_item,quote,divider,paragraph,paragraph",
+    "blocksFromMarkdown: each markdown shape maps to its Notion block type",
+  );
+  ok((blocks[5].to_do as { checked: boolean }).checked === true, "blocksFromMarkdown: `- [x]` sets checked");
+  ok((blocks[4].to_do as { checked: boolean }).checked === false, "blocksFromMarkdown: `- [ ]` leaves it unchecked");
+  ok(blocks.every((b) => b.object === "block"), "blocksFromMarkdown: every block carries Notion's `object: \"block\"`");
+
+  const lead: BlockNode = { type: "paragraph", paragraph: { rich_text: [{ plain_text: "existing" }] } };
+  const roundTrip = contentLines(renderBlocks([lead, ...blocks])).slice(1);
+  ok(roundTrip.join("\n") === shapes.join("\n"), "blocksFromMarkdown: the blocks render back to the same markdown");
+  ok(roundTrip[10] === "  nested", "blocksFromMarkdown: an indented line survives the round trip");
+
+  const capital = blocksFromMarkdown(["- [X] shouty"]);
+  ok(capital[0].type === "bulleted_list_item", "blocksFromMarkdown: `- [X]` is not coerced into a to_do");
+  ok(contentLines(renderBlocks(capital))[0] === "- [X] shouty", "blocksFromMarkdown: …and `- [X]` reads back verbatim");
+
+  const long = "z".repeat(4500);
+  const chunked = blocksFromMarkdown([long]);
+  ok((chunked[0].paragraph as { rich_text: unknown[] }).rich_text.length === 3, "blocksFromMarkdown: a >2000-char line splits into three rich_text objects");
+  ok(contentLines(renderBlocks(chunked))[0] === long, "blocksFromMarkdown: the split line reads back whole");
+
+  try {
+    blocksFromMarkdown(["# H", ""]);
+    ok(false, "blocksFromMarkdown must refuse a line it cannot store");
+  } catch (err) {
+    ok(err instanceof Error && err.message.includes("cannot be stored as a Notion block"), "blocksFromMarkdown: an unstorable line THROWS (round-trip guard fires)");
+  }
+}
+
+function makeNotion(store: Record<string, BlockNode[]>) {
+  const appends: { id: string; children: BlockNode[] }[] = [];
+  let gets = 0;
+  const fetchFn: HttpFetch = async (url, init) => {
+    const m = url.match(/\/v1\/blocks\/([^/?]+)\/children/);
+    const id = m ? m[1] : "";
+    if (init.method === "PATCH") {
+      const body = JSON.parse(init.body ?? "{}") as { children: BlockNode[] };
+      appends.push({ id, children: body.children });
+      (store[id] ??= []).push(...body.children);
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ results: body.children }) };
+    }
+    gets++;
+    return { ok: true, status: 200, text: async () => "", json: async () => ({ results: store[id] ?? [], has_more: false, next_cursor: null }) };
+  };
+  return { fetchFn, appends, gets: () => gets };
+}
+
+const WRITABLE = { name: "brain", provider: "notion", container: "wroot" };
+
+{
+  const store: Record<string, BlockNode[]> = {
+    wroot: [
+      { type: "heading_1", id: "wh", heading_1: { rich_text: [{ plain_text: "Brain" }] } },
+      { type: "child_page", id: "wsub", has_children: true, child_page: { title: "Decisions" } },
+    ],
+    wsub: [{ type: "paragraph", id: "wsp", paragraph: { rich_text: [{ plain_text: "kept" }] } }],
+  };
+  const notion = makeNotion(store);
+  const writable = makeNotionProvider({ client: () => new NotionClient("tok", notion.fetchFn) });
+
+  const before = await writable.readTier(p, TIER, WRITABLE);
+  ok(before["MEMORY.md"] === "# Brain\n", "write: precondition — the root page renders to just its heading");
+
+  const version = await writable.writeTier(p, TIER, { "MEMORY.md": "# Brain\n- learned: the deploy needs Node 24\n" }, "session s1", WRITABLE);
+  ok(typeof version === "string" && version.length > 0, "write: an append returns a version token (so hooks/memory.ts audits a memory.write row)");
+  ok(notion.appends.length === 1 && notion.appends[0].id === "wroot", "write: exactly one append, to the page the file key names");
+  ok(notion.appends[0].children.length === 1, "write: ONLY the added line is appended, never the whole file");
+  ok(notion.appends[0].children[0].type === "bulleted_list_item", "write: the added line is stored as its own typed block");
+
+  const after = await writable.readTier(p, TIER, WRITABLE);
+  ok(after["MEMORY.md"] === "# Brain\n- learned: the deploy needs Node 24\n", "write: a later read returns the appended line — the write LANDED and the stale cache was dropped");
+
+  const again = await writable.writeTier(p, TIER, { "MEMORY.md": after["MEMORY.md"] }, "session s2", WRITABLE);
+  ok(again === null, "write: unchanged content returns null (the provider contract's no-op)");
+  ok(notion.appends.length === 1, "write: …and dispatches no second append");
+
+  await writable.writeTier(p, TIER, { "Decisions.md": "kept\n- [x] shipped\n" }, "session s3", WRITABLE);
+  ok(notion.appends.length === 2 && notion.appends[1].id === "wsub", "write: a child page's file key appends to THAT page");
+  ok(notion.appends[1].children[0].type === "to_do", "write: the child page's added to-do lands as a to_do block");
+}
+
+{
+  const store: Record<string, BlockNode[]> = { wroot: [{ type: "paragraph", id: "wp", paragraph: { rich_text: [{ plain_text: "hi" }] } }] };
+  const notion = makeNotion(store);
+  const writable = makeNotionProvider({ client: () => new NotionClient("tok", notion.fetchFn) });
+  try {
+    await writable.writeTier(p, TIER, { "Invented.md": "hi\n- new\n" }, "s", WRITABLE);
+    ok(false, "a write to a file with no Notion page must throw");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ok(msg.includes("no Notion page for \"Invented.md\""), "refusal: an unknown file key names itself");
+    ok(msg.includes("NOTHING was saved, including the other file(s)"), "refusal: …and says the WHOLE tier is refused, not just this file");
+    ok(msg.includes("RECURRING.md") && msg.includes(".conflict-") && msg.includes(".rejected-"), "refusal: …and names the three host-minted shapes that can never map to a page");
+  }
+  ok(notion.appends.length === 0, "refusal: no append was dispatched");
+}
+
+{
+  const store: Record<string, BlockNode[]> = {
+    wroot: [
+      { type: "paragraph", id: "w1", paragraph: { rich_text: [{ plain_text: "first" }] } },
+      { type: "paragraph", id: "w2", paragraph: { rich_text: [{ plain_text: "second" }] } },
+    ],
+  };
+  const notion = makeNotion(store);
+  const writable = makeNotionProvider({ client: () => new NotionClient("tok", notion.fetchFn) });
+  try {
+    await writable.writeTier(p, TIER, { "MEMORY.md": "first\nEDITED\nthird\n" }, "s", WRITABLE);
+    ok(false, "an edit above the tail must throw");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ok(msg.includes("changed at line 2"), "refusal: the edit refusal names the diverging line");
+    ok(msg.includes("APPEND-ONLY"), "refusal: …and says why it cannot be expressed");
+  }
+  ok(notion.appends.length === 0, "refusal: an un-expressible edit dispatches NO partial append");
+
+  const added = await writable.writeTier(p, TIER, { "MEMORY.md": "first\nsecond\nthird\n" }, "s", WRITABLE);
+  ok(typeof added === "string", "refusal negative control: a pure append past the same prefix IS accepted");
+  ok(notion.appends.length === 1 && notion.appends[0].children.length === 1, "refusal negative control: …and appends exactly the one new line");
+
+  try {
+    await writable.writeTier(p, TIER, { "MEMORY.md": "first\n" }, "s", WRITABLE);
+    ok(false, "a deletion must throw");
+  } catch (err) {
+    ok(err instanceof Error && err.message.includes("APPEND-ONLY"), "refusal: a deletion is refused, not silently kept");
+  }
+}
+
+{
+  const store: Record<string, BlockNode[]> = { wroot: [{ type: "paragraph", id: "wp", paragraph: { rich_text: [{ plain_text: "one" }] } }] };
+  let patches = 0;
+  const failing: HttpFetch = async (url, init) => {
+    const id = url.match(/\/v1\/blocks\/([^/?]+)\/children/)?.[1] ?? "";
+    if (init.method === "PATCH") {
+      patches++;
+      return { ok: false, status: 500, text: async () => "notion is down", json: async () => ({}) };
+    }
+    return { ok: true, status: 200, text: async () => "", json: async () => ({ results: store[id] ?? [], has_more: false, next_cursor: null }) };
+  };
+  const writable = makeNotionProvider({ client: () => new NotionClient("tok", failing) });
+  try {
+    await writable.writeTier(p, TIER, { "MEMORY.md": "one\ntwo\n" }, "s", WRITABLE);
+    ok(false, "an append that Notion rejects must throw");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ok(msg.includes("500"), "failed append: the vendor status propagates");
+    ok(msg.includes("connector-credentials.ts"), "failed append: the error names where an endpoint refusal is fixed");
+  }
+  ok(patches === 1, "failed append: precondition — the PATCH was attempted");
+  store.wroot.push({ type: "paragraph", id: "wp2", paragraph: { rich_text: [{ plain_text: "landed" }] } });
+  const after = await writable.readTier(p, TIER, WRITABLE);
+  ok(after["MEMORY.md"].includes("landed"), "failed append: the cache was dropped BEFORE the first append, so a later read re-pulls");
+}
+
+{
+  const notion = makeNotion({ wroot: [] });
+  const writable = makeNotionProvider({ client: () => new NotionClient("tok", notion.fetchFn) });
+  try {
+    await writable.deleteTier(p, TIER, WRITABLE);
+    ok(false, "deleteTier on a writable notion silo must throw");
+  } catch (err) {
+    ok(err instanceof Error && err.message.includes("NOTHING was erased"), "deleteTier: a writable silo refuses loudly (a purge must never no-op silently)");
+  }
+}
+
+{
+  let reached = 0;
+  const counting: HttpFetch = async () => {
+    reached++;
+    return { ok: true, status: 200, text: async () => "", json: async () => ({}) };
+  };
+  const fenced = new NotionClient("tok", counting, "https://api.notion.com", {
+    hosts: ["api.notion.com"],
+    pathPrefixes: ["/v1/blocks/"],
+    methods: ["GET"],
+  });
+  try {
+    await fenced.appendChildren("wroot", blocksFromMarkdown(["- x"]));
+    ok(false, "a GET-only credential must refuse the append");
+  } catch {
+    ok(true, "endpoint fence: a GET-only credential refuses the block-append PATCH");
+  }
+  ok(reached === 0, "endpoint fence: the refusal happens BEFORE the request is dispatched");
+}
+
+{
+  const notion = makeNotion({
+    croot: [
+      { type: "paragraph", id: "cp", paragraph: { rich_text: [{ plain_text: "root" }] } },
+      { type: "child_page", id: "csub", has_children: true, child_page: { title: "Child" } },
+    ],
+    csub: [{ type: "paragraph", id: "cs", paragraph: { rich_text: [{ plain_text: "child" }] } }],
+  });
+  const shared = makeNotionProvider({ client: () => new NotionClient("tok", notion.fetchFn) });
+  const wide = await shared.readTier(p, TIER, { name: "wide", provider: "notion", container: "croot", readOnly: true });
+  ok("Child.md" in wide, "cache key: precondition — the recursive silo pulls the child page");
+  const narrow = await shared.readTier(p, TIER, { name: "narrow", provider: "notion", container: "croot", readOnly: true, recursive: false });
+  ok(!("Child.md" in narrow), "cache key: a `recursive: false` silo on the SAME page is not served the recursive silo's files");
+}
+
+console.log(`✓ notion-memory: ${passed} assertions passed (blocks↔MD codec + recursive pull + append write-back, offline fake)`);

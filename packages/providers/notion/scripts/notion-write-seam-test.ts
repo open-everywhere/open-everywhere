@@ -62,7 +62,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
     {
       file: "agent/memory/memory.ts",
       covered: true,
-      why: "NotionClient — the memory backing's READ-ONLY block reader. Typed over HttpFetch, not Response; carries the 429 backoff via withRetryAfterLoose since OPE-1255.",
+      why: "NotionClient — the memory backing's block reader AND its block appender (OPE-70). Typed over HttpFetch, not Response; both calls carry the 429 backoff via withRetryAfterLoose since OPE-1255.",
     },
   ];
 

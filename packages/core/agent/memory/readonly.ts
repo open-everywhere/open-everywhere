@@ -4,6 +4,10 @@ export function isProjectedCache(silo: MemorySilo): boolean {
   return silo.provider === "notion";
 }
 
+export function isAppendOnlyBacking(silo: MemorySilo): boolean {
+  return silo.provider === "notion" && silo.readOnly !== true;
+}
+
 export function readOnlyBanner(silo: MemorySilo): string {
   if (isProjectedCache(silo)) {
     const via = silo.skill ? "the `" + silo.skill + "` skill" : "the Notion tools";

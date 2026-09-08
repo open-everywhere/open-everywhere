@@ -1,6 +1,6 @@
 import type { ResolvedMemory } from "./resolve.js";
 import type { MemorySilo } from "./silo.js";
-import { isProjectedCache } from "./readonly.js";
+import { isProjectedCache, isAppendOnlyBacking } from "./readonly.js";
 import { tierSandboxDir } from "./sandbox-sync.js";
 import type { MemoryRecallRoute } from "../access/window-gate-manifest.js";
 
@@ -29,7 +29,11 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
       `"Call remember to save this fact for the team (category \\"note\\", or \\"decision\\" if it records a choice): <the fact, verbatim>". ` +
       `A fact is not a standing rule — never frame it as one. Only after the worker confirms the write, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
     : "save durable facts here with the `remember` tool";
-  if (!readOnly) return `writable — ${saveVerb}`;
+  if (!readOnly) {
+    return isAppendOnlyBacking(silo)
+      ? `writable but APPEND-ONLY — ${saveVerb}. Add new lines at the END of a file; changing or removing an existing line is REFUSED and does NOT save`
+      : `writable — ${saveVerb}`;
+  }
   if (isProjectedCache(silo)) {
     const via = silo.skill ? `the ${code(silo.skill)} skill` : "the Notion tools";
     return `read-only cache — edits are BLOCKED; to update, use ${via} (never edit these files)`;

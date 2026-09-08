@@ -10,6 +10,7 @@ import {
 } from "../agent/memory/domain.js";
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "../agent/memory/silo.js";
 import { renderMemoryIndex } from "../agent/memory/listing.js";
+import { siloTier } from "../agent/memory/store.js";
 import type { SurfaceBinding, Trust } from "../agent/identity/binding.js";
 import type { SessionMode } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
@@ -205,6 +206,16 @@ ok(renderMemoryIndex([]).includes("No memory is configured"), "index: empty plan
 const nkb = resolveMemoryPlan(binding("channel", "internal"), partition("C_NKB"), cfg);
 const nkbIndex = renderMemoryIndex(nkb.reads);
 ok(nkbIndex.includes("source: Notion") && nkbIndex.includes("read-only cache") && nkbIndex.includes("the `notion` skill"), "index: read-only Notion silo → on-disk + update route via its skill");
+
+{
+  const notionSilo = { name: "notion-brain", provider: "notion", container: "root" };
+  const writableNotion = renderMemoryIndex([{ silo: notionSilo, tier: siloTier(notionSilo.name), readOnly: false }]);
+  ok(writableNotion.includes("APPEND-ONLY"), "index: writable Notion silo → named APPEND-ONLY, not plain writable");
+  ok(writableNotion.includes("REFUSED and does NOT save"), "index: …and says an edit to an existing line does not save");
+  const gh = { name: "repo-brain", provider: "github", container: "acme/brain" };
+  const writableGit = renderMemoryIndex([{ silo: gh, tier: siloTier(gh.name), readOnly: false }]);
+  ok(!writableGit.includes("APPEND-ONLY"), "index negative control: a writable github silo is NOT marked append-only");
+}
 
 const partialIndex = renderMemoryIndex(multi.reads, ["notion-kb"]);
 ok(partialIndex.includes("Unavailable this session") && partialIndex.includes("**notion-kb** failed to load"), "index: failed silo → named under an unavailable section");

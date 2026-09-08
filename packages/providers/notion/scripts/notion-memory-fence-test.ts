@@ -81,5 +81,36 @@ async function pull(rules: CredentialEndpointRules | undefined): Promise<{ threw
   ok(!unnarrowed.threw, "§4 …and does not throw");
 }
 
+{
+  const SHIPPED: CredentialEndpointRules = { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET"] };
+  const WITH_PATCH: CredentialEndpointRules = { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET", "PATCH"] };
+  const WRITABLE = { name: "fence-brain", provider: "notion", container: ROOT };
+
+  async function append(rules: CredentialEndpointRules): Promise<{ threw: boolean; patches: number }> {
+    armCredential(rules);
+    let patches = 0;
+    const page = [{ type: "paragraph", id: "b1", paragraph: { rich_text: [{ plain_text: "kept" }] } }];
+    const fetchFn: HttpFetch = async (_url, init) => {
+      if (init.method === "PATCH") patches++;
+      return { ok: true, status: 200, async text() { return ""; }, async json() { return { results: page, has_more: false, next_cursor: null }; } };
+    };
+    const provider = makeNotionProvider(notionMemoryDeps(ORG_REF, BROKER, fetchFn));
+    try {
+      await provider.writeTier(P, TIER, { "MEMORY.md": "kept\n- added\n" }, "fence", WRITABLE);
+      return { threw: false, patches };
+    } catch {
+      return { threw: true, patches };
+    }
+  }
+
+  const shipped = await append(SHIPPED);
+  ok(shipped.patches === 0, "🔴 §5 the SHIPPED GET-only `memory` credential never dispatches the append PATCH — write-back needs an operator's own capability expansion");
+  ok(shipped.threw, "§5 …and the write THROWS rather than reporting a save that never happened");
+
+  const widened = await append(WITH_PATCH);
+  ok(widened.patches === 1, "§5 POSITIVE CONTROL: rules that admit PATCH let exactly one append through the same wiring");
+  ok(!widened.threw, "§5 …and the write does not throw");
+}
+
 resetBrokers();
 console.log(`notion-memory-fence-test: ${n} assertions passed`);

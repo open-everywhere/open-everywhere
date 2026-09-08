@@ -140,6 +140,59 @@ export function renderBlocks(blocks: readonly BlockNode[], resolve?: LinkResolve
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
+export function contentLines(markdown: string): string[] {
+  return markdown
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .filter((line) => line.length > 0);
+}
+
+const MAX_RICH_TEXT = 2000;
+
+function plainRich(content: string): RichText[] {
+  if (content.length === 0) return [];
+  const out: RichText[] = [];
+  for (let i = 0; i < content.length; i += MAX_RICH_TEXT) {
+    out.push({ type: "text", text: { content: content.slice(i, i + MAX_RICH_TEXT) } });
+  }
+  return out;
+}
+
+function mkBlock(type: string, payload: Record<string, unknown>): BlockNode {
+  return { object: "block", type, [type]: payload };
+}
+
+function blockForLine(line: string): BlockNode {
+  let m: RegExpMatchArray | null;
+  if ((m = line.match(/^### (.*)$/))) return mkBlock("heading_3", { rich_text: plainRich(m[1]) });
+  if ((m = line.match(/^## (.*)$/))) return mkBlock("heading_2", { rich_text: plainRich(m[1]) });
+  if ((m = line.match(/^# (.*)$/))) return mkBlock("heading_1", { rich_text: plainRich(m[1]) });
+  if ((m = line.match(/^- \[([ x])\] (.*)$/))) {
+    return mkBlock("to_do", { rich_text: plainRich(m[2]), checked: m[1] === "x" });
+  }
+  if ((m = line.match(/^- (.*)$/))) return mkBlock("bulleted_list_item", { rich_text: plainRich(m[1]) });
+  if ((m = line.match(/^1\. (.*)$/))) return mkBlock("numbered_list_item", { rich_text: plainRich(m[1]) });
+  if ((m = line.match(/^> (.*)$/))) return mkBlock("quote", { rich_text: plainRich(m[1]) });
+  if (line === "---") return mkBlock("divider", {});
+  return mkBlock("paragraph", { rich_text: plainRich(line) });
+}
+
+export function blocksFromMarkdown(lines: readonly string[]): BlockNode[] {
+  const blocks = lines.map(blockForLine);
+  const anchor = mkBlock("paragraph", { rich_text: plainRich("anchor") });
+  const back = contentLines(renderBlocks([anchor, ...blocks])).slice(1);
+  const at = back.findIndex((line, i) => line !== lines[i]);
+  if (back.length !== lines.length || at !== -1) {
+    const i = at === -1 ? Math.min(back.length, lines.length) : at;
+    throw new Error(
+      `notion memory: line ${i + 1} cannot be stored as a Notion block without changing it ` +
+        `(would read back as ${JSON.stringify(back[i] ?? "(nothing)")}, not ${JSON.stringify(lines[i] ?? "(nothing)")}). ` +
+        `The write is refused rather than saved in a form the next read would report differently.`,
+    );
+  }
+  return blocks;
+}
+
 export function pageTitle(block: BlockNode): string {
   const cp = (block.child_page ?? block.child_database) as { title?: string } | undefined;
   return cp?.title?.trim() || "untitled";

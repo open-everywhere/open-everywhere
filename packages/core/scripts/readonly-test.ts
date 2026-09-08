@@ -1,5 +1,5 @@
 
-import { readOnlyBanner, hasReadOnlyBanner, isProjectedCache, lockCommand } from "../agent/memory/readonly.js";
+import { readOnlyBanner, hasReadOnlyBanner, isProjectedCache, isAppendOnlyBacking, lockCommand } from "../agent/memory/readonly.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 
 let passed = 0;
@@ -16,6 +16,12 @@ const baseline: MemorySilo = { name: "org-baseline", provider: "sqlite", readOnl
 
 ok(isProjectedCache(notion), "notion provider → projected cache");
 ok(!isProjectedCache(baseline), "sqlite baseline → not a projected cache");
+
+const notionWritable: MemorySilo = { name: "brain", provider: "notion", container: "root" };
+ok(isAppendOnlyBacking(notionWritable), "writable notion silo → append-only backing");
+ok(!isAppendOnlyBacking(notion), "read-only notion silo → NOT append-only (it never writes at all)");
+ok(!isAppendOnlyBacking({ name: "repo-brain", provider: "github", container: "acme/brain" }), "writable github silo → NOT append-only (the files ARE the source)");
+ok(!isAppendOnlyBacking(baseline), "sqlite baseline → NOT append-only");
 
 const nb = readOnlyBanner(notion);
 ok(nb.includes("READ-ONLY") && nb.includes("Notion tools"), "notion banner → redirects to the Notion tools");

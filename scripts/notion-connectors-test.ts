@@ -128,6 +128,21 @@ ok(
     !credentialEndpointHostVerdict(teamKey?.endpoints, "https://mcp.notion.com/mcp").allowed,
     "the accepted trade-off: team-key's rules do NOT admit mcp.notion.com (the MCP connector's directUrl) — a connector grant now fails at the credential wall instead of at Notion's 401",
   );
+
+  const memoryKey = notionCat.credentials.find((cr) => cr.id === "memory");
+  ok(memoryKey !== undefined, "the shipped notion catalogue still carries the 'memory' credential the backing resolves");
+  ok(
+    JSON.stringify(memoryKey?.endpoints?.methods) === JSON.stringify(["GET"]),
+    "🔴 the shipped 'memory' credential admits GET ONLY — Notion memory write-back stays fenced out until an operator widens it, and three documents say so",
+  );
+  ok(
+    credentialEndpointVerdict(memoryKey?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "GET").allowed,
+    "positive control: the real 'memory' rules ADMIT the subtree pull (GET /v1/blocks/…/children), so the refusal below proves something",
+  );
+  ok(
+    !credentialEndpointVerdict(memoryKey?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "PATCH").allowed,
+    "🔴 …and REFUSE the memory backing's block-append PATCH on the same path — the fence, driven through the real rules",
+  );
 }
 
 {
