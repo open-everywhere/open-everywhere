@@ -80,6 +80,71 @@ export interface SpendSetArgs {
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
   readonly tainted?: boolean;
+  readonly coverage?: SpendCoverage;
+}
+
+export type SpendCoverage =
+  | { readonly measured: "full"; readonly windowDays: number }
+  | { readonly measured: "no-traffic"; readonly windowDays: number }
+  | { readonly measured: "gap"; readonly windowDays: number; readonly unratedModels: readonly string[]; readonly unobservedModels: readonly string[] }
+  | { readonly measured: "none"; readonly why: string };
+
+const COVERAGE_MODELS_SHOWN = 8;
+
+function namedModels(models: readonly string[]): string {
+  if (models.length <= COVERAGE_MODELS_SHOWN) return models.join(", ");
+  return `${models.slice(0, COVERAGE_MODELS_SHOWN).join(", ")} and ${models.length - COVERAGE_MODELS_SHOWN} more`;
+}
+
+function spendCoverageLines(coverage: SpendCoverage | undefined): string[] {
+  if (coverage === undefined) return [];
+  switch (coverage.measured) {
+    case "none":
+      return [`⚠ pricing coverage NOT MEASURED when this card was posted — ${coverage.why} This $ figure may not meter all of this scope's traffic.`];
+    case "no-traffic":
+      return [`ℹ pricing coverage: this scope ran no traffic in the ${coverage.windowDays} days before this card was posted, so nothing here shows whether this $ cap would meter it`];
+    case "full":
+      return [`✅ pricing coverage: every model this scope ran on in the ${coverage.windowDays} days before this card was posted carried a committed price`];
+    case "gap": {
+      const lines: string[] = [];
+      if (coverage.unratedModels.length > 0) {
+        lines.push(
+          `⚠ pricing coverage: this $ cap does NOT count calls on ${namedModels(coverage.unratedModels)} — they carry no committed price and add $0 to the spend ledger` +
+            ` (measured over the ${coverage.windowDays} days before this card was posted). The cap still sums every other priced row, and a token cap is unaffected.`,
+        );
+      }
+      if (coverage.unobservedModels.length > 0) {
+        lines.push(
+          `⚠ pricing coverage: some of this scope's rows record no model at all (${namedModels(coverage.unobservedModels)}), so the cap does not count them either` +
+            ` (measured over the ${coverage.windowDays} days before this card was posted).` +
+            ` That is an instrumentation gap, not a pricing one — no rate can be committed for them, because nothing observed which model ran.`,
+        );
+      }
+      return lines;
+    }
+    default:
+      return ["⚠ pricing coverage: this card carries a coverage state this deploy cannot read — treat the $ figure's coverage as unknown"];
+  }
+}
+
+function spendCoverageDetail(coverage: SpendCoverage | undefined): Record<string, unknown> {
+  if (coverage === undefined) return {};
+  switch (coverage.measured) {
+    case "gap":
+      return {
+        pricingCoverage: "gap",
+        ...(coverage.unratedModels.length > 0 ? { unratedModels: [...coverage.unratedModels] } : {}),
+        ...(coverage.unobservedModels.length > 0 ? { unobservedModels: [...coverage.unobservedModels] } : {}),
+      };
+    case "none":
+      return { pricingCoverage: "not-measured" };
+    case "no-traffic":
+      return { pricingCoverage: "no-traffic" };
+    case "full":
+      return { pricingCoverage: "full" };
+    default:
+      return { pricingCoverage: "unknown" };
+  }
 }
 
 function spendChangeLines(args: SpendSetArgs): string[] {
@@ -96,6 +161,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
     return [
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       ...spendChangeLines(args),
+      ...spendCoverageLines(args.coverage),
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
       ...spendTaintLines(args.tainted),
     ];
@@ -120,6 +186,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
         ...(args.monthlyUsd != null ? { monthlyUsd: args.monthlyUsd } : {}),
         ...(args.reason ? { reason: args.reason } : {}),
         ...(args.tainted ? { tainted: true } : {}),
+        ...spendCoverageDetail(args.coverage),
       },
     });
     const set = [

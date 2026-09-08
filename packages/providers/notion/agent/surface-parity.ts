@@ -6,9 +6,9 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "post-arm": "supported",
   "wake-origin-codec": "supported",
   "read-adapter": "supported",
-  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "reaction-feedback-ingest": { unsupported: "vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll" },
   "ancillary-ops": "supported",
-  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1501" },
+  "ambient-engagement-seam": "supported",
 
   "addressed-leg": { supported: "the `direct` wake — a name-drop or structured mention, not a platform @mention" },
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
@@ -31,6 +31,6 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   stop: { supported: "a comment whose entire body is `stop` — Notion pushes no reaction webhook" },
   ack_stop_glyph: { unsupported: "vendor limit — the Notion comment API exposes no reaction write, so there is no glyph to place" },
   ack_cancel_note: "supported",
-  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1501)" },
+  stand_down: { supported: "marks the page row; refuses when no row exists" },
   post_file: { supported: "at most 3 files per post — a Notion comment's own vendor cap" },
 };

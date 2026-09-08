@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { NotionAmbientConfig } from "./env.js";
+import { type NotionPagePin, notionBlockPhrases } from "./egress-evidence.js";
 import { pollUntil } from "./poll.js";
 
 const NOTION_API = "https://api.notion.com/v1";
@@ -43,6 +44,61 @@ export function buildBlockCommentBody(blockId: string, text: string): Record<str
 
 export function buildDiscussionReplyBody(discussionId: string, text: string): Record<string, unknown> {
   return { discussion_id: discussionId, rich_text: [{ text: { content: text } }] };
+}
+
+const PIN_READ_TIMEOUT_MS = 20_000;
+
+export type NotionPagePinResult = { readonly ok: true; readonly pin: NotionPagePin } | { readonly ok: false; readonly reason: string };
+
+function pageTitle(page: Record<string, unknown>): string {
+  const props = page.properties;
+  if (typeof props !== "object" || props === null) return "(untitled page)";
+  for (const value of Object.values(props as Record<string, unknown>)) {
+    if (typeof value !== "object" || value === null) continue;
+    const prop = value as Record<string, unknown>;
+    if (prop.type !== "title" || !Array.isArray(prop.title)) continue;
+    const text = prop.title
+      .map((span) => (typeof span === "object" && span !== null && typeof (span as Record<string, unknown>).plain_text === "string" ? ((span as Record<string, unknown>).plain_text as string) : ""))
+      .join("")
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return "(untitled page)";
+}
+
+export async function pinNotionQueryPage(opts: { readonly driverKey: string; readonly query: string }): Promise<NotionPagePinResult> {
+  const headers = { authorization: `Bearer ${opts.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" };
+  let found: Record<string, unknown> | undefined;
+  try {
+    const res = await fetch(`${NOTION_API}/search`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query: opts.query, filter: { value: "page", property: "object" }, page_size: 5 }),
+      signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+    });
+    if (!res.ok) return { ok: false, reason: `the harness's own POST /v1/search for "${opts.query}" → ${res.status}` };
+    const json = (await res.json()) as { results?: unknown };
+    const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
+    found = results.find((r) => r.object === "page" && typeof r.id === "string" && r.archived !== true);
+    if (!found) return { ok: false, reason: `the harness's own search for "${opts.query}" matched no page this token can see (${results.length} result(s))` };
+  } catch (err) {
+    return { ok: false, reason: `the harness's own Notion search failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const pageId = found.id as string;
+  const title = pageTitle(found);
+  try {
+    const res = await fetch(`${NOTION_API}/blocks/${encodeURIComponent(pageId)}/children?page_size=100`, {
+      headers: { authorization: headers.authorization, "notion-version": NOTION_VERSION },
+      signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+    });
+    if (!res.ok) return { ok: false, reason: `the harness's own GET /v1/blocks/${pageId}/children → ${res.status}` };
+    const json = (await res.json()) as { results?: unknown };
+    const phrases = notionBlockPhrases(Array.isArray(json.results) ? json.results : []);
+    if (phrases.length === 0) return { ok: false, reason: `the pinned page "${title}" (${pageId}) holds no quotable prose, so no phrase can be demanded of the answer` };
+    return { ok: true, pin: { pageId, title, phrases } };
+  } catch (err) {
+    return { ok: false, reason: `the harness's own Notion page read failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 export class NotionDriver {

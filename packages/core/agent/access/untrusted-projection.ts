@@ -11,6 +11,8 @@ import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 import { refuseAgentContinuation } from "./worker-continuation.js";
+import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
+import { auditWorkerToolset } from "../audit/worker-toolset.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -65,12 +67,23 @@ function isStatusOnlyConnectionSearch(output: unknown): boolean {
   });
 }
 
+export function recordWorkerToolset(tools: readonly string[], withheld: readonly string[]): void {
+  try {
+    const who = currentWorkerToolsetIdentity();
+    if (who === null) return;
+    const reason = claimWorkerToolsetEvidence(JSON.stringify([...tools].sort()));
+    if (reason === null) return;
+    void auditWorkerToolset({ who, reason, tools, withheld }).catch(() => undefined);
+  } catch {
+  }
+}
+
 export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
 
   const workerWake = currentWorkerWake();
-  if (workerWake) restrictToolsetForWorkerSeat(toolset);
+  const workerWithheld = workerWake ? restrictToolsetForWorkerSeat(toolset) : [];
   restrictToolsetForInvokerPosture(toolset, currentInvokerPosture(), workerWake);
 
   const agentAllowed = nativeAgentAllowedNow();
@@ -88,6 +101,8 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   }
 
   refuseAgentContinuation(toolset);
+
+  if (workerWake) recordWorkerToolset(Object.keys(toolset), workerWithheld);
 
   for (const [name, raw] of Object.entries(toolset)) {
     if (raw === null || typeof raw !== "object") continue;

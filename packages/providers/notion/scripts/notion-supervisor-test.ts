@@ -221,17 +221,19 @@ function dispatch(over: Partial<NotionSupervisorDispatch> = {}): NotionSuperviso
 
 interface WakeCapture { token: string; message: string; context: readonly string[]; state: { discussionId: string | null; pageId: string | null; workspaceId: string | null }; window?: UnifiedWindowWake }
 
-function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSupervisorDeps> = {}): { deps: NotionSupervisorDeps; wakes: WakeCapture[]; touched: string[] } {
+function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSupervisorDeps> = {}): { deps: NotionSupervisorDeps; wakes: WakeCapture[]; touched: string[]; engaged: string[] } {
   const wakes: WakeCapture[] = [];
   const touched: string[] = [];
+  const engaged: string[] = [];
   const deps: NotionSupervisorDeps = {
     getOrCreateSession: async () => session,
     touchSession: async (sk) => { touched.push(sk); },
     wake: async (w) => { wakes.push({ token: w.token, message: w.message, context: w.context, state: w.state as WakeCapture["state"], window: w.window }); },
+    markEngaged: async (d) => { engaged.push(d.pageId); },
     now: NOW,
     ...over,
   };
-  return { deps, wakes, touched };
+  return { deps, wakes, touched, engaged };
 }
 
 {

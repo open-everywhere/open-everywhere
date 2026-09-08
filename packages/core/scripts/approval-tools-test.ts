@@ -447,17 +447,35 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     ok(setOut.requested === true, "🔴 OPE-1193: the proposal still POSTS — pricing coverage is a report, never a refusal");
     const coverFrozen = await frozenOf(setOut.pendingId);
     ok(coverFrozen["monthlyUsd"] === 50 && coverFrozen["scopeKey"] === "slack/T123/C_COVER", "🔴 OPE-1193: …and the pending row is frozen with the proposed cap, unchanged by the report");
+    ok(
+      JSON.stringify(coverFrozen["coverage"]) === JSON.stringify({ measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: [] }),
+      `🔴 OPE-1482: the pending row FREEZES the gap for the card to render (got ${JSON.stringify(coverFrozen["coverage"])})`,
+    );
 
     const cleanOut = await inSession(async () =>
       execTool(setSpendLimitTool)({ monthlyUsd: 50, reason: "fully priced", scopeKey: "slack/T123/C_ALLPRICED" }, slackCtx("C_COVER") as never),
     );
     ok((cleanOut as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: a scope whose models are all priced reports NO unpricedModels field");
     ok(!/Pricing coverage/.test(cleanOut.note), "OPE-1193: …and its note carries no coverage sentence");
+    ok(
+      JSON.stringify((await frozenOf(cleanOut.pendingId))["coverage"]) === JSON.stringify({ measured: "full", windowDays: 30 }),
+      "🔴 OPE-1482: a fully priced scope freezes \"full\" — a distinct state, never the empty list a failed read would also produce",
+    );
+
+    const quietOut = await inSession(async () =>
+      execTool(setSpendLimitTool)({ monthlyUsd: 50, reason: "quiet room", scopeKey: "slack/T123/C_QUIET" }, slackCtx("C_COVER") as never),
+    );
+    ok(
+      JSON.stringify((await frozenOf(quietOut.pendingId))["coverage"]) === JSON.stringify({ measured: "no-traffic", windowDays: 30 }),
+      "🔴 OPE-1482: a scope with no traffic in the window freezes \"no-traffic\", never the full-coverage tick",
+    );
+    ok(!/Pricing coverage/.test(quietOut.note), "OPE-1482: …and the REPLY stays silent about it — there is no missing rate for the asker to go and commit");
 
     const tokensOnly = await inSession(async () =>
       execTool(setSpendLimitTool)({ monthlyTokens: 5_000_000, reason: "token bridge", scopeKey: "slack/T123/C_COVER" }, slackCtx("C_COVER") as never),
     );
     ok((tokensOnly as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: a token-only proposal reports no pricing coverage — a token cap counts every call");
+    ok((await frozenOf(tokensOnly.pendingId))["coverage"] === undefined, "OPE-1482: …and it freezes none either, so its card and audit row stay byte-identical to the pre-OPE-1482 shape");
 
     const atSurface = await unpricedModelsForScope("default", "surface", "slack/T123/C_COVER");
     ok(JSON.stringify(atSurface.models) === JSON.stringify(["test/no-rate-model"]), `🔴 OPE-1193: the surface read matches the key EXACTLY — "C_COVER2" is not swept in (got ${JSON.stringify(atSurface.models)})`);
@@ -510,6 +528,11 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
       ok(/Pricing coverage NOT MEASURED/.test(brokenOut.note), "🔴 OPE-1193: a failed ledger read SAYS SO in the note — never the same silence a fully priced scope produces");
       ok((brokenOut as { unpricedModels?: string[] }).unpricedModels === undefined, "OPE-1193: …and it names no models, because it measured none");
       ok(brokenOut.requested === true, "🔴 OPE-1193: …and the proposal still POSTS — a broken read is not a refusal either");
+      const brokenFrozen = await frozenOf(brokenOut.pendingId);
+      ok(
+        (brokenFrozen["coverage"] as { measured?: string } | undefined)?.measured === "none",
+        `🔴 OPE-1482: a failed ledger read freezes the NOT-MEASURED state for the card, never "full" (got ${JSON.stringify(brokenFrozen["coverage"])})`,
+      );
       const workingOut = await inSession(async () =>
         execTool(setSpendLimitTool)({ monthlyUsd: 75, reason: "ledger up", scopeKey: "slack/T123/C_BROKEN2" }, slackCtx("C_COVER") as never),
       );

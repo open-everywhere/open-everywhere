@@ -20,9 +20,10 @@ import {
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ancestry-trust.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
-import { notionRosterWorkspace } from "./notion-scope.js";
+import { notionPageDomain, notionRosterWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
+import { resolveNotionEngagement, type NotionEngagementDeps, type NotionSeamFacts } from "./notion-engagement.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type AttachSessionForCancel, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
@@ -51,6 +52,7 @@ export interface HandleNotionDeliveryDeps {
   readonly resolveBotName?: (credentialId: string) => Promise<string | undefined>;
   readonly ambientEnabled: (surfaceKey: string) => boolean;
   readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
+  readonly engagement?: NotionEngagementDeps;
   readonly fetch?: FetchLike;
   readonly version?: string;
   readonly retry?: NotionCallOpts["retry"];
@@ -75,6 +77,7 @@ export interface NotionDeliveryOutcome {
     | "no-api-key"
     | "unresolved-page"
     | "stopped"
+    | "stood-down"
     | "scope-refused"
     | "error";
   readonly detail?: string;
@@ -187,15 +190,29 @@ async function deliver(
     };
   }
 
-  if (!deps.ambientEnabled(surfaceKey)) {
+  const classification = classifyNotionComment(comment, botUserId, botName);
+  const seamFacts: NotionSeamFacts = {
+    workspaceId,
+    pageId,
+    ...(comment.created_by?.id ? { principalId: comment.created_by.id } : {}),
+    ...(credentialId ? { credentialId } : {}),
+  };
+  const seam = classification.addressing === "channel-watch" ? await resolveNotionEngagement(seamFacts, false, deps.engagement) : undefined;
+
+  const addressedInDeclaredDomain =
+    classification.addressing === "direct" && notionPageDomain(workspaceId, pageId, deps.domains).via !== "none";
+  if (!deps.ambientEnabled(surfaceKey) && !addressedInDeclaredDomain && seam?.kind !== "deliver") {
     return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey, signed, credentialId };
   }
 
-  const classification = classifyNotionComment(comment, botUserId, botName);
   if (classification.addressing === "drop") {
     const reason = classification.reason;
     const action = reason.startsWith("self") ? "skipped-self" : reason.startsWith("bot") ? "skipped-bot" : "dropped";
     return { status: 200, body: "ok", action, detail: reason, signed, credentialId };
+  }
+
+  if (classification.addressing !== "direct" && seam?.kind === "hold" && seam.stopped) {
+    return { status: 200, body: "ok", action: "stood-down", detail: seam.anchor, signed, credentialId };
   }
 
   const trust = await resolveNotionDeliveryTrust(pageId, workspaceId ?? "", deps.trustRoots, {

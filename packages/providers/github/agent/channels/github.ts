@@ -1,7 +1,16 @@
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState, type GitHubInboundContext, type GitHubComment, type GitHubInboundResult } from "eve/channels/github";
 import { buildGitHubAuth, githubAuthorFacts, githubBotMentioned } from "./github-identity.js";
+import {
+  githubEngagedAdmits,
+  githubEngagedFollowUpReach,
+  githubMachineAuthored,
+  markGitHubEngaged,
+  resolveGitHubEngagement,
+  type GitHubSeamFacts,
+} from "./github-engagement.js";
 import { parseGitHubStopComment, routeGitHubStopComment } from "./github-stop.js";
+import { liveGitHubReactionFeedbackDeps, parseGitHubReactionPollTarget, routeGitHubReactionFeedback } from "./github-reaction-feedback.js";
 import {
   classifyGitHubAmbientComment,
   extractGitHubAmbientEvent,
@@ -292,6 +301,25 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: ${cls.reason} (private=${ev.repoPrivate === true}, vouched=${vouched})`);
     return;
   }
+  const seamFacts: GitHubSeamFacts = {
+    owner: ev.owner,
+    repo: ev.repo,
+    number: ev.issueNumber,
+    isPrivate: ev.repoPrivate,
+    actorLogin: ev.comment.authorLogin ?? "unknown",
+    isMention: cls.addressing === "direct",
+    authorIsBot: false,
+    conversationKind: ev.isPullRequest ? "pull_request" : "issue",
+  };
+  const seam = await resolveGitHubEngagement(seamFacts);
+  if (seam.kind === "hold" && seam.stopped) {
+    slog(`comment on ${surfaceKey}#${ev.issueNumber} suppressed: stood down in ${seam.anchor} — @mention to pull the agent back in`);
+    return;
+  }
+  if (seam.kind === "deliver" && githubEngagedFollowUpReach(seamFacts).reachable && !shouldSuppressNativeMention(singleWindow, vouched)) {
+    slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: engaged container ${seam.anchor} — owned by the native githubChannel path`);
+    return;
+  }
   const directMention = cls.addressing === "direct";
   const mentionPolicy = singleWindowMentionPolicy(singleWindow, directMention, vouched);
   const auth = buildGitHubAuth({
@@ -396,7 +424,18 @@ async function auditNativeGitHubSilence(state: GitHubChannelState, reason: strin
 }
 
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
-    if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
+    const isMention = githubBotMentioned(comment.body, BOT_NAME, comment.author);
+    const seamFacts: GitHubSeamFacts = {
+      owner: ctx.repository.owner,
+      repo: ctx.repository.name,
+      number: ctx.conversation.issueNumber ?? ctx.conversation.pullRequestNumber ?? undefined,
+      isPrivate: ctx.repository.private,
+      actorLogin: comment.author?.login ?? ctx.sender.login,
+      isMention,
+      authorIsBot: githubMachineAuthored(comment.author?.login ?? ctx.sender.login, comment.author?.type ?? ctx.sender.type, BOT_NAME),
+      conversationKind: ctx.conversation.kind,
+    };
+    if (!isMention && !(await githubEngagedAdmits(seamFacts))) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
     const authorFacts = githubAuthorFacts({
       authorAssociation: str(comment.raw["author_association"]),
@@ -408,11 +447,12 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
         ctx.repository.owner,
         comment.author?.login ?? ctx.sender.login,
         authorFacts,
-        (message) => ctx.thread.post(message),
+        isMention ? (message) => ctx.thread.post(message) : undefined,
       )
     ) {
       return null;
     }
+    if (isMention) await markGitHubEngaged(seamFacts, comment.id);
     if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
       return null;
     }
@@ -574,6 +614,17 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       args.waitUntil(ambientDelivery(body, eventType, githubSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     }
     args.waitUntil(installationDelivery(body, eventType).catch((err) => ilog(`installation leg failed: ${String(err)}`)));
+    const pollTarget = parseGitHubReactionPollTarget(body, eventType);
+    if (pollTarget) {
+      args.waitUntil(
+        routeGitHubReactionFeedback(pollTarget, liveGitHubReactionFeedbackDeps(BOT_NAME)).then(
+          (outcomes) => {
+            if (outcomes.length > 0) slog(`reaction feedback on ${pollTarget.owner}/${pollTarget.repo}#${pollTarget.number}: ${outcomes.length} recorded`);
+          },
+          (err) => slog(`reaction feedback leg failed: ${String(err)}`),
+        ),
+      );
+    }
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);
   };

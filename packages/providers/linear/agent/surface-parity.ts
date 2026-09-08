@@ -6,9 +6,9 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   "post-arm": "supported",
   "wake-origin-codec": "supported",
   "read-adapter": "supported",
-  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "reaction-feedback-ingest": { supported: "the author of the reacted comment costs one GraphQL read — the webhook does not carry it" },
   "ancillary-ops": "supported",
-  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1501" },
+  "ambient-engagement-seam": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
@@ -31,6 +31,6 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   stop: { supported: "the ✋ reaction" },
   ack_stop_glyph: "supported",
   ack_cancel_note: "supported",
-  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1501)" },
+  stand_down: { supported: "marks the issue row; refuses when no row exists" },
   post_file: { unsupported: "vendor limit — a Linear comment carries no file-attachment API OE can drive" },
 };

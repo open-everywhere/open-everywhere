@@ -784,9 +784,14 @@ await handleTeamsSingleWindowDispatch(
   _resetSurfacesForTest();
   vouch(TEAMS_WS_KEY);
   ok(isVouchedInternal(TEAMS_WS_KEY, TEAMS_KEY), "teams vouch: a tenant-wide vouch satisfies isVouchedInternal (the any-grain check)");
-  ok(!isVouchedSurface(TEAMS_KEY), "teams vouch: a tenant-wide vouch does NOT satisfy isVouchedSurface — so teams-front REFUSES the channel (a Connect channel can't be swept in by a coarse vouch)");
+  ok(isVouchedSurface(TEAMS_KEY), "🔴 teams vouch: a TENANT-wide vouch now satisfies isVouchedSurface too — so teams-front ADMITS the channel on the tenant line alone (OPE-1521)");
+  ok(!isVouchedSurface("teams/TEN_OTHER/19-winchan.tacv2"), "🔴 teams vouch NEGATIVE CONTROL: the same channel id under an UNDECLARED tenant is still refused — the walk never reaches across tenants");
+  ok(teamsSingleWindowPrivacyOk(f({ vouched: isVouchedSurface(TEAMS_KEY) })), "teams floor: the tenant-line vouch carries through the floor the front reads");
+  ok(!teamsSingleWindowPrivacyOk(f({ vouched: isVouchedSurface(TEAMS_KEY), membershipType: "shared" })), "🔴 teams floor: a positively SHARED channel is refused even on the tenant line — the platform signal still demotes");
+  _resetSurfacesForTest();
   vouch(TEAMS_KEY);
-  ok(isVouchedSurface(TEAMS_KEY), "teams vouch: a SURFACE-grain vouch admits — the operator asserted this specific channel is internal");
+  ok(isVouchedSurface(TEAMS_KEY), "teams vouch: a CHANNEL-grain vouch admits — an exact declaration still wins its own key");
+  ok(!isVouchedSurface("teams/TEN_WIN/19-other.tacv2"), "teams vouch: a channel line narrows to the one channel (a sibling in the same tenant stays refused)");
   _resetSurfacesForTest();
 
   ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the canonical regional Bot Connector host is trusted");
@@ -1673,7 +1678,11 @@ overrideSettingsForTest({ window: { topology: false } });
   );
   ok(
     isVouchedSurface(teamsKey),
-    "🔴 real config: the Teams window member is vouched at EXACT CHANNEL grain — the single-window floor reads this, and the tenant line does NOT satisfy it",
+    "🔴 real config: the Teams window member passes the single-window floor from the REAL register — at whatever grain surfaces.ts declares (OPE-1521: tenant or channel)",
+  );
+  ok(
+    !isVouchedSurface("teams/00000000-0000-0000-0000-000000000000/19-undeclared-thread.tacv2"),
+    "real config NEGATIVE CONTROL: a Teams key this deployment declares nowhere fails the floor",
   );
   _resetSurfacesForTest();
 }

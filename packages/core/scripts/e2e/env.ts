@@ -75,10 +75,9 @@ export const ENV = {
   githubSoakRepo: "E2E_GITHUB_SOAK_REPO",
   soakDomain: "E2E_SOAK_DOMAIN",
 
-  engagedSlackChannel: "E2E_ENGAGED_SLACK_CHANNEL",
-  engagedDiscordChannel: "E2E_ENGAGED_DISCORD_CHANNEL",
-  engagedGithubRepo: "E2E_ENGAGED_GITHUB_REPO",
-  engagedLinearTeamId: "E2E_ENGAGED_LINEAR_TEAM_ID",
+  engagedGithubRepo: "E2E_ADDRESSED_GITHUB_REPO",
+  engagedDiscordChannel: "E2E_ADDRESSED_DISCORD_CHANNEL",
+  engagedLinearTeamId: "E2E_ADDRESSED_LINEAR_TEAM_ID",
   engagedNotionPageId: "E2E_ADDRESSED_NOTION_PAGE_ID",
 
   expectUnified: "E2E_EXPECT_UNIFIED",
@@ -458,24 +457,34 @@ function engagedRoom(env: Env, name: string): Resolved<EngagedRoomConfig> {
   return { ok: true, cfg: { id: values[0] } };
 }
 
+export type EngagedSurface = "slack" | "discord" | "github" | "linear" | "notion";
+
+export const ENGAGED_ROOM_VARS: Readonly<Record<EngagedSurface, string>> = {
+  slack: ENV.slackPrivateChannel,
+  discord: ENV.engagedDiscordChannel,
+  github: ENV.engagedGithubRepo,
+  linear: ENV.engagedLinearTeamId,
+  notion: ENV.engagedNotionPageId,
+};
+
 export function resolveEngagedSlack(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENV.engagedSlackChannel);
+  return engagedRoom(env, ENGAGED_ROOM_VARS.slack);
 }
 
 export function resolveEngagedDiscord(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENV.engagedDiscordChannel);
+  return engagedRoom(env, ENGAGED_ROOM_VARS.discord);
 }
 
 export function resolveEngagedGithub(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENV.engagedGithubRepo);
+  return engagedRoom(env, ENGAGED_ROOM_VARS.github);
 }
 
 export function resolveEngagedLinear(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENV.engagedLinearTeamId);
+  return engagedRoom(env, ENGAGED_ROOM_VARS.linear);
 }
 
 export function resolveEngagedNotion(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENV.engagedNotionPageId);
+  return engagedRoom(env, ENGAGED_ROOM_VARS.notion);
 }
 
 export function isLocalEvalTarget(targetUrl: string | undefined): boolean {

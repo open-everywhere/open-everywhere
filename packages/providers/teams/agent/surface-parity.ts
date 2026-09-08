@@ -6,7 +6,7 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "post-arm": "supported",
   "wake-origin-codec": "supported",
   "read-adapter": "supported",
-  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "reaction-feedback-ingest": { supported: "the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare" },
   "ancillary-ops": "supported",
   "ambient-engagement-seam": "supported",
 

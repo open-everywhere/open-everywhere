@@ -3,6 +3,7 @@ import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-sea
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
 import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
 import { setWorkerWake } from "../access/worker-seat-state.js";
+import { setWorkerToolsetIdentity, type WorkerToolsetIdentity } from "../access/worker-toolset-state.js";
 import { INVOKER_POSTURE_ATTR, resolveInvokerPosture } from "../access/invoker-posture.js";
 import { setInvokerPosture } from "../access/invoker-posture-state.js";
 import { WEBHOOK_MARKER_ATTR } from "../routines/fire-auth.js";
@@ -12,7 +13,7 @@ import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
-import { bindFrom, currentWakeId, deploymentOrg, isSubagentChildContext, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, currentTurnId, currentWakeId, delegationRootSessionId, deploymentOrg, isSubagentChildContext, subagentParentSessionId, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { routineManualStamped, routineMarker } from "../routines/routine.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -85,7 +86,37 @@ function classifyNativeDelegationSeat(ctx: HookContext): void {
 }
 
 function classifyWorkerSeat(ctx: HookContext): void {
-  setWorkerWake(grainOf(ctx as unknown as BindableContext) === "task");
+  const c = ctx as unknown as BindableContext;
+  const worker = grainOf(c) === "task";
+  setWorkerWake(worker);
+  setWorkerToolsetIdentity(worker ? workerToolsetIdentity(c) : null);
+}
+
+function parentCallIdOf(ctx: BindableContext): string | null {
+  try {
+    const id = (ctx as unknown as { session?: { parent?: { callId?: unknown } } }).session?.parent?.callId;
+    return typeof id === "string" && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function workerToolsetIdentity(c: BindableContext): WorkerToolsetIdentity | null {
+  try {
+    const sessionId = (c as { session?: { id?: string } }).session?.id;
+    if (typeof sessionId !== "string" || sessionId.length === 0) return null;
+    return {
+      org: deploymentOrg(),
+      domain: domainLabelOf(c),
+      worker: sessionId,
+      parentSession: subagentParentSessionId(c) ?? null,
+      parentCallId: parentCallIdOf(c),
+      rootSession: delegationRootSessionId(c) ?? null,
+      turn: currentTurnId(c) ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function classifyInvokerPosture(ctx: HookContext, attrs: Attrs): void {
@@ -111,6 +142,7 @@ async function classifyWake(ctx: HookContext): Promise<void> {
   setNativeDelegationSeat("unclassified");
   classifyNativeDelegationSeat(ctx);
   setWorkerWake(false);
+  setWorkerToolsetIdentity(null);
   classifyWorkerSeat(ctx);
   setLeanSeatWake(false);
   const attrs = attrsOf(ctx);
@@ -140,12 +172,14 @@ export default defineHook({
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
+      setWorkerToolsetIdentity(null);
       setInvokerPosture("untrusted-remote");
     },
     "turn.failed": () => {
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
+      setWorkerToolsetIdentity(null);
       setInvokerPosture("untrusted-remote");
     },
   },

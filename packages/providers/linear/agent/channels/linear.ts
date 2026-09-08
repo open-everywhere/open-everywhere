@@ -11,11 +11,13 @@ import {
 import { callLinear, createLinearActivity, linearChannelApi, type LinearApi } from "./linear-graphql.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
+import { markLinearEngaged, resolveLinearEngagement, type LinearSeamFacts } from "./linear-engagement.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
 import { postLinearSilenceAck, postLinearHostAck } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import { parseLinearReaction, routeLinearStopReaction } from "./linear-stop.js";
+import { liveLinearReactionFeedbackDeps, routeLinearReactionFeedback } from "./linear-reaction-feedback.js";
 import {
   classifyLinearAmbientComment,
   extractLinearCommentSignal,
@@ -443,7 +445,19 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
   const authorFacts = linearAuthorFacts(c.authorGuest);
   if (await linearExternalSuppressed(surfaceKey, signal.organizationId, c.authorId, authorFacts)) return;
-  if (!linearAmbientEnabled(surfaceKey)) {
+  const seamFacts: LinearSeamFacts = {
+    organizationId: signal.organizationId,
+    teamId: c.teamId,
+    issueId: c.issueId,
+    ...(c.authorId ? { principalId: c.authorId } : {}),
+    ...(c.teamPrivate === undefined ? {} : { isPrivate: c.teamPrivate }),
+  };
+  const seam = await resolveLinearEngagement(seamFacts, false);
+  if (seam.kind === "hold" && seam.stopped) {
+    slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) suppressed: stood down on ${seam.anchor} — address the agent again to pull it back in`);
+    return;
+  }
+  if (seam.kind !== "deliver" && !linearAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
     return;
   }
@@ -529,6 +543,27 @@ async function stopReactionDelivery(body: string, attachSession: AttachSessionFo
     appUserId: async (organizationId) => (await resolveViewer(organizationId)).id,
   });
   slog(`stop reaction on issue ${rx.issueId ?? "?"}: ${out.stopped ? out.outcome : out.reason}`);
+}
+
+async function reactionFeedbackDelivery(body: string): Promise<void> {
+  const rx = parseLinearReaction(body);
+  if (!rx) return;
+  const out = await routeLinearReactionFeedback(
+    rx,
+    liveLinearReactionFeedbackDeps({
+      appUserId: async (organizationId) => (await resolveViewer(organizationId)).id,
+      commentAuthorId: async (commentId) => {
+        const data = await callLinear<{ comment?: { user?: { id?: string } } }>({
+          credentials: linearCredentialsForOrg(rx.organizationId),
+          query: "query OeReactionCommentAuthor($id: String!) { comment(id: $id) { user { id } } }",
+          queryName: "OeReactionCommentAuthor",
+          variables: { id: commentId },
+        });
+        return data.comment?.user?.id;
+      },
+    }),
+  );
+  slog(`reaction feedback on issue ${rx.issueId ?? "?"}: ${out.ingested ? out.outcome.reason : out.reason}`);
 }
 
 export const LINEAR_MENTION_HANDOFF_TEXT =
@@ -642,6 +677,13 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       agentSessionId,
     );
     if (authorVerdict) return;
+    if (sig.action === "created") await markLinearEngaged({
+      organizationId,
+      teamId: c.teamId,
+      issueId: c.issueId,
+      ...(c.authorId ? { principalId: c.authorId } : {}),
+      ...(c.teamPrivate === undefined ? {} : { isPrivate: c.teamPrivate }),
+    }, agentSessionId);
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (!grainUsesUnifiedWindow(grain)) throw new Error("no single-context window (crossSurface/solo) holds for the enriched team (config raced or team mismatch)");
     const vouched = linearTeamVouched(organizationId, c.teamId);
@@ -812,6 +854,14 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       if (authorVerdict) return null;
     }
 
+    if (event.action === "created") await markLinearEngaged({
+      organizationId: event.organizationId ?? s.organizationId ?? undefined,
+      teamId,
+      issueId: s.issueId ?? s.issue?.id ?? undefined,
+      ...(creatorId ? { principalId: creatorId } : {}),
+      ...(isPrivate === undefined ? {} : { isPrivate }),
+    }, agentSessionId);
+
     const auth = stampNonMemberChatAuth(
       buildLinearAuth({
         agentSessionId,
@@ -975,6 +1025,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       args.waitUntil(ambientDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
       args.waitUntil(mentionSessionDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`mention leg failed: ${String(err)}`)));
       args.waitUntil(stopReactionDelivery(body, args.attachSession).catch((err) => slog(`stop leg failed: ${String(err)}`)));
+      args.waitUntil(reactionFeedbackDelivery(body).catch((err) => slog(`reaction feedback leg failed: ${String(err)}`)));
       const deliveryId = req.headers.get(LINEAR_DELIVERY_ID_HEADER) ?? undefined;
       args.waitUntil(
         admitTrigger(

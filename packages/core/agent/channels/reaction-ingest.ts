@@ -6,6 +6,7 @@ import { admitProviderRegistration } from "../access/provider-selection.js";
 export type EmojiClass = "positive" | "negative" | "other";
 
 const POSITIVE_EMOJI: ReadonlySet<string> = new Set([
+  "like", "laugh", "laughing", "hooray",
   "thumbsup", "+1", "white_check_mark", "heavy_check_mark", "ballot_box_with_check",
   "heart", "hearts", "yellow_heart", "green_heart", "blue_heart", "purple_heart",
   "tada", "raised_hands", "clap", "fire", "100", "pray", "star", "star2", "ok_hand",
@@ -17,7 +18,7 @@ const POSITIVE_EMOJI: ReadonlySet<string> = new Set([
 const NEGATIVE_EMOJI: ReadonlySet<string> = new Set([
   "thumbsdown", "-1", "x", "negative_squared_cross_mark", "no_entry", "no_entry_sign",
   "rage", "angry", "cry", "sob", "disappointed", "poop", "hankey", "confused", "no_good",
-  "-1_tone", "warning",
+  "-1_tone", "warning", "sad",
   "👎", "❌", "⛔", "🚫", "😡", "😠", "😢", "😭", "😞", "💩", "😕", "🙅", "⚠",
 ]);
 
@@ -33,7 +34,7 @@ export function classifyEmoji(raw: string): EmojiClass {
   return "other";
 }
 
-export type ReactionSurface = "slack" | "discord";
+export type ReactionSurface = "slack" | "discord" | "teams" | "github" | "linear";
 export type ReactionVerb = "added" | "removed";
 
 const REACTION_SURFACE_REGISTRY = new Set<string>();

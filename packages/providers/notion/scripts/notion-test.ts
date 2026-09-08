@@ -162,6 +162,7 @@ function baseDeps(
     fetch: fetchImpl,
     dispatch,
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    engagement: { getEngagement: async () => null },
     ...extra,
   };
   return { ...merged, domains: merged.domains ?? [] };

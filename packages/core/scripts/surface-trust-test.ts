@@ -88,15 +88,74 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
   registerSurfaces([defineSurface({ key: "discord/G1", trust: "internal" })]);
   ok(isVouchedInternal("discord/G1", "discord/G1/C1"), "workspace-grain: a workspace vouch covers a surface under it (isVouchedInternal)");
   ok(isVouchedInternal("discord/G1", "discord/G1/C_OTHER"), "workspace-grain: it covers EVERY surface under the workspace");
-  ok(!isVouchedSurface("discord/G1/C1"), "workspace-grain: a workspace vouch does NOT satisfy the exact-grain isVouchedSurface");
-  ok(isVouchedSurface("discord/G1"), "workspace-grain: the workspace key itself IS exact-vouched");
+  ok(isVouchedSurface("discord/G1/C1"), "🔴 workspace-grain: a workspace vouch ALSO satisfies isVouchedSurface — the two readers walk the same rungs (OPE-1521)");
+  ok(isVouchedSurface("discord/G1"), "workspace-grain: the workspace key itself is vouched");
 
   _resetSurfacesForTest();
   registerSurfaces([defineSurface({ key: "discord/G1/C1", trust: "internal" })]);
   ok(isVouchedSurface("discord/G1/C1"), "surface-grain: an exact surface vouch satisfies isVouchedSurface");
   ok(isVouchedInternal("discord/G1", "discord/G1/C1"), "surface-grain: it also satisfies the any-grain isVouchedInternal");
   ok(!isVouchedInternal("discord/G1", "discord/G1/C_SIBLING"), "surface-grain: a sibling surface stays external (narrowed to the one)");
-  ok(!isVouchedSurface("discord/G1"), "surface-grain: the parent workspace is NOT swept in by a surface vouch");
+  ok(!isVouchedSurface("discord/G1/C_SIBLING"), "surface-grain: the sibling stays external through the floor reader too");
+  ok(!isVouchedSurface("discord/G1"), "surface-grain: the parent workspace is NOT swept in by a surface vouch (the walk goes UP, never down)");
+}
+
+{
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "teams/T_ACME", trust: "internal" })]);
+  ok(isVouchedSurface("teams/T_ACME/19_channel"), "🔴 rung walk: a TENANT-only declaration vouches a channel under it — the operator declares the tenant once");
+  ok(isVouchedSurface("teams/T_ACME/19_other"), "rung walk: it reaches every channel under that tenant, not one");
+  ok(!isVouchedSurface("teams/T_OTHER/19_channel"), "🔴 rung walk NEGATIVE CONTROL: an UNDECLARED sibling tenant is not vouched — the walk goes up its OWN rungs, never across");
+  ok(!isVouchedSurface("slack/T_ACME/19_channel"), "rung walk: the same tenant segment under a DIFFERENT platform is not vouched (the platform rung is matched too)");
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_ACME", trust: "internal" }),
+    defineSurface({ key: "teams/T_ACME/19_connect", trust: "public" }),
+  ]);
+  ok(isVouchedSurface("teams/T_ACME/19_channel"), "rung walk: an unlisted room under the internal tenant is still vouched");
+  ok(!isVouchedSurface("teams/T_ACME/19_connect"), "🔴 rung walk: an EXACT `public` declaration beats the internal tenant it sits under — the carve-out reaches the floor");
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_ACME", trust: "public" }),
+    defineSurface({ key: "teams/T_ACME/19_channel", trust: "internal" }),
+  ]);
+  ok(isVouchedSurface("teams/T_ACME/19_channel"), "🔴 rung walk: an EXACT `internal` declaration still wins under a `public` tenant");
+  ok(!isVouchedSurface("teams/T_ACME/19_other"), "rung walk: its siblings stay with the `public` tenant");
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "github/acme", trust: "internal" }),
+    defineSurface({ key: "github/acme/oss-*", trust: "public" }),
+  ]);
+  ok(isVouchedSurface("github/acme/payments-api"), "rung walk: a repo under the internal org is vouched");
+  ok(!isVouchedSurface("github/acme/oss-sdk"), "rung walk: a `public` GLOB demotes the repos it names, even under an internal org");
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "github/acme/payments-*", trust: "internal" })]);
+  ok(isVouchedSurface("github/acme/payments-api"), "rung walk: an `internal` GLOB vouches the repos it names");
+  ok(!isVouchedSurface("github/acme/billing-api"), "rung walk: a repo the glob does not name stays external (the org itself is undeclared)");
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_ACME", trust: "internal" }),
+    defineSurface({ key: "teams/T_ACME/team:X", trust: "public" }),
+  ]);
+  eq(
+    declaredSurfaceTrust({ tenantKey: "teams/T_ACME", surfaceKeys: ["teams/T_ACME/19_x"], groupKey: "teams/T_ACME/team:X" }),
+    "public",
+    "group rung: a caller that HOLDS the group key resolves the `public` group declaration — the demotion exists",
+  );
+  ok(
+    isVouchedSurface("teams/T_ACME/19_x"),
+    "🔴 group rung FAIL-OPEN, pinned: isVouchedSurface holds no group key, so the `public` group declaration does NOT demote and the internal tenant admits (OPE-1538)",
+  );
+
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "teams/T_ACME", trust: "internal" })]);
+  ok(!isVouchedSurface("teams"), "rung walk: a one-segment key has no tenant rung — fail closed (a platform-only derivation bug would admit here)");
+  ok(!isVouchedSurface(""), "rung walk: an empty key returns false rather than throwing (a total function, not a vouch claim)");
+  _resetSurfacesForTest();
 }
 
 {
@@ -166,8 +225,8 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     ["slack/T0"],
     "🔴 the diagnostic read hands back every entry WITH its trust — a caller cannot lose the internal/public distinction the way a flat key list forced it to",
   );
-  ok(!isVouchedSurface("slack/T0/C_LOUNGE"), "isVouchedSurface: an EXACT `public` entry is not vouched at surface grain");
-  ok(!isVouchedSurface("github/acme/oss-sdk"), "isVouchedSurface: a GLOB never satisfies the exact grain (this gate exists to require an enumeration)");
+  ok(!isVouchedSurface("slack/T0/C_LOUNGE"), "isVouchedSurface: an EXACT `public` entry is not vouched — it beats the internal tenant above it");
+  ok(!isVouchedSurface("github/acme/oss-sdk"), "isVouchedSurface: a `public` GLOB is not vouched");
   eq(registeredSurfaces().length, 3, "registeredSurfaces(): every entry, whatever its trust (the preflight input)");
 }
 
@@ -337,13 +396,14 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     "NEGATIVE CONTROL: a channel in a DIFFERENT tenant stays undeclared — the vouch is not global",
   );
   ok(
-    !isVouchedSurface(CHANNEL),
-    "🔴 tenant rung: the tenant declaration does NOT satisfy isVouchedSurface — a tenant vouch never admits a room to a shared window",
+    isVouchedSurface(CHANNEL),
+    "🔴 tenant rung: the tenant declaration DOES satisfy isVouchedSurface — the tenant vouch admits the room to the shared window (OPE-1521)",
   );
 
   _resetSurfacesForTest();
   registerSurfaces([defineSurface({ key: CHANNEL, trust: "internal" })]);
   ok(isVouchedSurface(CHANNEL), "channel-only: the exact entry satisfies isVouchedSurface — the single-window floor opens");
+  ok(!isVouchedSurface(`${TENANT}/19-other-thread.tacv2`), "channel-only NEGATIVE CONTROL: a sibling channel in the same tenant is NOT admitted (the channel line narrows)");
   eq(declaredTrustForKeys(TENANT, CHANNEL), "internal", "channel-only: …and the ordinary memory verdict is internal too");
   eq(
     declaredSurfaceTrust({ tenantKey: TENANT, surfaceKeys: [THREAD, CHANNEL] }),

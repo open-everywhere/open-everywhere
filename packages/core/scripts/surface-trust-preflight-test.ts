@@ -56,8 +56,9 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
     ok(f.includes("defineSurface("), "🔴 a TEAMS undeclared surface gets the tracked defineSurface remedy, like every platform");
     ok(!f.includes("OE_TEAMS_INTERNAL_SURFACES"), "…and names no environment variable — the vouch is config-as-code");
     ok(/teams\/<tenantId>"/.test(f), "…and offers the TENANT declaration, which is the vouch (a declaration counts at any rung)");
-    ok(/single-window|SINGLE WINDOW/.test(f), "…and says a single-window member also needs its exact channel key");
-    ok(/OPE-1521/.test(f), "…and names the ticket that makes the window floor walk the rungs, so the extra line reads as temporary");
+    ok(/single-window|SINGLE WINDOW/.test(f), "…and answers the single-window case, which is where the grain used to matter");
+    ok(/OPE-1521/.test(f), "…naming the ticket that made the window floor walk the rungs — ONE line now serves both planes");
+    ok(/membershipType/.test(f), "🔴 …and states the tenant grain's REACH, so the operator can choose the channel grain knowingly");
 
     const other = run([], [seen("discord/G1/C_GENERAL", 30)]);
     const g = find(other, "undeclared surfaces")?.fix ?? "";
@@ -67,7 +68,7 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
 
     const mixed = undeclaredSurfacesFix(["discord/G1/C_GENERAL", "teams/deadbeef-1111/19-abc-thread.tacv2"]);
     ok(mixed.includes("Declaring the tenant"), "a mixed list keeps the generic remedy for its non-Teams example…");
-    ok(/OPE-1521/.test(mixed), "…and still names the single-window channel-key caveat for the Teams key behind it");
+    ok(/OPE-1521/.test(mixed), "…and still carries the Teams single-window clause for the Teams key behind it");
   }
 
   const green = run(

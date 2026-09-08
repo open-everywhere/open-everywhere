@@ -274,6 +274,30 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     "[P0-e] a NON-binding-trusted platform (teams) still throws when unvouched",
   );
   n++;
+  {
+    let message = "";
+    try {
+      assertWindowSourcesVouched([win(["teams/TEN_X/19-thread.tacv2", "github/a/x"]), orgGate], ["github/a/x"]);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    ok(message.includes("teams/TEN_X/19-thread.tacv2"), "[P0-e] the TEAMS offender is named (the clause below hangs off this throw)");
+    ok(/walks the declaration rungs/.test(message), "[P0-e] the TEAMS clause says the window floor WALKS THE RUNGS — one tenant line serves both planes (OPE-1521)");
+    ok(!/exact channel key/.test(message), "…and no longer demands an exact channel key, which stopped being true at OPE-1521");
+    ok(/membershipType/.test(message), "…and states the tenant grain's REACH, which is what the operator must weigh instead");
+  }
+  {
+    let message = "";
+    try {
+      assertWindowSourcesVouched([win(["github/a/x", "github/b/y"]), orgGate], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    ok(
+      message.includes("github/a/x") && !message.includes("walks the declaration rungs"),
+      "[P0-e] a non-teams offender carries NO teams clause (the note is teams-only)",
+    );
+  }
   assert.throws(
     () => assertWindowSourcesVouched([win(["github/a/x", "notion/b/y"]), orgGate], []),
     /github\/a\/x[\s\S]*notion\/b\/y/,

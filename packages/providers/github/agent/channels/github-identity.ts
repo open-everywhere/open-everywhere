@@ -162,6 +162,11 @@ export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
             repo,
             "pullRequestNumber" in anchor ? anchor.pullRequestNumber : anchor.issueNumber,
           ),
+          engagementKey: githubConversationKey(
+            owner,
+            repo,
+            "pullRequestNumber" in anchor ? anchor.pullRequestNumber : anchor.issueNumber,
+          ),
         }
       : {}),
   };

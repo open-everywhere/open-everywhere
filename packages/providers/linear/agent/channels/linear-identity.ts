@@ -110,6 +110,7 @@ export const bindLinear: IdentityMapper = (ctx): RawIdentity => {
     trust: linearTrust(linearAttr(a, ["guest"])),
     principalId: linearAuthPrincipalId(ctx) ?? linearAttr(a, ["creator_id", "creatorId", "user_id", "userId"]),
     ...(issueId ? { anchorChannelId: issueId } : {}),
+    ...(issueId ? { engagementKey: issueId } : {}),
     ...(threadRoot ? { anchorMessageId: threadRoot } : {}),
     target:
       agentSessionId || issueId

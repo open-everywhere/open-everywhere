@@ -655,6 +655,7 @@ export { parseSlackCommandText } from "./commands/core.js";
 export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch } from "./access/host-egress.js";
 
 export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
+export { classifyEmoji } from "./channels/reaction-ingest.js";
 
 export { registeredProjectionNames } from "./access/untrusted-projection.js";
 export { projectToolSet } from "./access/untrusted-projection.js";

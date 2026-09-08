@@ -23,6 +23,7 @@ import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionDeliveryTrust } from "./notion-ancestry-trust.js";
 import type { NotionSessionState } from "./notion-webhook.js";
+import { markNotionEngaged, type NotionSeamFacts } from "./notion-engagement.js";
 
 export function notionSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -161,6 +162,7 @@ export interface NotionSupervisorSession {
 export interface NotionSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, pageId: string, atIso: string) => Promise<NotionSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly markEngaged?: (d: NotionSupervisorDispatch) => Promise<void>;
   readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
 
   readonly wake: (input: {
@@ -229,12 +231,23 @@ export function notionExternalAuthorDecision(d: {
   return { suppressed, withheldIds };
 }
 
+async function liveNotionEngagementMark(d: NotionSupervisorDispatch): Promise<void> {
+  const facts: NotionSeamFacts = {
+    workspaceId: d.workspaceId ?? undefined,
+    pageId: d.pageId,
+    ...(d.trigger.authorId ? { principalId: d.trigger.authorId } : {}),
+    ...(d.credentialId ? { credentialId: d.credentialId } : {}),
+  };
+  await markNotionEngaged(facts, d.trigger.id);
+}
+
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const policy = d.externalPolicy ?? resolveExternalPolicy();
   const ingested = notionIngestedMessages(d);
   const external = notionExternalAuthorDecision({ trigger: d.trigger, threadComments: d.threadComments, ingested, policy });
   if (external.suppressed) return;
+  if (d.addressing === "direct") await (deps.markEngaged ?? liveNotionEngagementMark)(d);
   const session = await deps.getOrCreateSession(d.surfaceKey, d.pageId, atIso);
   const state: NotionSessionState = {
     discussionId: d.discussionId || null,

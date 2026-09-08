@@ -24,6 +24,7 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
+import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
@@ -46,6 +47,7 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const {
+  ENGAGED_ROOM_VARS,
   ENV,
   resolveSlack,
   resolveDiscord,
@@ -240,7 +242,12 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     [ENV.slackUnifiedChannelB]: "C0UNIB",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 14, "full env: all fourteen capabilities live");
+  ok(capsFull.available.size === 15, "full env: all fifteen capabilities live");
+  ok(capsFull.available.has("engagedSlack"), "J-ENGAGED-slack is LIVE on an env that carries E2E_SLACK_PRIVATE_CHANNEL — it drives the reused room rather than skipping");
+  ok(!capsFull.available.has("engagedGithub"), "J-ENGAGED-github stays DARK on a full operator env — it reads no var another fixture already sets");
+  const capsWithEngagedGithub = resolveCapabilities({ ...full, [ENGAGED_ROOM_VARS.github]: "example-owner/oe-e2e-addressed-github" });
+  ok(capsWithEngagedGithub.available.has("engagedGithub"), "…and comes up on its OWN var, so the capability is wired rather than merely unresolvable");
+  ok(capsWithEngagedGithub.available.size === 16, "one var, one more capability — nothing else moves with it");
   ok(capsFull.available.has("connectorWrite"), "connectorWrite comes up with the bound channel — no arming declaration stands between the fixture and the capability");
   const capFixtureCfg = resolveSlackCapFixture(full);
   ok(capFixtureCfg.ok && capFixtureCfg.cfg.channel === "C0CAP", "S10 cap-fixture cfg carries the dedicated throwaway channel");
@@ -360,8 +367,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS the three RED-AS-KNOWN engaged-seam journeys (OPE-1503: J-ENGAGED-github/linear/notion drive a seam their providers do not have yet, so they are optional and expected red, and OPE-1501 flips each to core; J-ENGAGED-teams is core) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725)",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725). 🔴 NO J-ENGAGED JOURNEY IS OPTIONAL: all six are core, because every provider wires the §2.5 seam (OPE-1500 landed Teams, OPE-1501 the three ticketing surfaces). Each still self-skips until its own room is provisioned, which is a skip and never a green",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -420,9 +427,10 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(req("J-ENGAGED-linear") === "linear+engagedLinear", "J-ENGAGED-linear requires linear + engagedLinear");
   ok(req("J-ENGAGED-notion") === "notionAmbient+engagedNotion", "J-ENGAGED-notion requires notionAmbient + engagedNotion (the ambient Notion driver, rebound onto the addressed-only page)");
   const suiteOf = (id: string) => SCENARIOS.find((sc) => sc.id === id)!.suite;
-  ok(suiteOf("J-ENGAGED-slack") === "core" && suiteOf("J-ENGAGED-discord") === "core", "the Slack and Discord engaged journeys are core — their seam exists today and they must pass");
-  for (const id of ["J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
-    ok(suiteOf(id) === "extended", `${id} is extended/optional — RED-AS-KNOWN until OPE-1501 lands its surface's seam`);
+  const optionalOf = (id: string) => SCENARIOS.find((sc) => sc.id === id)!.optional;
+  for (const id of ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
+    ok(suiteOf(id) === "core", `${id} is core — its surface wires the §2.5 seam, so the journey must pass rather than be opted into`);
+    ok(optionalOf(id) === false, `${id} is not optional — an engaged journey behind E2E_INCLUDE_OPTIONAL would prove the seam to nobody on a default run`);
   }
   const surfaceOf = (id: string) => SCENARIOS.find((sc) => sc.id === id)!.surface;
   for (const [id, surface] of [
@@ -461,11 +469,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     soakSlack: [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps],
     soakNotion: [ENV.notionSoakPage1, ENV.notionSoakPage2],
     soakLinear: [ENV.linearSoakLabelId],
-    engagedSlack: [ENV.engagedSlackChannel],
-    engagedDiscord: [ENV.engagedDiscordChannel],
-    engagedGithub: [ENV.engagedGithubRepo],
-    engagedLinear: [ENV.engagedLinearTeamId],
-    engagedNotion: [ENV.engagedNotionPageId],
+    engagedSlack: [ENGAGED_ROOM_VARS.slack],
+    engagedDiscord: [ENGAGED_ROOM_VARS.discord],
+    engagedGithub: [ENGAGED_ROOM_VARS.github],
+    engagedLinear: [ENGAGED_ROOM_VARS.linear],
+    engagedNotion: [ENGAGED_ROOM_VARS.notion],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
@@ -506,24 +514,25 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
   const roomOnlyMissing = new Set(["slack", "discord", "github", "linear", "notionAmbient"] as const);
   for (const [id, varName] of [
-    ["J-ENGAGED-slack", ENV.engagedSlackChannel],
-    ["J-ENGAGED-discord", ENV.engagedDiscordChannel],
-    ["J-ENGAGED-github", ENV.engagedGithubRepo],
-    ["J-ENGAGED-linear", ENV.engagedLinearTeamId],
-    ["J-ENGAGED-notion", ENV.engagedNotionPageId],
+    ["J-ENGAGED-slack", ENGAGED_ROOM_VARS.slack],
+    ["J-ENGAGED-discord", ENGAGED_ROOM_VARS.discord],
+    ["J-ENGAGED-github", ENGAGED_ROOM_VARS.github],
+    ["J-ENGAGED-linear", ENGAGED_ROOM_VARS.linear],
+    ["J-ENGAGED-notion", ENGAGED_ROOM_VARS.notion],
   ] as const) {
     const reason = skipReason(SCENARIOS.find((sc) => sc.id === id)!, roomOnlyMissing, missing, true);
     ok(reason?.includes(varName) === true, `${id} self-skips naming ${varName} while its room is unprovisioned (got ${JSON.stringify(reason)})`);
   }
-  ok(skipReason(SCENARIOS.find((sc) => sc.id === "J-ENGAGED-slack")!, all, noneMissing, false) === undefined, "J-ENGAGED-slack runs on a default pass once its room is provisioned");
-  ok(skipReason(SCENARIOS.find((sc) => sc.id === "J-ENGAGED-discord")!, all, noneMissing, false) === undefined, "J-ENGAGED-discord runs on a default pass once its room is provisioned");
-  for (const id of ["J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
+  for (const id of ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
     ok(
-      skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
-      `${id} stays out of a default pass — it is RED-AS-KNOWN until its seam lands, and a known red must not fail every run`,
+      skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, false) === undefined,
+      `${id} runs on a DEFAULT pass once its room is provisioned — no E2E_INCLUDE_OPTIONAL needed, because its surface wires the seam`,
     );
-    ok(skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, true) === undefined, `${id} runs in the extended lane, where its red is the point`);
   }
+  ok(
+    skipReason(SCENARIOS.find((sc) => sc.id === "S24")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
+    "NEGATIVE CONTROL: S24 is still held back to the extended lane by the SAME planner call",
+  );
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
     "S8 stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens",
@@ -1530,6 +1539,118 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
 
   {
+    const HEX32 = "1f2a3b4c5d6e7f8091a2b3c4d5e6f708";
+    const NOTION_HOST = "api.notion.com";
+    const CHANNEL = "C0EXGENRL";
+    const policyRow = (writeHosts: unknown, surface?: string): AuditWireEntry => ({
+      ts: "2026-05-12T11:30:00.000Z",
+      org: "o",
+      platform: "slack",
+      workspace: "T1",
+      ...(surface === undefined ? {} : { surface }),
+      action: EGRESS_POLICY_ACTION,
+      detail: { hosts: 4, enforced: true, writeHostCount: Array.isArray(writeHosts) ? writeHosts.length : 0, ...(writeHosts === undefined ? {} : { writeHosts }) },
+    });
+    const credentialedNotion = { host: NOTION_HOST, via: "notion-rest", credentialed: true, methods: ["GET", "POST", "PATCH"] };
+
+    const hit = findCredentialedWriteHost([policyRow([credentialedNotion], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL });
+    ok(
+      hit.matches.length === 1 && hit.matches[0]!.via === "notion-rest" && hit.rows === 1,
+      "🔴 OPE-1496 — a credentialed, write-open api.notion.com entry IS the HTTP route's firewall evidence, and the reader carries the connection that opened it",
+    );
+    ok(
+      findCredentialedWriteHost([policyRow([{ ...credentialedNotion, methods: ["GET"] }], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 0,
+      "🔴 a READ-ONLY rule is not this rung's evidence — the harness re-derives the verdict from the row's own methods rather than trusting the writer's filter",
+    );
+    ok(
+      findCredentialedWriteHost([policyRow([{ ...credentialedNotion, credentialed: false }], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 0,
+      "🔴 a host the firewall stamps NOTHING on is not evidence of a credentialed call — `credentialed` is the discriminator, and it is load-bearing",
+    );
+    for (const [label, entry] of [
+      ["no methods", { host: NOTION_HOST, via: "notion-rest", credentialed: true }],
+      ["an undecodable methods shape", { host: NOTION_HOST, via: "notion-rest", credentialed: true, methods: 3 }],
+      ["no credentialed flag", { host: NOTION_HOST, via: "notion-rest", methods: ["POST"] }],
+      ["no host", { via: "notion-rest", credentialed: true, methods: ["POST"] }],
+    ] as const) {
+      ok(
+        findCredentialedWriteHost([policyRow([entry], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 0,
+        `🔴 an entry with ${label} yields NO match — an assertion must never pass on a shape it could not read`,
+      );
+    }
+    const otherHost = findCredentialedWriteHost([policyRow([{ host: "api.github.com", via: "gh", credentialed: true, methods: "any" }], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL });
+    ok(
+      otherHost.matches.length === 0 && otherHost.hostsSeen.join(",") === "api.github.com",
+      "🔴 another vendor's credentialed write host is not Notion evidence — and the reader still reports what it DID see, so a red names it",
+    );
+    ok(
+      findCredentialedWriteHost([policyRow([{ ...credentialedNotion, methods: "any" }], CHANNEL)], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 1,
+      "a rule that declares no method match (`any`) admits a write, so it counts",
+    );
+    ok(
+      findCredentialedWriteHost([policyRow([credentialedNotion], "C-SOMEWHERE-ELSE")], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 0,
+      "🔴 a policy row stamped with ANOTHER surface is not this leg's — the gate would otherwise green on a sibling channel's firewall",
+    );
+    ok(
+      findCredentialedWriteHost([policyRow([credentialedNotion])], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 1,
+      "an UNATTRIBUTED policy row is kept — the same rule the connector-evidence gate uses, because dropping it would red a correct run on a window seconds wide",
+    );
+    const mixed = findCredentialedWriteHost(
+      [{ ts: "2026-05-12T11:30:00.000Z", org: "o", platform: "slack", workspace: "T1", surface: CHANNEL, action: "connector.op", detail: { writeHosts: [credentialedNotion] } }, policyRow(undefined, CHANNEL)],
+      { host: NOTION_HOST, surface: CHANNEL },
+    );
+    ok(mixed.rows === 1 && mixed.matches.length === 0, "🔴 only `egress.policy` rows are read, and a row with no writeHosts is total — no throw, no match");
+
+    ok(notionPageLinks(`Found "Team Handbook" — https://www.notion.so/Team-Handbook-${HEX32}`).length === 1, "a Notion page URL carrying the page's 32-hex id is the content rung");
+    ok(notionPageLinks(`see <https://www.notion.so/Team-Handbook-${HEX32}>`)[0] === `https://www.notion.so/Team-Handbook-${HEX32}`, "Slack's angle-bracket wrapping is stripped, not carried into the link");
+    ok(notionPageLinks(`https://acme.notion.site/Handbook-${HEX32}`).length === 1, "a published notion.site page counts too");
+    ok(notionPageLinks(`a ${HEX32} b https://www.notion.so/Team-Handbook-${HEX32} c https://www.notion.so/Team-Handbook-${HEX32}`).length === 1, "links are de-duplicated, and a bare id on its own is not a link");
+    ok(notionPageLinks("I searched Notion and found the team handbook page. See https://www.notion.so/help for more.").length === 0, "🔴 THE NEGATIVE CONTROL — a fluent answer with a marketing link carries NO page id, so prose cannot earn this rung");
+    ok(notionPageLinks("The live search returned nothing for that term.").length === 0, "an honest miss carries no link either (that a link is REPORTED and never SCORED is pinned on the leg source below, not here)");
+
+    const pageBlocks = [
+      { object: "block", type: "heading_1", heading_1: { rich_text: [{ plain_text: "Team Handbook" }] } },
+      { object: "block", type: "paragraph", paragraph: { rich_text: [{ plain_text: "Expenses over " }, { plain_text: "£40 need a written approval from the on-call lead." }] } },
+      { object: "block", type: "image", image: { caption: [] } },
+      { object: "block", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "Short one" }] } },
+    ];
+    const phrases = notionBlockPhrases(pageBlocks);
+    ok(
+      phrases.length === 1 && phrases[0] === "Expenses over £40 need a written approval from the on-call lead.",
+      "🔴 OPE-1496 — the reader takes a block's own line, joins its rich-text spans, and skips the title, the image and the four-word bullet: a phrase must be long enough that prose does not land it by chance",
+    );
+    ok(notionBlockPhrases([{ type: "paragraph" }, { type: "paragraph", paragraph: {} }, null, "nope", {}]).length === 0, "🔴 every unreadable block shape yields NO phrase — an assertion must never pass on prose it could not read");
+    const twoSentences = notionBlockPhrases([
+      { type: "paragraph", paragraph: { rich_text: [{ plain_text: "The on-call lead approves expenses. Receipts go to the finance channel within a week." }] } },
+    ]);
+    ok(
+      twoSentences.includes("Receipts go to the finance channel within a week.") && twoSentences.includes("The on-call lead approves expenses."),
+      "🔴 OPE-1496 — a SHORT two-sentence paragraph offers each sentence on its own, not only the joined line: a reply quoting one sentence of it must be able to clear the rung",
+    );
+    const pin = { pageId: HEX32, title: "Team Handbook", phrases };
+    ok(
+      quotedPagePhrase('It says: "Expenses over £40 need a written approval from the on-call lead."', pin) === phrases[0],
+      "🔴 OPE-1496 — a reply repeating the page's own sentence earns the answer half, which memory, backscroll and the web cannot supply",
+    );
+    ok(
+      quotedPagePhrase("> Expenses over £40 need a *written approval* from the on-call lead.", pin) === phrases[0],
+      "a Slack blockquote, and bold markers INSIDE the sentence, still match — a fold that missed them would red a correct deployment over formatting",
+    );
+    ok(
+      quotedPagePhrase(`I found the Team Handbook page. https://www.notion.so/Team-Handbook-${HEX32} — it covers expenses and on-call.`, pin) === undefined,
+      "🔴 THE NEGATIVE CONTROL — a fluent summary carrying the page LINK and the page's own topic words quotes no sentence, so it earns nothing: this is the finding that a link-only rung was too weak",
+    );
+    ok(quotedPagePhrase("The live search returned nothing for that term.", pin) === undefined, "🔴 an honest miss earns nothing here, which is why the leg skips rather than reds when the MCP rung is unarmed too");
+    ok(
+      quotedPagePhrase("Expenses over £40 need a written approval from the on-call lead.", { ...pin, phrases: ["Every laptop is replaced on a three-year cycle."] }) === undefined,
+      "🔴 the reply is matched against THIS pin's phrases — a sentence from another page earns nothing, so a reader that returned its first candidate would be caught here",
+    );
+    ok(
+      quotedPagePhrase("Health &amp; Safety training runs every second Tuesday.", { ...pin, phrases: ["Health & Safety training runs every second Tuesday."] }) !== undefined,
+      "🔴 Slack escapes an ampersand and Notion does not, so the fold decodes the entity — otherwise a correct quote of any sentence holding `&` could never match",
+    );
+  }
+
+  {
     const src = SCENARIOS.find((s) => s.id === "S24")!.run.toString();
     ok(
       /Run the search live against Notion/.test(src),
@@ -1549,8 +1670,40 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     );
 
     ok(
+      /findCredentialedWriteHost\(/.test(src) && /NOTION_REST_HOST\s*=\s*"api\.notion\.com"/.test(src),
+      "🔴 REACHABILITY (OPE-1496) — S24 reads the turn's egress policy row for the NAMED Notion REST host, so the HTTP route has a firewall rung at all",
+    );
+    ok(
+      /pinNotionQueryPage\(/.test(src) && /quotedPagePhrase\(/.test(src),
+      "🔴 OPE-1496 — S24 pins the fixture page with the harness's own Notion token and demands the reply QUOTE its body, so the firewall rung alone can never carry the leg",
+    );
+    ok(
+      /httpRoute\s*=\s*\w+\.matches\.length\s*>\s*0\s*&&\s*\w*[qQ]uoted\s*!==\s*(?:undefined|void 0)/.test(src),
+      "🔴 OPE-1496 — the HTTP rung is the policy row AND the quote: a page link alone does not satisfy it, which is the whole correction to the rung's first shape",
+    );
+    ok(
+      /REPORTED and not scored/.test(src),
+      "🔴 OPE-1496 — the page link stays in the message as a REPORTED shape and says so, so a reader never takes it for the rung",
+    );
+    ok(
+      /ctx\.log\(\s*`S24 rungs/.test(src),
+      "🔴 OPE-1496 — S24 LOGS which rung cleared before the gate, so a passing run says whether the strong rung or the weak one carried it",
+    );
+    ok(
+      /CONFIGURED REACH/.test(src) && !/really reached|really ran/.test(src),
+      "🔴 OPE-1496 — S24's HTTP rung reports CONFIGURED REACH, never a request (this SAMPLES two known-bad phrasings; it does not prove the message is free of overclaim)",
+    );
+    ok(
+      /copied from the page body word for word/.test(src) && /never write a sentence the page does not contain/.test(src),
+      "🔴 OPE-1496 — S24's ask demands a verbatim sentence from the page and forbids inventing one, which is what makes the content rung answerable honestly or not at all",
+    );
+    ok(
       /armedBefore\.state\s*!==\s*"armed"/.test(src),
-      "🔴 OPE-1496 — S24 skips unless the derived arming is POSITIVELY `armed` (an `unknown` from a connector that has never minted is exactly this fixture)",
+      "🔴 OPE-1496 — S24 still treats anything short of a POSITIVE `armed` as an unearnable MCP rung (an `unknown` from a connector that has never minted is exactly this fixture)",
+    );
+    ok(
+      /!\w*[mM]cpRoute\s*&&\s*!\w*[hH]ttpRoute\s*&&\s*\w+\.state\s*!==\s*"armed"/.test(src),
+      "🔴 OPE-1496 — the skip is CONDITIONAL on neither route being earned: a regression to the old unconditional pre-drive skip would make the HTTP rung dead code on this very fixture",
     );
     ok(
       /OPE-1496/.test(src),
@@ -1561,8 +1714,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       "🔴 OPE-894 — S24 reads NO arming env var; the deployment's own connector.mint rows are the evidence",
     );
     ok(
-      /connector\.use.{0,400}connector\.op/s.test(src) && /notion-rest skill/.test(src),
-      "🔴 OPE-1492 — S24's gate message branches its reading: `connector.use` only = the endpoint fence refused; no rows at all = the REST/skill route answered and writes nothing",
+      /connector\.use.{0,400}connector\.op/s.test(src) && /HTTP ROUTE \(/.test(src),
+      "🔴 OPE-1492 — S24's gate message branches its reading: `connector.use` only = the endpoint fence refused; no connector row = the HTTP route's own rung is what the leg rests on, and the message reports what that rung saw",
     );
     ok(
       /action\s*===\s*"connector\.op"\s*\|\|\s*\w+\.action\s*===\s*"connector\.use"/.test(src),

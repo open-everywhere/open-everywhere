@@ -287,6 +287,99 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(afterUsd.surfaceMonthlyUsd === 42.5, "spend.set: a USD-only card execute lands as a USD override (effectiveCaps reflects it)");
   ok(afterUsd.surfaceMonthlyTokens === undefined, "spend.set: the USD-only override replaced the previous row — token component reverts to config");
 
+  {
+    const covArgs = (coverage: unknown, scopeKey = "slack/T2/C_COV") => ({ org: "default", scopeKey, level: "surface" as const, monthlyUsd: 20, reason: "coverage", currentCap: null, currentUsd: null, ...(coverage !== undefined ? { coverage } : {}) });
+
+    const fullCard = spendSet.summarize(covArgs({ measured: "full", windowDays: 30 }) as never);
+    ok(
+      fullCard.some((l) => /✅ pricing coverage/.test(l) && l.includes("every model this scope ran on in the 30 days before this card was posted carried a committed price")),
+      "🔴 OPE-1482: a card for a fully priced scope SAYS full coverage — it does not stay silent, which a pre-OPE-1482 card also did",
+    );
+
+    const gapCard = spendSet.summarize(covArgs({ measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: [] }) as never);
+    ok(
+      gapCard.some((l) => /⚠ pricing coverage/.test(l) && l.includes("test/no-rate-model") && /\$0/.test(l)),
+      "🔴 OPE-1482: a card with an unpriced model NAMES it on the card, and says its calls add $0 to the ledger",
+    );
+    ok(!gapCard.some((l) => /✅/.test(l)), "OPE-1482: …and a gap card carries no full-coverage tick — the two states never render together");
+
+    const mixedCard = spendSet.summarize(covArgs({ measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: ["(unstamped)"] }) as never);
+    const ratedLine = mixedCard.find((l) => l.includes("test/no-rate-model"));
+    const unobservedLine = mixedCard.find((l) => l.includes("(unstamped)"));
+    ok(ratedLine !== undefined && unobservedLine !== undefined && ratedLine !== unobservedLine, "🔴 OPE-1482: a mixed gap renders the rated models and the unobserved rows on SEPARATE lines");
+    ok(!ratedLine!.includes("(unstamped)"), "🔴 OPE-1482: …the pricing-gap line never names an unobserved row — its remedy is to commit a rate, and there is no model to price");
+    ok(/instrumentation gap/.test(unobservedLine!), "🔴 OPE-1482: …and the unobserved line says its remedy is instrumentation, not a rate");
+
+    const unobservedOnly = spendSet.summarize(covArgs({ measured: "gap", windowDays: 30, unratedModels: [], unobservedModels: ["(unknown)"] }) as never);
+    ok(unobservedOnly.some((l) => l.includes("(unknown)") && /instrumentation gap/.test(l)), "OPE-1482: an all-unobserved gap still renders its own line");
+    ok(!unobservedOnly.some((l) => /carry no committed price/.test(l)), "OPE-1482: …and renders no pricing-gap line, because no model was named");
+
+    const alienCard = spendSet.summarize(covArgs({ measured: "some-future-state", windowDays: 30 }) as never);
+    ok(alienCard.some((l) => /coverage state this deploy cannot read/.test(l)), "🔴 OPE-1482: an unrecognised coverage tag renders as unknown, and never throws or renders silence");
+
+    const manyModels = Array.from({ length: 20 }, (_, i) => `test/model-${String(i).padStart(2, "0")}`);
+    const cappedCard = spendSet.summarize(covArgs({ measured: "gap", windowDays: 30, unratedModels: manyModels, unobservedModels: [] }) as never);
+    const cappedLine = cappedCard.find((l) => /pricing coverage/.test(l))!;
+    ok(cappedLine.includes("test/model-07") && !cappedLine.includes("test/model-08"), "🔴 OPE-1482: a long unpriced list names the first 8 models and stops there");
+    ok(cappedLine.includes("and 12 more"), "🔴 OPE-1482: …and says how many it did not name, so the reader knows the list is partial");
+    ok(cappedCard.join("\n").length < 2000, "🔴 OPE-1482: …keeping the whole card inside a Discord post's 2000-character limit");
+    const shortLine = spendSet.summarize(covArgs({ measured: "gap", windowDays: 30, unratedModels: ["a/one", "b/two"], unobservedModels: [] }) as never).find((l) => /pricing coverage/.test(l))!;
+    ok(shortLine.includes("a/one, b/two") && !/more/.test(shortLine), "OPE-1482: a short list is named in full, with no truncation tail");
+
+    for (const [label, frozen] of [
+      ["full", { measured: "full", windowDays: 30 }],
+      ["no-traffic", { measured: "no-traffic", windowDays: 30 }],
+      ["gap (rated)", { measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: [] }],
+      ["gap (unobserved)", { measured: "gap", windowDays: 30, unratedModels: [], unobservedModels: ["(unstamped)"] }],
+      ["not measured", { measured: "none", why: "the usage ledger could not be read on this turn, so no coverage was measured." }],
+    ] as const) {
+      const lines = spendSet.summarize(covArgs(frozen) as never).filter((l) => /pricing coverage/i.test(l));
+      ok(lines.length > 0, `OPE-1482: the "${label}" state renders at least one coverage line (the anchor check below is not vacuous)`);
+      ok(lines.every((l) => l.includes("this card was posted")), `🔴 OPE-1482: every "${label}" coverage line dates its claim to when the card was posted, never the live present`);
+    }
+
+    const quietCard = spendSet.summarize(covArgs({ measured: "no-traffic", windowDays: 30 }) as never);
+    ok(quietCard.some((l) => /pricing coverage/.test(l) && l.includes("ran no traffic in the 30 days before this card was posted")), "🔴 OPE-1482: a scope with no traffic in the window says so on the card");
+    ok(!quietCard.some((l) => /✅/.test(l)), "🔴 OPE-1482: …and never carries the full-coverage tick — an empty window proves nothing about the cap");
+
+    const noneCard = spendSet.summarize(covArgs({ measured: "none", why: "the usage ledger could not be read on this turn, so no coverage was measured." }) as never);
+    ok(noneCard.some((l) => /NOT MEASURED/.test(l)), "🔴 OPE-1482: an unmeasurable read renders its own card line, distinct from both full coverage and a gap");
+
+    const legacyCard = spendSet.summarize(covArgs(undefined) as never);
+    ok(!legacyCard.some((l) => /pricing coverage/i.test(l)), "OPE-1482: no frozen coverage → no coverage line (a pre-OPE-1482 card and a token-only proposal render unchanged)");
+
+    await spendSet.execute(covArgs({ measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: [] }, "slack/T2/C_COV_GAP"), "U_ORG_ADMIN");
+    await spendSet.execute(covArgs({ measured: "full", windowDays: 30 }, "slack/T2/C_COV_FULL"), "U_ORG_ADMIN");
+    await spendSet.execute({ org: "default", scopeKey: "slack/T2/C_COV_TOK", level: "surface" as const, monthlyTokens: 100, reason: "tokens", currentCap: null }, "U_ORG_ADMIN");
+
+    const covAudit = await readAudit({ org: "default", action: "admin.spend.set_limit" });
+    const rowFor = (scopeKey: string) => covAudit.find((e) => e.detail?.scopeKey === scopeKey);
+    const gapRow = rowFor("slack/T2/C_COV_GAP");
+    ok(gapRow?.detail?.pricingCoverage === "gap", "🔴 OPE-1482: the approver's decision row carries the coverage summary");
+    ok(JSON.stringify(gapRow?.detail?.unratedModels) === JSON.stringify(["test/no-rate-model"]), "🔴 OPE-1482: …and names the models the approved cap does not meter");
+    ok(gapRow?.detail?.unobservedModels === undefined, "OPE-1482: …with the instrumentation list absent when there is none — the two lists stay disjoint in the audit row too");
+
+    await spendSet.execute(covArgs({ measured: "some-future-state", windowDays: 30 }, "slack/T2/C_COV_ALIEN"), "U_ORG_ADMIN");
+    const alienRow = (await readAudit({ org: "default", action: "admin.spend.set_limit" })).find((e) => e.detail?.scopeKey === "slack/T2/C_COV_ALIEN");
+    ok(alienRow?.detail?.pricingCoverage === "unknown", "🔴 OPE-1482: an unrecognised coverage tag audits as \"unknown\", never as \"full\"");
+    await getOperationalStore().clearSpendLimit("default", "slack/T2/C_COV_ALIEN", "surface");
+
+    const fullRow = rowFor("slack/T2/C_COV_FULL");
+    ok(fullRow?.detail?.pricingCoverage === "full", "OPE-1482: a fully priced approval records \"full\" — the positive fact, not an absence");
+    ok(fullRow?.detail?.unpricedModels === undefined, "OPE-1482: …and names no models, because there are none");
+
+    await spendSet.execute(covArgs({ measured: "no-traffic", windowDays: 30 }, "slack/T2/C_COV_QUIET"), "U_ORG_ADMIN");
+    const quietRow = (await readAudit({ org: "default", action: "admin.spend.set_limit" })).find((e) => e.detail?.scopeKey === "slack/T2/C_COV_QUIET");
+    ok(quietRow?.detail?.pricingCoverage === "no-traffic", "OPE-1482: an empty-window approval records \"no-traffic\", distinct from \"full\" in the audit trail too");
+    await getOperationalStore().clearSpendLimit("default", "slack/T2/C_COV_QUIET", "surface");
+
+    const tokenRow = rowFor("slack/T2/C_COV_TOK");
+    ok(tokenRow !== undefined, "OPE-1482: the token-only approval really did write its own audit row — without this the control below would pass on a row that does not exist");
+    ok(tokenRow?.detail?.pricingCoverage === undefined, "OPE-1482: a token-only approval records no coverage field — a token cap counts every call, priced or not");
+
+    for (const key of ["slack/T2/C_COV_GAP", "slack/T2/C_COV_FULL", "slack/T2/C_COV_TOK"]) await getOperationalStore().clearSpendLimit("default", key, "surface");
+  }
+
   await getOperationalStore().clearSpendLimit("default", "slack/T2/C2", "surface");
 }
 

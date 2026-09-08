@@ -17,6 +17,8 @@ import {
   approvalPostDeps,
   planSetSpendLimit,
   requireCardPathHere,
+  readSpendCoverage,
+  frozenCoverage,
   type SetSpendLimitInput,
   type CurrentCaps,
 } from "../tools/set_spend_limit.js";
@@ -220,6 +222,7 @@ export interface OeApprovalDeps {
   readonly effectiveCaps?: typeof effectiveCaps;
   readonly requestApproval?: typeof requestApproval;
   readonly friendlyScopeLabel?: typeof friendlyScopeLabel;
+  readonly readSpendCoverage?: typeof readSpendCoverage;
 }
 
 function requireChannelId(binding: SurfaceBinding): string {
@@ -251,11 +254,13 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
 
   const channelId = requireChannelId(binding);
   const scopeLabel = await friendlyScopeLabelFn(plan.scopeKey);
+  const coverageReport = await (deps.readSpendCoverage ?? readSpendCoverage)(plan.args.org, plan.args.level, plan.args.scopeKey, plan.args.monthlyUsd);
+  const coverage = coverageReport === undefined ? undefined : frozenCoverage(coverageReport);
   const posted = await requestApprovalFn(
     {
       org: plan.args.org,
       kind: plan.kind,
-      args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
+      args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), ...(coverage ? { coverage } : {}) },
       scopeKey: plan.scopeKey,
       domain: plan.domain,
       requestedBy: binding.principalId!,

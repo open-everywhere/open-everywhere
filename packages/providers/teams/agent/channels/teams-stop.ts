@@ -6,11 +6,14 @@ import {
   type CancelOutcome,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth } from "./teams-identity.js";
+import { liveTeamsReactionFeedbackDeps, routeTeamsReactionFeedback, type TeamsReactionFeedbackDeps } from "./teams-reaction-feedback.js";
 
 export const TEAMS_STOP_REACTION = "angry";
 
 export interface TeamsReactionActivity {
   readonly added: readonly string[];
+  readonly removed: readonly string[];
+  readonly replyToId?: string;
   readonly reactorId?: string;
   readonly agentId?: string;
   readonly conversationId?: string;
@@ -20,9 +23,12 @@ export interface TeamsReactionActivity {
   readonly scope?: string;
 }
 
-export type TeamsStopOutcome =
+export type TeamsStopOutcome = (
   | { readonly stopped: false; readonly reason: string }
-  | { readonly stopped: true; readonly outcome: CancelOutcome };
+  | { readonly stopped: true; readonly outcome: CancelOutcome }
+) & {
+  readonly feedback?: Promise<void>;
+};
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -53,6 +59,8 @@ export function parseTeamsReaction(parsed: unknown): TeamsReactionActivity | nul
   const channelData = parsed["channelData"];
   return {
     added: reactionTypes(parsed["reactionsAdded"]),
+    removed: reactionTypes(parsed["reactionsRemoved"]),
+    ...(str(parsed["replyToId"]) ? { replyToId: str(parsed["replyToId"])! } : {}),
     reactorId: str(pick(parsed["from"], "id")),
     agentId: str(pick(parsed["recipient"], "id")),
     conversationId: str(pick(conversation, "id")),
@@ -66,24 +74,47 @@ export function parseTeamsReaction(parsed: unknown): TeamsReactionActivity | nul
 export interface TeamsStopDeps {
   readonly attachSession: AttachSessionForCancel;
   readonly cancel?: typeof cancelAnchoredTurn;
+  readonly feedback?: TeamsReactionFeedbackDeps;
+}
+
+type TeamsStopGuard =
+  | { readonly stop: false; readonly reason: string }
+  | { readonly stop: true; readonly reactorId: string; readonly conversationId: string };
+
+function stopGuard(rx: TeamsReactionActivity): TeamsStopGuard {
+  if (!rx.added.includes(TEAMS_STOP_REACTION)) return { stop: false, reason: "stop: not the stop reaction" };
+  if (!rx.reactorId) return { stop: false, reason: "stop: no reactor id — refusing to cancel (fail-closed)" };
+  if (!rx.agentId) return { stop: false, reason: "stop: agent identity unresolved — refusing to cancel (fail-closed)" };
+  if (rx.reactorId === rx.agentId || rx.reactorId.startsWith("28:")) {
+    return { stop: false, reason: "stop: the reactor is a bot — never a self-cancel" };
+  }
+  if (!rx.conversationId) return { stop: false, reason: "stop: no conversation — nothing to resolve a turn against" };
+  return { stop: true, reactorId: rx.reactorId, conversationId: rx.conversationId };
+}
+
+async function writeTeamsReactionFeedback(feedback: TeamsReactionActivity, deps: TeamsStopDeps): Promise<void> {
+  await routeTeamsReactionFeedback(feedback, deps.feedback ?? liveTeamsReactionFeedbackDeps()).catch(() => undefined);
 }
 
 export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: TeamsStopDeps): Promise<TeamsStopOutcome> {
-  if (!rx.added.includes(TEAMS_STOP_REACTION)) return { stopped: false, reason: "stop: not the stop reaction" };
-  if (!rx.reactorId) return { stopped: false, reason: "stop: no reactor id — refusing to cancel (fail-closed)" };
-  if (!rx.agentId) return { stopped: false, reason: "stop: agent identity unresolved — refusing to cancel (fail-closed)" };
-  if (rx.reactorId === rx.agentId || rx.reactorId.startsWith("28:")) {
-    return { stopped: false, reason: "stop: the reactor is a bot — never a self-cancel" };
+  const feedback: TeamsReactionActivity = { ...rx, added: rx.added.filter((type) => type !== TEAMS_STOP_REACTION) };
+  const carries = feedback.added.length > 0 || feedback.removed.length > 0;
+  const guard = stopGuard(rx);
+  const pending = carries ? writeTeamsReactionFeedback(feedback, deps) : undefined;
+  const rider = pending ? { feedback: pending } : {};
+
+  if (!guard.stop) {
+    await pending;
+    return { stopped: false, reason: guard.reason, ...rider };
   }
-  if (!rx.conversationId) return { stopped: false, reason: "stop: no conversation — nothing to resolve a turn against" };
 
   const partition = resolvePartition({
     channel: { kind: "teams" },
     session: {
       auth: {
         current: buildTeamsAuth({
-          userId: rx.reactorId,
-          conversationId: rx.conversationId,
+          userId: guard.reactorId,
+          conversationId: guard.conversationId,
           ...(rx.tenantId ? { tenantId: rx.tenantId } : {}),
           ...(rx.teamsChannelId ? { channelId: rx.teamsChannelId } : {}),
           ...(rx.teamId ? { teamId: rx.teamId } : {}),
@@ -92,16 +123,19 @@ export async function routeTeamsStopReaction(rx: TeamsReactionActivity, deps: Te
       },
     },
   });
-  const channelKey = turnChannelKey("teams", rx.conversationId);
-  if (!channelKey) return { stopped: false, reason: "stop: no conversation key" };
+  const channelKey = turnChannelKey("teams", guard.conversationId);
+  if (!channelKey) {
+    await pending;
+    return { stopped: false, reason: "stop: no conversation key", ...rider };
+  }
   const result = await (deps.cancel ?? cancelAnchoredTurn)({
     org: partition.org,
     platform: "teams",
     workspace: partition.workspace,
-    requestedBy: rx.reactorId,
+    requestedBy: guard.reactorId,
     via: "reaction",
     query: { channelKey },
     attachSession: deps.attachSession,
   });
-  return { stopped: true, outcome: result.outcome };
+  return { stopped: true, outcome: result.outcome, ...rider };
 }

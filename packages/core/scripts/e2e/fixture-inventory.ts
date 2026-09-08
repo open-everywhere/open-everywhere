@@ -9,6 +9,7 @@ import {
   canonicalId,
   collectDeclaredRooms,
   compareInventory,
+  createGuardRefusal,
   inventoryVars,
   namesLost,
   parseInventoryDoc,
@@ -612,6 +613,12 @@ async function runProvision(env: Env, domain: string, dryRun: boolean): Promise<
   const plan = planFor(domain);
   if (!plan) {
     console.error(`✗ e2e:fixtures provision: no plan for "${domain}". Known: ${knownDomains()}`);
+    return 2;
+  }
+  const refusals = plan.rooms.map((room) => createGuardRefusal(plan.domain, room)).filter((r): r is string => r !== null);
+  if (refusals.length > 0) {
+    console.error(`✗ e2e:fixtures provision ${plan.domain}: the create guard refuses this plan — nothing was created.`);
+    for (const r of refusals) console.error(`    ${r}`);
     return 2;
   }
   console.log(`e2e:fixtures provision ${plan.domain} (${plan.ticket}) — ${plan.what}`);

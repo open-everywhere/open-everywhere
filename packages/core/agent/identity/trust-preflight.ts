@@ -38,10 +38,11 @@ export function undeclaredSurfacesFix(undeclared: readonly string[]): string {
   const teamsRemedy =
     `add a line to agent/identity/surfaces.ts declaring the TENANT — defineSurface({ key: "teams/<tenantId>", ` +
     `trust: "internal" }). A declaration counts at any rung, so that covers every room under the tenant; declare a ` +
-    `single "teams/<tenantId>/<threadId>" key instead to narrow it to one channel. 🔴 A member of a cross-surface ` +
-    `SINGLE WINDOW also needs its exact channel key declared, because the window privacy floor reads isVouchedSurface, ` +
-    `an exact-key match a tenant declaration does not satisfy — OPE-1521 makes that floor walk the rungs, and the extra ` +
-    `line goes when it lands. See docs/deploy/surfaces/teams.md`;
+    `single "teams/<tenantId>/<threadId>" key instead to narrow it to one channel. ONE line is enough either way, ` +
+    `including for a member of a cross-surface SINGLE WINDOW: the window privacy floor walks the declaration rungs ` +
+    `too (OPE-1521), so a tenant declaration admits the room. 🔴 Weigh the REACH before you pick the tenant grain — it ` +
+    `covers rooms you never named, a cross-tenant Connect/shared channel among them, because an inbound Teams activity ` +
+    `usually omits membershipType. Declare the channel to narrow it. See docs/deploy/surfaces/teams.md`;
   if (example.startsWith("teams/")) return `${teamsRemedy} — this deployment's undeclared example is "${example}".`;
 
   const generic =

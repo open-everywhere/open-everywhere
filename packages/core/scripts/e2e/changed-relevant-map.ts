@@ -35,20 +35,20 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "github-provider",
     globs: ["packages/providers/github/**"],
-    scenarios: ["J-GH", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X"],
-    why: "J-GH is surface: \"github\"; the rest open, read status on, or subscribe to a real GitHub PR (open_pull_request's chain) and would break silently on a GitHub adapter regression even though they run through Slack.",
+    scenarios: ["J-GH", "J-ENGAGED-github", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X"],
+    why: "J-GH and J-ENGAGED-github are surface: \"github\" — the second drives the ambient engagement seam (OPE-1501: an @mention engages the issue, a plain comment wakes, stand_down stops it), which no other GitHub scenario reads. The rest open, read status on, or subscribe to a real GitHub PR (open_pull_request's chain) and would break silently on a GitHub adapter regression even though they run through Slack.",
   },
   {
     area: "linear-provider",
     globs: ["packages/providers/linear/**"],
-    scenarios: ["J-LIN"],
-    why: "J-LIN is the only surface: \"linear\" scenario.",
+    scenarios: ["J-LIN", "J-ENGAGED-linear"],
+    why: "The two surface: \"linear\" scenarios. J-ENGAGED-linear drives the ambient engagement seam (OPE-1501), which no other Linear scenario reads — and it is the only leg that exercises Linear's plain-comment path as a FOLLOW-UP route, because the Agent Session ends on its own reply.",
   },
   {
     area: "notion-provider",
     globs: ["packages/providers/notion/**"],
-    scenarios: ["J-NOT", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE"],
-    why: "J-NOT is surface: \"notion\"; the rest all drive a live Notion connector (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE).",
+    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE"],
+    why: "J-NOT and J-ENGAGED-notion are surface: \"notion\" — the second drives the ambient engagement seam (OPE-1501: a NAME-DROP engages the page, because Notion has no @mention of an integration) and is the only leg that reads the ingress's addressing-aware ambient gate. The rest all drive a live Notion connector (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE).",
   },
 
   {
@@ -168,7 +168,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/tools/stand_down.ts",
     ],
     scenarios: ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion", "J1", "J-DISC"],
-    why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, so it is the one that turns a regression in these two files RED rather than red-as-known. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
+    why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, as are the GitHub, Linear and Notion three since OPE-1501 — so all six turn a regression in these two files RED. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
   },
   {
     area: "core-agent-loop",

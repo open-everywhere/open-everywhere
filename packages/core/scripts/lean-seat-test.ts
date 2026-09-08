@@ -373,8 +373,11 @@ inSession(() => {
 
 {
   const hookSrc = readFileSync(new URL("../agent/hooks/lean-seat.ts", import.meta.url), "utf8");
-  ok(/setWorkerWake\(grainOf\([\s\S]{0,80}?\) === "task"\)/.test(hookSrc), "hooks/lean-seat.ts classifies the worker bit off grain `task`");
+  ok(/const worker = grainOf\([\s\S]{0,80}?\) === "task";/.test(hookSrc), "hooks/lean-seat.ts classifies the worker bit off grain `task`");
+  ok(/setWorkerWake\(worker\);/.test(hookSrc), "…and that ONE verdict is what the worker slot receives");
   ok(/setWorkerWake\(false\)/.test(hookSrc), "…written CLEAR-FIRST, so no early return can leave a stale verdict");
+  ok(/setWorkerToolsetIdentity\(worker \?/.test(hookSrc), "…and the evidence identity (OPE-1497) is stamped off the SAME verdict, never a second classification");
+  ok(/setWorkerToolsetIdentity\(null\)/.test(hookSrc), "…also written CLEAR-FIRST, so a seat can never inherit a worker's ids");
 }
 
 {

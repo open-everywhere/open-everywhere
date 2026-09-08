@@ -409,7 +409,7 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
                 ? `. A Notion TRUST ROOT does not satisfy this gate: the ancestor walk runs per delivery against the live Notion API, so config load cannot resolve it. Declare this page in the register as well`
                 :
                   platform === "teams"
-                  ? `. For TEAMS, the tenant entry above clears THIS check, but a single-window member also needs its exact channel key declared: the window privacy floor reads isVouchedSurface, an exact-key match a "teams/<tenantId>" entry does not satisfy, so the channel would be trusted for memory and still never join the window. OPE-1521 makes that floor walk the rungs; see docs/deploy/surfaces/teams.md`
+                  ? `. For TEAMS, this tenant entry is enough for a cross-surface SINGLE WINDOW member too: the window privacy floor walks the declaration rungs (OPE-1521), so a "teams/<tenantId>" declaration admits every room under the tenant. 🔴 Weigh that REACH — it covers rooms you never named, a cross-tenant Connect/shared channel among them, because an inbound Teams activity usually omits membershipType. Declare a "teams/<tenantId>/<threadId>" key to narrow it to one channel. See docs/deploy/surfaces/teams.md`
                   : ``),
           );
         }

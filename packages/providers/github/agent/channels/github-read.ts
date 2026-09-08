@@ -57,7 +57,7 @@ export function parseGithubContainer(container: string): GitHubContainer | undef
   return { owner: parts[0], repo: parts[1], repoFull, number };
 }
 
-const liveGithubFetch = globalThis.fetch as unknown as PrFetchFn;
+export const liveGithubReadFetch = globalThis.fetch as unknown as PrFetchFn;
 
 export async function getJson<T>(fetchFn: PrFetchFn, url: string, token: string, operation: string, retry?: RetryPolicy): Promise<T> {
   const res = await withRetryAfterLoose(() => fetchFn(url, { method: "GET", headers: prApiHeaders(token) }), { ...retry, surface: "github", operation });
@@ -194,7 +194,7 @@ export const githubReadAdapter = {
     ctx: BindableContext,
     channel: string,
     limit?: number,
-    fetchFn: PrFetchFn = liveGithubFetch,
+    fetchFn: PrFetchFn = liveGithubReadFetch,
     walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);
@@ -217,7 +217,7 @@ export const githubReadAdapter = {
     channel: string,
     threadTs: string,
     limit?: number,
-    fetchFn: PrFetchFn = liveGithubFetch,
+    fetchFn: PrFetchFn = liveGithubReadFetch,
     walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);

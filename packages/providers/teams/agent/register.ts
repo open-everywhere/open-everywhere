@@ -2,6 +2,7 @@ import {
   registerIdentityMapper,
   registerCapabilityManifest,
   registerSurfaceParity,
+  registerReactionSurface,
   registerPostArm,
   registerWakeOriginCodec,
   registerReadAdapter,
@@ -80,6 +81,7 @@ export function registerTeamsProvider(): void {
   registerBotDisplayName("teams", teamsBotDisplayName);
   registerAccountDirectory("teams", (query) => fetchTeamsDirectory(query));
   registerSurfaceMessageOps(teamsMessageOps);
+  registerReactionSurface("teams");
   registerProviderDocs("teams", PROVIDER_DOCS);
   registerTeamsOps();
 }

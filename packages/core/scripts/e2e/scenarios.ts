@@ -14,9 +14,11 @@ import { isMissingChatScopeError } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
+import { pinNotionQueryPage } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
+import { findCredentialedWriteHost, notionPageLinks, quotedPagePhrase } from "./egress-evidence.js";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
@@ -279,7 +281,6 @@ export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive"
 
 const ENGAGED_STOP_ASK = "thanks, that's everything — please stop following this thread now";
 const ENGAGED_NAME = "Open Everywhere";
-const ENGAGED_SEAM_TICKET = { github: "OPE-1501", linear: "OPE-1501", notion: "OPE-1501" } as const;
 
 async function gateEngagedWake(
   ctx: ScenarioContext,
@@ -317,21 +318,20 @@ async function gateEngagedWake(
 
 async function gateStandDownMarked(
   ctx: ScenarioContext,
-  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly anchor?: string; readonly ticket?: string },
+  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly anchor?: string },
 ): Promise<void> {
   const rows = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [STOOD_DOWN_ACTION] });
   const join = {
     ...(opts.anchor === undefined ? {} : { anchor: opts.anchor }),
     ...(opts.surface === undefined ? {} : { surface: opts.surface }),
   };
-  const because = opts.ticket ? ` — still expected to RED until ${opts.ticket} lands this surface's engaged seam` : "";
   ctx.gate(
     !standDownAttemptedButUnmarked(rows, join),
-    `stop: NEGATIVE CONTROL — no ${STOOD_DOWN_ACTION} row carries marked:false. One would prove the conversation was never on the engagement registry, so nothing above rode the engaged seam${because}`,
+    `stop: NEGATIVE CONTROL — no ${STOOD_DOWN_ACTION} row carries marked:false. One would prove the conversation was never on the engagement registry, so nothing above rode the engaged seam`,
   );
   ctx.gate(
     standDownMarked(rows, join),
-    `stop: an ${STOOD_DOWN_ACTION} row marks this conversation (marked:true${opts.anchor === undefined ? "" : `, anchor=${opts.anchor}`}) — the registry really held it, which is what makes the plain follow-up above an ENGAGED wake and not an ambient one (read ${rows.length} row(s))${because}`,
+    `stop: an ${STOOD_DOWN_ACTION} row marks this conversation (marked:true${opts.anchor === undefined ? "" : `, anchor=${opts.anchor}`}) — the registry really held it, which is what makes the plain follow-up above an ENGAGED wake and not an ambient one (read ${rows.length} row(s))`,
   );
 }
 
@@ -1582,19 +1582,17 @@ export const SCENARIOS: readonly Scenario[] = [
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const auditRead = ctx.auditRead!;
       const armedBefore = await deriveConnectorArming(auditRead, { connector: NOTION_CONNECTOR, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) });
-      if (armedBefore.state !== "armed")
-        ctx.skip(
-          `OPE-1496 — ${armingNote(NOTION_CONNECTOR, armedBefore)}. This leg's connector-evidence gate can only be earned by the MCP plane, ` +
-            `and on the credential bound here (\`team-key\`, endpoint rule \`api.notion.com\`) the connection's \`mcp.notion.com\` host is refused ` +
-            `at the credential endpoint fence — so \`connector.op\` is unreachable and only a doomed call could write \`connector.use\`. ` +
-            `An OAuth-armed Notion MCP credential is what arms this leg; no env var does.`,
-        );
+      const notionDriverKey = process.env[ENV.notionDriverKey]?.trim();
+      const pin = notionDriverKey
+        ? await pinNotionQueryPage({ driverKey: notionDriverKey, query })
+        : ({ ok: false, reason: `${ENV.notionDriverKey} is unset, so the harness cannot read the fixture page and has no phrase to demand` } as const);
       const sinceIso = new Date(Date.now() - 15_000).toISOString();
       const { ts: askTs } = await notion.post(
         notion.mention(
-          `look this up in Notion itself: search the connected Notion workspace for "${query}" and tell me what you find — a page title plus a short summary is enough. ` +
+          `look this up in Notion itself: search the connected Notion workspace for "${query}" and tell me what you find — a page title, a short summary, the page's own Notion link, ` +
+            `and ONE full sentence copied from the page body word for word, exactly as it is written there. ` +
             `Run the search live against Notion; do not answer from memory, from this channel's history, or from the web. ` +
-            `If the live search returns nothing, say so plainly; don't guess.`,
+            `If the live search returns nothing, say so plainly; don't guess, never invent a link, and never write a sentence the page does not contain.`,
         ),
       );
       const reply = await notion.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
@@ -1622,14 +1620,44 @@ export const SCENARIOS: readonly Scenario[] = [
         const reading = sawUseOnly
           ? `READING (OPE-1496): a connector.use row landed and no connector.op did — the MCP call reached the grant gate and the ` +
             `CREDENTIAL ENDPOINT FENCE then refused the connection's host. Expected on the \`team-key\` binding; it is the credential, not this leg.`
-          : `READING (OPE-1496): no connector row at all — the answer came through one of this channel's OTHER live Notion routes ` +
-            `(direct REST over api.notion.com, or the notion-rest skill), and NEITHER writes an evidence row. A correct, complete answer ` +
-            `looks identical to no answer from here. That gap is the ticket's open observability question, not a product failure.`;
+          : `READING (OPE-1496): no connector row at all — if the leg passed, the answer came through this channel's HTTP route, which the ` +
+            `rung below judges instead; if it did not, no route left a trace and the reply is the only thing that claims a Notion read happened.`;
+        const NOTION_REST_HOST = "api.notion.com";
+        const egress = findCredentialedWriteHost(rows, { host: NOTION_REST_HOST, surface: notion.channelId });
+        const pageLinks = notionPageLinks(reply.text);
+        const quoted = pin.ok ? quotedPagePhrase(reply.text, pin.pin) : undefined;
+        const httpReading =
+          `HTTP ROUTE (CONFIGURED REACH plus workspace content in the answer — never a proof that a request was made): ${
+            egress.matches.length > 0
+              ? `an egress.policy apply in this window opened ${NOTION_REST_HOST} with a credential (via ${egress.matches.map((m) => m.via ?? "unnamed").join(", ")}; methods ${egress.matches
+                  .map((m) => (m.methods === "any" ? "any" : m.methods.join("/")))
+                  .join(", ")}) — compiled from this channel's bundle, so it says the same thing every run`
+              : `NO egress.policy apply in this window opened ${NOTION_REST_HOST} with a credential (${egress.rows} policy row(s) on this channel; write-open hosts seen: ${egress.hostsSeen.join(", ") || "none"}) — an unchanged turn re-applies nothing and audits nothing, so this can mean no apply landed rather than a closed host`
+          }; ${
+            !pin.ok
+              ? `and NO page was pinned, so the answer half could not be scored at all — ${pin.reason}`
+              : quoted !== undefined
+                ? `and the reply repeats a phrase of the pinned page "${pin.pin.title}" (${pin.pin.pageId}) word for word — "${quoted}" — which model prose and the open web do not carry, though it names no route and this leg's OWN earlier runs posted the same phrase into this channel`
+                : `and the reply repeats NONE of the ${pin.pin.phrases.length} phrase(s) the harness read off the pinned page "${pin.pin.title}" (${pin.pin.pageId}), so nothing in it is beyond a prose answer's reach (if the workspace legitimately holds no match, point ${ENV.notionQuery} at a term it does hold)`
+          }; the reply carries ${pageLinks.length} Notion page link(s), REPORTED and not scored (32 hex characters are inventable).`;
+        const mcpRoute = evidence.length > 0;
+        const httpRoute = egress.matches.length > 0 && quoted !== undefined;
+        ctx.log(
+          `S24 rungs — MCP: ${mcpRoute ? "CLEARED" : "not cleared"} (${evidence.length} connector.op/connector.use row(s)); HTTP: ${httpRoute ? "CLEARED" : "not cleared"}. ${httpReading}`,
+        );
+        if (!mcpRoute && !httpRoute && armedBefore.state !== "armed")
+          ctx.skip(
+            `OPE-1496 — ${armingNote(NOTION_CONNECTOR, armedBefore)}. On the credential bound here (\`team-key\`, endpoint rule \`api.notion.com\`) the ` +
+              `connection's \`mcp.notion.com\` host is refused at the credential endpoint fence, so \`connector.op\` is unreachable and only a doomed call ` +
+              `could write \`connector.use\`. An OAuth-armed Notion MCP credential is what arms that rung; no env var does. The HTTP rung was not earned ` +
+              `either — ${httpReading}`,
+          );
         ctx.gate(
-          evidence.length > 0,
-          `the connector itself was reached: ${evidence.length} connector.op/connector.use row(s) on this channel in the leg's window ` +
-            `(all connector rows seen: ${seen.join(", ") || "none"}) — the reply alone ` +
-            `cannot tell a real connector search from a channel that mounts no connector. ${reading}`,
+          mcpRoute || httpRoute,
+          `one of this channel's two Notion routes cleared its rung — MCP (the strong one: a call was attempted and its grant gate ran; ` +
+            `\`connector.use\` alone clears it, and that row is written BEFORE the credential endpoint fence can refuse the host): ${evidence.length} ` +
+            `connector.op/connector.use row(s) on this channel in the leg's window (all connector rows seen: ${seen.join(", ") || "none"}); ${httpReading} ` +
+            `A red means neither rung cleared, which the reply alone could never tell you. ${reading}`,
         );
       }
     },
@@ -4601,11 +4629,11 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-github",
-    title: "GitHub ADDRESSED-ONLY journey — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    title: "GitHub ADDRESSED-ONLY journey — mention engages the issue, a plain follow-up wakes, stand_down stops it",
     requires: ["github", "engagedGithub"],
     surface: "github",
-    suite: "extended",
-    optional: true,
+    suite: "core",
+    optional: false,
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -4629,14 +4657,14 @@ export const SCENARIOS: readonly Scenario[] = [
           .catch(() => undefined);
         ctx.gate(
           second !== undefined && second.id !== first.id,
-          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — TODO(OPE-1501): GitHub has no engaged seam yet (no packages/providers/github file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — `github-engagement.ts` admits it on the native leg. (This gate asserts that a reply ARRIVED; it does not count them, so it makes no claim about the ambient leg's matching drop.)",
         );
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "github", leg: "engaged follow-up", expect: "thread-follow" });
 
         const stopFrom = new Date().toISOString();
         const stopId = await github.comment(issue, ENGAGED_STOP_ASK);
         await github.awaitBotReply(issue, stopId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) }).catch(() => undefined);
-        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github", ticket: ENGAGED_SEAM_TICKET.github });
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github" });
 
         const silenceFrom = new Date().toISOString();
         await github.comment(issue, "and what's 5 plus 5?");
@@ -4651,11 +4679,11 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-linear",
-    title: "Linear ADDRESSED-ONLY journey — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    title: "Linear ADDRESSED-ONLY journey — the mention engages the issue and the plain-comment path carries the follow-up",
     requires: ["linear", "engagedLinear"],
     surface: "linear",
-    suite: "extended",
-    optional: true,
+    suite: "core",
+    optional: false,
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -4677,14 +4705,14 @@ export const SCENARIOS: readonly Scenario[] = [
         if (second) seen.add(second.id);
         ctx.gate(
           second !== undefined,
-          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — TODO(OPE-1501): Linear has no engaged seam yet (no packages/providers/linear file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+          "engaged: a plain comment in the engaged issue woke the agent without a re-mention — the Agent Session ended on its reply, so `linear-engagement.ts` admits this one on the plain-comment path instead",
         );
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "linear", leg: "engaged follow-up", expect: "thread-follow" });
 
         const stopFrom = new Date().toISOString();
         await linear.comment(issue.id, ENGAGED_STOP_ASK);
         await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
-        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear", ticket: ENGAGED_SEAM_TICKET.linear });
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear" });
 
         const silenceFrom = new Date().toISOString();
         await linear.comment(issue.id, "and what's 5 plus 5?");
@@ -4699,11 +4727,11 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-notion",
-    title: "Notion ADDRESSED-ONLY journey (name-drop is the address) — RED-AS-KNOWN until OPE-1501 lands the engaged seam",
+    title: "Notion ADDRESSED-ONLY journey — the name-drop is the address, and it engages the page",
     requires: ["notionAmbient", "engagedNotion"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
+    optional: false,
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -4716,7 +4744,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const first = await notion.awaitBotReplyOnBlock(blockId, opened.discussionId, mentionFrom, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         ctx.gate(
           first !== undefined && first.text.trim().length > 0,
-          "name-drop: the agent replied in the block discussion — TODO(OPE-1510): Notion's whole ingress is behind the ambient gate (handleNotionWebhook step 9 returns ambient-disabled BEFORE it classifies the comment), so an addressed-only Notion page cannot be addressed at all. This gate is RED-AS-KNOWN until that gate reads addressing, and OPE-1501's engaged seam sits behind it",
+          "name-drop: the agent replied in the block discussion — the ambient gate reads the addressing, so an addressed-only page can be addressed",
         );
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "notion", leg: "name-drop", expect: "addressed" });
 
@@ -4727,7 +4755,7 @@ export const SCENARIOS: readonly Scenario[] = [
           .catch(() => undefined);
         ctx.gate(
           second !== undefined && second.id !== first?.id,
-          "engaged: a plain comment in the engaged discussion woke the agent without re-naming it — TODO(OPE-1501): Notion has no engaged seam yet (no packages/providers/notion file reads the engagement registry), so this gate is RED-AS-KNOWN until that ticket lands",
+          "engaged: a plain comment in the engaged discussion woke the agent without re-naming it — `notion-engagement.ts` admits it on the PAGE row the name-drop wrote",
         );
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up", expect: "thread-follow" });
 
@@ -4736,7 +4764,7 @@ export const SCENARIOS: readonly Scenario[] = [
         await notion
           .awaitBotReplyIn(opened.discussionId, stopFrom, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) })
           .catch(() => undefined);
-        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "notion", ticket: ENGAGED_SEAM_TICKET.notion });
+        await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "notion" });
 
         const silenceFrom = new Date().toISOString();
         await notion.replyToDiscussion(opened.discussionId, "and what's 5 plus 5?");

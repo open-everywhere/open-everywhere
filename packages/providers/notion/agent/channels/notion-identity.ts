@@ -99,5 +99,6 @@ export const bindNotion: IdentityMapper = (ctx): RawIdentity => {
     principalId: (principal && principal.length > 0 ? principal : undefined) ?? notionAttr(a, ["user_id", "userId"]),
     target: discussionId ? { discussionId, ...(pageId ? { pageId } : {}), ...(credentialId ? { credentialId } : {}) } : undefined,
     ...(notionConversationKey(workspaceId, pageId) ? { anchorChannelId: notionConversationKey(workspaceId, pageId) } : {}),
+    ...(notionConversationKey(workspaceId, pageId) ? { engagementKey: notionConversationKey(workspaceId, pageId) } : {}),
   };
 };

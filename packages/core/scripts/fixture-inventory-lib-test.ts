@@ -1,4 +1,4 @@
-import { ENV } from "./e2e/env.js";
+import { ENGAGED_ROOM_VARS, ENV } from "./e2e/env.js";
 import {
   NON_ROOM_ENV,
   PROVISION_PLAN,
@@ -8,6 +8,8 @@ import {
   canonicalId,
   collectDeclaredRooms,
   compareInventory,
+  createGuardRefusal,
+  engagedVarMismatches,
   idOfKey,
   inventoryVars,
   isSyntheticDomain,
@@ -253,8 +255,8 @@ ok(new Set(twoSynthetic.map(rowKey)).size === 2, "two Teams rows that render the
 ok(new Set(ROOM_VARS.map((v) => v.envVar)).size === ROOM_VARS.length, "no env var is listed twice in ROOM_VARS");
 for (const spec of ROOM_VARS) ok(spec.envVar.startsWith("E2E_"), `${spec.envVar} is an e2e fixture var`);
 ok(inventoryVars().length > ROOM_VARS.length, "the provisioning plan's created rooms join the inventory's vars");
-ok(!ROOM_VARS.some((v) => v.envVar === "E2E_ADDRESSED_DISCORD_CHANNEL"), "the control: the var below is in NO ROOM_VARS row, so only the plan can put it in the inventory");
-ok(inventoryVars().some((v) => v.envVar === "E2E_ADDRESSED_DISCORD_CHANNEL"), "a planned room's env var is inventoried");
+ok(!ROOM_VARS.some((v) => v.envVar === "E2E_ADDRESSED_TEAMS_SURFACE"), "the control: the var below is in NO ROOM_VARS row, so only the plan can put it in the inventory");
+ok(inventoryVars().some((v) => v.envVar === "E2E_ADDRESSED_TEAMS_SURFACE"), "a planned room's env var is inventoried");
 for (const plan of PROVISION_PLAN) {
   for (const room of plan.rooms) {
     if (room.readByCode !== undefined) {
@@ -273,15 +275,69 @@ for (const plan of PROVISION_PLAN) {
   ok(plan.rooms.length === SURFACE_ORDER.length, `${plan.domain} covers every surface`);
   for (const room of plan.rooms) {
     if (room.action === "reuse") ok(Boolean(room.reuseOf), `${plan.domain}/${room.surface} says which var it reuses`);
-    else {
-      ok(!room.reuseOf, `${plan.domain}/${room.surface} creates a room and reuses no var`);
-      ok(
-        !ROOM_VARS.some((v) => v.envVar === room.envVar) || Boolean(room.readByCode),
-        `${plan.domain}/${room.surface} creates into a var of its own, never over an existing fixture's`,
-      );
-    }
+    else ok(createGuardRefusal(plan.domain, room) === null, `${plan.domain}/${room.surface} passes the create guard (got ${createGuardRefusal(plan.domain, room)})`);
     ok(room.note.length > 0, `${plan.domain}/${room.surface} carries an operator note`);
   }
+}
+
+{
+  const CREATE = { surface: "slack", action: "create", note: "n" } as const;
+  const overBaseVar = createGuardRefusal("e2e-engaged", { ...CREATE, envVar: "E2E_SLACK_CHANNEL", readByCode: "shipped code reads it" });
+  ok(overBaseVar !== null, "REFUSED: a create over E2E_SLACK_CHANNEL, readByCode and all — the base Slack driver channel is no plan's to write");
+  ok(overBaseVar?.includes("E2E_SLACK_CHANNEL") === true, `…and the refusal names the var (got ${JSON.stringify(overBaseVar)})`);
+  ok(
+    createGuardRefusal("e2e-engaged", { ...CREATE, envVar: "E2E_SLACK_CHANNEL" }) !== null,
+    "REFUSED: the same create without readByCode — the membership test alone already stopped this one",
+  );
+  ok(
+    createGuardRefusal("e2e-engaged", { ...CREATE, envVar: "E2E_SLACK_PRIVATE_CHANNEL", readByCode: "shipped code reads it" }) !== null,
+    "REFUSED: a create over E2E_SLACK_PRIVATE_CHANNEL — the plan REUSES S11's channel, and reusing a room never earns the right to overwrite its var",
+  );
+  ok(
+    createGuardRefusal("e2e-engaged", { ...CREATE, surface: "github", envVar: "E2E_PR_REPO", readByCode: "shipped code reads it" }) !== null,
+    "REFUSED: a create over E2E_PR_REPO — same reason on the GitHub side",
+  );
+  ok(
+    createGuardRefusal("some-other-plan", { ...CREATE, surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", readByCode: "shipped code reads it" }) !== null,
+    "REFUSED: another plan creating into e2e-engaged's own var — ownedBy names ONE plan",
+  );
+  ok(
+    createGuardRefusal("e2e-engaged", { ...CREATE, surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", readByCode: "shipped code reads it" }) === null,
+    "ALLOWED: e2e-engaged creating into the var its own ROOM_VARS row declares ownedBy — the honest case the waiver exists for",
+  );
+  ok(
+    createGuardRefusal("e2e-engaged", { ...CREATE, envVar: "E2E_NOT_A_SHIPPED_VAR" }) === null,
+    "ALLOWED: a create into a var no ROOM_VARS row carries — nothing to write over",
+  );
+}
+
+for (const spec of ROOM_VARS) {
+  if (spec.ownedBy === undefined) continue;
+  const plan = planFor(spec.ownedBy);
+  ok(plan !== undefined, `${spec.envVar}'s ownedBy names a plan that exists (got ${JSON.stringify(spec.ownedBy)})`);
+  ok(
+    plan?.rooms.some((r) => r.envVar === spec.envVar && r.action === "create") === true,
+    `${spec.envVar}'s owner actually CREATES it — ownership is the right to write, so a plan that only reuses the room may not claim it`,
+  );
+}
+
+{
+  ok(
+    engagedVarMismatches(ENGAGED_ROOM_VARS).length === 0,
+    `every J-ENGAGED journey reads the var the e2e-engaged plan names for its surface (mismatched: ${engagedVarMismatches(ENGAGED_ROOM_VARS).join(", ")})`,
+  );
+  ok(
+    engagedVarMismatches({ ...ENGAGED_ROOM_VARS, slack: "E2E_ENGAGED_SLACK_CHANNEL" }).includes("slack"),
+    "the control: the join SEES the old E2E_ENGAGED_* spelling as a mismatch",
+  );
+  ok(
+    engagedVarMismatches({ ...ENGAGED_ROOM_VARS, teams: "E2E_ADDRESSED_TEAMS_SURFACE" }).length === 0,
+    "a surface the plan covers by that var is no mismatch — the control above fails on the NAME, not on being handed an extra key",
+  );
+  ok(
+    engagedVarMismatches({ unknownSurface: "E2E_SLACK_CHANNEL" }).includes("unknownSurface"),
+    "a surface the plan does not cover at all is a mismatch — the journey would read a var no provision run writes",
+  );
 }
 
 ok(new Set(PROVISION_PLAN.map((p) => p.linearKey)).size === PROVISION_PLAN.length, "no two plans share a Linear team key");

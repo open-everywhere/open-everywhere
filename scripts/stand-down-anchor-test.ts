@@ -6,9 +6,15 @@ import assert from "node:assert/strict";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
+import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
+import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
+import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 registerDiscordProvider();
 registerSlackProvider();
 registerTeamsProvider();
+registerGithubProvider();
+registerLinearProvider();
+registerNotionProvider();
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
@@ -24,6 +30,9 @@ import {
   type DiscordRelayMessage,
   type DiscordGatewaySend,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
+import { resolveGitHubEngagement } from "@open-everywhere/provider-github/agent/channels/github-engagement.js";
+import { resolveLinearEngagement } from "@open-everywhere/provider-linear/agent/channels/linear-engagement.js";
+import { markNotionEngaged, resolveNotionEngagement } from "@open-everywhere/provider-notion/agent/channels/notion-engagement.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -354,4 +363,75 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(srow !== null && srow.stopped === false, "…and nothing was marked there");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop)`);
+{
+  const ctx = windowCtx(
+    "github",
+    { owner: "acme", repo: "widgets", repo_private: "true", conversation_kind: "issue", issue_number: "42", user_login: "dev1" },
+    "dev1",
+  );
+  const b = bindFrom(ctx);
+  ok(b.mode === "channel", "precondition: a GitHub issue binds to SessionMode 'channel'");
+  ok(b.engagementKey === "acme/widgets#42", "🔴 OPE-1501: the GitHub binding publishes `owner/repo#N` as the engagement anchor — before this it published none and the verb threw");
+  const p = resolvePartition(ctx);
+  await store.markEngaged(p.org, p.surfaceKey, "acme/widgets#42", "2026-09-07T10:00:00Z", { participating: true });
+  const res = await runStandDown(ctx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 OPE-1501: stand_down SUCCEEDS on a GitHub issue thread");
+
+  const facts = { owner: "acme", repo: "widgets", number: 42, isPrivate: true, actorLogin: "dev2", isMention: false, authorIsBot: false, conversationKind: "issue" };
+  const verdict = await resolveGitHubEngagement(facts);
+  ok(verdict.kind === "hold" && verdict.stopped, "🔴 OPE-1501: github-engagement.ts reads the mark back as a STOP — the write lands on the key the wake gate reads");
+  ok(verdict.kind === "hold" && verdict.anchor === "acme/widgets#42", "…at the anchor the mapper published, so the two derivations agree byte for byte");
+
+  const other = await resolveGitHubEngagement({ ...facts, number: 43 });
+  ok(other.kind === "hold" && other.stopped === false, "🔴 NEGATIVE CONTROL: issue #43 is neither engaged nor stopped — the stop is per container, not per repo");
+  await store.markEngaged(p.org, p.surfaceKey, "acme/widgets#43", "2026-09-07T10:05:00Z", { participating: true });
+  const engaged = await resolveGitHubEngagement({ ...facts, number: 43 });
+  ok(engaged.kind === "deliver", "🔴 NEGATIVE CONTROL: …and once #43 holds a row, a plain comment there DELIVERS");
+}
+
+{
+  const ctx = windowCtx(
+    "linear",
+    { organization_id: "ORG_L", team_id: "TEAM_L", issue_id: "ISSUE_L", is_private: "true", creator_id: "u_l" },
+    "u_l",
+  );
+  const b = bindFrom(ctx);
+  ok(b.mode === "channel", "precondition: a Linear issue binds to SessionMode 'channel'");
+  ok(b.engagementKey === "ISSUE_L", "🔴 OPE-1501: the Linear binding publishes the ISSUE id as the engagement anchor");
+  const p = resolvePartition(ctx);
+  await store.markEngaged(p.org, p.surfaceKey, "ISSUE_L", "2026-09-07T10:00:00Z", { participating: true });
+  const res = await runStandDown(ctx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 OPE-1501: stand_down SUCCEEDS on a Linear issue");
+
+  const facts = { organizationId: "ORG_L", teamId: "TEAM_L", issueId: "ISSUE_L", principalId: "u_l2", isPrivate: true };
+  const verdict = await resolveLinearEngagement(facts, false);
+  ok(verdict.kind === "hold" && verdict.stopped, "🔴 OPE-1501: linear-engagement.ts reads the mark back as a STOP on the ambient comment path");
+  const other = await resolveLinearEngagement({ ...facts, issueId: "ISSUE_OTHER" }, false);
+  ok(other.kind === "hold" && other.stopped === false, "🔴 NEGATIVE CONTROL: a different issue in the same team is untouched — the stop is per issue");
+}
+
+{
+  const ctx = windowCtx(
+    "notion",
+    { workspace_id: "WS_N", page_id: "PAGE_N", discussion_id: "DISC_N", user_id: "u_n" },
+    "u_n",
+  );
+  const b = bindFrom(ctx);
+  ok(b.mode === "channel", "precondition: a Notion page binds to SessionMode 'channel'");
+  ok(b.engagementKey === "WS_N/PAGE_N", "🔴 OPE-1501: the Notion binding publishes `<workspace>/<page>` as the engagement anchor");
+  const p = resolvePartition(ctx);
+  await store.markEngaged(p.org, p.surfaceKey, "WS_N/PAGE_N", "2026-09-07T10:00:00Z", { participating: true });
+  const res = await runStandDown(ctx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 OPE-1501: stand_down SUCCEEDS on a Notion page");
+
+  const facts = { workspaceId: "WS_N", pageId: "PAGE_N", principalId: "u_n2" };
+  const verdict = await resolveNotionEngagement(facts, false);
+  ok(verdict.kind === "hold" && verdict.stopped, "🔴 OPE-1501: notion-engagement.ts reads the mark back as a STOP");
+  ok(verdict.kind === "hold" && verdict.anchor === "WS_N/PAGE_N", "…at the PAGE grain, the same one `anchorChannelId` already used");
+
+  await markNotionEngaged(facts, "cmt-back-in");
+  const back = await resolveNotionEngagement(facts, false);
+  ok(back.kind === "deliver", "🔴 OPE-1501: a fresh addressed comment re-engages the page and lifts the stop — `participating: true` is the way back in");
+}
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the GitHub/Linear/Notion anchors and their own seams' round trips)`);

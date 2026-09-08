@@ -6,9 +6,9 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "post-arm": "supported",
   "wake-origin-codec": "supported",
   "read-adapter": "supported",
-  "reaction-feedback-ingest": { unsupported: "not built yet — OPE-1502" },
+  "reaction-feedback-ingest": { supported: "polled on the next delivery for that conversation — GitHub pushes no reaction webhook, so a removal is never observed" },
   "ancillary-ops": "supported",
-  "ambient-engagement-seam": { unsupported: "not built yet — OPE-1501" },
+  "ambient-engagement-seam": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
@@ -31,6 +31,6 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   stop: { supported: "a comment whose entire body is `stop` — GitHub sends no reaction webhook" },
   ack_stop_glyph: { unsupported: "vendor limit — GitHub's fixed eight reactions carry no raised hand, so there is no ✋ to place" },
   ack_cancel_note: "supported",
-  stand_down: { unsupported: "refuses — no conversation anchor until the engagement seam lands (OPE-1501)" },
+  stand_down: { supported: "marks the issue/pull-request row; refuses when no row exists" },
   post_file: { unsupported: "vendor limit — a GitHub comment carries no file-attachment API" },
 };

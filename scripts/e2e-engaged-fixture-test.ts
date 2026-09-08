@@ -24,15 +24,28 @@ type DomainSnapshot = {
     readonly credentials: unknown;
     readonly credentialGrants: unknown;
   } | null;
+  readonly org: {
+    readonly nameDropWake: unknown;
+    readonly ambientSupervisor: unknown;
+    readonly mode: unknown;
+  } | null;
   readonly resolved: Record<string, string | null>;
 };
 
-const PROBE = [...EXPECTED_ROOMS, ...MUST_STAY_OUT.map(([key]) => key)];
+const NO_EXPLICIT_DOMAIN: readonly (readonly [string, string])[] = [
+  [
+    "slack/T0EXAMPLE/C0EXCHAN004",
+    "#oe-e2e-private is J-ENGAGED-slack's room and S11's, and BOTH need its default addressed-only posture — an explicit domain of any name would supply a different one",
+  ],
+];
+
+const PROBE = [...EXPECTED_ROOMS, ...MUST_STAY_OUT.map(([key]) => key), ...NO_EXPLICIT_DOMAIN.map(([key]) => key)];
 
 if (process.argv.includes("--probe")) {
   const { loadDomains, domainsForSurface } = await import("../agent/memory/config/domains.js");
   const domains = loadDomains();
   const d = domains.find((x) => x.name === "e2e-engaged");
+  const org = domains.find((x) => x.match === "org");
   const resolve = (key: string): string | null => {
     const [platform, workspace, ...rest] = key.split("/");
     return domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: rest.join("/") })[0] ?? null;
@@ -49,6 +62,13 @@ if (process.argv.includes("--probe")) {
           mode: d.mode ?? null,
           credentials: d.credentials ?? null,
           credentialGrants: d.credentialGrants ?? null,
+        }
+      : null,
+    org: org
+      ? {
+          nameDropWake: org.nameDropWake ?? null,
+          ambientSupervisor: org.ambientSupervisor ?? null,
+          mode: org.mode ?? null,
         }
       : null,
     resolved: Object.fromEntries(PROBE.map((k) => [k, resolve(k)])),
@@ -100,7 +120,7 @@ const ok = (cond: boolean, label: string): void => {
   );
   ok(
     d.nameDropWake === true,
-    "nameDropWake is ON — the SLACK name-drop leg has nothing to assert without it. It is inert for Notion: no packages/providers/notion file reads the flag, and Notion's ingress sits behind the ambient gate regardless (OPE-1510)",
+    "nameDropWake is ON — declared so this fixture asserts its OWN posture rather than inheriting a workspace default. 🔴 IT DRIVES NOTHING TODAY: the domain's only room is the Notion page, and no packages/providers/notion file reads the flag (Notion's ingress sits behind the ambient gate regardless, OPE-1510). J-ENGAGED-slack's name-drop leg rides the `org` criteria domain's own nameDropWake, because its room is in no explicit domain (OPE-1539) — leg 5 pins THAT knob, which is the one that leg reads. The pin stays because the first Slack or Discord room added to this roster needs the flag already true",
   );
   ok(d.engagementTier === "neutral", `engagementTier is "neutral" — it overrides GitHub's "reserved" default so every room behaves uniformly (got ${JSON.stringify(d.engagementTier)})`);
   ok(d.memory === "e2e-brain", `the fixture reuses the shared harness brain (got ${JSON.stringify(d.memory)}) — no memory leg lives in these journeys, so it needs no silo of its own`);
@@ -120,6 +140,28 @@ const ok = (cond: boolean, label: string): void => {
   for (const [room, why] of MUST_STAY_OUT) {
     ok(s.resolved[room] !== "e2e-engaged", `${room} is NOT in e2e-engaged — ${why} (resolves to ${s.resolved[room]})`);
   }
+  for (const [room, why] of NO_EXPLICIT_DOMAIN) {
+    ok(s.resolved[room] === null, `${room} is in NO EXPLICIT DOMAIN — ${why} (resolves to ${s.resolved[room]})`);
+  }
+  ok(s.resolved["slack/T0EXAMPLE/C0EXCHAN003"] === "e2e-unified", `the control: a room an explicit domain DOES hold resolves to that domain (got ${s.resolved["slack/T0EXAMPLE/C0EXCHAN003"]})`);
 }
 
-console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture by absence, grants nothing, exclusivity)`);
+{
+  const s = snapshot();
+  ok(s.org !== null, "the `org` criteria domain is registered — the domain every NO_EXPLICIT_DOMAIN room falls to");
+  const org = s.org!;
+  ok(
+    org.ambientSupervisor === null,
+    `the \`org\` criteria domain sets NO ambientSupervisor (got ${JSON.stringify(org.ambientSupervisor)}) — J-ENGAGED-slack's room inherits its addressed-only posture from here. Turn this on and a supervisor answers the plain follow-up, so the journey passes on the supervisor rather than the engagement registry`,
+  );
+  ok(
+    org.mode === null,
+    `the \`org\` criteria domain sets NO mode (got ${JSON.stringify(org.mode)}) — a belt over assertUnifiedDomainTrust, which refuses a mode on any criteria domain. It reds only if that refusal goes away`,
+  );
+  ok(
+    org.nameDropWake === true,
+    `the \`org\` criteria domain sets nameDropWake: true (got ${JSON.stringify(org.nameDropWake)}) — J-ENGAGED-slack's name-drop leg rides THIS knob, because its room is in no explicit domain`,
+  );
+}
+
+console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture by absence, grants nothing, exclusivity, the default posture the Slack journey rides)`);

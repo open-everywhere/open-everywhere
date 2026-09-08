@@ -361,6 +361,7 @@ function discordOeInteraction(opts: {
       return { id: "pending-123", expiresAt: "2026-07-07T00:00:00.000Z" };
     },
     friendlyScopeLabel: async () => undefined,
+    readSpendCoverage: async () => ({ models: ["test/no-rate-model"] }),
   };
 
   const raiseReply = await runBudgetRaise(discordBinding(), 25, deps);
@@ -371,6 +372,10 @@ function discordOeInteraction(opts: {
   ok(recorded!.scopeKey === "discord/G1/C1", "runBudgetRaise defaults to this surface's own scope");
   ok(recorded!.requestedBy === "U_REQUESTER", "runBudgetRaise's requestedBy is the invoking principal");
   ok(recorded!.channelId === "C1", "runBudgetRaise posts to this channel");
+  ok(
+    JSON.stringify((recorded!.args as { coverage?: unknown }).coverage) === JSON.stringify({ measured: "gap", windowDays: 30, unratedModels: ["test/no-rate-model"], unobservedModels: [] }),
+    `runBudgetRaise freezes the pricing coverage onto the card's args (got ${JSON.stringify((recorded!.args as { coverage?: unknown }).coverage)})`,
+  );
 
   recorded = undefined;
   const clearReply = await runBudgetClear(discordBinding(), deps);

@@ -2,6 +2,7 @@ import {
   registerIdentityMapper,
   registerCapabilityManifest,
   registerSurfaceParity,
+  registerReactionSurface,
   registerPostArm,
   registerWakeOriginCodec,
   registerReadAdapter,
@@ -31,6 +32,7 @@ export function registerLinearProvider(): void {
   registerCapabilityManifest("linear", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerSurfaceParity("linear", LINEAR_SURFACE_PARITY);
   registerPostArm(linearPostArm);
+  registerReactionSurface("linear");
   registerSurfaceMessageOps(linearMessageOps);
   registerWakeOriginCodec("linear", linearWakeOriginCodec);
   registerReadAdapter(linearReadAdapter);

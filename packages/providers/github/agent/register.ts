@@ -2,6 +2,7 @@ import {
   registerIdentityMapper,
   registerCapabilityManifest,
   registerSurfaceParity,
+  registerReactionSurface,
   registerPostArm,
   registerWakeOriginCodec,
   registerProviderDocs,
@@ -28,6 +29,7 @@ export function registerGithubProvider(): void {
   registerWakeOriginCodec("github", githubWakeOriginCodec);
   registerReadAdapter(githubReadAdapter);
   registerSurfaceMessageOps(githubMessageOps);
+  registerReactionSurface("github");
   registerWebhookVerifier(githubWebhookVerifier);
   registerProviderDocs("github", PROVIDER_DOCS);
   registerGithubOps();

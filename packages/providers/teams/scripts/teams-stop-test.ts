@@ -36,6 +36,7 @@ function recordingDeps(): { deps: TeamsStopDeps; calls: CancelAnchoredTurnInput[
     calls,
     deps: {
       attachSession: () => ({ cancel: async () => ({ status: "accepted" }) }),
+      feedback: { sink: { record: async () => undefined, telemetry: () => undefined } },
       cancel: async (input: CancelAnchoredTurnInput): Promise<CancelResult> => {
         calls.push(input);
         return { outcome: "requested", message: "Standing down — I'll stop this turn where it is." };

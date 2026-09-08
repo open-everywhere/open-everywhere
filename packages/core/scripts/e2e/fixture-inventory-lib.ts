@@ -17,6 +17,7 @@ export interface RoomVarSpec {
   readonly what: string;
   readonly expectUnclaimed?: string;
   readonly neverProbe?: string;
+  readonly ownedBy?: string;
 }
 
 export const ROOM_VARS: readonly RoomVarSpec[] = [
@@ -60,11 +61,10 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_1", what: "the soak tests' spec page" },
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_2", what: "the soak tests' late-recall page" },
 
-  { surface: "slack", envVar: "E2E_ENGAGED_SLACK_CHANNEL", what: "J-ENGAGED-slack's addressed-only channel" },
-  { surface: "discord", envVar: "E2E_ENGAGED_DISCORD_CHANNEL", what: "J-ENGAGED-discord's addressed-only channel" },
-  { surface: "github", envVar: "E2E_ENGAGED_GITHUB_REPO", what: "J-ENGAGED-github's addressed-only repo" },
-  { surface: "linear", envVar: "E2E_ENGAGED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team" },
-  { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page — the one name both sides already share" },
+  { surface: "github", envVar: "E2E_ADDRESSED_GITHUB_REPO", what: "J-ENGAGED-github's addressed-only repo — NOT E2E_PR_REPO, which names e2e-unified's e2e-scratch", ownedBy: "e2e-engaged" },
+  { surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", what: "J-ENGAGED-discord's addressed-only channel", ownedBy: "e2e-engaged" },
+  { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team", ownedBy: "e2e-engaged" },
+  { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page", ownedBy: "e2e-engaged" },
 ];
 
 export type NonRoomReason =
@@ -172,9 +172,15 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         envVar: "E2E_SLACK_PRIVATE_CHANNEL",
         action: "reuse",
         reuseOf: "E2E_SLACK_PRIVATE_CHANNEL",
-        note: "S11's private channel already carries the addressed-only posture; no second Slack room is needed",
+        note: "S11's private channel already carries the addressed-only posture — it sits in NO explicit domain, so it falls to the `org` criteria domain, which sets neither ambientSupervisor nor mode. J-ENGAGED-slack drives it. Do NOT put it in ANY explicit domain: scripts/e2e-engaged-fixture-test.ts asserts it resolves to no explicit domain at all, which is what both S11 and this journey need. Its silo is therefore org-brain, the real shared brain (OPE-1541)",
       },
-      { surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", action: "create", note: "a text channel in the test guild" },
+      {
+        surface: "discord",
+        envVar: "E2E_ADDRESSED_DISCORD_CHANNEL",
+        action: "create",
+        readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.discord` reads the var, so it is in ROOM_VARS — but the room is this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
+        note: "a text channel in the test guild",
+      },
       {
         surface: "teams",
         envVar: "E2E_ADDRESSED_TEAMS_SURFACE",
@@ -183,17 +189,23 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
       },
       {
         surface: "github",
-        envVar: "E2E_PR_REPO",
-        action: "reuse",
-        reuseOf: "E2E_PR_REPO",
-        note: "the PR-target repo is already granted and App-installed; a second repo would need a second install",
+        envVar: "E2E_ADDRESSED_GITHUB_REPO",
+        action: "create",
+        readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.github` reads the var, so it is in ROOM_VARS — but the room is this plan's own, and the row declares `ownedBy: \"e2e-engaged\"`",
+        note: "🔴 A REPO OF ITS OWN, and the second install is the price. This entry once REUSED E2E_PR_REPO, which names the same repository as E2E_GITHUB_REPO — `example-owner/e2e-scratch`, which e2e-unified holds with ambientSupervisor and mode:\"unified\". An ambient supervisor answers the plain follow-up, so J-ENGAGED-github would have passed step (b) without the engagement registry ever being read. No GitHub provisioner creates a repo, so this surface reports blocked with its one-time grant line and the journey self-skips until an operator acts",
       },
-      { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", action: "create", note: "a team in the e2e Linear org" },
+      {
+        surface: "linear",
+        envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID",
+        action: "create",
+        readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.linear` reads the var, so it is in ROOM_VARS — but the room is this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
+        note: "a team in the e2e Linear org",
+      },
       {
         surface: "notion",
         envVar: "E2E_ADDRESSED_NOTION_PAGE_ID",
         action: "create",
-        readByCode: "`agent/memory/config/domains.ts` names this page in the `e2e-engaged` roster and `env.ts` reads the var, so it is in ROOM_VARS — but the room is still this plan's own to write",
+        readByCode: "`agent/memory/config/domains.ts` names this page in the `e2e-engaged` roster and `env.ts` reads the var, so it is in ROOM_VARS — but the room is still this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
         note: "a page under the e2e page's own parent; `oe-e2e-addressed-notion` already exists, and create finds it by name rather than making a second one",
       },
     ],
@@ -206,6 +218,31 @@ export function roomName(slug: string, surface: SurfaceKind): string {
 
 export function planFor(domain: string): ProvisionDomain | undefined {
   return PROVISION_PLAN.find((p) => p.domain === domain || p.slug === domain);
+}
+
+export function createGuardRefusal(domain: string, room: PlannedRoom): string | null {
+  if (room.action !== "create") return null;
+  const where = `${domain}/${room.surface}`;
+  if (room.reuseOf) return `${where}: a create names no reuseOf (got ${room.reuseOf})`;
+  const spec = ROOM_VARS.find((v) => v.envVar === room.envVar);
+  if (!spec) return null;
+  if (room.readByCode === undefined) {
+    return `${where}: ${room.envVar} is an existing fixture's room var ("${spec.what}") — a create would write over it`;
+  }
+  if (spec.ownedBy !== domain) {
+    const owner = spec.ownedBy === undefined ? "no plan" : spec.ownedBy;
+    return `${where}: readByCode does not waive the guard for ${room.envVar} — that var is owned by ${owner}, not ${domain}`;
+  }
+  return null;
+}
+
+export function engagedVarMismatches(reads: Readonly<Record<string, string>>): readonly string[] {
+  const plan = planFor("e2e-engaged");
+  if (!plan) return Object.keys(reads).sort();
+  return Object.entries(reads)
+    .filter(([surface, envVar]) => plan.rooms.find((r) => r.surface === surface)?.envVar !== envVar)
+    .map(([surface]) => surface)
+    .sort();
 }
 
 export function surfaceOfKey(key: string): SurfaceKind | null {

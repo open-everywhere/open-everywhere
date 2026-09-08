@@ -63,7 +63,7 @@ function githubAppCreds(): { appId: string; privateKeyPem: string; installations
   return { appId, privateKeyPem, installations: {} };
 }
 
-async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
+export async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   const creds = githubAppCreds();
   if (!creds) {
     throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));
@@ -77,7 +77,7 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, owner: origin.owner, repo: origin.repo });
 }
 
-const GITHUB_API_BASE = "https://api.github.com";
+export const GITHUB_API_BASE = "https://api.github.com";
 
 export type GitHubFetchLike = (input: string, init: RequestInit) => Promise<Response>;
 

@@ -159,8 +159,11 @@ export function isVouchedInternal(workspaceKey: string, surfaceKey: string): boo
 }
 
 export function isVouchedSurface(surfaceKey: string): boolean {
-  const hit = surfaces.find((e) => e.surface.key === surfaceKey);
-  return hit?.surface.trust === "internal";
+  return isVouchedInternal(tenantKeyOfSurfaceKey(surfaceKey), surfaceKey);
+}
+
+function tenantKeyOfSurfaceKey(surfaceKey: string): string {
+  return surfaceKey.split("/").slice(0, 2).join("/");
 }
 
 export function declaredWorkspaceTrust(workspaceKey: string): SurfaceTrust | undefined {
