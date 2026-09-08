@@ -26,7 +26,13 @@ import { allowedOnLeanSeat } from "../agent/access/lean-seat.js";
 import { allowedOnWorkerSeat } from "../agent/access/worker-seat.js";
 import { WORKER_ONLY_TOOLS_STANDING } from "../agent/access/worker-capability-index.generated.js";
 import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
-import { requestCredentialGrantEntry } from "../agent/tools/request_credential_grant.js";
+import { credentialGrantConnectors } from "../agent/access/credential-grant.js";
+import { defaultGrantTool, requestCredentialGrantEntry } from "../agent/tools/request_credential_grant.js";
+import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
+import { registerConfig } from "../agent/access/config.js";
+import { defineDomain } from "../agent/memory/domain.js";
+import { resolvePartition } from "../agent/memory/partition.js";
+import type { BindableContext } from "../agent/identity/binding.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 
 let n = 0;
@@ -482,6 +488,100 @@ console.log("8. an ask with NO VERIFIED REQUESTER is refused before anything is 
   eq(allowed.sent, true, "🔴 control — the identical ask WITH a verified requester is raised");
   eq((await store.pendingCredentialGrantAsksForScope(ORG, SCOPE_UNVERIFIED, nowIso())).length, 1, "control — and writes its ask row");
   eq(dmed.length, 1, "control — and posts exactly one card, so the leg above measures the missing requester and nothing else");
+}
+
+console.log("9. an ask composes with no vendor tool name to look up:");
+{
+  for (const connector of credentialGrantConnectors()) {
+    ok(
+      defaultGrantTool(connector) !== undefined,
+      `🔴 "${connector}" is admitted for credential grants and has NO default tool — an ask for it can only be composed by a caller that already knows the vendor's name, which is the OPE-1552 dead end`,
+    );
+  }
+  eq(defaultGrantTool("notion"), VENDOR_TOOL, "the Notion default is the name this pack's fixtures and the borrow transport both drive");
+  eq(defaultGrantTool("linear"), undefined, "a connector this tree admits no grant role for has NO default — the verb refuses rather than inventing a name");
+
+  const schema = (requestCredentialGrantEntry as unknown as { inputSchema: { safeParse(v: unknown): { success: boolean } } }).inputSchema;
+  const askInput = { connector: "notion", owner: OWNER, purpose: "read the launch page", requested_mode: "once", target_label: "Launch page" };
+  ok(schema.safeParse(askInput).success, "🔴 an ask that names NO tool is a valid call — the caller cannot look the name up, because the connector it would ask is the one it is borrowing");
+  ok(schema.safeParse({ ...askInput, tool: VENDOR_TOOL }).success, "…and an ask that DOES name one is unchanged");
+  ok(!schema.safeParse({ ...askInput, tool: "" }).success, "…while an EMPTY tool is still refused — omitting the field and sending a blank name are different claims");
+
+  const chatCtx = { session: { auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } }, id: "sess-chat-1552" } };
+  const exec = async (over: Record<string, unknown>): Promise<{ asked: boolean; message: string }> =>
+    (await inEveContext(new FakeEveContext(), async () =>
+      (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+        { ...askInput, ...over },
+        chatCtx,
+      )),
+    )) as { asked: boolean; message: string };
+
+  const noTool = await exec({});
+  const withTool = await exec({ tool: VENDOR_TOOL });
+  ok(!noTool.message.includes("must name the vendor's own tool name"), "🔴 an ask with no tool is NOT stopped on the missing name — it walks on to the ordinary gates");
+  eq(noTool.message, withTool.message, "…and stops exactly where the identical ask WITH a tool stops, so the missing name changes nothing about the ask's path");
+  ok(withTool.message.includes("does not admit credential grants"), "control — both calls stopped on the DOMAIN gate, the one this fixture's surface genuinely fails");
+
+  {
+    dmed.length = 0;
+    const SCOPE_DEFAULTED = "sess-defaulted-tool";
+    const defaulted = defaultGrantTool("notion");
+    ok(defaulted !== undefined && defaulted.length > 0, "the default is a non-empty name before anything is asked with it");
+    const raised = await raise({ resource: "OPE-1552 default-tool page", scope: SCOPE_DEFAULTED, tool: defaulted ?? "" });
+    eq(raised.sent, true, "an ask carrying the DEFAULT tool name is raised");
+    const rows = await store.pendingCredentialGrantAsksForScope(ORG, SCOPE_DEFAULTED, new Date(clock).toISOString());
+    eq(rows.length, 1, "…and writes exactly one ask row");
+    eq(rows[0]?.mcpTool, VENDOR_TOOL, "🔴 …whose vendor tool is the default the verb composes — the name that reaches the owner's approval check");
+    eq(dmed.length, 1, "…and one card reaches the owner's DM");
+    ok(dmed[0]?.text.includes(VENDOR_TOOL), "…naming the tool they are being asked to lend, so the owner judges the same name the borrow would spend");
+  }
+
+  {
+    const grantCtx = (sessionId: string): BindableContext =>
+      ({ session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId } }) as unknown as BindableContext;
+    const FIXTURE = resolvePartition(grantCtx("sess-probe"));
+    const GRANT_DOMAINS = [defineDomain({ name: "grant-ask-fixture", channels: [FIXTURE.surfaceKey], credentialGrants: ["notion"] })];
+    registerConfig({
+      loadBundles: () => [],
+      loadBindings: () => [],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains: () => GRANT_DOMAINS,
+      loadSilos: () => [],
+      domainsForSurface: ({ workspaceKey, surface }) => GRANT_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+    });
+    const ENVELOPE = '<message trigger="true" from="human" author-id="U-req">read the launch page</message>';
+    const drive = async (sessionId: string, over: Record<string, unknown>): Promise<{ asked: boolean; message: string }> =>
+      await inEveContext(new FakeEveContext(), async () => {
+        const ctx = grantCtx(sessionId);
+        recordRequesterIdentity(ctx, undefined, ENVELOPE);
+        return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+          { connector: "notion", owner: OWNER, purpose: "read the launch page", requested_mode: "once", ...over },
+          ctx,
+        )) as { asked: boolean; message: string };
+      });
+    const rowsFor = async (scopeKey: string): Promise<readonly { mcpTool?: string }[]> =>
+      await store.pendingCredentialGrantAsksForScope(ORG, scopeKey, new Date().toISOString());
+
+    dmed.length = 0;
+    const DEFAULTED_SCOPE = "sess-1552-verb-defaulted";
+    const defaulted = await drive(DEFAULTED_SCOPE, { target_label: "OPE-1552 verb default page" });
+    eq(defaulted.asked, true, "🔴 the SHIPPED VERB raises an ask with no `tool` named — the whole point of OPE-1552");
+    const defaultedRows = await rowsFor(DEFAULTED_SCOPE);
+    eq(defaultedRows.length, 1, "…writing exactly one ask row");
+    eq(defaultedRows[0]?.mcpTool, VENDOR_TOOL, "🔴 …whose vendor tool is the CONNECTOR'S DEFAULT — the verb composed the name the caller could not look up");
+    eq(dmed.length, 1, "…and one card reaches the owner's DM");
+    ok(dmed[0]?.text.includes(VENDOR_TOOL), "🔴 …naming that same tool, so the owner decides on the name the borrow would actually spend");
+
+    dmed.length = 0;
+    const NAMED_SCOPE = "sess-1552-verb-named";
+    const OTHER_TOOL = "notion-search";
+    const named = await drive(NAMED_SCOPE, { target_label: "OPE-1552 verb named page", tool: OTHER_TOOL });
+    eq(named.asked, true, "control — the identical ask that DOES name a tool is raised too");
+    const namedRows = await rowsFor(NAMED_SCOPE);
+    eq(namedRows[0]?.mcpTool, OTHER_TOOL, "🔴 control — and carries the CALLER'S name, not the default: an explicit name still wins");
+    ok(dmed[0]?.text.includes(OTHER_TOOL) === true && dmed[0]?.text.includes(VENDOR_TOOL) === false, "control — and the card names the caller's tool alone");
+  }
 }
 
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

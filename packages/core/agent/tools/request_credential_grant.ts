@@ -17,6 +17,14 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { Domain } from "../memory/domain.js";
 
+const GRANT_DEFAULT_TOOLS: Readonly<Record<string, string>> = {
+  notion: "notion-fetch",
+};
+
+export function defaultGrantTool(connector: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(GRANT_DEFAULT_TOOLS, connector) ? GRANT_DEFAULT_TOOLS[connector] : undefined;
+}
+
 function safeDomains(): readonly Domain[] {
   try {
     return getConfig().loadDomains();
@@ -68,7 +76,10 @@ export const requestCredentialGrantEntry = defineTool({
     "messages and answer there; you get nothing back but confirmation that they were asked. Say in " +
     "the room that the ask went out, then carry on with something else; do not wait for an answer and " +
     "do not ask twice. When they approve, this conversation gains a tool on its next turn and the " +
-    "answer is posted here. This grants nothing by itself.",
+    "answer is posted here. This grants nothing by itself. " +
+    "🔴 Raise it as soon as you know whose account it is — there is no TOOL NAME to look up first. A connector call that fails with " +
+    '"not granted to this surface" is the REASON to ask; it is not this ask being refused, and it never becomes one. Say an ask ' +
+    "went out, or was refused, only from what THIS tool hands back.",
   inputSchema: z.object({
     connector: z
       .string()
@@ -109,10 +120,14 @@ export const requestCredentialGrantEntry = defineTool({
     tool: z
       .string()
       .min(1)
+      .optional()
       .describe(
-        "The vendor's own tool name, spelled exactly as their connection publishes it (for example " +
-          "`notion-fetch`). It is checked against their live connection when they approve, and an ask " +
-          "that names a tool their account does not publish is refused then.",
+        "OPTIONAL, and normally OMIT IT. The vendor's own tool name, spelled exactly as their " +
+          "connection publishes it (for example `notion-fetch`). Name one only if you have already " +
+          "seen it. 🔴 Do NOT go looking for it first: this conversation is not granted the " +
+          "connector — that is why you are asking — so listing its tools is refused by design, and " +
+          "that refusal is about the LISTING, never about this ask. Omitted, the ask names the " +
+          "connector's default tool, which the owner sees on their card and can decline.",
       ),
   }),
   outputSchema: z.object({
@@ -139,6 +154,15 @@ export const requestCredentialGrantEntry = defineTool({
         message:
           `Refused: "${input.connector}" is not a connector this deployment lends credentials for. ` +
           (known.length > 0 ? `It admits: ${known.join(", ")}.` : "It admits none, so nothing can be granted here."),
+      };
+    }
+    const mcpTool = input.tool?.trim() || defaultGrantTool(input.connector);
+    if (mcpTool === undefined) {
+      return {
+        asked: false,
+        message:
+          `Refused: this deployment has no default tool for "${input.connector}", so an ask must name ` +
+          "the vendor's own tool name in `tool`.",
       };
     }
     const frozenArgs = input.frozen_args ?? {};
@@ -178,7 +202,7 @@ export const requestCredentialGrantEntry = defineTool({
       connector: input.connector,
       domainGrantsConnector: domainsAdmitCredentialGrant(domains, input.connector),
       frozenArgs: frozenArgs,
-      mcpTool: input.tool,
+      mcpTool,
       nowMs: Date.now(),
       org: p.org,
       ownerHandle: owner.handle,
