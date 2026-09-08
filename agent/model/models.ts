@@ -7,7 +7,7 @@ import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { resolveStack, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
-export type { ModelRole, ModelRoleSpec, ModelStack, StackAlias } from "./stacks.js";
+export type { ModelRoleSpec, ModelStack } from "./stacks.js";
 
 const STACK_ALIAS = getSettings(process.env, SETTINGS_OVERRIDES).models.stack;
 

@@ -5,7 +5,8 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { approveCredentialGrant, declineCredentialGrant, type ApproveGrantOutcome, type GrantAuditStamps } from "./credential-grant-flow.js";
 import { parseGrantCardActionId, type GrantCardAnswer } from "./credential-grant-card.js";
-import { type CredentialGrantMode } from "../operational/credential-grant-rows.js";
+import { connectorDisplayName, grantActionPhrase, grantExpiryPhrase } from "./credential-grant-copy.js";
+import { type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
 export const GRANT_CARD_CLICK_ACTION = "grant.card_click";
 
@@ -52,36 +53,38 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
       if (approved.reason === "not_pending_or_expired") {
         return { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
       }
-      return { outcome: "failed", text: approveFailureText(approved.reason, approved.prompted === true) };
+      return { outcome: "failed", text: grantApproveFailureText(approved.reason, approved.prompted === true) };
     }
     await noteClick(input, "approved");
-    const named = approved.grant.toolName === undefined ? "the granted tool" : `\`${approved.grant.toolName}\``;
-    return {
-      outcome: "approved",
-      text:
-        `Approved. That conversation can now run ${named} on \`${approved.grant.resource}\` with your credential, ` +
-        `until ${approved.grant.expiresAt}. It grants nothing else. You get a message the first time it is used.`,
-    };
+    return { outcome: "approved", text: grantApprovedClickText(approved.grant, input.nowMs) };
   } catch (err) {
     console.log(`[open-everywhere:grant] card click for ask ${input.askId} did not resolve: ${String(err)}`);
     return { outcome: "failed", text: "That could not be answered right now. Nothing changed, and nothing was granted. Try the button again." };
   }
 }
 
+export function grantApprovedClickText(grant: Pick<CredentialGrantRow, "connector" | "mcpTool" | "expiresAt">, nowMs: number): string {
+  const action = grantActionPhrase(grant.connector, grant.mcpTool);
+  return (
+    `Approved. That conversation can ${action} with your ${connectorDisplayName(grant.connector)} account ${grantExpiryPhrase(grant.expiresAt, nowMs)}. ` +
+    "Nothing else is granted. I will tell you the first time it is used."
+  );
+}
+
 type GrantApproveFailure = Extract<ApproveGrantOutcome, { approved: false }>;
 
-function approveFailureText(reason: GrantApproveFailure["reason"], prompted: boolean): string {
+export function grantApproveFailureText(reason: GrantApproveFailure["reason"], prompted: boolean): string {
   switch (reason) {
     case "consent_required":
       return prompted
-        ? "Connect your own account first — I have sent you the link in a separate message. Open it, then press Approve here again. Nothing has been granted and nothing has been spent."
+        ? "Not yet — I have just sent you the link to connect your account. Nothing has been granted."
         : "Your own account is not connected yet, and this deployment could not send you the link to connect it. Nothing has been granted. Ask an operator to check the connector setup.";
     case "catalogue_unreachable":
       return "Your account could not be reached just now, so nothing was granted and nothing was spent. Press Approve again in a moment.";
     case "tool_absent":
-      return "Your connection publishes no tool by that name, so there was nothing to lend. Nothing was granted, this request is closed, and the person who asked has been told.";
+      return "Your account does not offer what they asked for, so there was nothing to lend. Nothing was granted, this request is closed, and the person who asked has been told.";
     case "frozen_args_unknown":
-      return "That request fixes arguments the tool does not take, so the grant could never have been spent. Nothing was granted, this request is closed, and the person who asked has been told.";
+      return "That request pins values the tool does not take, so the grant could never have been spent. Nothing was granted, this request is closed, and the person who asked has been told.";
     case "owner_unresolvable":
       return "This deployment cannot resolve your account for that connector, so nothing could ever be spent under the grant. Nothing was granted. An operator fixes this, not another tap.";
     case "not_pending_or_expired":

@@ -11,6 +11,8 @@ import { requesterThisTurn } from "../access/requester-identity.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
+import { friendlyScopeLabel } from "../approvals/scope-label.js";
+import { grantActionPhrase } from "../access/credential-grant-copy.js";
 import { configuredAgentName } from "../identity/bot-name.js";
 import { currentSessionId, currentTurnId, delegationRootSessionId, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
@@ -192,11 +194,10 @@ export const requestCredentialGrantEntry = defineTool({
     const owner = await resolveGrantOwner(input.owner, p.platform, p.workspace);
     if ("refusal" in owner) return { asked: false, message: owner.refusal };
 
-    const requesterLabel =
-      requesterPrincipalId === undefined
-        ? "an unverified caller"
-        : (await resolveRequesterLabel(requesterPrincipalId).catch(() => undefined)) ?? requesterPrincipalId;
+    const requesterLabel = requesterPrincipalId === undefined ? "an unverified caller" : ((await resolveRequesterLabel(requesterPrincipalId).catch(() => undefined)) ?? "");
     const requesterTarget = replyTargetJson(c);
+    const conversationLabel = await grantConversationLabel(p.platform, p.workspace, p.surface);
+    const audience = requesterPrincipalId !== undefined && requesterPrincipalId === owner.principalId ? "owner" : "seat";
 
     const outcome = await askForCredentialGrant({
       connector: input.connector,
@@ -215,6 +216,7 @@ export const requestCredentialGrantEntry = defineTool({
       requesterLabel,
       requesterPrincipalId,
       ...(requesterTarget === undefined ? {} : { requesterTarget }),
+      ...(conversationLabel === undefined ? {} : { conversationLabel }),
       scopeKey,
       ...(p.surface === undefined ? {} : { surface: p.surface }),
       targetLabel: input.target_label,
@@ -222,16 +224,29 @@ export const requestCredentialGrantEntry = defineTool({
       workspace: p.workspace,
     });
 
-    if (!outcome.sent) return { asked: false, message: credentialGrantRefusalNote(input.connector, outcome.reason) };
+    if (!outcome.sent) {
+      return {
+        asked: false,
+        message: credentialGrantRefusalNote(input.connector, outcome.reason, {
+          audience,
+          conversationLabel,
+          expiresAt: outcome.liveGrant?.expiresAt,
+          mcpTool: outcome.liveGrant?.mcpTool,
+          nowMs: Date.now(),
+          ownerLabel: owner.displayName,
+        }),
+      };
+    }
+    const who = owner.displayName ?? "them";
     return {
       askId: outcome.askId,
       asked: true,
       message:
-        `Asked ${outcome.ownerHandle}. The card is in their direct messages and only they can answer it. ` +
-        `If they approve, this conversation gains the tool \`${outcome.toolName}\` on its next turn. ` +
+        `Asked ${who}. The card is in their direct messages and only they can answer it. ` +
+        `If they approve, this conversation gains a tool that can ${grantActionPhrase(input.connector, mcpTool)} on its next turn. ` +
         `Tell the room the ask went out and carry on — nothing is granted yet, you will not be told here the moment they answer, ` +
         `and asking again for the same thing is refused.`,
-      owner: outcome.ownerHandle,
+      owner: who,
     };
   },
 });
@@ -257,6 +272,11 @@ function jsonObjectProblem(value: unknown, path = "the fixed arguments", depth =
     if (bad !== undefined) return bad;
   }
   return undefined;
+}
+
+async function grantConversationLabel(platform: string, workspace: string, surface: string | undefined): Promise<string | undefined> {
+  if (surface === undefined || surface.length === 0 || platform.length === 0 || workspace.length === 0) return undefined;
+  return await friendlyScopeLabel(`${platform}/${workspace}/${surface}`);
 }
 
 function replyTargetJson(ctx: BindableContext): string | undefined {

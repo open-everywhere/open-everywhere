@@ -524,7 +524,7 @@ function report(records: RunnerRecord[], root: string): string {
   row("binds a socket", convertible.filter((r) => r.signals.bindsSocket).length, "of the converting set");
   lines.push("");
   const unchained = unchainedRootScripts(root);
-  lines.push(`ROOT test:* SCRIPTS OFF THE ROOT CHAIN (${unchained.length}) — unguarded by coverage.spec.ts`);
+  lines.push(`ROOT test:* SCRIPTS OFF THE ROOT CHAIN (${unchained.length}) — each declared in OFF_CHAIN_BY_DESIGN (OPE-1470)`);
   for (const name of unchained) lines.push(`  ${name}`);
   lines.push("");
   lines.push("NOT PLAIN-ASSERT — the files whose recipe is not mechanical, named");

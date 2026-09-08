@@ -17,12 +17,12 @@ function ok(cond: boolean, label: string): void {
 const PLAN = { slug: "addressed", linearKey: "OEEA" };
 
 interface Recorder {
-  readonly calls: { method: string; url: string; body: unknown }[];
+  readonly calls: { method: string; url: string; body: unknown; auth: string }[];
   creates(match: RegExp): number;
 }
 
 function recorder(): Recorder {
-  const calls: { method: string; url: string; body: unknown }[] = [];
+  const calls: { method: string; url: string; body: unknown; auth: string }[] = [];
   return {
     calls,
     creates(match) {
@@ -36,7 +36,8 @@ function scripted(rec: Recorder, route: (url: string, method: string, body: unkn
     const url = typeof input === "string" ? input : String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    rec.calls.push({ method, url, body });
+    const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+    rec.calls.push({ method, url, body, auth });
     const answer = route(url, method, body);
     if (answer === undefined) throw new Error(`the test script has no route for ${method} ${url}`);
     return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
@@ -144,6 +145,38 @@ for (const [on, label] of [
   ok(String((creates[0].body as { variables?: { key?: string } }).variables?.key) === "OEEA", "linear: the team key comes from the plan, not from a derivation");
 }
 
+const LINEAR_OWN_KEY_ROOM: PlannedRoom = { ...ROOM("linear", "E2E_ADDRESSED_LINEAR_TEAM_ID"), credentialVar: "E2E_ADDRESSED_LINEAR_API_KEY" };
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearScript(rec, 1), () => PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_OWN_KEY_ROOM));
+  ok(outcome.state === "skipped", "linear: a room with its own `credentialVar` unset SKIPS — an absent credential is an operator step nobody took, never a red");
+  ok(
+    outcome.detail?.includes("E2E_ADDRESSED_LINEAR_API_KEY") === true,
+    `linear: …and the skip NAMES the variable to set, so the operator is not left to guess which key (got: ${JSON.stringify(outcome.detail)})`,
+  );
+  ok(
+    rec.calls.length === 0,
+    `🔴 linear: NOT ONE vendor call is made without that key — falling back to the base key here would query the WRONG workspace and report its answer as this room's (saw ${rec.calls.length} call(s))`,
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearScript(rec, 1), () =>
+    PROVISIONERS.linear({ ...LINEAR_ENV, E2E_ADDRESSED_LINEAR_API_KEY: "own-workspace-key" }, PLAN, LINEAR_OWN_KEY_ROOM),
+  );
+  ok(outcome.state === "found" && outcome.id === "T-EXISTING", "linear: with its own key set, the room resolves exactly as any other");
+  ok(
+    rec.calls.length > 0 && rec.calls.every((c) => c.auth === "own-workspace-key"),
+    `🔴 linear: EVERY request carries the ROOM's key, never the base one — the whole point of the variable, and a fallback that leaked through would silently query the base workspace (auths seen: ${JSON.stringify([...new Set(rec.calls.map((c) => c.auth))])})`,
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearScript(rec, 1), () => PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM));
+  ok(outcome.state === "found", "linear: a room declaring NO `credentialVar` still resolves on the base driver key — the fallback is intact");
+  ok(rec.calls.every((c) => c.auth === "k"), `linear: …and it is the base key on the wire (auths seen: ${JSON.stringify([...new Set(rec.calls.map((c) => c.auth))])})`);
+}
+
 const SLACK_ENV = { E2E_SLACK_USER_TOKEN: "t", E2E_SLACK_BOT_USER_ID: "UBOT" };
 const SLACK_ROOM = ROOM("slack", "E2E_ADDRESSED_SLACK_CHANNEL");
 const WANT_SLACK = roomName(PLAN.slug, "slack");
@@ -203,7 +236,7 @@ function githubScript(rec: Recorder, on: "private" | "public" | "archived" | "ab
     const url = typeof input === "string" ? input : String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    rec.calls.push({ method, url, body });
+    rec.calls.push({ method, url, body, auth: String(new Headers(init?.headers).get("authorization") ?? "") });
     if (url.endsWith("/user")) return Response.json({ login: "owner1" });
     if (url.endsWith(`/repos/owner1/${WANT_GITHUB}`)) {
       if (on === "absent") return Response.json({ message: "Not Found" }, { status: 404 });

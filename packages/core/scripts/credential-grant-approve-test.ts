@@ -427,7 +427,7 @@ console.log("6b. the card cannot hide a fixed argument behind a padded one:");
   const card = grantCardText(padded, "Ada");
   ok(card.includes("page_id"), "🔴 A PADDED FIRST VALUE CANNOT PUSH A LATER KEY OFF THE CARD");
   ok(card.includes("THE-REAL-TARGET"), "…nor its value: every key gets its own line");
-  ok(card.includes("Fixed arguments (2,"), "…and the count is derived from the object, not from what fitted");
+  ok(card.includes("It is pinned to these 2 values"), "…and the count is derived from the object, not from what fitted");
   ok(card.includes("value truncated"), "the padded value IS cut, and the card SAYS so rather than cutting silently");
 
   const plain = grantCardText({ ...askRowFixture, frozenArgs: { page_id: "abc123" } }, "Ada");
@@ -436,8 +436,8 @@ console.log("6b. the card cannot hide a fixed argument behind a padded one:");
 
   const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${String(i).padStart(2, "0")}`, i]));
   const wide = grantCardText({ ...askRowFixture, frozenArgs: many }, "Ada");
-  ok(wide.includes("Fixed arguments (40,"), "a 40-key freeze reports 40…");
-  ok(wide.includes("more fixed argument(s) are NOT shown"), "…and says out loud that the list is cut…");
+  ok(wide.includes("It is pinned to these 40 values"), "a 40-key freeze reports 40…");
+  ok(wide.includes("more pinned value(s) are NOT shown"), "…and says out loud that the list is cut…");
   ok(wide.includes("Decline unless"), "…steering the owner to DECLINE, which is the safe answer to what they cannot see");
 }
 
@@ -482,7 +482,7 @@ console.log("8. one reader-facing word per mode, on every surface that names one
 
     const phrase = mode === "once" ? word : `for ${word}`;
     ok(
-      approvedGrantCardText(ask, grant).includes(`You approved ${phrase}, and it expires`),
+      approvedGrantCardText(ask, grant, NOW).includes(`You approved ${phrase}, `),
       `the terminal card spells \`${mode}\` as "${phrase}" — the button's own phrasing, preposition included`,
     );
     ok(labels.includes(`Approve ${phrase}`), `…and that phrase IS a real button label for \`${mode}\`, never a second spelling of it`);
@@ -544,7 +544,7 @@ console.log("8c. the card's answer list reads as options, and promises no reply:
 
 console.log("9. an approve or a decline rewrites the owner's card — it no longer says 'tap one button':");
 {
-  const approvedText = approvedGrantCardText(askRowFixture as never, grantRowFixture as never);
+  const approvedText = approvedGrantCardText(askRowFixture as never, grantRowFixture as never, NOW);
   ok(approvedText.includes("✅ APPROVED"), "the approved card says what was decided");
   ok(approvedText.includes("Tapping a button on this card now does nothing"), "…and states the buttons are dead");
   ok(!approvedText.includes("Tap one button to answer"), "NEGATIVE CONTROL: the live card's own call-to-action is gone from the decided one");

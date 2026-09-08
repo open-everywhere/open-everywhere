@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage, resolveBlockOwningPage, resolveNotionCredential } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
+import { assertNotionActingIdentity } from "../channels/notion-acting-identity.js";
 import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock, assertNotionWorkPageAllowed } from "../channels/notion-scope.js";
 import { notionWorkGrant, notionWorkMount, notionWorkspacesOf, type NotionWorkGrant } from "../channels/notion-work.js";
 import {
@@ -27,7 +28,9 @@ export const readNotionPageEntry = defineTool({
           "Read the text of a Notion page (this doc, or another page shared with the integration). " +
           "Use it when a reply needs the doc's own content — to answer a question about the page or " +
           "catch a problem in it. Returns the page's top-level text (truncated if very long); the " +
-          "comment thread you were woken on is already in your context.",
+          "comment thread you were woken on is already in your context. It reads under the shared " +
+          "team integration, never under the asker's own Notion account, so it sees what the team " +
+          "integration was shared and not what they can see.",
         inputSchema: z.object({
           page: z
             .string()
@@ -64,6 +67,7 @@ export const readNotionPageEntry = defineTool({
                 : "No Notion page id available for this session — pass `page` explicitly.",
             );
           }
+          await assertNotionActingIdentity(ctx2 as BindableContext, "read_notion_page");
           const credentialId = workGrant ? workGrant.credential : notionCallerCredential(ctx2 as BindableContext, domains);
           const cred = await resolveNotionCredential(credentialId);
           let page: string;

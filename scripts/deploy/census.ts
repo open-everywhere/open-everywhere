@@ -27,16 +27,15 @@ import {
 } from "../../packages/core/agent/ops/census.js";
 import { readAudit } from "../../packages/core/agent/audit/audit.js";
 import { decryptCredential } from "../../packages/core/agent/credentials/db-broker.js";
-import { deploymentOrg } from "../../packages/core/agent/identity/binding.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
 import { CONTROL_READ_RUNTIME_SIGNAL_PATH } from "../../packages/core/agent/control/read-route.js";
-import { connectOperatorStore } from "../../packages/core/scripts/operator-store-connect.js";
 import { assertStoreIdentity } from "../../packages/core/scripts/store-identity-guard.js";
 
 import { loadBundles } from "../../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../../agent/access/connector-credentials.js";
 import { loadDomains } from "../../agent/memory/config/domains.js";
 import { loadWebhooks } from "../../agent/webhooks/hooks.js";
+import { openCensusStore } from "./census-store.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -208,16 +207,7 @@ try {
   const timeoutMs = Number(args.values.get("timeout-ms") ?? "20000") || 20_000;
   const json = args.flags.has("json");
 
-  const store = await connectOperatorStore();
-  if (store.id !== "postgres" || !store.label.startsWith("hosted Postgres")) {
-    throw new DeployConfigError(
-      `the operational store this process opened is "${store.label}" — not the deployment's own.\n` +
-        "  A census of a local floor store proves nothing about the deployment. Export DATABASE_URL\n" +
-        "  (and OE_OPERATIONAL_PROVIDER, if your deployment sets it) and run again.",
-    );
-  }
-
-  const org = args.values.get("org")?.trim() || deploymentOrg();
+  const { target: store, org } = await openCensusStore(args.values.get("org"));
 
   {
     const identityToken = (process.env.OE_DEPLOY_CONTROL_TOKEN?.trim() || process.env.E2E_CONTROL_READ_TOKEN?.trim()) ?? "";

@@ -1,7 +1,15 @@
 import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
-import { flatDisplayName, quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
+import {
+  flatDisplayName,
+  grantResourceTargetLabel,
+  quotedPurpose,
+  type CredentialGrantAskRow,
+  type CredentialGrantMode,
+  type CredentialGrantRow,
+} from "../operational/credential-grant-rows.js";
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
 
@@ -56,11 +64,13 @@ export interface GrantAskWorkerOrigin {
   readonly seatLabel: string;
 }
 
-export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin): string {
-  const who = flatDisplayName(requesterLabel);
+export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin, conversationLabel?: string): string {
+  const who = flatDisplayName(grantRequesterPhrase(requesterLabel));
   const seat = workerOrigin === undefined ? undefined : flatDisplayName(workerOrigin.seatLabel);
+  const vendor = connectorDisplayName(ask.connector);
+  const where = flatDisplayName(grantConversationPhrase(conversationLabel));
   return [
-    seat === undefined ? `*${who}* asks to use your ${ask.connector} credential.` : `*${seat}* asks to use your ${ask.connector} credential.`,
+    `*${seat ?? who}* asks to use your ${vendor} account, for ${where}.`,
     "",
     ...(workerOrigin === undefined
       ? []
@@ -68,24 +78,45 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
           `• Who it is for: ${who}, in their conversation with ${seat}.`,
           `• How it was raised: ${seat} gave the work to a background task, and the task raised this ask. The task ends when its work does, and it never sees your answer.`,
           `• What a grant reaches: that conversation, never the background task.`,
+          "",
         ]),
-    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
-    `• On: \`${ask.resource}\``,
+    askActionSentence(ask, "want"),
+    `Their reason: "${quotedPurpose(ask.purpose)}"`,
+    ...unreviewedToolLines(ask),
     ...frozenLines(ask),
-    ...(ask.toolName === undefined ? [] : [`• They would gain the tool: \`${ask.toolName}\``]),
-    `• Where: this one conversation only`,
-    `• They asked for: ${GRANT_MODE_WORDS[ask.requestedMode]}`,
-    `• Their stated purpose: "${quotedPurpose(ask.purpose)}"`,
+    `They asked for: ${GRANT_MODE_WORDS[ask.requestedMode]}. You choose the answer.`,
     "",
     "Tap one button to answer:",
-    `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${ask.connector}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
+    `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${vendor}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
     `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
     `• *Approve for ${GRANT_MODE_WORDS.standing}* — a standing grant, clamped to a fixed ${String(STANDING_DAYS)}-day ceiling.`,
     "• *Decline* — nothing is granted.",
     "",
     "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
-    "Approving lets that conversation run this one tool on this one resource with your credential. It grants nothing else.",
+    closingReassurance(ask, where, vendor),
   ].join("\n");
+}
+
+function askActionSentence(ask: CredentialGrantAskRow, lead: "want" | "wanted"): string {
+  const action = grantActionPhrase(ask.connector, ask.mcpTool);
+  const target = grantResourceTargetLabel(ask);
+  const opening = lead === "want" ? "They want to" : "They asked to";
+  return target === undefined ? `${opening} ${action}.` : `${opening} ${action} — "${quotedPurpose(target)}".`;
+}
+
+function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string): string {
+  const action = grantActionPhrase(ask.connector, ask.mcpTool);
+  const pinned = Object.keys(ask.frozenArgs ?? {}).length > 0;
+  return pinned
+    ? `Approving lets ${where} ${action} with your account — the pinned values above, and nothing else in ${vendor}. No other conversation gets it.`
+    : `Approving lets ${where} ${action} with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your ${vendor} account. No other conversation gets it.`;
+}
+
+function unreviewedToolLines(ask: CredentialGrantAskRow): readonly string[] {
+  if (grantActionIsReviewed(ask.connector, ask.mcpTool)) return [];
+  return [
+    `⚠️ This deployment has no plain description of what they asked for. It can only READ — a write is refused before any card is ever sent — but exactly what it reads in ${connectorDisplayName(ask.connector)} is decided by the pinned values on the next line. Read them, and decline unless you know what this is.`,
+  ];
 }
 
 function frozenLines(ask: CredentialGrantAskRow): readonly string[] {
@@ -93,11 +124,11 @@ function frozenLines(ask: CredentialGrantAskRow): readonly string[] {
   if (frozen === undefined) return [];
   const keys = Object.keys(frozen).sort();
   if (keys.length === 0) {
-    return ["\u2022 Fixed arguments: none \u2014 that conversation chooses every argument this tool takes"];
+    return ["Nothing is pinned down: that conversation would choose every detail of the call, which is a wider ask than pinning one thing."];
   }
   const shown = keys.slice(0, FROZEN_KEYS_SHOWN);
   const lines = [
-    `\u2022 Fixed arguments (${String(keys.length)}, and they cannot be changed):`,
+    keys.length === 1 ? "It is pinned to this one value, which they cannot change:" : `It is pinned to these ${String(keys.length)} values, which they cannot change:`,
     ...shown.map((key) => {
       const k = cardData(key, FROZEN_KEY_MAX);
       const name = k.truncated ? `\`${k.text}\` \u26a0\ufe0f (name truncated)` : `\`${k.text}\``;
@@ -106,7 +137,7 @@ function frozenLines(ask: CredentialGrantAskRow): readonly string[] {
   ];
   if (keys.length > shown.length) {
     lines.push(
-      `    \u00b7 \u26a0\ufe0f ${String(keys.length - shown.length)} more fixed argument(s) are NOT shown here. Decline unless you know exactly what this asks for.`,
+      `    \u00b7 \u26a0\ufe0f ${String(keys.length - shown.length)} more pinned value(s) are NOT shown here. Decline unless you know exactly what this asks for.`,
     );
   }
   return lines;
@@ -132,8 +163,7 @@ export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotifi
   return [
     `⌛ EXPIRED — this request timed out.`,
     "",
-    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
-    `• On: \`${ask.resource}\``,
+    askActionSentence(ask, "wanted"),
     "",
     "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
     requesterNotified
@@ -143,31 +173,30 @@ export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotifi
 }
 
 export function refusedGrantCardText(ask: CredentialGrantAskRow, gate: GrantApproveGate): string {
+  const vendor = connectorDisplayName(ask.connector);
   return [
-    `🚫 NOT GRANTED — your ${ask.connector} account could not lend this.`,
+    `🚫 NOT GRANTED — your ${vendor} account could not lend this.`,
     "",
-    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
-    `• On: \`${ask.resource}\``,
+    askActionSentence(ask, "wanted"),
     "",
     ask.mcpTool === undefined
       ? "This request was raised by an older build and this one cannot complete it. Nothing was granted and nothing was spent."
       : gate === "tool_absent"
-        ? `Your ${ask.connector} connection does not publish a tool by that name, so there was nothing to lend. Nothing was granted and nothing was spent.`
-        : `That request fixes arguments the ${ask.connector} tool does not take, so the grant could never have been spent. Nothing was granted and nothing was spent.`,
+        ? `Your ${vendor} account does not offer what they asked for, so there was nothing to lend. Nothing was granted and nothing was spent.`
+        : `That request pins values the ${vendor} tool does not take, so the grant could never have been spent. Nothing was granted and nothing was spent.`,
     "This request is closed. Ask them to raise a fresh one if it is still needed.",
   ].join("\n");
 }
 
 export type GrantApproveGate = "tool_absent" | "frozen_args_unknown";
 
-export function approvedGrantCardText(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">): string {
+export function approvedGrantCardText(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">, nowMs: number): string {
   return [
     `✅ APPROVED — you approved this request.`,
     "",
-    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
-    `• On: \`${ask.resource}\``,
+    askActionSentence(ask, "wanted"),
     "",
-    `You approved ${grantModePhrase(grant.mode)}, and it expires ${grant.expiresAt}.`,
+    `You approved ${grantModePhrase(grant.mode)}, ${grantExpiryPhrase(grant.expiresAt, nowMs)}.`,
     "Tapping a button on this card now does nothing.",
   ].join("\n");
 }
@@ -176,20 +205,21 @@ export function declinedGrantCardText(ask: CredentialGrantAskRow): string {
   return [
     `🚫 DECLINED — you declined this request.`,
     "",
-    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
-    `• On: \`${ask.resource}\``,
+    askActionSentence(ask, "wanted"),
     "",
     "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
   ].join("\n");
 }
 
 export function grantConsentPromptText(ask: CredentialGrantAskRow, url: string): string {
+  const vendor = connectorDisplayName(ask.connector);
   return [
-    `Before that ${ask.connector} grant can be approved, connect your own ${ask.connector} account.`,
+    `You need to connect your ${vendor} account first.`,
     "",
-    `Open this link, then press Approve on the request again: ${url}`,
+    "Open this link (it connects your account only, do not forward it), then press Approve again:",
+    url,
     "",
-    "The link connects YOUR account only — do not forward it. Nothing has been granted and nothing has been spent.",
+    "Nothing has been granted and nothing has been spent.",
   ].join("\n");
 }
 
@@ -197,13 +227,22 @@ export type GrantCardDelivery =
   | { readonly delivered: true; readonly surfaceId: string; readonly messageId: string }
   | { readonly delivered: false; readonly reason: "no_dm_arm" | "send_failed" };
 
-export async function deliverGrantCard(ask: CredentialGrantAskRow, requesterLabel: string, workerOrigin?: GrantAskWorkerOrigin): Promise<GrantCardDelivery> {
+export async function deliverGrantCard(
+  ask: CredentialGrantAskRow,
+  requesterLabel: string,
+  workerOrigin?: GrantAskWorkerOrigin,
+  conversationLabel?: string,
+): Promise<GrantCardDelivery> {
   if (!canDeliverDirectMessage(ask.ownerPlatform)) return { delivered: false, reason: "no_dm_arm" };
   const arm = postArm(ask.ownerPlatform);
   const deliver = arm?.deliverDirectMessage;
   if (deliver === undefined || arm === undefined) return { delivered: false, reason: "no_dm_arm" };
   try {
-    const landed = await deliver.call(arm, { actions: grantCardActions(ask), principalId: ask.ownerNativeId, text: grantCardText(ask, requesterLabel, workerOrigin) });
+    const landed = await deliver.call(arm, {
+      actions: grantCardActions(ask),
+      principalId: ask.ownerNativeId,
+      text: grantCardText(ask, requesterLabel, workerOrigin, conversationLabel),
+    });
     return { delivered: true, messageId: landed.messageId, surfaceId: landed.surfaceId };
   } catch {
     return { delivered: false, reason: "send_failed" };
@@ -218,8 +257,8 @@ export async function refuseGrantCard(ask: CredentialGrantAskRow, gate: GrantApp
   return await rewriteGrantCard(ask, refusedGrantCardText(ask, gate));
 }
 
-export async function approveGrantCard(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">): Promise<boolean> {
-  return await rewriteGrantCard(ask, approvedGrantCardText(ask, grant));
+export async function approveGrantCard(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">, nowMs: number): Promise<boolean> {
+  return await rewriteGrantCard(ask, approvedGrantCardText(ask, grant, nowMs));
 }
 
 export async function declineGrantCard(ask: CredentialGrantAskRow): Promise<boolean> {

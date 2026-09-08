@@ -301,7 +301,9 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
   eq(grant?.scopeKey, "sess-chat-1", "…scoped to the chat that asked");
   eq(grant?.ownerSlug, "rowan_hale", "…under the owner slug the ASK pinned");
   eq(grant?.toolName, "grant__rowan_hale_notion__notion_fetch_launch_page", "…mounted under the name the ASK pinned, target label and all");
-  eq(owner.text.includes("grant__rowan_long_notion__notion_fetch_launch_page"), true, "…and the owner is told THAT name, not a recomposed grant__<owner>__<verb>");
+  eq(owner.text.includes("grant__"), false, "…and the owner's confirmation names NO mounted tool — the name is the mint contract, not copy");
+  ok(owner.text.includes("read a Notion page"), "…it says what that conversation can now DO");
+  ok(/until \d\d:\d\d UTC/u.test(owner.text), "…and when it ends, as a clock time rather than an ISO instant");
 
   const listed = vendor.seen.find((r) => (r.body?.["method"] as string | undefined) === "tools/list");
   ok(listed !== undefined, "the owner's live connection was read at approve time");
@@ -533,7 +535,8 @@ console.log("9. an ask composes with no vendor tool name to look up:");
     eq(rows.length, 1, "…and writes exactly one ask row");
     eq(rows[0]?.mcpTool, VENDOR_TOOL, "🔴 …whose vendor tool is the default the verb composes — the name that reaches the owner's approval check");
     eq(dmed.length, 1, "…and one card reaches the owner's DM");
-    ok(dmed[0]?.text.includes(VENDOR_TOOL), "…naming the tool they are being asked to lend, so the owner judges the same name the borrow would spend");
+    ok(dmed[0]?.text.includes("read a Notion page"), "…and the card says what that tool DOES, in the words the reviewed table spells for it");
+    ok(dmed[0]?.text.includes(VENDOR_TOOL) === false, "…never the vendor tool id, which is unreadable to the person deciding");
   }
 
   {
@@ -571,7 +574,7 @@ console.log("9. an ask composes with no vendor tool name to look up:");
     eq(defaultedRows.length, 1, "…writing exactly one ask row");
     eq(defaultedRows[0]?.mcpTool, VENDOR_TOOL, "🔴 …whose vendor tool is the CONNECTOR'S DEFAULT — the verb composed the name the caller could not look up");
     eq(dmed.length, 1, "…and one card reaches the owner's DM");
-    ok(dmed[0]?.text.includes(VENDOR_TOOL), "🔴 …naming that same tool, so the owner decides on the name the borrow would actually spend");
+    ok(dmed[0]?.text.includes("read a Notion page"), "🔴 …saying what that same tool DOES, so the owner decides on the borrow the row will actually spend");
 
     dmed.length = 0;
     const NAMED_SCOPE = "sess-1552-verb-named";
@@ -580,7 +583,10 @@ console.log("9. an ask composes with no vendor tool name to look up:");
     eq(named.asked, true, "control — the identical ask that DOES name a tool is raised too");
     const namedRows = await rowsFor(NAMED_SCOPE);
     eq(namedRows[0]?.mcpTool, OTHER_TOOL, "🔴 control — and carries the CALLER'S name, not the default: an explicit name still wins");
-    ok(dmed[0]?.text.includes(OTHER_TOOL) === true && dmed[0]?.text.includes(VENDOR_TOOL) === false, "control — and the card names the caller's tool alone");
+    ok(dmed[0]?.text.includes("read one thing in Notion") === true, "control — an UNREVIEWED tool reads as the generic floor, not as the default tool's phrase");
+    ok(dmed[0]?.text.includes("read a Notion page") === false, "control — …so the two tools do not render the same card");
+    ok(dmed[0]?.text.includes("no plain description") === true, "control — …and the owner is warned that this deployment cannot describe it, and steered to decline");
+    ok(dmed[0]?.text.includes(OTHER_TOOL) === false && dmed[0]?.text.includes(VENDOR_TOOL) === false, "control — and NEITHER vendor id appears");
   }
 }
 

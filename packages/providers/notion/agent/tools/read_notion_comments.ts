@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionComments, resolveBlockOwningPage, resolveNotionCredential, type NotionCommentSummary } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
+import { assertNotionActingIdentity } from "../channels/notion-acting-identity.js";
 import { assertNotionBlockAllowed, assertNotionPageAllowed } from "../channels/notion-scope.js";
 import {
   ingestUntrustedModelOutput,
@@ -89,6 +90,7 @@ export const readNotionCommentsEntry = defineTool({
     if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
     const domains = getConfig().loadDomains();
     await assertNotionPageAllowed(ctx2 as BindableContext, page, domains);
+    await assertNotionActingIdentity(ctx2 as BindableContext, "read_notion_comments");
     const cred = await resolveNotionCredential(notionCallerCredential(ctx2 as BindableContext, domains));
     if (!cred) throw new Error("no value stored under db:notion:channel-key — cannot read the comments.");
     if (input.block) {

@@ -413,10 +413,15 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   eq(sandboxRow.credential, "notion-rest", "🔴 …and the credential IDENTITY, under the shared name `credential`");
   ok(!JSON.stringify(sandboxRow).includes(SECRET), "🔴 …carrying no byte of the credential VALUE");
 
-  process.env.OE_ORG = "acme-org";
-  process.env.OE_WORKSPACE = "ws1";
-  process.env.OE_SURFACE = "c1";
   await import("./_register-test-config.js");
+  const {
+    _resetDeploymentIdentityForTest,
+    _setDeploymentIdentityForTest,
+    registerDeploymentIdentity,
+    registeredDeploymentIdentity,
+  } = await import("../agent/identity/deployment-identity.js");
+  const savedIdentity = registeredDeploymentIdentity();
+  _setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
   const { oeFetch, setHostEgressLookup } = await import("../agent/access/host-egress.js");
   const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
   type OperationalStore = import("../agent/operational/store.js").OperationalStore;
@@ -428,7 +433,8 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
 
   const realFetch = globalThis.fetch;
   const live = getOperationalStore();
-  const hostRows: { action: string; detail?: Record<string, unknown> }[] = [];
+  type CapturedRow = { action: string; org?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> };
+  const hostRows: CapturedRow[] = [];
   const sentInits: (RequestInit | undefined)[] = [];
   globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
     sentInits.push(init);
@@ -436,7 +442,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   }) as typeof globalThis.fetch;
   registerOperationalStore({
     ...live,
-    appendAudit: async (r: { action: string; detail?: Record<string, unknown> }) => void hostRows.push(r),
+    appendAudit: async (r: CapturedRow) => void hostRows.push(r),
   } as unknown as OperationalStore);
   resetOperationalStore();
   setHostEgressLookup(async () => ["93.184.216.34"]);
@@ -450,6 +456,10 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     const allow = hostRows.filter((r) => r.action === "egress.hostside.allow").at(-1);
     ok(allow !== undefined, "🔴 an allowed host-side call appends exactly one `egress.hostside.allow` row");
     hostRow = allow!.detail as Record<string, unknown>;
+
+    eq(allow!.org, "acme-org", "🔴 the host-side row is stamped with the DECLARED org");
+    eq(allow!.workspace, "ws1", "🔴 …the declared ambient workspace");
+    eq(allow!.surface, "c1", "🔴 …and the declared ambient surface");
 
     sentInits.length = 0;
     await oeFetch({} as BindableContext, "https://raw.githubusercontent.com/o/r/main/README.md", {
@@ -465,6 +475,8 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     globalThis.fetch = realFetch;
     registerOperationalStore(live);
     resetOperationalStore();
+    if (savedIdentity) registerDeploymentIdentity(savedIdentity);
+    else _resetDeploymentIdentityForTest();
     for (const [k, v] of savedProxyEnv) if (v !== undefined) process.env[k] = v;
   }
   eq(hostRow.plane, "host", "the host plane's row names its plane");

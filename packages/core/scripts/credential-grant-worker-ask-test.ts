@@ -151,18 +151,18 @@ const origin: GrantAskWorkerOrigin = { seatLabel: SEAT };
 const seatCard = grantCardText(ask, REQUESTER);
 const workerCard = grantCardText(ask, REQUESTER, origin);
 
-ok(seatCard.startsWith(`*${REQUESTER}* asks to use your notion credential.`), "a SEAT-raised card no longer opens by naming the requester — this path's copy must not move");
+ok(seatCard.startsWith(`*${REQUESTER}* asks to use your Notion account,`), "a SEAT-raised card no longer opens by naming the requester — this path's copy must not move");
 ok(!seatCard.includes(SEAT), "a seat-raised card names the agent — the attribution block belongs to a worker-raised ask alone");
 ok(!seatCard.includes("background task"), "a seat-raised card mentions a background task that never existed");
 
 ok(
-  workerCard.startsWith(`*${SEAT}* asks to use your notion credential.`),
+  workerCard.startsWith(`*${SEAT}* asks to use your Notion account,`),
   "🔴 a WORKER-raised card still opens by naming a person — the raiser is a shell the owner has never heard of, so `who is asking` must name the agent they know",
 );
 ok(workerCard.includes(`• Who it is for: ${REQUESTER}, in their conversation with ${SEAT}.`), "the worker-raised card lost the person the ask is for");
 ok(workerCard.includes("gave the work to a background task"), "the worker-raised card does not state HOW the ask was raised");
 ok(workerCard.includes("never the background task"), "the worker-raised card does not say what a grant actually reaches");
-for (const line of ["Tap one button to answer:", "• *Decline* — nothing is granted.", '• Their stated purpose: "read the launch checklist"']) {
+for (const line of ["Tap one button to answer:", "• *Decline* — nothing is granted.", 'Their reason: "read the launch checklist"']) {
   ok(workerCard.includes(line), `the worker-raised card lost "${line}" — the attribution may add context, never change the decision`);
 }
 ok(seatCard !== workerCard, "the two cards are byte-identical — the attribution is not being rendered at all");

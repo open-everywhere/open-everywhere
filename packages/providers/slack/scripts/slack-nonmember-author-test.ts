@@ -11,12 +11,15 @@ import {
 import { buildSlackAuth, partnerFactsFromInfo } from "../agent/channels/slack-identity.js";
 import {
   slackAuthorIsMember,
+  slackClickerIsGuest,
   slackWakeAuthorFacts,
   regradeSlackBackscrollTrust,
+  _resetAuthorMemberCache,
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
+import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { renderMessages, slackReadAdapter } from "../agent/channels/slack-read.js";
-import { readChannelResult, defineDomain, registerConfig, type ReadAdapter, type RenderedLine } from "@open-everywhere/core/agent/adapter-api.js";
+import { readChannelResult, defineDomain, registerConfig, registerSurfaces, defineSurface, type ReadAdapter, type RenderedLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackProvider } from "../agent/register.js";
 
 let passed = 0;
@@ -251,5 +254,76 @@ _resetAuthorTrustForTest();
   const clean = await readChannelResult(readCtx, "slack", joined(memberOnly), "C1");
   ok(!("authoredByNonMember" in clean), "🔴 NEGATIVE CONTROL: a member-only page joined the same way carries NO field — so the positive above is the guest, not an always-mark");
 }
+
+console.log("7. an absent workspace at the live probe:");
+
+process.env["SLACK_BOT_TOKEN"] = "xoxb-test-nonmember-author";
+
+let infoBody: unknown = { ok: false, error: "unset" };
+const fakeUsersInfo = (async (input: unknown) => {
+  const url = input instanceof URL ? input : new URL(String(input));
+  const op = url.pathname.split("/").pop() ?? "";
+  const body = op === "users.info" ? infoBody : { ok: false, error: `unmocked_op:${op}` };
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}) as typeof fetch;
+
+await withPatchedFetch(fakeUsersInfo, async () => {
+  registerSurfaces([]);
+  _resetAuthorMemberCache();
+  infoBody = { ok: true, user: { id: "U_ABSENT", team_id: "T_HOME" } };
+  ok(
+    (await slackAuthorIsMember("U_ABSENT", undefined)) === false,
+    "🔴 an ABSENT team id over an UNDECLARED home workspace is a positive GUEST verdict (`false`), never `undefined` — absence of a declaration infers non-member (OPE-1579)",
+  );
+  _resetAuthorMemberCache();
+  ok(
+    (await slackClickerIsGuest("U_ABSENT", undefined)) === true,
+    "…and the floors' reader inverts that same verdict — one probe, so the chat mark, the member-tier clicker floor and the HITL answer floor cannot disagree about an unnamed workspace",
+  );
+
+  registerSurfaces([defineSurface({ key: "slack/T_HOME", trust: "internal" })]);
+  _resetAuthorMemberCache();
+  ok(
+    (await slackAuthorIsMember("U_ABSENT", undefined)) === true,
+    "🔴 POSITIVE CONTROL: the SAME author is a MEMBER once the operator declares `slack/T_HOME` — the walk reads the home workspace off `users.info`, so an ingress that names no workspace still vouches a declared workspace's people",
+  );
+
+  registerSurfaces([defineSurface({ key: "slack/E_GRID", trust: "internal" })]);
+  _resetAuthorMemberCache();
+  infoBody = { ok: true, user: { id: "U_SIB", team_id: "T_SIB", enterprise_user: { enterprise_id: "E_GRID" } } };
+  ok((await slackAuthorIsMember("U_SIB", undefined)) === true, "a declared GRID vouches a sibling-workspace author whose ingress named no workspace");
+  _resetAuthorMemberCache();
+  infoBody = { ok: true, user: { id: "U_SIB", team_id: "T_SIB", enterprise_user: { enterprise_id: "E_OTHER" } } };
+  ok(
+    (await slackAuthorIsMember("U_SIB", undefined)) === false,
+    "NEGATIVE CONTROL: a DIFFERENT Grid is a guest on the same shape — the declaration vouches, not the payload's shape",
+  );
+
+  _resetAuthorMemberCache();
+  infoBody = { ok: true, user: { id: "U_NOTEAM", enterprise_user: { enterprise_id: "E_GRID" } } };
+  ok(
+    (await slackAuthorIsMember("U_NOTEAM", undefined)) === false,
+    "🔴 a user object naming NO workspace is a GUEST even under a DECLARED Grid — the walk needs a workspace to look up, and it answers rather than declining",
+  );
+
+  registerSurfaces([]);
+  _resetAuthorMemberCache();
+  infoBody = { ok: false, error: "missing_scope" };
+  ok(
+    (await slackAuthorIsMember("U_ABSENT", undefined)) === undefined,
+    "🔴 A FAILED ASK STILL ANSWERS NOTHING: an `ok:false` body gives `undefined` even with no team id — a missing WORKSPACE never produces that verdict, and a deployment without `users:read` still marks nothing (the fail-OPEN polarity section 2 pins)",
+  );
+
+  _resetAuthorMemberCache();
+  infoBody = { ok: true, user: { id: "U_OWN", team_id: "T_HOME" } };
+  ok(
+    (await slackAuthorIsMember("U_OWN", "T_HOME")) === true,
+    "negative control: a NAMED workspace still admits its own member with NOTHING declared — the own-workspace arm is untouched",
+  );
+});
+
+registerSurfaces([]);
+_resetAuthorMemberCache();
+delete process.env["SLACK_BOT_TOKEN"];
 
 console.log(`\n✅ slack non-member author: ${passed} assertions passed`);

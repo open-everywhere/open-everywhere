@@ -29,6 +29,8 @@ import {
   NOTION_WORK_CREDENTIAL,
 } from "../agent/channels/notion-work.js";
 import { assertNotionWorkPageAllowed, notionWorkScope } from "../agent/channels/notion-scope.js";
+import { notionReadAdapter } from "../agent/channels/notion-read.js";
+import { notionWorkSearchAdapter } from "../agent/channels/notion-work-search.js";
 import notionSearch, { notionSearchEntry } from "../agent/tools/notion_search.js";
 import { readNotionPageEntry } from "../agent/tools/read_notion_page.js";
 import { readNotionCommentsEntry } from "../agent/tools/read_notion_comments.js";
@@ -417,6 +419,147 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     resetRegisteredConnectorCredentials();
     resetBrokers();
   }
+}
+
+{
+  const execute = readNotionPageEntry.execute as (i: unknown, c: BindableContext) => Promise<unknown>;
+
+  const askingSeat = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" }, principalId: "U1", principalType: "slack-user" } },
+        id: "sess-seat",
+      },
+    }) as unknown as BindableContext;
+
+  const askingWorker = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "subagent", continuationToken: "subagent:sess-seat:call_1" },
+      session: {
+        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" } } },
+        id: "sess-child",
+        parent: { callId: "call_1", sessionId: "sess-seat" },
+      },
+    }) as unknown as BindableContext;
+
+  const askingWorkerTokenOnly = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "subagent", continuationToken: "subagent:sess-seat:call_1" },
+      session: {
+        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" } } },
+        id: "sess-child",
+      },
+    }) as unknown as BindableContext;
+
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, askingSeat("C_DEV")),
+    /asks to act with the requester's own notion account/,
+    "🔴 read_notion_page REFUSES a work-granted read when the requester asked to act as themselves",
+  );
+  passed++;
+
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, askingWorker("C_DEV")),
+    /asks to act with the requester's own notion account/,
+    "🔴 …and so does the DELEGATED WORKER, which is where the live substitution happened",
+  );
+  passed++;
+
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, askingWorkerTokenOnly("C_DEV")),
+    /asks to act with the requester's own notion account/,
+    "🔴 …including one whose only linkage to its seat is the subagent continuation token",
+  );
+  passed++;
+
+  const refusal = await execute({ page: SPEC_PAGE }, askingSeat("C_DEV")).then(
+    () => "",
+    (e: Error) => e.message,
+  );
+  ok(!refusal.includes("soak-work-key"), "🔴 …and it refuses BEFORE resolving the team credential (no team call)");
+
+  const strayStamp = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-somebody-else|notion" }, principalId: "U1", principalType: "slack-user" } },
+        id: "sess-seat",
+      },
+    }) as unknown as BindableContext;
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, strayStamp("C_DEV")),
+    /work credential "soak-work-key"/,
+    "negative control: a stamp from another session leaves the read on the team family",
+  );
+  passed++;
+
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, slackCtx("C_DEV")),
+    /work credential "soak-work-key"/,
+    "negative control: an ordinary read still resolves the WORK credential (the gate refuses nothing on its own)",
+  );
+  passed++;
+
+  const search = notionSearchEntry.execute as (i: unknown, c: BindableContext) => Promise<unknown>;
+  await assert.rejects(
+    () => search({ query: "spec" }, askingSeat("C_DEV")),
+    /asks to act with the requester's own notion account/,
+    "🔴 notion_search refuses the same ask",
+  );
+  passed++;
+  await assert.rejects(
+    () => search({ query: "spec" }, slackCtx("C_DEV")),
+    /work credential "soak-work-key"/,
+    "negative control: notion_search without an ask still resolves the WORK credential",
+  );
+  passed++;
+
+  const askingNotionSeat: BindableContext = {
+    channel: { kind: "notion" },
+    session: {
+      auth: { current: { attributes: { workspace_id: WS, page_id: SPEC_PAGE, oe_own_account_ask: "sess-seat|notion" }, principalId: "U_NOTION", principalType: "notion-user" } },
+      id: "sess-seat",
+    },
+  } as unknown as BindableContext;
+
+  const comments = readNotionCommentsEntry.execute as (i: unknown, c: BindableContext) => Promise<unknown>;
+  await assert.rejects(
+    () => comments({ page: SPEC_PAGE }, askingNotionSeat),
+    /asks to act with the requester's own notion account/,
+    "🔴 read_notion_comments refuses an own-account ask (the delegated worker's own arm)",
+  );
+  passed++;
+  const commentsPlain = await comments({ page: SPEC_PAGE }, notionCtx(SPEC_PAGE)).then(
+    () => "",
+    (e: Error) => e.message,
+  );
+  ok(commentsPlain.includes("db:notion:channel-key"), "negative control: read_notion_comments without an ask still resolves the CHAT credential");
+
+  await assert.rejects(
+    () => notionReadAdapter.readChannel(askingNotionSeat, SPEC_PAGE, 10),
+    /asks to act with the requester's own notion account/,
+    "🔴 the generic read adapter refuses it too — read_notion_page's own superset is not a way around the gate",
+  );
+  passed++;
+  const readPlain = await notionReadAdapter.readChannel(notionCtx(SPEC_PAGE), SPEC_PAGE, 10).then(
+    () => "",
+    (e: Error) => e.message,
+  );
+  ok(readPlain.includes("no Notion credential is stored"), "negative control: the read adapter without an ask still reaches the credential resolve");
+
+  await assert.rejects(
+    () => notionWorkSearchAdapter.search(askingSeat("C_DEV"), granted, "spec", { insideDomain: false, limit: 5 }),
+    /asks to act with the requester's own notion account/,
+    "🔴 the federated search adapter's Notion arm refuses it too",
+  );
+  passed++;
+  await assert.rejects(
+    () => notionWorkSearchAdapter.search(slackCtx("C_DEV"), granted, "spec", { insideDomain: false, limit: 5 }),
+    /work credential "soak-work-key"/,
+    "negative control: the federated search adapter without an ask still resolves the WORK credential",
+  );
+  passed++;
 }
 
 console.log(`✓ notion-work-grant: ${passed} assertions passed`);

@@ -2,11 +2,13 @@ import type { Bundle, ConnectorOpGating } from "./bundle.js";
 import {
   classifyConnectorOpTierVerdict,
   connectorOpName,
+  defaultConnectorOpTierArm,
   parseQualifiedToolName,
   type ConnectorOpTier,
+  type ConnectorOpTierArm,
   type OpTierBasis,
 } from "./consequence.js";
-import { getConfig, type AppConfig } from "./config.js";
+import { getConfig } from "./config.js";
 
 const TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
 
@@ -103,47 +105,45 @@ export function declaredConnectorOpRaise(toolName: string, bundles?: readonly Bu
   return raised;
 }
 
-function registeredConnectorOpTierArm(): AppConfig["connectorOpTier"] {
+function registeredConnectorOpTierArm(): ConnectorOpTierArm {
   try {
-    return getConfig().connectorOpTier;
+    return getConfig().connectorOpTier ?? defaultConnectorOpTierArm;
   } catch {
-    return undefined;
+    return defaultConnectorOpTierArm;
   }
 }
 
 interface ArmAnswer {
-  readonly present: boolean;
+  readonly replaced: boolean;
   readonly tier?: ConnectorOpTier;
 }
 
-const NO_ARM: ArmAnswer = { present: false };
-
-function consumerArmTier(toolName: string): ArmAnswer {
+function consultTieringFunction(toolName: string): ArmAnswer {
   const arm = registeredConnectorOpTierArm();
-  if (!arm) return NO_ARM;
+  const replaced = arm !== defaultConnectorOpTierArm;
   const parsed = parseQualifiedToolName(toolName);
-  if (parsed?.connection === undefined) return { present: true };
+  if (parsed?.connection === undefined) return { replaced };
   let answer: unknown;
   try {
     answer = arm({ connection: parsed.connection, verb: parsed.verb, toolName });
   } catch (err) {
     console.warn(`[open-everywhere:access] connectorOpTier arm threw for ${toolName}; kept the built-in verdict: ${String(err)}`);
-    return { present: true };
+    return { replaced };
   }
-  if (answer === undefined) return { present: true };
+  if (answer === undefined) return { replaced };
   if (typeof answer !== "string" || !Object.hasOwn(TIER_RANK, answer)) {
     console.warn(
       `[open-everywhere:access] connectorOpTier arm returned ${JSON.stringify(answer)} for ${toolName}, which is not a tier; kept the built-in verdict`,
     );
-    return { present: true };
+    return { replaced };
   }
-  return { present: true, tier: answer as ConnectorOpTier };
+  return { replaced, tier: answer as ConnectorOpTier };
 }
 
 export interface ConnectorOpTierParts {
   readonly base: ConnectorOpTier;
   readonly basis: OpTierBasis;
-  readonly armPresent: boolean;
+  readonly armReplaced: boolean;
   readonly arm?: ConnectorOpTier;
   readonly armLowered: boolean;
   readonly declared?: ConnectorOpTier;
@@ -152,7 +152,7 @@ export interface ConnectorOpTierParts {
 
 export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle[]): ConnectorOpTierParts {
   const verdict = classifyConnectorOpTierVerdict(toolName);
-  const arm = consumerArmTier(toolName);
+  const arm = consultTieringFunction(toolName);
   const afterArm =
     arm.tier === undefined
       ? verdict.tier
@@ -165,8 +165,8 @@ export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle
   return {
     base: verdict.tier,
     basis: verdict.basis,
-    armPresent: arm.present,
-    ...(arm.tier !== undefined ? { arm: arm.tier } : {}),
+    armReplaced: arm.replaced,
+    ...(arm.replaced && arm.tier !== undefined ? { arm: arm.tier } : {}),
     armLowered,
     ...(declared !== undefined ? { declared } : {}),
     tier,

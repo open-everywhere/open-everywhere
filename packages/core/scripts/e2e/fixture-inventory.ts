@@ -183,7 +183,7 @@ export function reachableSurfaces(env: Env): { reachable: Set<SurfaceKind>; blin
     discord: has(ENV.discordDriverToken),
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsBotAppId].every(has),
     github: has(ENV.githubDriverToken),
-    linear: has(ENV.linearApiKey),
+    linear: has(ENV.linearApiKey) || has(ENV.addressedLinearApiKey),
     notion: has(ENV.notionDriverKey),
   };
   const reachable = new Set<SurfaceKind>(SURFACE_ORDER.filter((s) => state[s]));
@@ -253,7 +253,7 @@ async function resolveGithubRoom(ctx: ResolverContext, id: string): Promise<Reso
 }
 
 async function resolveLinearRoom(ctx: ResolverContext, id: string): Promise<Resolution> {
-  const keys = [ctx.env[ENV.linearApiKey], ctx.env[ENV.linearSoakDriverKey]].filter((k): k is string => Boolean(k?.trim()));
+  const keys = [ctx.env[ENV.linearApiKey], ctx.env[ENV.addressedLinearApiKey], ctx.env[ENV.linearSoakDriverKey]].filter((k): k is string => Boolean(k?.trim()));
   let last = "no Linear key";
   for (const key of keys) {
     const answer = await linearGraphql(key, `query($id:String!){ team(id:$id){ id name key organization { id } } }`, { id });
@@ -525,8 +525,18 @@ async function provisionTeams(env: Env, plan: ProvisionTarget, room: PlannedRoom
 }
 
 async function provisionLinear(env: Env, plan: ProvisionTarget, room: PlannedRoom): Promise<ProvisionOutcome> {
-  const apiKey = env[ENV.linearApiKey];
-  if (!apiKey) return { room, state: "skipped", detail: `no ${ENV.linearApiKey}` };
+  const keyVar = room.credentialVar ?? ENV.linearApiKey;
+  const apiKey = env[keyVar]?.trim();
+  if (!apiKey) {
+    return {
+      room,
+      state: "skipped",
+      detail:
+        keyVar === ENV.linearApiKey
+          ? `no ${keyVar}`
+          : `no ${keyVar} — this room's team is in its own Linear workspace, so ${ENV.linearApiKey} cannot see it. Mint a personal API key in THAT workspace and export it as ${keyVar}`,
+    };
+  }
   const want = roomName(plan.slug, "linear");
   let after: string | null = null;
   do {
@@ -557,7 +567,7 @@ async function provisionLinear(env: Env, plan: ProvisionTarget, room: PlannedRoo
       detail: `teamCreate: ${detail}`,
       grant:
         `Linear (two steps, both required): (1) create the team by hand — Settings → Teams → New team, name "${want}", key "${key}"; ` +
-        `(2) re-mint ${ENV.linearApiKey} with BOTH that team and the existing ${ENV.linearTeamId} team in its scope. A team-scoped key cannot even READ a team outside its scope, so step (1) alone leaves the room unresolvable.`,
+        `(2) mint a personal API key IN THE WORKSPACE THAT TEAM LIVES IN, scoped to include it, and export it as ${keyVar}. A key cannot read a team outside its own scope — and never one outside its own WORKSPACE, whatever its team scope — so step (1) alone leaves the room unresolvable.`,
     };
   }
   return { room, state: "created", id: team.id, name: want, detail: "created" };

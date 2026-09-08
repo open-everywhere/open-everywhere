@@ -112,6 +112,10 @@ export function refusedUnverifiedRequester(rows: readonly AuditWireEntry[]): rea
   return rows.filter((e) => e.action === "grant.refused" && detailOf(e).gate === "unverified_requester");
 }
 
+export function refusedGrantAlreadyLive(rows: readonly AuditWireEntry[]): readonly AuditWireEntry[] {
+  return rows.filter((e) => e.action === "grant.refused" && detailOf(e).gate === "grant_already_live");
+}
+
 export function allNoticesDelivered(rows: readonly AuditWireEntry[], platform: string): boolean {
   return rows.length > 0 && rows.every((e) => detailOf(e).outcome === "sent" && detailOf(e).ownerPlatform === platform);
 }

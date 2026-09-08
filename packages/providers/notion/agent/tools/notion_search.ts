@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveNotionCredential, searchNotion } from "../channels/notion-api.js";
 import { notionWorkGrant, notionWorkMount } from "../channels/notion-work.js";
+import { assertNotionActingIdentity } from "../channels/notion-acting-identity.js";
 import {
   ingestUntrustedModelOutput,
   getConfig,
@@ -34,6 +35,7 @@ export const notionSearchEntry = defineTool({
           "An operator grants it by declaring the domain's Notion work credential in agent/memory/config/domains.ts.",
       );
     }
+    await assertNotionActingIdentity(ctx as BindableContext, "notion_search");
     const cred = await resolveNotionCredential(grant.credential);
     if (!cred) throw new Error(`no value stored for this domain's Notion work credential "${grant.credential}" — cannot search.`);
     const hits = await searchNotion(input.query, {

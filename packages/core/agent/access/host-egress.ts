@@ -198,6 +198,17 @@ export const EGRESS_REPORT_PROTOCOL =
 
 export type ReachDenyReason = "not-allowlisted" | "connector-revoked";
 
+export type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
+
+export const MAX_REDIRECT_HOPS = 5;
+
+export function redirectBoundDenial(tool: string, host: string): string {
+  return (
+    `${tool}: this request has already followed ${MAX_REDIRECT_HOPS} redirects, and "${host}" is the next one. ` +
+    `A chain that long is a loop or a cloak, so the fence stopped it. Fetch the final URL directly instead.`
+  );
+}
+
 export function egressReachDenial(tool: string, host: string, reason: ReachDenyReason): string {
   const cause =
     reason === "not-allowlisted"
@@ -212,6 +223,7 @@ export interface ReachDeps {
   readonly tool?: string;
   readonly hosts?: (ctx: BindableContext) => readonly ReachableHost[];
   readonly narrow?: (ctx: BindableContext, ids: readonly string[]) => Promise<readonly string[] | null>;
+  readonly rowFields?: Readonly<Record<string, unknown>>;
 }
 
 export async function assertEgressReach(ctx: BindableContext, rawUrl: string, deps: ReachDeps = {}): Promise<URL> {
@@ -224,6 +236,7 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
       ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "denied" }),
       reason,
       tool,
+      ...(deps.rowFields ?? {}),
     });
     throw new Error(egressReachDenial(tool, url.hostname, reason));
   };
@@ -233,6 +246,29 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
     const granted = await narrow(ctx, [entry.viaConnection]);
     if (granted === null || !granted.includes(entry.viaConnection)) return deny("connector-revoked");
   }
+  return url;
+}
+
+export async function assertEgressHop(ctx: BindableContext, rawUrl: string, hop: number, deps: ReachDeps = {}): Promise<URL> {
+  const tool = deps.tool ?? DEFAULT_TOOL_LABEL;
+  const parsed = parseHttpUrl(rawUrl, tool);
+  const rowFields = { hop, dispatch: "framework" } as const;
+  if (hop > MAX_REDIRECT_HOPS) {
+    const reason: HostDenyReason = "redirect-bound";
+    await auditToolAction(ctx, "egress.hostside.deny", {
+      ...hostCallAuditFields({ host: parsed.hostname, verb: HOST_PLANE_VERB, outcome: "denied" }),
+      reason,
+      tool,
+      ...rowFields,
+    });
+    throw new Error(redirectBoundDenial(tool, parsed.hostname));
+  }
+  const url = await assertEgressReach(ctx, rawUrl, { ...deps, rowFields });
+  await auditToolAction(ctx, "egress.hostside.allow", {
+    ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "allowed" }),
+    tool,
+    ...rowFields,
+  });
   return url;
 }
 
@@ -253,9 +289,10 @@ export async function oeFetch(ctx: BindableContext, rawUrl: string, opts: OeFetc
       dispatch = await directDispatch(parsed, tool);
     } catch (err) {
       const resolveFailed = (err as { oeEgressCause?: EgressRefusalCause })?.oeEgressCause === "resolve-failed";
+      const reason: HostDenyReason = resolveFailed ? "resolve-failed" : "ssrf";
       await auditToolAction(ctx, "egress.hostside.deny", {
         ...hostCallAuditFields({ host: parsed.hostname, verb: HOST_PLANE_VERB, outcome: resolveFailed ? "failed" : "denied" }),
-        reason: resolveFailed ? "resolve-failed" : "ssrf",
+        reason,
         tool,
       });
       throw err;

@@ -95,4 +95,52 @@ for (const name of RETIRED) {
   ok(!ENV_READ_ALLOWLIST.has(name), `${name} holds no env-read-allowlist row any more`);
 }
 
+{
+  const SCAN_ROOTS = ["agent", "deploy", "packages", "scripts", "tests"];
+  const SKIP_DIRS = new Set(["node_modules", "dist", ".eve", "generated"]);
+  const { readFileSync: read, readdirSync: list, statSync: stat } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const tsFiles = (dir: string, out: string[] = []): string[] => {
+    let entries: string[];
+    try {
+      entries = list(dir);
+    } catch {
+      return out;
+    }
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry)) continue;
+      const p = join(dir, entry);
+      if (stat(p).isDirectory()) tsFiles(p, out);
+      else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) out.push(p);
+    }
+    return out;
+  };
+
+  const rootFiles = list(".").filter((e) => e.endsWith(".ts") && !e.endsWith(".d.ts") && stat(e).isFile());
+  const files = [...SCAN_ROOTS.flatMap((root) => tsFiles(root)), ...rootFiles];
+  ok(files.length > 500, `precondition: the scan really walked the tree (${files.length} TypeScript files)`);
+  ok(
+    files.includes("packages/core/scripts/egress-write-attribution-test.ts"),
+    "precondition: the scan reaches the suite this guard was written for",
+  );
+  ok(files.includes("vitest.config.ts"), "precondition: …and reaches the repo-root configs every suite loads");
+
+  const offences: string[] = [];
+  for (const name of RETIRED) {
+    const write = new RegExp(String.raw`process\.env(?:\.${name}\b|\[["']${name}["']\])\s*=(?!=)`);
+    const record = new RegExp(String.raw`(?<![\w$.])${name}\s*:`);
+    for (const file of files) {
+      const lines = read(file, "utf8").split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        const code = line.trimStart();
+        if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
+        if (write.test(line) || record.test(line)) offences.push(`${file}:${i + 1} sets ${name}`);
+      }
+    }
+  }
+  ok(offences.length === 0, `🔴 no suite sets a retired identity env name${offences.length ? ` — ${offences.join(", ")}` : ""}`);
+}
+
 console.log(`\n${n} assertions passed`);

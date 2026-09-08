@@ -31,6 +31,8 @@ import {
   grantIdsOf,
   grantsForAsks,
   noticesForGrant,
+  refusedGrantAlreadyLive,
+  surfaceNamesChannel,
   refusedUnverifiedRequester,
   splitFenceRows,
   unexpiredGrants,
@@ -41,6 +43,7 @@ import {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   dispatchAddressings,
+  isAmbientLegAddressing,
   dispatchedAction,
   replyPostCount,
   reportedDirectMention,
@@ -268,7 +271,11 @@ export function skipReason(
     const vars = [...new Set(unmet.flatMap((c) => missing[c]))];
     return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})`;
   }
-  if (category === "optional-not-included") return "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
+  if (category === "optional-not-included") {
+    return explicitlyNamed
+      ? "optional/stretch — naming it directly is NOT enough (that consent works for the expensive gate, not this one): set E2E_INCLUDE_OPTIONAL=1 to run"
+      : "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
+  }
   if (category === "expensive-not-included")
     return `expensive — ${scenario.costReason} (name it directly or set --include-expensive / E2E_INCLUDE_EXPENSIVE=1 to run)`;
   return undefined;
@@ -2102,10 +2109,10 @@ export const SCENARIOS: readonly Scenario[] = [
           const onIssueA = dispatched.filter((r) => (r.detail as { issueId?: unknown } | undefined)?.issueId === issueA.id);
           const selfDirect = onIssueA.filter((r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "direct");
           const selfChannelWatch = onIssueA.filter(
-            (r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "channel-watch" && r.principalId === lin.appUserId,
+            (r) => isAmbientLegAddressing((r.detail as { addressing?: unknown } | undefined)?.addressing) && r.principalId === lin.appUserId,
           );
           const otherChannelWatch = onIssueA.filter(
-            (r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "channel-watch" && r.principalId !== lin.appUserId,
+            (r) => isAmbientLegAddressing((r.detail as { addressing?: unknown } | undefined)?.addressing) && r.principalId !== lin.appUserId,
           );
           ctx.gate(
             selfDirect.length === 0,
@@ -4495,7 +4502,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const refused = grantRows.filter((e) => e.action === "grant.refused");
       const askedRows = grantRows.filter((e) => e.action === "grant.asked");
 
-      if (askedRows.length === 0) {
+      const noFreshAsk = tapped && askedRows.length === 0 && refusedGrantAlreadyLive(grantRows).some((e) => surfaceNamesChannel(e.surface, threadId));
+      if (noFreshAsk) {
+        ctx.log(
+          `S-DISCORD-GRANT: this tapped run's own fresh raise was refused \`grant_already_live\` and wrote no grant.asked row — the EXPECTED state, because the raise ran in the session that already holds the tapped grant. Phase 1's row gates stand down for this run only; phase 2 drives on the ${ARMING_ADVISORY_LOOKBACK_DAYS}-day lookback joined to thread ${process.env[ENV.discordGrantThread]?.trim() || "(from the sidecar)"}'s own asks.`,
+        );
+      }
+      if (askedRows.length === 0 && !noFreshAsk) {
         const unverified = refusedUnverifiedRequester(grantRows);
         if (unverified.length > 0) {
           ctx.skip(
@@ -4507,14 +4520,16 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
       const discordOwned = discordOwnedAsks(grantRows);
-      ctx.gate(
-        discordOwned.length > 0,
-        `🔴 (hard): the ask minted a DISCORD-OWNED grant row — a grant.asked row whose \`owner\` principal key names the discord platform (found ${askedRows.length} grant.asked row(s), ${discordOwned.length} Discord-owned; owners seen: ${JSON.stringify(askedRows.map((e) => (e.detail as GrantDetail | undefined)?.owner))}). THIS IS THE FIXTURE OPE-1310 EXISTS FOR — without it a live run's two grant-tap probes have nothing to tap. A Slack-owned row here means E2E_DISCORD_GRANT_OWNER named somebody the resolver read into a different namespace.`,
-      );
-      ctx.gate(
-        discordOwned.every((e) => (e.detail as GrantDetail | undefined)?.connector === "notion"),
-        `🔴 (hard): the Discord-owned ask names the one connector this tree lends (notion) — a row naming another connector means CREDENTIAL_GRANT_ROLES was widened without this leg being re-derived (${JSON.stringify(discordOwned.map((e) => (e.detail as GrantDetail | undefined)?.connector))})`,
-      );
+      if (!noFreshAsk) {
+        ctx.gate(
+          discordOwned.length > 0,
+          `🔴 (hard): the ask minted a DISCORD-OWNED grant row — a grant.asked row whose \`owner\` principal key names the discord platform (found ${askedRows.length} grant.asked row(s), ${discordOwned.length} Discord-owned; owners seen: ${JSON.stringify(askedRows.map((e) => (e.detail as GrantDetail | undefined)?.owner))}). THIS IS THE FIXTURE OPE-1310 EXISTS FOR — without it a live run's two grant-tap probes have nothing to tap. A Slack-owned row here means E2E_DISCORD_GRANT_OWNER named somebody the resolver read into a different namespace.`,
+        );
+        ctx.gate(
+          discordOwned.every((e) => (e.detail as GrantDetail | undefined)?.connector === "notion"),
+          `🔴 (hard): the Discord-owned ask names the one connector this tree lends (notion) — a row naming another connector means CREDENTIAL_GRANT_ROLES was widened without this leg being re-derived (${JSON.stringify(discordOwned.map((e) => (e.detail as GrantDetail | undefined)?.connector))})`,
+        );
+      }
 
       if (!tapped) {
         const written = writeGrantThreadRecord(threadRecordPath, { threadId, raisedAt: new Date().toISOString() });

@@ -92,6 +92,7 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_GITHUB_DRIVER_TOKEN: "credential",
   E2E_GITHUB_WEBHOOK_SECRET: "credential",
   E2E_LINEAR_API_KEY: "credential",
+  E2E_ADDRESSED_LINEAR_API_KEY: "credential",
   E2E_LINEAR_WEBHOOK_SECRET: "credential",
   E2E_LINEAR_SOAK_DRIVER_KEY: "credential",
   E2E_NOTION_DRIVER_KEY: "credential",
@@ -155,6 +156,7 @@ export interface PlannedRoom {
   readonly action: ProvisionAction;
   readonly reuseOf?: string;
   readonly readByCode?: string;
+  readonly credentialVar?: string;
   readonly note: string;
 }
 
@@ -208,7 +210,8 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID",
         action: "create",
         readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.linear` reads the var, so it is in ROOM_VARS — but the room is this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
-        note: "a team in the e2e Linear org",
+        credentialVar: "E2E_ADDRESSED_LINEAR_API_KEY",
+        note: "🔴 A TEAM IN A SECOND LINEAR WORKSPACE, and that is why it carries a key of its own (OPE-1590). It lives in `second-e2e-workspace`; E2E_LINEAR_API_KEY is a `the base e2e workspace` key and a Linear personal API key cannot read a team outside its own workspace at all. OPE-1581's grant line — re-mint the one key over both teams — reaches only teams inside ONE workspace, so it cannot join these two",
       },
       {
         surface: "notion",
@@ -227,6 +230,14 @@ export function roomName(slug: string, surface: SurfaceKind): string {
 
 export function planFor(domain: string): ProvisionDomain | undefined {
   return PROVISION_PLAN.find((p) => p.domain === domain || p.slug === domain);
+}
+
+export function credentialVarFor(envVar: string): string | undefined {
+  for (const plan of PROVISION_PLAN) {
+    const room = plan.rooms.find((r) => r.envVar === envVar);
+    if (room?.credentialVar !== undefined) return room.credentialVar;
+  }
+  return undefined;
 }
 
 export function createGuardRefusal(domain: string, room: PlannedRoom): string | null {
@@ -550,6 +561,12 @@ operator's Microsoft 365 tenant id, so the id lives in the environment and this 
 That is a choice about what this table is FOR, not a prohibition: a tenant id is a tracked literal
 by ruling, and no gate refuses one. A Teams row gives the reader the room's name and the variable
 that carries its id, which is what the rest of this file gives every other row.
+
+**A room can need a credential of its own.** A \`PlannedRoom\` may declare \`credentialVar\`, and the
+Linear addressed-only team does: it lives in a second Linear workspace, and a Linear personal API key
+never reads outside the workspace it was minted in, so \`E2E_LINEAR_API_KEY\` cannot see it. Its key is
+\`E2E_ADDRESSED_LINEAR_API_KEY\`. Unset, that room is SKIPPED by name — the provisioner never reds over
+an absent credential, and never writes a value nobody gave it.
 
 Column meanings: **id** is the vendor's own id (\`owner/repo\` on GitHub, empty on Teams). **name**
 is what the vendor calls the room today. **env var** is the \`E2E_*\` name that carries the id;

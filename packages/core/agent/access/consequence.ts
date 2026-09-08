@@ -127,6 +127,16 @@ export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
   return classifyConnectorOpTierVerdict(toolName).tier;
 }
 
+export interface ConnectorOpTierQuestion {
+  readonly connection: string;
+  readonly verb: string;
+  readonly toolName: string;
+}
+
+export type ConnectorOpTierArm = (op: ConnectorOpTierQuestion) => ConnectorOpTier | undefined;
+
+export const defaultConnectorOpTierArm: ConnectorOpTierArm = (op) => classifyConnectorOpTier(op.toolName);
+
 export function restMethodTier(method: string): ConnectorOpTier {
   switch (method.trim().toUpperCase()) {
     case "GET":

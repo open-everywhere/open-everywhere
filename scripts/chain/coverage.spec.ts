@@ -15,10 +15,15 @@ import {
   legsForShard,
   needsSubprocess,
   rootLegs,
+  rootChainScriptNames,
   workspacePackages,
 } from "./_legs.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+function rootScripts(): Record<string, string> {
+  return (JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
+}
 
 describe("batched chain parity", () => {
   test("every shard index has a spec file, and every spec file has an index", () => {
@@ -60,6 +65,7 @@ describe("batched chain parity", () => {
     for (const pkg of workspacePackages()) {
       for (const script of Object.keys(pkg.scripts)) known.add(`${pkg.name} ${script}`);
     }
+    for (const script of Object.keys(rootScripts())) known.add(`${ROOT_PKG_LABEL} ${script}`);
     for (const [label, reason] of OFF_CHAIN_BY_DESIGN) {
       expect(known.has(label), `OFF_CHAIN_BY_DESIGN names "${label}", which no package defines`).toBe(true);
       expect(reason.length, `OFF_CHAIN_BY_DESIGN entry "${label}" carries no reason`).toBeGreaterThan(20);
@@ -168,6 +174,28 @@ describe("root chain parity", () => {
   test("no root leg is named twice", () => {
     const names = rootLegs().map((l) => l.script);
     expect(new Set(names).size, "rootLegs() named the same script more than once").toBe(names.length);
+  });
+
+  test("every `test:*` script the ROOT package defines is reached by the root chain, or declared off-chain", () => {
+    const reached = rootChainScriptNames();
+    const unexplained = Object.keys(rootScripts())
+      .filter((k) => k.startsWith("test:") && k !== "test:chain")
+      .filter((k) => !reached.has(k))
+      .filter((k) => !OFF_CHAIN_BY_DESIGN.has(`${ROOT_PKG_LABEL} ${k}`))
+      .sort();
+    expect(
+      unexplained,
+      "root `test:*` scripts that no chain runs and no OFF_CHAIN_BY_DESIGN entry explains — either chain them, or name them with a reason",
+    ).toEqual([]);
+  });
+
+  test("the root off-chain declarations are exactly the root scripts that are off the chain", () => {
+    const wronglyDeclared = [...OFF_CHAIN_BY_DESIGN.keys()]
+      .filter((label) => label.startsWith(`${ROOT_PKG_LABEL} `))
+      .map((label) => label.slice(ROOT_PKG_LABEL.length + 1))
+      .filter((script) => rootChainScriptNames().has(script))
+      .sort();
+    expect(wronglyDeclared, "declared off-chain, but the root chain reaches it — delete the declaration").toEqual([]);
   });
 
   test("every declared ROOT_CHAIN_EXEMPT reason is substantive", () => {

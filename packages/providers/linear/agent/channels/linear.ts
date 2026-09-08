@@ -11,7 +11,7 @@ import {
 import { callLinear, createLinearActivity, linearChannelApi, type LinearApi } from "./linear-graphql.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
-import { markLinearEngaged, resolveLinearEngagement, type LinearSeamFacts } from "./linear-engagement.js";
+import { linearWakeAddressing, markLinearEngaged, resolveLinearEngagement, type LinearSeamFacts } from "./linear-engagement.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
 import { postLinearSilenceAck, postLinearHostAck } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
@@ -530,7 +530,13 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
     surface: surfaceKey,
     principalId: c.authorId,
     action: "linear.dispatched",
-    detail: { addressing: cls.addressing, issueId: c.issueId, teamPrivate: c.teamPrivate === true, vouched: linearTeamVouched(signal.organizationId, c.teamId), diverted: ambientWindow !== undefined },
+    detail: {
+      addressing: linearWakeAddressing(cls.addressing, seam.kind === "deliver"),
+      issueId: c.issueId,
+      teamPrivate: c.teamPrivate === true,
+      vouched: linearTeamVouched(signal.organizationId, c.teamId),
+      diverted: ambientWindow !== undefined,
+    },
   });
   slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) → judged wake dispatched`);
 }

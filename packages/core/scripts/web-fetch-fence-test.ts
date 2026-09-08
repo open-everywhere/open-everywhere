@@ -11,8 +11,10 @@ _setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1"
 
 await import("./_register-test-config.js");
 
-const { assertEgressReach, egressReachDenial, EGRESS_REPORT_PROTOCOL, hostReachable } = await import("../agent/access/host-egress.js");
-const { withEgressFence } = await import("../agent/access/web-fetch-fence.js");
+const { assertEgressReach, egressReachDenial, EGRESS_REPORT_PROTOCOL, hostReachable, MAX_REDIRECT_HOPS, redirectBoundDenial } = await import(
+  "../agent/access/host-egress.js"
+);
+const { withEgressFence, HOP_HOOK_ABSENT } = await import("../agent/access/web-fetch-fence.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const { formatWindowToken, taskWindowId } = await import("../agent/channels/window-key.js");
 const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
@@ -216,4 +218,132 @@ async function refusal(fn: () => unknown): Promise<string> {
   );
 }
 
-console.log(`\n✓ web-fetch-fence: ${n} assertions passed (shared reach decision + legible refusal + live-resolver default + break-glass revoke parity + audited deny + real mounted wiring)\n`);
+{
+  type HopHooks = { __oeWebFetchHopGuard?: (rawUrl: string, hop: number) => Promise<void>; __oeWebFetchHopPatched?: boolean };
+  const hooks = globalThis as HopHooks;
+  const allow = hostsOf([
+    { host: "docs.acme.test", viaConnection: null },
+    { host: "cdn.acme.test", viaConnection: null },
+  ]);
+  const deps = { hosts: allow, narrow: passThrough };
+
+  ok(typeof hooks.__oeWebFetchHopGuard === "function", "loading the fence INSTALLS the hop guard, which is the only name eve's patched redirect loop can reach us by");
+  ok(hooks.__oeWebFetchHopPatched === true, "🔴 the installed eve bytes publish the patched-dispatch marker — patch-package only WARNS on a failed patch, so the fence reads this rather than trusting it");
+
+  type Row = { action: string; detail?: Record<string, unknown> };
+  const rowsOf = async (fn: () => unknown): Promise<Row[]> => {
+    const live = getOperationalStore();
+    const rows: Row[] = [];
+    registerOperationalStore({ ...live, appendAudit: async (r: Row) => void rows.push(r) } as unknown as OperationalStore);
+    resetOperationalStore();
+    try {
+      await fn();
+    } catch {
+    } finally {
+      registerOperationalStore(live);
+      resetOperationalStore();
+    }
+    return rows;
+  };
+
+  function redirectingTool(chain: readonly string[]): ToolDefinition & { followed: string[] } {
+    const followed: string[] = [];
+    const tool = {
+      name: "web_fetch",
+      description: "fetch",
+      inputSchema: { type: "object", properties: {} },
+      execute: async (input: unknown) => {
+        for (const [i, next] of chain.entries()) {
+          await hooks.__oeWebFetchHopGuard!(next, i + 1);
+          followed.push(next);
+        }
+        return { content: "ok", contentType: "text/plain", truncated: false, url: (input as { url: string }).url };
+      },
+    } as unknown as ToolDefinition & { followed: string[] };
+    tool.followed = followed;
+    return tool;
+  }
+
+  const drive = (t: ToolDefinition, url = "https://docs.acme.test/page") => withEgressFence("web_fetch", t, deps).execute({ url }, {} as ToolContext);
+
+  {
+    const t = redirectingTool(["https://cdn.acme.test/asset.png"]);
+    const rows = await rowsOf(() => drive(t));
+    ok(t.followed.length === 1, "🔴 a redirect from a declared host to ANOTHER declared host is FOLLOWED — the fence narrows the chain, it does not forbid one");
+    const allows = rows.filter((r) => r.action === "egress.hostside.allow");
+    ok(allows.length === 2, "🔴 …and the chain leaves TWO audit rows, one per hop — the trail says what was reached, not only what was asked for");
+    ok(allows[0]?.detail?.host === "docs.acme.test" && allows[0]?.detail?.hop === 0, "hop 0 names the URL the model supplied");
+    ok(allows[1]?.detail?.host === "cdn.acme.test" && allows[1]?.detail?.hop === 1, "🔴 hop 1 names the host the RESPONSE chose — the row the fence never used to write at all");
+    ok(
+      allows.every((r) => r.detail?.plane === "host" && r.detail?.unit === "call" && r.detail?.outcome === "allowed" && r.detail?.credential === null),
+      "…both rows carry the shared cross-plane egress shape (OPE-1547), and neither claims a credential rode along",
+    );
+    ok(allows.every((r) => r.detail?.dispatch === "framework"), "…and both are marked admission rows: eve dispatches, so OE never sees the settlement to report");
+    ok(rows.every((r) => r.action !== "egress.hostside.deny"), "negative control: an all-declared chain writes NO deny row");
+  }
+
+  {
+    const t = redirectingTool(["https://evil.test/steal"]);
+    const rows = await rowsOf(() => drive(t));
+    ok(t.followed.length === 0, "🔴 THE HOLE, CLOSED: a redirect to an UNDECLARED host is refused BEFORE it is followed");
+    const m = await refusal(() => drive(redirectingTool(["https://evil.test/steal"])));
+    ok(m === egressReachDenial("web_fetch", "evil.test", "not-allowlisted"), "🔴 …with the SAME refusal text a direct call to that host gets — one protocol, not a second one for redirects");
+    ok(m.includes('"evil.test"'), "…which NAMES the hop host, not the allow-listed host the model asked for");
+    const deny = rows.find((r) => r.action === "egress.hostside.deny");
+    ok(deny?.detail?.host === "evil.test", "🔴 …and the refusal row names the HOP host — the row whose absence let the old chain read as a clean fetch");
+    ok(deny?.detail?.reason === "not-allowlisted" && deny?.detail?.tool === "web_fetch", "…with the same reason and tool a direct deny carries");
+    ok(deny?.detail?.plane === "host" && deny?.detail?.unit === "call" && deny?.detail?.outcome === "denied", "…in the same row shape as a direct refusal");
+    ok(
+      deny?.detail?.hop === 1 && deny?.detail?.dispatch === "framework",
+      "🔴 …and the row says WHICH HOP: the refusal text is the one a direct call gets, so without this an exfil bounce off a declared host reads as the model typing evil.test itself",
+    );
+    ok(rows.filter((r) => r.action === "egress.hostside.allow").length === 1, "…and only hop 0 was ever admitted");
+  }
+
+  {
+    const self = "https://docs.acme.test/loop";
+    const t = redirectingTool(Array.from({ length: MAX_REDIRECT_HOPS + 1 }, () => self));
+    const rows = await rowsOf(() => drive(t));
+    ok(t.followed.length === MAX_REDIRECT_HOPS, `🔴 a redirect loop between DECLARED hosts stops at ${MAX_REDIRECT_HOPS} hops — the allow-list would admit every one of them`);
+    const m = await refusal(() => drive(redirectingTool(Array.from({ length: MAX_REDIRECT_HOPS + 1 }, () => self))));
+    ok(m === redirectBoundDenial("web_fetch", "docs.acme.test"), "…refused with the bound's own text, not the allow-list refusal");
+    ok(!m.includes(EGRESS_REPORT_PROTOCOL), "🔴 …which does NOT carry the widening protocol: a loop is not a host the operator should be asked to declare");
+    const deny = rows.find((r) => r.action === "egress.hostside.deny");
+    ok(deny?.detail?.reason === "redirect-bound" && deny?.detail?.hop === MAX_REDIRECT_HOPS + 1, "…and the row says the bound was the cause, and at which hop");
+    ok(deny?.detail?.dispatch === "framework", "…carrying the same two fields every other row of the chain does — one shape across allowed, denied and bounded");
+  }
+
+  {
+    const rows = await rowsOf(() => assertEgressReach(CTX, "https://evil.test/x", { tool: "web_fetch", hosts: allow, narrow: passThrough }));
+    const deny = rows.find((r) => r.action === "egress.hostside.deny");
+    ok(deny !== undefined && deny.detail?.hop === undefined && deny.detail?.dispatch === undefined, "negative control: a reach deny with no hop context carries neither field");
+  }
+
+  {
+    const m = await refusal(() => hooks.__oeWebFetchHopGuard!("https://cdn.acme.test/x", 1));
+    ok(m.includes("outside the egress fence's scope"), "🔴 a hop offered with no fence scope open is REFUSED, not followed — fail-closed on 'I cannot see whose allow-list applies'");
+    ok(m.includes("cdn.acme.test"), "…and names the hop it refused, even though the host itself is declared for other callers");
+  }
+
+  {
+    const saved = hooks.__oeWebFetchHopPatched;
+    hooks.__oeWebFetchHopPatched = undefined;
+    let rows: Row[] = [];
+    let m = "";
+    const t = redirectingTool([]);
+    try {
+      rows = await rowsOf(async () => {
+        m = await refusal(() => drive(t));
+      });
+    } finally {
+      hooks.__oeWebFetchHopPatched = saved;
+    }
+    ok(m.includes(HOP_HOOK_ABSENT), "🔴 with the eve patch missing, `web_fetch` is refused OUTRIGHT — a broken patch costs the tool, never the control");
+    ok(t.followed.length === 0 && rows.length === 0, "…before any dispatch and before any row: a fetch that will be refused leaves no 'admitted' trail behind it");
+    ok(hooks.__oeWebFetchHopPatched === true, "negative control: the marker is restored, so the cases above were not passing on a stale global");
+  }
+}
+
+console.log(
+  `\n✓ web-fetch-fence: ${n} assertions passed (shared reach decision + legible refusal + live-resolver default + break-glass revoke parity + audited deny + real mounted wiring + per-hop redirect fence)\n`,
+);

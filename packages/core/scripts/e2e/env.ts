@@ -1,3 +1,5 @@
+import { credentialVarFor, teamsSegment } from "./fixture-inventory-lib.js";
+
 export const ENV = {
   slackUserToken: "E2E_SLACK_USER_TOKEN",
   slackChannel: "E2E_SLACK_CHANNEL",
@@ -45,6 +47,7 @@ export const ENV = {
   prUngrantedRepo: "E2E_PR_UNGRANTED_REPO",
 
   linearApiKey: "E2E_LINEAR_API_KEY",
+  addressedLinearApiKey: "E2E_ADDRESSED_LINEAR_API_KEY",
   linearTeamId: "E2E_LINEAR_TEAM_ID",
   linearAppUserId: "E2E_LINEAR_APP_USER_ID",
   linearAgentHandle: "E2E_LINEAR_AGENT_HANDLE",
@@ -490,13 +493,17 @@ function teamsChannelOf(value: string): string {
   return value.startsWith("teams/") ? (value.split("/").pop() ?? "") : value;
 }
 
+function teamsCompareKey(value: string): string {
+  return teamsSegment(teamsChannelOf(value));
+}
+
 export function resolveEngagedTeams(env: Env = process.env): Resolved<EngagedRoomConfig> {
   const room = engagedRoom(env, ENGAGED_ROOM_VARS.teams);
   if (!room.ok) return room;
   const id = teamsChannelOf(room.cfg.id);
   if (id.length === 0) return { ok: false, missing: [ENGAGED_ROOM_VARS.teams] };
   const shared = env[ENV.teamsChannelId]?.trim();
-  if (shared && teamsChannelOf(shared) === id) {
+  if (shared && teamsCompareKey(shared) === teamsCompareKey(room.cfg.id)) {
     return {
       ok: false,
       missing: [
@@ -512,7 +519,20 @@ export function resolveEngagedGithub(env: Env = process.env): Resolved<EngagedRo
 }
 
 export function resolveEngagedLinear(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENGAGED_ROOM_VARS.linear);
+  const room = engagedRoom(env, ENGAGED_ROOM_VARS.linear);
+  if (!room.ok) return room;
+  const keyVar = credentialVarFor(ENGAGED_ROOM_VARS.linear);
+  if (keyVar !== undefined && !env[keyVar]?.trim()) {
+    return {
+      ok: false,
+      missing: [`${keyVar} — this team is in its own Linear workspace, so ${ENV.linearApiKey} cannot see it (mint a personal API key in THAT workspace)`],
+    };
+  }
+  return room;
+}
+
+export function engagedLinearApiKey(env: Env = process.env, fallback: string): string {
+  return env[ENV.addressedLinearApiKey]?.trim() || fallback;
 }
 
 export function resolveEngagedNotion(env: Env = process.env): Resolved<EngagedRoomConfig> {

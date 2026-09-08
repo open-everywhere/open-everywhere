@@ -1,4 +1,5 @@
 import { classifyConnectorOpTier } from "./consequence.js";
+import { connectorDisplayName, grantDuplicateRefusalText, type GrantCopyAudience, type GrantDuplicateFacts } from "./credential-grant-copy.js";
 import {
   grantOwnerSlug,
   grantTargetSlug,
@@ -140,10 +141,14 @@ function tryCompose(compose: () => string | undefined): string | undefined {
   }
 }
 
-export function grantMintRefusalMessage(connector: string, reason: GrantMintRefusal): string {
+export interface GrantDuplicateContext extends Omit<GrantDuplicateFacts, "connector"> {
+  readonly audience: GrantCopyAudience;
+}
+
+export function grantMintRefusalMessage(connector: string, reason: GrantMintRefusal, duplicate?: GrantDuplicateContext): string {
   switch (reason) {
     case "no_domain_grant":
-      return `This room's domain does not admit credential grants for ${connector}. An operator declares the grant role on the domain before anyone can ask.`;
+      return `This room's domain does not admit credential grants for ${connectorDisplayName(connector)}. An operator declares the grant role on the domain before anyone can ask.`;
     case "unverified_requester":
       return "This turn names no single verified requester, so there is nobody to record as having asked. Ask again in a turn that carries one verified author.";
     case "illegal_owner_handle":
@@ -151,15 +156,22 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
     case "unresolvable_owner":
       return "That owner is not named in a form this deployment can resolve a credential for, so nothing could ever be spent under the grant. Ask again naming the owner by their linked account.";
     case "grant_already_live":
-      return "A live grant for that owner, that tool with those fixed arguments, and this conversation already exists. Use it, or ask the owner to revoke it before asking again.";
+      return grantDuplicateRefusalText(duplicate?.audience ?? "seat", {
+        connector,
+        conversationLabel: duplicate?.conversationLabel,
+        expiresAt: duplicate?.expiresAt,
+        mcpTool: duplicate?.mcpTool,
+        nowMs: duplicate?.nowMs ?? 0,
+        ownerLabel: duplicate?.ownerLabel,
+      });
     case "ask_already_pending":
-      return "You already asked that person for that tool on that resource, and they have not answered yet. Do not ask again — they were sent one card, and asking again would page them a second time for the same decision. Tell the room the ask is still with them, and carry on with something else.";
+      return "You already asked that person for this, and they have not answered yet. Do not ask again — they were sent one card, and a second ask would page them again for the same decision. Say in the room that the ask is still with them, and carry on with something else.";
     case "write_verb_out_of_slice":
       return "That call mutates. Credential grants admit read operations today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
     case "illegal_tool_name":
-      return `That tool name carries no characters a mounted tool name can hold, so the grant could not be named. Name the ${connector} tool exactly as the connection publishes it.`;
+      return `That tool name carries no characters a mounted tool name can hold, so the grant could not be named. Name the ${connectorDisplayName(connector)} tool exactly as the connection publishes it.`;
     case "illegal_connector_id":
-      return `This deployment spells the ${connector} connector id in a form a mounted tool name cannot hold, so no grant for it can be named. Nothing about the ask was wrong — an operator fixes this, not a retry.`;
+      return `This deployment spells the ${connectorDisplayName(connector)} connector id in a form a mounted tool name cannot hold, so no grant for it can be named. Nothing about the ask was wrong — an operator fixes this, not a retry.`;
   }
 }
 

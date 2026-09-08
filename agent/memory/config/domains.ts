@@ -147,6 +147,7 @@ const rawDomains: Domain[] = [
   defineDomain({
     name: "e2e-connector",
     channels: ["slack/T0EXAMPLE/C0EXGENRL"],
+    credentialGrants: ["notion"],
     memory: "e2e-brain",
     ambientSupervisor: true,
     mode: "solo",

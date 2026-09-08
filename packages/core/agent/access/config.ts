@@ -1,5 +1,5 @@
 import type { Bundle, Binding } from "./bundle.js";
-import type { ConnectorOpTier } from "./consequence.js";
+import { defaultConnectorOpTierArm, type ConnectorOpTierArm } from "./consequence.js";
 import type { ResultReduceSeam } from "./result-reduce.js";
 import type { WakeArmAnswer, WakeArmInput } from "../channels/wake-arm.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
@@ -59,7 +59,7 @@ export interface AppConfig {
   loadGroups?(): readonly Group[];
   auditScrub?(text: string): string;
 
-  connectorOpTier?(op: { readonly connection: string; readonly verb: string; readonly toolName: string }): ConnectorOpTier | undefined;
+  connectorOpTier?: ConnectorOpTierArm;
 
   reduceResult?(
     body: string,
@@ -73,7 +73,7 @@ export interface AppConfig {
 let registered: AppConfig | null = null;
 
 export function registerConfig(config: AppConfig): void {
-  registered = config;
+  registered = config.connectorOpTier === undefined ? { ...config, connectorOpTier: defaultConnectorOpTierArm } : config;
 }
 
 export function getConfig(): AppConfig {

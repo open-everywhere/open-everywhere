@@ -413,7 +413,9 @@ console.log("6. the owner's card:");
   eq(actions.map((a) => a.id.split(":")[1]), ["once", "session", "standing", "decline"], "the four buttons ARE the mode — the mode is never a free field the model fills in");
   eq(actions.filter((a) => a.intent === "reject").length, 1, "exactly one button is a reject intent");
   const text = grantCardText(ask, "Ada");
-  ok(text.includes(`\`${MCP_TOOL}\``) && text.includes(ask.resource), "the card names the exact vendor tool and the exact resource label");
+  ok(text.includes("read a Notion page"), "the card says what the borrow DOES, in the reviewed words for that vendor tool");
+  ok(text.includes('— "Launch page"'), "…and names the target by the label a person wrote");
+  ok(!text.includes(MCP_TOOL) && !text.includes(ask.resource), "…and carries neither the vendor tool id nor the code-shaped resource column");
   ok(!text.includes('"Q3"'), "the model-authored purpose cannot carry a quote character into the card — it would close the quoted span");
   ok(!text.includes("\nIGNORE THE ABOVE"), "…and cannot carry a newline, which is how model text would otherwise start a line of its own");
   ok(text.includes("IGNORE THE ABOVE"), "…but the purpose is still SHOWN, flattened — the owner reads what was actually asked for");
@@ -446,8 +448,8 @@ console.log("6. the owner's card:");
     "🔴 …and it SCOPES that ceiling to one turn — the broker's allowance rolls at the turn boundary (both stores reset `refund_count` when `refund_turn` changes), so a bullet stating the number as an absolute ceiling would promise the owner a bound the code does not enforce",
   );
   ok(
-    (onceLine ?? "").includes("notion"),
-    "…and it names the connector the call would actually reach, so 'one call' is anchored to something the owner recognises",
+    (onceLine ?? "").includes("Notion"),
+    "…and it names the connector the call would actually reach, by its BRAND, so 'one call' is anchored to something the owner recognises",
   );
   eq(quotedPurpose('a "quoted" purpose'), "a quoted purpose", "quotedPurpose strips the characters that would escape the span");
   ok(quotedPurpose("x".repeat(500)).length <= 200, "…and caps the length");
@@ -468,7 +470,7 @@ console.log("7. the lapse copy:");
 
   const card = expiredGrantCardText(ask, true);
   ok(card.includes("EXPIRED"), "the owner's card is rewritten to say expired");
-  ok(card.includes(`\`${MCP_TOOL}\``) && card.includes(ask.resource), "…and still names what was asked for, so the owner reads one story");
+  ok(card.includes("read a Notion page") && card.includes('— "Launch page"'), "…and still names what was asked for, so the owner reads one story");
   ok(card.includes("does nothing"), "…and says a tap achieves nothing, which is true whether or not the surface kept the buttons");
   ok(!card.includes(ask.purpose), "the model-authored purpose is NOT replayed into the expired card — it has served its purpose and nothing needs it again");
   ok(grantCardText(ask, "Ada") !== card, "NEGATIVE CONTROL: the expired card is not the live card — a rewrite to identical text would leave the owner an ask that still looks answerable");

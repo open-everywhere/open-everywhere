@@ -7,6 +7,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveNotionCredential, searchNotion } from "./notion-api.js";
 import { notionWorkGrant } from "./notion-work.js";
+import { assertNotionActingIdentity } from "./notion-acting-identity.js";
 import { canonicalNotionId } from "./notion-scope.js";
 
 export function domainOwnPageIds(domain: Domain): ReadonlySet<string> {
@@ -24,6 +25,7 @@ export const notionWorkSearchAdapter: WorkSearchAdapter = {
     if (!domain) throw new Error("this domain holds no Notion work grant.");
     const grant = notionWorkGrant(ctx, [domain]);
     if (!grant) throw new Error("this domain holds no Notion work grant.");
+    await assertNotionActingIdentity(ctx, "notion_work_search");
     const cred = await resolveNotionCredential(grant.credential);
     if (!cred) throw new Error(`no value stored for this domain's Notion work credential "${grant.credential}".`);
     const hits = await searchNotion(query, { ...cred, pageSize: Math.min(Math.max(opts.limit, 1), 100) });

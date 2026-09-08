@@ -603,6 +603,110 @@ check("OPE-785: discord.heartbeat now GATES — a stale or missing row fails the
   assert.equal(missingRow.find((f) => f.action === "discord.heartbeat")?.ok, false, "a MISSING discord.heartbeat row also gates red");
 });
 
+{
+  const { initOperationalSchema } = await import("../packages/core/agent/operational/postgres.js");
+  type PgClient = import("../packages/core/agent/operational/postgres.js").PgClient;
+  const { _resetDeploymentIdentityForTest, registerDeploymentIdentity, registeredDeploymentIdentity } = await import(
+    "../packages/core/agent/identity/deployment-identity.js"
+  );
+  const { openCensusStore } = await import("./deploy/census-store.js");
+
+  const HOSTED = { id: "postgres", label: "hosted Postgres (DATABASE_URL)" } as const;
+
+  function stubStore(): { connect: () => Promise<typeof HOSTED>; integrityOrgs: string[] } {
+    const integrityOrgs: string[] = [];
+    const client: PgClient = {
+      query: async (text: string, params?: readonly unknown[]) => {
+        if (text.includes("pg_has_role")) return { rows: [{ is_owner: false }] };
+        if (text.includes("relrowsecurity")) return { rows: [] };
+        if (text.includes("INSERT INTO audit_entry")) {
+          integrityOrgs.push(String(params?.[1]));
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    };
+    return {
+      integrityOrgs,
+      connect: async () => {
+        try {
+          await initOperationalSchema(client);
+        } catch {
+        }
+        return HOSTED;
+      },
+    };
+  }
+
+  const savedIdentity = registeredDeploymentIdentity();
+  let declaredOrgs: string[] = [];
+  let declaredResultOrg = "";
+  let bareOrgs: string[] = [];
+  let bareResultOrg = "";
+  let floorRefusal: string | null = null;
+  try {
+    _resetDeploymentIdentityForTest();
+    const declared = stubStore();
+    declaredResultOrg = (await openCensusStore("acme", declared.connect)).org;
+    declaredOrgs = declared.integrityOrgs;
+
+    _resetDeploymentIdentityForTest();
+    const bare = stubStore();
+    bareResultOrg = (await openCensusStore(undefined, bare.connect)).org;
+    bareOrgs = bare.integrityOrgs;
+
+    _resetDeploymentIdentityForTest();
+    try {
+      await openCensusStore("acme", async () => ({ id: "postgres", label: "embedded Postgres floor (PGlite, local data dir)" }));
+    } catch (err) {
+      floorRefusal = err instanceof Error ? err.message : String(err);
+    }
+  } finally {
+    if (savedIdentity) registerDeploymentIdentity(savedIdentity);
+    else _resetDeploymentIdentityForTest();
+  }
+
+  check("OPE-1587: --org is declared BEFORE the store opens, so the integrity row carries it", () => {
+    assert.equal(declaredOrgs.length, 1, "positive control: the schema init really wrote one audit.integrity row");
+    assert.equal(declaredOrgs[0], "acme", "the integrity row is filed under the org named on the command line");
+    assert.equal(declaredResultOrg, "acme", "…and the census reads the same org it wrote under");
+  });
+
+  check("OPE-1587: with no --org the row falls back to the shipped default", () => {
+    assert.equal(bareOrgs.length, 1, "positive control: the no-flag run wrote an integrity row too");
+    assert.equal(bareOrgs[0], "default", "an undeclared operator process is the shipped \"default\"");
+    assert.equal(bareResultOrg, "default", "…and reads that partition");
+  });
+
+  check("OPE-1587: a floor store is still refused, by name", () => {
+    assert.ok(floorRefusal !== null, "a store that is not the deployment's own throws");
+    assert.match(String(floorRefusal), /embedded Postgres floor/, "…and the refusal names the store it opened");
+  });
+
+  const readSource = (await import("node:fs")).readFileSync;
+  const ENTRIES = [
+    {
+      file: "scripts/deploy/census.ts",
+      label: "the census entry opens its store through its rung",
+      requires: /openCensusStore\(/,
+      forbids: /\bconnectOperatorStore\s*\(/,
+    },
+    {
+      file: "packages/core/agent/ops/server.ts",
+      label: "the ops MCP server declares the org before it connects",
+      requires: /declareOperatorOrg\([\s\S]*?connectOperatorStore\(/,
+      forbids: /connectOperatorStore\([\s\S]*?declareOperatorOrg\(/,
+    },
+  ] as const;
+  for (const entry of ENTRIES) {
+    const code = readSource(entry.file, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    check(`OPE-1587: ${entry.label}`, () => {
+      assert.match(code, entry.requires, `${entry.file} declares the org, then connects`);
+      assert.doesNotMatch(code, entry.forbids, `${entry.file} holds no connect that runs before a declaration`);
+    });
+  }
+}
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);

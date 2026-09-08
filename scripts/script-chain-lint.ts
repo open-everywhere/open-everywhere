@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const ROOT = process.cwd();
 
@@ -78,10 +78,47 @@ for (const pkg of packages) {
   }
 }
 
+const TSX_TARGET = /(?:^|\s)tsx\s+(\S+\.ts)(?=\s|$)/g;
+const MENTIONS_TSX = /(?:^|\s)tsx(?:\s|$)/;
+const byFile = new Map<string, string>();
+for (const pkg of packages) {
+  for (const [name, command] of Object.entries(pkg.scripts)) {
+    if (!name.startsWith("test:") && !name.startsWith("lint:")) continue;
+    const targets = [...command.matchAll(TSX_TARGET)].map((m) => m[1]!);
+    if (targets.length === 0) {
+      if (MENTIONS_TSX.test(command)) {
+        problems.push(
+          `${pkg.label}: script "${name}" runs \`${command}\`, which invokes \`tsx\` but names no plain ` +
+            `\`<file>.ts\` target this gate can read. Put the file first after \`tsx\`, unquoted — a target ` +
+            `this cannot parse is a duplicate it cannot catch, and skipping it silently would hide that.`,
+        );
+      }
+      continue;
+    }
+    for (const target of targets) {
+      const file = relative(ROOT, join(pkg.dir, target));
+      const label = `${pkg.label} ${name}`;
+      const first = byFile.get(file);
+      if (first !== undefined) {
+        problems.push(
+          `"${first}" and "${label}" both run \`tsx ${file}\` — two npm scripts naming ONE runner file. ` +
+            `The batched runner would import it twice under two labels, and deleting either script leaves the ` +
+            `other defined-but-unchained. Keep one script per runner file.`,
+        );
+        continue;
+      }
+      byFile.set(file, label);
+    }
+  }
+}
+
 if (problems.length > 0) {
-  console.error(`✗ script-chain: ${problems.length} unresolvable leg(s):\n`);
+  console.error(`✗ script-chain: ${problems.length} problem(s):\n`);
   for (const p of problems) console.error(`  • ${p}`);
   process.exit(1);
 }
 
-console.log(`✓ script-chain: ${checked} \`npm run\` leg(s) across ${packages.length} package(s) all resolve`);
+console.log(
+  `✓ script-chain: ${checked} \`npm run\` leg(s) across ${packages.length} package(s) all resolve; ` +
+    `${byFile.size} \`test:*\`/\`lint:*\` runner file(s) each named by exactly one script`,
+);

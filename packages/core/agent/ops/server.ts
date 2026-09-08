@@ -33,16 +33,17 @@ function json(data: unknown) {
 }
 
 export interface OpsServerDeps {
-  connectStore?: (envPath: string) => Promise<{ label: string }>;
+  connectStore?: (envPath: string, org: string | undefined) => Promise<{ label: string }>;
 }
 
 export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
   const server = new McpServer({ name: "open-everywhere-ops", version: "0.1.0" });
   const connectStore =
     deps.connectStore ??
-    (async (envPath: string) => {
+    (async (envPath: string, org: string | undefined) => {
       const mod = await import("../../scripts/operator-store-connect.js");
       mod.loadRootOfTrustEnv(envPath);
+      mod.declareOperatorOrg(org);
       return await mod.connectOperatorStore();
     });
 
@@ -100,7 +101,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       },
     },
     async (a) => {
-      const store = await connectStore(envFilePath(a.envPath));
+      const store = await connectStore(envFilePath(a.envPath), a.org);
       const { setOperatorSecret, SET_BY_OPS_MCP } = await import("../credentials/operator-secrets.js");
       const set: unknown[] = [];
       for (const [name, value] of Object.entries(a.secrets)) {
@@ -123,7 +124,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       },
     },
     async (a) => {
-      const store = await connectStore(envFilePath(a.envPath));
+      const store = await connectStore(envFilePath(a.envPath), a.org);
       const { listOperatorSecrets } = await import("../credentials/operator-secrets.js");
       const secrets = await listOperatorSecrets({ ...(a.includeInternal ? { includeInternal: true } : {}), ...(a.org ? { org: a.org } : {}) });
       return json({ store: store.label, secrets });
@@ -138,7 +139,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       inputSchema: { name: z.string(), org: z.string().optional(), envPath: z.string().optional() },
     },
     async (a) => {
-      const store = await connectStore(envFilePath(a.envPath));
+      const store = await connectStore(envFilePath(a.envPath), a.org);
       const { removeOperatorSecret } = await import("../credentials/operator-secrets.js");
       const removed = await removeOperatorSecret(a.name, a.org ? { org: a.org } : {});
       return json({ ok: removed, store: store.label, removed: removed ? [a.name] : [], ...(removed ? {} : { note: `no secret named "${a.name}" was stored` }) });

@@ -2,6 +2,9 @@ import "./_register-test-config.js";
 import assert from "node:assert/strict";
 import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, overridesView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
+import { resolveAccess } from "../agent/access/resolver.js";
+import { defineBundle, defineBinding } from "../agent/access/bundle.js";
+import { getConfig, registerConfig } from "../agent/access/config.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
@@ -14,6 +17,7 @@ const ok = (label: string, cond: boolean) => {
   assert.ok(cond, label);
   n++;
 };
+
 const spend = await spendView();
 ok("spendView has a period", /^\d{4}-\d{2}$/.test(spend.period));
 ok("spendView surfaces is an array", Array.isArray(spend.surfaces));
@@ -46,6 +50,47 @@ ok("auditView echoes the resolved filter limit", audit.filter.limit === 5);
 const access = await accessView({ platform: "local", workspace: "dev", channel: "default" });
 ok("accessView resolves a scopeKey", typeof access.scopeKey === "string" && access.scopeKey.length > 0);
 ok("accessView connectors is an array", Array.isArray(access.connectors));
+
+{
+  const saved = getConfig();
+  const SURFACE = "slack/T-TEST/C-CONNECTOR";
+  const catalogue = [
+    {
+      connector: "notion",
+      allows: ["service-oauth"] as const,
+      credentials: [{ id: "service-oauth", type: "service-oauth" as const, endpoints: { hosts: ["mcp.notion.com"] } }],
+    },
+  ];
+  registerConfig({
+    ...saved,
+    loadBundles: () => [defineBundle({ name: "connector-fixture", connectors: [{ name: "notion", credential: "service-oauth" }] })],
+    loadBindings: () => [defineBinding({ bundle: "connector-fixture", scope: { level: "surface", surface: SURFACE } })],
+    loadConnectorCredentials: () => catalogue,
+  });
+  try {
+    const [platform, workspace, channel] = SURFACE.split("/") as [string, string, string];
+    const q = { platform, workspace, channel };
+    const req = { mode: "channel" as const, platform, workspace, channel, domains: [] };
+    const cfg = getConfig();
+
+    const withoutCatalogue = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
+    ok("the credential catalogue is load-bearing: omitting it empties the resolver's connector list", withoutCatalogue.connectors.length === 0);
+
+    const oracle = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []);
+    ok("…and passing it resolves the granted connector", oracle.connectors.length > 0);
+
+    const view = await accessView(q);
+    assert.deepEqual(
+      view.connectors,
+      oracle.connectors,
+      "accessView must report the resolver's own connector list — dropping the credential catalogue silently empties it",
+    );
+    n++;
+    ok("…so access_preview reports a non-empty connector list for a surface that reaches one", view.connectors.length > 0);
+  } finally {
+    registerConfig(saved);
+  }
+}
 for (const c of access.connections) {
   ok(`connection ${c.id} exposes only a secretRef name, never a value`, !("secret" in c) && !("token" in c) && !("authorization" in c));
 }

@@ -496,4 +496,28 @@ const NOW = "2026-05-12T11:30:00.000Z";
   _resetAuthorTrustForTest();
 }
 
-console.log(`✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control)`);
+
+{
+  const { linearWakeAddressing } = await import("@open-everywhere/provider-linear/agent/channels/linear-engagement.js");
+
+  ok(linearWakeAddressing("channel-watch", true) === "thread-follow", "linear addressing: an engaged follow-up is PROMOTED — this is the value J-ENGAGED-linear step (b) gates on");
+  ok(
+    linearWakeAddressing("channel-watch", false) === "channel-watch",
+    "🔴 linear addressing: NEGATIVE CONTROL — ambient chatter on a team that is not engaged stays `channel-watch`, so the promotion is evidence and not a rename",
+  );
+  ok(linearWakeAddressing("channel-watch", undefined) === "channel-watch", "linear addressing: an absent verdict is not an engaged one — the conservative word, so a caller that omits it claims nothing");
+  ok(linearWakeAddressing("drop", true) === "drop", "linear addressing: `drop` is never promoted — it returns before the row is written, and the guard keeps that true if it ever did not");
+
+  const { readFileSync } = await import("node:fs");
+  const linearSource = readFileSync(new URL("../packages/providers/linear/agent/channels/linear.ts", import.meta.url), "utf8");
+  ok(
+    linearSource.includes('addressing: linearWakeAddressing(cls.addressing, seam.kind === "deliver")'),
+    "🔴 linear addressing: the `linear.dispatched` row is BUILT from the seam verdict — without this call the mapping above is dead code and the journey reds again",
+  );
+  ok(
+    !/detail:\s*\{\s*addressing:\s*cls\.addressing/.test(linearSource),
+    "🔴 linear addressing: NEGATIVE CONTROL — the raw classifier value is no longer written into a dispatch detail, which is the exact line OPE-1578 removed",
+  );
+}
+
+console.log(`✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control; plus Linear's dispatch-row promotion and its call site)`);

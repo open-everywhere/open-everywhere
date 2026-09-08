@@ -9,6 +9,12 @@ export const SESSION_LIMIT_CONTINUATION_TOOL_NAME = "session_limit_continuation"
 
 export const SESSION_LIMIT_REQUEST_ID_RE = /:limit:(?:input|output):\d+$/u;
 
+export const SESSION_LIMIT_COST_REQUEST_ID_RE = /:limit:token-cost:\d+(?:\.\d+)?(?:e[+-]?\d+)?$/iu;
+
+export function isSessionLimitRequestId(requestId: string): boolean {
+  return SESSION_LIMIT_REQUEST_ID_RE.test(requestId) || SESSION_LIMIT_COST_REQUEST_ID_RE.test(requestId);
+}
+
 export const SESSION_PARK_AUDIT_ACTION = "session.token_limit_park";
 
 export const PARK_AUDIT_WINDOW_MS = 60 * 60_000;
@@ -18,9 +24,11 @@ export function parkRotateDelta(): number {
 }
 
 export interface SessionLimitPark {
-  readonly kind: "input" | "output" | "unknown";
+  readonly kind: "input" | "output" | "token-cost" | "unknown";
   readonly limit?: number;
   readonly usedTokens?: number;
+  readonly limitUsd?: number;
+  readonly usedCostUsd?: number;
   readonly requestId: string;
 }
 
@@ -39,14 +47,25 @@ export function detectSessionLimitPark(requests: unknown): SessionLimitPark | un
     if (!isSessionLimitContinuationRequest(r)) continue;
     const req = r as { requestId?: unknown; action?: { toolName?: unknown; input?: unknown } };
     const requestId = typeof req.requestId === "string" ? req.requestId : "";
-    const input = (req.action?.input ?? {}) as { kind?: unknown; limit?: unknown; usedTokens?: unknown };
-    const kind = input.kind === "input" || input.kind === "output" ? input.kind : "unknown";
+    const input = (req.action?.input ?? {}) as {
+      kind?: unknown;
+      limit?: unknown;
+      usedTokens?: unknown;
+      limitUsd?: unknown;
+      usedCostUsd?: unknown;
+    };
+    const kind =
+      input.kind === "input" || input.kind === "output" || input.kind === "token-cost" ? input.kind : "unknown";
     const limit = numberOrUndefined(input.limit);
     const usedTokens = numberOrUndefined(input.usedTokens);
+    const limitUsd = numberOrUndefined(input.limitUsd);
+    const usedCostUsd = numberOrUndefined(input.usedCostUsd);
     return {
       kind,
       ...(limit !== undefined ? { limit } : {}),
       ...(usedTokens !== undefined ? { usedTokens } : {}),
+      ...(limitUsd !== undefined ? { limitUsd } : {}),
+      ...(usedCostUsd !== undefined ? { usedCostUsd } : {}),
       requestId,
     };
   }
@@ -123,6 +142,8 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
       requestId: park.requestId,
       ...(park.limit !== undefined ? { limit: park.limit } : {}),
       ...(park.usedTokens !== undefined ? { usedTokens: park.usedTokens } : {}),
+      ...(park.limitUsd !== undefined ? { limitUsd: park.limitUsd } : {}),
+      ...(park.usedCostUsd !== undefined ? { usedCostUsd: park.usedCostUsd } : {}),
       ...(scope.sessionId !== undefined ? { sessionId: scope.sessionId } : {}),
       ...(registryKey !== undefined ? { registryKey } : {}),
       ...(token !== undefined ? { token } : {}),

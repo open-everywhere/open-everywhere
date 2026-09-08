@@ -9,6 +9,7 @@ assertCoreDistFresh();
 await import("../agent/lib/register-config.js");
 
 const { getConfig } = await import("@open-everywhere/core/agent/access/config.js");
+const { defaultConnectorOpTierArm } = await import("@open-everywhere/core/agent/access/consequence.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -26,10 +27,19 @@ ok(config.loadBundles().length > 0, "control: …and it carries real bundles, so
 
 const ARM_SLOTS: readonly (readonly [string, string])[] = [
   ["auditScrub", "the audit-scrub seam (packages/core/agent/audit/tool-action.ts)"],
-  ["connectorOpTier", "the connector-op tiering seam (packages/core/agent/access/connector-op-gating.ts)"],
   ["reduceResult", "the result-reducing seam (packages/core/agent/access/result-reduce.ts)"],
   ["decideWake", "the wake seam (packages/core/agent/channels/wake-arm.ts)"],
 ];
+
+const DEFAULTED_ARM_SLOTS: readonly (readonly [string, string, unknown])[] = [
+  [
+    "connectorOpTier",
+    "the connector-op tiering seam (packages/core/agent/access/connector-op-gating.ts)",
+    defaultConnectorOpTierArm,
+  ],
+];
+
+const ALL_ARM_SLOTS: readonly string[] = [...ARM_SLOTS.map(([s]) => s), ...DEFAULTED_ARM_SLOTS.map(([s]) => s)];
 
 const APP_CONFIG_MEMBERS: readonly string[] = [
   "loadConnectorCredentials",
@@ -63,8 +73,8 @@ function appConfigOptionalMembers(): readonly string[] {
 
 const declared = appConfigOptionalMembers();
 
-ok(declared.length >= ARM_SLOTS.length, `the scan found members to check (${declared.length} optional members on AppConfig)`);
-for (const [slot] of ARM_SLOTS) {
+ok(declared.length >= ALL_ARM_SLOTS.length, `the scan found members to check (${declared.length} optional members on AppConfig)`);
+for (const slot of ALL_ARM_SLOTS) {
   ok(declared.includes(slot), `🔴 the scan really sees the arm slots: AppConfig declares \`${slot}\``);
 }
 ok(!declared.includes("loadBundles"), "…and it does NOT match a REQUIRED member — the scan reads the `?`, not just the name");
@@ -88,7 +98,14 @@ for (const [slot, seam] of ARM_SLOTS) {
   );
 }
 
+for (const [slot, seam, shipped] of DEFAULTED_ARM_SLOTS) {
+  const value = (config as unknown as Record<string, unknown>)[slot];
+  ok(typeof value === "function", `${seam}: AppConfig.${slot} holds a tiering function — the slot ships FULL, never empty`);
+  ok(value === shipped, `🔴 this deployment runs the SHIPPED DEFAULT on ${seam} (AppConfig.${slot}), not an arm of its own`);
+}
+
 console.log(
-  `✓ drop-in-arms-unregistered: ${passed} assertions passed (${ARM_SLOTS.length} arm slots, all empty on this deployment; ` +
+  `✓ drop-in-arms-unregistered: ${passed} assertions passed (${ARM_SLOTS.length} empty arm slots + ` +
+    `${DEFAULTED_ARM_SLOTS.length} holding the shipped default, so no consumer arm runs on this deployment; ` +
     `${declared.length} AppConfig optional members pinned)`,
 );

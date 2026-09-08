@@ -160,18 +160,14 @@ export type { DreamCompletion, DreamJudge } from "./memory/dream/judge.js";
 export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dream/mode3.js";
 export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
 export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
-export { connectorOpTierFromCompletion, connectorOpTierPrompt, parseConnectorOpTierAnswer, connectorOpTierCacheKey } from "./access/connector-op-model-arm.js";
-export type {
-  ConnectorOpTierCompletion,
-  ConnectorOpTierQuestion,
-  ModelConnectorOpTierArm,
-  ModelConnectorOpTierArmOptions,
-} from "./access/connector-op-model-arm.js";
 export { stampModelCall, readModelStamp, swapModelStamp, withModelStampScope } from "./model/model-stamp.js";
 export type { BindableContext } from "./identity/binding.js";
 
 export { installLogShipping } from "./observability/ship.js";
 export { initTelemetry, emitTelemetry, registerSurfaceCredentialProbe } from "./observability/telemetry.js";
+
+export { connectorActingIdentityForTurn, CONNECTOR_ACTING_IDENTITY_ACTION } from "./connections/own-account-gate.js";
+export type { ActingIdentityVerdict, OwnAccountVendor } from "./connections/own-account-ask.js";
 
 export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";

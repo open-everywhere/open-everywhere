@@ -25,7 +25,11 @@ export default defineHook({
           park,
         );
         console.warn(
-          `[open-everywhere:session-park] session hit eve's ${park.kind}-token bound and PARKED ` +
+          `[open-everywhere:session-park] session hit eve's ${
+            park.kind === "token-cost"
+              ? `model token-COST bound${park.limitUsd !== undefined ? ` ($${park.limitUsd})` : ""}`
+              : `${park.kind}-token bound${park.limit !== undefined ? ` (${park.limit})` : ""}`
+          } and PARKED ` +
             `(org=${p.org} surface=${p.surfaceKey} token=${JSON.stringify(token)} remedy=${outcome.remedy}` +
             `${outcome.registryKey ? ` key=${outcome.registryKey}` : ""}${outcome.audited ? "" : " audit=throttled"})`,
         );

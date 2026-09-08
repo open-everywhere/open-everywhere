@@ -130,14 +130,22 @@ function resolveRootScript(name: string, scripts: Record<string, string>, out: C
 }
 
 export function rootLegs(): ChainLeg[] {
+  return walkRootChain().legs;
+}
+
+function walkRootChain(): { legs: ChainLeg[]; reached: Set<string> } {
   const file = join(REPO_ROOT, "package.json");
   const scripts = (JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
   const chain = scripts["test:chain"];
   if (!chain) throw new Error("root test chain: the root package.json defines no `test:chain` script.");
   const legs: ChainLeg[] = [];
-  const seen = new Set<string>();
-  for (const name of chainLegNames(chain)) resolveRootScript(name, scripts, legs, seen);
-  return legs;
+  const reached = new Set<string>();
+  for (const name of chainLegNames(chain)) resolveRootScript(name, scripts, legs, reached);
+  return { legs, reached };
+}
+
+export function rootChainScriptNames(): ReadonlySet<string> {
+  return walkRootChain().reached;
 }
 
 export function legLabel(leg: ChainLeg): string {
@@ -166,6 +174,42 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     "@open-everywhere/adapters test:sandbox-live",
     "drives the REAL Vercel Sandbox platform: needs credentials, creates 4 sandboxes, ~3 min and " +
       "~$0.02 a run. Run it by hand before a deploy that touches sandbox lifecycle.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:suites`,
+    "the batched runner ITSELF — `vitest run --config vitest.chain.config.ts`, which is what EXECUTES " +
+      "every chain leg. Chaining it would make the pool a leg of itself. Run by the root `test` script.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:integration`,
+    "its own TIER, not a chain leg: a separate vitest config behind `suite-lock-run.ts`, ~1450s at one " +
+      "worker, and it boots a real agent host per worker. Run as its own gate (`npm run test:integration`).",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:dynamic-closure-bundle`,
+    "a `postbuild` leg (OPE-1063): it reads the just-built `.output/server/index.mjs` to prove no " +
+      "`defineTool` callback carries an undeclared capture, which no `tsx`-tier test can see. It runs " +
+      "wherever `npm run build` runs, so it is already inside the `build` proof suite.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:e2e-driver`,
+    "an argument-taking passthrough to the core workspace's `e2e:driver`, not a suite: it drives ONE " +
+      "named e2e leg against a deployed instance. The batched runner imports a file and can pass no argv.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:pg-real`,
+    "a LIVE pack: `bash scripts/test-pg-real.sh`, which needs a real Postgres. Not a `tsx <file>.ts` " +
+      "command at all, so the batched runner could not import it even if the database were there.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:docker-smoke`,
+    "a LIVE pack: `bash scripts/docker-smoke.sh`, which needs a Docker daemon. Same two reasons as " +
+      "`test:pg-real` — an external dependency, and a bash command the runner cannot import.",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:docker-sandbox-stop-live`,
+    "a LIVE pack: it drives real Docker sandbox lifecycle. Run it by hand before a deploy that touches " +
+      "the Docker sandbox driver.",
   ],
 ]);
 

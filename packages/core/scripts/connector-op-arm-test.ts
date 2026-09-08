@@ -12,12 +12,13 @@ const { overrideSettingsForTest } = await import("../agent/settings/settings.js"
 overrideSettingsForTest({ connectors: { opTiering: true } });
 
 const { defineBundle } = await import("../agent/access/bundle.js");
-const { classifyConnectorOpTier, classifyConnectorOpTierVerdict, connectorOpName } = await import("../agent/access/consequence.js");
+const { classifyConnectorOpTier, classifyConnectorOpTierVerdict, connectorOpName, defaultConnectorOpTierArm, parseQualifiedToolName } =
+  await import("../agent/access/consequence.js");
 const { connectorOpTierParts, effectiveConnectorOpConsequence, effectiveConnectorOpTier } = await import(
   "../agent/access/connector-op-gating.js"
 );
 const { allowedOnRestrictedJobWake, restrictToolsetForJobWake } = await import("../agent/access/job-posture.js");
-const { registerConfig } = await import("../agent/access/config.js");
+const { getConfig, registerConfig } = await import("../agent/access/config.js");
 
 type Tier = "read" | "write" | "destructive";
 type ArmFn = (op: { readonly connection: string; readonly verb: string; readonly toolName: string }) => Tier | undefined;
@@ -77,8 +78,8 @@ for (const op of ALL_OPS) {
 }
 {
   const parts = connectorOpTierParts(UNKNOWN_OP);
-  eq(parts.armPresent, false, "no config registered: armPresent is false");
-  eq(parts.arm, undefined, "no config registered: no arm answer");
+  eq(parts.armReplaced, false, "no config registered: the shipped default stands, so nothing is marked as replaced");
+  eq(parts.arm, undefined, "no config registered: no consumer arm answer");
   eq(parts.armLowered, false, "no config registered: nothing was lowered by an arm");
 }
 
@@ -88,10 +89,36 @@ for (const op of ALL_OPS) {
 }
 {
   const parts = connectorOpTierParts(WRITE_OP);
-  eq(parts.armPresent, false, "config with no arm: armPresent is false — distinguishable from an arm that abstained");
+  eq(parts.armReplaced, false, "config supplying no function: armReplaced is false — distinguishable from a consumer arm that abstained");
   eq(parts.base, "write", "parts carry the built-in's tier");
   eq(parts.basis, "write-verb", "parts carry the built-in's basis");
   eq(parts.tier, "write", "…and the effective tier is that same verdict");
+}
+
+{
+  registerConfig(config());
+  const slot = getConfig().connectorOpTier;
+  ok(typeof slot === "function", "the tiering slot holds a callable — `registerConfig` filled it, so it is not empty");
+  ok(
+    slot === defaultConnectorOpTierArm,
+    "🔴 a config that supplies no tiering function is REGISTERED carrying `defaultConnectorOpTierArm` itself — " +
+      "if this failed with the check above passing, the slot holds some other function",
+  );
+  for (const op of ALL_OPS) {
+    const parsed = parseQualifiedToolName(op);
+    ok(parsed?.connection !== undefined, `fixture: ${op} parses as a connector op`);
+    eq(
+      defaultConnectorOpTierArm({ connection: parsed?.connection ?? "", verb: parsed?.verb ?? "", toolName: op }),
+      classifyConnectorOpTier(op),
+      `🔴 the default tiering function IS the verb classifier for ${op} — so the seam's join is a no-op`,
+    );
+  }
+  const mine: ArmFn = () => "destructive";
+  registerConfig(config(mine));
+  eq(getConfig().connectorOpTier, mine, "🔴 a consumer-supplied tiering function REPLACES the default on the slot");
+  ok(getConfig().connectorOpTier !== defaultConnectorOpTierArm, "…so the default is no longer reachable through the slot");
+  eq(connectorOpTierParts(READ_OP).armReplaced, true, "…and the seam records the replacement for the audit row");
+  eq(effectiveConnectorOpTier(READ_OP), "destructive", "…and it is the consumer's answer that decides, not the default's");
 }
 
 registerConfig(config(({ verb }) => (verb === "frobnicate_widget" ? "read" : undefined)));
@@ -187,7 +214,7 @@ for (const op of ALL_OPS) {
 {
   const { warnings } = capturingWarnings(() => effectiveConnectorOpTier(UNKNOWN_OP));
   eq(warnings.length, 0, "a deliberate `undefined` is NOT a defect — it logs no note");
-  eq(connectorOpTierParts(UNKNOWN_OP).armPresent, true, "…but the row still records that an arm was registered");
+  eq(connectorOpTierParts(UNKNOWN_OP).armReplaced, true, "…but the row still records that this deployment replaced the default");
 }
 
 registerConfig(
@@ -318,7 +345,7 @@ await handler(ev(WRITE_OP), ctx);
   const row = await rowFor(WRITE_OP);
   eq(row?.detail?.opTier, "write", "no arm: the row carries the built-in tier");
   eq(row?.detail?.baseOpTier, undefined, "…and stamps no baseOpTier, because nothing moved it");
-  eq(row?.detail?.opTierArm, undefined, "…and no arm marker at all");
+  eq(row?.detail?.opTierArmReplaced, undefined, "…and no replacement marker at all");
   eq(row?.detail?.armOpTier, undefined, "…and no arm answer");
   eq(row?.detail?.opTierArmLowered, undefined, "…and no lowered marker");
   eq(row?.detail?.opTierBasis, undefined, "…and no basis, because nothing needs separating");
@@ -330,7 +357,7 @@ await handler(ev(UNKNOWN_OP), ctx);
   const row = await rowFor(UNKNOWN_OP);
   eq(row?.detail?.opTier, "write", "🔴 the row carries the FLOORED tier the seam settled on");
   eq(row?.detail?.baseOpTier, "destructive", "…with the built-in's own verdict alongside it");
-  eq(row?.detail?.opTierArm, true, "…marked as a deployment that registered an arm");
+  eq(row?.detail?.opTierArmReplaced, true, "…marked as a deployment that REPLACED the default tiering function");
   eq(row?.detail?.armOpTier, "read", "🔴 …and what the arm ASKED FOR, unfloored — so a row shows an arm reaching for the open tier");
   eq(row?.detail?.opTierArmLowered, true, "🔴 …and the query that matters: this arm lowered the op");
   eq(row?.detail?.opTierBasis, "unrecognised", "🔴 …in the ruling's ABSTENTION bucket — the built-in recognised no verb");
@@ -341,7 +368,7 @@ await handler(ev(DESTRUCTIVE_OP), ctx);
 {
   const row = await rowFor(DESTRUCTIVE_OP);
   eq(row?.detail?.opTier, "destructive", "an abstaining arm on a recognised op: the built-in tier");
-  eq(row?.detail?.opTierArm, true, "…the arm is still recorded as present");
+  eq(row?.detail?.opTierArmReplaced, true, "…the replacement is still recorded");
   eq(row?.detail?.armOpTier, undefined, "…but it answered nothing");
   eq(row?.detail?.opTierArmLowered, undefined, "…and lowered nothing");
 }

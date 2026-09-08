@@ -4,6 +4,7 @@ import {
   resolveEngagedDiscord,
   resolveEngagedTeams,
   resolveEngagedGithub,
+  engagedLinearApiKey,
   resolveEngagedLinear,
   resolveEngagedNotion,
   resolveEngagedSlack,
@@ -155,7 +156,10 @@ async function main(): Promise<void> {
   const discordEngagedDriver = discord.ok && engagedDiscord.ok ? new DiscordDriver({ ...discord.cfg, channel: engagedDiscord.cfg.id }) : undefined;
   const teamsEngagedDriver = teams.ok && engagedTeams.ok ? new TeamsDriver({ ...teams.cfg, channelId: engagedTeams.cfg.id }) : undefined;
   const githubEngagedDriver = github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined;
-  const linearEngagedDriver = linear.ok && engagedLinear.ok ? new LinearDriver({ ...linear.cfg, teamId: engagedLinear.cfg.id }) : undefined;
+  const linearEngagedDriver =
+    linear.ok && engagedLinear.ok
+      ? new LinearDriver({ ...linear.cfg, teamId: engagedLinear.cfg.id, apiKey: engagedLinearApiKey(process.env, linear.cfg.apiKey) })
+      : undefined;
   const notionEngagedDriver =
     notionAmbient.ok && engagedNotion.ok ? new NotionDriver({ ...notionAmbient.cfg, pageId: engagedNotion.cfg.id }) : undefined;
   const slackSecondaryDriver =

@@ -272,6 +272,17 @@ export function grantBorrowResourceLabel(targetLabel: string, mcpTool: string, f
   return quotedPurpose(label.length === 0 ? call : `${label} — ${call}`);
 }
 
+export function grantResourceTargetLabel(row: { readonly resource: string; readonly mcpTool?: string; readonly frozenArgs?: GrantJsonObject }): string | undefined {
+  const tool = row.mcpTool === undefined ? "" : quotedPurpose(row.mcpTool);
+  if (tool.length === 0) return undefined;
+  const marker = ` — ${tool}(`;
+  const cut = row.resource.lastIndexOf(marker);
+  if (cut <= 0) return undefined;
+  if (!row.resource.endsWith(")")) return undefined;
+  const label = row.resource.slice(0, cut).trim();
+  return label.length === 0 ? undefined : label;
+}
+
 export function grantAuditResource(row: { readonly resource: string; readonly mcpTool?: string; readonly frozenArgs?: GrantJsonObject }): string {
   if (row.mcpTool === undefined) return row.resource;
   const keys = quotedPurpose(Object.keys(row.frozenArgs ?? {}).sort().join(","));

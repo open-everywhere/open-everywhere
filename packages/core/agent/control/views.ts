@@ -754,7 +754,7 @@ export async function accessView(q: AccessQuery = {}) {
     domains: cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
     principalId: q.principalId,
   };
-  const access = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
+  const access = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []);
   const routing = resolveDomainForChannel(`${platform}/${workspace}/${channel}`, cfg.loadDomains());
   return {
     scopeKey: access.scopeKey,

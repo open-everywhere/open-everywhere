@@ -51,6 +51,12 @@ export function dispatchAddressings(rows: readonly AuditWireEntry[], platform: s
   });
 }
 
+export const AMBIENT_LEG_ADDRESSINGS: readonly string[] = ["channel-watch", "thread-follow"];
+
+export function isAmbientLegAddressing(value: unknown): boolean {
+  return typeof value === "string" && AMBIENT_LEG_ADDRESSINGS.includes(value);
+}
+
 export function reportedThreadFollow(rows: readonly AuditWireEntry[], platform: string): boolean {
   return dispatchAddressings(rows, platform).includes("thread-follow");
 }

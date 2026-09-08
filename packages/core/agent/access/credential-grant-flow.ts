@@ -70,12 +70,17 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly requestedMode: CredentialGrantMode;
   readonly domainGrantsConnector: boolean;
   readonly workerOrigin?: GrantAskWorkerOrigin;
+  readonly conversationLabel?: string;
   readonly nowMs: number;
 }
 
 export type AskForGrantOutcome =
   | { readonly sent: true; readonly askId: string; readonly ownerHandle: string; readonly toolName: string }
-  | { readonly sent: false; readonly reason: GrantMintRefusal | "owner_unreachable" };
+  | {
+      readonly sent: false;
+      readonly reason: GrantMintRefusal | "owner_unreachable";
+      readonly liveGrant?: { readonly mcpTool: string | undefined; readonly expiresAt: string };
+    };
 
 export async function askForCredentialGrant(input: AskForGrantInput): Promise<AskForGrantOutcome> {
   const store = getOperationalStore();
@@ -120,7 +125,13 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
       resource: grantAuditResource({ frozenArgs: input.frozenArgs, mcpTool: input.mcpTool, resource }),
       verb: toolSlug,
     });
-    return { reason: verdict.ok ? "unverified_requester" : verdict.reason, sent: false };
+    return {
+      reason: verdict.ok ? "unverified_requester" : verdict.reason,
+      sent: false,
+      ...(live === null || (verdict.ok ? "unverified_requester" : verdict.reason) !== "grant_already_live"
+        ? {}
+        : { liveGrant: { expiresAt: live.expiresAt, mcpTool: live.mcpTool } }),
+    };
   }
   const ask: CredentialGrantAskRow = {
     connector: input.connector,
@@ -144,7 +155,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     verb: toolSlug,
   };
   await store.addCredentialGrantAsk(input.org, ask);
-  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel, input.workerOrigin);
+  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel, input.workerOrigin, input.conversationLabel);
   if (!delivery.delivered) {
     await store.decideCredentialGrantAsk(input.org, ask.id, ["pending"], "expired", nowIso);
     await auditGrant(input, "grant.refused", ask.requesterPrincipalId, {
@@ -265,7 +276,7 @@ export async function approveCredentialGrant(
   });
   await postGrantResolution(ask, { askedMode: pending.requestedMode, grant, kind: "approved" });
   try {
-    await approveGrantCard(ask, grant);
+    await approveGrantCard(ask, grant, nowMs);
   } catch (err) {
     log(`ask ${ask.id}: the owner's card could not be rewritten after approval: ${String(err)}`);
   }

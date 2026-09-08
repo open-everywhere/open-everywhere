@@ -8,6 +8,7 @@ import {
   type Partition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildLinearAuth } from "./linear-identity.js";
+import type { LinearAmbientAddressing } from "./linear-supervisor.js";
 
 export interface LinearSeamFacts {
   readonly organizationId: string | undefined;
@@ -100,4 +101,11 @@ async function liveMarkEngageSeen(org: string, key: string, atIso: string): Prom
     }
     return true;
   }
+}
+
+export function linearWakeAddressing(
+  addressing: LinearAmbientAddressing,
+  engagedFollowUp: boolean | undefined,
+): LinearAmbientAddressing | "thread-follow" {
+  return addressing === "channel-watch" && engagedFollowUp === true ? "thread-follow" : addressing;
 }

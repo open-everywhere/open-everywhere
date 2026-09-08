@@ -168,7 +168,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, an
   const cardPost = slack.calls.find((c) => c.method === "chat.postMessage" && c.params.get("channel") === OWNER_DM_CHANNEL);
   expect(cardPost, "the owner was never sent a card").toBeDefined();
   const cardText = String(cardPost?.params.get("text") ?? "");
-  const opener = /^\*(.+?)\* asks to use your notion credential\./.exec(cardText);
+  const opener = /^\*(.+?)\* asks to use your Notion account, for /.exec(cardText);
   expect(opener, `the card's first line is not the ask opener: ${cardText.slice(0, 160)}`).not.toBeNull();
   const asker = opener?.[1] ?? "";
   expect(cardText, "the card does not say who the ask is for — the worker context is missing").toContain("• Who it is for: ");

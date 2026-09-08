@@ -15,6 +15,7 @@ import {
   type NotionCommentSummary,
 } from "./notion-api.js";
 import { notionCallerCredential } from "./notion-credentials.js";
+import { assertNotionActingIdentity } from "./notion-acting-identity.js";
 import { assertNotionPageAllowed } from "./notion-scope.js";
 
 export const ANCHOR_SNIPPET_MAX = 120;
@@ -96,6 +97,7 @@ export function notionThreadLines(comments: readonly NotionCommentSummary[], dis
 async function admit(ctx: BindableContext, page: string, deps?: NotionReadDeps): Promise<NotionCallOpts> {
   const domains = safeDomains();
   await assertNotionPageAllowed(ctx, page, domains);
+  await assertNotionActingIdentity(ctx, "notion_read");
   if (deps?.call) return deps.call;
   const cred = await resolveNotionCredential(notionCallerCredential(ctx, domains));
   if (!cred) throw new Error("read: no Notion credential is stored for this session, so nothing can be read.");

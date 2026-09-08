@@ -223,4 +223,49 @@ function eq(actual: unknown, expected: unknown, label: string): void {
   eq(signalsOf(controlsOnly).directAssertSites, 0, "🔴 the controls alone count ZERO — the three above are what the fixture measures");
 }
 
-console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families, direct-assert sites)\n`);
+{
+  const fixture = [
+    'import { ok, eq } from "./harness.js";',
+    'const label = "ok(inAString);";',
+    "// eq(inALineComment);",
+    "/* must(inABlockComment); */",
+    "okay = 1;",
+    "  return ok(v);",
+    "if (check(nested)) {",
+    "}",
+    "const quoted = `",
+    "ok(inATemplateLiteral);",
+    "`;",
+    "/*",
+    "must(insideABlockComment);",
+    "*/",
+    "ok(a === b);",
+    "  eq(a, b);",
+    "await must.eventually(p);",
+    "expect(x).toBe(1);",
+    "assert(a);",
+    'fail("boom");',
+    "same(a, b);",
+    "okAudit(row);",
+    "expectSomething(v);",
+    "equalish(a, b);",
+    "isReady(x);",
+    "",
+  ].join("\n");
+
+  eq(
+    signalsOf(fixture).assertionSites,
+    11,
+    "🔴 `assertionSites` counts the eleven statement-position house-helper calls and none of the nine controls — seven the ANCHOR rejects (an import, a string, two one-line comments, a bare assignment, and two nested calls) and two the STRIPPER rejects (a template body and a block-comment body, both at column 0)",
+  );
+
+  const controlsOnly = fixture
+    .split("\n")
+    .filter((l) => !/^[ \t]*(?:await[ \t]+)?(?:ok|check|must|eq|is|okAudit|fail|assert|expect|same|equal)[A-Za-z]*(?:\.\w+)?[ \t]*\(/u.test(l))
+    .join("\n");
+  eq(signalsOf(controlsOnly).assertionSites, 0, "🔴 the controls alone count ZERO — the eleven above are what the fixture measures");
+
+  eq(signalsOf(fixture).directAssertSites, 1, "🔴 the same fixture yields ONE `directAssertSites` — the wide count and the narrow count read different regexes");
+}
+
+console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families, direct-assert sites, assertion sites)\n`);

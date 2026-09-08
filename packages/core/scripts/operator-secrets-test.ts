@@ -285,6 +285,17 @@ function cli(stdin = "") {
   const defaultText = (defaultList.content as { type: string; text: string }[])[0]!.text;
   ok(JSON.parse(defaultText).store !== undefined, "mcp: the SHIPPED default wiring reaches the store (the lazy scripts/ import resolves)");
   ok(!defaultText.includes(SENTINEL.slice(0, 8)), "🔴 mcp: the default-wired listing carries no values either");
+
+  {
+    const { deploymentOrg } = await import("../agent/identity/deployment-identity.js");
+    _setDeploymentIdentityForTest({ org: undefined });
+    ok(deploymentOrg() === "default", "precondition: nothing is declared before the call, so the org is the shipped default");
+    await client2.callTool({ name: "secret_list", arguments: { org: "acme-ops" } });
+    ok(deploymentOrg() === "acme-ops", "🔴 mcp: the shipped wiring declares the CALL's org before it opens the store");
+    await client2.callTool({ name: "secret_list", arguments: {} });
+    ok(deploymentOrg() === "acme-ops", "…and a call naming no org changes nothing");
+    _setDeploymentIdentityForTest({ org: undefined });
+  }
   await client2.close();
 }
 

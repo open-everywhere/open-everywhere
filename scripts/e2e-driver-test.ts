@@ -20,6 +20,7 @@ import {
   isUnattendedLift,
   noticesForGrant,
   ownerPlatformOf,
+  refusedGrantAlreadyLive,
   refusedUnverifiedRequester,
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
@@ -70,6 +71,8 @@ const {
   auditSilencesExpected,
   isLocalEvalTarget,
   resolveCapabilities,
+  engagedLinearApiKey,
+  resolveEngagedLinear,
   resolveEngagedTeams,
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("../packages/core/scripts/e2e/env.js");
@@ -118,6 +121,7 @@ const {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   dispatchAddressings,
+  isAmbientLegAddressing,
   dispatchedAction,
   replyPostCount,
   reportedDirectMention,
@@ -409,6 +413,46 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
   const unset = resolveEngagedTeams({ [shared]: "19:chan-B" });
   ok(unset.ok === false && unset.missing.includes(addressed), "unset still self-skips naming the variable to set, unchanged by the new refusal");
+
+  const rawChannel = "19:abc@thread.tacv2";
+  const sanitisedChannel = "19-abc-thread.tacv2";
+  const mixed = resolveEngagedTeams({ [addressed]: `teams/19:tenant-guid/${sanitisedChannel}`, [shared]: rawChannel });
+  ok(!mixed.ok, "a sanitised addressed surface key and a RAW E2E_TEAMS_CHANNEL_ID name one channel and are refused");
+  ok(
+    !mixed.ok && mixed.missing.some((m) => m.includes(addressed) && m.includes(shared)),
+    `the raw/sanitised refusal names both variables like every other collision (got: ${mixed.ok ? "resolved" : mixed.missing.join("; ")})`,
+  );
+  const mixedOtherWay = resolveEngagedTeams({ [addressed]: rawChannel, [shared]: sanitisedChannel });
+  ok(!mixedOtherWay.ok, "and the other way round — a raw addressed id against a sanitised shared one is the same collision");
+
+  const distinctUnderSeg = resolveEngagedTeams({ [addressed]: "19:abc@thread.tacv2", [shared]: "19:xyz@thread.tacv2" });
+  ok(
+    distinctUnderSeg.ok && distinctUnderSeg.cfg.id === "19:abc@thread.tacv2",
+    `two different channels still resolve through the widened comparison, RAW for the driver (got: ${distinctUnderSeg.ok ? distinctUnderSeg.cfg.id : "refused"})`,
+  );
+
+  const rawOut = resolveEngagedTeams({ [addressed]: `teams/19:tenant-guid/${rawChannel}`, [shared]: "19:other@thread.tacv2" });
+  ok(rawOut.ok && rawOut.cfg.id === rawChannel, `the resolver hands the driver the RAW channel id, never the compare key (got: ${rawOut.ok ? rawOut.cfg.id : "refused"})`);
+}
+
+{
+  const own = ENV.addressedLinearApiKey;
+
+  const noKey = resolveEngagedLinear({ [ENV.engagedLinearTeamId]: "team-uuid-1" });
+  ok(!noKey.ok, "the addressed-only Linear team does not resolve while its own key is unset");
+  ok(
+    !noKey.ok && noKey.missing.some((m) => m.includes(own)),
+    `…and the refusal NAMES that key, so the operator is not left to guess (got: ${noKey.ok ? "resolved" : noKey.missing.join("; ")})`,
+  );
+  const withKey = resolveEngagedLinear({ [ENV.engagedLinearTeamId]: "team-uuid-1", [own]: "lin_api_addressed" });
+  ok(withKey.ok && withKey.cfg.id === "team-uuid-1", `with both set it resolves to the team id (got: ${withKey.ok ? withKey.cfg.id : "refused"})`);
+  const noTeam = resolveEngagedLinear({ [own]: "lin_api_addressed" });
+  ok(!noTeam.ok && noTeam.missing.includes(ENV.engagedLinearTeamId), "an unset team id still self-skips naming the team variable, unchanged by the key check");
+
+  ok(engagedLinearApiKey({ [own]: "lin_api_addressed" }, "lin_api_base") === "lin_api_addressed", "the addressed team's OWN key wins where it is set");
+  ok(engagedLinearApiKey({}, "lin_api_base") === "lin_api_base", "🔴 NEGATIVE CONTROL: unset falls back to the base driver key — a same-workspace room is unchanged, not broken by this variable existing");
+  ok(engagedLinearApiKey({ [own]: "   " }, "lin_api_base") === "lin_api_base", "a whitespace-only value is not a key — an empty export must not blank the driver's credential");
+  ok(engagedLinearApiKey({ [own]: "  lin_api_addressed  " }, "lin_api_base") === "lin_api_addressed", "the value is trimmed, so a stray newline in an env file does not become part of the authorization header");
 }
 
 {
@@ -592,6 +636,19 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     engagedNotion: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
+
+  {
+    const grant = SCENARIOS.find((sc) => sc.id === "S-DISCORD-GRANT")!;
+    ok(grant.optional === true, "precondition: S-DISCORD-GRANT is optional, which is what makes the naming asymmetry reachable");
+    const named = skipReason(grant, all, noneMissing, false, true)!;
+    ok(named !== undefined && named.includes("E2E_INCLUDE_OPTIONAL=1"), `a named-but-optional scenario still skips, and the line names the flag (got: ${JSON.stringify(named)})`);
+    ok(
+      named.includes("NOT enough"),
+      `🔴 …and says naming it directly is NOT the consent this gate takes — without that clause the reader has no way to tell which of the two rules they met (got: ${JSON.stringify(named)})`,
+    );
+    ok(skipReason(grant, all, noneMissing, false, false)!.includes("E2E_INCLUDE_OPTIONAL=1"), "…the remedy never depends on the explicitly-named branch");
+    ok(skipReason(grant, all, noneMissing, true) === undefined, "🔴 NEGATIVE CONTROL: with E2E_INCLUDE_OPTIONAL=1 it RUNS — the flag is a real remedy, not just a sentence");
+  }
 
   const roomOnlyMissing = new Set(["slack", "discord", "github", "linear", "notionAmbient"] as const);
   for (const [id, varName] of [
@@ -1275,6 +1332,32 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     `OPE-1483: S-DISCORD-GRANT makes exactly ONE channel-targeted post — phase 2's granted call — and it targets the thread \`resolveGrantThread\` named. ` +
       `A post with no channel argument opens a fresh auto-thread, i.e. a fresh session with no grant mounted. ` +
       `Resolved names: ${JSON.stringify([...resolved])}; targeted posts: ${JSON.stringify(targetedPosts)}`,
+  );
+
+  const grantBodyTight = grantBody.replace(/\s+/g, "");
+  const noFreshAskInit = /noFreshAsk=([^;]+);/.exec(grantBodyTight)?.[1] ?? "";
+  ok(
+    noFreshAskInit.includes("tapped") && noFreshAskInit.includes("askedRows.length===0") && noFreshAskInit.includes("refusedGrantAlreadyLive"),
+    `OPE-1590: the fall-through predicate is ALL THREE conjuncts — tapped, no fresh grant.asked row, and a \`grant_already_live\` refusal. ` +
+      `Drop any one and it widens: without \`tapped\` an untapped run skips its own phase-1 gates, and without the refusal read a tapped run ` +
+      `passes them on an empty trail (got: ${JSON.stringify(noFreshAskInit)})`,
+  );
+  ok(
+    !grantBodyTight.includes("if(askedRows.length===0)"),
+    "OPE-1590: the no-row skip is no longer reached on `askedRows.length === 0` ALONE — that unguarded arm is what exited 1 on a tapped run",
+  );
+  ok(
+    noFreshAskInit.includes("surfaceNamesChannel(e.surface,threadId)"),
+    `OPE-1590: the refusal is joined to the thread THIS run raised in — \`surfaceNamesChannel(e.surface, threadId)\`, the same join phase 2 uses. A platform-only scope (\`e.platform==="discord"\`) matches another conversation's refusal (got: ${JSON.stringify(noFreshAskInit)})`,
+  );
+  ok(
+    !noFreshAskInit.includes('e.platform==="discord"'),
+    "🔴 OPE-1590: NEGATIVE — the platform-only scope is gone; it was the wider predicate this join replaced",
+  );
+  ok(
+    (grantBodyTight.match(/!noFreshAsk/g) ?? []).length >= 2,
+    `OPE-1590: the predicate guards BOTH sites — the phase-1 skips and the two Discord-owned hard gates, which assert over the \`askedRows\` that is empty on exactly this path. ` +
+      `Guarding only the skips leaves the first gate redding a correct tapped run and the second passing vacuously (\`every\` on an empty list is true) (found ${(grantBodyTight.match(/!noFreshAsk/g) ?? []).length} guard(s))`,
   );
 
   const defective = 'async ctx=>{const asked=await discord.post(x);const reply=await discord.awaitReply(asked.channelId,asked.id,{timeoutMs:3e5});}';
@@ -3104,6 +3187,30 @@ rmSync(dir, { recursive: true, force: true });
   ok(refusedUnverifiedRequester([unverified, domainRefusal]).length === 1, "refusedUnverifiedRequester isolates the ONE refusal whose cause this pack cannot settle from the trail alone");
   ok(refusedUnverifiedRequester([domainRefusal]).length === 0, "NEGATIVE: every other gate value is a real refusal and is reported as one, never skipped past");
 
+  const alreadyLive = grantRow("grant.refused", { connector: "notion", gate: "grant_already_live" });
+  ok(refusedGrantAlreadyLive([alreadyLive, domainRefusal, unverified]).length === 1, "refusedGrantAlreadyLive isolates the ONE refusal a tapped re-run earns by design");
+  ok(refusedGrantAlreadyLive([domainRefusal, unverified]).length === 0, "🔴 NEGATIVE: no other refusal reads as `already live` — a domain refusal or an unverified requester must still skip, never fall through to phase 2");
+  ok(refusedGrantAlreadyLive([grantRow("grant.asked", { connector: "notion", gate: "grant_already_live" })]).length === 0, "NEGATIVE: the reader is pinned to grant.refused — a `gate` field on another action is not a refusal");
+  ok(refusedGrantAlreadyLive([]).length === 0, "VACUITY: no rows is no refusal, so an empty trail never opens the fall-through");
+  ok(refusedUnverifiedRequester([alreadyLive]).length === 0, "NEGATIVE (the other direction): the two refusal readers do not overlap — an already-live refusal is diagnosed, not undiagnosed");
+
+  const MY_THREAD = "1300000000000000106";
+  const liveHere = { ...grantRow("grant.refused", { connector: "notion", gate: "grant_already_live" }), surface: MY_THREAD };
+  const liveElsewhere = { ...grantRow("grant.refused", { connector: "notion", gate: "grant_already_live" }), surface: "999888777666555444" };
+  const liveHereQualified = { ...grantRow("grant.refused", { connector: "notion", gate: "grant_already_live" }), surface: `discord/guild-1/${MY_THREAD}` };
+  ok(
+    refusedGrantAlreadyLive([liveHere]).some((e) => surfaceNamesChannel(e.surface, MY_THREAD)),
+    "the join accepts the refusal raised in THIS run's own thread — the bare-thread-id spelling `bindDiscord` writes",
+  );
+  ok(
+    refusedGrantAlreadyLive([liveHereQualified]).some((e) => surfaceNamesChannel(e.surface, MY_THREAD)),
+    "…and the qualified `discord/<guild>/<thread>` spelling, so a moved stamp shape does not silently stop matching",
+  );
+  ok(
+    !refusedGrantAlreadyLive([liveElsewhere]).some((e) => surfaceNamesChannel(e.surface, MY_THREAD)),
+    "🔴 NEGATIVE CONTROL: ANOTHER conversation's `grant_already_live` does NOT open the fall-through — unjoined, it would stand both Discord-owned hard gates down on a run whose own raise failed for a different reason, and swallow the skip that names it",
+  );
+
   const sentNotice = grantRow("grant.notified", { outcome: "sent", ownerPlatform: "discord", owner: "discord/900000000000000001", grantId: "g1" });
   const failedNotice = grantRow("grant.notified", { outcome: "failed", ownerPlatform: "discord", owner: "discord/900000000000000001", grantId: "g2", error: "Error" });
   ok(noticesForGrant([sentNotice, failedNotice], "g1").length === 1, "noticesForGrant keys the notice to ONE grant id — the notice is claimed once per grant forever, so a leg must ask about its own grant, not its own time window");
@@ -3219,6 +3326,22 @@ rmSync(dir, { recursive: true, force: true });
   ok(!reportedDirectMention([dispatched("name-drop")], "discord"), "NEGATIVE: a name-drop is not an @mention");
   ok(reportedNameDrop([dispatched("name-drop")], "discord"), "reportedNameDrop names the name-drop addressing");
   ok(!reportedNameDrop([dispatched("direct")], "discord"), "NEGATIVE: an @mention is not a name-drop");
+
+  ok(isAmbientLegAddressing("channel-watch"), "isAmbientLegAddressing names unowned room chatter");
+  ok(isAmbientLegAddressing("thread-follow"), "🔴 …and the ENGAGED plain comment, which is the spelling the promotion introduced — drop it and every ambient-leg filter goes blind on an engaged room");
+  ok(!isAmbientLegAddressing("direct") && !isAmbientLegAddressing("direct-mention"), "🔴 NEGATIVE: the ADDRESSED leg's spellings are not the ambient leg's — a set that swallowed them would make every self-loop gate vacuous");
+  ok(!isAmbientLegAddressing("name-drop"), "NEGATIVE: a name-drop is the addressed leg too");
+  ok(!isAmbientLegAddressing(undefined) && !isAmbientLegAddressing(7), "a row with no addressing, or a non-string one, names no leg — never coerced");
+
+  const selfLoopBody = SCENARIOS.find((s) => s.id === "J-LIN")!.run.toString().replace(/\s+/g, "");
+  ok(
+    !selfLoopBody.includes('addressing==="channel-watch"'),
+    '🔴 OPE-1578: J-LIN filters its dispatch rows through `isAmbientLegAddressing`, never the literal `"channel-watch"` — the literal stops matching the moment the issue is engaged, which this leg\'s own @mention makes it',
+  );
+  ok(
+    (selfLoopBody.match(/isAmbientLegAddressing\(/g) ?? []).length === 2,
+    `OPE-1578: BOTH self-loop filters take it — the app-principal gate and the other-principal log arm (found ${(selfLoopBody.match(/isAmbientLegAddressing\(/g) ?? []).length})`,
+  );
 
   const post = (surface: string) => row(REPLY_POST_ACTION, { chars: 12 }, surface);
   ok(replyPostCount([post("C1"), post("C1")]) === 2, "replyPostCount counts the posts the deployment actually made");

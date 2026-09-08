@@ -1,12 +1,13 @@
 import { accountProfileFor, composedAccountName } from "../identity/account-display-name.js";
 import { isQualifiedPrincipalKey, parsePrincipalKey, tryPrincipalKey } from "../identity/principal-key.js";
-import { grantMintRefusalMessage, type GrantMintRefusal } from "./credential-grant.js";
+import { grantMintRefusalMessage, type GrantDuplicateContext, type GrantMintRefusal } from "./credential-grant.js";
 
 export interface ResolvedGrantOwner {
   readonly principalId: string;
   readonly platform: string;
   readonly nativeId: string;
   readonly handle: string;
+  readonly displayName?: string;
 }
 
 function bareId(raw: string): string {
@@ -40,16 +41,18 @@ export async function resolveGrantOwner(
     return { refusal: `Refused: "${named}" is not a well-formed principal key, so nothing could ever be spent under it.` };
   }
   const profile = await accountProfileFor(parsed.platform, parsed.id, parsed.tenant).catch(() => undefined);
-  const handle = composedAccountName(profile) ?? parsed.id;
-  return { handle, nativeId: parsed.id, platform: parsed.platform, principalId: asKey };
+  const displayName = composedAccountName(profile);
+  const handle = displayName ?? parsed.id;
+  return { handle, nativeId: parsed.id, platform: parsed.platform, principalId: asKey, ...(displayName === undefined ? {} : { displayName }) };
 }
 
-export function credentialGrantRefusalNote(connector: string, reason: GrantMintRefusal | "owner_unreachable"): string {
+export function credentialGrantRefusalNote(connector: string, reason: GrantMintRefusal | "owner_unreachable", duplicate?: GrantDuplicateContext): string {
   if (reason === "owner_unreachable") {
     return (
       "Refused: this deployment cannot send that person a direct message, so the card would never be seen. " +
       "An ask nobody can read is worse than no ask — say so in the room rather than trying again."
     );
   }
-  return `Refused: ${grantMintRefusalMessage(connector, reason)}`;
+  const message = grantMintRefusalMessage(connector, reason, duplicate);
+  return reason === "grant_already_live" ? message : `Refused: ${message}`;
 }

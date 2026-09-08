@@ -53,7 +53,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
         tier: connectorOpConsequenceOfTier(tiers.tier),
         opTier: tiers.tier,
         ...(tiers.tier !== tiers.base ? { baseOpTier: tiers.base } : {}),
-        ...(tiers.armPresent ? { opTierArm: true } : {}),
+        ...(tiers.armReplaced ? { opTierArmReplaced: true } : {}),
         ...(tiers.arm !== undefined ? { armOpTier: tiers.arm } : {}),
         ...(tiers.armLowered ? { opTierArmLowered: true, opTierBasis: tiers.basis } : {}),
         ...(status !== undefined ? { status } : {}),

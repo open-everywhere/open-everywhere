@@ -79,6 +79,22 @@ try {
   reds.push(`MISSING: ${TOOL_LOOP} is not installed — run \`npm install\`.`);
 }
 
+const WEB_FETCH_REQUEST = "node_modules/eve/dist/src/execution/web-fetch/request.js";
+const HOP_CALL_IN_FOLLOW = "await __oeWebFetchHop(a.toString(),e+1);n=a;continue";
+try {
+  const bytes = readFileSync(WEB_FETCH_REQUEST, "utf8");
+  if (!bytes.includes(HOP_CALL_IN_FOLLOW)) {
+    reds.push(
+      `HOP HOOK NOT IN THE FOLLOW BRANCH: ${WEB_FETCH_REQUEST} does not contain "${HOP_CALL_IN_FOLLOW}". ` +
+        `eve's redirect loop must call the Open Everywhere hop guard BEFORE it follows a Location, or an ` +
+        `allow-listed host can redirect web_fetch to a host this session never declared (OPE-1568). ` +
+        `Re-derive the redirect hunk of patches/ against the installed eve and re-run this lint.`,
+    );
+  }
+} catch {
+  reds.push(`MISSING: ${WEB_FETCH_REQUEST} is not installed — run \`npm install\`.`);
+}
+
 function packageJsonPaths(): string[] {
   const out = ["package.json"];
   for (const group of ["packages", join("packages", "providers")]) {
