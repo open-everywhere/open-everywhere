@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SECRET_STORE_ENV_KEYS } from "../agent/credentials/operator-secrets.js";
+import { registerDeploymentIdentity } from "../agent/identity/deployment-identity.js";
 import { registerOperationalPgliteLazy } from "../agent/operational/pglite-client.js";
 import { initOperationalSchema, type PgClient } from "../agent/operational/postgres.js";
 import {
@@ -75,7 +76,14 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
 export async function connectOperatorStoreForCli(argv: readonly string[] = process.argv): Promise<OperatorStoreTarget> {
   const flag = argv.indexOf("--root-env");
   loadRootOfTrustEnv(resolve(flag >= 0 ? (argv[flag + 1] ?? ".env.local") : ".env.local"));
+  const orgFlag = argv.indexOf("--org");
+  declareOperatorOrg(orgFlag >= 0 ? argv[orgFlag + 1] : undefined);
   return await connectOperatorStore();
+}
+
+export function declareOperatorOrg(org: string | undefined): void {
+  if (org === undefined || org.trim().length === 0 || org.startsWith("-")) return;
+  registerDeploymentIdentity({ org });
 }
 
 export function resetOperatorStoreConnection(): void {

@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-user-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_PLATFORM = "slack";
 process.env.NOTION_API_KEY = "STATIC-TEAM-KEY";
 process.env.NOTION_TEAM = "BOUND-TEAM-KEY";

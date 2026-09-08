@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -6,9 +7,7 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-process.env.OE_ORG = "acme-org";
-process.env.OE_WORKSPACE = "ws1";
-process.env.OE_SURFACE = "c1";
+_setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
 
 await import("./_register-test-config.js");
 

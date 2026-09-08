@@ -2,7 +2,7 @@ import { controlPartition } from "../../agent/memory/partition.js";
 import { siloTier } from "../../agent/memory/store.js";
 import type { MemoryFiles } from "../../agent/memory/store.js";
 import { mulberry32, pick } from "./memory-eval-harness.js";
-import { deploymentOrg } from "../../agent/identity/deployment-org.js";
+import { deploymentOrg } from "../../agent/identity/deployment-identity.js";
 
 export type SiloShape = "flat" | "repo-tree" | "nested";
 export type DescQuality = "clear" | "vague";

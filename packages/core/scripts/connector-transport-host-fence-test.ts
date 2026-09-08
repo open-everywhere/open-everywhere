@@ -8,11 +8,12 @@ registerSlackFixtureMapper();
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-transport-host-fence-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_PLATFORM = "slack";
 
 import type { CredentialEndpointRules } from "../agent/access/credential-endpoints.js";
 import type { CredentialBroker } from "../agent/access/credentials.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const { credentialEndpointHostVerdict, assertCredentialEndpointHostAllowed, CredentialEndpointError } = await import(
   "../agent/access/credential-endpoints.js"

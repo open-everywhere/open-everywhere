@@ -8,7 +8,7 @@ import {
   setOperatorSecret,
   type SecretWriteResult,
 } from "../agent/credentials/operator-secrets.js";
-import { connectOperatorStore, loadRootOfTrustEnv } from "./operator-store-connect.js";
+import { connectOperatorStore, declareOperatorOrg, loadRootOfTrustEnv } from "./operator-store-connect.js";
 
 export interface SecretCliIo {
   out(line: string): void;
@@ -24,8 +24,8 @@ const USAGE = [
   "  oe secret list [--all] [--json]         names + provenance ONLY (never values)",
   "  oe secret rm <name>                     delete one stored secret",
   "",
-  "  --root-env PATH   read DATABASE_URL / OE_CREDENTIAL_ENCRYPTION_KEY / OE_ORG from PATH (default ./.env.local)",
-  "  --org ORG         override the org the rows are keyed by (default OE_ORG, else \"default\")",
+  "  --root-env PATH   read DATABASE_URL / OE_CREDENTIAL_ENCRYPTION_KEY from PATH (default ./.env.local)",
+  "  --org ORG         the org the rows are keyed by (default \"default\"; a deployment declares its own in agent/identity/surfaces.ts)",
   "  --as LABEL        stamp the row's provenance as operator:cli:LABEL",
   "",
   "  There is deliberately no --value flag (argv leaks to shell history and ps) and no `get`.",
@@ -70,6 +70,7 @@ export async function runSecretCommand(args: readonly string[], io: SecretCliIo)
   const setBy = label ? `${SET_BY_CLI}:${label}` : SET_BY_CLI;
 
   loadRootOfTrustEnv(resolve(flagValue(rest, "--root-env") ?? ".env.local"));
+  declareOperatorOrg(org);
 
   try {
     switch (verb) {

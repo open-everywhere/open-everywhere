@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-background-task-taint-")), "ops.sqlite3");
-process.env.OE_WORKSPACE = "dev";
+_setDeploymentIdentityForTest({ workspace: "dev" });
 
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureMapper();

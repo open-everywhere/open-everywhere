@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 
 const REGISTRY_PATH = "dist/src/framework/sources/registry.js";
 
+const POLICY_PATH = "dist/src/compiler/default-tool-policy.js";
+
 const OPT_IN_SNAPSHOT = ["glob", "grep"] as const;
 
 interface FrameworkSourceRegistry {
@@ -20,6 +22,42 @@ export interface EveFrameworkTools {
   readonly optIn: readonly string[] | undefined;
   readonly rootOnly: readonly string[];
   readonly optInDrift: string | undefined;
+  readonly required: readonly string[];
+}
+
+export function readRequiredFrameworkToolSlots(eveRoot: string): string[] {
+  const file = join(eveRoot, POLICY_PATH);
+  let source: string;
+  try {
+    source = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+
+  const declaration = /REQUIRED_FRAMEWORK_TOOL_SLOTS\s*=\s*new Set\(\[([^\]]*)\]\)/u.exec(source);
+  if (declaration === null) {
+    throw new Error(
+      `eve framework tools: ${POLICY_PATH} exists but declares no readable ` +
+        `\`REQUIRED_FRAMEWORK_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that decides which ` +
+        `framework tool slots refuse a disableTool() sentinel. Guessing is not safe in both directions: an ` +
+        `OVER-report exempts a slot from the sentinel demand and lets a hands-on tool sit there unreviewed, ` +
+        `and an UNDER-report leaves the failure to surface as an \`eve build\` throw naming eve's file instead ` +
+        `of OE's zero-hands invariant. Read eve's policy module and update this reader.`,
+    );
+  }
+
+  const slots: string[] = [];
+  for (const [, name] of declaration[1]!.matchAll(/["'`]tools\/([A-Za-z0-9_]+)\.?[a-z]*["'`]/gu)) {
+    slots.push(name!);
+  }
+  if (declaration[1]!.trim() !== "" && slots.length === 0) {
+    throw new Error(
+      `eve framework tools: ${POLICY_PATH} declares REQUIRED_FRAMEWORK_TOOL_SLOTS with entries this reader ` +
+        `cannot parse (${declaration[1]!.trim()}). Only \`tools/<name>\` slot literals are understood. Half of ` +
+        `guessing wrong here is fail-OPEN — see the note above.`,
+    );
+  }
+  return [...new Set(slots)].sort();
 }
 
 function toolNameOf(logicalPath: string): string | undefined {
@@ -121,11 +159,23 @@ export async function readEveFrameworkTools(options: ReadEveFrameworkToolsOption
   const optIn = optInDrift === undefined ? [...OPT_IN_SNAPSHOT] : undefined;
   const all = [...new Set([...inRegistry, ...(optIn ?? [])])].sort();
 
+  const required = readRequiredFrameworkToolSlots(eveRoot);
+  const unmounted = required.filter((name) => !defaultMounted.has(name));
+  if (unmounted.length > 0) {
+    throw new Error(
+      `eve framework tools: ${POLICY_PATH} requires slot(s) ${unmounted.join(", ")} that ${REGISTRY_PATH} does ` +
+        `not register for "all-local-nodes". One of the two reads is stale. A required-but-unmounted slot would ` +
+        `make the subagent lint demand a replacement tool in a slot eve never mounts, so this throws rather ` +
+        `than guessing which read to believe.`,
+    );
+  }
+
   return {
     all,
     defaultMounted: [...defaultMounted].sort(),
     optIn: optIn === undefined ? undefined : [...optIn].sort(),
     rootOnly: [...rootOnly].sort(),
     optInDrift,
+    required,
   };
 }

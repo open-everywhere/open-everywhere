@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-self-dispatch-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 overrideSettingsForTest({ window: { topology: true } });
 delete process.env.OE_SPAWN_DISPATCH_SECRET;
@@ -49,6 +49,7 @@ import {
 } from "../agent/channels/unified.js";
 import type { RouteHandlerArgs } from "eve/channels";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

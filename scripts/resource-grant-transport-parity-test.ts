@@ -7,6 +7,7 @@ import { assertPackageDistFresh } from "./core-dist-freshness.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 assertPackageDistFresh("packages/core", "@open-everywhere/core");
 for (const id of ["slack", "discord", "teams"]) {
@@ -21,7 +22,7 @@ process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 
 const dir = join(tmpdir(), `open-everywhere-resource-grant-parity-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
-process.env.OE_ORG = "parity-org";
+_setDeploymentIdentityForTest({ org: "parity-org" });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 

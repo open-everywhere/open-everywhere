@@ -11,11 +11,14 @@ import {
   slackWakeAuthorFacts,
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
+import { partnerFactsFromInfo } from "../agent/channels/slack-identity.js";
 import {
   getOperationalStore,
   overrideSettingsForTest,
   markUndeliveredAfterHeal,
   isUndeliveredAfterHeal,
+  registerSurfaces,
+  defineSurface,
   type WakeMessageInput,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -54,11 +57,12 @@ function dmEnvelope(eventId: string, over: Record<string, unknown> = {}): string
   });
 }
 
-function mpimEnvelope(eventId: string, over: Record<string, unknown> = {}): string {
+function mpimEnvelope(eventId: string, over: Record<string, unknown> = {}, envelopeOver: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type: "event_callback",
     event_id: eventId,
     team_id: TEAM,
+    ...envelopeOver,
     event: { type: "message", channel_type: "mpim", channel: MPIM_CHANNEL, user: USER, ts: "1768686403.100200", text: "can one of you chase order 4417?", ...over },
   });
 }
@@ -110,6 +114,7 @@ async function runFront(
     fifo?: SpyFifo;
     channelFacts?: { internal: boolean; channelType?: string; extShared?: boolean; trustChecked?: boolean } | null;
     authorRefuted?: boolean;
+    authorUserInfo?: Record<string, unknown>;
     sendThrowsFirst?: Error;
     sendThrowsAlways?: Error;
     selfBotId?: string | null;
@@ -162,7 +167,12 @@ async function runFront(
       },
       authorFactsFor: async (internal: boolean, userId?: string, teamId?: string) => {
         authorFactLookups++;
-        const probe: SlackMemberProbe = async () => (opts.authorRefuted === undefined ? undefined : !opts.authorRefuted);
+        const probe: SlackMemberProbe = async (_u, probeTeamId) =>
+          opts.authorUserInfo !== undefined
+            ? partnerFactsFromInfo({ user: opts.authorUserInfo }, probeTeamId).dmPartnerTrust === "internal"
+            : opts.authorRefuted === undefined
+              ? undefined
+              : !opts.authorRefuted;
         return slackWakeAuthorFacts(internal, userId, teamId, probe);
       },
       resolveDmSeat: async (_org, dm, _at) => {
@@ -584,6 +594,76 @@ async function runFront(
   ok(
     !unresolvable.dispatched[0]!.message.includes('<untrusted_external_data'),
     "🔴 NEGATIVE CONTROL: an UNRESOLVABLE probe does not fence either — the backstop fails OPEN with the rest of the leg",
+  );
+}
+
+{
+  const GRID_MEMBER = { team_id: "T_SIBLING", enterprise_user: { enterprise_id: "E_GRID" } };
+  const attrsOf = (r: Awaited<ReturnType<typeof runFront>>) => r.dispatched[0]!.auth.attributes ?? {};
+
+  registerSurfaces([]);
+  const undeclared = await runFront(mpimEnvelope("Ev11grid-undeclared"), { authorUserInfo: GRID_MEMBER });
+  eq(
+    attrsOf(undeclared)["oe_chat_nonmember"],
+    "true",
+    "🔴 NEGATIVE CONTROL: with the Grid UNDECLARED, a sibling workspace's member writing in the group DM is marked a guest — absence infers non-member, which is the ruling's other half",
+  );
+
+  registerSurfaces([defineSurface({ key: "slack/E_GRID", trust: "internal" })]);
+  const declared = await runFront(mpimEnvelope("Ev11grid-declared"), { authorUserInfo: GRID_MEMBER });
+  eq(
+    attrsOf(declared)["oe_chat_nonmember"],
+    undefined,
+    "🔴 OPE-1508: ONE `slack/E_GRID` declaration vouches the sibling workspace, so a Grid colleague writing in the group DM leaves `oe_chat_nonmember` ABSENT — the Grid home-team defect is closed",
+  );
+  ok(
+    !declared.dispatched[0]!.message.includes("<untrusted_external_data"),
+    "…and their words are no longer fenced as a stranger's — the refutation drove the render too",
+  );
+  ok(
+    undeclared.dispatched[0]!.message.includes("<untrusted_external_data"),
+    "NEGATIVE CONTROL: the undeclared sibling's words ARE fenced — one refutation still feeds the stamp and the render together",
+  );
+
+  const gridGuest = await runFront(mpimEnvelope("Ev11grid-guest"), {
+    authorUserInfo: { ...GRID_MEMBER, is_restricted: true },
+  });
+  eq(
+    attrsOf(gridGuest)["oe_chat_nonmember"],
+    "true",
+    "🔴 a multi-channel GUEST in the vouched sibling workspace is still marked — the enterprise line vouches workspaces, not the people inside them",
+  );
+
+  registerSurfaces([]);
+  const ownApp = await runFront(mpimEnvelope("Ev11grid-ownbot"), { authorUserInfo: { team_id: TEAM, is_bot: true } });
+  eq(
+    attrsOf(ownApp)["oe_chat_nonmember"],
+    undefined,
+    "🔴 OPE-1508: the WORKSPACE'S OWN APP writing in a group DM is a MEMBER — `is_bot` no longer refutes on its own, which is what marked the admitted e2e driver a guest",
+  );
+  const foreignApp = await runFront(mpimEnvelope("Ev11grid-foreignbot"), {
+    authorUserInfo: { team_id: "T_ELSEWHERE", is_bot: true },
+  });
+  eq(
+    attrsOf(foreignApp)["oe_chat_nonmember"],
+    "true",
+    "🔴 NEGATIVE CONTROL: a FOREIGN app in the same room is still a guest — the bot rule is the rung walk, not a blanket admission",
+  );
+  registerSurfaces([]);
+}
+
+{
+  const grid = await runFront(mpimEnvelope("Ev11stamp-grid", {}, { enterprise_id: "E_GRID" }));
+  eq(
+    (grid.dispatched[0]!.auth.attributes ?? {})["enterprise_id"],
+    "E_GRID",
+    "🔴 OPE-1508: a group-DM wake in an Enterprise Grid stamps `enterprise_id` from the event envelope — the binding's route to the rung above the workspace",
+  );
+  const plain = await runFront(mpimEnvelope("Ev11stamp-plain"));
+  eq(
+    (plain.dispatched[0]!.auth.attributes ?? {})["enterprise_id"],
+    undefined,
+    "🔴 NEGATIVE CONTROL: an ordinary single-workspace group DM stamps NO enterprise_id — an absent rung, so its trust walk is byte-identical to what it was",
   );
 }
 

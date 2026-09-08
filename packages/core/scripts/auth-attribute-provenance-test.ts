@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { filesContainingAll } from "./eve-dist-search.js";
+import { filesContainingAll, filesMatching } from "./eve-dist-search.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -127,8 +127,122 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   const waitFn = tw.slice(waitStart, legacyStart);
   const legacy = tw.slice(legacyStart);
 
-  const ownedParam = /^async function runTurnOwnedWorkflow\((\w+)\)/.exec(owned)?.[1];
-  ok(ownedParam !== undefined, "runTurnOwnedWorkflow still takes a single named workflow-input parameter");
+  const ownedSignature = /^async function runTurnOwnedWorkflow\(([^)]*)\)/.exec(owned)?.[1];
+  const ownedParams = (ownedSignature ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p !== "");
+  const ownedParam = ownedParams[0];
+  ok(ownedParam !== undefined, "runTurnOwnedWorkflow still takes a named workflow-input parameter first");
+  ok(
+    ownedParams.every((p) => /^[A-Za-z_$][\w$]*$/u.test(p)),
+    `runTurnOwnedWorkflow's parameters are all plain identifiers (saw: ${JSON.stringify(ownedParams)})`,
+  );
+
+  function argsAt(src: string, open: number): string {
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) return src.slice(open + 1, i);
+      }
+    }
+    return "";
+  }
+  function splitArgs(args: string): readonly string[] {
+    if (args.trim() === "") return [];
+    const out: string[] = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < args.length; i++) {
+      const ch = args[i]!;
+      if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch)) depth--;
+      else if (ch === "," && depth === 0) {
+        out.push(args.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    out.push(args.slice(start).trim());
+    return out;
+  }
+  ok(splitArgs(argsAt("f(a(1,2),b.c)", 1)).length === 2, "arg scanner: a nested call is ONE argument, not two");
+  ok(splitArgs(argsAt("f(a(1,2),b.c)", 1))[1] === "b.c", "arg scanner: the second argument is read whole");
+  ok(splitArgs(argsAt("f(x)", 1)).length === 1, "arg scanner: a single argument reads as one");
+  ok(splitArgs(argsAt("f()", 1)).length === 0, "arg scanner: no arguments reads as none");
+
+  const callSites = filesMatching(/runTurnOwnedWorkflow\(/u).flatMap((rel) => {
+    const src = read(rel);
+    return [...src.matchAll(/(?<!function )runTurnOwnedWorkflow\(/gu)].map((m) => ({
+      file: rel,
+      args: splitArgs(argsAt(src, (m.index ?? 0) + m[0].length - 1)),
+    }));
+  });
+  ok(
+    callSites.length === 2,
+    `runTurnOwnedWorkflow has exactly TWO call sites in eve's whole dist (saw ${callSites.length}: ${JSON.stringify(callSites.map((c) => c.file))})`,
+  );
+  const selfSite = callSites.find((c) => c.file.endsWith("turn-workflow.js"));
+  ok(
+    selfSite !== undefined && selfSite.args.length === 1,
+    `turn-workflow.js's own call site still passes just the workflow input (saw: ${JSON.stringify(selfSite?.args)})`,
+  );
+  const outsideSite = callSites.find((c) => !c.file.endsWith("turn-workflow.js"));
+  ok(
+    outsideSite !== undefined,
+    "…and the other call site is OUTSIDE turn-workflow.js — the caller a file-scoped scan cannot see",
+  );
+  ok(
+    /^\w+\.resolve$/u.test(outsideSite?.args[1] ?? ""),
+    `the outside call site's second argument is a bare \`<v>.resolve\`, a readiness signal (saw: ${JSON.stringify(outsideSite?.args)})`,
+  );
+  const resolverVar = (outsideSite?.args[1] ?? "").split(".")[0]!;
+  ok(
+    new RegExp(`(?<![\\w$.])${resolverVar}=Promise\\.withResolvers\\(\\)`, "u").test(read(outsideSite?.file ?? "execution/turn-workflow.js")),
+    "…and that resolver is a `Promise.withResolvers()` resolver from the same module, not a delivery",
+  );
+  ok(
+    callSites.every((c) => c.args.length <= ownedParams.length),
+    `no call site passes more arguments than runTurnOwnedWorkflow declares (params: ${JSON.stringify(ownedParams)}, sites: ${JSON.stringify(callSites.map((c) => c.args))})`,
+  );
+
+  const loopHead = owned.indexOf(";;){");
+  ok(loopHead > 0, "runTurnOwnedWorkflow still drives its steps from a `for(<init>;;)` loop");
+  const bodyOpen = loopHead + ";;)".length;
+  let bodyDepth = 0;
+  let bodyClose = -1;
+  for (let i = bodyOpen; i < owned.length; i++) {
+    const ch = owned[i];
+    if (ch === "{") bodyDepth++;
+    else if (ch === "}") {
+      bodyDepth--;
+      if (bodyDepth === 0) {
+        bodyClose = i;
+        break;
+      }
+    }
+  }
+  ok(bodyClose > bodyOpen, "the step loop's body is a balanced block, so this reader can span it exactly");
+  const loopBody = owned.slice(bodyOpen, bodyClose + 1);
+  const outsideLoopBody = owned.slice(0, bodyOpen) + owned.slice(bodyClose + 1);
+  ok(outsideLoopBody.length < owned.length, "…and the span it removes is non-empty");
+  for (const extra of ownedParams.slice(1)) {
+    ok(
+      new RegExp(`^\\{let ${extra}=`, "u").test(loopBody),
+      `the step loop's body re-binds \`${extra}\`, so no occurrence inside it is about the parameter`,
+    );
+    const uses = [...outsideLoopBody.matchAll(new RegExp(`(?<![\\w$.])${extra}(?![\\w$])`, "gu"))];
+    ok(
+      uses.length === 2,
+      `outside that body — signature, loop init and the tail after the loop — \`${extra}\` appears exactly twice: its declaration and one call (saw ${uses.length})`,
+    );
+    ok(
+      new RegExp(`(?<=[,;{}])${extra}\\?\\.\\(\\)(?=[,;}])`, "u").test(outsideLoopBody),
+      `…and that call is the STATEMENT \`${extra}?.()\` — no arguments in, and the result is discarded, so nothing crosses INTO the turn through it`,
+    );
+  }
   const stepVar = /turnStep\(\w+\.createStepInput\((\w+),/.exec(owned)?.[1];
   ok(stepVar !== undefined, "runTurnOwnedWorkflow still drives turnStep via cursor.createStepInput(<stepInput>, …)");
 

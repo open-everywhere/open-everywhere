@@ -10,6 +10,7 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { registerSurfaces, defineSurface, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseDriverAllowlist } from "@open-everywhere/core/agent/testing/driver-allowlist.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -20,7 +21,8 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 

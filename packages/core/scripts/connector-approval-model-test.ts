@@ -1,10 +1,11 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_PLATFORM = "slack";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import { classifyConnectorOpTier, restMethodTier } from "../agent/access/consequence.js";
 import { sessionGrantKind, connectorSessionKind } from "../agent/approvals/session-grant.js";
 import { connectorOpApproval } from "../agent/connections/connector-auth.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({

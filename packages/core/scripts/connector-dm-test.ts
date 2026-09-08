@@ -5,13 +5,14 @@ import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-dm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 overrideSettingsForTest({ connectors: { dmOnly: true } });
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_PLATFORM = "slack";
 
 const { registerConfig } = await import("../agent/access/config.js");

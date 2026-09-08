@@ -201,9 +201,16 @@ export { registerIdentityMapper, registeredIdentityMapperPlatforms, deploymentOr
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
-export { surfaceKeySegment } from "./identity/binding.js";
+export { surfaceKeySegment, trustGroupKeyFor } from "./identity/binding.js";
 
 export { registerSurfaces, defineSurface, _resetSurfacesForTest } from "./identity/trust.js";
+
+export {
+  registerDeploymentIdentity,
+  _setDeploymentIdentityForTest,
+  _resetDeploymentIdentityForTest,
+} from "./identity/deployment-identity.js";
+export type { DeploymentIdentity } from "./identity/deployment-identity.js";
 export { registerSubtreePlatform, applySubtreeSurfaceClaims, subtreeSurfaceKeys, _resetSubtreePlatformsForTest } from "./identity/trust.js";
 export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/trust.js";
 
@@ -544,6 +551,7 @@ export {
   getThreadEngagement,
   isThreadEngaged,
   markThreadEngaged,
+  roomEngagementAddress,
   WARM_SILENT_LIMIT,
 } from "./channels/engagement.js";
 
@@ -652,7 +660,18 @@ export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 
 export { parseSlackCommandText } from "./commands/core.js";
 
-export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch } from "./access/host-egress.js";
+export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
+export {
+  egressAuditFields,
+  hostCallAuditFields,
+  sandboxPolicyAuditFields,
+  normaliseVerbs,
+  EGRESS_AUDIT_ROW_FIELDS,
+  type EgressAuditRow,
+  type EgressPlane,
+  type EgressRowUnit,
+  type EgressOutcome,
+} from "./access/egress.js";
 
 export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
 export { classifyEmoji } from "./channels/reaction-ingest.js";

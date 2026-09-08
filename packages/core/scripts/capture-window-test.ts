@@ -1,6 +1,6 @@
 
 process.env.OE_SQLITE_PATH = ":memory:";
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 import { PGlite } from "@electric-sql/pglite";
 import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
@@ -27,6 +27,7 @@ import type { AuditInput } from "../agent/audit/audit.js";
 import type { Partition } from "../agent/memory/partition.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 import type { WebhookHook } from "../agent/webhooks/config.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

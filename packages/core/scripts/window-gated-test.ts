@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-gated-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import { defineTool } from "eve/tools";
 import { z } from "zod";
@@ -29,6 +29,7 @@ import {
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext, WindowGrain } from "../agent/identity/binding.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

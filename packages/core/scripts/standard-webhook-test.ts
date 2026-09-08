@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../..");
@@ -12,7 +13,7 @@ const REPO = resolve(HERE, "../../..");
 const dir = join(tmpdir(), `oe-standard-webhook-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;

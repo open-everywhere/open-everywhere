@@ -518,7 +518,7 @@ export const SETTINGS = {
       shipped: "",
       validate: sandboxRegionProblem,
       summary:
-        "Vercel region to create sandboxes in — the data-residency pin for sandbox COMPUTE, the sibling of the AI Gateway's `inferenceRegion` for inference. Empty (the default) pins nothing. **The pinned eve cannot honour it yet**: it creates sandboxes through its own vendored `@vercel/sandbox`, whose `Sandbox.create` has no `region`, so a value would be dropped silently. Setting it therefore REFUSES THE BOOT with that reason rather than running in the default region under a residency claim. Read at boot, applied at sandbox CREATE, and inert off Vercel (a loud warning says so).",
+        "Vercel region to create sandboxes in — the data-residency pin for sandbox COMPUTE, the sibling of the AI Gateway's `inferenceRegion` for inference. Empty (the default) pins nothing. Read at boot, applied at sandbox CREATE, and inert off Vercel (a loud warning says so). Existing sandboxes keep the region they were created in. Should a future eve stop forwarding the region to sandbox creation, `npm run test:sandbox-region` goes red — that red is the signal, and it is the only automatic part. The boot keeps pinning until a maintainer flips the hand-maintained capability constant to `false`. That flip is what makes setting this REFUSE THE BOOT with the reason, rather than run in the default region under a residency claim.",
       format: (v) => (v === "" ? "`` (no pin — Vercel's own default region)" : v),
     } satisfies SettingSpec<string>,
   },

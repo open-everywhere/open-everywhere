@@ -7,7 +7,7 @@ import { join } from "node:path";
 const dir = join(tmpdir(), `open-everywhere-domain-model-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -25,6 +25,7 @@ const {
 import type { RoutingDeps, ModelBackend } from "../agent/model/routing.js";
 import type { Domain, ModelReasoning } from "../agent/memory/domain.js";
 import type { ModelPolicy } from "../agent/model/policy.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {

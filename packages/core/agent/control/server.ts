@@ -70,7 +70,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "List routines",
       description:
-        'Every proactive routine across one org\'s surfaces (config-as-code\'s routines console) — id, trigger, next run, status, failure count, the routine\'s full PROMPT, and for an event subscription when its filter first/last matched a delivery. onlyDue=true returns just those a tick would fire now. org defaults to the deployment\'s (OE_ORG / "default"); an org-wide listing requires the org-wide "admin" role, or pass surfaceKey to scope it to one channel (a covering "domain:<name>" role is enough for that). Read-only.',
+        'Every proactive routine across one org\'s surfaces (config-as-code\'s routines console) — id, trigger, next run, status, failure count, the routine\'s full PROMPT, and for an event subscription when its filter first/last matched a delivery. onlyDue=true returns just those a tick would fire now. org defaults to the deployment\'s declared org (else "default"); an org-wide listing requires the org-wide "admin" role, or pass surfaceKey to scope it to one channel (a covering "domain:<name>" role is enough for that). Read-only.',
       inputSchema: { onlyDue: z.boolean().optional(), org: z.string().min(1).optional(), surfaceKey: z.string().min(1).optional() },
     },
     (args) =>
@@ -179,7 +179,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Usage window (priced, per surface × model)",
       description:
-        'Everything the deployment spent since a timestamp across a set of workspaces, grouped by (surfaceKey, model): call count, token sums, an EXACT per-row $ estimate at each row\'s own stamped model rate (spend/pricing.ts), and a total. An unpriced or unstamped row shows tokens with estimatedUsd omitted and its model under unpricedModels — never a guessed figure (deliberately NO assumed-model fallback, unlike usage_summary). Built for the e2e/CI harness pricing a live run via a read-only service token. workspaceKeys entries are exactly "platform/workspace"; sinceIso is any parseable ISO-8601 timestamp; org defaults to the deployment\'s (OE_ORG / "default"). Org-wide — requires the org-wide "admin" role (service tokens carry it). Read-only.',
+        'Everything the deployment spent since a timestamp across a set of workspaces, grouped by (surfaceKey, model): call count, token sums, an EXACT per-row $ estimate at each row\'s own stamped model rate (spend/pricing.ts), and a total. An unpriced or unstamped row shows tokens with estimatedUsd omitted and its model under unpricedModels — never a guessed figure (deliberately NO assumed-model fallback, unlike usage_summary). Built for the e2e/CI harness pricing a live run via a read-only service token. workspaceKeys entries are exactly "platform/workspace"; sinceIso is any parseable ISO-8601 timestamp; org defaults to the deployment\'s declared org (else "default"). Org-wide — requires the org-wide "admin" role (service tokens carry it). Read-only.',
       inputSchema: {
         sinceIso: z.string().min(1),
         workspaceKeys: z.array(z.string().min(1)).min(1),

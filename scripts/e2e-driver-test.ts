@@ -416,7 +416,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
-    "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
+    "S-LINK-SLACK", "J-MPIM", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
@@ -426,7 +426,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
     `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on;)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
     "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"]);
   for (const s of SCENARIOS) {
     okShape(s.title.trim().length > 0, `${s.id} has a title`);
@@ -475,6 +475,10 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(req("J3") === "slack+synthetic+slackUser2", "J3 (governance journey) requires slack + synthetic + slackUser2 (union of S5/S19 synthetic + S15/S16 non-admin identity)");
   ok(req("J4") === "slack+syntheticDm", "J4 (access journey) requires slack + syntheticDm (the always-run propose + out-of-vocab + DM legs; the opt-in member tap guards on synthetic/slackUser2 at runtime)");
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
+  ok(
+    req("J-MPIM") === "slack+slackMpim",
+    "J-MPIM (OPE-1509) requires slack + slackMpim — the base driver rebound onto the group DM, which is the pack's only mpim room",
+  );
   ok(req("J1") === "slack" && req("S23") === "slack", "J1 (core journey) + S23 need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
   ok(req("J-TEAMS") === "teams", "J-TEAMS requires only the teams driver");
@@ -525,6 +529,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     synthetic: [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel],
     slackPrivate: [ENV.slackPrivateChannel],
     slackChannelB: [ENV.slackChannelB],
+    slackMpim: [ENV.slackMpimChannel],
     slackCapFixture: [ENV.slackCapChannel],
     slackSupervisor: [ENV.slackSupervisorChannel],
     syntheticDm: [ENV.slackDmChannel],
@@ -554,13 +559,14 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
     synthetic: [],
     slackPrivate: [],
     slackChannelB: [],
+    slackMpim: [],
     slackCapFixture: [],
     slackSupervisor: [],
     syntheticDm: [],
@@ -654,6 +660,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const baseOnly = new Set(["slack", "discord", "synthetic"] as const);
   const s11 = skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false);
   ok(s11 === `missing slackPrivate driver (set ${ENV.slackPrivateChannel})`, "S11 skip names exactly E2E_SLACK_PRIVATE_CHANNEL");
+  const jmpim = skipReason(SCENARIOS.find((s) => s.id === "J-MPIM")!, baseOnly, missing, false);
+  ok(
+    jmpim === `missing slackMpim driver (set ${ENV.slackMpimChannel})`,
+    "J-MPIM skip names exactly E2E_SLACK_MPIM_CHANNEL — the group DM is the one fixture it cannot derive",
+  );
   const j2 = skipReason(SCENARIOS.find((s) => s.id === "J2")!, baseOnly, missing, false);
   ok(j2?.includes(ENV.slackChannelB) === true && j2.includes("slackChannelB"), "J2 skip names E2E_SLACK_CHANNEL_B");
   for (const id of ["S13", "S14"]) {
@@ -1445,7 +1456,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const cwMissing = {
     slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackSupervisor: [],
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
-    notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel],
+    notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel], slackMpim: [],
     soakSlack: [], soakNotion: [], soakLinear: [],
     engagedSlack: [], engagedDiscord: [], engagedTeams: [], engagedGithub: [], engagedLinear: [], engagedNotion: [],
   } as const;
@@ -1679,6 +1690,21 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(
       findCredentialedWriteHost([policyRow([credentialedNotion], "C-SOMEWHERE-ELSE")], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 0,
       "🔴 a policy row stamped with ANOTHER surface is not this leg's — the gate would otherwise green on a sibling channel's firewall",
+    );
+
+    const { writeHostsAuditFields } = await import("../packages/core/agent/access/egress.js");
+    const shipped = (writeHostsAuditFields([{ host: NOTION_HOST, credential: "notion-rest", credentialed: true, verb: ["GET", "POST", "PATCH"] }]) as { writeHosts?: unknown }).writeHosts;
+    const shippedHit = findCredentialedWriteHost([policyRow(shipped, CHANNEL)], { host: NOTION_HOST, surface: CHANNEL });
+    ok(
+      shippedHit.matches.length === 1 && shippedHit.matches[0]!.via === "notion-rest",
+      "🔴 the reader decodes an entry the PRODUCT rendered, not only the shapes this suite hand-builds — a field rename must red here rather than silently emptying the window",
+    );
+    ok(
+      findCredentialedWriteHost(
+        [policyRow((writeHostsAuditFields([{ host: NOTION_HOST, credential: "notion-rest", credentialed: true, verb: ["GET"] }]) as { writeHosts?: unknown }).writeHosts, CHANNEL)],
+        { host: NOTION_HOST, surface: CHANNEL },
+      ).matches.length === 0,
+      "🔴 …and re-derives the write verdict from the shipped entry too: a read-only rule rendered by the product is still not this rung's evidence",
     );
     ok(
       findCredentialedWriteHost([policyRow([credentialedNotion])], { host: NOTION_HOST, surface: CHANNEL }).matches.length === 1,

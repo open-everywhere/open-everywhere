@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-dispatch-task-window-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -24,6 +24,7 @@ import type { RouteHandlerArgs } from "eve/channels";
 
 import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 registerSlackFixtureCodec();
 

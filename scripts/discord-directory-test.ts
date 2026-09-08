@@ -1,4 +1,5 @@
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -9,7 +10,7 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.DISCORD_BOT_TOKEN = "fixture-bot-token-not-a-secret";
 
 const GUILD_A = "G_ALPHA";

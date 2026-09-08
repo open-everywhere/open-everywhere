@@ -102,10 +102,6 @@ allow("connection", [
 ]);
 
 allow("identity", [
-  ["OE_ORG", "which org this deployment is — the identity class settings.ts names as staying in env."],
-  ["OE_SURFACE", "the ambient surface this process speaks as."],
-  ["OE_CHANNEL", "the older spelling of OE_SURFACE, still read as its fallback."],
-  ["OE_WORKSPACE", "the ambient workspace this process belongs to."],
   ["OE_MODE", "the binding mode stand-in, read ONLY by bindLocal — the `eve dev`/unregistered-platform mapper — and clamped to the channel/dm/mpim enum."],
   ["OE_VISIBILITY", "the binding visibility stand-in, read ONLY by bindLocal, clamped to private/public."],
   ["OE_AGENT_NAME", "this agent's full display name."],

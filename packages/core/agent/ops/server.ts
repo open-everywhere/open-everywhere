@@ -95,7 +95,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         secrets: z
           .record(z.string(), z.string())
           .describe("name → value, e.g. { ACME_API_TOKEN: '<the token>' }. The name is the secretRef a credential points at."),
-        org: z.string().optional().describe("override the org the rows are keyed by (default OE_ORG)"),
+        org: z.string().optional().describe("override the org the rows are keyed by (default: the org this deployment declares in agent/identity/surfaces.ts)"),
         envPath: z.string().optional(),
       },
     },

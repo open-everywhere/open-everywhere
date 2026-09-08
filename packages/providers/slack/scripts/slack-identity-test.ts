@@ -19,6 +19,7 @@ import {
   partnerFactsFromInfo,
   appCanReadConversation,
 } from "../agent/channels/slack-identity.js";
+import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -29,7 +30,8 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_ORG"]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 
@@ -105,13 +107,13 @@ const part = resolvePartition(slackCtx({ team_id: "T1", channel_id: "C9", channe
 ok(part.surfaceKey === "slack/T1/C9", "partition surfaceKey derives from slack binding");
 
 const orgCtx = slackCtx({ team_id: "T1", channel_id: "C9", channel_type: "channel", is_private: "false" });
-delete process.env.OE_ORG;
-ok(resolvePartition(orgCtx).org === "default", "partition.org defaults to 'default' when OE_ORG unset");
-process.env.OE_ORG = "acme-inc";
+_setDeploymentIdentityForTest({ org: undefined });
+ok(resolvePartition(orgCtx).org === "default", "partition.org defaults to 'default' when the deployment declares no org");
+_setDeploymentIdentityForTest({ org: "acme-inc" });
 const orgPart = resolvePartition(orgCtx);
-ok(orgPart.org === "acme-inc", "partition.org threads from OE_ORG");
+ok(orgPart.org === "acme-inc", "partition.org threads from the declared org");
 ok(orgPart.surfaceKey === "slack/T1/C9", "org is kept out of surfaceKey (org-portable tier keys)");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const auth = buildSlackAuth({ userId: "U7", teamId: "T1", channelId: "C9", threadTs: "169.1", channelType: "channel", isPrivate: false });
 ok(auth.authenticator === "slack" && auth.principalId === "U7" && auth.principalType === "slack-user", "buildSlackAuth: principal fields");
@@ -171,8 +173,136 @@ ok(partnerFactsFromInfo({ user: { team_id: "T", is_restricted: true } }, "T").dm
 ok(partnerFactsFromInfo({ user: { team_id: "T", is_ultra_restricted: true } }, "T").dmPartnerTrust === "external", "partnerFacts: single-channel guest (ultra_restricted) -> external");
 ok(partnerFactsFromInfo({ user: { team_id: "T", is_stranger: true } }, "T").dmPartnerTrust === "external", "partnerFacts: Connect stranger -> external");
 ok(partnerFactsFromInfo({ user: { team_id: "T2" } }, "T").dmPartnerTrust === "external", "partnerFacts: different workspace -> external");
-ok(partnerFactsFromInfo({ user: { team_id: "T", is_bot: true } }, "T").dmPartnerTrust === "external", "partnerFacts: bot account -> external");
+ok(partnerFactsFromInfo({ user: { team_id: "T", deleted: true } }, "T").dmPartnerTrust === "external", "partnerFacts: deleted account -> external");
 ok(partnerFactsFromInfo(null, "T").dmPartnerTrust === "external", "partnerFacts: failed/empty lookup -> external (fail closed)");
+
+{
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T", is_bot: true } }, "T").dmPartnerTrust === "internal",
+    "🔴 partnerFacts: the workspace's OWN app (is_bot, same team_id) is a MEMBER — no bot carve-out (OPE-1508)",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T2", is_bot: true } }, "T").dmPartnerTrust === "external",
+    "🔴 partnerFacts NEGATIVE CONTROL: a FOREIGN app (is_bot, other team_id, undeclared) is a GUEST — the bot rule is a rung walk, not an admission",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T", is_bot: true, is_restricted: true } }, "T").dmPartnerTrust === "external",
+    "partnerFacts: the guest flags still refute an own-workspace bot — dropping `is_bot` widened nothing else",
+  );
+
+  const gridUser = { team_id: "T_SIB", enterprise_user: { enterprise_id: "E_GRID" } };
+  registerSurfaces([]);
+  ok(
+    partnerFactsFromInfo({ user: gridUser }, "T_HQ").dmPartnerTrust === "external",
+    "🔴 partnerFacts NEGATIVE CONTROL: with NOTHING declared, a Grid sibling workspace's member is a GUEST (absence infers non-member)",
+  );
+  registerSurfaces([defineSurface({ key: "slack/E_GRID", trust: "internal" })]);
+  ok(
+    partnerFactsFromInfo({ user: gridUser }, "T_HQ").dmPartnerTrust === "internal",
+    "🔴 partnerFacts: ONE `slack/E_GRID` declaration vouches the sibling workspace — the Grid member writing in T_HQ is a MEMBER (OPE-1508)",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_OTHER", enterprise_user: { enterprise_id: "E_OTHER" } } }, "T_HQ").dmPartnerTrust === "external",
+    "partnerFacts: a member of a DIFFERENT, undeclared Grid is still a guest — the walk never reaches across",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { ...gridUser, is_restricted: true } }, "T_HQ").dmPartnerTrust === "external",
+    "partnerFacts: a GUEST in a vouched sibling workspace is still a guest — the rung walk admits a workspace, never a person's grade",
+  );
+  registerSurfaces([defineSurface({ key: "slack/T_SIB", trust: "internal" })]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_SIB" } }, "T_HQ").dmPartnerTrust === "internal",
+    "partnerFacts: a declared WORKSPACE vouches its own members too — the enterprise entry is one rung, not the only one",
+  );
+  registerSurfaces([
+    defineSurface({ key: "slack/E_GRID", trust: "internal" }),
+    defineSurface({ key: "slack/T_SIB", trust: "public" }),
+  ]);
+  ok(
+    partnerFactsFromInfo({ user: gridUser }, "T_HQ").dmPartnerTrust === "external",
+    "🔴 partnerFacts: a `public` WORKSPACE carve-out demotes a member of it, though the enterprise above is internal — the narrower line wins",
+  );
+  registerSurfaces([]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_HQ" } }, "T_HQ").dmPartnerTrust === "internal",
+    "🔴 partnerFacts: the EVENT's own workspace is a member with NOTHING declared — the walk is only reached when the home workspace differs",
+  );
+
+  registerSurfaces([
+    defineSurface({ key: "slack/E_GRID", trust: "internal" }),
+    defineSurface({ key: "slack/T_SALES", trust: "public" }),
+  ]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_SALES", enterprise_user: { enterprise_id: "E_GRID" } } }, "T_SALES").dmPartnerTrust === "internal",
+    "🔴 partnerFacts: a `public` carve-out on the ARRIVAL workspace does NOT demote its own member — the own-workspace arm answers before the register",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_SALES", enterprise_user: { enterprise_id: "E_GRID" } } }, "T_HQ").dmPartnerTrust === "external",
+    "partnerFacts: the SAME person writing in ANOTHER workspace IS demoted by that carve-out — which is the half the register decides",
+  );
+  registerSurfaces([]);
+}
+
+{
+  registerSurfaces([]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_FOREIGN", is_bot: true } }).dmPartnerTrust === "external",
+    "🔴 partnerFacts NEGATIVE CONTROL: a FOREIGN app with NO expected team id and no guest flag is a GUEST — absence never admits (OPE-1508 review fix)",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_FOREIGN" } }).dmPartnerTrust === "external",
+    "partnerFacts: the same holds for a PERSON — the fix is about the absent workspace, not about bots",
+  );
+  registerSurfaces([defineSurface({ key: "slack/T_OWN", trust: "internal" })]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_OWN", is_bot: true } }).dmPartnerTrust === "internal",
+    "🔴 partnerFacts: the deployment's OWN app is a MEMBER with no expected team id, because the operator DECLARED `slack/T_OWN` — the walk answers where the envelope cannot",
+  );
+  registerSurfaces([defineSurface({ key: "slack/E_GRID", trust: "internal" })]);
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_SIB", enterprise_user: { enterprise_id: "E_GRID" } } }).dmPartnerTrust === "internal",
+    "partnerFacts: a declared GRID vouches a member whose envelope named no workspace — the org-wide install shape the fix exists for",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "T_SIB", enterprise_user: { enterprise_id: "E_OTHER" } } }).dmPartnerTrust === "external",
+    "partnerFacts NEGATIVE CONTROL: a DIFFERENT Grid with no expected team id is still a guest",
+  );
+  ok(
+    partnerFactsFromInfo({ user: { team_id: "" } }, "").dmPartnerTrust === "external",
+    "partnerFacts: an EMPTY expected team id never matches an empty home team id — a blank is an absence, not an identity",
+  );
+  registerSurfaces([]);
+}
+
+ok(
+  buildSlackAuth({ userId: "U", teamId: "T", channelId: "C", enterpriseId: "E_GRID" }).attributes.enterprise_id === "E_GRID",
+  "buildSlackAuth: enterprise_id stowed when the envelope named one",
+);
+ok(
+  !("enterprise_id" in buildSlackAuth({ userId: "U", teamId: "T", channelId: "C" }).attributes),
+  "buildSlackAuth NEGATIVE CONTROL: a non-Grid event stamps NO enterprise_id attribute (an absent rung, not an empty one)",
+);
+ok(
+  bindSlack(slackCtx({ team_id: "T", channel_id: "C", channel_type: "channel", enterprise_id: "E_GRID" })).trustEnterprise === "E_GRID",
+  "bindSlack: the enterprise_id attribute becomes RawIdentity.trustEnterprise — the rung core walks",
+);
+ok(
+  bindSlack(slackCtx({ team_id: "T", channel_id: "C", channel_type: "channel" })).trustEnterprise === undefined,
+  "bindSlack NEGATIVE CONTROL: no attribute ⇒ no enterprise rung contributed",
+);
+{
+  registerSurfaces([defineSurface({ key: "slack/E_GRID", trust: "internal" })]);
+  const gridCtx = { team_id: "T_SIB", channel_id: "C_GRID", channel_type: "channel", is_private: "false", trust_checked: "true", is_ext_shared: "false" };
+  ok(
+    bindFrom(slackCtx({ ...gridCtx, enterprise_id: "E_GRID" })).declaredTrust === "internal",
+    "🔴 bindFrom: a room in an UNDECLARED Grid workspace resolves declaredTrust `internal` from the enterprise line (OPE-1508)",
+  );
+  ok(
+    bindFrom(slackCtx(gridCtx)).declaredTrust === undefined,
+    "🔴 bindFrom NEGATIVE CONTROL: the SAME room with no enterprise_id stamped declares nothing — the stamp is what carries the rung",
+  );
+  registerSurfaces([]);
+}
 
 ok(buildSlackAuth({ userId: "U", channelId: "D", channelType: "im", dmPartnerTrust: "internal" }).attributes.dm_partner_trust === "internal", "buildSlackAuth: dm_partner_trust stowed");
 ok(buildSlackAuth({ userId: "U", channelId: "D", channelType: "im" }).attributes.dm_partner_trust === undefined, "buildSlackAuth: no dm_partner_trust attribute when unverified");

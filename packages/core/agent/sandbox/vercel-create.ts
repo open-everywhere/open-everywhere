@@ -2,14 +2,13 @@ export const KNOWN_SANDBOX_REGIONS = ["iad1", "sfo1", "cle1", "cdg1"] as const;
 
 export const DEFAULT_SANDBOX_REGION = "iad1";
 
-export const SANDBOX_REGION_PASSTHROUGH_SUPPORTED = false;
+export const SANDBOX_REGION_PASSTHROUGH_SUPPORTED = true;
 
 export const SANDBOX_REGION_GAP =
-  "eve 0.48.0 creates every Vercel sandbox through its own vendored @vercel/sandbox, whose " +
-  "Sandbox.create enumerates the fields it forwards and has no `region` among them — a region " +
-  "set here would be DROPPED SILENTLY and the sandbox would run in the default region. The same " +
-  "eve vendors a newer copy that does forward a region (@vercel/sandbox-delete), but loads it only " +
-  "on the delete path, and the create path's module seam is package-internal";
+  "the pinned eve creates every Vercel sandbox through its own vendored copy of the SDK, whose " +
+  "Sandbox.create enumerates the fields it forwards to the API — and this eve either does not type " +
+  "`region` on create or does not forward it, so a region set here would be DROPPED SILENTLY and " +
+  "the sandbox would run in the default region";
 
 const REGION_SHAPE = /^[a-z]{3}[0-9]$/;
 
@@ -71,7 +70,7 @@ export function resolveSandboxRegionPlan(input: {
         `[open-everywhere:sandbox] sandbox.region=${region} cannot be honoured: ${SANDBOX_REGION_GAP}. ` +
         `Refusing to boot rather than run in ${DEFAULT_SANDBOX_REGION} under a residency pin. ` +
         `Clear sandbox.region to boot without the pin (and drop the sandbox leg of any residency claim), ` +
-        `or move to an eve whose CREATE path forwards the region.`,
+        `or stay on an eve whose CREATE path forwards the region.`,
     };
   }
 

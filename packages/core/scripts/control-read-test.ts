@@ -5,6 +5,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -18,7 +19,7 @@ function ok(cond: boolean, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-control-read-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_CONTROL_READ_TOKENS;
 
 const {

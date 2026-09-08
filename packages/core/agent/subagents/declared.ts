@@ -19,9 +19,20 @@ export function checkDeclaredSubagents(
   subagents: readonly DeclaredSubagentSource[],
   frameworkToolNames: readonly string[],
   toolNames: readonly string[],
+  requiredFrameworkToolNames: readonly string[] = [],
 ): string[] {
   const problems: string[] = [];
   const tools = new Set(toolNames);
+  const required = new Set(requiredFrameworkToolNames);
+
+  const mounted = new Set(frameworkToolNames);
+  for (const name of [...required].sort()) {
+    if (!mounted.has(name)) {
+      problems.push(
+        `"${name}" is declared a REQUIRED framework tool slot but is not in the default-mounted set — one of the two reads of the installed eve is stale, and until that is resolved this lint cannot say whether the slot takes a replacement tool or a disableTool() sentinel`,
+      );
+    }
+  }
 
   for (const s of subagents) {
     const at = `agent/subagents/${s.name}`;
@@ -56,11 +67,22 @@ export function checkDeclaredSubagents(
 
     for (const fw of frameworkToolNames) {
       const src = s.toolFiles.get(fw);
+      const isRequired = required.has(fw);
+      const fill = isRequired
+        ? "Author a no-op replacement tool that reaches nothing — eve REQUIRES this slot and refuses `disableTool()` for it."
+        : "Add `export default disableTool();`";
       if (src === undefined) {
         problems.push(
-          `${at}/tools/${fw}.ts is missing — an absent slot falls back to eve's FRAMEWORK default, not to the root's narrowed version, and the root's egress/spend hooks are not inherited either, so ${fw} would mount UNFENCED here. Add \`export default disableTool();\``,
+          `${at}/tools/${fw}.ts is missing — an absent slot falls back to eve's FRAMEWORK default, not to the root's narrowed version, and the root's egress/spend hooks are not inherited either, so ${fw} would mount UNFENCED here. ${fill}`,
         );
-      } else if (!/\bdisableTool\s*\(\s*\)/u.test(src)) {
+        continue;
+      }
+      const isSentinel = /^\s*export\s+default\s+disableTool\s*\(\s*\)\s*;?\s*$/mu.test(src);
+      if (isRequired && isSentinel) {
+        problems.push(
+          `${at}/tools/${fw}.ts is a \`disableTool()\` sentinel, but eve declares "${fw}" a REQUIRED framework tool slot and throws at build on a sentinel for it. Export a no-op replacement tool from this file instead — one that reaches nothing, so the slot is filled and the subagent still holds no hands. Deleting the file is NOT the fix: it re-mounts eve's framework default unfenced.`,
+        );
+      } else if (!isRequired && !isSentinel) {
         problems.push(
           `${at}/tools/${fw}.ts is not a \`disableTool()\` sentinel — a declared subagent is a zero-hands reasoning pass; giving it a real tool is a posture change that must also move its rows in access/consequence.ts and access/window-gate-manifest.ts`,
         );

@@ -73,7 +73,7 @@ function main(): void {
   }
 
   {
-    const r = lint(fixture(["OE_ORG"]));
+    const r = lint(fixture(["OE_MODE"]));
     const unallowed = r.out.split("\n").filter((l) => l.includes("ENV READ NOT ALLOWLISTED"));
     ok(unallowed.length === 0, `an allowlisted read raises no unallowlisted red (got: ${unallowed.join(" | ")})`);
     ok(r.out.includes("STALE ALLOWLIST ENTRY"), "…while the shrink direction DOES fire for the entries this tree stopped reading");
@@ -133,7 +133,7 @@ function main(): void {
       "settings-lever": 0,
       secret: 32,
       connection: 37,
-      identity: 24,
+      identity: 20,
       platform: 13,
       "pending-migration": 45,
     };
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 151, `the allowlist holds 151 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 147, `the allowlist holds 147 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {
@@ -154,7 +154,7 @@ function main(): void {
   }
 
   {
-    const r = lint(fixture(["OE_ORG"]));
+    const r = lint(fixture(["OE_MODE"]));
     ok(!r.out.includes("STALE REVERSE_SCAN_SELF"), "the self-exclusion list names files that exist");
   }
 
@@ -214,13 +214,13 @@ function main(): void {
 
     const defaulted = `export function f(deps: { env?: NodeJS.ProcessEnv } = {}) { const env = deps.env ?? process.env; return env[K]; }`;
     ok(scanComputedEnvReads("agent/r.ts", defaulted).dynamic.length === 1, "`X.env ?? process.env` is a ProcessEnv alias");
-    const valueBinding = `export function g() { const key = process.env.OE_ORG ?? ""; return key[0]; }`;
+    const valueBinding = `export function g() { const key = process.env.OE_MODE ?? ""; return key[0]; }`;
     const vb = scanComputedEnvReads("agent/v.ts", valueBinding);
     ok(vb.dynamic.length === 0 && vb.resolved.length === 0, "…while `const key = process.env.X` binds a value, not the env");
 
-    ok(scanComputedEnvReads("agent/o.ts", `const K = "OE_ORG";\nexport const v = process.env?.[K];`).resolved[0]?.name === "OE_ORG", "`process.env?.[K]` is the same read");
+    ok(scanComputedEnvReads("agent/o.ts", `const K = "OE_MODE";\nexport const v = process.env?.[K];`).resolved[0]?.name === "OE_MODE", "`process.env?.[K]` is the same read");
     ok(
-      scanComputedEnvReads("agent/m.ts", `const K = "OE_ORG";\nexport const v = process.env[\n  K\n];`).resolved[0]?.name === "OE_ORG",
+      scanComputedEnvReads("agent/m.ts", `const K = "OE_MODE";\nexport const v = process.env[\n  K\n];`).resolved[0]?.name === "OE_MODE",
       "…and so is a key expression the formatter wrapped across lines",
     );
 
@@ -244,8 +244,8 @@ function main(): void {
   }
 
   {
-    const body = [`const K = "OE_ORG";`, `export const v = process.env[K];`].join("\n");
-    const r = lint(sourceFixture(body, ["OE_ORG"]));
+    const body = [`const K = "OE_MODE";`, `export const v = process.env[K];`].join("\n");
+    const r = lint(sourceFixture(body, ["OE_MODE"]));
     const unallowed = r.out.split("\n").filter((l) => l.includes("ENV READ NOT ALLOWLISTED"));
     ok(unallowed.length === 0, `a computed read of an ALLOWLISTED name raises no red (got: ${unallowed.join(" | ")})`);
   }

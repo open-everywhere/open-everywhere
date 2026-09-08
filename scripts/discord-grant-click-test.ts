@@ -3,9 +3,10 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-discord-grant-")), "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_PLATFORM;
 delete process.env.OE_EGRESS_SPOOF;
 delete process.env.DISCORD_PUBLIC_KEY;

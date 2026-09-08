@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -13,7 +14,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-link-consent-")), "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.DISCORD_BOT_TOKEN = "fixture-bot-token-not-a-secret";
 
 const ORG = "acme";

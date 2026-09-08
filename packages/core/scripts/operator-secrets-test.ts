@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `oe-operator-secrets-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 const KEY = randomBytes(32).toString("base64");
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = KEY;
@@ -231,13 +232,13 @@ function cli(stdin = "") {
 
 {
   const envFile = join(dir, "root-of-trust.env");
-  writeFileSync(envFile, ["OE_ORG=from-file", "SLACK_BOT_TOKEN=should-not-be-lifted", "DATABASE_URL=postgres://ignored"].join("\n"), "utf8");
-  delete process.env.OE_ORG;
+  writeFileSync(envFile, ["OE_OPERATIONAL_PROVIDER=sqlite", "SLACK_BOT_TOKEN=should-not-be-lifted", "DATABASE_URL=postgres://ignored"].join("\n"), "utf8");
+  delete process.env.OE_OPERATIONAL_PROVIDER;
   delete process.env.SLACK_BOT_TOKEN;
   const applied = loadRootOfTrustEnv(envFile);
-  ok(applied.includes("OE_ORG"), "env allowlist: a root-of-trust var IS lifted out of the file");
+  ok(applied.includes("OE_OPERATIONAL_PROVIDER"), "env allowlist: a root-of-trust var IS lifted out of the file");
   ok(!applied.includes("SLACK_BOT_TOKEN") && process.env.SLACK_BOT_TOKEN === undefined, "🔴 env allowlist: a CHANNEL secret is NOT lifted into the process env");
-  delete process.env.OE_ORG;
+  _setDeploymentIdentityForTest({ org: undefined });
   delete process.env.DATABASE_URL;
 
   let connects = 0;

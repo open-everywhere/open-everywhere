@@ -5,11 +5,12 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { defineTool } from "eve/tools";
 import type { ApprovalPolicy } from "eve/tools/approval";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-approval-reach-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_PLATFORM = "slack";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 let passed = 0;
 function fail(label: string): never {

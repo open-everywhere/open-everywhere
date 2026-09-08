@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-surface-trust-")), "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 import {
   surfaceTrustPreflightChecks,
@@ -16,6 +16,7 @@ import {
 import { runPreflightProbes, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
 import { defineSurface, type Surface } from "../agent/identity/trust.js";
 import type { Check } from "../agent/ops/quickstart.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -110,6 +111,41 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
     find(dormant, "dead declarations"),
     undefined,
     "a DORMANT deployment (newest traffic older than the window) emits no dead row — absence of traffic there is not evidence about the config",
+  );
+}
+
+{
+  const gridEntry = [defineSurface({ key: "slack/E_GRID", trust: "internal" })];
+  const sibling = { ...seen("slack/T_SIB/C_ROOM", 60, 1), enterpriseKey: "slack/E_GRID" };
+
+  const walked = run(gridEntry, [sibling]);
+  eq(
+    find(walked, "undeclared surfaces")?.status,
+    "ok",
+    "🔴 enterprise rung: traffic in a sibling workspace under a DECLARED Grid is covered — the check walks the same rungs the resolver walks",
+  );
+  eq(
+    find(walked, "dead declarations"),
+    undefined,
+    "🔴 enterprise rung: the Grid's own line is ALIVE — it matched traffic through the rung, so the operator is never told to delete a working declaration",
+  );
+
+  const unwalked = run(gridEntry, [seen("slack/T_SIB/C_ROOM", 60, 1)]);
+  eq(
+    find(unwalked, "undeclared surfaces")?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: with no enterpriseKey on the row, the same traffic reports UNDECLARED — the rung is what covers it, not the register",
+  );
+  ok(
+    find(unwalked, "dead declarations")?.fix?.includes("slack/E…") === true,
+    "…and the dead-declaration remedy WARNS about the rung before it says delete, which is the sentence that stops an operator dropping a live Grid line",
+  );
+
+  const otherGrid = run(gridEntry, [{ ...seen("slack/T_FOREIGN/C_ROOM", 60, 1), enterpriseKey: "slack/E_OTHER" }]);
+  eq(
+    find(otherGrid, "undeclared surfaces")?.status,
+    "missing",
+    "🔴 NEGATIVE CONTROL: traffic under an UNDECLARED Grid is still undeclared — the rung admits what the operator named, nothing else",
   );
 }
 

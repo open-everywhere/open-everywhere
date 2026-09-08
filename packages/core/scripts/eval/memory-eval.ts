@@ -17,7 +17,7 @@ import {
   type Injection, type InjectBody, type HarnessMsg,
 } from "./memory-eval-harness.js";
 import { buildTopology, type Topology, type PlantedFact } from "./seed-silo.js";
-import { deploymentOrg } from "../../agent/identity/deployment-org.js";
+import { deploymentOrg } from "../../agent/identity/deployment-identity.js";
 
 export const DOMAIN_REASONING_CEILING: ModelReasoning = "high";
 

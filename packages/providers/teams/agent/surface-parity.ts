@@ -8,7 +8,9 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "read-adapter": "supported",
   "reaction-feedback-ingest": { supported: "the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare" },
   "ancillary-ops": "supported",
-  "ambient-engagement-seam": "supported",
+  "ambient-engagement-seam": {
+    supported: "the seam is wired; plain follow-ups reach it only where the tenant consented to `ChannelMessage.Read.Group` / `ChatMessage.Read.Chat`, which no API can probe",
+  },
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },

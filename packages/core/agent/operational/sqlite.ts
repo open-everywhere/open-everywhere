@@ -128,6 +128,7 @@ function getDb(): DatabaseSync {
       participating INTEGER NOT NULL DEFAULT 0, -- 1 = invited participant (replied/@mentioned); 0 = warm watcher
       silent_streak INTEGER NOT NULL DEFAULT 0, -- consecutive silent woken turns since last engage/participation
       stopped       INTEGER NOT NULL DEFAULT 0, -- 1 = an explicit stop landed (window path); suppress non-mention wakes until re-invited
+      engaged_by    TEXT,                       -- id of the event that last PROMOTED this row; a re-promotion from the SAME id never clears stopped
       PRIMARY KEY (org_id, surface_key, thread_ts)
     );
     CREATE TABLE IF NOT EXISTS channel_session (
@@ -613,6 +614,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE thread_engagement ADD COLUMN kind TEXT NOT NULL DEFAULT 'thread'",
 
     "ALTER TABLE thread_engagement ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0",
+
+    "ALTER TABLE thread_engagement ADD COLUMN engaged_by TEXT",
 
     "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
@@ -1512,18 +1515,23 @@ export const sqliteOperationalStore: OperationalStore = {
     const participating = opts?.participating ? 1 : 0;
     const ownerToken = opts?.ownerToken ?? null;
     const kind = opts?.kind ?? "thread";
+    const engagedBy = opts?.engagedBy ?? null;
     getDb()
       .prepare(
-        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 0)
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped, engaged_by)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?)
          ON CONFLICT(org_id, surface_key, thread_ts) DO UPDATE SET
            last_turn_at  = excluded.last_turn_at,
            participating = MAX(participating, excluded.participating),
            silent_streak = CASE WHEN excluded.participating = 1 THEN 0 ELSE silent_streak END,
            owner_token   = COALESCE(excluded.owner_token, owner_token),
-           stopped       = CASE WHEN excluded.participating = 1 THEN 0 ELSE stopped END`,
+           stopped       = CASE
+                             WHEN excluded.participating = 1
+                              AND (engaged_by IS NULL OR excluded.engaged_by IS NULL OR engaged_by <> excluded.engaged_by)
+                             THEN 0 ELSE stopped END,
+           engaged_by    = CASE WHEN excluded.participating = 1 THEN COALESCE(excluded.engaged_by, engaged_by) ELSE engaged_by END`,
       )
-      .run(org, surfaceKey, threadTs, at, at, participating, ownerToken, kind);
+      .run(org, surfaceKey, threadTs, at, at, participating, ownerToken, kind, participating === 1 ? engagedBy : null);
   },
 
   async markStopped(org, surfaceKey, threadTs) {
@@ -1542,9 +1550,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getEngagement(org, surfaceKey, threadTs) {
     const row = getDb()
-      .prepare("SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped FROM thread_engagement WHERE org_id = ? AND surface_key = ? AND thread_ts = ?")
+      .prepare("SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped, engaged_by FROM thread_engagement WHERE org_id = ? AND surface_key = ? AND thread_ts = ?")
       .get(org, surfaceKey, threadTs) as
-      | { engaged_at: string; last_turn_at: string; participating: number; silent_streak: number; owner_token: string | null; kind: string | null; stopped: number }
+      | { engaged_at: string; last_turn_at: string; participating: number; silent_streak: number; owner_token: string | null; kind: string | null; stopped: number; engaged_by: string | null }
       | undefined;
     return row
       ? {
@@ -1558,6 +1566,7 @@ export const sqliteOperationalStore: OperationalStore = {
           ...(row.owner_token ? { ownerToken: row.owner_token } : {}),
           kind: (row.kind as "thread" | "spawned" | null) ?? "thread",
           stopped: row.stopped === 1,
+          ...(row.engaged_by ? { engagedBy: row.engaged_by } : {}),
         }
       : null;
   },
@@ -1568,7 +1577,7 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async listEngagements(org) {
     const rows = getDb()
-      .prepare("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped FROM thread_engagement WHERE org_id = ?")
+      .prepare("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped, engaged_by FROM thread_engagement WHERE org_id = ?")
       .all(org) as {
       surface_key: string;
       thread_ts: string;
@@ -1579,6 +1588,7 @@ export const sqliteOperationalStore: OperationalStore = {
       owner_token: string | null;
       kind: string | null;
       stopped: number;
+      engaged_by: string | null;
     }[];
     return rows.map((r) => ({
       org,
@@ -1591,6 +1601,7 @@ export const sqliteOperationalStore: OperationalStore = {
       ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
       kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
       stopped: r.stopped === 1,
+      ...(r.engaged_by ? { engagedBy: r.engaged_by } : {}),
     }));
   },
 

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `oe-connector-tool-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 
 const {

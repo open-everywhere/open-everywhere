@@ -88,7 +88,20 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
 
 {
   const reaper = read("execution/terminate-child-sessions-step.js");
-  ok(reaper.includes("cancelOwnedTask"), "PIN 4: eve's reaper still cancels every task in the session index");
+  const indexedStep = read("execution/cancel-indexed-session-tasks-step.js");
+  ok(
+    /await cancelAllIndexedSessionTasksStep\(\{/.test(reaper),
+    "PIN 4: eve's reaper still cancels every task in the session index — through the extracted cancelAllIndexedSessionTasksStep",
+  );
+  ok(
+    /if\(await cancelAllIndexedSessionTasksStep\(\{[^}]*\}\),/.test(reaper) ||
+      /;await cancelAllIndexedSessionTasksStep\(\{[^}]*\}\);/.test(reaper),
+    "PIN 4 🔴: …and it awaits that step UNCONDITIONALLY, not on some arm — every reaped session's indexed tasks are cancelled",
+  );
+  ok(
+    indexedStep.includes("getSessionTaskIndex(") && /for\(let \w+ of \w+\)try\{await cancelOwnedTask\(\{/.test(indexedStep),
+    "PIN 4: …and the extracted step is the one that loops `cancelOwnedTask` over the session task index",
+  );
   ok(
     reaper.includes("cancelRun"),
     "PIN 4 🔴: eve's reaper still ALSO calls `cancelRun` per local child handle — proof that a task cancel does not end a worker session",

@@ -5,11 +5,12 @@ import { rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `open-everywhere-silent-routine-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

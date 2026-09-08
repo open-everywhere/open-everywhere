@@ -8,6 +8,7 @@ export const ENV = {
   discordBotUserId: "E2E_DISCORD_BOT_USER_ID",
   slackPrivateChannel: "E2E_SLACK_PRIVATE_CHANNEL",
   slackChannelB: "E2E_SLACK_CHANNEL_B",
+  slackMpimChannel: "E2E_SLACK_MPIM_CHANNEL",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
   slackUser2Id: "E2E_SLACK_USER2_ID",
   slackSecondaryToken: "E2E_SLACK_SECONDARY_TOKEN",
@@ -101,6 +102,7 @@ export type Capability =
   | "synthetic"
   | "slackPrivate"
   | "slackChannelB"
+  | "slackMpim"
   | "slackCapFixture"
   | "syntheticDm"
   | "slackUser2"
@@ -314,6 +316,12 @@ export function resolveSlackPrivate(env: Env = process.env): Resolved<SlackExtra
 
 export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
   const { values, missing } = need(env, [ENV.slackChannelB]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
+export function resolveSlackMpim(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
+  const { values, missing } = need(env, [ENV.slackMpimChannel]);
   if (missing.length > 0) return { ok: false, missing };
   return { ok: true, cfg: { channel: values[0] } };
 }
@@ -538,6 +546,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
+  const slackMpim = resolveSlackMpim(env);
   const slackCapFixture = resolveSlackCapFixture(env);
   const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
@@ -567,6 +576,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
+  if (slackMpim.ok) available.add("slackMpim");
   if (slackCapFixture.ok) available.add("slackCapFixture");
   if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");
@@ -598,6 +608,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       synthetic: synthetic.ok ? [] : synthetic.missing,
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
+      slackMpim: slackMpim.ok ? [] : slackMpim.missing,
       slackCapFixture: slackCapFixture.ok ? [] : slackCapFixture.missing,
       slackSupervisor: slackSupervisor.ok ? [] : slackSupervisor.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,

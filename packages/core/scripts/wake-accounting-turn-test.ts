@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -18,7 +19,7 @@ function eq<T>(actual: T, expected: T, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-wake-accounting-turn-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 const ORG = "acme";
 const DOMAIN = "payments";
 

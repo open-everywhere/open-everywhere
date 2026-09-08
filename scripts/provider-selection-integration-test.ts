@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-provider-selection-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 delete process.env.OE_PLATFORM;
 
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
@@ -21,6 +21,7 @@ import { postArm, registeredPostArmPlatforms } from "@open-everywhere/core/agent
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
 import { divertToUnifiedWindow } from "@open-everywhere/core/agent/channels/unified.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

@@ -16,6 +16,7 @@ import {
   resolveSlack,
   resolveSlackCapFixture,
   resolveSlackChannelB,
+  resolveSlackMpim,
   resolveSlackPrivate,
   resolveSlackSecondary,
   resolveSlackSupervisor,
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
 
   const slackPrivate = resolveSlackPrivate();
   const slackChannelB = resolveSlackChannelB();
+  const slackMpim = resolveSlackMpim();
   const slackCapFixture = resolveSlackCapFixture();
   const slackSupervisor = resolveSlackSupervisor();
   const syntheticDm = resolveSyntheticDm();
@@ -141,6 +143,7 @@ async function main(): Promise<void> {
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
+  const slackMpimDriver = slackDriver && slackMpim.ok ? slackDriver.withChannel(slackMpim.cfg.channel) : undefined;
   const slackCapFixtureDriver = slackDriver && slackCapFixture.ok ? slackDriver.withChannel(slackCapFixture.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
@@ -272,6 +275,7 @@ async function main(): Promise<void> {
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,
+      slackMpim: slackMpimDriver,
       ...(engagedSlack.ok ? { engagedSlack: engagedSlack.cfg } : {}),
       discordEngaged: discordEngagedDriver,
       teamsEngaged: teamsEngagedDriver,

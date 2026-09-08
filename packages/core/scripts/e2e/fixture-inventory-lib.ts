@@ -25,6 +25,7 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   { surface: "slack", envVar: "E2E_SLACK_PRIVATE_CHANNEL", what: "S11's private surface" },
   { surface: "slack", envVar: "E2E_SLACK_CHANNEL_B", what: "S12's second-domain channel (silo isolation)" },
   { surface: "slack", envVar: "E2E_SLACK_DM_CHANNEL", what: "the driver-user↔OE DM (S13/S14/J4)" },
+  { surface: "slack", envVar: "E2E_SLACK_MPIM_CHANNEL", what: "J-MPIM's group DM (mpim) — the pack's only group-DM room" },
   { surface: "slack", envVar: "E2E_SLACK_SUPERVISOR_CHANNEL", what: "J-SUP's ambient-supervisor channel" },
   { surface: "slack", envVar: "E2E_SLACK_CAP_CHANNEL", what: "S10's throwaway spend-cap scope" },
   { surface: "slack", envVar: "E2E_NOTION_CHANNEL", what: "S24's Notion-connector-bound channel" },

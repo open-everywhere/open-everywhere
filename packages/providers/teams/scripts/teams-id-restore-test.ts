@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { surfaceKeySegment } from "@open-everywhere/core/agent/adapter-api.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -12,7 +13,7 @@ const ok = (cond: boolean, label: string) => {
 
 const dir = join(tmpdir(), `open-everywhere-teams-id-restore-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";

@@ -8,8 +8,10 @@ import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
 import { stripComments } from "./_source-scan-utils.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
   delete process.env[k];
 }
 

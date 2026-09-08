@@ -15,6 +15,7 @@ import { carriesPlatformIdentity, healDeliveryIdentity, refreshBindingStamp, sub
 import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -25,8 +26,9 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+_resetDeploymentIdentityForTest();
 for (const k of [
-  "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
+  "OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
 ]) {
   delete process.env[k];
 }
@@ -36,18 +38,16 @@ ok(
   "slack UNREGISTERED (core alone): binds fail-closed external through bindLocal",
 )
 
-process.env.OE_WORKSPACE = "acme";
-process.env.OE_SURFACE = "alpha";
+_setDeploymentIdentityForTest({ workspace: "acme", surface: "alpha" });
 process.env.OE_MODE = "dm";
 process.env.OE_VISIBILITY = "private";
 const local = bindFrom({});
-ok(local.platform === "local" && local.workspace === "acme" && local.surface === "alpha", "local: identity from OE_* env");
+ok(local.platform === "local" && local.workspace === "acme" && local.surface === "alpha", "local: identity from the declared ambient workspace/surface");
 ok(local.mode === "dm" && local.visibility === "private", "local: mode/visibility from env");
 ok(local.target === undefined, "local: no post-back target");
-delete process.env.OE_SURFACE;
-delete process.env.OE_CHANNEL;
+_setDeploymentIdentityForTest({ surface: undefined });
 const defaults = bindFrom({ channel: { kind: "local" } });
-ok(defaults.surface === "default", "local: surface defaults when env unset for that field");
+ok(defaults.surface === "default", "local: surface defaults when the declaration names none");
 
 ok(bindFrom({}).trust === "internal", "bindFrom: local/dev defaults internal");
 process.env.OE_TRUST = "external";
@@ -197,7 +197,8 @@ ok(
 }
 
 {
-  for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_TRUST", "OE_MODE"]) delete process.env[k];
+  _resetDeploymentIdentityForTest();
+  for (const k of ["OE_PLATFORM", "OE_TRUST", "OE_MODE"]) delete process.env[k];
 
   const surfaceMapper: IdentityMapper = (ctx) => {
     const a = ctx.session?.auth?.current?.attributes;
@@ -299,7 +300,7 @@ ok(
     await sessionStarted(internalWakeA);
     const stamped = readBindingBridge();
     ok(stamped !== null && !carriesPlatformIdentity(bridgedContext(stamped)), "🔴 OPE-603 §2 negative control: a session that only ever saw an identity-less delivery holds a stamp that NAMES NO SURFACE");
-    ok(scopeKeyOf(internalWakeA) === "ope603a/dev/default", "🔴 OPE-603 §2: …so it binds the env stand-in, inventing no surface");
+    ok(scopeKeyOf(internalWakeA) === "ope603a/dev/default", "🔴 OPE-603 §2: …so it binds the ambient gap-filler default, inventing no surface");
     ok(bindFrom(internalWakeA).trust === "external", "🔴 OPE-603 §2: …and FAILS CLOSED to external");
     ok(scopeKeyOf(toolCtx) === "ope603a/dev/default", "🔴 OPE-603 §2: …and its tools resolve nothing either — never a borrowed surface");
   });

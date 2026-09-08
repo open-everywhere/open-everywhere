@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { deriveRegistryMountSets, readEveFrameworkTools } from "./eve-framework-tools.js";
+import { deriveRegistryMountSets, readEveFrameworkTools, readRequiredFrameworkToolSlots } from "./eve-framework-tools.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -147,6 +148,40 @@ throwsWith(() => deriveRegistryMountSets([]), "0 default-mounted", "🔴 an empt
     ok(live.all.includes(name), `\`all\` carries every classified name — missing ${name} would make every lint blind to it`);
   }
   ok(!live.all.includes("sleep"), "🔴 `sleep` is NOT a framework tool — eve exports `./tools/sleep` and always has, but its own accessors never counted it, so the exports map is not a substitute for the registry");
+  eq(
+    live.required,
+    ["connection_search"],
+    "🔴 the installed eve REQUIRES exactly `connection_search` — the slot a `disableTool()` sentinel throws at build on (OPE-1537). A second name here means a second subagent slot needs an authored no-op replacement",
+  );
+  for (const name of live.required) {
+    ok(live.defaultMounted.includes(name), `every REQUIRED name is also default-mounted — ${name} would otherwise be a demand for a file in a slot eve never mounts`);
+  }
 }
 
-console.log(`\n✓ eve-framework-tools: ${n} assertions passed (grammar, union totality, unknown-scope guard, empty-scope guards, live premise)\n`);
+{
+  const dir = mkdtempSync(join(tmpdir(), "oe-eve-policy-"));
+  const policyDir = join(dir, "dist", "src", "compiler");
+  mkdirSync(policyDir, { recursive: true });
+  const policy = join(policyDir, "default-tool-policy.js");
+
+  eq(readRequiredFrameworkToolSlots(dir), [], "an eve that ships NO default-tool policy requires nothing — every slot stays disableable, which is what such an eve accepts");
+
+  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([`tools/connection_search`]);");
+  eq(readRequiredFrameworkToolSlots(dir), ["connection_search"], "one required slot is read off the declaration, with the `tools/` prefix stripped");
+
+  writeFileSync(policy, 'const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set(["tools/connection_search","tools/read_file"]);');
+  eq(readRequiredFrameworkToolSlots(dir), ["connection_search", "read_file"], "…and several are read, sorted — the case that arms the lint before eve's build throws");
+
+  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([]);");
+  eq(readRequiredFrameworkToolSlots(dir), [], "an explicitly EMPTY policy requires nothing — a retired policy is not a parse failure");
+
+  writeFileSync(policy, "const SOMETHING_ELSE_ENTIRELY=new Set([`tools/connection_search`]);");
+  throwsWith(() => readRequiredFrameworkToolSlots(dir), "default-tool-policy.js", "🔴 a policy module whose declaration was renamed THROWS rather than reporting `nothing required`");
+
+  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([SOME_CONSTANT]);");
+  throwsWith(() => readRequiredFrameworkToolSlots(dir), "cannot parse", "🔴 …and so does a declaration whose entries are not slot literals");
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
+console.log(`\n✓ eve-framework-tools: ${n} assertions passed (grammar, union totality, unknown-scope guard, empty-scope guards, required-slot reader, live premise)\n`);

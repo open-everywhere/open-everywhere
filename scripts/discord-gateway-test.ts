@@ -61,6 +61,7 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { finalMessageAction, NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/turn-delivery.js";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -71,9 +72,10 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+_resetDeploymentIdentityForTest();
 for (const k of [
-  "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL",
-  "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST",
+  "OE_PLATFORM",
+  "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
 ]) {
   delete process.env[k];
 }

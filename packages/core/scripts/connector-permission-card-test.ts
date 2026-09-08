@@ -18,13 +18,14 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_PLATFORM = "slack";
 process.env.OE_EGRESS_SPOOF = "1";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
 import type { ApprovalStatus } from "eve/tools/approval";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { connectorApprovalPolicy, ASK_UNATTENDED_SENTENCE, TAINTED_ASK_UNATTENDED_SENTENCE } = await import("../agent/connections/connector-auth.js");

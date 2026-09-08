@@ -5,6 +5,7 @@ import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const PRICED_MODEL = builtInModelIds()[0];
 
@@ -50,7 +51,7 @@ for (const c of access.connections) {
 }
 
 const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
-process.env.OE_ORG = CTL_ORG;
+_setDeploymentIdentityForTest({ org: CTL_ORG });
 {
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");

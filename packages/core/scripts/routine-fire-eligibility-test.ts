@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -23,7 +24,7 @@ async function throwsWith(fn: () => unknown, needle: RegExp, label: string): Pro
 
 const dir = mkdtempSync(join(tmpdir(), "oe-routine-fire-eligibility-"));
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_TRUST;
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: false } });

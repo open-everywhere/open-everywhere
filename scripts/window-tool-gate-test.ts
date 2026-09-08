@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-tool-gate-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import { windowGrainOf, type WindowGrain, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "@open-everywhere/core/agent/channels/window-key.js";
@@ -16,6 +16,7 @@ import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "@open-everywhere/core/agent/channels/unified-window.js";
 import { buildDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { withheldFromGrain, WINDOW_GATED_TOOLS } from "@open-everywhere/core/agent/access/window-gate-manifest.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let n = 0;
 const eq = (a: unknown, b: unknown, label: string) => {

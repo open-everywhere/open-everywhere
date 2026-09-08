@@ -7,7 +7,7 @@ const dir = join(tmpdir(), `open-everywhere-approval-dedupe-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_PLATFORM = "slack";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 registerConfig({
@@ -25,6 +25,7 @@ const { withDuplicateApprovalGuard, recordApprovalRaised, DUPLICATE_APPROVAL_WIN
   "@open-everywhere/core/agent/access/approval-dedupe.js"
 );
 import type { HasEventSeen, MarkEventSeen } from "@open-everywhere/core/agent/access/approval-dedupe.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 const requestOf = (approval: Approval): ((ctx: ApprovalContext) => ApprovalStatus | Promise<ApprovalStatus>) =>
   typeof approval === "function" ? approval : approval.request;

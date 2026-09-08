@@ -21,15 +21,24 @@ function admitsAWrite(methods: readonly string[] | "any"): boolean {
   return methods.some((m) => !READ_ONLY_METHODS.has(m.toUpperCase()));
 }
 
+function readVerbs(e: Record<string, unknown>): readonly string[] | "any" | undefined {
+  for (const key of ["verb", "methods"] as const) {
+    const v = e[key];
+    if (v === "any") return "any";
+    if (Array.isArray(v) && v.every((m) => typeof m === "string")) return v as readonly string[];
+  }
+  return undefined;
+}
+
 function readWriteHost(raw: unknown): (CredentialedWriteHost & { readonly credentialed: boolean }) | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const e = raw as Record<string, unknown>;
   if (typeof e.host !== "string" || e.host.length === 0) return undefined;
   if (typeof e.credentialed !== "boolean") return undefined;
-  const methods =
-    e.methods === "any" ? ("any" as const) : Array.isArray(e.methods) && e.methods.every((m) => typeof m === "string") ? (e.methods as readonly string[]) : undefined;
+  const methods = readVerbs(e);
   if (methods === undefined) return undefined;
-  return { host: e.host, via: typeof e.via === "string" ? e.via : null, methods, credentialed: e.credentialed };
+  const credential = typeof e.credential === "string" ? e.credential : typeof e.via === "string" ? e.via : null;
+  return { host: e.host, via: credential, methods, credentialed: e.credentialed };
 }
 
 export function findCredentialedWriteHost(rows: readonly AuditWireEntry[], opts: { readonly host: string; readonly surface?: string }): EgressHostEvidence {

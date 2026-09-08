@@ -6,6 +6,7 @@ import type { ReachableHost } from "./resolver.js";
 import { resolveAccessFor } from "./request.js";
 import { narrowByConnectorOverride } from "./connector-scope.js";
 import { auditToolAction } from "../audit/tool-action.js";
+import { hostCallAuditFields } from "./egress.js";
 
 export type HostLookup = (hostname: string) => Promise<readonly string[]>;
 let lookupImpl: HostLookup | undefined;
@@ -82,6 +83,8 @@ function parseHttpUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): URL {
   return url;
 }
 
+export type EgressRefusalCause = "resolve-failed";
+
 export type EgressRoute = { readonly via: "direct" } | { readonly via: "proxy"; readonly proxyUrl: string };
 
 export interface EgressDispatch {
@@ -129,7 +132,13 @@ export function resolveEgressRoute(url: URL, env: NodeJS.ProcessEnv = process.en
 }
 
 async function pinResolvedIp(url: URL, tool: string = DEFAULT_TOOL_LABEL): Promise<{ url: URL; dispatcher: Agent }> {
-  const addrs = await resolveAll(url.hostname);
+  let addrs: readonly string[];
+  try {
+    addrs = await resolveAll(url.hostname);
+  } catch (err) {
+    if (err instanceof Error) (err as { oeEgressCause?: EgressRefusalCause }).oeEgressCause = "resolve-failed";
+    throw err;
+  }
   if (addrs.length === 0) {
     throw new Error(`${tool}: "${url.hostname}" did not resolve to any address.`);
   }
@@ -197,6 +206,8 @@ export function egressReachDenial(tool: string, host: string, reason: ReachDenyR
   return `${tool}: ${cause}, so the request was refused before it was made. ${EGRESS_REPORT_PROTOCOL}`;
 }
 
+const HOST_PLANE_VERB = "GET";
+
 export interface ReachDeps {
   readonly tool?: string;
   readonly hosts?: (ctx: BindableContext) => readonly ReachableHost[];
@@ -209,7 +220,11 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
   const hosts = (deps.hosts ?? ((c: BindableContext) => resolveAccessFor(c).reachableHosts))(ctx);
   const entry = reachableEntry(url.hostname, hosts);
   const deny = async (reason: ReachDenyReason): Promise<never> => {
-    await auditToolAction(ctx, "egress.hostside.deny", { host: url.hostname, reason, tool });
+    await auditToolAction(ctx, "egress.hostside.deny", {
+      ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "denied" }),
+      reason,
+      tool,
+    });
     throw new Error(egressReachDenial(tool, url.hostname, reason));
   };
   if (!entry) return deny("not-allowlisted");
@@ -237,11 +252,35 @@ export async function oeFetch(ctx: BindableContext, rawUrl: string, opts: OeFetc
     try {
       dispatch = await directDispatch(parsed, tool);
     } catch (err) {
-      await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "ssrf", tool });
+      const resolveFailed = (err as { oeEgressCause?: EgressRefusalCause })?.oeEgressCause === "resolve-failed";
+      await auditToolAction(ctx, "egress.hostside.deny", {
+        ...hostCallAuditFields({ host: parsed.hostname, verb: HOST_PLANE_VERB, outcome: resolveFailed ? "failed" : "denied" }),
+        reason: resolveFailed ? "resolve-failed" : "ssrf",
+        tool,
+      });
       throw err;
     }
   }
   const { url, dispatcher, via, antiRebind } = dispatch;
-  await auditToolAction(ctx, opts.auditAs ?? "egress.hostside.allow", { host: url.hostname, tool, via, antiRebind });
-  return fetch(url, { dispatcher, redirect: "error", headers: {} } as unknown as RequestInit);
+  const auditAs = opts.auditAs ?? "egress.hostside.allow";
+  let response: Response;
+  try {
+    response = await fetch(url, { dispatcher, redirect: "error", headers: {} } as unknown as RequestInit);
+  } catch (err) {
+    await auditToolAction(ctx, auditAs, {
+      ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "failed" }),
+      tool,
+      route: via,
+      antiRebind,
+    });
+    throw err;
+  }
+  await auditToolAction(ctx, auditAs, {
+    ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "allowed" }),
+    tool,
+    route: via,
+    antiRebind,
+    status: response.status,
+  });
+  return response;
 }

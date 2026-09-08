@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -27,7 +28,7 @@ const ROSTER_LOCK = JSON.parse(readFileSync(join(repoRoot, "roster.lock.json"), 
   packages: Record<string, { contributions: Record<string, string> }>;
 };
 
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 const {
   applyPolicyAdd,

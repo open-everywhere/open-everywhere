@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import "./_register-test-config.js";
 
 let n = 0;
@@ -28,8 +29,8 @@ interface EntryResult {
   readonly ready: boolean;
 }
 
-function runEntry(env: Record<string, string>): Promise<EntryResult> {
-  const child: ChildProcess = spawn(process.execPath, [TSX_CLI, ENTRY, "--root-env", NO_ENV_FILE], {
+function runEntry(env: Record<string, string>, extraArgs: readonly string[] = []): Promise<EntryResult> {
+  const child: ChildProcess = spawn(process.execPath, [TSX_CLI, ENTRY, "--root-env", NO_ENV_FILE, ...extraArgs], {
     cwd: CORE_DIR,
     env: {
       ...process.env,
@@ -103,8 +104,20 @@ function runEntry(env: Record<string, string>): Promise<EntryResult> {
   ok(r.err.includes("embedded Postgres floor"), "and reports the embedded-Postgres floor as the store it wired");
 }
 
+{
+  const store = { OE_OPERATIONAL_PROVIDER: "sqlite", OE_SQLITE_PATH: join(workDir, "org.sqlite3") };
+  const declared = await runEntry(store, ["--org", "acme-holdings"]);
+  ok(declared.ready === true, "--org: the entry still starts");
+  ok(declared.err.includes("org: acme-holdings"), "the entry acts for the org named on the command line");
+
+  const undeclared = await runEntry(store);
+  ok(undeclared.ready === true, "no --org: the entry still starts");
+  ok(undeclared.err.includes("org: default"), "and with no flag it falls back to the shipped default");
+  ok(!undeclared.err.includes("acme-holdings"), "control: the declared org came from the flag, not from a leaked register");
+}
+
 process.env.OE_SQLITE_PATH = join(workDir, "standin.sqlite3");
-process.env.OE_ORG = "default";
+_setDeploymentIdentityForTest({ org: "default" });
 delete process.env.OE_OPERATIONAL_PROVIDER;
 delete process.env.DATABASE_URL;
 delete process.env.OE_PGLITE_DIR;

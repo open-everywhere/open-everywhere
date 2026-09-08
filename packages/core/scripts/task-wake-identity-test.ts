@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-task-wake-identity-")), "ops.sqlite3");
-process.env.OE_WORKSPACE = "dev";
+_setDeploymentIdentityForTest({ workspace: "dev" });
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

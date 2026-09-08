@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-governance-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_ORG = "gov-test";
+_setDeploymentIdentityForTest({ org: "gov-test" });
 
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
@@ -35,6 +35,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
 

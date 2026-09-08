@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-transcript-tool-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
 delete process.env.OE_PUBLIC_BASE_URL;
@@ -39,6 +39,7 @@ import { projectToolSet, registeredProjectionNames } from "../agent/access/untru
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { WINDOW_UNGATED_TOOLS, WINDOW_GATED_TOOLS, JOB_WAKE_TOOLS } from "../agent/access/window-gate-manifest.js";
 import readRoutineTranscript from "../agent/tools/read_routine_transcript.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

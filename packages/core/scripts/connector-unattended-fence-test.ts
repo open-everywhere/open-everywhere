@@ -10,7 +10,7 @@ const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-unattended-fen
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_PLATFORM = "slack";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import type { ApprovalPolicy, ApprovalStatus } from "eve/tools/approval";
 import {
@@ -29,6 +29,7 @@ import { routineFireAttributes, webhookFireAttributes } from "../agent/routines/
 import { declaredPermissionKinds, armDeclaredRoutinePermissions } from "../agent/routines/declared-permissions.js";
 import { overrideSettingsForTest, registerSettings } from "../agent/settings/settings.js";
 import { effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({

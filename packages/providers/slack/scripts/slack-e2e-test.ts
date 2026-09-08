@@ -16,6 +16,7 @@ import {
   type BindableContext,
   type EffectiveAccess,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerIdentityMapper("slack", bindSlack);
 
@@ -28,8 +29,9 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+_resetDeploymentIdentityForTest();
 for (const k of [
-  "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL",
+  "OE_PLATFORM",
   "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL",
 ]) {
   delete process.env[k];

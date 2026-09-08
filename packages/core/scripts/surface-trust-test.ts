@@ -16,6 +16,7 @@ import {
   type Surface,
 } from "../agent/identity/trust.js";
 import { bindFrom, registerIdentityMapper, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
+import { _resetDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -147,14 +148,145 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     "group rung: a caller that HOLDS the group key resolves the `public` group declaration — the demotion exists",
   );
   ok(
+    !isVouchedSurface("teams/T_ACME/19_x", { groupKey: "teams/T_ACME/team:X" }),
+    "🔴 group rung: isVouchedSurface GIVEN the group key sees the `public` carve-out and refuses, matching every other plane (OPE-1538)",
+  );
+  ok(
     isVouchedSurface("teams/T_ACME/19_x"),
-    "🔴 group rung FAIL-OPEN, pinned: isVouchedSurface holds no group key, so the `public` group declaration does NOT demote and the internal tenant admits (OPE-1538)",
+    "group rung is OPT-IN: the same key with NO group key passed still admits on the tenant line — no non-Teams caller changed",
+  );
+  ok(
+    isVouchedSurface("teams/T_ACME/19_y", { groupKey: "teams/T_ACME/team:OTHER" }),
+    "group rung: a room in a DIFFERENT team keeps the internal tenant line — the carve-out demotes one team, not the tenant",
+  );
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_WIDE", trust: "public" }),
+    defineSurface({ key: "teams/T_WIDE/team:IN", trust: "internal" }),
+  ]);
+  ok(
+    !isVouchedSurface("teams/T_WIDE/19_z"),
+    "precondition: with NO group key the `public` tenant line refuses — the answer before the rung is supplied",
+  );
+  ok(
+    isVouchedSurface("teams/T_WIDE/19_z", { groupKey: "teams/T_WIDE/team:IN" }),
+    "🔴 group rung PROMOTES too: an `internal` team under a `public` tenant ADMITS — supplying a rung changes the answer in BOTH directions, and the floor's doc must not claim otherwise",
+  );
+  ok(
+    !isVouchedSurface("teams/T_WIDE/19_z", { groupKey: "teams/T_WIDE/team:NOTDECLARED" }),
+    "🔴 …but an UNDECLARED team gets nothing from the rung — the fail-closed default is untouched, which is the property that actually matters",
+  );
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_CONT", trust: "internal" }),
+    defineSurface({ key: "teams/T_CONT/19_chan", trust: "public" }),
+  ]);
+  ok(
+    isVouchedSurface("teams/T_CONT/19_chan-messageid-1"),
+    "precondition: asked with the reply-chain key ALONE, the `public` CHANNEL declaration is invisible and the tenant line admits",
+  );
+  ok(
+    !isVouchedSurface("teams/T_CONT/19_chan-messageid-1", { containerKey: "teams/T_CONT/19_chan" }),
+    "🔴 container grain: carrying the CHANNEL key makes the `public` carve-out visible and the chain is REFUSED — the fail-open miss OPE-1538 closes one rung below the group",
+  );
+  ok(
+    isVouchedSurface("teams/T_CONT/19_other-messageid-1", { containerKey: "teams/T_CONT/19_other" }),
+    "container grain: a chain in an UNDECLARED channel still admits on the tenant line — the container key demotes only where a declaration says so",
+  );
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "teams/T_CONT2", trust: "internal" }),
+    defineSurface({ key: "teams/T_CONT2/19_chan", trust: "public" }),
+    defineSurface({ key: "teams/T_CONT2/19_chan-messageid-9", trust: "internal" }),
+  ]);
+  ok(
+    isVouchedSurface("teams/T_CONT2/19_chan-messageid-9", { containerKey: "teams/T_CONT2/19_chan" }),
+    "🔴 container grain: an exact REPLY-CHAIN declaration beats the channel's — same-tier ties break on the caller's key order, and raw comes first, as in bindFrom",
+  );
+  ok(
+    !isVouchedSurface("teams/T_CONT2/19_chan-messageid-8", { containerKey: "teams/T_CONT2/19_chan" }),
+    "…while a sibling chain with no entry of its own still takes the channel's `public` — so (c) measured the chain entry, not the container being ignored",
+  );
+  ok(
+    isVouchedSurface("teams/T_CONT2/19_solo", { containerKey: "teams/T_CONT2/19_solo" }) === isVouchedSurface("teams/T_CONT2/19_solo"),
+    "container grain: passing the SAME key as both grains answers identically to passing it once",
   );
 
   _resetSurfacesForTest();
   registerSurfaces([defineSurface({ key: "teams/T_ACME", trust: "internal" })]);
   ok(!isVouchedSurface("teams"), "rung walk: a one-segment key has no tenant rung — fail closed (a platform-only derivation bug would admit here)");
   ok(!isVouchedSurface(""), "rung walk: an empty key returns false rather than throwing (a total function, not a vouch claim)");
+  _resetSurfacesForTest();
+}
+
+{
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "slack/E0GRID", trust: "internal" })]);
+  const sibling = (extra: Partial<{ enterpriseKey: string }> = {}) =>
+    declaredSurfaceTrust({ tenantKey: "slack/T0SIB", surfaceKeys: ["slack/T0SIB/C0ROOM"], ...extra });
+  eq(
+    sibling({ enterpriseKey: "slack/E0GRID" }),
+    "internal",
+    "🔴 enterprise rung: ONE `slack/E0GRID` declaration vouches a room in an UNDECLARED sibling workspace under it",
+  );
+  eq(
+    sibling(),
+    undefined,
+    "🔴 enterprise rung NEGATIVE CONTROL: the SAME register and the SAME room, asked with NO enterprise key, declares nothing — the rung is what carries the vouch, not the register",
+  );
+  eq(
+    declaredSurfaceTrust({ tenantKey: "slack/T0SIB", surfaceKeys: ["slack/T0SIB/C0ROOM"], enterpriseKey: "slack/E0OTHER" }),
+    undefined,
+    "enterprise rung: an UNDECLARED enterprise vouches nothing — the walk goes up its own rungs, never across to a declared sibling Grid",
+  );
+  eq(
+    declaredWorkspaceTrust("slack/T0SIB", "slack/E0GRID"),
+    "internal",
+    "enterprise rung: declaredWorkspaceTrust walks it too — the workspace-grain question a per-author membership probe asks",
+  );
+  eq(
+    declaredWorkspaceTrust("slack/T0SIB"),
+    undefined,
+    "enterprise rung: declaredWorkspaceTrust WITHOUT the rung is unchanged — an existing caller keeps asking exactly what it asked",
+  );
+
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "slack/E0GRID", trust: "internal" }),
+    defineSurface({ key: "slack/T0SIB", trust: "public" }),
+  ]);
+  eq(
+    declaredSurfaceTrust({ tenantKey: "slack/T0SIB", surfaceKeys: ["slack/T0SIB/C0ROOM"], enterpriseKey: "slack/E0GRID" }),
+    "public",
+    "🔴 enterprise rung ORDER: a `public` WORKSPACE carve-out beats the `internal` enterprise above it — the narrower line wins",
+  );
+  eq(
+    declaredSurfaceTrust({ tenantKey: "slack/T0HQ", surfaceKeys: ["slack/T0HQ/C0ROOM"], enterpriseKey: "slack/E0GRID" }),
+    "internal",
+    "enterprise rung ORDER: a workspace the carve-out does not name still rides the enterprise declaration",
+  );
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "slack/E0GRID", trust: "public" }),
+    defineSurface({ key: "slack/T0SIB", trust: "internal" }),
+  ]);
+  eq(
+    declaredSurfaceTrust({ tenantKey: "slack/T0SIB", surfaceKeys: ["slack/T0SIB/C0ROOM"], enterpriseKey: "slack/E0GRID" }),
+    "internal",
+    "🔴 enterprise rung ORDER, mirrored: a `public` ENTERPRISE does not demote the workspace the operator declared internal beneath it",
+  );
+  _resetSurfacesForTest();
+  registerSurfaces([
+    defineSurface({ key: "slack/E0GRID", trust: "internal" }),
+    defineSurface({ key: "slack/T0SIB/C0CONNECT", trust: "public" }),
+  ]);
+  eq(
+    declaredSurfaceTrust({ tenantKey: "slack/T0SIB", surfaceKeys: ["slack/T0SIB/C0CONNECT"], enterpriseKey: "slack/E0GRID" }),
+    "public",
+    "enterprise rung: an EXACT room carve-out beats the enterprise two rungs above it",
+  );
   _resetSurfacesForTest();
 }
 
@@ -421,7 +553,8 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 
 {
   _resetSurfacesForTest();
-  for (const k of ["OE_TRUST", "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_MODE"]) delete process.env[k];
+  _resetDeploymentIdentityForTest();
+  for (const k of ["OE_TRUST", "OE_PLATFORM", "OE_MODE"]) delete process.env[k];
 
   const vendor: IdentityMapper = (ctx) => {
     const a = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {};

@@ -9,7 +9,7 @@ import { encryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
 const dir = join(tmpdir(), `oe-oauth-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { makePkce, makeState } = await import("../agent/oe-oauth/pkce.js");
@@ -17,6 +17,7 @@ const { makeOeOauthTokenVault, CLAIM_LEASE_TTL_MS } = await import("../agent/oe-
 const { makeOeOauth } = await import("../agent/oe-oauth/user-auth-flow.js");
 const { OeOauthNeedsConsentError, OeOauthNeedsReconsentError, OeOauthRefreshContendedError } = await import("../agent/oe-oauth/errors.js");
 import type { OeOauthProviderConfig } from "../agent/oe-oauth/config.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

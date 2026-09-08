@@ -26,6 +26,7 @@ import { CONTROL_WRITE_TOOL_NAMES } from "../agent/control/writes.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -169,7 +170,7 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
-  process.env.OE_ORG = "default";
+  _setDeploymentIdentityForTest({ org: "default" });
   ok("scopeDenial: admin -> null (covered)", scopeDenial(["admin"], { org: "default", surfaceKey: "slack/T1/C_TXN" }) === null);
   ok(
     "scopeDenial: covering domain role -> null (covered)",

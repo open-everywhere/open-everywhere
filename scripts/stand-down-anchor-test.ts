@@ -18,7 +18,7 @@ registerNotionProvider();
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
-import { shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
+import { roomEngagementAddress, shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
 import { bindFrom } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import standDown, { STAND_DOWN_ACTION, DM_REFUSAL, GROUP_REFUSAL } from "@open-everywhere/core/agent/tools/stand_down.js";
@@ -30,6 +30,7 @@ import {
   type DiscordRelayMessage,
   type DiscordGatewaySend,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
+import { clearTeamsRoomStop } from "@open-everywhere/provider-teams/agent/channels/teams-engagement.js";
 import { resolveGitHubEngagement } from "@open-everywhere/provider-github/agent/channels/github-engagement.js";
 import { resolveLinearEngagement } from "@open-everywhere/provider-linear/agent/channels/linear-engagement.js";
 import { markNotionEngaged, resolveNotionEngagement } from "@open-everywhere/provider-notion/agent/channels/notion-engagement.js";
@@ -434,4 +435,98 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(back.kind === "deliver", "🔴 OPE-1501: a fresh addressed comment re-engages the page and lifts the stop — `participating: true` is the way back in");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the GitHub/Linear/Notion anchors and their own seams' round trips)`);
+{
+  const ROOM = "19:room-a@thread.tacv2";
+  const roomCtx = windowCtx(
+    "teams",
+    { tenant_id: "T_ROOM", conversation_id: "19:room-a@thread.tacv2;messageid=1", channel_id: ROOM, scope: "channel", user_id: "29:u9" },
+    "29:u9",
+  );
+  const rb = bindFrom(roomCtx);
+  ok(rb.roomEngagementKey === ROOM, "🔴 OPE-1511: the Teams binding publishes the CHANNEL as its room-grain anchor — the opt-in that reaches this fallback at all");
+  ok(rb.engagementKey === "19:room-a@thread.tacv2;messageid=1", "…while the conversation anchor stays the reply chain: two grains, not a replaced one");
+
+  const p = resolvePartition(roomCtx);
+  const room = roomEngagementAddress(p);
+  ok(room.partition.surfaceKey !== p.surfaceKey, "precondition: the room row lives at the DOMAIN grain, a different row from the reply chain's");
+
+  let refused = "";
+  try {
+    await runStandDown(roomCtx);
+  } catch (err) {
+    refused = (err as Error).message;
+  }
+  ok(refused.includes("nothing was marked"), "🔴 OPE-1511: with NO stored room wake the verb still refuses — the fallback marks a row, it never conjures one");
+
+  await store.markEngaged(room.partition.org, room.partition.surfaceKey, room.anchor, "2026-09-08T10:00:00Z", { participating: false });
+  const res = await runStandDown(roomCtx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 OPE-1511: with the room wake stored, the SAME undirected turn stands down — the gap a person in the room could not close by any verb");
+  ok(res.note.includes("anywhere in this room"), "…and the copy names the ROOM grain, because a room stop silences every conversation in it");
+  const roomRow = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
+  ok(roomRow !== null && roomRow.stopped === true, "…the flag lands on the room row Leg A's own gate reads back (teams-engagement.ts teamsRoomWatchStopped)");
+  const chainRow = await store.getEngagement(p.org, p.surfaceKey, rb.engagementKey!);
+  ok(chainRow === null, "🔴 …and the reply chain is untouched — the fallback did not invent a conversation row on the way past");
+
+  const CHAIN2 = "19:room-a@thread.tacv2;messageid=2";
+  const chainCtx = windowCtx("teams", { tenant_id: "T_ROOM2", conversation_id: CHAIN2, channel_id: "19:room-b@thread.tacv2", scope: "channel", user_id: "29:u9" }, "29:u9");
+  const cp = resolvePartition(chainCtx);
+  const room2 = roomEngagementAddress(cp);
+  await store.markEngaged(cp.org, cp.surfaceKey, CHAIN2, "2026-09-08T10:00:00Z", { participating: true });
+  await store.markEngaged(room2.partition.org, room2.partition.surfaceKey, room2.anchor, "2026-09-08T10:00:00Z", { participating: false });
+  const cres = await runStandDown(chainCtx, "asked me to stop following");
+  ok(cres.standingDown === true && cres.note.includes("in this conversation"), "🔴 OPE-1511 NEGATIVE CONTROL: an ENGAGED conversation stops at its OWN grain, and says so");
+  const room2Row = await store.getEngagement(room2.partition.org, room2.partition.surfaceKey, room2.anchor);
+  ok(room2Row !== null && room2Row.stopped === false, "🔴 …and the room row is NOT stopped — the fallback runs only where the conversation grain held nothing");
+
+  await clearTeamsRoomStop(p, "2026-09-08T11:00:00Z", "mention-back-1");
+  const lifted = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
+  ok(lifted !== null && lifted.stopped === false, "🔴 OPE-1511: an @mention's clear LIFTS the room stop on the room row itself — the stop is not a trap");
+  ok(lifted !== null && lifted.engagedBy === "mention-back-1", "…and it records the mention's activity id, so the room clear carries the OPE-1527 guard too");
+
+  ok(await store.markStopped(room.partition.org, room.partition.surfaceKey, room.anchor), "precondition: the room is stood down again");
+  await clearTeamsRoomStop(p, "2026-09-08T12:00:00Z", "mention-back-1");
+  const replayedRoom = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
+  ok(replayedRoom !== null && replayedRoom.stopped === true, "🔴 OPE-1511 + OPE-1527: a REDELIVERED @mention does not lift the ROOM stop either — one guard, both grains");
+  await clearTeamsRoomStop(p, "2026-09-08T12:05:00Z", "mention-back-2");
+  const newRoom = await store.getEngagement(room.partition.org, room.partition.surfaceKey, room.anchor);
+  ok(newRoom !== null && newRoom.stopped === false, "🔴 NEGATIVE CONTROL: a NEW @mention still lifts the room stop — the room grain is not a one-way door");
+
+  const discordCtx = windowCtx("discord", { guild_id: "G_R", channel_id: "C_UNENROLLED", parent_channel_id: "C_PARENT", user_id: "u_r" }, "u_r");
+  ok(bindFrom(discordCtx).roomEngagementKey === undefined, "🔴 NEGATIVE CONTROL: Discord publishes NO room key — a mapper opts in, the tool never assumes");
+  const dp = resolvePartition(discordCtx);
+  const dRoom = roomEngagementAddress(dp);
+  await store.markEngaged(dRoom.partition.org, dRoom.partition.surfaceKey, dRoom.anchor, "2026-09-08T10:00:00Z", { participating: false });
+  let discordRefused = "";
+  try {
+    await runStandDown(discordCtx);
+  } catch (err) {
+    discordRefused = (err as Error).message;
+  }
+  ok(discordRefused.includes("nothing was marked"), "🔴 …so even with a parent-channel row sitting right there, Discord still refuses — no surface silently widened");
+}
+
+{
+  const ctx = windowCtx("teams", { tenant_id: "T_REPLAY", conversation_id: "19:replay@thread.tacv2", channel_id: "19:rc@thread.tacv2", scope: "channel", user_id: "29:ur" }, "29:ur");
+  const p = resolvePartition(ctx);
+  const ANCHOR = "19:replay@thread.tacv2";
+  await store.markEngaged(p.org, p.surfaceKey, ANCHOR, "2026-09-08T10:00:00Z", { participating: true, engagedBy: "act-1" });
+  ok((await runStandDown(ctx, "asked me to stop following")).standingDown === true, "precondition: the conversation is engaged and now stood down");
+
+  await store.markEngaged(p.org, p.surfaceKey, ANCHOR, "2026-09-08T11:00:00Z", { participating: true, engagedBy: "act-1" });
+  const afterReplay = await store.getEngagement(p.org, p.surfaceKey, ANCHOR);
+  ok(afterReplay !== null && afterReplay.stopped === true, "🔴 OPE-1527: a REDELIVERED @mention leaves the stand-down in place, with no TTL between it and the replay");
+
+  await store.markEngaged(p.org, p.surfaceKey, ANCHOR, "2026-09-08T11:05:00Z", { participating: true, engagedBy: "act-2" });
+  const afterNew = await store.getEngagement(p.org, p.surfaceKey, ANCHOR);
+  ok(afterNew !== null && afterNew.stopped === false, "🔴 OPE-1527 NEGATIVE CONTROL: a NEW @mention still lifts it — the guard is per activity id, never a blanket refusal to re-engage");
+
+  const ctx2 = windowCtx("slack", { team_id: "T_RS", channel_id: "C_RS", thread_ts: "2500.1", user_id: "urs" }, "urs");
+  const sp = resolvePartition(ctx2);
+  await store.markEngaged(sp.org, sp.surfaceKey, "2500.1", "2026-09-08T10:00:00Z", { participating: true });
+  ok((await runStandDown(ctx2, "asked me to stop following")).standingDown === true, "precondition: a Slack thread is engaged and stood down");
+  await store.markEngaged(sp.org, sp.surfaceKey, "2500.1", "2026-09-08T10:05:00Z", { participating: true });
+  const slackRow = await store.getEngagement(sp.org, sp.surfaceKey, "2500.1");
+  ok(slackRow !== null && slackRow.stopped === false, "🔴 OPE-1527 NEGATIVE CONTROL: a promotion with NO id clears the stop exactly as before — no surface that opted out changed");
+}
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the GitHub/Linear/Notion anchors and their own seams' round trips)`);

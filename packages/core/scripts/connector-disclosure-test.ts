@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-disclosure-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_ORG = "disc-test";
+_setDeploymentIdentityForTest({ org: "disc-test" });
 
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
@@ -39,6 +39,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
 let n = 0;

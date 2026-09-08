@@ -10,7 +10,6 @@ export const SET_BY_OPS_MCP = "operator:ops-mcp";
 export const SECRET_STORE_ENV_KEYS: readonly string[] = [
   "DATABASE_URL",
   "OE_CREDENTIAL_ENCRYPTION_KEY",
-  "OE_ORG",
   "OE_OPERATIONAL_PROVIDER",
   "OE_PGLITE_DIR",
   "OE_SQLITE_PATH",

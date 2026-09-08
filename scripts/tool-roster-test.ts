@@ -20,6 +20,7 @@ import {
   resolveCoreToolsDir,
 } from "@open-everywhere/core/agent/scaffold/tool-roster-read.js";
 import { diffConfigSnapshots, renderConfigDiff, toolRosterFindings, type ConfigSnapshot } from "./config-snapshot-diff.js";
+import { readEveFrameworkTools } from "../packages/core/scripts/eve-framework-tools.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -211,9 +212,15 @@ try {
 
   const subagentRoster = readToolRoster(join(repoRoot, "agent", "subagents", "fresh_eyes_review", "tools"));
   ok(subagentRoster.length > 0, "the fresh_eyes_review subagent carries its own tools/ roster");
+  const required = [...(await readEveFrameworkTools()).required].sort();
+  const mounted = subagentRoster.filter((e) => e.classification !== PRIMITIVE_DISABLED).map((e) => e.name).sort();
   ok(
-    subagentRoster.every((e) => e.classification === PRIMITIVE_DISABLED),
-    "every file in a declared subagent's tools/ is a sentinel — a subagent that holds no tool cannot widen access",
+    JSON.stringify(mounted) === JSON.stringify(required),
+    `every file in a declared subagent's tools/ is a sentinel EXCEPT the slots eve refuses to let an app disable — a subagent that holds no tool cannot widen access (mounted ${JSON.stringify(mounted)} vs eve-required ${JSON.stringify(required)})`,
+  );
+  ok(
+    subagentRoster.filter((e) => e.classification === PRIMITIVE_DISABLED).length === subagentRoster.length - required.length,
+    "…and every other file is classified declined, not merely absent from the mounted list",
   );
 }
 

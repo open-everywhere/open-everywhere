@@ -106,6 +106,7 @@ export interface ScenarioContext {
   readonly synthetic?: SyntheticSlack;
   readonly slackPrivate?: SlackDriver;
   readonly slackB?: SlackDriver;
+  readonly slackMpim?: SlackDriver;
   readonly slackCapFixture?: SlackDriver;
   readonly slackSupervisor?: SlackDriver;
   readonly dm?: SlackDriver;
@@ -1467,6 +1468,51 @@ export const SCENARIOS: readonly Scenario[] = [
           }
         }
       }
+    },
+  },
+  {
+    id: "J-MPIM",
+    title:
+      "Slack GROUP DM (mpim): a plain message in a group DM wakes the agent through the mpim door and is answered in that room — the live proof of the group-DM author leg (OPE-1509)",
+    requires: ["slack", "slackMpim"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: REPLY_WAIT * 2,
+    judged: true,
+    run: async (ctx) => {
+      const mpim = ctx.slackMpim!;
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      const text = "quick one for the group — what's 7*8? reply with just the number";
+      const { ts: anchorTs } = await mpim.post(text);
+      const reply = await mpim.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(reply.text.trim().length > 0, "J-MPIM: the agent's group-DM reply has a body (the await above is what proves an unmentioned mpim message woke it at all — this gate catches an empty one)");
+
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso, actions: ["surface.wake_admitted"] });
+        ctx.gate(
+          rows.some((r) => {
+            const d = r.detail as { door?: unknown; dmKind?: unknown } | undefined;
+            return d?.door === "dm" && d?.dmKind === "mpim";
+          }),
+          'J-MPIM: a surface.wake_admitted row (door "dm", dmKind "mpim") proves the GROUP-DM door admitted it — the mpim window seat owns the turn, not the native mention path',
+        );
+        const posts = await ctx.auditRead({ sinceIso, platform: "slack", actions: ["reply.post"] });
+        ctx.gate(
+          posts.some((r) => (r.surface ?? "").endsWith(`/${mpim.channelId}`)),
+          "J-MPIM: a slack `reply.post` row carries the GROUP DM's own surface key — the reply is filed under the mpim, which is what keeps its seat fenced off every other room",
+        );
+      } else {
+        ctx.log("J-MPIM: no control-read creds (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the door and surface-key gates did not run; the reply itself is this leg's evidence");
+      }
+
+      await ctx.judgePass(
+        closedQA("Does the reply give 56?", { mustMatch: ["56"] }),
+        reply.text,
+        "group-DM arithmetic sanity — a real model turn in the mpim's own window",
+      );
+
+      ctx.log("J-MPIM: the GUEST arm needs a guest identity with its own token — no such fixture exists, so the refutation half stays unit-proven: the mark and the untrusted fence in slack-dm-divert-test.ts §11c / §11c-grid, the member plane's refusal on that mark in packages/core/scripts/member-plane-test.ts. Presence marks nothing either way: no roster is read here.");
     },
   },
   {

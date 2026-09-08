@@ -598,6 +598,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         buildSlackAuth({
           userId: ev.userId ?? "",
           teamId: ev.teamId,
+          ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
           channelId: ev.channelId,
           threadTs: ev.threadTs,
           channelType: dmKind,

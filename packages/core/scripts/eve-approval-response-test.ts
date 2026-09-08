@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-eve-approval-response-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_PLATFORM = "slack";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

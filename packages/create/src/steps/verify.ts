@@ -51,7 +51,7 @@ export const verifyStep: WizardStep = {
       summary: "Before going live: run a real task in a pilot channel and check docs/deploy/setup-runbook.md's safety checklist (access bundles, egress enforcement, spend caps).",
       instructions: [
         "npm run access:preview -- --platform slack --workspace T_TEAM --channel C_CHANNEL",
-        "npm run audit --org <org> — confirm actions land under the expected identity/scope.",
+        "npm run audit --workspace @open-everywhere/core -- --org <org> — confirm actions land under the expected identity/scope. The `--` is required; without it npm eats the flag and the read runs as the \"default\" org.",
         "@mention the agent in the channel you wired up.",
       ],
     };

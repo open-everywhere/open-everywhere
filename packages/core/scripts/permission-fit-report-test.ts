@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-permfit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { appendAudit, readAudit } = await import("../agent/audit/audit.js");

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-teams-roster-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 delete process.env.OE_TRUST;
 
 import { parseTeamsActivity, type TeamsMessageActivity } from "eve/channels/teams";
@@ -39,6 +39,7 @@ import { OE_CHAT_NONMEMBER_ATTR } from "@open-everywhere/core/agent/access/taint
 import { registerConfig, defineDomain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import type { RouteHandlerArgs } from "eve/channels";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 registerTeamsProvider();
 

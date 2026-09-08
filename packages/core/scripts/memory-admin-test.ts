@@ -9,7 +9,7 @@ const dir = join(tmpdir(), `open-everywhere-memory-admin-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_MEMORY_PROVIDER;
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
@@ -29,6 +29,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import memoryAdminListTool from "../agent/tools/memory_admin_list.js";
 import memoryAdminReadTool from "../agent/tools/memory_admin_read.js";
 import { execTool } from "./_tool-exec.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

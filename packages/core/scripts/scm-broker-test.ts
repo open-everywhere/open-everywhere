@@ -220,14 +220,14 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
     eq(detail.enforced, true, "…and that it was really enforced — the row is appended only after the apply returned");
     ok(typeof detail.policyFingerprint === "string" && /^[0-9a-f]{64}$/u.test(detail.policyFingerprint as string), "…with the policy generation id, so this row joins the session-start one");
 
-    const listed = detail.writeHosts as { host: string; via: string | null; credentialed: boolean; methods: unknown }[];
+    const listed = detail.writeHosts as { host: string; credential: string | null; credentialed: boolean; verb: unknown }[];
     ok(Array.isArray(listed), "…and it carries the writeHosts list");
     const names = listed.map((h) => h.host).sort();
     ok(names.includes("github.com") && names.includes("codeload.github.com"), "🔴 the row NAMES both brokered git hosts as open to a write — the gap OPE-1448 found");
     const gh = listed.find((h) => h.host === "github.com")!;
-    eq(gh.methods, "any", "🔴 …and says the broker rule narrows no verb, which is what an un-narrowed rule does");
+    eq(gh.verb, "any", "🔴 …and says the broker rule narrows no verb, which is what an un-narrowed rule does");
     eq(gh.credentialed, true, "🔴 …and that a credential rides on it — the installation token, stamped at the firewall");
-    eq(gh.via, null, "…named by no bundle connection, because the broker's token belongs to none");
+    eq(gh.credential, null, "…named by no bundle connection, because the broker's token belongs to none");
     eq(detail.writeHostCount, listed.length, "the exact count agrees with the list at this size (well under the cap)");
 
     const stamped = brokerAuthHeader("tok_1").Authorization!;

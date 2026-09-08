@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-discord-dm-divert-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import {
@@ -22,6 +22,7 @@ import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { RUN_KEY_FETCH_MARKER, HTTP_404_MARKER, PRUNED_DEPLOYMENT_AUDIT_ACTION } from "@open-everywhere/core/agent/channels/stranded-seat.js";
 import type { RouteHandlerArgs } from "eve/channels";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 registerDiscordProvider();
 

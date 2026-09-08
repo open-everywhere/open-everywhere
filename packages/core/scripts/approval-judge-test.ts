@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-approval-judge-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 const {
@@ -36,6 +36,7 @@ import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
 import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/approval-judge.js";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

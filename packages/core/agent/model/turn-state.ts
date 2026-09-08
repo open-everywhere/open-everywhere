@@ -1,4 +1,4 @@
-import { deploymentOrg } from "../identity/deployment-org.js";
+import { deploymentOrg } from "../identity/deployment-identity.js";
 import { getOperationalStore } from "../operational/provider.js";
 
 const TURN_STATE_PREFIX = "oe-turn-state:";

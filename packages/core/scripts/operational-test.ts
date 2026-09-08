@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
-import { deploymentOrg } from "../agent/identity/deployment-org.js";
+import {
+  deploymentOrg,
+  registeredDeploymentIdentity,
+  _setDeploymentIdentityForTest,
+} from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -554,6 +558,45 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const sk = "teams/T/CE";
+
+  await store.markEngaged("acme", sk, "e.1", "2026-09-08T10:00:00Z", { participating: true, engagedBy: "act-1" });
+  ok((await store.getEngagement("acme", sk, "e.1"))!.engagedBy === "act-1", "pg: a promotion records the promoting event id");
+  ok(await store.markStopped("acme", sk, "e.1"), "pg: …and the row can then be stopped");
+
+  await store.markEngaged("acme", sk, "e.1", "2026-09-08T11:00:00Z", { participating: true, engagedBy: "act-1" });
+  const replayed = (await store.getEngagement("acme", sk, "e.1"))!;
+  ok(replayed.stopped === true, "🔴 pg: a promotion REPEATING the recorded id does NOT clear `stopped` — a replay cannot lift a stand-down");
+  ok(replayed.lastTurnAt === "2026-09-08T11:00:00Z", "pg: …while the rest of the upsert still applies, so the guard is on the clear alone");
+
+  await store.markEngaged("acme", sk, "e.1", "2026-09-08T12:00:00Z", { participating: true, engagedBy: "act-2" });
+  const fresh = (await store.getEngagement("acme", sk, "e.1"))!;
+  ok(fresh.stopped === false && fresh.engagedBy === "act-2", "🔴 pg: a NEW id clears the stop and becomes the recorded promoter");
+
+  ok(await store.markStopped("acme", sk, "e.1"), "pg: stopped again");
+  await store.markEngaged("acme", sk, "e.1", "2026-09-08T13:00:00Z", { participating: true });
+  const unknown = (await store.getEngagement("acme", sk, "e.1"))!;
+  ok(unknown.stopped === false, "🔴 pg: a promotion with NO id clears the stop — the pre-OPE-1527 rule, kept for every caller that opts out");
+  ok(unknown.engagedBy === "act-2", "pg: …and it does not erase the recorded promoter (COALESCE), so an id-less refresh cannot blind the guard");
+
+  ok(await store.markStopped("acme", sk, "e.1"), "pg: stopped once more");
+  await store.markEngaged("acme", sk, "e.1", "2026-09-08T14:00:00Z", { participating: false, engagedBy: "act-9" });
+  const warm = (await store.getEngagement("acme", sk, "e.1"))!;
+  ok(warm.stopped === true && warm.engagedBy === "act-2", "🔴 pg: a WARM refresh carrying an id neither clears the stop nor rewrites the promoter");
+
+  await store.markEngaged("acme", sk, "e.2", "2026-09-08T15:00:00Z", { participating: true, engagedBy: "act-A" });
+  await store.markEngaged("acme", sk, "e.2", "2026-09-08T15:01:00Z", { participating: true, engagedBy: "act-B" });
+  ok(await store.markStopped("acme", sk, "e.2"), "pg: two mentions, then a stand-down");
+  await store.markEngaged("acme", sk, "e.2", "2026-09-08T16:00:00Z", { participating: true, engagedBy: "act-B" });
+  ok((await store.getEngagement("acme", sk, "e.2"))!.stopped === true, "pg: replaying the LATEST mention leaves the stop — the shipped guard");
+  await store.markEngaged("acme", sk, "e.2", "2026-09-08T16:01:00Z", { participating: true, engagedBy: "act-A" });
+  ok(
+    (await store.getEngagement("acme", sk, "e.2"))!.stopped === false,
+    "🔴 pg RESIDUAL, pinned not claimed: replaying a SUPERSEDED mention DOES clear the stop — one slot holds one promoter (OPE-1562)",
+  );
+}
+
+{
   const sk = "slack/T/CO";
 
   await store.markEngaged("acme", sk, "o.1", "2026-07-09T10:00:00Z");
@@ -1047,11 +1090,11 @@ const store = makeOperationalPostgresStore(client);
   }
 
   {
-    const previousOrg = process.env.OE_ORG;
-    process.env.OE_ORG = "Acme Inc";
+    const previousOrg = registeredDeploymentIdentity()?.org;
+    _setDeploymentIdentityForTest({ org: "Acme Inc" });
     try {
       const normalised = deploymentOrg();
-      ok(normalised === "Acme-Inc", "OE_ORG=\"Acme Inc\" is a value the two paths CAN disagree on (deploymentOrg cleans it)");
+      ok(normalised === "Acme-Inc", "an org of \"Acme Inc\" is a value the two paths CAN disagree on (deploymentOrg cleans it)");
 
       await pg.exec("DROP POLICY audit_insert ON audit_entry");
       await initOperationalSchema(client);
@@ -1060,12 +1103,11 @@ const store = makeOperationalPostgresStore(client);
       const stamped = await store.readAudit({ org: normalised, action: "audit.integrity" });
       ok(stamped.length === 1 && stamped[0].detail?.healed === true, "🔴 the integrity row is readable at deploymentOrg() — the org every other row is stamped with");
       const rawEnv = await store.readAudit({ org: "Acme Inc", action: "audit.integrity" });
-      ok(rawEnv.length === 0, "🔴 nothing landed under the RAW env value — no second spelling of one deployment's org");
+      ok(rawEnv.length === 0, "🔴 nothing landed under the RAW declared value — no second spelling of one deployment's org");
       const other = await store.readAudit({ org: "default", action: "audit.integrity" });
       ok(other.length === 3, "negative control: the \"default\" partition is unchanged by a boot under another org");
     } finally {
-      if (previousOrg === undefined) delete process.env.OE_ORG;
-      else process.env.OE_ORG = previousOrg;
+      _setDeploymentIdentityForTest({ org: previousOrg });
     }
   }
 

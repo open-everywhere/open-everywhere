@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 const dir = join(tmpdir(), `oe-oauth-cb-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
@@ -15,6 +15,7 @@ const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const cb = await import("../agent/connections/oe-oauth-callback.js");
 import type { OeOauthCallbackCompleter } from "../agent/connections/oe-oauth-callback.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

@@ -7,6 +7,7 @@ export interface SurfaceTraffic {
   readonly surfaceKey: string;
   readonly firstSeen: string;
   readonly lastSeen: string;
+  readonly enterpriseKey?: string;
 }
 
 export interface SurfaceTrustPreflightInput {
@@ -80,7 +81,8 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
   for (const t of input.traffic) {
     const segs = t.surfaceKey.split("/");
     const tenantKey = segs.slice(0, 2).join("/");
-    const hits = parsed.filter(({ entry }) => surfaceKeyEntryMatches(entry, t.surfaceKey) || surfaceKeyEntryMatches(entry, tenantKey));
+    const rungs = [t.surfaceKey, tenantKey, ...(t.enterpriseKey === undefined ? [] : [t.enterpriseKey])];
+    const hits = parsed.filter(({ entry }) => rungs.some((k) => surfaceKeyEntryMatches(entry, k)));
     if (hits.length === 0) {
       undeclared.push(t.surfaceKey);
       continue;
@@ -116,7 +118,10 @@ export function surfaceTrustPreflightChecks(input: SurfaceTrustPreflightInput): 
       name: "surface trust: dead declarations",
       status: "info",
       detail: `${dead.length} declaration(s) matched no traffic in the last ${deadDays} days: ${nameList(dead)}`,
-      fix: "a room can be archived, a repo transferred, a Linear team deleted — the key then stops matching and the surface falls back to fail-closed external, which is correct but silent. Confirm each is intentional, then delete the line or fix the key.",
+      fix:
+        "a room can be archived, a repo transferred, a Linear team deleted — the key then stops matching and the surface falls back to fail-closed external, which is correct but silent. " +
+        "🔴 CHECK THE RUNG BEFORE YOU DELETE ANYTHING. A live declaration written ABOVE the grain traffic is keyed at matches no traffic row and still lands here: a Slack Enterprise Grid line (`slack/E…`) vouches workspaces, while every traffic row names a workspace and a room, so a working Grid declaration reports as dead (OPE-1508; OPE-1560 carries the audit-row half that would let this check walk the rung). Deleting one silently returns every workspace under it to non-member. " +
+        "Confirm each is intentional, then delete the line or fix the key.",
     });
   }
 

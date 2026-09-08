@@ -5,11 +5,12 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import type { WebhookHook } from "../agent/webhooks/config.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `oe-webhook-declare-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { readAudit } = await import("../agent/audit/audit.js");

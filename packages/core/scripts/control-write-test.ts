@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import "./_register-test-config.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-write-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "default";
+_setDeploymentIdentityForTest({ org: "default" });
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");

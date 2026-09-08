@@ -21,6 +21,7 @@ import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { Partition } from "../agent/memory/partition.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { _resetDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
 
@@ -42,7 +43,8 @@ function throws(fn: () => unknown, needle: string, label: string): void {
   ok(false, label);
 }
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_ORG", "OE_TRUST"]) delete process.env[k];
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_TRUST"]) delete process.env[k];
 
 const qa = defineRole({
   name: "qa",

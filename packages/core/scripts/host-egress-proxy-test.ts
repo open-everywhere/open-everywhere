@@ -1,6 +1,7 @@
 
 import assert from "node:assert/strict";
 import { Agent, ProxyAgent } from "undici";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -8,9 +9,7 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-process.env.OE_ORG = "acme-org";
-process.env.OE_WORKSPACE = "ws1";
-process.env.OE_SURFACE = "c1";
+_setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
 
 const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"] as const;
 const clearProxyEnv = (): void => {
@@ -161,7 +160,7 @@ function stubLookup(addresses: readonly string[]): { calls: number } {
     ok(pcall.init.redirect === "error" && JSON.stringify(pcall.init.headers) === "{}", "…without weakening the other two invariants: no redirect follow, and NO credentials on a model-supplied URL");
     ok(proxyLookups.calls === 0, "…and with no local resolution behind it");
     const pallow = rows.filter((r) => r.action === "egress.hostside.allow").at(-1);
-    ok(pallow?.detail?.via === "proxy" && pallow?.detail?.antiRebind === "proxy-acl", "🔴 the audit ALLOW row records the route and the delegated anti-rebind posture — the trail must not imply the pin held when it did not");
+    ok(pallow?.detail?.route === "proxy" && pallow?.detail?.antiRebind === "proxy-acl", "🔴 the audit ALLOW row records the route and the delegated anti-rebind posture — the trail must not imply the pin held when it did not");
     await (pcall.init.dispatcher as ProxyAgent).close();
 
     const before = calls.length;
@@ -177,7 +176,7 @@ function stubLookup(addresses: readonly string[]): { calls: number } {
     ok(dcall.init.dispatcher instanceof Agent && !(dcall.init.dispatcher instanceof ProxyAgent), "🔴 with the proxy env gone the SAME call reverts to the pinned direct Agent — the fork is decided per-call by env, not baked at import");
     ok(directLookups.calls === 1, "…and resolves locally again");
     const dallow = rows.filter((r) => r.action === "egress.hostside.allow").at(-1);
-    ok(dallow?.detail?.via === "direct" && dallow?.detail?.antiRebind === "ip-pin", "…and the audit row says the pin is what held");
+    ok(dallow?.detail?.route === "direct" && dallow?.detail?.antiRebind === "ip-pin", "…and the audit row says the pin is what held");
     await (dcall.init.dispatcher as Agent).close();
   } finally {
     clearProxyEnv();

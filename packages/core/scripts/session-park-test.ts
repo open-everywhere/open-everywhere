@@ -38,42 +38,47 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 
 {
   const mod = read("harness/session-limit-enforcement.js");
-  const enfStart = mod.indexOf("async function enforceSessionTokenLimit(");
-  const parkStart = mod.indexOf("async function parkOnSessionTokenLimit(");
-  const fmtStart = mod.indexOf("function formatSessionTokenLimitMessage(");
-  const failStart = mod.indexOf("async function failSessionTokenLimit(");
+  const enfStart = mod.indexOf("async function enforceSessionUsageLimit(");
+  const parkStart = mod.indexOf("async function parkOnSessionUsageLimit(");
+  const fmtStart = mod.indexOf("function formatSessionLimitMessage(");
+  const failStart = mod.indexOf("async function failSessionUsageLimit(");
   ok(
     enfStart >= 0 && parkStart > enfStart && fmtStart > parkStart && failStart > fmtStart,
-    "session-limit-enforcement.js still declares enforceSessionTokenLimit → parkOnSessionTokenLimit → formatSessionTokenLimitMessage → failSessionTokenLimit",
+    "session-limit-enforcement.js still declares enforceSessionUsageLimit → parkOnSessionUsageLimit → formatSessionLimitMessage → failSessionUsageLimit",
   );
   const enforce = mod.slice(enfStart, parkStart);
-  const park = mod.slice(parkStart, fmtStart);
+  const park = mod.slice(parkStart, mod.indexOf("function violationWindow("));
   const fail = mod.slice(failStart);
+  ok(park.length > 0, "the park arm was sliced from real bytes — an empty slice would pass its regexes vacuously");
 
-  const param = /^async function enforceSessionTokenLimit\((\w+)\)/.exec(enforce)?.[1];
+  const param = /^async function enforceSessionUsageLimit\((\w+)\)/.exec(enforce)?.[1];
   const emitVar = /\{emit:(\w+)\}=/.exec(enforce)?.[1];
-  ok(param !== undefined && emitVar !== undefined, "enforceSessionTokenLimit still takes one input object and destructures its `emit`");
+  ok(param !== undefined && emitVar !== undefined, "enforceSessionUsageLimit still takes one input object and destructures its `emit`");
   const branch = new RegExp(
     `${emitVar as string}!==void 0&&\\(${param as string}\\.config\\.mode===\`conversation\`\\|\\|` +
-      `${param as string}\\.config\\.capabilities\\?\\.requestInput===!0\\)\\?parkOnSessionTokenLimit\\(`,
+      `${param as string}\\.config\\.capabilities\\?\\.requestInput===!0\\)\\?parkOnSessionUsageLimit\\(`,
   );
-  ok(branch.test(enforce), "enforceSessionTokenLimit still PARKS when an emitter exists AND (mode===`conversation` || capabilities?.requestInput===true)");
-  ok(/:failSessionTokenLimit\(/.test(enforce), "…and only the ELSE arm reaches failSessionTokenLimit");
+  ok(branch.test(enforce), "enforceSessionUsageLimit still PARKS when an emitter exists AND (mode===`conversation` || capabilities?.requestInput===true)");
+  ok(/:failSessionUsageLimit\(/.test(enforce), "…and only the ELSE arm reaches failSessionUsageLimit");
 
-  ok(/createSessionLimitContinuationRequest\(\{/.test(park), "parkOnSessionTokenLimit still builds a createSessionLimitContinuationRequest");
+  ok(/createSessionLimitContinuationRequest\(\{/.test(park), "parkOnSessionUsageLimit still builds a createSessionLimitContinuationRequest");
   ok(/\.emit\(createInputRequestedEvent\(/.test(park), "…emits it via createInputRequestedEvent (the event authored hooks see)");
   ok(/\{next:null,session:setHarnessEmissionState\(/.test(park), "…and returns `{ next: null }` — the session PARKS, it does not end");
 
-  ok(/code:`SESSION_TOKEN_LIMIT_REACHED`/.test(fail), "failSessionTokenLimit still emits the SESSION_TOKEN_LIMIT_REACHED code");
-  ok(!/\bthrow\b/.test(fail), "failSessionTokenLimit still RETURNS a step result — it never throws");
+  ok(/`SESSION_TOKEN_LIMIT_REACHED`/.test(fail), "failSessionUsageLimit still emits the SESSION_TOKEN_LIMIT_REACHED code");
+  ok(!/\bthrow\b/.test(fail), "failSessionUsageLimit still RETURNS a step result — it never throws");
   ok(/\{next:\{done:!0/.test(fail), "…returning a done step result");
+
+  ok(/`SESSION_TOKEN_COST_LIMIT_REACHED`/.test(fail), "the fail arm also mints SESSION_TOKEN_COST_LIMIT_REACHED for the token-COST bound");
+  ok(/`token-cost`/.test(enforce) === false, "the park-vs-fail branch does NOT discriminate on the violation kind — a cost park is still a park");
+  ok(/violationWindow\(\w+\)>0/.test(enforce), "…the branch's only extra guard is a positive violation window, which both kinds carry");
 
   const producers = ["harness/session-limit-enforcement.js"];
   ok(producers.every((f) => read(f).includes("SESSION_TOKEN_LIMIT_REACHED")), "session-limit-enforcement.js is a producer of SESSION_TOKEN_LIMIT_REACHED");
 
   ok(
-    /return`The session reached its configured \$\{\w+\} token limit\.`/.test(mod),
-    "formatSessionTokenLimitMessage still formats `The session reached its configured <kind> token limit.`",
+    /`The session reached its configured \$\{\w+\} token limit\.`/.test(mod),
+    "formatSessionLimitMessage still formats `The session reached its configured <kind> token limit.`",
   );
 
   ok(!mod.includes("n_REACHED"), "the 0.22.x `n_REACHED` minifier artifact is absent from this dist (why the classifier's third pattern was removed in OPE-171)");
@@ -95,9 +100,12 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
     /=await \w+\.runtime\.dispatchContinuation\(\{command:\w+,continuationToken:\w+\}\)/.test(send),
     "the send still awaits only runtime.dispatchContinuation on the continuation path (0.31's rename of runtime.deliver)",
   );
+  const inlineCreate = /createSession\(\(await \w+\.runtime\.createSession\(\w+\)\)\.sessionId,/.test(send);
+  const hoistedCreate = /(\w+)=await \w+\.runtime\.createSession\(\w+\);?/.exec(send)?.[1];
+  const hoistedCreatePlacement = hoistedCreate !== undefined && new RegExp(`createSession\\(${hoistedCreate}\\.sessionId,`).test(send);
   ok(
-    /createSession\(\(await \w+\.runtime\.createSession\(\w+\)\)\.sessionId,/.test(send),
-    "…and only runtime.createSession on the fresh-session path (0.31's rename of runtime.run — the turn still runs elsewhere)",
+    inlineCreate || hoistedCreatePlacement,
+    "…and only runtime.createSession on the fresh-session path (0.31's rename of runtime.run — the turn still runs elsewhere), written inline or through a hoisted local",
   );
 }
 
@@ -108,10 +116,13 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
     "eve still names the continuation prompt's synthetic tool `session_limit_continuation`",
   );
   ok(new RegExp(`toolName:SESSION_LIMIT_CONTINUATION_TOOL_NAME`).test(cont), "…and stamps it as the request's action.toolName");
-  ok(/input:\{kind:\w+\.kind,limit:\w+\.limit,usedTokens:\w+\.usedTokens\}/.test(cont), "…carrying {kind, limit, usedTokens} as the action input");
-  ok(/isSessionLimitContinuationRequestId[\s\S]{0,120}?\/:limit:\(\?:input\|output\):\\d\+\$\/u/.test(cont), "…and eve's own requestId grammar still matches OE's SESSION_LIMIT_REQUEST_ID_RE");
+  ok(/kind:\w+\.kind,limit:\w+\.limit,usedTokens:\w+\.usedTokens\}/.test(cont), "a token-count violation still carries {kind, limit, usedTokens} as the action input");
+  ok(/kind:\w+\.kind,limitUsd:\w+\.limitUsd,usedCostUsd:\w+\.usedCostUsd\}/.test(cont), "…and a token-COST violation carries {kind, limitUsd, usedCostUsd} instead");
+  ok(/isSessionLimitContinuationRequestId[\s\S]{0,140}?\/:limit:\(\?:input\|output\):\\d\+\$\/u/.test(cont), "eve's requestId grammar still carries the token-count pattern OE's SESSION_LIMIT_REQUEST_ID_RE mirrors");
+  ok(/isSessionLimitContinuationRequestId[\s\S]{0,240}?:limit:token-cost:/.test(cont), "…and eve added a SECOND requestId pattern for the token-cost bound");
   ok(cont.includes(`\`${SESSION_LIMIT_CONTINUATION_TOOL_NAME}\``), "OE's SESSION_LIMIT_CONTINUATION_TOOL_NAME matches eve's literal");
-  ok(SESSION_LIMIT_REQUEST_ID_RE.source === ":limit:(?:input|output):\\d+$", "OE's SESSION_LIMIT_REQUEST_ID_RE mirrors eve's isSessionLimitContinuationRequestId grammar");
+  ok(SESSION_LIMIT_REQUEST_ID_RE.source === ":limit:(?:input|output):\\d+$", "OE's SESSION_LIMIT_REQUEST_ID_RE mirrors eve's TOKEN-COUNT requestId pattern");
+  ok(!SESSION_LIMIT_REQUEST_ID_RE.test("sess-1:limit:token-cost:12.5"), "…and does NOT match a token-cost requestId — the known shortfall, audited as kind `unknown`");
 }
 
 {
@@ -136,7 +147,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   );
 
   const loop = read("harness/tool-loop.js");
-  ok(/await enforceSessionTokenLimit\(\{[^}]{0,80}?emit:\w+/.test(loop), "the tool loop still calls enforceSessionTokenLimit WITH an emitter (so the park branch is reachable)");
+  ok(/await enforceSessionUsageLimit\(\{[^}]{0,80}?emit:\w+/.test(loop), "the tool loop still calls enforceSessionUsageLimit WITH an emitter (so the park branch is reachable)");
 }
 
 {

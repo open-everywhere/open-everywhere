@@ -4,7 +4,7 @@ const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureMapper();
 __slackStubs.registerSlackFixtureCodec();
 
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 import {
   DM_ANCHOR_DOMAIN_PREFIX,
@@ -32,6 +32,7 @@ import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { bindFrom } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => { assert.ok(cond, label); n++; };

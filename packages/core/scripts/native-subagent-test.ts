@@ -7,7 +7,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { filesContainingAll } from "./eve-dist-search.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-native-subagent-")), "ops.sqlite3");
-process.env.OE_WORKSPACE = "dev";
+_setDeploymentIdentityForTest({ workspace: "dev" });
 
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureMapper();
@@ -29,6 +29,7 @@ import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/delegation-mount.js";
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -117,7 +118,7 @@ ok(channelPlatform(unstampedChildCtx) === "subagent", "🔴 D1 FAIL-CLOSED: with
 {
   const unstamped = bindFrom(unstampedChildCtx);
   ok(unstamped.platform === "subagent", `🔴 D1 RED (the pre-fix world, still the answer when nothing stamped the origin): platform "subagent" (got "${unstamped.platform}")`);
-  ok(unstamped.workspace === "dev", `…workspace literally "dev" — bindLocal's OE_WORKSPACE stand-in, NOT the unnamed-tenant literal (got "${unstamped.workspace}"; correcting the first written account of this bug)`);
+  ok(unstamped.workspace === "dev", `…workspace literally "dev" — bindFrom's declared ambient-workspace rung, NOT the unnamed-tenant literal (got "${unstamped.workspace}"; correcting the first written account of this bug)`);
   ok(unstamped.surface === "default", "…surface `default`");
   ok(unstamped.principalId === undefined, "…and NO principal — which is why its spend rows were unattributed as well as mis-partitioned (OPE-394)");
   ok(unstamped.trust === "external", "…and trust fails CLOSED to external, so the memory gate grants it nothing");

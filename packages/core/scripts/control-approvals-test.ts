@@ -8,7 +8,7 @@ import "./_register-test-config.js";
 const dir = join(tmpdir(), `open-everywhere-control-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "default";
+_setDeploymentIdentityForTest({ org: "default" });
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -18,6 +18,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 import type { PendingActionRow } from "../agent/approvals/types.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {

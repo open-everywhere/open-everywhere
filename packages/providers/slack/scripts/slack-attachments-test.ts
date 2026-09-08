@@ -20,8 +20,13 @@ import {
   resolveGuardedAttachment,
   resolveAttachment,
   setHostEgressLookup,
+  getOperationalStore,
+  registerOperationalStore,
+  resetOperationalStore,
+  EGRESS_AUDIT_ROW_FIELDS,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
+type OperationalStore = Parameters<typeof registerOperationalStore>[0];
 import { fetchSlackAttachment } from "../agent/access/slack-attachment-fetch.js";
 
 let n = 0;
@@ -93,6 +98,13 @@ const ctx = {
     return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(3) } as unknown as Response;
   }) as typeof fetch;
   setHostEgressLookup(async () => ["93.184.216.34"]);
+  const liveStore = getOperationalStore();
+  const auditRows: { action: string; detail?: Record<string, unknown> }[] = [];
+  registerOperationalStore({
+    ...liveStore,
+    appendAudit: async (r: { action: string; detail?: Record<string, unknown> }) => void auditRows.push(r),
+  } as unknown as OperationalStore);
+  resetOperationalStore();
   try {
     const res = await fetchSlackAttachment(ctx, { urlPrivate: "https://files.slack.com/files-pri/T123-F1/screenshot.png", id: "F1" });
     ok(res.status === 200, "host-pin: a genuine files.slack.com url_private is fetched");
@@ -105,7 +117,27 @@ const ctx = {
     }
     ok(denied, "host-pin: a spoofed non-Slack host is REFUSED (throws)");
     ok(egress.length === 1, "host-pin: the refusal produced ZERO egress (no fetch, no token, host never contacted)");
+
+    const allow = auditRows.filter((r) => r.action === "slack.attachment.allow").at(-1)?.detail;
+    ok(allow !== undefined, "🔴 an allowed attachment download appends a `slack.attachment.allow` row");
+    for (const field of EGRESS_AUDIT_ROW_FIELDS) {
+      ok(allow![field] !== undefined, `🔴 …carrying the shared egress field \`${field}\``);
+    }
+    ok(allow!.credential === "SLACK_BOT_TOKEN", "🔴 …naming the credential that rode by REF — the identity an operator can look up");
+    ok(!JSON.stringify(allow).includes(BOT_TOKEN), "🔴 …and NEVER the token value, which the seam holds two lines above the row");
+    ok(allow!.plane === "host" && allow!.unit === "call", "…on the host plane, at call unit");
+    ok(allow!.verb!.toString() === "GET" && allow!.outcome === "allowed", "…with the verb it sent and the outcome it got");
+    ok(allow!.route === "direct" || allow!.route === "proxy", "…and the dispatch ROUTE under `route`");
+    ok(allow!.via === undefined, "🔴 …and no `via`: that name means the credential identity on the sandbox plane, so it may not mean a route here");
+
+    const deny = auditRows.filter((r) => r.action === "slack.attachment.deny").at(-1)?.detail;
+    ok(deny !== undefined, "🔴 the host-pin refusal appends a `slack.attachment.deny` row");
+    ok(deny!.outcome === "denied", "…whose outcome is `denied` — a policy refusal, not a failure");
+    ok(deny!.credential === null, "🔴 …with `credential: null` as a POSITIVE claim: the host-pin is decided before the token is read");
+    ok(deny!.host === "evil.attacker.test", "…naming the host the token was refused to");
   } finally {
+    registerOperationalStore(liveStore);
+    resetOperationalStore();
     globalThis.fetch = realFetch;
     setHostEgressLookup(undefined);
     delete process.env.SLACK_BOT_TOKEN;

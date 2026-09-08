@@ -16,8 +16,10 @@ import { slackSpendGate, spendRefusalCopy, spendBypassWarnCopy, type SpendGateAu
 import { admitInbound } from "../agent/channels/slack.js";
 import { parseMessageEvent, routeSupervisorEvent, supervisorToken, type SupervisorRouteDeps } from "../agent/channels/slack-events.js";
 import { stripComments } from "./_source-scan-utils.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
   delete process.env[k];
 }
 

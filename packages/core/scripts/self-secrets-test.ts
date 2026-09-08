@@ -3,11 +3,12 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `oe-self-secrets-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { getOrMintSelfSecret, selfSecretsArmed, resetSelfSecretWarnings, resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");

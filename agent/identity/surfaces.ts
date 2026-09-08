@@ -1,4 +1,14 @@
 import { defineSurface, registerSurfaces, type Surface } from "@open-everywhere/core/agent/identity/trust.js";
+import {
+  registerDeploymentIdentity,
+  type DeploymentIdentity,
+} from "@open-everywhere/core/agent/identity/deployment-identity.js";
+
+export const deploymentIdentity: DeploymentIdentity = {
+  org: "default",
+  workspace: "dev",
+  surface: "default",
+};
 
 export const surfaces: readonly Surface[] = [
   defineSurface({ key: "discord/1300000000000000100", trust: "internal" }),
@@ -6,11 +16,6 @@ export const surfaces: readonly Surface[] = [
   defineSurface({ key: "discord/300000000000000104", trust: "internal" }),
 
   defineSurface({ key: "teams/7e5a0000-0000-4000-8000-000000000001", trust: "internal" }),
-
-  defineSurface({
-    key: "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2",
-    trust: "internal",
-  }),
 
   defineSurface({ key: "slack/T0EXAMPLE", trust: "internal" }),
 
@@ -32,3 +37,4 @@ export const surfaces: readonly Surface[] = [
 ];
 
 registerSurfaces(surfaces);
+registerDeploymentIdentity(deploymentIdentity);

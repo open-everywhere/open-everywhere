@@ -4,6 +4,7 @@ import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -23,7 +24,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
     reachableHosts: hosts,
     repos: [],
     repoCapabilities: {}, resourceCapabilities: {},
-   
+
     plugins: [],
     skills: [],
     subagents: [],
@@ -408,9 +409,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
     } as OperationalStore;
     registerOperationalStore(fake);
     resetOperationalStore();
-    process.env.OE_ORG = "acme-org";
-    process.env.OE_WORKSPACE = "ws1";
-    process.env.OE_SURFACE = "c1";
+    _setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
     try {
       const narrowed = await narrowByConnectorOverride({}, ["acme-conn", "other-conn"]);
       ok(
@@ -438,9 +437,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
         "🔴 OPE-311(f) END TO END: a connector_override row shaped exactly like revoke_connector's write removes the revoked host from the compiled sandbox policy — the gap this ticket closes",
       );
     } finally {
-      delete process.env.OE_ORG;
-      delete process.env.OE_WORKSPACE;
-      delete process.env.OE_SURFACE;
+      _setDeploymentIdentityForTest({ org: undefined, workspace: undefined, surface: undefined });
       registerOperationalStore(live);
       resetOperationalStore();
     }

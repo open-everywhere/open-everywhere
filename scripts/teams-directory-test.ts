@@ -2,6 +2,7 @@ import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js"
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -12,7 +13,7 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 const dir = join(tmpdir(), `open-everywhere-teams-directory-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";

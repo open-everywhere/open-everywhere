@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +16,7 @@ function ok(cond: boolean, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-triggered-fire-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: true } });
 

@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,8 +17,7 @@ function ok(cond: boolean, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-reply-delegation-pending-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
-process.env.OE_WORKSPACE = "dev";
+_setDeploymentIdentityForTest({ org: "acme", workspace: "dev" });
 
 const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper, registerSlackFixturePostArm } =
   await import("./_slack-test-stubs.js");

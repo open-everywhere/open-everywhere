@@ -85,6 +85,11 @@ const pinnedOpts = vercelSandboxCreateOptions({
   regionPlan: { kind: "pinned", region: "cdg1", info: "" },
 });
 ok(pinnedOpts.region === "cdg1", "a pinned plan puts the region in the object eve receives");
+
+const shippedPlan = resolveSandboxRegionPlan({ region: " CDG1 ", onVercel: true });
+ok(shippedPlan.kind === "pinned", "the SHIPPED default pins a set region on Vercel — the boot passes no passthroughSupported");
+const shippedOpts = vercelSandboxCreateOptions({ timeoutMs: 1, snapshotExpirationMs: 2, regionPlan: shippedPlan });
+ok(shippedOpts.region === "cdg1", "the operator's raw value reaches eve's create options, normalized, with no override anywhere in the path");
 ok(!("failoverRegions" in pinnedOpts), "failoverRegions is NEVER set — a silent cross-zone failover would void the pin");
 for (const plan of [{ kind: "inert", warn: "" }, { kind: "refused", error: "" }, { kind: "invalid", error: "" }] as const) {
   const opts = vercelSandboxCreateOptions({ timeoutMs: 1, snapshotExpirationMs: 2, regionPlan: plan });
@@ -105,6 +110,22 @@ function createBody(js: string): string {
   return end === -1 ? js.slice(start, start + 2000) : js.slice(start, end);
 }
 
+function forwardedParams(body: string): string {
+  const anchor = /createSandbox\(\{/u.exec(body);
+  if (anchor === null) return "";
+  const open = anchor.index + anchor[0].length - 1;
+  let depth = 0;
+  for (let i = open; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return body.slice(open + 1, i);
+    }
+  }
+  return "";
+}
+
 export interface RegionPassthrough {
   readonly typed: boolean;
   readonly forwarded: boolean;
@@ -113,7 +134,7 @@ export interface RegionPassthrough {
 
 function detectRegionPassthrough(input: { readonly createParamsDts: string; readonly vendoredJs: string }): RegionPassthrough {
   const typed = /^\s*region\?:/m.test(createParamsBlock(input.createParamsDts));
-  const forwarded = /\bregion:/.test(createBody(input.vendoredJs));
+  const forwarded = /(?<![\w$.])region:/u.test(forwardedParams(createBody(input.vendoredJs)));
   return { typed, forwarded, supported: typed && forwarded };
 }
 
@@ -143,10 +164,30 @@ ok(
   }).typed,
   "detector: a region OUTSIDE the create params does not count",
 );
+const SYNTHETIC_REGION_OUTSIDE_ENUMERATION = {
+  createParamsDts: SYNTHETIC_WITH.createParamsDts,
+  vendoredJs:
+    "static async create(e){let i=await n.createSandbox({ports:e?.ports,tags:e?.tags});return new S({sandbox:i.sandbox,region:i.json.region})}static async fork(e){}",
+};
+ok(
+  !detectRegionPassthrough(SYNTHETIC_REGION_OUTSIDE_ENUMERATION).forwarded,
+  "detector: a `region:` outside the forwarded-params enumeration is NOT a forward",
+);
+ok(
+  !detectRegionPassthrough(SYNTHETIC_REGION_OUTSIDE_ENUMERATION).supported,
+  "detector: typed + a region only outside the enumeration is NOT support — that is the silent drop",
+);
+ok(
+  detectRegionPassthrough({ createParamsDts: SYNTHETIC_WITH.createParamsDts, vendoredJs: SYNTHETIC_WITH.vendoredJs }).forwarded,
+  "detector: a `region:` INSIDE the enumeration is a forward",
+);
 
 const EVE_DIST = join(REPO_ROOT, "node_modules", "eve", "dist", "src");
-const VENDORED = join(EVE_DIST, "compiled", "@vercel", "sandbox");
 const BINDING = join(EVE_DIST, "execution", "sandbox", "bindings", "vercel.js");
+
+function createCopyOf(binding: string): string | undefined {
+  return /loadSandboxModule\?\?\(async\(\)=>await import\(`#compiled\/@vercel\/([A-Za-z0-9._-]+)\/index\.js`\)\)/u.exec(binding)?.[1];
+}
 
 function recheck(what: string): never {
   console.error(
@@ -158,34 +199,55 @@ function recheck(what: string): never {
   process.exit(1);
 }
 
+ok(
+  createCopyOf("let t=e.loadSandboxModule??(async()=>await import(`#compiled/@vercel/sandbox-drives/index.js`)),n=e.loadDeleteSandboxModule??(async()=>await import(`#compiled/@vercel/sandbox/index.js`))") === "sandbox-drives",
+  "create-loader reader: picks the copy `loadSandboxModule` defaults to, not the one beside it",
+);
+ok(
+  createCopyOf("let n=e.loadDeleteSandboxModule??(async()=>await import(`#compiled/@vercel/sandbox/index.js`))") === undefined,
+  "create-loader reader: the DELETE loader alone does not answer — the copy that mints is the only one that decides",
+);
+
+let bindingJs: string;
+try {
+  bindingJs = readFileSync(BINDING, "utf8");
+} catch (err) {
+  recheck(`cannot read eve's Vercel sandbox binding (${String(err)}).`);
+}
+
+const createCopy = createCopyOf(bindingJs);
+if (createCopy === undefined) {
+  recheck("eve's Vercel binding no longer defaults `loadSandboxModule` to a `#compiled/@vercel/<copy>/index.js` import — the create path moved, and this guard cannot tell which module to read.");
+}
+const VENDORED = join(EVE_DIST, "compiled", "@vercel", createCopy);
+
 let createParamsDts: string;
 let vendoredJs: string;
-let bindingJs: string;
 try {
   createParamsDts = readFileSync(join(VENDORED, "sandbox.d.ts"), "utf8");
   vendoredJs = readFileSync(join(VENDORED, "index.js"), "utf8");
-  bindingJs = readFileSync(BINDING, "utf8");
 } catch (err) {
-  recheck(`cannot read eve's vendored SDK or its Vercel binding (${String(err)}).`);
+  recheck(`cannot read eve's vendored SDK copy \`${createCopy}\`, the one its binding creates through (${String(err)}).`);
 }
 
-if (createParamsBlock(createParamsDts) === "") recheck("eve's vendored SDK no longer declares `interface BaseCreateSandboxParams`.");
-if (createBody(vendoredJs) === "") recheck("eve's vendored SDK no longer declares `static async create(`.");
-if (!bindingJs.includes("#compiled/@vercel/sandbox/index.js")) {
-  recheck("eve's Vercel binding no longer loads `#compiled/@vercel/sandbox/index.js` — sandbox creation moved to another vendored copy.");
-}
+if (createParamsBlock(createParamsDts) === "") recheck(`eve's vendored \`${createCopy}\` no longer declares \`interface BaseCreateSandboxParams\`.`);
+if (createBody(vendoredJs) === "") recheck(`eve's vendored \`${createCopy}\` no longer declares \`static async create(\`.`);
+if (forwardedParams(createBody(vendoredJs)) === "")
+  recheck(`eve's vendored \`${createCopy}\` create no longer posts a \`createSandbox({ … })\` enumeration — this guard cannot see which fields it forwards.`);
 
 const live: RegionPassthrough = detectRegionPassthrough({ createParamsDts, vendoredJs });
 
 ok(
   live.supported === SANDBOX_REGION_PASSTHROUGH_SUPPORTED,
   `SANDBOX_REGION_PASSTHROUGH_SUPPORTED=${SANDBOX_REGION_PASSTHROUGH_SUPPORTED} matches eve ` +
-    `(typed=${live.typed}, forwarded=${live.forwarded}). eve moved: flip the constant in ` +
-    "packages/core/agent/sandbox/vercel-create.ts, drop the refusal wording from the setting summary, " +
-    "and correct the residency coverage in docs/extending/models-and-gateway.md.",
+    `(typed=${live.typed}, forwarded=${live.forwarded}). eve moved: set the constant in ` +
+    "packages/core/agent/sandbox/vercel-create.ts to what eve now does, then make the setting summary, " +
+    "docs/extending/sandbox.md and docs/extending/models-and-gateway.md say the same thing. Setting it " +
+    "to `false` re-arms the refusal, so a set `sandbox.region` starts refusing the boot — write that " +
+    "down rather than leaving a residency claim eve cannot honour.",
 );
 
 console.log(
   `✓ sandbox-region: ${passed} assertions passed (validate, fail-closed plan, composed opts, ` +
-    `eve passthrough=${live.supported})`,
+    `eve create copy=${createCopy}, passthrough=${live.supported})`,
 );

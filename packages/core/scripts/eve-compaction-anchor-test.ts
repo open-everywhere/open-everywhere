@@ -73,8 +73,16 @@ ok(
 );
 ok((src.match(/__oeAnchoredConfig\(/g) ?? []).length === 2, "wiring: exactly one call site (helper definition plus one invocation)");
 ok((src.match(/__oeA[,)]/g) ?? []).length === 1, "wiring: the anchored config is read exactly once — nothing else re-budgets on it");
+const anchorCall = /__oeA=__oeAnchoredConfig\([A-Za-z_$]{1,2},([A-Za-z_$]{1,2})\)/.exec(src);
 ok(
-  /selectRecentWindowSize\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\?\{\.\.\.i,recentWindowSize:1\}:i\)/.test(src),
+  anchorCall !== null,
+  "wiring: the anchored config is declared from the work step's own messages and config parameters",
+);
+const configLetter = anchorCall![1];
+ok(
+  new RegExp(
+    `selectRecentWindowSize\\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\\?\\{\\.\\.\\.${configLetter},recentWindowSize:1\\}:${configLetter}\\)`,
+  ).test(src),
   "wiring: selectRecentWindowSize still reads the original config — per-message budgeting keeps the estimator",
 );
 const wrapper =

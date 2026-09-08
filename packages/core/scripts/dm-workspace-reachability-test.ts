@@ -1,6 +1,6 @@
 
 process.env.OE_SQLITE_PATH = ":memory:";
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 import assert from "node:assert/strict";
 import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
@@ -15,6 +15,7 @@ import {
   registerPostArm,
   DM_WORKSPACE_UNREACHABLE_REASON,
 } from "../agent/channels/post-arms.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 delete process.env[MULTI_TENANT_ENV];
 registerOperationalStore(sqliteOperationalStore);

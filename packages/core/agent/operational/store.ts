@@ -412,6 +412,7 @@ export interface EngagementRow {
   readonly ownerToken?: string;
   readonly kind: "thread" | "spawned";
   readonly stopped: boolean;
+  readonly engagedBy?: string;
 }
 
 export interface TurnAnchorWrite {
@@ -666,7 +667,13 @@ export interface OperationalStore {
   getDomainModel(org: string, domain: string): Promise<DomainModelRow | null>;
   domainModels(org: string): Promise<DomainModelRow[]>;
 
-  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string, opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned" }): Promise<void>;
+  markEngaged(
+    org: string,
+    surfaceKey: string,
+    threadTs: string,
+    at: string,
+    opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned"; engagedBy?: string },
+  ): Promise<void>;
   markStopped(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   bumpSilentStreak(org: string, surfaceKey: string, threadTs: string): Promise<number>;
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;

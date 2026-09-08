@@ -14,6 +14,7 @@ import {
   type SurfaceBinding,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionProvider } from "../agent/register.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerNotionProvider();
 
@@ -26,8 +27,9 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+_resetDeploymentIdentityForTest();
 for (const k of [
-  "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL",
+  "OE_PLATFORM",
   "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
 ]) {
   delete process.env[k];

@@ -10,11 +10,12 @@ import type { Binding, Bundle } from "../agent/access/bundle.js";
 import type { Domain } from "../agent/memory/domain.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const dir = join(tmpdir(), `open-everywhere-agent-create-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "default";
+_setDeploymentIdentityForTest({ org: "default" });
 
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();

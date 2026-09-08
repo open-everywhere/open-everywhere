@@ -13,7 +13,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     globs: ["packages/providers/slack/**"],
     scenarios: [
       "J1", "J2", "S-MEM-READ", "J3", "S6", "S8", "S9", "S10", "S11", "S13", "S14", "S-LINK-SLACK",
-      "J4", "S20", "S23", "S24", "F-ART", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
+      "J4", "J-MPIM", "S20", "S23", "S24", "F-ART", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
       "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE",
       "S-CONNECTOR-TIER", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
       "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",

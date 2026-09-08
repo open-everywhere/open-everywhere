@@ -149,6 +149,9 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
     principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),
     ...(teamsMode(scope) !== "dm" && conversationId ? { engagementKey: conversationId } : {}),
+    ...(mode === "channel" && teamsAttr(a, ["channel_id", "channelId"])
+      ? { roomEngagementKey: teamsAttr(a, ["channel_id", "channelId"]) }
+      : {}),
     ...(conversationId ? { anchorChannelId: conversationId } : {}),
     target:
       conversationId && serviceUrl

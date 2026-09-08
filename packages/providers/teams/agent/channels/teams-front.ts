@@ -12,7 +12,15 @@ import {
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
-import { markTeamsEngaged, resolveTeamsEngagement, teamsMachineAuthored, type TeamsEngagementVerdict } from "./teams-engagement.js";
+import {
+  clearTeamsRoomStop,
+  markTeamsEngaged,
+  markTeamsRoomWatched,
+  resolveTeamsEngagement,
+  teamsMachineAuthored,
+  teamsRoomWatchStopped,
+  type TeamsEngagementVerdict,
+} from "./teams-engagement.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -36,6 +44,7 @@ import {
   getConfig,
   getOperationalStore,
   isVouchedSurface,
+  trustGroupKeyFor,
   resolveWakeTrustFromContext,
   stampNonMemberChatAuth,
   deploymentOrg,
@@ -270,11 +279,14 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
     const grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
     if (!grainUsesUnifiedWindow(grain)) return null;
     const tenantId = a.tenantId ?? a.conversation.tenantId;
+    const groupKey = trustGroupKeyFor(partition.workspaceKey, teamsTrustGroup(a.teamId)?.trustGroup);
     const facts: TeamsSingleWindowFacts = {
       scope: a.scope,
       membershipType: teamsMembershipType(a.channelData),
       tenantId,
-      vouched: isVouchedSurface(surfaceKey) || process.env.OE_TRUST === "internal",
+      vouched:
+        isVouchedSurface(partition.surfaceKey, { containerKey: surfaceKey, ...(groupKey === undefined ? {} : { groupKey }) }) ||
+        process.env.OE_TRUST === "internal",
     };
     const window = planTeamsSingleWindow(true, a.isBotMentioned, facts, {
       serviceUrl: a.serviceUrl,
@@ -338,6 +350,9 @@ export interface TeamsFrontOptions {
   readonly stopReaction?: (rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => Promise<TeamsStopOutcome>;
   readonly engagementSeam?: (a: TeamsMessageActivity, machineAuthored: boolean) => Promise<TeamsEngagementVerdict>;
   readonly markEngaged?: (a: TeamsMessageActivity) => Promise<string | null>;
+  readonly roomStopped?: (partition: Partition) => Promise<boolean>;
+  readonly markRoomWatched?: (partition: Partition, atIso: string) => Promise<void>;
+  readonly clearRoomStop?: (partition: Partition, atIso: string, engagedBy: string) => Promise<void>;
 }
 
 const OK = () => new Response("ok");
@@ -504,6 +519,9 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const stopReaction = opts.stopReaction ?? ((rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => routeTeamsStopReaction(rx, { attachSession }));
   const engagementSeam = opts.engagementSeam ?? resolveTeamsEngagement;
   const markEngaged = opts.markEngaged ?? ((a: TeamsMessageActivity) => markTeamsEngaged(a));
+  const roomStopped = opts.roomStopped ?? teamsRoomWatchStopped;
+  const markRoomWatched = opts.markRoomWatched ?? markTeamsRoomWatched;
+  const clearRoomStop = opts.clearRoomStop ?? clearTeamsRoomStop;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -610,6 +628,18 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       return OK();
     }
 
+    const addressedHere = plan.window.addressing === "direct-mention";
+    if (addressedHere) {
+      await clearRoomStop(plan.partition, new Date(now()).toISOString(), activity.id).catch(() => undefined);
+    } else if (await roomStopped(plan.partition)) {
+      if (isTeamsInputResponseActivity(activity)) {
+        tlog(`activity ${activity.id} on ${plan.surfaceKey}: room stood down, but this is an answer to a parked question — forwarded`);
+        return forward();
+      }
+      tlog(`activity ${activity.id} on ${plan.surfaceKey}: this room was stood down — ambient wake suppressed until an @mention`);
+      return OK();
+    }
+
     const key = `teams:${activity.conversation.id}:${activity.id}`;
     if (dedupe.seen(key, now())) return OK();
     dedupe.mark(key, now());
@@ -619,6 +649,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       `activity ${activity.id} on ${plan.surfaceKey}: single-window — diverting to the unified supervisor ` +
         `(${plan.window.addressing === "direct-mention" ? "addressed @mention; native forward suppressed" : "ambient channel-watch"})`,
     );
+    if (!addressedHere) args.waitUntil(markRoomWatched(plan.partition, new Date(now()).toISOString()).catch(() => undefined));
     args.waitUntil(fifo.enqueue(plan.surfaceKey, () => dispatch(activity, plan, args.to)));
     return OK();
   };

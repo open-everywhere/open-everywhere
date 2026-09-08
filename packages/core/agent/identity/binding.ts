@@ -1,7 +1,7 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
-import { seg, deploymentOrg } from "./deployment-org.js";
+import { seg, deploymentOrg, ambientWorkspace, ambientSurface } from "./deployment-identity.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust, type SurfaceTrust } from "./trust.js";
 
@@ -32,6 +32,7 @@ export interface SurfaceBinding {
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
   readonly engagementKey?: string;
+  readonly roomEngagementKey?: string;
   readonly anchorMessageId?: string;
   readonly anchorChannelId?: string;
 }
@@ -59,15 +60,29 @@ function trustGroupKey(
   workspace: string,
   group: string | undefined,
 ): { readonly groupKey: string } | undefined {
+  const key = trustGroupKeyFor(`${platform}/${workspace}`, group);
+  return key === undefined ? undefined : { groupKey: key };
+}
+
+export function trustGroupKeyFor(workspaceKey: string, group: string | undefined): string | undefined {
   if (group === undefined || !/^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/.test(group)) return undefined;
-  return { groupKey: `${platform}/${workspace}/${group}` };
+  return `${workspaceKey}/${group}`;
+}
+
+function trustEnterpriseKey(
+  platform: string,
+  enterprise: string | undefined,
+): { readonly enterpriseKey: string } | undefined {
+  const spelled = seg(enterprise, "");
+  if (spelled.length === 0) return undefined;
+  return { enterpriseKey: `${platform}/${spelled}` };
 }
 
 export function surfaceKeySegment(value: string | undefined): string {
   return seg(value, "");
 }
 
-export { deploymentOrg } from "./deployment-org.js";
+export { deploymentOrg } from "./deployment-identity.js";
 
 function authOf(ctx: BindableContext): AuthPrincipal | null {
   return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
@@ -150,10 +165,12 @@ export interface RawIdentity {
   readonly trust?: Trust;
   readonly trustVerified?: boolean;
   readonly trustGroup?: string;
+  readonly trustEnterprise?: string;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
   readonly engagementKey?: string;
+  readonly roomEngagementKey?: string;
   readonly anchorMessageId?: string;
   readonly anchorChannelId?: string;
 }
@@ -168,8 +185,8 @@ const bindLocal: Mapper = (ctx) => {
   const envVis = process.env.OE_VISIBILITY;
   const envTrust = process.env.OE_TRUST;
   return {
-    workspace: process.env.OE_WORKSPACE,
-    surface: process.env.OE_SURFACE ?? process.env.OE_CHANNEL,
+    workspace: undefined,
+    surface: undefined,
     mode: envMode && ENV_MODES.has(envMode) ? (envMode as SessionMode) : "channel",
     visibility: envVis === "private" ? "private" : "public",
     trust: envTrust === "external" ? "external" : envTrust === "internal" ? "internal" : undefined,
@@ -484,8 +501,8 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   }
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
-  const workspace = seg(raw.workspace ?? local.workspace, UNNAMED_TENANT);
-  const surface = seg(raw.surface ?? local.surface, "default");
+  const workspace = seg(raw.workspace ?? ambientWorkspace(), UNNAMED_TENANT);
+  const surface = seg(raw.surface ?? ambientSurface(), "default");
   const domainSurfaceSeg = raw.domainSurface ? seg(raw.domainSurface, surface) : undefined;
   const declared = declaredSurfaceTrust({
     tenantKey: `${platform}/${workspace}`,
@@ -494,6 +511,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
         ? [`${platform}/${workspace}/${surface}`, `${platform}/${workspace}/${domainSurfaceSeg}`]
         : [`${platform}/${workspace}/${surface}`],
     ...(trustGroupKey(platform, workspace, raw.trustGroup) ?? {}),
+    ...(trustEnterpriseKey(platform, raw.trustEnterprise) ?? {}),
   });
   const vouched = declared === "internal" ? ("internal" as const) : undefined;
   const declaredExternal = mode === "channel" && declared === "public" ? ("external" as const) : undefined;
@@ -524,6 +542,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     target: raw.target,
     threadTs: raw.threadTs,
     engagementKey: raw.engagementKey,
+    roomEngagementKey: raw.roomEngagementKey,
     anchorMessageId: raw.anchorMessageId,
     anchorChannelId: raw.anchorChannelId,
   };

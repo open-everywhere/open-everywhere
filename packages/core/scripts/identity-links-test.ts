@@ -1,7 +1,7 @@
 
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
-process.env.OE_ORG = "default";
+_setDeploymentIdentityForTest({ org: "default" });
 
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
@@ -51,6 +51,7 @@ import unlinkIdentityTool from "../agent/tools/unlink_identity.js";
 import { renderWakeEnvelope, type WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { normalizeFenceNonce } from "../agent/access/untrusted.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 registerSlackFixtureMapper();
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-domain-containers-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_ORG = "containers-test";
+_setDeploymentIdentityForTest({ org: "containers-test" });
 
 import { registerConfig } from "../agent/access/config.js";
 import {
@@ -22,6 +22,7 @@ import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/a
 import { readAudit } from "../agent/audit/audit.js";
 import { siloCoveringDomains } from "../agent/control/auth.js";
 import { adminControlRoles } from "../agent/access/roles.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

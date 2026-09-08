@@ -14,6 +14,7 @@ import {
   teamsMachineAuthored,
   teamsSeamDeliveryProven,
   teamsSeamGrant,
+  teamsRoomWatchStopped,
   teamsSeamUnsupportedReason,
   type TeamsEngagementDeps,
   type TeamsEngagementVerdict,
@@ -173,13 +174,21 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     readonly dispatch: number;
     readonly dm: number;
     readonly marks: number;
+    readonly roomWatched: number;
+    readonly roomCleared: number;
   }
 
-  async function run(body: string, verdict: TeamsEngagementVerdict, opts: { plan?: boolean } = {}): Promise<FrontRun> {
+  async function run(
+    body: string,
+    verdict: TeamsEngagementVerdict,
+    opts: { plan?: boolean; addressing?: string; roomStopped?: boolean } = {},
+  ): Promise<FrontRun> {
     let forward = 0;
     let dispatch = 0;
     let dm = 0;
     let marks = 0;
+    let roomWatched = 0;
+    let roomCleared = 0;
     const waits: Promise<unknown>[] = [];
     const handler = buildTeamsFrontHandler(
       async () => {
@@ -195,10 +204,17 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
           marks++;
           return CHANNEL_CONV;
         },
+        roomStopped: async () => opts.roomStopped === true,
+        markRoomWatched: async () => {
+          roomWatched++;
+        },
+        clearRoomStop: async () => {
+          roomCleared++;
+        },
         planFor: (): TeamsFrontPlan | null =>
           opts.plan
             ? ({
-                window: { wakeId: "wk-1", origin: { platform: "teams", serviceUrl: SERVICE_URL, conversationId: CHANNEL_CONV } },
+                window: { wakeId: "wk-1", addressing: opts.addressing, origin: { platform: "teams", serviceUrl: SERVICE_URL, conversationId: CHANNEL_CONV } },
                 surfaceKey: `teams/${TENANT}/chan`,
                 partition: { org: "default", platform: "teams", workspace: TENANT, surfaceKey: `teams/${TENANT}/chan` } as unknown as Partition,
                 grain: {} as never,
@@ -216,7 +232,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     const args = { to: {} as never, waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as Parameters<typeof handler>[1];
     await handler(new Request("https://oe.test/eve/v1/teams", { method: "POST", body }), args);
     await Promise.all(waits);
-    return { forward, dispatch, dm, marks };
+    return { forward, dispatch, dm, marks, roomWatched, roomCleared };
   }
 
   const engage: TeamsEngagementVerdict = { kind: "engage", anchor: CHANNEL_CONV, org: "default" };
@@ -245,6 +261,60 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
   ok(openNative.forward === 1 && openNative.dispatch === 0, "3h: an UN-engaged plain message still FORWARDS on the native path, byte-identically to before this leg — its own mention gate is what drops it");
   const openWindow = await run(activityBody("channel"), holdOpen, { plan: true });
   ok(openWindow.dispatch === 1, "3i: 🔴 NEGATIVE CONTROL — the same un-engaged message STILL reaches Leg A on a vouched single-window surface; the seam did not narrow the domain's opted-in ambient posture");
+
+  {
+    const ambient = await run(activityBody("channel"), holdOpen, { plan: true });
+    ok(
+      ambient.dispatch === 1 && ambient.roomWatched === 1,
+      "3o: 🔴 an AMBIENT Leg A wake stores a room-grain watch row — the stored wake a stored stop needs, and without it stand_down has nothing to mark",
+    );
+    const ambientStopped = await run(activityBody("channel"), holdOpen, { plan: true, roomStopped: true });
+    ok(
+      ambientStopped.dispatch === 0 && ambientStopped.forward === 0,
+      "3p: 🔴 …and once that room row carries the stop, the undirected wake is SUPPRESSED — the gap a person in the room could not close by any verb",
+    );
+    ok(
+      ambientStopped.roomWatched === 0,
+      "3q: …a suppressed wake refreshes nothing either, so a stopped room cannot re-arm itself",
+    );
+
+    const mentionOnStoppedRoom = await run(activityBody("channel", { mentioned: true }), engage, {
+      plan: true,
+      addressing: "direct-mention",
+      roomStopped: true,
+    });
+    ok(
+      mentionOnStoppedRoom.roomCleared === 1 && mentionOnStoppedRoom.dispatch === 1,
+      "3r: 🔴 an @MENTION lifts the ROOM stop and is answered — the room stop is reversible, and by the same act that reverses a conversation stop",
+    );
+    ok(
+      mentionOnStoppedRoom.roomWatched === 0,
+      "3r2: …and an addressed wake writes no watch row: it re-invited the room a line earlier, so a watch write would be a second spelling of the same fact",
+    );
+
+    const ambientOpen = await run(activityBody("channel"), holdOpen, { plan: true, roomStopped: false });
+    ok(
+      ambientOpen.dispatch === 1,
+      "3s0: 🔴 NEGATIVE CONTROL — with the room NOT stopped the same ambient wake dispatches, so 3p measured the flag and not the topology",
+    );
+
+    const rawHitl = JSON.parse(activityBody("channel")) as Record<string, unknown>;
+    rawHitl.value = { [TEAMS_HITL_DATA_KEY]: { requestId: "req-room-1" } };
+    const parsedRoomHitl = parseTeamsActivity(rawHitl);
+    assert.ok(parsedRoomHitl && parsedRoomHitl.type === "message", "room HITL fixture must parse as a message activity");
+    ok(isTeamsInputResponseActivity(parsedRoomHitl), "3s1: precondition — eve reads this channel fixture as an input-response activity");
+    const roomHitl = await run(JSON.stringify(rawHitl), holdOpen, { plan: true, roomStopped: true });
+    ok(
+      roomHitl.forward === 1 && roomHitl.dispatch === 0,
+      "3s2: 🔴 a STOOD-DOWN room still FORWARDS an answer to a parked question — standing down means stop following the room, never stop listening to what the agent asked",
+    );
+
+    const nativeWithRoomStop = await run(activityBody("channel"), holdOpen, { roomStopped: true });
+    ok(
+      nativeWithRoomStop.forward === 1 && nativeWithRoomStop.roomWatched === 0,
+      "3s3: 🔴 the room gate is Leg A's ALONE — an off-window activity still forwards to the native path, and stores no room row",
+    );
+  }
 
   const personal = await run(activityBody("personal"), unanchored);
   ok(personal.dm === 1, "3j: a 1:1 chat still diverts to its own DM window unconditionally — 'a DM is always answered' is unchanged");
@@ -364,6 +434,40 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
   resetTeamsSeamSupport();
   await resolveTeamsEngagement(activity("channel", { mentioned: true }), false, depsFor({}).deps);
   ok(teamsSeamDeliveryProven("channel") === false, "5n: 🔴 NEGATIVE CONTROL — a MENTION proves nothing; mentions are delivered with or without the grant, which is the whole reason the gap is invisible");
+}
+
+{
+  const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import(
+    "@open-everywhere/core/agent/adapter-api.js"
+  );
+  const live = getOperationalStore();
+  const part = resolvePartition({
+    channel: { kind: "teams" as const },
+    session: {
+      auth: {
+        current: buildTeamsAuth({
+          userId: HUMAN,
+          tenantId: TENANT,
+          conversationId: CHANNEL_CONV,
+          channelId: "19:room-fc@thread.tacv2",
+          scope: "channel",
+        }) as unknown as { attributes?: Readonly<Record<string, string>> },
+      },
+    },
+  } as never);
+
+  ok((await teamsRoomWatchStopped(part)) === false, "4a: precondition — with a readable store and no row, the room is NOT stopped and the wake proceeds");
+
+  const broken = { ...live, getEngagement: async () => { throw new Error("store down"); } } as typeof live;
+  registerOperationalStore(broken);
+  resetOperationalStore();
+  ok(
+    (await teamsRoomWatchStopped(part)) === true,
+    "🔴 4b: an UNREADABLE store HOLDS the ambient wake — fail-CLOSED, because a wake gate cannot prove the agent is still welcome, and the same outage blocks re-asserting the stop",
+  );
+  registerOperationalStore(live);
+  resetOperationalStore();
+  ok((await teamsRoomWatchStopped(part)) === false, "🔴 4c: NEGATIVE CONTROL — with the live store back it answers false again, so 4b measured the failure and not a latched flag");
 }
 
 console.log(`✓ teams-engagement: ${passed} assertions passed`);

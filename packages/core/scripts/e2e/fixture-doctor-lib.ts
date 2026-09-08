@@ -257,6 +257,14 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     channelVar: ENV.slackDmChannel,
   },
   {
+    id: "slackMpim",
+    label: "Slack GROUP DM (mpim) fixture — J-MPIM's room, the pack's only group DM",
+    required: [v(ENV.slackMpimChannel)],
+    scenarios: "J-MPIM (the live group-DM author leg — OPE-1509)",
+    probe: "slack-dm-channel",
+    channelVar: ENV.slackMpimChannel,
+  },
+  {
     id: "synthetic",
     label: "Synthetic signed-POST driver (approval clicks + /oe slash commands)",
     required: [v(ENV.targetUrl), v(ENV.slackSigningSecret), v(ENV.slackAdminUserId), v(ENV.slackChannel)],

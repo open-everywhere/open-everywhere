@@ -2,6 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-audit-"));
 const dbFile = join(tmp, "ops.sqlite3");
@@ -56,10 +57,9 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
 
 {
   const { auditToolAction } = await import("../agent/audit/tool-action.js");
-  process.env.OE_ORG = "toolorg";
+  _setDeploymentIdentityForTest({ org: "toolorg" });
   process.env.OE_PLATFORM = "slack";
-  process.env.OE_WORKSPACE = "TW";
-  process.env.OE_SURFACE = "CW";
+  _setDeploymentIdentityForTest({ workspace: "TW", surface: "CW" });
   process.env.OE_PRINCIPAL = "U_actor";
   process.env.OE_MODE = "channel";
 
@@ -71,7 +71,8 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   ok(rows.some((e) => e.action === "pr.open" && (e.detail as { number?: number })?.number === 7), "pr.open recorded with its detail");
   ok(rows.every((e) => e.principalId === "U_actor"), "tool action stamps WHO from the ctx binding");
   ok(rows.every((e) => e.platform === "slack" && e.workspace === "TW" && e.surface === "CW"), "tool action stamps WHERE from the ctx binding");
-  for (const k of ["OE_ORG", "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
+  _resetDeploymentIdentityForTest();
+  for (const k of ["OE_PLATFORM", "OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
 }
 
 {

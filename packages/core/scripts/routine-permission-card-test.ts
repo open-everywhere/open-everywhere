@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-routine-permission-card-"));
@@ -16,7 +17,7 @@ function ok(cond: boolean, label: string): void {
 
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_EGRESS_SPOOF = "1";
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();

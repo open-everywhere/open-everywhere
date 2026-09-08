@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { EngagementRow } from "../operational/store.js";
-import type { Partition } from "../memory/partition.js";
+import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { WakeReason, WakeTrust, WakeMessageSender } from "./wake-envelope.js";
 
 export const WARM_SILENT_LIMIT = 3;
@@ -9,7 +9,7 @@ export async function markThreadEngaged(
   p: Partition,
   threadTs: string,
   atIso: string,
-  opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned" },
+  opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned"; engagedBy?: string },
 ): Promise<void> {
   try {
     await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso, opts);
@@ -57,6 +57,15 @@ export async function markThreadStopped(p: Partition, threadTs: string): Promise
 export async function isThreadStopped(p: Partition, anchor: string | undefined): Promise<boolean> {
   if (anchor === undefined || anchor.length === 0) return false;
   return (await getThreadEngagement(p, anchor))?.stopped === true;
+}
+
+export function roomEngagementAddress(p: Partition): { readonly partition: Partition; readonly anchor: string } {
+  const roomKey = domainKeyOf(p);
+  const segs = roomKey.split("/");
+  return {
+    partition: { ...p, surface: segs[2] ?? p.surface, surfaceKey: roomKey, key: roomKey, domainKey: roomKey },
+    anchor: segs[2] ?? p.surface,
+  };
 }
 
 export async function isThreadEngaged(p: Partition, threadTs: string): Promise<boolean> {

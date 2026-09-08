@@ -14,7 +14,8 @@ process.env.DISCORD_BOT_TOKEN = "sec-bot-token-never-real";
 overrideSettingsForTest({ discord: { autoThread: true } });
 overrideSettingsForTest({ discord: { statusUx: true } });
 delete process.env.DISCORD_PUBLIC_KEY;
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 
@@ -54,6 +55,7 @@ import type { Partition } from "@open-everywhere/core/agent/memory/partition.js"
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
 import type { ScenarioDriver } from "./discord-scenario-harness.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 registerConfig({
   loadBundles: () => [],

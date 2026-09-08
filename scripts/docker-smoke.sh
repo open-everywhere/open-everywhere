@@ -38,7 +38,6 @@ echo "-- booting $NAME on the docker() sandbox backend (daemon socket mounted) -
   -v "${SOCK}:/var/run/docker.sock" \
   -e OE_MEMORY_PROVIDER=sqlite \
   -e OE_OPERATIONAL_PROVIDER=sqlite \
-  -e OE_ORG=default \
   -e OE_TELEMETRY=off \
   -e PORT=3000 \
   "$IMAGE" >/dev/null

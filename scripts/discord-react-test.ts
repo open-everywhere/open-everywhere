@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
+import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,7 +17,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-discord-react-")), "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 process.env.DISCORD_BOT_TOKEN = "fixture-bot-token-not-a-secret";
 
 const ORG = "acme";

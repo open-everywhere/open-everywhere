@@ -60,16 +60,6 @@ export function registerSlackFixtureManifest(): void {
   registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
 }
 
-export function testPartnerFactsFromInfo(info: unknown, expectedTeamId?: string): { dmPartnerTrust: "internal" | "external" } {
-  const u = (info as { user?: Record<string, unknown> } | null)?.user;
-  if (!u || typeof u !== "object") return { dmPartnerTrust: "external" };
-  const guestOrStranger = Boolean(u["is_restricted"] || u["is_ultra_restricted"] || u["is_stranger"]);
-  const deletedOrBot = Boolean(u["deleted"] || u["is_bot"]);
-  const sameTeam = expectedTeamId ? u["team_id"] === expectedTeamId : true;
-  const internal = !guestOrStranger && !deletedOrBot && sameTeam;
-  return { dmPartnerTrust: internal ? "internal" : "external" };
-}
-
 export function registerSlackFixtureCodec(): void {
   type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
   const noColon = (s: string): string => s.replace(/:/g, "_");

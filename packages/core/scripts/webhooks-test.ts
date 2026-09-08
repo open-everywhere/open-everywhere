@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { _setDeploymentIdentityForTest, registeredDeploymentIdentity } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -17,7 +18,7 @@ function ok(cond: boolean, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-webhooks-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs, configHookPosture, configHookDisclosure, isFusedHook, hooksSharingSecretRef } = await import("../agent/webhooks/config.js");
 type FusedWebhookHook = import("../agent/webhooks/config.js").FusedWebhookHook;
@@ -464,15 +465,15 @@ function captureReceive(): { calls: Captured[]; to: never } {
   ok(calls[0]!.auth.attributes?.["is_ext_shared"] === undefined, "a throwing trust recheck is caught and treated as unconfirmed (fail-closed)");
 }
 
-ok(webhookOrg() === "acme", "webhookOrg reads OE_ORG (the same tenant default bindFrom uses)");
+ok(webhookOrg() === "acme", "webhookOrg reads the declared org (the same tenant default bindFrom uses)");
 
 {
   const { deploymentOrg } = await import("../agent/identity/binding.js");
-  const prior = process.env.OE_ORG;
-  process.env.OE_ORG = "Acme Inc";
+  const prior = registeredDeploymentIdentity()?.org;
+  _setDeploymentIdentityForTest({ org: "Acme Inc" });
   ok(deploymentOrg() === "Acme-Inc", "deploymentOrg NORMALISES a value with a space (seg())");
   ok(webhookOrg() === deploymentOrg(), "🔴 webhookOrg agrees with deploymentOrg on a value that needs normalising — it used to return the raw \"Acme Inc\"");
-  process.env.OE_ORG = prior;
+  _setDeploymentIdentityForTest({ org: prior });
   ok(webhookOrg() === "acme", "…and the fixture's org is restored for the rest of the suite");
 }
 

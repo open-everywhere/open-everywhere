@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { normalizeFenceNonce } from "../agent/access/untrusted.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -19,7 +20,7 @@ const REPO = resolve(HERE, "../../..");
 const dir = join(tmpdir(), `open-everywhere-webhook-disclosure-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ORG = "acme";
+_setDeploymentIdentityForTest({ org: "acme" });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackTestBridge();

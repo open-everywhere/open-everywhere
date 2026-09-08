@@ -4,6 +4,70 @@ import type { Connection } from "./bundle.js";
 import { extraEgressHosts } from "./extra-hosts.js";
 import { DEFAULT_NETWORK_ACCESS_LEVEL, TRUSTED_ACCESS_HOSTS, type NetworkAccessLevel } from "./network-access.js";
 
+export type EgressPlane = "sandbox" | "host";
+
+export type EgressRowUnit = "call" | "policy";
+
+export type EgressOutcome = "allowed" | "denied" | "failed" | "granted";
+
+export interface EgressAuditRow {
+  readonly plane: EgressPlane;
+  readonly unit: EgressRowUnit;
+  readonly host: string;
+  readonly verb: readonly string[] | "any";
+  readonly credential: string | null;
+  readonly outcome: EgressOutcome;
+}
+
+export const EGRESS_AUDIT_ROW_FIELDS = ["plane", "unit", "host", "verb", "credential", "outcome"] as const;
+
+export function normaliseVerbs(verbs: readonly string[] | "any"): readonly string[] | "any" {
+  if (verbs === "any") return "any";
+  return [...new Set(verbs.map((v) => v.toUpperCase()))].sort();
+}
+
+export function egressAuditFields(row: EgressAuditRow): Record<string, unknown> {
+  return {
+    plane: row.plane,
+    unit: row.unit,
+    host: row.host.toLowerCase(),
+    verb: normaliseVerbs(row.verb),
+    credential: row.credential,
+    outcome: row.outcome,
+  };
+}
+
+export function hostCallAuditFields(args: {
+  readonly host: string;
+  readonly verb: string;
+  readonly outcome: EgressOutcome;
+  readonly credential?: string | null;
+}): Record<string, unknown> {
+  return egressAuditFields({
+    plane: "host",
+    unit: "call",
+    host: args.host,
+    verb: [args.verb],
+    credential: args.credential ?? null,
+    outcome: args.outcome,
+  });
+}
+
+export function sandboxPolicyAuditFields(args: {
+  readonly host: string;
+  readonly verb: readonly string[] | "any";
+  readonly credential: string | null;
+}): Record<string, unknown> {
+  return egressAuditFields({
+    plane: "sandbox",
+    unit: "policy",
+    host: args.host,
+    verb: args.verb,
+    credential: args.credential,
+    outcome: "granted",
+  });
+}
+
 export type ResolveHeaders = (connection: Connection) => Promise<Record<string, string>>;
 
 export type NarrowConnections = (connectionIds: readonly string[]) => Promise<readonly string[] | null>;
@@ -81,9 +145,9 @@ const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"
 
 export interface OpenWriteHost {
   readonly host: string;
-  readonly via: string | null;
+  readonly credential: string | null;
   readonly credentialed: boolean;
-  readonly methods: readonly string[] | "any";
+  readonly verb: readonly string[] | "any";
 }
 
 export function ruleStampsCredential(rule: { readonly transform?: readonly unknown[] }): boolean {
@@ -93,9 +157,13 @@ export function ruleStampsCredential(rule: { readonly transform?: readonly unkno
 export const WRITE_HOSTS_ROW_CAP = 20;
 
 export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): Record<string, unknown> {
+  const listed = writeHosts.slice(0, WRITE_HOSTS_ROW_CAP).map((h) => ({
+    ...sandboxPolicyAuditFields({ host: h.host, verb: h.verb, credential: h.credential }),
+    credentialed: h.credentialed,
+  }));
   return {
     writeHostCount: writeHosts.length,
-    ...(writeHosts.length > 0 ? { writeHosts: writeHosts.slice(0, WRITE_HOSTS_ROW_CAP) } : {}),
+    ...(listed.length > 0 ? { writeHosts: listed } : {}),
     ...(writeHosts.length > WRITE_HOSTS_ROW_CAP ? { writeHostsTruncated: true } : {}),
   };
 }
@@ -105,14 +173,14 @@ export function openWriteHosts(
   reachableHosts: readonly ReachableHost[] = [],
 ): readonly OpenWriteHost[] {
   if (typeof policy === "string") {
-    return policy === "allow-all" ? [{ host: "*", via: null, credentialed: false, methods: "any" }] : [];
+    return policy === "allow-all" ? [{ host: "*", credential: null, credentialed: false, verb: "any" }] : [];
   }
   const allow = (policy as { allow?: readonly string[] | Record<string, EgressRule[]> }).allow;
   if (!allow) return [];
   const viaByHost = new Map(reachableHosts.map((h) => [h.host, h.viaConnection]));
   const byHost = (a: { host: string }, b: { host: string }): number => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0);
   if (Array.isArray(allow)) {
-    return allow.map((host) => ({ host, via: null, credentialed: false, methods: "any" as const })).sort(byHost);
+    return allow.map((host) => ({ host, credential: null, credentialed: false, verb: "any" as const })).sort(byHost);
   }
   const out: OpenWriteHost[] = [];
   for (const [host, rules] of Object.entries(allow)) {
@@ -133,9 +201,9 @@ export function openWriteHosts(
     if (!writes) continue;
     out.push({
       host,
-      via: credentialed ? (viaByHost.get(host) ?? null) : null,
+      credential: credentialed ? (viaByHost.get(host) ?? null) : null,
       credentialed,
-      methods: unrestricted ? "any" : [...methods].sort(),
+      verb: unrestricted ? "any" : [...methods].sort(),
     });
   }
   return out.sort(byHost);

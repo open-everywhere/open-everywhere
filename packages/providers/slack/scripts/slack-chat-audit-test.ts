@@ -4,10 +4,12 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-slack-chat-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
+_resetDeploymentIdentityForTest();
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 overrideSettingsForTest({ audit: { silences: false } });

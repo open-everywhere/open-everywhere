@@ -69,13 +69,13 @@ const ok = (label: string, cond: boolean) => {
   const client = new Client({ name: "ops-test", version: "0" });
   await client.connect(ct);
 
-  const res = await client.callTool({ name: "scaffold_env", arguments: { values: { AI_GATEWAY_API_KEY: "new", OE_ORG: "acme" }, path: file } });
+  const res = await client.callTool({ name: "scaffold_env", arguments: { values: { AI_GATEWAY_API_KEY: "new", OE_PUBLIC_BASE_URL: "https://example.test" }, path: file } });
   const out = JSON.parse((res.content as { type: string; text: string }[])[0].text);
-  ok("scaffold_env reports the keys it set", out.ok === true && out.keysSet.includes("OE_ORG"));
+  ok("scaffold_env reports the keys it set", out.ok === true && out.keysSet.includes("OE_PUBLIC_BASE_URL"));
 
   const written = readFileSync(file, "utf-8");
   ok("scaffold_env updates an existing key in place", written.includes("AI_GATEWAY_API_KEY=new") && !written.includes("=old"));
-  ok("scaffold_env appends a new key", written.includes("OE_ORG=acme"));
+  ok("scaffold_env appends a new key", written.includes("OE_PUBLIC_BASE_URL=https://example.test"));
   ok("scaffold_env preserves comments", written.includes("# existing"));
 
   const pfRes = await client.callTool({ name: "preflight", arguments: { envPath: file } });

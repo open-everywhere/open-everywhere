@@ -1,5 +1,7 @@
 import {
+  declaredWorkspaceTrust,
   rootDmGrainAttrs,
+  surfaceKeySegment,
   type BindableContext,
   type IdentityMapper,
   type RawIdentity,
@@ -17,6 +19,7 @@ export interface OpenEverywhereSlackAuth {
 export interface SlackIdentityInput {
   readonly userId: string;
   readonly teamId?: string;
+  readonly enterpriseId?: string;
   readonly channelId: string;
   readonly threadTs?: string;
   readonly channelType?: string;
@@ -32,6 +35,7 @@ export function buildSlackAuth(input: SlackIdentityInput): OpenEverywhereSlackAu
     user_id: input.userId,
   };
   if (input.teamId) attributes.team_id = input.teamId;
+  if (input.enterpriseId) attributes.enterprise_id = input.enterpriseId;
   if (input.threadTs) attributes.thread_ts = input.threadTs;
   if (input.channelType) attributes.channel_type = input.channelType;
   if (typeof input.isPrivate === "boolean") attributes.is_private = String(input.isPrivate);
@@ -52,13 +56,31 @@ export interface ChannelFacts {
   readonly dmPartnerTrust?: "internal" | "external";
 }
 
+function enterpriseIdOfUser(u: Record<string, unknown>): string | undefined {
+  const eu = u["enterprise_user"];
+  if (!eu || typeof eu !== "object") return undefined;
+  const id = (eu as Record<string, unknown>)["enterprise_id"];
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+export function slackWorkspaceVouched(teamId: string | undefined, enterpriseId: string | undefined): boolean {
+  const team = surfaceKeySegment(teamId);
+  if (team.length === 0) return false;
+  const enterprise = surfaceKeySegment(enterpriseId);
+  return (
+    declaredWorkspaceTrust(`slack/${team}`, enterprise.length === 0 ? undefined : `slack/${enterprise}`) === "internal"
+  );
+}
+
 export function partnerFactsFromInfo(info: unknown, expectedTeamId?: string): { dmPartnerTrust: "internal" | "external" } {
   const u = (info as { user?: Record<string, unknown> } | null)?.user;
   if (!u || typeof u !== "object") return { dmPartnerTrust: "external" };
   const guestOrStranger = Boolean(u["is_restricted"] || u["is_ultra_restricted"] || u["is_stranger"]);
-  const deletedOrBot = Boolean(u["deleted"] || u["is_bot"]);
-  const sameTeam = expectedTeamId ? u["team_id"] === expectedTeamId : true;
-  const internal = !guestOrStranger && !deletedOrBot && sameTeam;
+  const deleted = Boolean(u["deleted"]);
+  const homeTeamId = typeof u["team_id"] === "string" ? (u["team_id"] as string) : undefined;
+  const ownWorkspace = expectedTeamId !== undefined && expectedTeamId.length > 0 && homeTeamId === expectedTeamId;
+  const admittedWorkspace = ownWorkspace || slackWorkspaceVouched(homeTeamId, enterpriseIdOfUser(u));
+  const internal = !guestOrStranger && !deleted && admittedWorkspace;
   return { dmPartnerTrust: internal ? "internal" : "external" };
 }
 
@@ -160,6 +182,7 @@ export const bindSlack: IdentityMapper = (ctx): RawIdentity => {
   const dmPartnerTrust: Trust | undefined = dmRaw === "internal" || dmRaw === "external" ? dmRaw : undefined;
   return {
     workspace: slackAttr(a, ["team_id", "teamId"]),
+    trustEnterprise: slackAttr(a, ["enterprise_id", "enterpriseId"]),
     surface: channelId,
     mode,
     visibility: slackVisibility(channelType, isPrivate, mode),

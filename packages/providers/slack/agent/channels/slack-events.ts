@@ -117,8 +117,14 @@ import {
 export interface SlackEventEnvelope {
   readonly type?: string;
   readonly team_id?: string;
+  readonly enterprise_id?: string;
   readonly event?: Record<string, unknown> & { readonly type?: string };
   readonly [key: string]: unknown;
+}
+
+export function slackEnterpriseIdFromEnvelope(envelope: SlackEventEnvelope): string | undefined {
+  const id = envelope.enterprise_id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 export interface ParsedMessageEvent {
@@ -126,6 +132,7 @@ export interface ParsedMessageEvent {
   readonly ts: string;
   readonly threadTs?: string;
   readonly teamId?: string;
+  readonly enterpriseId?: string;
   readonly userId?: string;
   readonly botId?: string;
   readonly subtype?: string;
@@ -383,6 +390,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const authoredText = typeof inner.text === "string" ? inner.text : "";
   const text = resolveSlackInboundText(authoredText, inner);
   const teamId = envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined);
+  const enterpriseId = slackEnterpriseIdFromEnvelope(envelope);
   const attachments = parseSlackFiles(inner.files);
   for (const a of attachments) {
     if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId });
@@ -392,6 +400,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     ts,
     threadTs,
     teamId,
+    ...(enterpriseId === undefined ? {} : { enterpriseId }),
     userId: typeof inner.user === "string" ? inner.user : undefined,
     botId: typeof inner.bot_id === "string" ? inner.bot_id : undefined,
     subtype,
@@ -869,6 +878,7 @@ function authForEvent(ev: ParsedMessageEvent, facts?: ChannelFacts): OpenEverywh
   return buildSlackAuth({
     userId: ev.userId ?? "",
     teamId: ev.teamId,
+    ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
     channelId: ev.channelId,
     threadTs: ev.threadTs,
     channelType: ev.channelType,
@@ -1988,6 +1998,7 @@ export interface ParsedChannelJoinEvent {
   readonly channelId: string;
   readonly ts: string;
   readonly teamId?: string;
+  readonly enterpriseId?: string;
   readonly userId: string;
   readonly inviterId?: string;
   readonly channelKind?: string;
@@ -2001,11 +2012,13 @@ export function parseChannelJoinEvent(envelope: SlackEventEnvelope): ParsedChann
   const userId = typeof e.user === "string" ? e.user : "";
   const ts = typeof e.event_ts === "string" ? e.event_ts : "";
   if (!channelId || !userId || !ts) return null;
+  const enterpriseId = slackEnterpriseIdFromEnvelope(envelope);
   return {
     channelId,
     userId,
     ts,
     teamId: envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined),
+    ...(enterpriseId === undefined ? {} : { enterpriseId }),
     inviterId: typeof e.inviter === "string" ? e.inviter : undefined,
     channelKind: typeof e.channel_type === "string" ? e.channel_type : undefined,
   };
@@ -2220,6 +2233,7 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
     auth: buildSlackAuth({
       userId: ev.inviterId ?? ev.userId,
       teamId: ev.teamId,
+      ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
       channelId: ev.channelId,
       threadTs: ev.ts,
       channelType: m.channelType ?? joinChannelType(ev.channelKind),

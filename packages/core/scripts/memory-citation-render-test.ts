@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-memory-citation-render-")), "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 delete process.env.OE_EGRESS_SPOOF;
 
 import { truncateMemoryCitationPaths } from "../agent/channels/turn-delivery.js";
@@ -16,6 +16,7 @@ import { editPostedMessage } from "../agent/channels/reply-edit.js";
 import type { EditLocus } from "../agent/channels/reply-edit.js";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { readAudit } from "../agent/audit/audit.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

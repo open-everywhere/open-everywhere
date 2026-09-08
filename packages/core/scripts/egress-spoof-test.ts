@@ -4,13 +4,14 @@ import { join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-egress-spoof-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_ORG;
+_setDeploymentIdentityForTest({ org: undefined });
 delete process.env.OE_EGRESS_SPOOF;
 delete process.env.VERCEL;
 delete process.env.OE_PLATFORM;
 
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import type { SurfaceMessageOps } from "../agent/channels/surface-message-ops.js";
+import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 

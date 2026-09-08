@@ -151,6 +151,44 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
     "an EXTRA authored tool is caught — giving a subagent hands is a posture change that must move its manifest rows first",
   );
 
+  const REPLACEMENT = "import { defineTool } from \"eve/tools\";\nexport default defineTool({});\n";
+  const withTool = (name: string, src: string): DeclaredSubagentSource =>
+    goodSubagent({ toolFiles: new Map(FRAMEWORK.map((t) => [t, t === name ? src : DISABLED])) });
+
+  eq(
+    checkDeclaredSubagents([withTool("bash", REPLACEMENT)], FRAMEWORK, [], ["bash"]),
+    [],
+    "a REQUIRED slot filled by an authored replacement passes clean — that is eve's own sanctioned route",
+  );
+  ok(
+    checkDeclaredSubagents([goodSubagent()], FRAMEWORK, [], ["bash"]).some((p) => p.includes("REQUIRED framework tool slot and throws at build")),
+    "…and a `disableTool()` sentinel in a REQUIRED slot is caught, with the reason named — instead of eve's build throwing after every gate went green",
+  );
+  ok(
+    checkDeclaredSubagents([withTool("bash", REPLACEMENT)], FRAMEWORK, [], []).some((p) => p.includes("is not a `disableTool()` sentinel")),
+    "negative control: the SAME replacement in a NON-required slot is still a posture change — the exemption is per-slot, not blanket",
+  );
+  ok(
+    checkDeclaredSubagents([goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) })], FRAMEWORK, [], ["bash"])
+      .some((p) => p.includes("tools/bash.ts is missing") && p.includes("Author a no-op replacement tool")),
+    "a MISSING required slot is still a hole, and the remedy it names is the replacement, not a sentinel",
+  );
+  ok(
+    checkDeclaredSubagents([goodSubagent()], FRAMEWORK, [], ["connection_search"]).some((p) => p.includes("is not in the default-mounted set")),
+    "a slot declared REQUIRED but not MOUNTED is a contradiction between two reads of eve, and says so rather than demanding a file for a slot eve never mounts",
+  );
+  ok(
+    checkDeclaredSubagents([withTool("bash", `// this slot used to be a disableTool() sentinel\n${REPLACEMENT}`)], FRAMEWORK, [], []).some((p) =>
+      p.includes("is not a `disableTool()` sentinel"),
+    ),
+    "a real tool that only MENTIONS disableTool() in a comment is not mistaken for a sentinel",
+  );
+  eq(
+    checkDeclaredSubagents([withTool("bash", `// a sentinel: disableTool()\n${DISABLED}`)], FRAMEWORK, [], []),
+    [],
+    "…and a genuine sentinel still passes with such a comment above it",
+  );
+
   expectProblem(goodSubagent({ agentSource: undefined }), "agent.ts is missing", "a missing config module is caught");
   expectProblem(goodSubagent({ agentSource: "export default defineAgent({ model: m(), outputSchema: S });" }), "no `description`", "a missing description is caught (eve fails the build on it too)");
   expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m() });" }), "no `outputSchema`", "an UNTYPED subagent is caught — a prose result is not actionable by the caller or the audit trail");

@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { markThreadStopped } from "../channels/engagement.js";
+import { markThreadStopped, roomEngagementAddress } from "../channels/engagement.js";
 import { appendAudit } from "../audit/audit.js";
 
 export const STAND_DOWN_ACTION = "engagement.stood_down";
@@ -43,14 +43,26 @@ export default defineTool({
       );
     }
     const partition = resolvePartition(c);
-    const marked = await markThreadStopped(partition, anchor);
+    let marked = await markThreadStopped(partition, anchor);
+    const room = binding.roomEngagementKey === undefined ? null : roomEngagementAddress(partition);
+    let stoppedRoom = false;
+    if (!marked && room) {
+      marked = await markThreadStopped(room.partition, room.anchor);
+      stoppedRoom = marked;
+    }
     await appendAudit({
       org: partition.org,
       platform: partition.platform,
       workspace: partition.workspace,
       surface: partition.surfaceKey,
       action: STAND_DOWN_ACTION,
-      detail: { surfaceKey: partition.surfaceKey, anchor, marked, reason: input.reason ?? null },
+      detail: {
+        surfaceKey: partition.surfaceKey,
+        anchor,
+        marked,
+        reason: input.reason ?? null,
+        ...(binding.roomEngagementKey === undefined ? {} : { roomAnchor: binding.roomEngagementKey, roomStop: stoppedRoom }),
+      },
     }).catch(() => undefined);
     if (!marked) {
       throw new Error(
@@ -59,9 +71,11 @@ export default defineTool({
     }
     return {
       standingDown: true,
-      note:
-        "Standing down here — you won't be woken by messages in this conversation until someone " +
-        "@mentions you again. Acknowledge it in one short line and end the turn.",
+      note: stoppedRoom
+        ? "Standing down here — you won't be woken by messages anywhere in this room until someone " +
+          "@mentions you again. Acknowledge it in one short line and end the turn."
+        : "Standing down here — you won't be woken by messages in this conversation until someone " +
+          "@mentions you again. Acknowledge it in one short line and end the turn.",
     };
   },
 });

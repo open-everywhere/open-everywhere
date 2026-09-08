@@ -131,10 +131,16 @@ export interface SurfaceTrustQuery {
   readonly tenantKey: string;
   readonly surfaceKeys: readonly string[];
   readonly groupKey?: string;
+  readonly enterpriseKey?: string;
 }
 
 export function declaredSurfaceTrust(q: SurfaceTrustQuery): SurfaceTrust | undefined {
-  const keys = [...q.surfaceKeys, ...(q.groupKey === undefined ? [] : [q.groupKey]), q.tenantKey];
+  const keys = [
+    ...q.surfaceKeys,
+    ...(q.groupKey === undefined ? [] : [q.groupKey]),
+    q.tenantKey,
+    ...(q.enterpriseKey === undefined ? [] : [q.enterpriseKey]),
+  ];
   let best: { readonly trust: SurfaceTrust; readonly specificity: number; readonly keyIndex: number } | undefined;
   for (const e of surfaces) {
     for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
@@ -158,16 +164,33 @@ export function isVouchedInternal(workspaceKey: string, surfaceKey: string): boo
   return declaredTrustForKeys(workspaceKey, surfaceKey) === "internal";
 }
 
-export function isVouchedSurface(surfaceKey: string): boolean {
-  return isVouchedInternal(tenantKeyOfSurfaceKey(surfaceKey), surfaceKey);
+export function isVouchedSurface(
+  surfaceKey: string,
+  opts?: {
+    readonly containerKey?: string;
+    readonly groupKey?: string;
+  },
+): boolean {
+  const containerKey = opts?.containerKey;
+  return (
+    declaredSurfaceTrust({
+      tenantKey: tenantKeyOfSurfaceKey(surfaceKey),
+      surfaceKeys: containerKey === undefined || containerKey === surfaceKey ? [surfaceKey] : [surfaceKey, containerKey],
+      ...(opts?.groupKey === undefined ? {} : { groupKey: opts.groupKey }),
+    }) === "internal"
+  );
 }
 
 function tenantKeyOfSurfaceKey(surfaceKey: string): string {
   return surfaceKey.split("/").slice(0, 2).join("/");
 }
 
-export function declaredWorkspaceTrust(workspaceKey: string): SurfaceTrust | undefined {
-  return declaredSurfaceTrust({ tenantKey: workspaceKey, surfaceKeys: [workspaceKey] });
+export function declaredWorkspaceTrust(workspaceKey: string, enterpriseKey?: string): SurfaceTrust | undefined {
+  return declaredSurfaceTrust({
+    tenantKey: workspaceKey,
+    surfaceKeys: [workspaceKey],
+    ...(enterpriseKey === undefined ? {} : { enterpriseKey }),
+  });
 }
 
 export function registeredSurfaces(): readonly Surface[] {

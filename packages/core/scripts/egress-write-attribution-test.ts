@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { compileNetworkPolicy, openWriteHosts, type OpenWriteHost } from "../agent/access/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
@@ -67,9 +68,9 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   );
 
   const vendor = rows.find((r) => r.host === "api.vendor.test")!;
-  eq(vendor.via, "notion-rest", "🔴 the row NAMES the connection whose rule opened the write — the join ship #159 could not make");
+  eq(vendor.credential, "notion-rest", "🔴 the row NAMES the connection whose rule opened the write — the join a live run could not make");
   eq(vendor.credentialed, true, "…and says a credential really rides on it");
-  eq(vendor.methods, ["GET", "PATCH", "POST"], "…and the exact methods it admits, de-duplicated and sorted");
+  eq(vendor.verb, ["GET", "PATCH", "POST"], "…and the exact methods it admits, de-duplicated and sorted");
 
   ok(
     !rows.some((r) => r.host === "api.readonly.test"),
@@ -77,9 +78,9 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   );
 
   const bare = rows.find((r) => r.host === "raw.githubusercontent.com")!;
-  eq(bare.via, null, "a credential-less allow is attributed to no connection, which is true of it");
+  eq(bare.credential, null, "a credential-less allow is attributed to no connection, which is true of it");
   eq(bare.credentialed, false, "…and says so positively, rather than leaving the reader to infer it from a null");
-  eq(bare.methods, "any", "🔴 …and a bare allow reports `any`: no method match admits DELETE as readily as GET");
+  eq(bare.verb, "any", "🔴 …and a bare allow reports `any`: no method match admits DELETE as readily as GET");
 }
 
 {
@@ -92,7 +93,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     async (ids) => ids,
   );
   const grantedRow = openWriteHosts(grantedPolicy, hosts).find((r) => r.host === "github.com")!;
-  eq(grantedRow.via, "gh-app", "🔴 positive control: with the grant intact, github.com IS attributed to its connection");
+  eq(grantedRow.credential, "gh-app", "🔴 positive control: with the grant intact, github.com IS attributed to its connection");
   eq(grantedRow.credentialed, true, "…and the row says a credential rides");
 
   const revokedPolicy = await compileNetworkPolicy(
@@ -110,12 +111,12 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   const revokedRow = openWriteHosts(revokedPolicy, hosts).find((r) => r.host === "github.com")!;
   ok(revokedRow !== undefined, "the re-added host is still reported as write-open — the reach is real, only the attribution was wrong");
   eq(
-    revokedRow.via,
+    revokedRow.credential,
     null,
     "🔴 OPE-1448: a host the policy stamps NOTHING on names no connection — a revoked credential must never read as still injected",
   );
   eq(revokedRow.credentialed, false, "…and the row states the absence positively");
-  eq(revokedRow.methods, "any", "…while still reporting the bare allow's full verb reach");
+  eq(revokedRow.verb, "any", "…while still reporting the bare allow's full verb reach");
 }
 
 {
@@ -129,18 +130,18 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   const bundleClaims: ReachableHost[] = [{ host: "github.com", viaConnection: "gh-conn", methods: ["GET"] }];
 
   const unfiltered = openWriteHosts(brokered, bundleClaims).find((r) => r.host === "github.com")!;
-  eq(unfiltered.via, "gh-conn", "positive control: attribution is a host-NAME lookup — an unfiltered list really does name the bundle connection");
+  eq(unfiltered.credential, "gh-conn", "positive control: attribution is a host-NAME lookup — an unfiltered list really does name the bundle connection");
 
   const rows = openWriteHosts(brokered, brokerAttributionHosts(bundleClaims));
   eq(rows.map((r) => r.host), ["codeload.github.com", "github.com"], "both brokered git hosts are reported");
   const gh = rows.find((r) => r.host === "github.com")!;
   eq(gh.credentialed, true, "🔴 a brokered host says a credential rides, though no bundle connection named it");
   eq(
-    gh.via,
+    gh.credential,
     null,
     "🔴 …and names none: the broker REPLACED the bundle's github.com rule, so naming that connection would report a credential that is not the one riding",
   );
-  eq(gh.methods, "any", "🔴 the broker's rule declares no method match, so it is open to every verb");
+  eq(gh.verb, "any", "🔴 the broker's rule declares no method match, so it is open to every verb");
   ok(!JSON.stringify(rows).includes(SECRET), "…and the brokered token does not reach the row");
 
   eq(
@@ -155,7 +156,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
 
   const rows = openWriteHosts(headerless, [{ host: "api.acme.test", viaConnection: "acme" }]);
   eq(rows[0]!.credentialed, true, "🔴 a transform entry with no headers still reads as credentialed — unrecognised shapes err toward MORE open");
-  eq(rows[0]!.via, "acme", "…and is attributed, because something is stamped");
+  eq(rows[0]!.credential, "acme", "…and is attributed, because something is stamped");
 
   const { summariseEgressPolicy } = await import("../agent/access/egress-status.js");
   const entry = summariseEgressPolicy(headerless).allow.find((a) => a.host === "api.acme.test")!;
@@ -177,8 +178,8 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   const hosts: ReachableHost[] = [{ host: "api.acme.test", viaConnection: "acme" }];
   const rows = openWriteHosts(await compile(hosts), hosts);
   eq(rows.length, 1, "an un-narrowed credentialed host is write-capable");
-  eq(rows[0]!.methods, "any", "…reported as `any`, not as an empty method list");
-  eq(rows[0]!.via, "acme", "…still attributed to its connection");
+  eq(rows[0]!.verb, "any", "…reported as `any`, not as an empty method list");
+  eq(rows[0]!.credential, "acme", "…still attributed to its connection");
 }
 
 {
@@ -189,7 +190,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   eq(((policy as { allow: Record<string, unknown[]> }).allow["api.acme.test"] ?? []).length, 2, "the compiler really emitted one rule per prefix");
   const rows = openWriteHosts(policy, hosts);
   eq(rows.length, 1, "a multi-rule host is reported once");
-  eq(rows[0]!.methods, ["GET", "POST"], "…with the union of its rules' methods, not the first rule's");
+  eq(rows[0]!.verb, ["GET", "POST"], "…with the union of its rules' methods, not the first rule's");
 }
 
 {
@@ -198,7 +199,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     [{ host: "api.acme.test", viaConnection: "acme" }],
   );
   eq(rows.length, 1, "a host with any mutating rule is reported even when another rule is read-only");
-  eq(rows[0]!.methods, ["DELETE", "GET"], "…methods are upper-cased, so a lower-case declaration cannot hide a DELETE");
+  eq(rows[0]!.verb, ["DELETE", "GET"], "…methods are upper-cased, so a lower-case declaration cannot hide a DELETE");
 }
 
 {
@@ -208,7 +209,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   const all = openWriteHosts("allow-all" as never, []);
   eq(all.length, 1, "🔴 `allow-all` is NOT silence — the most open policy the type admits must not row as `writeHostCount: 0`");
   eq(all[0]!.host, "*", "…it is reported as the catch-all");
-  eq(all[0]!.methods, "any", "…open to every verb");
+  eq(all[0]!.verb, "any", "…open to every verb");
 
   const arr = openWriteHosts({ allow: ["b.test", "a.test"] } as never, [{ host: "a.test", viaConnection: "acme" }]);
   eq(
@@ -216,9 +217,9 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     ["a.test", "b.test"],
     "🔴 the bare-array form of `allow` names its HOSTS — `Object.entries` on it would name a host \"0\"",
   );
-  eq(arr[0]!.via, null, "an array entry stamps nothing, so it names no connection even where the config wished for one");
+  eq(arr[0]!.credential, null, "an array entry stamps nothing, so it names no connection even where the config wished for one");
   eq(arr[0]!.credentialed, false, "…and says so");
-  eq(arr[1]!.methods, "any", "…and an array entry carries no rules, so no method narrowing");
+  eq(arr[1]!.verb, "any", "…and an array entry carries no rules, so no method narrowing");
 
   eq(
     openWriteHosts({ allow: { "api.acme.test": [{ match: { method: ["GET"] }, ...bearer }] } } as never),
@@ -227,7 +228,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
   );
   const orphan = openWriteHosts({ allow: { "*": [] } } as never, []);
   eq(orphan.length, 1, "the `networkAccessLevel: \"full\"` catch-all is reported");
-  eq(orphan[0]!.via, null, "…with no attribution, because nothing credentialed opened it");
+  eq(orphan[0]!.credential, null, "…with no attribution, because nothing credentialed opened it");
   eq(orphan[0]!.credentialed, false, "…and it stamps nothing");
   eq(all[0]!.credentialed, false, "`allow-all` is reach without a credential, and the row separates the two");
 }
@@ -288,9 +289,9 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
     const listed = detail.writeHosts as OpenWriteHost[];
     ok(Array.isArray(listed) && listed.length === 1, "…and the list itself");
     eq(listed[0]!.host, "api.vendor.test", "🔴 the row NAMES the host that was open to a write");
-    eq(listed[0]!.via, "notion-rest", "🔴 …and the connection that opened it — the whole point of OPE-1445");
+    eq(listed[0]!.credential, "notion-rest", "🔴 …and the connection that opened it — the whole point of OPE-1445");
     eq(listed[0]!.credentialed, true, "…and that a credential really rides on it");
-    eq(listed[0]!.methods, ["GET", "PATCH", "POST"], "…with the methods it admits");
+    eq(listed[0]!.verb, ["GET", "PATCH", "POST"], "…with the methods it admits");
     ok(!JSON.stringify(row).includes(SECRET), "🔴 end-to-end: the audited row carries no credential value");
     ok(detail.writeHostsTruncated === undefined, "a short list is not marked truncated");
   }
@@ -362,7 +363,7 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
       const listed = detail.writeHosts as OpenWriteHost[];
       ok(Array.isArray(listed) && listed.length === 1, "…and the list itself");
       eq(listed[0]!.host, "api.vendor.test", "🔴 naming the host the refused child would have left open to a write");
-      eq(listed[0]!.via, "notion-rest", "🔴 …and the connection that would have opened it");
+      eq(listed[0]!.credential, "notion-rest", "🔴 …and the connection that would have opened it");
       eq(listed[0]!.credentialed, true, "…with a credential stamped on it");
       ok(!JSON.stringify(row).includes(SECRET), "🔴 the abort row carries no credential value either");
     }
@@ -390,6 +391,107 @@ const compile = (hosts: ReachableHost[], connections: Connection[] = [conn("noti
         "🔴 …and writes no divergence row — the row is the abort's own, not a field every pass carries",
       );
     }
+  }
+}
+
+{
+  console.log("  §4 the cross-plane row contract (OPE-1547):");
+  const { EGRESS_AUDIT_ROW_FIELDS, hostCallAuditFields, writeHostsAuditFields } = await import("../agent/access/egress.js");
+
+  const sandboxHosts: ReachableHost[] = [
+    { host: "api.vendor.test", viaConnection: "notion-rest", methods: ["GET", "POST", "PATCH"] },
+  ];
+  const sandboxPolicy = await compile(sandboxHosts);
+  ok(JSON.stringify(sandboxPolicy).includes(SECRET), "🔴 positive control: the compiled policy really carries the canary credential");
+  const sandboxFields = writeHostsAuditFields(openWriteHosts(sandboxPolicy, sandboxHosts));
+  const sandboxRow = (sandboxFields.writeHosts as Record<string, unknown>[])[0]!;
+  eq(sandboxRow.plane, "sandbox", "the sandbox plane's entry names its plane");
+  eq(sandboxRow.unit, "policy", "🔴 …and its UNIT: one host one firewall apply left open, never a call anybody observed");
+  eq(sandboxRow.outcome, "granted", "🔴 …so its outcome is `granted` — this plane cannot report a call's fate");
+  eq(sandboxRow.host, "api.vendor.test", "…the target host");
+  eq(sandboxRow.verb, ["GET", "PATCH", "POST"], "…the verbs it admits, under the SHARED name `verb`");
+  eq(sandboxRow.credential, "notion-rest", "🔴 …and the credential IDENTITY, under the shared name `credential`");
+  ok(!JSON.stringify(sandboxRow).includes(SECRET), "🔴 …carrying no byte of the credential VALUE");
+
+  process.env.OE_ORG = "acme-org";
+  process.env.OE_WORKSPACE = "ws1";
+  process.env.OE_SURFACE = "c1";
+  await import("./_register-test-config.js");
+  const { oeFetch, setHostEgressLookup } = await import("../agent/access/host-egress.js");
+  const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+  type OperationalStore = import("../agent/operational/store.js").OperationalStore;
+  type BindableContext = import("../agent/identity/binding.js").BindableContext;
+
+  const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"] as const;
+  const savedProxyEnv = PROXY_VARS.map((k) => [k, process.env[k]] as const);
+  for (const k of PROXY_VARS) delete process.env[k];
+
+  const realFetch = globalThis.fetch;
+  const live = getOperationalStore();
+  const hostRows: { action: string; detail?: Record<string, unknown> }[] = [];
+  const sentInits: (RequestInit | undefined)[] = [];
+  globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+    sentInits.push(init);
+    return new Response("stub", { status: 200 });
+  }) as typeof globalThis.fetch;
+  registerOperationalStore({
+    ...live,
+    appendAudit: async (r: { action: string; detail?: Record<string, unknown> }) => void hostRows.push(r),
+  } as unknown as OperationalStore);
+  resetOperationalStore();
+  setHostEgressLookup(async () => ["93.184.216.34"]);
+
+  let hostRow: Record<string, unknown>;
+  try {
+    const res = await oeFetch({} as BindableContext, "https://raw.githubusercontent.com/o/r/main/README.md", {
+      tool: "describe_image",
+    });
+    ok(res.status === 200, "positive control: the stubbed dispatch really returned, so the row below describes a settled call");
+    const allow = hostRows.filter((r) => r.action === "egress.hostside.allow").at(-1);
+    ok(allow !== undefined, "🔴 an allowed host-side call appends exactly one `egress.hostside.allow` row");
+    hostRow = allow!.detail as Record<string, unknown>;
+
+    sentInits.length = 0;
+    await oeFetch({} as BindableContext, "https://raw.githubusercontent.com/o/r/main/README.md", {
+      tool: "describe_image",
+      method: "DELETE",
+    } as unknown as Parameters<typeof oeFetch>[2]);
+    eq(sentInits.length, 1, "positive control: the forced call really reached the stubbed socket exactly once");
+    eq(sentInits.at(-1)!.method, undefined, "🔴 a caller-supplied verb never reaches the socket — oeFetch sets no `method`, so the dispatch is a GET");
+    const forced = hostRows.filter((r) => r.action === "egress.hostside.allow").at(-1)!.detail as Record<string, unknown>;
+    eq(forced.verb, ["GET"], "🔴 …and the row reports the plane's constant verb, never one a caller asked for");
+  } finally {
+    setHostEgressLookup(undefined);
+    globalThis.fetch = realFetch;
+    registerOperationalStore(live);
+    resetOperationalStore();
+    for (const [k, v] of savedProxyEnv) if (v !== undefined) process.env[k] = v;
+  }
+  eq(hostRow.plane, "host", "the host plane's row names its plane");
+  eq(hostRow.unit, "call", "🔴 …and its UNIT: one row per call, because this plane makes the call");
+  eq(hostRow.outcome, "allowed", "🔴 …and the OUTCOME, which the row could not carry before OPE-1547");
+  eq(hostRow.host, "raw.githubusercontent.com", "…the target host");
+  eq(hostRow.verb, ["GET"], "🔴 …the VERB it sent, under the same shared name the sandbox plane uses");
+  eq(hostRow.credential, null, "🔴 …and `credential: null` as a POSITIVE claim: oeFetch attaches nothing to a model-supplied URL");
+  eq(hostRow.route, "direct", "🔴 the dispatch route is `route` — `via` now means the credential identity on both planes");
+  ok(hostRow.via === undefined, "🔴 …and `via` is GONE from the host row, so one name cannot mean two things in one store");
+
+  for (const field of EGRESS_AUDIT_ROW_FIELDS) {
+    ok(sandboxRow[field] !== undefined, `🔴 the SANDBOX plane's row carries the shared field \`${field}\``);
+    ok(hostRow[field] !== undefined || (field === "credential" && "credential" in hostRow), `🔴 the HOST plane's row carries the shared field \`${field}\``);
+  }
+
+  const credentialed = hostCallAuditFields({
+    host: "files.slack.com",
+    verb: "GET",
+    outcome: "allowed",
+    credential: "SLACK_BOT_TOKEN",
+  });
+  eq(credentialed.credential, "SLACK_BOT_TOKEN", "🔴 a credentialed host-side call names the credential REF — the identity, never the secret");
+  eq(credentialed.plane, "host", "…on the host plane");
+  eq(credentialed.unit, "call", "…at call unit");
+  for (const field of EGRESS_AUDIT_ROW_FIELDS) {
+    ok(credentialed[field] !== undefined, `🔴 the credentialed host-side row carries the shared field \`${field}\``);
   }
 }
 
