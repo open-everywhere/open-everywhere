@@ -194,14 +194,61 @@ for (const [on, label] of [
   ok(rec.creates(/conversations\.create/) === 0, "slack: …and nothing is created over an archived name");
 }
 
+const GITHUB_ENV = { E2E_GITHUB_DRIVER_TOKEN: "t" };
+const GITHUB_ROOM = ROOM("github", "E2E_ADDRESSED_GITHUB_REPO");
+const WANT_GITHUB = roomName(PLAN.slug, "github");
+
+function githubScript(rec: Recorder, on: "private" | "public" | "archived" | "absent"): typeof fetch {
+  return (async (input: unknown, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    rec.calls.push({ method, url, body });
+    if (url.endsWith("/user")) return Response.json({ login: "owner1" });
+    if (url.endsWith(`/repos/owner1/${WANT_GITHUB}`)) {
+      if (on === "absent") return Response.json({ message: "Not Found" }, { status: 404 });
+      return Response.json({ full_name: `owner1/${WANT_GITHUB}`, private: on !== "public", archived: on === "archived" });
+    }
+    if (method === "POST" && url.endsWith("/user/repos")) return Response.json({ full_name: `owner1/${WANT_GITHUB}` }, { status: 201 });
+    throw new Error(`the test script has no route for ${method} ${url}`);
+  }) as typeof fetch;
+}
+
 {
   const rec = recorder();
-  const outcome = await withPatchedFetch(scripted(rec, () => ({})), () =>
-    PROVISIONERS.github({}, PLAN, ROOM("github", "E2E_ADDRESSED_GITHUB_REPO")),
-  );
-  ok(outcome.state === "blocked", "github: the provisioner stops rather than creating a repo");
-  ok(rec.calls.length === 0, "github: …and it reaches no vendor at all");
-  ok((outcome.grant ?? "").includes("/user/repos"), "github: …and it names the call a human would make");
+  const outcome = await withPatchedFetch(githubScript(rec, "private"), () => PROVISIONERS.github(GITHUB_ENV, PLAN, GITHUB_ROOM));
+  ok(outcome.state === "found" && outcome.id === `owner1/${WANT_GITHUB}`, "github: an existing PRIVATE repo is found by name");
+  ok(rec.creates(/^POST .*\/user\/repos$/) === 0, "github: NO repo is created when the name already exists");
+  ok((outcome.grant ?? "").includes("App"), "github: …and the App installation still prints, because no PAT can read it back");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(githubScript(rec, "absent"), () => PROVISIONERS.github(GITHUB_ENV, PLAN, GITHUB_ROOM));
+  ok(outcome.state === "created" && outcome.id === `owner1/${WANT_GITHUB}`, "github: an absent repo IS created — the control for the arm above");
+  ok(rec.creates(/^POST .*\/user\/repos$/) === 1, "github: exactly one create request, never two");
+  const create = rec.calls.find((c) => c.method === "POST")!;
+  ok((create.body as { private?: boolean }).private === true, "github: the created repo is PRIVATE — the journey's non-mention arm refuses a public one");
+  ok((create.body as { name?: string }).name === WANT_GITHUB, "github: …and it is created under the plan's own room name");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(githubScript(rec, "public"), () => PROVISIONERS.github(GITHUB_ENV, PLAN, GITHUB_ROOM));
+  ok(outcome.state === "blocked", "github: a PUBLIC repo of the wanted name blocks, never reads as found");
+  ok(outcome.id === undefined, "github: …and no id for a repo the journey would refuse is handed back to .env.e2e");
+  ok((outcome.grant ?? "").toLowerCase().includes("private"), "github: …and the block names making it private as the fix");
+  ok(rec.creates(/^POST/) === 0, "github: …and nothing is created over the existing name");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(githubScript(rec, "archived"), () => PROVISIONERS.github(GITHUB_ENV, PLAN, GITHUB_ROOM));
+  ok(outcome.state === "blocked", "github: an ARCHIVED repo of the wanted name blocks, never reads as found");
+  ok(outcome.id === undefined, "github: …and no read-only repo's id is handed back to .env.e2e");
+  ok((outcome.detail ?? "").includes("ARCHIVED"), "github: …and the refusal names what is wrong with it");
+  ok(rec.creates(/^POST/) === 0, "github: …and nothing is created over the existing name");
+}
+{
+  const outcome = await PROVISIONERS.github({}, PLAN, GITHUB_ROOM);
+  ok(outcome.state === "skipped", "github: with no driver token the surface is SKIPPED, never blocked on a vendor it never called");
 }
 
 {

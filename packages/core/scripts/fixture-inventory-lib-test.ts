@@ -6,6 +6,7 @@ import {
   SURFACE_ORDER,
   buildInventory,
   canonicalId,
+  teamsSegment,
   collectDeclaredRooms,
   compareInventory,
   createGuardRefusal,
@@ -46,6 +47,16 @@ ok(canonicalId("notion", "40000000000040008000000000000101") === "40000000-0000-
 ok(canonicalId("github", "Acme/API") === "acme/api", "a github repo name canonicalises to lower case");
 ok(canonicalId("slack", "C0AB1") === "C0AB1", "a slack id is left exactly as the vendor spells it");
 ok(resolutionKey("notion", "40000000000040008000000000000101") === resolutionKey("notion", "40000000-0000-4000-8000-000000000101"), "both Notion spellings key one room");
+
+const TEAMS_RAW = "19:aaaaBBBBccccDDDD-eeeeFFFFggggHHHH1234@thread.tacv2";
+const TEAMS_KEY = "19-aaaaBBBBccccDDDD-eeeeFFFFggggHHHH1234-thread.tacv2";
+const TEAMS_RAW_OTHER = "19:0000111122223333444455556666777788@thread.tacv2";
+ok(canonicalId("teams", TEAMS_RAW) === TEAMS_KEY, "a raw Graph channel id canonicalises to the sanitised segment a surface key carries");
+ok(canonicalId("teams", TEAMS_KEY) === TEAMS_KEY, "…and the sanitised spelling is already canonical, so the mapping is idempotent");
+ok(resolutionKey("teams", TEAMS_RAW) === resolutionKey("teams", TEAMS_KEY), "both Teams spellings key one room");
+ok(resolutionKey("teams", TEAMS_RAW_OTHER) !== resolutionKey("teams", TEAMS_RAW), "two DIFFERENT Teams channels still key two rooms");
+ok(teamsSegment(TEAMS_RAW_OTHER) === "19-0000111122223333444455556666777788-thread.tacv2", "teamsSegment sanitises the colon and the at-sign to the stored form");
+ok(teamsSegment("00000000-1111-4222-8333-444444444444") === "00000000-1111-4222-8333-444444444444", "a value that needs no sanitising is returned unchanged");
 
 const DOMAINS: DomainLike[] = [
   { name: "org" },

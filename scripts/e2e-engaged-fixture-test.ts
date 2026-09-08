@@ -3,7 +3,10 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-const EXPECTED_ROOMS = ["notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000104"] as const;
+const EXPECTED_ROOMS = [
+  "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000104",
+  "discord/1300000000000000100/1300000000000000102",
+] as const;
 
 const MUST_STAY_OUT: readonly (readonly [string, string])[] = [
   ["slack/T0EXAMPLE/C0EXCHAN004", "#oe-e2e-private is S11's fixture and needs to sit OUTSIDE every explicit domain"],
@@ -120,7 +123,7 @@ const ok = (cond: boolean, label: string): void => {
   );
   ok(
     d.nameDropWake === true,
-    "nameDropWake is ON — declared so this fixture asserts its OWN posture rather than inheriting a workspace default. 🔴 IT DRIVES NOTHING TODAY: the domain's only room is the Notion page, and no packages/providers/notion file reads the flag. That is the whole reason, NOT the ambient gate: the gate reads the addressing (OPE-1510), so an addressed comment on a DECLARED page passes it with ambientSupervisor unset. J-ENGAGED-slack's name-drop leg rides the `org` criteria domain's own nameDropWake, because its room is in no explicit domain (OPE-1539) — leg 5 pins THAT knob, which is the one that leg reads. The pin stays because the first Slack or Discord room added to this roster needs the flag already true",
+    "nameDropWake is ON — declared so this fixture asserts its OWN posture rather than inheriting a workspace default. 🔴 IT IS LIVE ON DISCORD AND INERT ON NOTION: discord-gateway.ts reads the flag, so the room OPE-1581 added is the first here it governs, while no packages/providers/notion file reads it at all. Notion's silence is NOT the ambient gate: that gate reads the addressing (OPE-1510), so an addressed comment on a DECLARED page passes it with ambientSupervisor unset. J-ENGAGED-slack's name-drop leg rides the `org` criteria domain's own nameDropWake, because its room is in no explicit domain (OPE-1539) — leg 5 pins THAT knob, which is the one that leg reads",
   );
   ok(d.engagementTier === "neutral", `engagementTier is "neutral" — it overrides GitHub's "reserved" default so every room behaves uniformly (got ${JSON.stringify(d.engagementTier)})`);
   ok(d.memory === "e2e-brain", `the fixture reuses the shared harness brain (got ${JSON.stringify(d.memory)}) — no memory leg lives in these journeys, so it needs no silo of its own`);

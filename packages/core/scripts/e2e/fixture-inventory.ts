@@ -18,6 +18,7 @@ import {
   resolutionKey,
   roomName,
   roomsUnseen,
+  teamsSegment,
   type BindingLike,
   type DomainLike,
   type PlannedRoom,
@@ -113,9 +114,20 @@ async function discordApi(
   return { status: res.status, json };
 }
 
-async function githubApi(token: string, path: string): Promise<{ status: number; json: Record<string, unknown> }> {
+async function githubApi(
+  token: string,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await fetch(`https://api.github.com${path}`, {
-    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
+    method: init.method ?? "GET",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
@@ -228,7 +240,7 @@ async function resolveTeamsRoom(ctx: ResolverContext, id: string): Promise<Resol
     return { ok: true, name: info.displayName || "(unnamed team)", detail: "GET /teams/{id}" };
   }
   const channels = await ctx.teams.channels();
-  const found = channels.find((c) => c.id === id);
+  const found = channels.find((c) => c.id === id || teamsSegment(c.id) === id);
   if (!found) return { ok: false, detail: "not in GET /teams/{team}/channels" };
   return { ok: true, name: found.displayName || "(unnamed channel)", detail: "GET /teams/{team}/channels" };
 }
@@ -543,7 +555,9 @@ async function provisionLinear(env: Env, plan: ProvisionTarget, room: PlannedRoo
       room,
       state: "blocked",
       detail: `teamCreate: ${detail}`,
-      grant: "Linear: the driver PAT must belong to a workspace ADMIN (team creation is an admin action), or an admin creates the team by hand.",
+      grant:
+        `Linear (two steps, both required): (1) create the team by hand — Settings → Teams → New team, name "${want}", key "${key}"; ` +
+        `(2) re-mint ${ENV.linearApiKey} with BOTH that team and the existing ${ENV.linearTeamId} team in its scope. A team-scoped key cannot even READ a team outside its scope, so step (1) alone leaves the room unresolvable.`,
     };
   }
   return { room, state: "created", id: team.id, name: want, detail: "created" };
@@ -584,16 +598,72 @@ async function provisionNotion(env: Env, plan: ProvisionTarget, room: PlannedRoo
   return { room, state: "created", id: typeof id === "string" ? canonicalId("notion", id) : undefined, name: want, detail: "created" };
 }
 
+const GITHUB_APP_GRANT =
+  "GitHub: confirm the OE GitHub App is installed on this repo (or that its installation covers All repositories) — no PAT can install an App or read the installation back, so this tool cannot check it. Without the installation no webhook reaches the deployment.";
+
+async function provisionGithub(env: Env, plan: ProvisionTarget, room: PlannedRoom): Promise<ProvisionOutcome> {
+  const token = env[ENV.githubDriverToken];
+  if (!token) return { room, state: "skipped", detail: `no ${ENV.githubDriverToken}` };
+  const want = roomName(plan.slug, "github");
+  const me = await githubApi(token, "/user");
+  const owner = typeof me.json.login === "string" ? me.json.login : "";
+  if (!owner) {
+    return {
+      room,
+      state: "blocked",
+      detail: `GET /user → ${me.status} — the driver token names no account, so there is no owner to create under`,
+      grant: `GitHub: check ${ENV.githubDriverToken} is a live token for the e2e account.`,
+    };
+  }
+  const existing = await githubApi(token, `/repos/${owner}/${want}`);
+  if (existing.status === 200) {
+    const full = String(existing.json.full_name ?? `${owner}/${want}`);
+    if (existing.json.private !== true) {
+      return {
+        room,
+        state: "blocked",
+        detail: `${full} exists but is PUBLIC — J-ENGAGED-github's non-mention arm refuses a public repo`,
+        grant: `GitHub: make ${full} private (Settings → General → Danger Zone), then re-run this command.`,
+      };
+    }
+    const readOnly = existing.json.archived === true ? "ARCHIVED" : existing.json.disabled === true ? "DISABLED" : "";
+    if (readOnly) {
+      return {
+        room,
+        state: "blocked",
+        detail: `${full} exists but is ${readOnly} — read-only, so the journey cannot open its issue`,
+        grant: `GitHub: un-${readOnly.toLowerCase()} ${full} (Settings → General → Danger Zone), then re-run this command.`,
+      };
+    }
+    return { room, state: "found", id: full, name: full, detail: "already exists (private)", grant: GITHUB_APP_GRANT };
+  }
+  if (existing.status !== 404) {
+    return { room, state: "blocked", detail: `GET /repos/{owner}/{repo} → ${existing.status} — cannot tell whether the repo exists, so nothing is created` };
+  }
+  const created = await githubApi(token, "/user/repos", {
+    method: "POST",
+    body: { name: want, private: true, auto_init: true, has_issues: true, description: "OE e2e addressed-only fixture (OPE-1503)" },
+  });
+  if (created.status < 200 || created.status >= 300) {
+    return {
+      room,
+      state: "blocked",
+      detail: `POST /user/repos → ${created.status} ${String(created.json.message ?? "")}`.trim(),
+      grant:
+        `GitHub: either give ${ENV.githubDriverToken} the account-level "Administration" write permission ` +
+        `(fine-grained PAT → Account permissions → Administration: Read and write), or create the repo by hand — ` +
+        `a PRIVATE repo named \`${want}\` under \`${owner}\` — then re-run this command, which finds it by name.`,
+    };
+  }
+  const full = String(created.json.full_name ?? `${owner}/${want}`);
+  return { room, state: "created", id: full, name: full, detail: "created private", grant: GITHUB_APP_GRANT };
+}
+
 export const PROVISIONERS: Record<SurfaceKind, (env: Env, plan: ProvisionTarget, room: PlannedRoom) => Promise<ProvisionOutcome>> = {
   slack: provisionSlack,
   discord: provisionDiscord,
   teams: provisionTeams,
-  github: async (_env, _plan, room) => ({
-    room,
-    state: "blocked",
-    detail: "no plan creates a GitHub repo today",
-    grant: "GitHub: create the repo with `POST /user/repos`, then install the OE App on it and grant it in a bundle.",
-  }),
+  github: provisionGithub,
   linear: provisionLinear,
   notion: provisionNotion,
 };

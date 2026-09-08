@@ -1,4 +1,10 @@
+import { seg } from "../../agent/identity/deployment-identity.js";
+
 export type SurfaceKind = "slack" | "discord" | "teams" | "github" | "linear" | "notion";
+
+export function teamsSegment(id: string): string {
+  return seg(id, "") || id;
+}
 
 export const SURFACE_ORDER: readonly SurfaceKind[] = ["slack", "discord", "teams", "github", "linear", "notion"];
 
@@ -195,7 +201,7 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         envVar: "E2E_ADDRESSED_GITHUB_REPO",
         action: "create",
         readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.github` reads the var, so it is in ROOM_VARS — but the room is this plan's own, and the row declares `ownedBy: \"e2e-engaged\"`",
-        note: "🔴 A REPO OF ITS OWN, and the second install is the price. This entry once REUSED E2E_PR_REPO, which names the same repository as E2E_GITHUB_REPO — `example-owner/e2e-scratch`, which e2e-unified holds with ambientSupervisor and mode:\"unified\". An ambient supervisor answers the plain follow-up, so J-ENGAGED-github would have passed step (b) without the engagement registry ever being read. No GitHub provisioner creates a repo, so this surface reports blocked with its one-time grant line and the journey self-skips until an operator acts",
+        note: "🔴 A REPO OF ITS OWN, and the second install is the price. This entry once REUSED E2E_PR_REPO, which names the same repository as E2E_GITHUB_REPO — `example-owner/e2e-scratch`, which e2e-unified holds with ambientSupervisor and mode:\"unified\". An ambient supervisor answers the plain follow-up, so J-ENGAGED-github would have passed step (b) without the engagement registry ever being read. The provisioner CREATES this repo (OPE-1581) under the driver token's own account, PRIVATE — the journey's non-mention arm refuses a public repo — but it cannot install the OE GitHub App, which stays a one-time operator action it prints beside every outcome",
       },
       {
         surface: "linear",
@@ -318,6 +324,7 @@ export interface Resolution {
 }
 
 export function canonicalId(surface: SurfaceKind, id: string): string {
+  if (surface === "teams") return teamsSegment(id);
   if (surface === "notion") {
     const hex = id.replaceAll("-", "").toLowerCase();
     if (/^[0-9a-f]{32}$/u.test(hex)) {
@@ -539,8 +546,10 @@ be valid for Slack and still miss a private channel its user is not in. Both ref
 they saw; \`--partial\` overrides them when the rooms are genuinely gone.
 
 **A Teams row carries a name and an env var, never the key.** A Teams surface key holds the
-operator's Microsoft 365 tenant id, and \`scripts/teams-vouch-lint.ts\` fails the \`test\` chain on
-such a literal in a tracked file. The id lives in the environment.
+operator's Microsoft 365 tenant id, so the id lives in the environment and this table redacts it.
+That is a choice about what this table is FOR, not a prohibition: a tenant id is a tracked literal
+by ruling, and no gate refuses one. A Teams row gives the reader the room's name and the variable
+that carries its id, which is what the rest of this file gives every other row.
 
 Column meanings: **id** is the vendor's own id (\`owner/repo\` on GitHub, empty on Teams). **name**
 is what the vendor calls the room today. **env var** is the \`E2E_*\` name that carries the id;
