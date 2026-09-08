@@ -63,6 +63,7 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
 
   { surface: "github", envVar: "E2E_ADDRESSED_GITHUB_REPO", what: "J-ENGAGED-github's addressed-only repo — NOT E2E_PR_REPO, which names e2e-unified's e2e-scratch", ownedBy: "e2e-engaged" },
   { surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", what: "J-ENGAGED-discord's addressed-only channel", ownedBy: "e2e-engaged" },
+  { surface: "teams", envVar: "E2E_ADDRESSED_TEAMS_SURFACE", what: "J-ENGAGED-teams's addressed-only channel — NOT E2E_TEAMS_CHANNEL_ID, which J-TEAMS drives", ownedBy: "e2e-engaged" },
   { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team", ownedBy: "e2e-engaged" },
   { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page", ownedBy: "e2e-engaged" },
 ];
@@ -185,7 +186,8 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         surface: "teams",
         envVar: "E2E_ADDRESSED_TEAMS_SURFACE",
         action: "create",
-        note: "a channel in the test team; the var holds the whole `teams/<tenant>/<thread>` key, env only",
+        readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.teams` reads the var, so it is in ROOM_VARS — but the room is this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
+        note: "🔴 A CHANNEL OF ITS OWN (OPE-1531). J-ENGAGED-teams used to drive E2E_TEAMS_CHANNEL_ID, the room J-TEAMS drives, so the two scenarios shared one standing seat and one context window — one scenario's rotation pressure was the other's. The channel lives in the SAME team as E2E_TEAMS_CHANNEL_ID, because the driver's delegated Graph auth is scoped to that team",
       },
       {
         surface: "github",
@@ -371,16 +373,19 @@ export function idOfKey(key: string): string {
   return parts[parts.length - 1];
 }
 
-export function inventoryVars(): readonly RoomVarSpec[] {
+export function inventoryVars(
+  roomVars: readonly RoomVarSpec[] = ROOM_VARS,
+  plan: readonly ProvisionDomain[] = PROVISION_PLAN,
+): readonly RoomVarSpec[] {
   const planned: RoomVarSpec[] = [];
-  for (const plan of PROVISION_PLAN) {
-    for (const room of plan.rooms) {
+  for (const domain of plan) {
+    for (const room of domain.rooms) {
       if (room.action !== "create") continue;
-      planned.push({ surface: room.surface, envVar: room.envVar, what: `${plan.domain} (${plan.ticket}) — ${room.note}` });
+      planned.push({ surface: room.surface, envVar: room.envVar, what: `${domain.domain} (${domain.ticket}) — ${room.note}` });
     }
   }
-  const seen = new Set(ROOM_VARS.map((v) => v.envVar));
-  return [...ROOM_VARS, ...planned.filter((v) => !seen.has(v.envVar))];
+  const seen = new Set(roomVars.map((v) => v.envVar));
+  return [...roomVars, ...planned.filter((v) => !seen.has(v.envVar))];
 }
 
 export function buildInventory(input: InventoryInput): Inventory {
@@ -676,6 +681,21 @@ export function namesLost(committed: readonly ParsedRow[], generated: readonly I
     if (now && unnamed(now.name)) lost.push(`${before.surface} ${before.id === "—" ? before.name : before.id}: was "${before.name}", now "${now.name}" — ${now.note}`);
   }
   return lost;
+}
+
+export function roomsUnseen(
+  committed: readonly ParsedRow[],
+  envValues: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+  const declared = new Set(ROOM_VARS.map((r) => r.envVar));
+  const unseen: string[] = [];
+  for (const row of committed) {
+    if (row.envVars.some((v) => Boolean(envValues[v]?.trim()))) continue;
+    const blind = row.envVars.filter((v) => declared.has(v) && !envValues[v]?.trim());
+    if (blind.length === 0) continue;
+    unseen.push(`${blind.join(", ")} unset here; writing would drop \`${row.name}\` or its env-var column`);
+  }
+  return unseen;
 }
 
 export function compareInventory(

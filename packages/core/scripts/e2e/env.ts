@@ -79,6 +79,7 @@ export const ENV = {
   engagedDiscordChannel: "E2E_ADDRESSED_DISCORD_CHANNEL",
   engagedLinearTeamId: "E2E_ADDRESSED_LINEAR_TEAM_ID",
   engagedNotionPageId: "E2E_ADDRESSED_NOTION_PAGE_ID",
+  engagedTeamsSurface: "E2E_ADDRESSED_TEAMS_SURFACE",
 
   expectUnified: "E2E_EXPECT_UNIFIED",
   unixArmed: "E2E_UNIX_ARMED",
@@ -119,6 +120,7 @@ export type Capability =
   | "soakLinear"
   | "engagedSlack"
   | "engagedDiscord"
+  | "engagedTeams"
   | "engagedGithub"
   | "engagedLinear"
   | "engagedNotion";
@@ -457,11 +459,12 @@ function engagedRoom(env: Env, name: string): Resolved<EngagedRoomConfig> {
   return { ok: true, cfg: { id: values[0] } };
 }
 
-export type EngagedSurface = "slack" | "discord" | "github" | "linear" | "notion";
+export type EngagedSurface = "slack" | "discord" | "teams" | "github" | "linear" | "notion";
 
 export const ENGAGED_ROOM_VARS: Readonly<Record<EngagedSurface, string>> = {
   slack: ENV.slackPrivateChannel,
   discord: ENV.engagedDiscordChannel,
+  teams: ENV.engagedTeamsSurface,
   github: ENV.engagedGithubRepo,
   linear: ENV.engagedLinearTeamId,
   notion: ENV.engagedNotionPageId,
@@ -473,6 +476,27 @@ export function resolveEngagedSlack(env: Env = process.env): Resolved<EngagedRoo
 
 export function resolveEngagedDiscord(env: Env = process.env): Resolved<EngagedRoomConfig> {
   return engagedRoom(env, ENGAGED_ROOM_VARS.discord);
+}
+
+function teamsChannelOf(value: string): string {
+  return value.startsWith("teams/") ? (value.split("/").pop() ?? "") : value;
+}
+
+export function resolveEngagedTeams(env: Env = process.env): Resolved<EngagedRoomConfig> {
+  const room = engagedRoom(env, ENGAGED_ROOM_VARS.teams);
+  if (!room.ok) return room;
+  const id = teamsChannelOf(room.cfg.id);
+  if (id.length === 0) return { ok: false, missing: [ENGAGED_ROOM_VARS.teams] };
+  const shared = env[ENV.teamsChannelId]?.trim();
+  if (shared && teamsChannelOf(shared) === id) {
+    return {
+      ok: false,
+      missing: [
+        `${ENGAGED_ROOM_VARS.teams} to a channel other than ${ENV.teamsChannelId}'s — J-ENGAGED-teams needs a room of its own (OPE-1531)`,
+      ],
+    };
+  }
+  return { ok: true, cfg: { id } };
 }
 
 export function resolveEngagedGithub(env: Env = process.env): Resolved<EngagedRoomConfig> {
@@ -532,6 +556,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const soakLinear = resolveSoakLinear(env);
   const engagedSlack = resolveEngagedSlack(env);
   const engagedDiscord = resolveEngagedDiscord(env);
+  const engagedTeams = resolveEngagedTeams(env);
   const engagedGithub = resolveEngagedGithub(env);
   const engagedLinear = resolveEngagedLinear(env);
   const engagedNotion = resolveEngagedNotion(env);
@@ -560,6 +585,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (soakLinear.ok) available.add("soakLinear");
   if (engagedSlack.ok) available.add("engagedSlack");
   if (engagedDiscord.ok) available.add("engagedDiscord");
+  if (engagedTeams.ok) available.add("engagedTeams");
   if (engagedGithub.ok) available.add("engagedGithub");
   if (engagedLinear.ok) available.add("engagedLinear");
   if (engagedNotion.ok) available.add("engagedNotion");
@@ -590,6 +616,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       soakLinear: soakLinear.ok ? [] : soakLinear.missing,
       engagedSlack: engagedSlack.ok ? [] : engagedSlack.missing,
       engagedDiscord: engagedDiscord.ok ? [] : engagedDiscord.missing,
+      engagedTeams: engagedTeams.ok ? [] : engagedTeams.missing,
       engagedGithub: engagedGithub.ok ? [] : engagedGithub.missing,
       engagedLinear: engagedLinear.ok ? [] : engagedLinear.missing,
       engagedNotion: engagedNotion.ok ? [] : engagedNotion.missing,

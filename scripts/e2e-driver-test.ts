@@ -70,10 +70,12 @@ const {
   auditSilencesExpected,
   isLocalEvalTarget,
   resolveCapabilities,
+  resolveEngagedTeams,
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("../packages/core/scripts/e2e/env.js");
-const { readRefreshSidecar, writeRefreshSidecar, isMissingChatScopeError } = await import("../packages/core/scripts/e2e/teams-driver.js");
+const { readRefreshSidecar, writeRefreshSidecar, isMissingChatScopeError, collectGraphPages } = await import("../packages/core/scripts/e2e/teams-driver.js");
 const { backoffDelayMs, pollUntil, pollOptional, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
+const { withoutMarker } = await import("../packages/core/scripts/e2e/journey.js");
 const {
   signSlackRequest,
   buildApprovalClickPayload,
@@ -340,6 +342,76 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const badMarker = "engaged-14432";
+  ok(`the answer is (ref ${badMarker})`.includes("144"), "the control: the raw reply DOES contain '144' — through the marker, not through an answer");
+  ok(
+    !withoutMarker(`the answer is (ref ${badMarker})`, badMarker).includes("144"),
+    "with the marker removed the same reply no longer passes the 144 gate — the echoed ref cannot stand in for the answer",
+  );
+  ok(withoutMarker(`144 (ref ${badMarker})`, badMarker).includes("144"), "a reply that really answers still passes once the marker is removed");
+  ok(withoutMarker("150", "engaged-99999").includes("150"), "a reply with no marker at all is unchanged by the removal");
+  ok(!withoutMarker(`12${badMarker}34`, badMarker).includes("1234"), "the marker is replaced by a space, so removing it cannot fuse two tokens into a third");
+  ok(withoutMarker("untouched", "").includes("untouched"), "an empty marker removes nothing rather than shredding the text");
+}
+
+{
+  const pages: Record<string, { value?: readonly string[]; "@odata.nextLink"?: string }> = {
+    "/replies": { value: ["a", "b"], "@odata.nextLink": "https://graph.microsoft.com/v1.0/replies?$skiptoken=2" },
+    "https://graph.microsoft.com/v1.0/replies?$skiptoken=2": { value: ["c"], "@odata.nextLink": "https://graph.microsoft.com/v1.0/replies?$skiptoken=3" },
+    "https://graph.microsoft.com/v1.0/replies?$skiptoken=3": { value: ["d"] },
+  };
+  const asked: string[] = [];
+  const fetchPage = async (url: string): Promise<{ value?: readonly string[]; "@odata.nextLink"?: string }> => {
+    asked.push(url);
+    return pages[url] ?? {};
+  };
+  const all = await collectGraphPages<string>("/replies", fetchPage, 20);
+  ok(all.join(",") === "a,b,c,d", `every page's items are returned in page order (got ${all.join(",")})`);
+  ok(asked.length === 3, `the walk follows @odata.nextLink until a page carries none (pages fetched: ${asked.length})`);
+
+  const onePage = await collectGraphPages<string>("/replies", async () => ({ value: ["a", "b"] }), 20);
+  ok(onePage.join(",") === "a,b", "the control: a collection with no nextLink returns exactly its one page");
+
+  const empty = await collectGraphPages<string>("/replies", async () => ({}), 20);
+  ok(empty.length === 0, "a page carrying no `value` contributes nothing rather than throwing");
+
+  let threw = "";
+  try {
+    await collectGraphPages<string>("/replies", async () => ({ value: ["x"], "@odata.nextLink": "https://graph.microsoft.com/v1.0/loop" }), 3);
+  } catch (err) {
+    threw = err instanceof Error ? err.message : String(err);
+  }
+  ok(threw.includes("partial collection"), `a chain still paging at the bound THROWS rather than truncating (threw: ${threw || "nothing"})`);
+}
+
+{
+  const addressed = ENV.engagedTeamsSurface;
+  const shared = ENV.teamsChannelId;
+
+  const same = resolveEngagedTeams({ [addressed]: "19:chan-A", [shared]: "19:chan-A" });
+  ok(!same.ok, "both variables naming ONE channel is refused, not resolved");
+  ok(
+    !same.ok && same.missing.some((m) => m.includes(addressed) && m.includes(shared)),
+    `the refusal names BOTH variables so the operator knows which pair collided (got: ${same.ok ? "resolved" : same.missing.join("; ")})`,
+  );
+
+  const apart = resolveEngagedTeams({ [addressed]: "19:chan-A", [shared]: "19:chan-B" });
+  ok(apart.ok && apart.cfg.id === "19:chan-A", `two different channels still resolve, to the addressed room (got: ${apart.ok ? apart.cfg.id : "refused"})`);
+
+  const sameViaKey = resolveEngagedTeams({ [addressed]: "teams/19:tenant-guid/19:chan-A", [shared]: "19:chan-A" });
+  ok(!sameViaKey.ok, "the surface-key spelling of J-TEAMS's own channel is refused too — the check compares channels, not strings");
+
+  const apartViaKey = resolveEngagedTeams({ [addressed]: "teams/19:tenant-guid/19:chan-A", [shared]: "19:chan-B" });
+  ok(apartViaKey.ok && apartViaKey.cfg.id === "19:chan-A", `a surface key for a separate room resolves to its channel id (got: ${apartViaKey.ok ? apartViaKey.cfg.id : "refused"})`);
+
+  const noShared = resolveEngagedTeams({ [addressed]: "19:chan-A" });
+  ok(noShared.ok && noShared.cfg.id === "19:chan-A", "with E2E_TEAMS_CHANNEL_ID unset there is nothing to collide with, so the room resolves");
+
+  const unset = resolveEngagedTeams({ [shared]: "19:chan-B" });
+  ok(unset.ok === false && unset.missing.includes(addressed), "unset still self-skips naming the variable to set, unchanged by the new refusal");
+}
+
+{
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
@@ -355,7 +427,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on;)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
-    "engagedSlack", "engagedDiscord", "engagedGithub", "engagedLinear", "engagedNotion"]);
+    "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"]);
   for (const s of SCENARIOS) {
     okShape(s.title.trim().length > 0, `${s.id} has a title`);
     okShape(typeof s.run === "function", `${s.id} has a run body`);
@@ -423,6 +495,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
   ok(req("J-ENGAGED-slack") === "slack+engagedSlack", "J-ENGAGED-slack requires slack + engagedSlack (the base xoxp driver, rebound onto the addressed-only channel)");
   ok(req("J-ENGAGED-discord") === "discord+engagedDiscord", "J-ENGAGED-discord requires discord + engagedDiscord");
+  ok(req("J-ENGAGED-teams") === "teams+engagedTeams", "J-ENGAGED-teams requires teams + engagedTeams (OPE-1531 — its own fixture channel, never J-TEAMS’s E2E_TEAMS_CHANNEL_ID)");
   ok(req("J-ENGAGED-github") === "github+engagedGithub", "J-ENGAGED-github requires github + engagedGithub");
   ok(req("J-ENGAGED-linear") === "linear+engagedLinear", "J-ENGAGED-linear requires linear + engagedLinear");
   ok(req("J-ENGAGED-notion") === "notionAmbient+engagedNotion", "J-ENGAGED-notion requires notionAmbient + engagedNotion (the ambient Notion driver, rebound onto the addressed-only page)");
@@ -445,7 +518,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite" | "engagedSlack" | "engagedDiscord" | "engagedGithub" | "engagedLinear" | "engagedNotion">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite" | "engagedSlack" | "engagedDiscord" | "engagedTeams" | "engagedGithub" | "engagedLinear" | "engagedNotion">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -471,6 +544,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     soakLinear: [ENV.linearSoakLabelId],
     engagedSlack: [ENGAGED_ROOM_VARS.slack],
     engagedDiscord: [ENGAGED_ROOM_VARS.discord],
+    engagedTeams: [ENGAGED_ROOM_VARS.teams],
     engagedGithub: [ENGAGED_ROOM_VARS.github],
     engagedLinear: [ENGAGED_ROOM_VARS.linear],
     engagedNotion: [ENGAGED_ROOM_VARS.notion],
@@ -480,7 +554,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -506,6 +580,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     soakLinear: [],
     engagedSlack: [],
     engagedDiscord: [],
+    engagedTeams: [],
     engagedGithub: [],
     engagedLinear: [],
     engagedNotion: [],
@@ -523,6 +598,21 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     const reason = skipReason(SCENARIOS.find((sc) => sc.id === id)!, roomOnlyMissing, missing, true);
     ok(reason?.includes(varName) === true, `${id} self-skips naming ${varName} while its room is unprovisioned (got ${JSON.stringify(reason)})`);
   }
+  {
+    const collided = resolveEngagedTeams({ [ENGAGED_ROOM_VARS.teams]: "19:chan-A", [ENV.teamsChannelId]: "19:chan-A" });
+    const teamsLive = new Set([...all].filter((c) => c !== "engagedTeams"));
+    const reason = skipReason(
+      SCENARIOS.find((sc) => sc.id === "J-ENGAGED-teams")!,
+      teamsLive,
+      { ...noneMissing, engagedTeams: collided.ok ? [] : collided.missing },
+      true,
+    );
+    ok(
+      reason?.includes(`set ${ENGAGED_ROOM_VARS.teams} to a channel other than ${ENV.teamsChannelId}'s`) === true,
+      `the collision's skip line reads as a REMEDY inside skipReason's "(set …)" frame (got ${JSON.stringify(reason)})`,
+    );
+  }
+
   for (const id of ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion"]) {
     ok(
       skipReason(SCENARIOS.find((sc) => sc.id === id)!, all, noneMissing, false) === undefined,
@@ -1357,7 +1447,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
     notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel],
     soakSlack: [], soakNotion: [], soakLinear: [],
-    engagedSlack: [], engagedDiscord: [], engagedGithub: [], engagedLinear: [], engagedNotion: [],
+    engagedSlack: [], engagedDiscord: [], engagedTeams: [], engagedGithub: [], engagedLinear: [], engagedNotion: [],
   } as const;
   for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, cwMissing, true);

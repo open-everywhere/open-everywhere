@@ -6,6 +6,7 @@ import { pollUntil, sleep } from "./poll.js";
 const TOKEN_BASE = "https://login.microsoftonline.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const TOKEN_SKEW_MS = 60_000;
+const MAX_GRAPH_PAGES = 20;
 
 export interface TeamsMessage {
   readonly id: string;
@@ -20,6 +21,28 @@ interface GraphChatMessage {
   from?: { application?: { id?: string }; user?: { id?: string } };
   body?: { contentType?: string; content?: string };
   createdDateTime?: string;
+}
+
+export interface GraphPage<T> {
+  readonly value?: readonly T[];
+  readonly "@odata.nextLink"?: string;
+}
+
+export async function collectGraphPages<T>(
+  first: string,
+  fetchPage: (url: string) => Promise<GraphPage<T>>,
+  maxPages: number,
+): Promise<readonly T[]> {
+  const items: T[] = [];
+  let next: string | undefined = first;
+  for (let page = 0; page < maxPages; page += 1) {
+    const json: GraphPage<T> = await fetchPage(next);
+    for (const item of json.value ?? []) items.push(item);
+    const link = json["@odata.nextLink"];
+    if (typeof link !== "string" || link.length === 0) return items;
+    next = link;
+  }
+  throw new Error(`teams: reply chain still had pages after ${maxPages} — refusing to answer with a partial collection`);
 }
 
 function htmlEscape(text: string): string {
@@ -137,8 +160,10 @@ export class TeamsDriver {
   }
 
   private async graph(method: "GET" | "POST", path: string, body?: unknown, retried = false): Promise<unknown> {
+    const url = path.startsWith("http") ? path : `${GRAPH_BASE}${path}`;
+    if (!url.startsWith(`${GRAPH_BASE}/`)) throw new Error(`teams ${method}: refusing a link outside ${GRAPH_BASE}`);
     const token = await this.accessToken();
-    const res = await fetch(`${GRAPH_BASE}${path}`, {
+    const res = await fetch(url, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -270,11 +295,12 @@ export class TeamsDriver {
   }
 
   async replies(rootMessageId: string): Promise<readonly TeamsMessage[]> {
-    const json = (await this.graph(
-      "GET",
+    const pages = await collectGraphPages<GraphChatMessage>(
       `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages/${rootMessageId}/replies`,
-    )) as { value?: readonly GraphChatMessage[] };
-    return (json.value ?? []).map(toMessage);
+      (url) => this.graph("GET", url) as Promise<GraphPage<GraphChatMessage>>,
+      MAX_GRAPH_PAGES,
+    );
+    return pages.map(toMessage);
   }
 
   isBotReply(m: TeamsMessage): boolean {

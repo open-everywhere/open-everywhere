@@ -2,6 +2,7 @@ import {
   resolveCapabilities,
   resolveConnectorWrite,
   resolveEngagedDiscord,
+  resolveEngagedTeams,
   resolveEngagedGithub,
   resolveEngagedLinear,
   resolveEngagedNotion,
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
   const connectorWrite = resolveConnectorWrite();
   const engagedSlack = resolveEngagedSlack();
   const engagedDiscord = resolveEngagedDiscord();
+  const engagedTeams = resolveEngagedTeams();
   const engagedGithub = resolveEngagedGithub();
   const engagedLinear = resolveEngagedLinear();
   const engagedNotion = resolveEngagedNotion();
@@ -148,6 +150,7 @@ async function main(): Promise<void> {
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
   const discordEngagedDriver = discord.ok && engagedDiscord.ok ? new DiscordDriver({ ...discord.cfg, channel: engagedDiscord.cfg.id }) : undefined;
+  const teamsEngagedDriver = teams.ok && engagedTeams.ok ? new TeamsDriver({ ...teams.cfg, channelId: engagedTeams.cfg.id }) : undefined;
   const githubEngagedDriver = github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined;
   const linearEngagedDriver = linear.ok && engagedLinear.ok ? new LinearDriver({ ...linear.cfg, teamId: engagedLinear.cfg.id }) : undefined;
   const notionEngagedDriver =
@@ -271,6 +274,7 @@ async function main(): Promise<void> {
       slackB: slackBDriver,
       ...(engagedSlack.ok ? { engagedSlack: engagedSlack.cfg } : {}),
       discordEngaged: discordEngagedDriver,
+      teamsEngaged: teamsEngagedDriver,
       githubEngaged: githubEngagedDriver,
       linearEngaged: linearEngagedDriver,
       notionEngaged: notionEngagedDriver,

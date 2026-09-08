@@ -8,6 +8,10 @@ export function factToken(stem: string): string {
   return `${stem}-${Date.now() % 100_000}`;
 }
 
+export function withoutMarker(text: string, marker: string): string {
+  return marker.length === 0 ? text : text.split(marker).join(" ");
+}
+
 export function approveButton(m: SlackMessage): { pendingId: string; org: string } | undefined {
   const prefix = `${APPROVAL_PREFIX}approve:`;
   const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));

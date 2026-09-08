@@ -21,6 +21,7 @@ import {
   rowKey,
   resolutionKey,
   roomName,
+  roomsUnseen,
   surfaceOfKey,
   type BindingLike,
   type DomainLike,
@@ -235,6 +236,50 @@ ok(
   ).length === 1,
   "a Teams row keyed on its env var still matches across a name change, so its loss is seen",
 );
+{
+  const committed = [
+    { surface: "slack" as const, id: "CA", name: "#general", envVars: ["E2E_SLACK_CHANNEL"], claimants: ["e2e-unified"], note: "—" },
+    { surface: "notion" as const, id: "PN", name: "oe-e2e-addressed-notion", envVars: ["E2E_ADDRESSED_NOTION_PAGE_ID"], claimants: ["e2e-engaged"], note: "—" },
+  ];
+  const unseen = roomsUnseen(committed, ENV_VALUES);
+  ok(unseen.length === 1, `exactly the row whose declared env var is unset here refuses the write (got ${unseen.length})`);
+  ok(
+    unseen[0].includes("E2E_ADDRESSED_NOTION_PAGE_ID") && unseen[0].includes("oe-e2e-addressed-notion"),
+    "…and the refusal names the variable to set and the room that would be dropped",
+  );
+
+  ok(
+    roomsUnseen(committed, { ...ENV_VALUES, E2E_ADDRESSED_NOTION_PAGE_ID: "PN" }).length === 0,
+    "the control: with the variable SET the row is visible and the write proceeds",
+  );
+
+  ok(
+    roomsUnseen(
+      [{ surface: "slack" as const, id: "CX", name: "#retired", envVars: ["E2E_RETIRED_CHANNEL"], claimants: ["unclaimed"], note: "—" }],
+      ENV_VALUES,
+    ).length === 0,
+    "a committed row naming a var ROOM_VARS no longer declares is a real removal, never a refusal",
+  );
+
+  ok(
+    roomsUnseen([{ surface: "slack" as const, id: "CY", name: "#config-only", envVars: [], claimants: ["e2e-b"], note: "—" }], ENV_VALUES).length === 0,
+    "a row with no env var at all is read from config on every run, so it is never unseen",
+  );
+
+  ok(
+    roomsUnseen(
+      [{ surface: "slack" as const, id: "CA", name: "#general", envVars: ["E2E_SLACK_CHANNEL", "E2E_SLACK_UNIFIED_CHANNEL_A"], claimants: ["e2e-unified"], note: "—" }],
+      ENV_VALUES,
+    ).length === 0,
+    "a row whose SECOND declared var is unset still passes while the first is set — the run resolved the room",
+  );
+
+  ok(
+    roomsUnseen(committed, { ...ENV_VALUES, E2E_ADDRESSED_NOTION_PAGE_ID: "   " }).length === 1,
+    "a whitespace-only value counts as unset, the same way compareInventory reads visibility",
+  );
+}
+
 const twoSynthetic = [
   { surface: "teams" as const, id: "—", name: "(fabricated id)", envVars: [], claimants: ["it-a"], note: "synthetic" },
   { surface: "teams" as const, id: "—", name: "(fabricated id)", envVars: [], claimants: ["it-b"], note: "synthetic" },
@@ -254,9 +299,37 @@ ok(new Set(twoSynthetic.map(rowKey)).size === 2, "two Teams rows that render the
 
 ok(new Set(ROOM_VARS.map((v) => v.envVar)).size === ROOM_VARS.length, "no env var is listed twice in ROOM_VARS");
 for (const spec of ROOM_VARS) ok(spec.envVar.startsWith("E2E_"), `${spec.envVar} is an e2e fixture var`);
-ok(inventoryVars().length > ROOM_VARS.length, "the provisioning plan's created rooms join the inventory's vars");
-ok(!ROOM_VARS.some((v) => v.envVar === "E2E_ADDRESSED_TEAMS_SURFACE"), "the control: the var below is in NO ROOM_VARS row, so only the plan can put it in the inventory");
-ok(inventoryVars().some((v) => v.envVar === "E2E_ADDRESSED_TEAMS_SURFACE"), "a planned room's env var is inventoried");
+{
+  const onlyPlanned = inventoryVars(
+    [{ surface: "slack" as const, envVar: "E2E_IN_BOTH", what: "a room shipped code reads" }],
+    [
+      {
+        domain: "e2e-synthetic",
+        slug: "synthetic",
+        linearKey: "OESY",
+        ticket: "OPE-0",
+        what: "a plan used only by this assertion",
+        rooms: [
+          { surface: "slack" as const, envVar: "E2E_IN_BOTH", action: "create" as const, note: "already a ROOM_VARS row" },
+          { surface: "slack" as const, envVar: "E2E_PLAN_ONLY", action: "create" as const, note: "the plan alone carries it" },
+          { surface: "slack" as const, envVar: "E2E_REUSED", action: "reuse" as const, reuseOf: "E2E_IN_BOTH", note: "a reuse creates nothing" },
+        ],
+      },
+    ],
+  );
+  ok(onlyPlanned.some((v) => v.envVar === "E2E_PLAN_ONLY"), "a room the plan CREATES and no ROOM_VARS row carries joins the inventory's vars");
+  ok(onlyPlanned.filter((v) => v.envVar === "E2E_IN_BOTH").length === 1, "a var in BOTH tables appears once — the ROOM_VARS row wins, it is not duplicated");
+  ok(!onlyPlanned.some((v) => v.envVar === "E2E_REUSED"), "the control: a REUSE entry makes no room, so it adds no var — only `create` does");
+}
+for (const plan of PROVISION_PLAN) {
+  for (const room of plan.rooms) {
+    if (room.action !== "create") continue;
+    ok(
+      ROOM_VARS.some((v) => v.envVar === room.envVar),
+      `${plan.domain} creates ${room.envVar}, so a ROOM_VARS row must carry it — a planned room no code reads is a room that self-skips forever`,
+    );
+  }
+}
 for (const plan of PROVISION_PLAN) {
   for (const room of plan.rooms) {
     if (room.readByCode !== undefined) {

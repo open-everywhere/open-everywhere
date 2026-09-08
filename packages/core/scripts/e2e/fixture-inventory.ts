@@ -17,6 +17,7 @@ import {
   renderInventoryDoc,
   resolutionKey,
   roomName,
+  roomsUnseen,
   type BindingLike,
   type DomainLike,
   type PlannedRoom,
@@ -350,11 +351,19 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
       console.error("  Set the driver credentials for every surface, or pass --partial to write anyway.");
       return 2;
     }
-    const lost = existsSync(docPath) ? namesLost(parseInventoryDoc(readFileSync(docPath, "utf8")), inventory.rows) : [];
+    const committedNow = existsSync(docPath) ? parseInventoryDoc(readFileSync(docPath, "utf8")) : [];
+    const lost = namesLost(committedNow, inventory.rows);
     if (lost.length > 0 && !options.partial) {
       console.error(`✗ e2e:fixtures inventory: ${lost.length} room(s) this run could not resolve already carry a name in ${INVENTORY_DOC}:`);
       for (const l of lost) console.error(`    ${l}`);
       console.error("  Check the credential reaches those rooms. Pass --partial only if the rooms are genuinely gone.");
+      return 2;
+    }
+    const unseen = roomsUnseen(committedNow, env);
+    if (unseen.length > 0 && !options.partial) {
+      console.error(`✗ e2e:fixtures inventory: ${unseen.length} room(s) in ${INVENTORY_DOC} name an env var this environment does not set:`);
+      for (const u of unseen) console.error(`    ${u}`);
+      console.error("  Set those variables, or pass --partial to write a table without those rooms.");
       return 2;
     }
     writeFileSync(docPath, generated, "utf8");

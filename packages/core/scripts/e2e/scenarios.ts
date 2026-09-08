@@ -78,6 +78,7 @@ import {
   driveDecide,
   drivePrOpen,
   factToken,
+  withoutMarker,
   parseLinkCode,
   silenceCauseGate,
   SPEND_GATE_DOORS,
@@ -129,6 +130,7 @@ export interface ScenarioContext {
   readonly connectorWrite?: SlackDriver;
   readonly engagedSlack?: EngagedRoomConfig;
   readonly discordEngaged?: DiscordDriver;
+  readonly teamsEngaged?: TeamsDriver;
   readonly githubEngaged?: GithubDriver;
   readonly linearEngaged?: LinearDriver;
   readonly notionEngaged?: NotionDriver;
@@ -1771,7 +1773,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J-ENGAGED-teams",
     title: "Teams engaged seam (OPE-1500): an @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing",
-    requires: ["teams"],
+    requires: ["teams", "engagedTeams"],
     surface: "teams",
     suite: "core",
     smoke: false,
@@ -1779,7 +1781,7 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: REPLY_WAIT * 4 + SILENCE_WINDOW * 3,
     judged: true,
     run: async (ctx) => {
-      const teams = ctx.teams!;
+      const teams = ctx.teamsEngaged!;
       const RSC_GRANT = "ChannelMessage.Read.Group";
       if (!ctx.auditRead) {
         ctx.skip(
@@ -4552,18 +4554,21 @@ export const SCENARIOS: readonly Scenario[] = [
       const slack = ctx.slack!.withChannel(ctx.engagedSlack!.id);
       const surface = slack.channelId;
 
+      const batch = factToken("engaged");
+      const answerOf = (text: string): string => withoutMarker(text, batch);
+
       const mentionFrom = new Date().toISOString();
-      const { ts: rootTs } = await slack.post(slack.mention("what's 12*12? reply with just the number"));
+      const { ts: rootTs } = await slack.post(slack.mention(`what's 12*12? reply with just the number. ref ${batch}`));
       const first = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(first.threadTs === rootTs, "mention: the reply lands in the thread the mention opened");
-      ctx.gate(first.text.includes("144"), "mention: the reply answers correctly (hard gate: 144)");
+      ctx.gate(answerOf(first.text).includes("144"), "mention: the reply answers correctly (hard gate: 144, read with the run marker removed)");
       await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "slack", surface, leg: "mention", expect: "addressed" });
 
       const followFrom = new Date().toISOString();
       const { ts: followTs } = await slack.post("and what's that plus 6?", rootTs);
       const second = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(second.ts !== first.ts, "engaged: the plain follow-up drew a FRESH reply with no re-mention");
-      ctx.gate(second.text.includes("150"), "engaged: the follow-up reply kept the thread's context (hard gate: 150)");
+      ctx.gate(answerOf(second.text).includes("150"), "engaged: the follow-up reply kept the thread's context (hard gate: 150, read with the run marker removed)");
       await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "slack", surface, leg: "engaged follow-up", expect: "thread-follow" });
 
       const stopFrom = new Date().toISOString();
@@ -4586,6 +4591,34 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(dropReply.threadTs === dropTs, "name-drop: the reply roots on the message that dropped the name");
       await gateEngagedWake(ctx, { sinceIso: dropFrom, platform: "slack", surface, leg: "name-drop", expect: "name-drop" });
       ctx.log(`(control window opened ${controlFrom}; name-drop driven at ${dropTs})`);
+
+      try {
+        const written = await ctx.auditRead!({ sinceIso: mentionFrom, platform: "slack", surface, actions: ["memory.write"] });
+        if (written.length === 0) {
+          ctx.log("teardown: no memory.write row for this room in the journey window — nothing reached org-brain, nothing to purge");
+        } else {
+          ctx.log(`teardown: ${written.length} memory.write row(s) for this room — asking for a purge scoped to ${batch} (best-effort, unverified)`);
+          const { ts: forgetTs } = await slack.post(
+            slack.mention(`permanently erase anything you stored about ${batch} from memory — it was test data and must not persist`),
+          );
+          const card = await awaitCard(slack, forgetTs, REPLY_WAIT);
+          const btn = approveButton(card);
+          if (ctx.synthetic && btn) {
+            const clicked = await ctx.synthetic.click({
+              pendingId: btn.pendingId,
+              org: btn.org,
+              decision: "approve",
+              messageTs: card.ts,
+              channelId: slack.channelId,
+            });
+            ctx.log(`teardown: ${clicked.label} approve memory.purge ${btn.pendingId} → ${clicked.status}`);
+          } else {
+            ctx.log("teardown: synthetic capability absent (or no approve button) — purge card left to expire on TTL");
+          }
+        }
+      } catch (err) {
+        ctx.log(`teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+      }
     },
   },
   {
