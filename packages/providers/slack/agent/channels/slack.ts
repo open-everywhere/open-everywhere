@@ -498,7 +498,7 @@ const slackMentionChannel = slackChannel({
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       if (action.kind === "buffer-tool-status") {
         return;
       }

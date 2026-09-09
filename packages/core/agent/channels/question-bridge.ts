@@ -1,6 +1,6 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { isSessionLimitContinuationRequest } from "./session-park.js";
-import { WAKE_TARGET_TTL_MS, type UnifiedWakeOrigin } from "./unified-window.js";
+import { WAKE_TARGET_TTL_MS, unifiedThreadRef, type UnifiedWakeOrigin } from "./unified-window.js";
 
 export const QUESTION_BRIDGED_AUDIT_ACTION = "turn.question_bridged";
 export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
@@ -68,6 +68,15 @@ export interface QuestionBridgeDeps {
 
 const ERROR_MAX = 300;
 
+function containerKeyOf(origin: UnifiedWakeOrigin): string | undefined {
+  try {
+    const key = unifiedThreadRef(origin).channelKey;
+    return key.length > 0 ? key : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function bridgeQuestionToSurface(
   scope: QuestionBridgeScope,
   question: BridgeableQuestion,
@@ -99,7 +108,8 @@ export async function bridgeQuestionToSurface(
   }
   try {
     const id = await deps.post(origin, text);
-    await row(QUESTION_BRIDGED_AUDIT_ACTION, { ...base, platform: origin.platform, id });
+    const containerKey = containerKeyOf(origin);
+    await row(QUESTION_BRIDGED_AUDIT_ACTION, { ...base, platform: origin.platform, id, ...(containerKey ? { containerKey } : {}) });
     return { status: "bridged", platform: origin.platform, id, origin };
   } catch (err) {
     await row(QUESTION_DROPPED_AUDIT_ACTION, {

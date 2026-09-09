@@ -1029,7 +1029,7 @@ const native: LinearChannel = linearChannel({
           await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(data, channel);
           return;
         }
-        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message);
+        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
         const nativeReplied = consumeSupervisorReplyMark(ctx);
         if (nativeAction.kind === "silent") {
           await completeNativeLinearSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);

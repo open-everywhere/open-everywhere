@@ -28,7 +28,10 @@ export interface BucketOptions {
   readonly maxClusters?: number;
   readonly maxExamplesPerCluster?: number;
   readonly surfaceName?: SurfaceNamer;
+  readonly cluster?: FailureClusterer;
 }
+
+export type FailureClusterer = (rows: readonly AuditEntry[], opts: BucketOptions) => FailureCluster[];
 
 export type SurfaceNamer = (row: AuditEntry) => string | undefined;
 
@@ -75,9 +78,7 @@ function failureDiagSuffix(d: Record<string, unknown>): string {
   return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
 }
 
-export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions = {}): FailureCluster[] {
-  const maxClusters = opts.maxClusters ?? 3;
-  const maxExamples = opts.maxExamplesPerCluster ?? 3;
+export function groupFailuresByAction(rows: readonly AuditEntry[]): Map<string, AuditEntry[]> {
   const byAction = new Map<string, AuditEntry[]>();
   for (const row of rows) {
     if (!isFailureAction(row.action)) continue;
@@ -85,7 +86,13 @@ export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions 
     if (list) list.push(row);
     else byAction.set(row.action, [row]);
   }
-  return Array.from(byAction.entries())
+  return byAction;
+}
+
+export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions = {}): FailureCluster[] {
+  const maxClusters = opts.maxClusters ?? 3;
+  const maxExamples = opts.maxExamplesPerCluster ?? 3;
+  return Array.from(groupFailuresByAction(rows).entries())
     .map(([action, entries]) => ({
       action,
       count: entries.length,
@@ -94,6 +101,9 @@ export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions 
     .sort((a, b) => b.count - a.count)
     .slice(0, maxClusters);
 }
+
+export const FACET_LABEL_MAX = 120;
+export const FACET_SKETCH_MAX = 300;
 
 export interface FailureFacet {
   readonly label: string;
@@ -170,7 +180,7 @@ export function parseFailureFacet(text: string): FailureFacet | null {
   const o = raw as Record<string, unknown>;
   if (typeof o["label"] !== "string" || o["label"].trim().length === 0) return null;
   if (typeof o["fixSketch"] !== "string" || o["fixSketch"].trim().length === 0) return null;
-  return { label: o["label"].trim().slice(0, 120), fixSketch: o["fixSketch"].trim().slice(0, 300) };
+  return { label: o["label"].trim().slice(0, FACET_LABEL_MAX), fixSketch: o["fixSketch"].trim().slice(0, FACET_SKETCH_MAX) };
 }
 
 export type FacetCompletion = (scope: string, prompt: string) => Promise<string>;
@@ -222,7 +232,7 @@ export async function buildMode3Report(
   windowEnd: string,
   opts: BucketOptions = {},
 ): Promise<Mode3Report | null> {
-  const clusters = bucketFailures(rows, opts);
+  const clusters = (opts.cluster ?? bucketFailures)(rows, opts);
   if (clusters.length === 0) return null;
 
   const judge = failureFacetJudge();
@@ -237,14 +247,17 @@ export async function buildMode3Report(
       }
     }
     const chosen = facet ?? staticFacet(c.action);
-    shaped.push({ ...c, label: chosen.label, fixSketch: chosen.fixSketch, judged: facet !== null });
+    shaped.push({ ...c, label: chosen.label.slice(0, FACET_LABEL_MAX), fixSketch: chosen.fixSketch.slice(0, FACET_SKETCH_MAX), judged: facet !== null });
   }
 
   const totalFailures = rows.filter((r) => isFailureAction(r.action)).length;
   return { org, windowStart, windowEnd, totalFailures, clusters: shaped };
 }
 
-export function formatMode3Report(report: Mode3Report): string {
+export const DISCOVERY_ONLY_FOOTER =
+  "_Discovery only — no PR opened this run. A human picks which fix sketch, if any, to act on._";
+
+export function formatMode3Report(report: Mode3Report, footer: string = DISCOVERY_ONLY_FOOTER): string {
   const lines = [
     `:microscope: *Weekly failure digest* (${report.windowStart.slice(0, 10)} → ${report.windowEnd.slice(0, 10)}) — ` +
       `${report.totalFailures} failure event(s), top ${report.clusters.length} cluster(s):`,
@@ -253,6 +266,6 @@ export function formatMode3Report(report: Mode3Report): string {
     lines.push(`${i + 1}. *${c.label}* (\`${c.action}\`, ${c.count}×) — ${c.fixSketch}`);
     if (c.examples[0]) lines.push(`   e.g. ${c.examples[0]}`);
   });
-  lines.push("_Discovery only — no PR opened this run (Mode 3 v1). A human picks which fix sketch, if any, to act on._");
+  lines.push(footer);
   return lines.join("\n");
 }

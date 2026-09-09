@@ -522,7 +522,7 @@ const native: GitHubChannel = githubChannel({
           await defaultEvent("message.completed")?.(data, channel);
           return;
         }
-        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message);
+        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
         const nativeReplied = consumeSupervisorReplyMark(ctx);
         if (nativeAction.kind === "silent") {
           await auditNativeGitHubSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);

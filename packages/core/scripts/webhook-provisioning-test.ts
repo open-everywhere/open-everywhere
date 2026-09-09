@@ -196,6 +196,11 @@ const rotateKind = actionKind("webhook.rotate")!;
   for (const p of ["teams", "github", "linear", "notion"]) ok(!hasPrivateDeliveryPath(p), `${p} has no private delivery path`);
   registerCardPoster("discord", async () => undefined);
   ok(hasApprovalCardPath("discord") && !hasPrivateDeliveryPath("discord"), "🔴 the two predicates already DISAGREE, so neither can be silently reused for the other");
+
+  for (const p of ["slack", "discord", "teams", "github", "linear", "notion", "unknown-surface"]) {
+    ok(!hasPrivateDeliveryPath(p) || hasApprovalCardPath(p), `🔴 private delivery on "${p}" implies a card path — so the card-path refusal is subsumed and a venue redirect stays unreachable`);
+  }
+
   ok(revealMod.revealPageAvailable(), "the reveal page is armed in this test deployment");
 }
 
@@ -240,6 +245,11 @@ const rotateKind = actionKind("webhook.rotate")!;
   ok(/nothing needed redeploying/i.test(armed), "…and says the property the db home exists for");
   eq(delivered.length, 1, "one private one-time link was delivered");
   ok(!delivered[0]!.text.includes(first!), "…carrying only the link, never the value");
+
+  eq(delivered[0]!.userId, REQUESTER, "…addressed to the ASKER who requested the rotation");
+  ok(delivered[0]!.userId !== DECIDER, "🔴 …and NOT to the approver who clicked: approval is fungible across admins, custody of a live key is not");
+  eq(delivered[0]!.channelId, "C1", "…delivered into the frozen ASKING channel, never a venue room the card could have been redirected to");
+  ok(!armed.includes(REQUESTER) && !armed.includes(DECIDER), "…and the channel-visible outcome line names neither party's id");
 
   const { resolveHookKeys } = await import("../agent/webhooks/secrets.js");
   const { registerDbCredentialBroker } = await import("../agent/credentials/db-broker.js");

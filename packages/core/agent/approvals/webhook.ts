@@ -59,7 +59,7 @@ async function deliverReveal(
   return post(
     args.channelId,
     args.to,
-    `Your "${args.source}" webhook was ${what}. Open this link to see its endpoint URL and signing secret — ` +
+    `The "${args.source}" webhook you asked me to rotate was ${what}. Open this link to see its endpoint URL and signing secret — ` +
       `it works ONCE, expires in 15 minutes, and only you can see this message:\n${link.url}\n\n` +
       `Nothing can show you the secret again. If you lose it, ask me to rotate the webhook.`,
   );
@@ -84,7 +84,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
       `Issue a new signing secret for the declared "${args.hookId}" webhook`,
       "If it has never had one, this is what makes it start authenticating — no redeploy, and no secret in the config diff.",
       "If it already has one, that value stops being accepted the moment this runs, UNLESS its declaration lists a second `secretRef` — that list IS the overlap, and it ends when a PR removes the entry, not on a timer.",
-      "You get a ONE-TIME link to read the new secret. The old one is not recoverable and is never shown again.",
+      `The person who asked — ${args.requestedBy} — gets a ONE-TIME link to read the new secret, not you. The old one is not recoverable and is never shown again.`,
       `Requested by ${args.requestedBy}`,
     ];
   },
@@ -130,7 +130,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     await vault.write(currentRef, secret, { connector: "webhook", domain: hook.id, createdBy: decidedBy });
 
     const delivered = await deliverReveal(
-      { org: args.org, ref: currentRef, source: hook.id, to: decidedBy, platform: args.platform, channelId: args.channelId },
+      { org: args.org, ref: currentRef, source: hook.id, to: args.requestedBy, platform: args.platform, channelId: args.channelId },
       outgoing ? "rotated" : "created",
     );
 
@@ -149,6 +149,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
         overlapped,
         rotatedBy: decidedBy,
         requestedBy: args.requestedBy,
+        revealedTo: args.requestedBy,
         revealDelivered: delivered,
       },
     });
@@ -156,16 +157,16 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": outcome });
     if (!delivered) {
       return (
-        `webhook "${hook.id}" has a new signing secret, but I couldn't hand you the one-time link — so nobody has the new value and the endpoint won't authenticate anything until this is run again from a surface where I can message you privately.` +
+        `webhook "${hook.id}" has a new signing secret, but I couldn't hand the one-time link to the person who asked for it — so nobody has the new value and the endpoint won't authenticate anything until this is run again from a surface where I can message them privately.` +
         (overlapped ? " Its declared previous-key ref still holds the old value, so an existing sender keeps working meanwhile." : "")
       );
     }
     return outgoing
-      ? `webhook "${hook.id}" rotated — I've sent you a private one-time link with the new secret.` +
+      ? `webhook "${hook.id}" rotated — I've sent the person who asked a private one-time link with the new secret.` +
           (overlapped
             ? " The old value moved to the second `secretRef` its declaration lists, so it keeps being accepted until a PR removes that entry."
             : " Its declaration lists one `secretRef`, so the old value stopped being accepted just now — update the sender before it retries.")
-      : `webhook "${hook.id}" now has a signing secret — I've sent you a private one-time link with it. Paste it into the sender and the endpoint starts authenticating; nothing needed redeploying.`;
+      : `webhook "${hook.id}" now has a signing secret — I've sent the person who asked a private one-time link with it. They paste it into the sender and the endpoint starts authenticating; nothing needed redeploying.`;
   },
 };
 

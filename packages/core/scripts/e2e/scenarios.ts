@@ -1808,15 +1808,20 @@ export const SCENARIOS: readonly Scenario[] = [
         afterIso: remention.createdDateTime ?? reply1.createdDateTime,
         contains: markerT,
       });
+      await sleep(SILENCE_WINDOW);
+      const chain = await teams.replies(driven.id);
+      const answers = chain.filter((m) => teams.isBotReply(m) && m.text.includes(markerT));
+      ctx.log(
+        `re-mention: ${answers.length} token-carrying answer(s) before the judge — ` +
+          answers.map((m, i) => `#${i + 1} ${JSON.stringify(m.text.slice(0, 160))}`).join(" · "),
+      );
+
       await ctx.judgePass(
         closedQA("Does the reply recall the project name Northwind (proving the reply-chain session kept context)?", { mustMatch: [/northwind/i] }),
         reply3.text,
         "re-mention: continuity in the reply chain",
       );
 
-      await sleep(SILENCE_WINDOW);
-      const chain = await teams.replies(driven.id);
-      const answers = chain.filter((m) => teams.isBotReply(m) && m.text.includes(markerT));
       const answerVerdict = classifyAnswers(answers.length, markerT);
       ctx.gate(!answerVerdict.red, answerVerdict.label);
       if (answerVerdict.verdict === "duplicate") ctx.observe(answerVerdict.label);

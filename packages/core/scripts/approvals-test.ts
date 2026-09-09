@@ -1167,7 +1167,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-benefit-ok", { channel: "C_INTERNAL" }), { post });
   ok(benefitExecuted.includes("U_RANDOM_MEMBER"), "clicker gate leg B: a beneficiary kind executes in an ATTESTED room");
 
-  ok(actionKind("webhook.rotate")?.beneficiaryClicker === true, "clicker gate leg B: webhook.rotate carries beneficiaryClicker (its execute reveals a live signing secret to the DECIDER)");
+  ok(actionKind("webhook.rotate")?.beneficiaryClicker === true, "clicker gate leg B: webhook.rotate carries beneficiaryClicker (its execute mints a live signing secret and destroys the one in use; the reveal goes to the ASKER — OPE-327)");
   ok(actionKind("webhook.create") === undefined && actionKind("webhook.revoke") === undefined, "clicker gate leg B: webhook.create/webhook.revoke are GONE (OPE-224) — a hook is created and removed by merged PRs");
   ok(actionKind("webhook.declare")?.beneficiaryClicker === undefined && actionKind("pr.open")?.beneficiaryClicker === undefined, "clicker gate leg B: witness kinds (webhook.declare, pr.open) do NOT carry it — opening a PR hands the clicker nothing");
 

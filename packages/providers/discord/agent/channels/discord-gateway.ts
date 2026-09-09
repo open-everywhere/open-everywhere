@@ -97,6 +97,8 @@ import {
   type ReactionIngestOutcome,
   type ReactionVerb,
   consumeNoReplyThisTurn,
+  consumeStandDownSilenceThisTurn,
+  STAND_DOWN_SILENCE_REASON,
   NO_REPLY_SENTINEL_REASON,
   auditNoReplySentinelObserved,
   getSettings,
@@ -1561,13 +1563,16 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
-      const action = finalMessageAction(data.finishReason, data.message);
-      if (action.kind === "buffer-tool-status") return;
+      const rawAction = finalMessageAction(data.finishReason, data.message);
+      if (rawAction.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
       const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const noReplyToolCalledThisTurn = consumeNoReplyThisTurn() !== null;
+      const stoodDownSilentThisTurn = consumeStandDownSilenceThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const action: FinalMessageAction =
+        stoodDownSilentThisTurn && rawAction.kind === "post" ? { kind: "silent", reason: STAND_DOWN_SILENCE_REASON } : rawAction;
       const plan = planCompletion({
         action,
         reactionActive: Boolean(status.original),

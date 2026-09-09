@@ -60,6 +60,7 @@ import { threadParentChannelId, clearDiscordInfoCacheForTest } from "@open-every
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { finalMessageAction, NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/turn-delivery.js";
+import { STAND_DOWN_SILENCE_REASON } from "@open-everywhere/core/agent/channels/stand-down-silence.js";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
@@ -517,6 +518,16 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(carded.reaction === "clear", "plan: card posted → still counts as answered (👀 clears)");
   const cardedUntracked = planCompletion({ action: postAction, reactionActive: false, cardPostedThisTurn: true });
   ok(cardedUntracked.delivery.kind === "none" && cardedUntracked.reaction === "none", "plan: card posted, untracked → suppressed, reaction untouched");
+
+  const stoodDownSilent = planCompletion({ action: { kind: "silent", reason: STAND_DOWN_SILENCE_REASON }, reactionActive: true });
+  ok(stoodDownSilent.delivery.kind !== "post", "plan: a turn silenced by the stand-down latch posts NOTHING — the trailing prose never reaches the room");
+  ok(stoodDownSilent.reaction === "clear", "plan: …and the turn still counts as answered, because the acknowledgement already went out");
+
+  const gatewaySrc = readFileSync(new URL("../packages/providers/discord/agent/channels/discord-gateway.ts", import.meta.url), "utf8");
+  ok(/consumeStandDownSilenceThisTurn\(/.test(gatewaySrc), "🔴 wiring: the GUILD completion handler reads the stand-down latch — without this read a stood-down Discord thread reproduces a live run");
+  ok(/STAND_DOWN_SILENCE_REASON/.test(gatewaySrc), "wiring: …and turns it into the silent verdict under that reason");
+  ok(!/finalMessageActionForTurn\s*\(/.test(gatewaySrc), "🔴 wiring: …without CALLING `finalMessageActionForTurn`, which would eat the no_reply signal this handler splits on");
+  ok(/finalMessageAction\s*\(/.test(gatewaySrc), "wiring/CONTROL: …and the handler does still call the pure decision — a source guard that matched nothing would pass the line above for free");
 }
 
 {

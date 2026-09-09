@@ -22,7 +22,11 @@ export type SkillDomainRefusal = "dm" | "mpim" | "external" | "unassigned";
 
 export type SkillDomainResult = { readonly domain: string } | { readonly domain: null; readonly reason: SkillDomainRefusal };
 
-export function skillDomainFor(binding: SurfaceBinding, partition: Partition, domains: readonly Domain[]): SkillDomainResult {
+export function skillDomainFor(
+  binding: SurfaceBinding,
+  partition: Pick<Partition, "domainKey" | "surfaceKey">,
+  domains: readonly Domain[],
+): SkillDomainResult {
   if (binding.mode === "dm") return { domain: null, reason: "dm" };
   if (binding.mode === "mpim") return { domain: null, reason: "mpim" };
   if (binding.trust === "external") return { domain: null, reason: "external" };

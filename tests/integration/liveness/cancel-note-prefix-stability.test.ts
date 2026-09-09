@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
+import { CONTROL_WRITE_TOOL_NAMES, registerControlWriteTools } from "@open-everywhere/core/agent/control/writes.js";
 import {
   disposeLater,
   bootAgent,
@@ -51,6 +52,15 @@ function prefixDivergence(before: readonly RecordedRequest["messages"][number][]
   return undefined;
 }
 
+function controlWriteDescriptions(): ReadonlyMap<string, string> {
+  const seen = new Map<string, string>();
+  registerControlWriteTools(
+    { registerTool: (name: string, spec: { description?: string }) => seen.set(name, spec.description ?? "") } as never,
+    "ope1194-probe",
+  );
+  return seen;
+}
+
 test("a cancelled turn's system-prompt reminder is one clean insertion at a fixed point, and clears back to byte-identical — never a scattered rewrite of the prefix", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
@@ -62,6 +72,23 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const requestA = await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn A's model call");
   expect(requestA.fault).toBeUndefined();
   a.dispose();
+
+  const controlDescriptions = controlWriteDescriptions();
+  expect([...controlDescriptions.keys()].sort()).toEqual([...CONTROL_WRITE_TOOL_NAMES].sort());
+  expect(controlDescriptions.get("set_domain_model")!.length, "set_domain_model's description no longer exceeds its OPE-1194 base length (868) plus the ~340 characters the old warning named, so this file stopped driving that boundary").toBeGreaterThanOrEqual(1208);
+  const carriesControlWrites = (r: Pick<RecordedRequest, "toolDefinitions">): string | undefined => {
+    const whole = JSON.stringify(r);
+    for (const [name, description] of controlDescriptions) {
+      const needle = JSON.stringify(description).slice(1, -1);
+      if (needle.length > 0 && whole.includes(needle)) return `carries ${name}'s control-plane description verbatim`;
+    }
+    return undefined;
+  };
+  expect(
+    carriesControlWrites({ toolDefinitions: [{ name: "set_domain_model", description: controlDescriptions.get("set_domain_model")! }] }),
+    "the matcher cannot see set_domain_model's description even when it IS present — every absence assertion below is vacuous",
+  ).toBeDefined();
+  expect(carriesControlWrites(requestA), "turn A's model call reaches the control plane's tool text").toBeUndefined();
 
   const b = disposeLater(
     registerScript({
@@ -120,6 +147,13 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
 
   expect(new Set([requestA.sessionId, requestC.sessionId, requestD.sessionId]).size).toBe(1);
   expect(requestA.sessionId).toBeTypeOf("string");
+
+  expect(carriesControlWrites(requestC), "turn C's model call reaches the control plane's tool text").toBeUndefined();
+  expect(carriesControlWrites(requestD), "turn D's model call reaches the control plane's tool text").toBeUndefined();
+  const defs = (r: RecordedRequest) => JSON.stringify(r.toolDefinitions);
+  expect(defs(requestA).length, "turn A was offered no tools at all — the tool-block comparison below is vacuous").toBeGreaterThan(2);
+  expect(defs(requestC), "the tool block changed across the cancel — turn C's differs from turn A's").toBe(defs(requestA));
+  expect(defs(requestD), "the tool block changed across the clear — turn D's differs from turn A's").toBe(defs(requestA));
 
   const sysA = systemBlock(requestA);
   const sysC = systemBlock(requestC);

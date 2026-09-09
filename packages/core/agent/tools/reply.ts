@@ -37,6 +37,8 @@ import {
   markStoppedAckThisTurn,
   wasStoppedAckSpentThisTurn,
 } from "../channels/reply-signal.js";
+import { markStandDownSilenceThisTurn, REPLY_STAND_DOWN_ACK_ACTION } from "../channels/stand-down-silence.js";
+import { auditToolAction } from "../audit/tool-action.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage, boundConversationOrigin, sameUnifiedConversation } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
@@ -95,10 +97,24 @@ function standDownRowKey(bind: BindableContext, turnId: string | undefined): str
   }
 }
 
-async function spendStoppedAck(bind: BindableContext, turnId: string | undefined): Promise<void> {
+async function spendStoppedAck(bind: BindableContext, turnId: string | undefined, arm: "unified" | "per-surface"): Promise<void> {
   markStoppedAckThisTurn(turnId);
+  markStandDownSilenceThisTurn(turnId);
   const rowKey = standDownRowKey(bind, turnId);
   if (rowKey !== undefined) await noteStoppedAck(rowKey);
+  let anchor: string | undefined;
+  let sessionId: string | undefined;
+  try {
+    const binding = bindFrom(bind);
+    anchor = binding.engagementKey ?? binding.threadTs;
+    sessionId = currentSessionId(bind);
+  } catch {
+  }
+  await auditToolAction(bind, REPLY_STAND_DOWN_ACK_ACTION, {
+    arm,
+    ...(anchor !== undefined ? { anchor } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  });
 }
 
 export const unifiedReplyEntry = defineTool({
@@ -222,7 +238,7 @@ export const unifiedReplyEntry = defineTool({
         { terminal: input.done !== false },
       );
       markRepliedThisTurn(turnId);
-      if (standDown.stopped) await spendStoppedAck(bind, turnId);
+      if (standDown.stopped) await spendStoppedAck(bind, turnId, "unified");
       markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);
 
@@ -290,7 +306,7 @@ export const baseReplyEntry = defineTool({
           }
           const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
           markRepliedThisTurn(baseTurnId);
-          if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId);
+          if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId, "per-surface");
           noteTerminalCallGrain(bindBase);
           return {
             posted: true,

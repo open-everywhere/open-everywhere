@@ -35,6 +35,26 @@ const catalogues: ConnectorCredentials[] = [
   }),
 
   defineConnectorCredentials({
+    description: "GitHub — a member's OWN GitHub account, as a second acting identity. Declared, DM-only, and not yet mintable.",
+    connector: "github",
+    allows: ["user-oauth"],
+    humanActing: {
+      supported: true,
+      credentialTypes: ["user-oauth"],
+    },
+    credentials: [
+      {
+        id: "user-oauth",
+        type: "user-oauth",
+        grantFamily: "human-acting",
+        home: vercelConnectorHome("github.com/login/oauth"),
+        lifecycle: { refresh: "refresh-token" },
+        endpoints: { hosts: ["api.github.com"], methods: ["GET"] },
+      },
+    ],
+  }),
+
+  defineConnectorCredentials({
     description: "Linear workspace — the WORK surface a granted domain files and mutates issues through.",
     connector: "linear",
     allows: ["api-key"],

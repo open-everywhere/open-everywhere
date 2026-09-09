@@ -9,7 +9,7 @@ import { scopeUsdSpend } from "../spend/check.js";
 import { getProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { telemetryStatusLine } from "../observability/telemetry.js";
-import { domainForChannel } from "../memory/domain.js";
+import { domainForChannel, type Domain } from "../memory/domain.js";
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import {
@@ -23,6 +23,8 @@ import {
   type CurrentCaps,
 } from "../tools/set_spend_limit.js";
 import { planClearSpendLimit, type ClearSpendLimitInput } from "../tools/clear_spend_limit.js";
+import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js";
+import type { SkillDomainRefusal } from "../skills/domain-skills.js";
 
 export const OE_COMMAND_NAME = "oe";
 
@@ -168,9 +170,9 @@ export interface BudgetStatusFacts {
 export function renderBudgetStatus(f: BudgetStatusFacts): string {
   return [
     "*Spend status* (current calendar month)",
-    `• this channel (\`${f.surfaceKey}\`): ${f.surfaceTokens.toLocaleString()} / ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens · ` +
+    `• this channel (\`${f.surfaceKey}\`): ${fmtTokenCount(f.surfaceTokens)} / ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens · ` +
       `~$${f.surfaceUsd.toFixed(2)} / ${fmtCap(f.caps.surfaceMonthlyUsd, "usd")}`,
-    `• whole workspace (\`${f.workspaceKey}\`): ${f.workspaceTokens.toLocaleString()} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
+    `• whole workspace (\`${f.workspaceKey}\`): ${fmtTokenCount(f.workspaceTokens)} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
       `~$${f.workspaceUsd.toFixed(2)} / ${fmtCap(f.caps.workspaceMonthlyUsd, "usd")}`,
     "_propose a change with `/oe budget raise <usd>` or `/oe budget clear`._",
   ].join("\n");
@@ -223,6 +225,47 @@ export interface OeApprovalDeps {
   readonly requestApproval?: typeof requestApproval;
   readonly friendlyScopeLabel?: typeof friendlyScopeLabel;
   readonly readSpendCoverage?: typeof readSpendCoverage;
+  readonly domainSpendWindow?: typeof domainSpendWindow;
+  readonly domains?: readonly Domain[];
+  readonly nowISO?: () => string;
+}
+
+function noDomainSpendReason(reason: SkillDomainRefusal): string {
+  switch (reason) {
+    case "dm":
+      return "a DM belongs to no memory domain";
+    case "mpim":
+      return "a group chat belongs to no memory domain";
+    case "external":
+      return "an externally-shared or unconfirmed channel reports no domain spend";
+    case "unassigned":
+      return "this channel is in no memory domain, and no org-wide default domain is configured";
+  }
+}
+
+export const BUDGET_RAISE_SCAN_DAYS = 30;
+
+async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprovalDeps): Promise<string> {
+  const domains = deps.domains ?? getConfig().loadDomains();
+  const resolved = reportDomainForBinding(binding, domains);
+  if (resolved.domain === null) return `\n_No domain spend to show — ${noDomainSpendReason(resolved.reason)}._`;
+  try {
+    const scan = await (deps.domainSpendWindow ?? domainSpendWindow)(
+      binding.org,
+      resolved.domain,
+      deps.nowISO ? deps.nowISO() : new Date().toISOString(),
+      BUDGET_RAISE_SCAN_DAYS,
+      { domains },
+    );
+    return (
+      `\n_Domain \`${scan.domain}\` spent ~$${scan.usd.toFixed(2)} on ${fmtTokenCount(scan.tokens)} tokens over ${fmtTokenCount(scan.calls)} calls ` +
+      `in ${scan.periods.join(", ")} — the whole calendar months holding the last ${BUDGET_RAISE_SCAN_DAYS} days, which is the finest window the spend ledger keeps._`
+    );
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.warn(`[open-everywhere:spend] "/oe budget raise" could not scan domain "${resolved.domain}" spend: ${why}`);
+    return `\n_Domain spend NOT shown — the spend ledger could not be read on this turn._`;
+  }
 }
 
 function requireChannelId(binding: SurfaceBinding): string {
@@ -270,15 +313,18 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
     },
     approvalPostDeps(binding.platform),
   );
+  const spendSentence = await budgetRaiseSpendSentence(binding, deps);
   if (posted.autoApproved) {
     return (
       `Done — $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` is already in force: the approver chain auto-approved it ` +
-      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}`
+      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}` +
+      spendSentence
     );
   }
   return (
     `Card posted in this channel — proposing $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` ` +
-    `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.`
+    `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.` +
+    spendSentence
   );
 }
 

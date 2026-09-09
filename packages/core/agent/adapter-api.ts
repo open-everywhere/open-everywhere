@@ -630,6 +630,7 @@ export {
 
 export { consumeNoReplyThisTurn } from "./channels/no-reply-signal.js";
 export { consumeReactedThisTurn } from "./channels/react-signal.js";
+export { consumeStandDownSilenceThisTurn, STAND_DOWN_SILENCE_REASON } from "./channels/stand-down-silence.js";
 
 export { MAX_MESSAGES } from "./channels/context-render.js";
 

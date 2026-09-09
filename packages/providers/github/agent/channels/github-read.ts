@@ -12,6 +12,7 @@ import {
   type RetryPolicy,
   type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { assertGithubActingIdentity } from "./github-acting-identity.js";
 import { githubReviewThreadRoot } from "./github-identity.js";
 
 const GITHUB_CHANNEL_DEFAULT_LIMIT = 50;
@@ -116,10 +117,11 @@ async function assertGithubContainerAllowed(ctx: BindableContext, target: GitHub
   await assertSurfaceAllowed(ctx, "github", target.repo);
 }
 
-async function admitContainer(ctx: BindableContext, channel: string): Promise<GitHubContainer> {
+async function admitContainer(ctx: BindableContext, channel: string, tool: string): Promise<GitHubContainer> {
   const target = parseGithubContainer(channel);
   if (!target) throw new ChannelScopeError(`"${channel}" is not a GitHub conversation id (expected "owner/repo#number").`);
   await assertGithubContainerAllowed(ctx, target);
+  await assertGithubActingIdentity(ctx, tool);
   return target;
 }
 
@@ -197,7 +199,7 @@ export const githubReadAdapter = {
     fetchFn: PrFetchFn = liveGithubReadFetch,
     walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
-    const target = await admitContainer(ctx, channel);
+    const target = await admitContainer(ctx, channel, "github_read_channel");
     const effective = Math.min(limit ?? GITHUB_CHANNEL_DEFAULT_LIMIT, GITHUB_MAX_PAGE);
     const token = await resolveConversationReadToken(target.repoFull);
     const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
@@ -220,7 +222,7 @@ export const githubReadAdapter = {
     fetchFn: PrFetchFn = liveGithubReadFetch,
     walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
-    const target = await admitContainer(ctx, channel);
+    const target = await admitContainer(ctx, channel, "github_read_thread");
     const token = await resolveConversationReadToken(target.repoFull);
     const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
     const { comments, mightBeTruncated } = await fetchReviewComments(fetchFn, token, target, () => walkRetry(deadline, walk));

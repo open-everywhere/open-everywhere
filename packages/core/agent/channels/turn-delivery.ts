@@ -4,6 +4,7 @@ import { getSettings } from "../settings/settings.js";
 import { configuredAgentName } from "../identity/bot-name.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
+import { consumeStandDownSilenceThisTurn, STAND_DOWN_SILENCE_REASON } from "./stand-down-silence.js";
 import { OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./unified-window.js";
 import type { ChannelSessionRow } from "../operational/store.js";
 
@@ -27,11 +28,13 @@ export function finalMessageAction(finishReason: string, message: string | null)
   return { kind: "post", text: message };
 }
 
-export function finalMessageActionForTurn(finishReason: string, message: string | null): FinalMessageAction {
+export function finalMessageActionForTurn(finishReason: string, message: string | null, turnId?: string): FinalMessageAction {
   const action = finalMessageAction(finishReason, message);
   if (action.kind === "buffer-tool-status") return action;
   const reason = consumeNoReplyThisTurn();
+  const stoodDownSilent = consumeStandDownSilenceThisTurn(turnId);
   if (silentRoutineThisTurn()) return { kind: "silent", reason: SILENT_ROUTINE_DROP_REASON };
+  if (stoodDownSilent) return { kind: "silent", reason: STAND_DOWN_SILENCE_REASON };
   if (reason) return { kind: "silent", reason: `no_reply tool: ${reason}` };
   return action;
 }

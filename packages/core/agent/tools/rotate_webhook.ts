@@ -5,7 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
 
@@ -37,9 +37,7 @@ export default defineTool({
     if (mode === "mpim") throw new Error("Group DMs are execution-only — rotate from a channel or a DM instead.");
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(`Rotating a webhook secret needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}".`);
-    }
+
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("rotate_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and there is nobody in a fire to hand a fresh signing secret to. Ask a person in this conversation to rotate it.");
@@ -108,7 +106,7 @@ export default defineTool({
       pending: true,
       pendingId: posted.id,
       source: declared.id,
-      message: `card posted — ${subject}, awaiting a human to approve it (pending ${posted.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
+      message: `card posted — ${subject}, awaiting a human to approve it (pending ${posted.id}). On approval YOU get a private one-time link with it, because you asked — whoever approves sees only the decision. Nothing needs redeploying.`,
     };
   },
 });

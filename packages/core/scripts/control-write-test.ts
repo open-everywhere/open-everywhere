@@ -37,6 +37,8 @@ const callJson = async (client: InstanceType<typeof Client>, name: string, args:
   const writeTools = Object.keys((buildControlServer({ includeWrites: true, actor: "t" }) as unknown as { _registeredTools: Record<string, unknown> })._registeredTools);
   ok("write server exposes all the mutating tools", CONTROL_WRITE_TOOL_NAMES.every((t) => writeTools.includes(t)));
   ok("write server still exposes the read tools", CONTROL_TOOL_NAMES.every((t) => writeTools.includes(t)));
+  const undeclared = writeTools.filter((t) => !(CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes(t) && !(CONTROL_TOOL_NAMES as readonly string[]).includes(t));
+  ok(`write server registers NOTHING undeclared (found: ${undeclared.join(", ") || "none"})`, undeclared.length === 0);
 }
 
 const server = buildControlServer({ includeWrites: true, actor: "admin@example.com" });

@@ -49,6 +49,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "suspend_link_set",
   "reactivate_link_set",
   "revoke_link_set",
+  "purge_link_set_credentials",
   "directory_sync_now",
   "directory_sync_status",
   "directory_groups_plan",
@@ -490,7 +491,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Set a domain's model / reasoning pick",
       description:
-        "Runtime SELF-SERVE of a domain's model id and/or reasoning effort — the free CHOICE within the org's model-policy envelope (agent/model/policy.ts is the git-config allow-list/ceiling; this is the per-domain runtime pick layered under it, see docs/deploy/configuration-reference.md \"Model policy\"). Requires a DOMAIN ADMIN of `domain` (or org-wide admin) — the one control-plane write a domain admin, not just an org admin, may make on their own domain. modelId must be usable under the org's model policy (allow-listed and not provider-denied — any id if no policy is configured); reasoning must be at/under the domain's effective reasoning ceiling. At least one of modelId/reasoning is required. Takes effect immediately (no redeploy, no session restart needed); replaces any previous pick for the domain wholesale. clear_domain_model reverts to the git-config route.",
+        "Runtime SELF-SERVE of a domain's model id and/or reasoning effort — the free CHOICE within the org's model-policy envelope (agent/model/policy.ts is the git-config allow-list/ceiling; this is the per-domain runtime pick layered under it, see docs/deploy/configuration-reference.md \"Model policy\"). Requires a DOMAIN ADMIN of `domain` (or org-wide admin) — the one control-plane write a domain admin, not just an org admin, may make on their own domain. modelId must be usable under the org's model policy (allow-listed and not provider-denied — any id if no policy is configured); reasoning must be at/under the domain's effective reasoning ceiling. At least one of modelId/reasoning is required. Takes effect immediately (no redeploy, no session restart needed); replaces any previous pick for the domain wholesale. clear_domain_model reverts to the git-config route. 🔴 AN UNPRICED PICK STILL LANDS, AND REPORTS ITSELF (OPE-1157): when `modelId` carries no committed price in this deployment (agent/spend/model-pricing.ts, or core's built-in table), the result adds `unpriced: true` and a warning, and the audit row carries the same flag. Calls on that model add $0 to the spend ledger, so this domain's turn spend stops counting against any USD cap over it until the rate is committed. The cap is not dead: it still sums every other priced row in its scope, and a TOKEN cap is unaffected, because tokens are counted for every call. Measure the rate with `npm run probe:models` and commit it.",
       inputSchema: {
         org: z.string().min(1),
         domain: z.string().min(1),

@@ -11,6 +11,7 @@ import {
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
+import { GITHUB_OWN_ACCOUNT_VENDOR } from "../agent/channels/github-acting-identity.js";
 import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson, walkRetry, READ_WALK_BUDGET_MS } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 
@@ -331,6 +332,52 @@ const MAX_REVIEW_PAGES_EXPECTED = 5;
   );
   eq(unbounded.slept.length, MAX_REVIEW_PAGES_EXPECTED, "§8 negative control: with a never-shrinking budget every page pays its own 30 s wait");
   ok(out.possiblyIncomplete === true, "§8 negative control: …and the walk completes, hitting its page ceiling");
+}
+
+{
+  const OWN_ACCOUNT_ASK_ATTR = "oe_own_account_ask";
+  const stamp = (sessionId: string, connector: string): string => `${sessionId}|-|${connector}`;
+
+  function turnAskingOwnAccount(connector: string): BindableContext {
+    const base = githubTurn({ issue: 7 }) as unknown as { session: { auth: { current: { attributes?: Record<string, unknown> } } } };
+    const attributes = { ...(base.session.auth.current.attributes ?? {}), [OWN_ACCOUNT_ASK_ATTR]: stamp("seat-1", connector) };
+    return { ...base, session: { ...base.session, auth: { current: { ...base.session.auth.current, attributes } }, id: "seat-1" } } as unknown as BindableContext;
+  }
+
+  const asked = transport([["/issues/7", ISSUE_7]]);
+  let refusal: unknown;
+  try {
+    await githubReadAdapter.readChannel(turnAskingOwnAccount("github"), "acme/api#7", 10, asked.fn);
+  } catch (err) {
+    refusal = err;
+  }
+  ok(refusal instanceof Error, "§9 a read on a turn that asked for the member's OWN GitHub account is refused");
+  ok(String((refusal as Error).message).includes("own github account"), "§9 …with the gate's own sentence, which names the account that was asked for");
+  eq(asked.urls.length, 0, "§9 …and NOTHING was fetched — the refusal lands before the vendor is dialed");
+
+  const notion = transport([["/issues/7", ISSUE_7]]);
+  const throughNotion = await githubReadAdapter.readChannel(turnAskingOwnAccount("notion"), "acme/api#7", 10, notion.fn);
+  ok(throughNotion.lines.length > 0, "§9 negative control: a NOTION own-account stamp does not refuse a GitHub read");
+
+  const plain = transport([["/issues/7", ISSUE_7]]);
+  const ordinary = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 10, plain.fn);
+  ok(ordinary.lines.length > 0, "§9 negative control: a turn with no own-account stamp reads normally");
+}
+
+{
+  const ORDINARY = ["through", "highlight", "light", "although", "right", "throughput"];
+  const namesGithub = (word: string): boolean => word.includes("github");
+  const hidesInsideWord = (word: string): boolean => ORDINARY.some((ordinary) => ordinary.includes(word));
+
+  const aliases: readonly string[] = GITHUB_OWN_ACCOUNT_VENDOR.aliases ?? [];
+  ok(aliases.length > 0, "§10 the shipped vendor declares at least one alias");
+  ok(GITHUB_OWN_ACCOUNT_VENDOR.connector === "github", "§10 the shipped connector word is the access plane's own `github`");
+  for (const word of [GITHUB_OWN_ACCOUNT_VENDOR.connector, ...aliases]) {
+    ok(namesGithub(word), `§10 the shipped word "${word}" names github`);
+    ok(!hidesInsideWord(word), `§10 the shipped word "${word}" hides inside no ordinary word`);
+  }
+  ok(hidesInsideWord("gh"), "§10 negative control: `gh` DOES hide inside `through` — the hiding hazard is real");
+  ok(!namesGithub("notion.so"), "§10 negative control: a word that does not name github fails the naming rule");
 }
 
 console.log(`✓ github-read: ${passed} assertions passed`);

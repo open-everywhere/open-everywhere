@@ -457,4 +457,67 @@ function discordOeInteraction(opts: {
   n += 3;
 }
 
+{
+  const domains = [
+    defineDomain({ name: "eng", reach: ["discord/G1/C_ENG"] }),
+    defineDomain({ name: "sales", reach: ["discord/G1/C_SALES"] }),
+  ];
+  let recorded: RequestApprovalInput | undefined;
+  const scanned: Record<string, { usd: number; tokens: number; calls: number }> = {
+    eng: { usd: 12.5, tokens: 123456, calls: 42 },
+    sales: { usd: 99.75, tokens: 9, calls: 3 },
+  };
+  let scannedFor: string | undefined;
+  let scannedWith: { org: string; nowISO: string; days: number } | undefined;
+  const deps = {
+    effectiveCaps: async () => ({ surfaceMonthlyUsd: 5 }),
+    requestApproval: async (input: RequestApprovalInput) => {
+      recorded = input;
+      return { id: "pending-scan", expiresAt: "2026-09-10T00:00:00.000Z" };
+    },
+    friendlyScopeLabel: async () => undefined,
+    readSpendCoverage: async () => ({ models: [] }),
+    domains,
+    nowISO: () => "2026-09-09T10:00:00.000Z",
+    domainSpendWindow: async (org: string, domain: string, nowISO: string, days: number) => {
+      scannedFor = domain;
+      scannedWith = { org, nowISO, days };
+      return { domain, periods: ["2026-08", "2026-09"], ...scanned[domain] };
+    },
+  };
+  const inDomain = (surface: string) => discordBinding({ surface, trust: "internal", target: { channelId: surface, guildId: "G1" } });
+
+  const engReply = await runBudgetRaise(inDomain("C_ENG"), 25, deps as never);
+  ok(scannedFor === "eng", "budget raise: the scan resolves the requester's OWN domain from their binding — the caller never names one");
+  ok(
+    scannedWith!.org === "default" && scannedWith!.days === 30 && scannedWith!.nowISO === "2026-09-09T10:00:00.000Z",
+    `budget raise: the scan is pinned to the requester's own org and a 30-day window (got ${JSON.stringify(scannedWith)})`,
+  );
+  ok(engReply.includes("`eng`") && engReply.includes("$12.50"), `budget raise: the ack shows the requester their own domain's 30-day spend (got: ${engReply})`);
+  ok(engReply.includes("123,456") && engReply.includes("42"), "budget raise: the ack carries the domain's token and call totals too");
+  ok(engReply.includes("2026-08, 2026-09"), "budget raise: the ack NAMES the calendar months summed — the ledger's grain is a month, and the line says so instead of claiming an exact 30 days");
+  ok(!engReply.includes("99.75") && !engReply.includes("`sales`"), "budget raise: a requester in one domain sees NOTHING of another domain's spend");
+  const salesReply = await runBudgetRaise(inDomain("C_SALES"), 25, deps as never);
+  ok(scannedFor === "sales" && salesReply.includes("$99.75"), "budget raise: a requester in the other domain gets THAT domain's figure (negative control — the answer tracks the requester)");
+  ok(!salesReply.includes("12.50"), "budget raise: …and still sees nothing of the first domain's spend");
+
+  ok(recorded!.kind === "spend.set", "budget raise: the scan did not turn the raise into an act — it is still a spend.set PROPOSAL");
+  ok(salesReply.includes("An admin needs to Approve it."), "budget raise: the ack still says an admin decides — the raise stays admin-gated");
+  ok(JSON.stringify(recorded!.args).indexOf("99.75") === -1, "budget raise: the scanned figure is NOT frozen onto the card — it is the asker's evidence, not the approver's");
+
+  scannedFor = undefined;
+  const dmReply = await runBudgetRaise(discordBinding({ mode: "dm", workspace: "U_DM", target: { channelId: "U_DM" } }), 10, deps as never);
+  ok(scannedFor === undefined, "budget raise: a DM resolves to no domain, so the scan does not run at all");
+  ok(/No domain spend to show/.test(dmReply) && /DM/.test(dmReply), "budget raise: a DM ack states that no domain spend is shown, and why — never a silent zero");
+
+  const brokenReply = await runBudgetRaise(inDomain("C_ENG"), 25, {
+    ...deps,
+    domainSpendWindow: async () => {
+      throw new Error("ledger unreachable");
+    },
+  } as never);
+  ok(brokenReply.includes("pending-scan"), "budget raise: a failed scan still returns the working proposal ack — the read is fail-soft");
+  ok(/NOT shown/.test(brokenReply) && !brokenReply.includes("$0.00"), "budget raise: a failed scan says the ledger could not be read, never a $0.00 that would read as a clean bill");
+}
+
 console.log(`\n✓ oe-commands: ${n} assertions passed (parsing, renderers, registration JSON, classification, ephemeral responses, budget glue — the Slack signature gate moved to @open-everywhere/provider-slack)\n`);

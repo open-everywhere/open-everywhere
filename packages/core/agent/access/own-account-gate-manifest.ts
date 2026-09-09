@@ -59,7 +59,11 @@ export function findOwnAccountGateSites(files: readonly OwnAccountGateFile[]): O
   return sites;
 }
 
-export function checkOwnAccountGateSites(files: readonly OwnAccountGateFile[], connectors: readonly string[]): string[] {
+export function checkOwnAccountGateSites(
+  files: readonly OwnAccountGateFile[],
+  connectors: readonly string[],
+  humanActingConnectors: readonly string[] = [],
+): string[] {
   const sites = findOwnAccountGateSites(files);
   const problems: string[] = [];
 
@@ -74,6 +78,7 @@ export function checkOwnAccountGateSites(files: readonly OwnAccountGateFile[], c
 
   const gated = new Set(sites.map((s) => s.connector).filter((c): c is string => c !== undefined));
   const admitted = new Set(connectors);
+  const userPrincipal = new Set(humanActingConnectors);
 
   for (const connector of connectors) {
     if (gated.has(connector)) continue;
@@ -88,11 +93,15 @@ export function checkOwnAccountGateSites(files: readonly OwnAccountGateFile[], c
 
   for (const connector of [...gated].sort()) {
     if (admitted.has(connector)) continue;
+    if (userPrincipal.has(connector)) continue;
     problems.push(
-      `a gate marked \`${OWN_ACCOUNT_GATE_MARKER} ${connector}\` covers a connector CREDENTIAL_GRANT_ROLES does not admit — ` +
-        `a stale join. The gate still recognises an ask for ${connector}, but no grant can be minted for it, so the gate ` +
-        `can only ever REFUSE: a member naming their own ${connector} account is turned away with a route this deployment ` +
-        `cannot open. Either add ${connector} to the reviewed list, or delete the gate call together with its marker.`,
+      `a gate marked \`${OWN_ACCOUNT_GATE_MARKER} ${connector}\` covers a connector NEITHER list recognises — ` +
+        `a stale join. ${connector} is not in CREDENTIAL_GRANT_ROLES (access/credential-grant.ts), so no grant can be ` +
+        `minted for it, and its catalogue declares no \`human-acting\` credential family (access/connector-credentials.ts), ` +
+        `so nothing says this deployment ever means to act as the person there. The gate still recognises an ask for ${connector} and ` +
+        `can then only ever REFUSE: a member naming their own ${connector} account is turned away with a route this ` +
+        `deployment cannot open, and no review decided that. Add ${connector} to the reviewed list, declare a ` +
+        `\`human-acting\` credential family for it, or delete the gate call together with its marker.`,
     );
   }
 

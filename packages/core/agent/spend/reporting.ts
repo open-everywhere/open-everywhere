@@ -1,15 +1,16 @@
 import { resolvePartition } from "../memory/partition.js";
 import { requireOrgAdmin } from "../access/roles.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
-import { resolveSkillDomainDetailed, type SkillDomainRefusal } from "../skills/domain-skills.js";
+import { resolveSkillDomainDetailed, skillDomainFor, type SkillDomainRefusal, type SkillDomainResult } from "../skills/domain-skills.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { getConfig } from "../access/config.js";
 import type { UsageSummaryRow } from "../operational/store.js";
 import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
 import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
-import { UNKNOWN_MODEL } from "./spend.js";
-import type { SurfacePeriodSpend } from "./store.js";
-import type { BindableContext } from "../identity/binding.js";
+import { UNKNOWN_MODEL, periodOf } from "./spend.js";
+import { spendRollup, type SurfacePeriodSpend } from "./store.js";
+import type { BindableContext, SurfaceBinding } from "../identity/binding.js";
 
 export type ReportScope = "domain" | "org";
 
@@ -53,6 +54,53 @@ export function filterToDomain<T extends { readonly surfaceKey: string; readonly
   domains: readonly Domain[],
 ): T[] {
   return rows.filter((r) => domainOfUsageRow(r.surfaceKey, r.kind, domains) === domainName);
+}
+
+export function periodsCoveringDays(nowISO: string, days: number): string[] {
+  const now = new Date(nowISO);
+  if (Number.isNaN(now.getTime())) throw new Error(`periodsCoveringDays: not an ISO instant: ${JSON.stringify(nowISO)}`);
+  if (!Number.isFinite(days) || days < 0) throw new Error(`periodsCoveringDays: days must be a non-negative finite number, got ${days}`);
+  const start = new Date(now.getTime() - days * 86_400_000);
+  const span = (now.getUTCFullYear() - start.getUTCFullYear()) * 12 + (now.getUTCMonth() - start.getUTCMonth());
+  const periods: string[] = [];
+  for (let i = 0; i <= span; i++) periods.push(periodOf(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1)).toISOString()));
+  return periods;
+}
+
+export function reportDomainForBinding(binding: SurfaceBinding, domains: readonly Domain[]): SkillDomainResult {
+  const workspaceKey = `${binding.platform}/${binding.workspace}`;
+  return skillDomainFor(
+    binding,
+    { surfaceKey: `${workspaceKey}/${binding.surface}`, domainKey: `${workspaceKey}/${binding.domainSurface ?? binding.surface}` },
+    domains,
+  );
+}
+
+export interface DomainSpendWindow {
+  readonly domain: string;
+  readonly periods: readonly string[];
+  readonly tokens: number;
+  readonly usd: number;
+  readonly calls: number;
+}
+
+export interface DomainSpendWindowDeps {
+  readonly spendRollup?: typeof spendRollup;
+  readonly domains?: readonly Domain[];
+}
+
+export async function domainSpendWindow(org: string, domainName: string, nowISO: string, days: number, deps: DomainSpendWindowDeps = {}): Promise<DomainSpendWindow> {
+  const periods = periodsCoveringDays(nowISO, days);
+  const domains = deps.domains ?? getConfig().loadDomains();
+  const rows = await (deps.spendRollup ?? spendRollup)(org);
+  const mine = rows.filter((l) => l.org === org && periods.includes(l.period) && domainOfUsageRow(l.surfaceKey, undefined, domains) === domainName);
+  return {
+    domain: domainName,
+    periods,
+    tokens: mine.reduce((sum, l) => sum + l.tokens, 0),
+    usd: mine.reduce((sum, l) => sum + l.usd, 0),
+    calls: mine.reduce((sum, l) => sum + l.calls, 0),
+  };
 }
 
 export interface AssumedModelPricing {

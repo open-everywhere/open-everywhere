@@ -60,9 +60,47 @@ const gated = (connector: string): string =>
   const problems = checkOwnAccountGateSites([{ file: "a/stale.ts", source: gated("dropbox") }], ["notion"]);
   eq(problems.length, 2, "a stale gate reds twice: the marked connector is not admitted, and the admitted one is not gated");
   ok(
-    problems.some((p) => p.includes("dropbox") && p.includes("does not admit") && p.includes("only ever REFUSE")),
+    problems.some((p) => p.includes("dropbox") && p.includes("NEITHER list recognises") && p.includes("only ever REFUSE")),
     "…and one message says what a stale join actually does: the gate still recognises the ask, and can only refuse it",
   );
+}
+
+{
+  const files: OwnAccountGateFile[] = [
+    { file: "a/notion-acting-identity.ts", source: gated("notion") },
+    { file: "b/github-acting-identity.ts", source: gated("github") },
+  ];
+
+  eq(
+    checkOwnAccountGateSites(files, ["notion"], ["github"]),
+    [],
+    "🔴 a gate for a connector that only DECLARES humanActing.supported is clean — it refuses by design",
+  );
+
+  const undeclared = checkOwnAccountGateSites(files, ["notion"], []);
+  eq(undeclared.length, 1, "🔴 …and the SAME gate reds when nothing declares humanActing.supported for it");
+  ok(undeclared[0]?.includes("github"), "…naming the connector neither list recognises");
+  ok(undeclared[0]?.includes("human-acting"), "…and telling the author the second route out");
+
+  const neither = checkOwnAccountGateSites(
+    [...files, { file: "c/stale.ts", source: gated("dropbox") }],
+    ["notion"],
+    ["github"],
+  );
+  eq(neither.length, 1, "🔴 a gate for a connector in NEITHER list is still a stale join");
+  ok(neither[0]?.includes("dropbox"), "…and it is the unrecognised connector that reds, not the declared one");
+  ok(!neither[0]?.includes("github"), "…the declared connector is not swept in with it");
+
+  eq(
+    checkOwnAccountGateSites(files, ["notion"]).length,
+    1,
+    "🔴 omitting humanActingConnectors reds — the parameter defaults to the strict reading, never to a pass",
+  );
+
+  const bothLists = checkOwnAccountGateSites(files, ["notion", "linear"], ["github", "linear"]);
+  eq(bothLists.length, 1, "🔴 a connector in CREDENTIAL_GRANT_ROLES with no gated site still reds, humanActing or not");
+  ok(bothLists[0]?.includes("linear"), "…naming the ungated connector");
+  ok(bothLists[0]?.includes("CREDENTIAL_GRANT_ROLES"), "…and it is rule 1 that fired, not rule 3");
 }
 
 {
@@ -147,8 +185,17 @@ const gated = (connector: string): string =>
 
   const connectors = credentialGrantConnectors();
   ok(connectors.length > 0, "the reviewed list is not empty — an empty one would make the real-tree check vacuous");
-  eq(checkOwnAccountGateSites(files, connectors), [], "🔴 the shipped tree gates every connector it admits a credential grant for");
+
+  const declaredByTree = findOwnAccountGateSites(files)
+    .map((s) => s.connector)
+    .filter((c): c is string => c !== undefined);
+  eq(
+    checkOwnAccountGateSites(files, connectors, declaredByTree),
+    [],
+    "🔴 the shipped tree gates every connector it admits a credential grant for, and every gate names its connector",
+  );
   ok(findOwnAccountGateSites(files).length > 0, "…and the scan really found the shipped gate call(s)");
+  ok(declaredByTree.includes("notion"), "…including the notion gate, so `declaredByTree` is a real set and not an empty one");
 }
 
 console.log(`own-account-gate-lint: ${n} assertions passed.`);

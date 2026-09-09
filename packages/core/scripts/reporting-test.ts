@@ -32,6 +32,9 @@ import {
   aggregateBySurface,
   resolveReportScope,
   reportDomainRefusalMessage,
+  reportDomainForBinding,
+  periodsCoveringDays,
+  domainSpendWindow,
   slackUserIdIn,
   slackChannelIdIn,
   resolveSlackLabels,
@@ -270,6 +273,74 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     const msg = reportDomainRefusalMessage(reason);
     ok(msg.length > 0 && !msg.includes("undefined") && !/authored/.test(msg), "reportDomainRefusalMessage: a real sentence, and doesn't misleadingly talk about authoring a skill");
   }
+}
+
+{
+  const domainsFixture = [
+    defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),
+    defineDomain({ name: "other", reach: ["slack/T1/C_OTHER"] }),
+    defineDomain({ name: "org", match: "org" }),
+  ];
+
+  ok(
+    JSON.stringify(periodsCoveringDays("2026-09-12T10:00:00Z", 30)) === JSON.stringify(["2026-08", "2026-09"]),
+    "periodsCoveringDays: a 30-day window early in the month names BOTH calendar months it touches",
+  );
+  ok(
+    JSON.stringify(periodsCoveringDays("2026-01-31T23:59:00Z", 30)) === JSON.stringify(["2026-01"]),
+    "periodsCoveringDays: a window that stays inside one month names one period (negative control for the two-period case)",
+  );
+  ok(
+    JSON.stringify(periodsCoveringDays("2026-03-15T00:00:00Z", 90)) === JSON.stringify(["2025-12", "2026-01", "2026-02", "2026-03"]),
+    "periodsCoveringDays: a longer window names every month between the ends, and rolls the year",
+  );
+  ok(
+    JSON.stringify(periodsCoveringDays("2026-02-27T00:00:00Z", 28)) === JSON.stringify(["2026-01", "2026-02"]),
+    `periodsCoveringDays: a window starting on the 30th does NOT skip the short month that follows (got ${JSON.stringify(periodsCoveringDays("2026-02-27T00:00:00Z", 28))})`,
+  );
+  ok(JSON.stringify(periodsCoveringDays("2026-09-12T10:00:00Z", 0)) === JSON.stringify(["2026-09"]), "periodsCoveringDays: a zero-day window is the current month alone");
+  assert.throws(() => periodsCoveringDays("not-an-instant", 30), /ISO instant/, "periodsCoveringDays: refuses a non-instant rather than looping on NaN");
+  n++;
+  assert.throws(() => periodsCoveringDays("2026-09-12T10:00:00Z", -1), /non-negative/, "periodsCoveringDays: refuses a negative window");
+  n++;
+
+  const binding = (over: Record<string, unknown> = {}) =>
+    ({ org: "default", platform: "slack", workspace: "T1", surface: "C_ENG", mode: "channel", visibility: "private", trust: "internal", principalId: "U1", ...over }) as never;
+  ok(reportDomainForBinding(binding(), domainsFixture).domain === "eng", "reportDomainForBinding: resolves the caller's OWN explicit domain from their binding");
+  ok(reportDomainForBinding(binding({ surface: "C_OTHER" }), domainsFixture).domain === "other", "reportDomainForBinding: a caller in the other domain resolves to THAT domain (negative control — the answer tracks the binding)");
+  ok(reportDomainForBinding(binding({ surface: "C_RANDOM" }), domainsFixture).domain === "org", "reportDomainForBinding: an unassigned internal channel falls to the org pseudo-domain");
+  ok(reportDomainForBinding(binding({ mode: "dm", surface: "D1" }), domainsFixture).domain === null, "reportDomainForBinding: a DM resolves to NO domain — the scan cannot run there");
+  ok(reportDomainForBinding(binding({ trust: "external" }), domainsFixture).domain === null, "reportDomainForBinding: an external channel resolves to NO domain");
+  ok(
+    reportDomainForBinding(binding({ surface: "C_THREAD", domainSurface: "C_ENG" }), domainsFixture).domain === "eng",
+    "reportDomainForBinding: resolves at the DOMAIN grain (domainSurface), so a thread reports its parent channel's domain",
+  );
+
+  const rollup = (): SurfacePeriodSpend[] => [
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 100, usd: 1, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 5 },
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-08", tokens: 200, usd: 2, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 7 },
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-05", tokens: 900, usd: 9, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 99 },
+    { org: "default", surfaceKey: "slack/T1/C_OTHER", period: "2026-09", tokens: 400, usd: 4, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 11 },
+    { org: "other-tenant", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 800, usd: 8, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 13 },
+  ];
+  const scanDeps = { spendRollup: async () => rollup(), domains: domainsFixture };
+  const engWindow = await domainSpendWindow("default", "eng", "2026-09-12T10:00:00Z", 30, scanDeps as never);
+  ok(
+    engWindow.usd === 3 && engWindow.tokens === 300 && engWindow.calls === 12,
+    `domainSpendWindow: sums ONLY the caller's domain over the window's periods (got $${engWindow.usd}, ${engWindow.tokens} tokens, ${engWindow.calls} calls)`,
+  );
+  ok(JSON.stringify(engWindow.periods) === JSON.stringify(["2026-08", "2026-09"]), "domainSpendWindow: names the calendar months it actually summed");
+  const otherWindow = await domainSpendWindow("default", "other", "2026-09-12T10:00:00Z", 30, scanDeps as never);
+  ok(otherWindow.usd === 4 && otherWindow.tokens === 400, "domainSpendWindow: a caller in the OTHER domain gets that domain's figures, never the first one's");
+  ok(engWindow.usd !== otherWindow.usd, "domainSpendWindow: the two domains' answers differ — neither is the org-wide total");
+  ok(!engWindow.periods.includes("2026-05"), "domainSpendWindow: a month outside the window is neither summed nor named");
+  ok(engWindow.usd === 3, "domainSpendWindow: a foreign tenant's row on the same surface key never enters the sum");
+  ok(
+    JSON.stringify(Object.keys(engWindow).sort()) === JSON.stringify(["calls", "domain", "periods", "tokens", "usd"]),
+    `domainSpendWindow: the result carries ONLY aggregate fields — nothing names a surface or a principal (got ${Object.keys(engWindow).sort().join(",")})`,
+  );
+  const emptyWindow = await domainSpendWindow("default", "eng", "2020-01-15T00:00:00Z", 30, scanDeps as never);
+  ok(emptyWindow.usd === 0 && emptyWindow.calls === 0, "domainSpendWindow: a window with no rows sums to zero, never to the unfiltered total");
 }
 
 {

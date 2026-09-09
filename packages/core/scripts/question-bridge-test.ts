@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import type { AuditInput } from "../agent/audit/audit.js";
-import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+import { unifiedThreadRef, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import {
   detectBridgeableInputRequest,
   renderQuestionForSurface,
@@ -389,6 +389,40 @@ for (const [label, resolveOrigin] of [
     ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
     ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");
   }
+}
+
+{
+  console.log("\n7. the bridged row names the room (OPE-1231):");
+  const posts: { origin: UnifiedWakeOrigin; text: string }[] = [];
+  const s = sink();
+  const outcome = await bridgeQuestionToSurface(scope, question, {
+    resolveOrigin: async () => slackOrigin,
+    post: async (origin, text) => {
+      posts.push({ origin, text });
+      return "msg-room-1";
+    },
+    audit: s.audit,
+  });
+  ok(outcome.status === "bridged", "7: the question bridged");
+  ok(posts.length === 1 && posts[0]!.origin === slackOrigin, "7: …to the origin it was handed, once (the row below describes THAT post)");
+  const d = s.rows[0]!.detail as Record<string, unknown>;
+  const expected = unifiedThreadRef(slackOrigin).channelKey;
+  ok(typeof expected === "string" && expected.length > 0, "7: the fixture codec really derives a container key (else the line below would assert nothing)");
+  ok(d.containerKey === expected, `7: 🔴 the row names the CONTAINER the post went to (${String(d.containerKey)})`);
+  ok(d.containerKey !== undefined && String(d.containerKey).includes(slackOrigin.channelId), "7: …and that container carries the origin's own channel, not another room's");
+  const serialised = JSON.stringify(s.rows);
+  ok(!serialised.includes(QUESTION_TEXT), "7: adding the room did NOT bring the prompt with it");
+
+  const sUnknown = sink();
+  const unknownOrigin = { platform: "no-such-platform", channelId: "C_X" } as unknown as UnifiedWakeOrigin;
+  const unknownOutcome = await bridgeQuestionToSurface(scope, question, {
+    resolveOrigin: async () => unknownOrigin,
+    post: async () => "msg-room-2",
+    audit: sUnknown.audit,
+  });
+  ok(unknownOutcome.status === "bridged", "7: an undecodable origin still BRIDGES — the container is a field, never a gate");
+  ok(sUnknown.rows.length === 1, "7: …and still writes exactly one row");
+  ok((sUnknown.rows[0]!.detail as Record<string, unknown>).containerKey === undefined, "7: …with the container ABSENT rather than a guessed or empty value");
 }
 
 console.log(`question-bridge: ${n} assertions passed`);
