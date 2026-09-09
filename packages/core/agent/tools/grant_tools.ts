@@ -164,7 +164,7 @@ export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record
     console.warn(
       `[open-everywhere:credential-grant] two or more grants claim the mounted name "${s.name}" in one chat. ` +
         `Keeping grant ${winner?.id ?? "none"} (minted ${winner?.createdAt ?? "unknown"}); grant ${s.loser.id} (minted ${s.loser.createdAt}) is not mounted. ` +
-        "The skipped grant stays valid — its owner may revoke it, and a fresh ask mints a name of its own.",
+        "The skipped grant stays valid — its owner can end it from their own direct messages (`revoke_credential_grant`), and a fresh ask mints a name of its own.",
     );
   }
   const mounted: Record<string, ReplayableToolEntry> = {};

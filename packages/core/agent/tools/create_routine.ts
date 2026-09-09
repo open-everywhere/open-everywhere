@@ -19,6 +19,8 @@ import type { Domain } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/declared-permissions.js";
+import { validateRoutineCollectors } from "../routines/collector.js";
+import { validateRoutineGate } from "../routines/gate.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
@@ -147,6 +149,31 @@ export default defineTool({
           "that row; over-declaring silently widens what runs unattended at 03:00. When in doubt, leave it " +
           "out. Deletes are never declarable and always ask. Omit entirely for a routine that only reads or " +
           "only posts here.",
+      ),
+    collectors: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "PRE-RUN READS. Names of declared collectors the HOST runs BEFORE each fire, whose output is handed " +
+          "to the run as data — so the run starts from current inputs instead of guessing. You cannot invent " +
+          "one: the name, the tool it calls and the arguments it calls it with are all written in this " +
+          "deployment's config, and a name it does not declare is refused here with the list of names it does. " +
+          "Each collector needs its tool declared in `permissions` above, because a collector runs under the " +
+          "routine's declared permission and nothing wider. Omit for a routine that needs nothing fetched " +
+          "before it starts.",
+      ),
+    gate: z
+      .string()
+      .optional()
+      .describe(
+        "CONDITION GATE. The name of a declared predicate that decides whether this routine runs AT ALL, " +
+          "checked host-side over the collectors above before any session starts — for work that must not " +
+          "happen until something is verifiably true (\"do not tell them it is fixed until the fix is actually " +
+          "serving\"). Like `collectors`, the predicate itself is written in this deployment's config and a " +
+          "name it does not declare is refused here. It needs at least one `collector` — that is what it reads. " +
+          "It FAILS CLOSED: while the condition is false the routine does not run and says so in its audit trail. " +
+          "A one-shot routine is NOT retired by a gate saying no — it stays due and fires as soon as the condition " +
+          "holds. Omit for a routine that should run every time it is due.",
       ),
   }),
   outputSchema: z.object({
@@ -280,11 +307,13 @@ export default defineTool({
     const tainted = untrustedIngestedThisTurn();
     const permissions = (input.permissions ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
     declaredPermissionKinds(permissions);
+    const collectors = validateRoutineCollectors(input.collectors ?? [], permissions);
+    const gate = validateRoutineGate(input.gate, collectors);
     const posted = await requestApproval(
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,

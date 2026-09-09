@@ -22,7 +22,7 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "request_credential_grant",
 ]);
 
-export const DM_SEAT_CARVE_IN: ReadonlySet<string> = new Set(["link_identity", "confirm_link", "unlink_identity"]);
+export const DM_SEAT_CARVE_IN: ReadonlySet<string> = new Set(["link_identity", "confirm_link", "unlink_identity", "revoke_credential_grant"]);
 
 export type LeanSeatPosture = "lean" | "full";
 

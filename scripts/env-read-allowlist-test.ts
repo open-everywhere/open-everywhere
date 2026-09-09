@@ -131,7 +131,7 @@ function main(): void {
     for (const [, e] of ENV_READ_ALLOWLIST) census.set(e.klass, (census.get(e.klass) ?? 0) + 1);
     const expected: Record<string, number> = {
       "settings-lever": 0,
-      secret: 32,
+      secret: 33,
       connection: 37,
       identity: 20,
       platform: 13,
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 147, `the allowlist holds 147 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 148, `the allowlist holds 148 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {

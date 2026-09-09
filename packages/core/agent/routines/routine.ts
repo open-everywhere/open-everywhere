@@ -1,6 +1,7 @@
 import { describeFilter, storedFilter } from "./event-model.js";
 import { ROUTINE_PERMISSION_PREFIX } from "./permission-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
+import type { RoutineFollowUp } from "./follow-ups.js";
 
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
@@ -54,6 +55,8 @@ export interface Routine {
   readonly createdAt: string;
   readonly taintedAtCreation?: boolean;
   readonly policy?: readonly RoutinePolicyRule[];
+  readonly collectors?: readonly string[];
+  readonly gate?: string;
 
   status: RoutineStatus;
   disabledReason?: string;
@@ -66,6 +69,7 @@ export interface Routine {
   consecutiveFailures: number;
   firstFailureAt?: string;
   lastStateHash?: string;
+  followUps?: readonly RoutineFollowUp[];
 
   firstMatchAt?: string;
   lastMatchAt?: string;

@@ -75,6 +75,7 @@ export const CONTRIBUTIONS = {
       summary: "Read every reply in the thread this task was delegated from — the work-surface read, under the domain's work grant. Takes no target.",
     },
     { kind: "tool", name: "record_job_state", module: "agent/tools/record_job_state.js", summary: "Record your progress on this DURABLE JOB — a short, canonical note (goal, what's done, what's next) that survives even if this session is later replaced, so it's your reliable hand-off to the next…" },
+    { kind: "tool", name: "record_follow_up", module: "agent/tools/record_follow_up.js", summary: "Leave a named follow-up for the NEXT run of this same routine, or resolve one that is finished." },
     { kind: "tool", name: "record_watch_state", module: "agent/tools/record_watch_state.js", summary: "Record the state a WATCH routine just observed, and learn whether it changed since the last check." },
     { kind: "tool", name: "remove_routine_rule", module: "agent/tools/remove_routine_rule.js", summary: "PROPOSE removing ONE standing rule from a routine — the rule stops being applied to every future run." },
     { kind: "tool", name: "reply", module: "agent/tools/reply.js", summary: "Post a reply into the conversation a specific wake came from, without ending your turn." },
@@ -82,6 +83,12 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "request_access", module: "agent/tools/request_access.js", summary: "PROPOSE widening access — this grants nothing itself." },
     { kind: "tool", name: "resume", module: "agent/tools/resume.js", summary: "PROPOSE lifting the break-glass halt — this does NOT lift it. Posts a confirmation card; an org admin must click Approve, because resuming WIDENS what the deployment may do." },
     { kind: "tool", name: "revoke_connector", module: "agent/tools/revoke_connector.js", summary: "Break-glass PROPOSE: cut an Eve connector (by name, e.g." },
+    {
+      kind: "tool",
+      name: "revoke_credential_grant",
+      module: "agent/tools/revoke_credential_grant.js",
+      summary: "List, or END, the credential grants the person you are talking to is lending — DM only, and only ever their own (OPE-1637).",
+    },
     { kind: "tool", name: "revoke_routine_permissions", module: "agent/tools/revoke_routine_permissions.js", summary: "Withdraw a routine's STANDING permissions — the things it was allowed to do unattended without asking — while leaving the routine itself running on its schedule." },
     { kind: "tool", name: "rotate_webhook", module: "agent/tools/rotate_webhook.js", summary: "Issue a signing secret for a webhook that exists here, and send it privately as a one-time link." },
     { kind: "tool", name: "run_routine_now", module: "agent/tools/run_routine_now.js", summary: "Run an existing routine ONCE right now, off its schedule, without changing the schedule." },
@@ -106,6 +113,7 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "walk_pr", module: "agent/tools/walk_pr.js", summary: "Gather everything needed to walk a human through a pull request before they merge it: the PR's state, its diff, and the resolved-config FACTS computed by CI (effective access per scope, domain…" },
 
     { kind: "channel", name: "aws-sso-callback", module: "agent/channels/aws-sso-callback.js", summary: "Deployment mount for the OE-owned AWS IAM Identity Center link callback — `GET /oauth/v1/aws-sso/callback` (the Identity Center OIDC authorization-server redirect landing, Phase 1)." },
+    { kind: "channel", name: "control-mcp", module: "agent/channels/control-mcp.js", summary: "Deployment mount for the control plane's MCP WRITE transport — `POST /control/v1/mcp` — and the small OAuth 2.1 authorization server that guards it: `/control/v1/oauth/authorize`, `/control/v1/oauth/token`, and the RFC 8414 and RFC 9728 discovery documents (OPE-72). Fail-closed: every route 404s until `OE_CONTROL_OAUTH_SIGNING_SECRET` is set AND `CONTROL_OAUTH_ISSUER` is declared in tracked config; a registered client is then a further condition on issuing a token." },
     { kind: "channel", name: "control-read", module: "agent/channels/control-read.js", summary: "Deployment mount for the control plane's READ side — `GET /control/v1/usage` (priced usage window), `GET /control/v1/audit` (the audit window: dispatched/replied/no_reply/rejected rows — the uniform…" },
     { kind: "channel", name: "credential-intake-page", module: "agent/channels/credential-intake-page.js", summary: "Deployment mount for the one-shot credential-intake PAGE (stage 6) — GET renders the entry form, POST stores the value." },
     { kind: "channel", name: "oe-oauth-callback", module: "agent/channels/oe-oauth-callback.js", summary: "Deployment mount for the OE-owned own-rolled OAuth callback — `GET /oauth/v1/callback` (the hosted-MCP authorization-server redirect landing, OPE-88)." },

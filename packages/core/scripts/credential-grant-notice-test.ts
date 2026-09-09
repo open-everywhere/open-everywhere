@@ -214,8 +214,12 @@ const sessionGrant = await mintGrant("session-standing", "standing");
   eq(dmed.length, dmsAfterCard + 1, "THE OWNER GOT A DM on the first use of their grant");
   eq(dmed[dmed.length - 1].principalId, "U-owner", "…addressed to the OWNER's own DM, the same 1:1 the approval card lives in");
   ok(dmed[dmed.length - 1].text.includes("Your Notion credential was just used"), "…saying their credential was spent, naming the vendor as a person writes it");
-  ok(!dmed[dmed.length - 1].text.includes(sessionGrant), "…and NOT the grant id: it was there only for a revocation no route reaches (OPE-1637)");
-  ok(dmed[dmed.length - 1].actions === undefined, "…with no buttons: this deployment has no revoke click route, and a dead button is worse than none");
+  ok(!dmed[dmed.length - 1].text.includes(sessionGrant), "…and NOT the grant id: the revoke verb takes a number from its own list, never a uuid");
+  ok(
+    dmed[dmed.length - 1].text.includes("Tell me here to end it"),
+    "…and naming the route that ENDS it (OPE-1637): the owner's own DM, where `revoke_credential_grant` answers",
+  );
+  ok(dmed[dmed.length - 1].actions === undefined, "…with no buttons: the revoke route is a DM verb, and a card button in a room would be the wrong venue for it");
 }
 
 console.log("3. the SECOND use: the room sees it again, the owner is not paged again:");
@@ -386,9 +390,9 @@ console.log("9. the two halves called directly:");
   );
   ok(grantOwnerNoticeText(grant, undefined, NOW).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it, by the principal key the `grant.used` row also carries (OPE-1083)");
   ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
-  ok(!/(?:you|they|the owner)\s+(?:can|may|could|should)\s+revoke|unless you revoke|revoke it first/iu.test(grantOwnerNoticeText(grant, undefined, NOW)), "the owner's DM OFFERS no revocation, because nothing in the tree revokes a grant");
-  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("There is no way to revoke it yet"), "…and says the control is ABSENT rather than staying silent about it");
-  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes(grant.id), "…and it prints no grant id, whose only stated purpose was that revocation");
+  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("Tell me here to end it and I will end it now."), "the owner's DM OFFERS the end, because `tools/revoke_credential_grant.ts` now takes it");
+  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("There is no way to revoke it yet"), "…and no longer says the control is absent, which the route made false");
+  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes(grant.id), "…and it STILL prints no grant id: the verb lists the owner's own grants and takes a number, never a uuid");
 }
 
 console.log("10. a registered display-name arm resolves a label, and the principal key stays visible too:");

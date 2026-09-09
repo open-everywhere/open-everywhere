@@ -180,28 +180,28 @@ console.log("5. lean-seat interplay:");
   for (const name of DM_SEAT_CARVE_IN) {
     ok(!LEAN_SEAT_TOOLS.has(name), `${name} is NOT in the seat-independent roster (a channel seat could never call it — the DM wall refuses)`);
     ok(!allowedOnLeanSeat(name), `a narrowed CHANNEL standing seat does NOT hold ${name}`);
-    ok(allowedOnLeanSeat(name, true), `a narrowed DM seat DOES hold ${name} — an interactive challenge verb cannot be relocated to a one-shot worker`);
+    ok(allowedOnLeanSeat(name, true), `a narrowed DM seat DOES hold ${name} — a verb the person must answer back cannot be relocated to a one-shot worker`);
   }
-  eq([...DM_SEAT_CARVE_IN].sort(), ["confirm_link", "link_identity", "unlink_identity"], "the carve-in is EXACTLY the identity trio — nothing else is seat-shaped");
+  eq([...DM_SEAT_CARVE_IN].sort(), ["confirm_link", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio plus the owner's grant off switch — nothing else is seat-shaped");
 
   ok(!allowedOnLeanSeat("purge_memory", true), "a DM seat does NOT keep `purge_memory` — memory work relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
   ok(!allowedOnLeanSeat("connection_search", true), "…nor `connection_search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");
   ok(!allowedOnLeanSeat("aws", true) && !allowedOnLeanSeat("notion__search", true), "…nor anything else: default-deny is unchanged for a DM seat");
   ok(allowedOnLeanSeat("reply", true) && allowedOnLeanSeat("agent", true), "the base roster still applies on a DM seat");
 
-  const toolset: Record<string, unknown> = { reply: {}, no_reply: {}, agent: {}, purge_memory: {}, aws: {}, link_identity: {}, confirm_link: {}, unlink_identity: {}, notion__search: {} };
+  const toolset: Record<string, unknown> = { reply: {}, no_reply: {}, agent: {}, purge_memory: {}, aws: {}, link_identity: {}, confirm_link: {}, unlink_identity: {}, revoke_credential_grant: {}, notion__search: {} };
   const dmSet = { ...toolset };
   const removedOnDm = restrictToolsetForLeanSeat(dmSet, true);
-  eq(Object.keys(dmSet).sort(), ["agent", "confirm_link", "link_identity", "no_reply", "reply", "unlink_identity"], "a delegating DM seat keeps the speak verbs, the delegation verb AND the identity trio");
+  eq(Object.keys(dmSet).sort(), ["agent", "confirm_link", "link_identity", "no_reply", "reply", "revoke_credential_grant", "unlink_identity"], "a delegating DM seat keeps the speak verbs, the delegation verb AND the whole carve-in");
   ok(removedOnDm.includes("purge_memory") && removedOnDm.includes("aws") && removedOnDm.includes("notion__search"), "…and loses everything worker-shaped");
 
   const channelSet = { ...toolset };
   restrictToolsetForLeanSeat(channelSet);
-  eq(Object.keys(channelSet).sort(), ["agent", "no_reply", "reply"], "a delegating CHANNEL standing seat does NOT get the trio — the carve-in is a property of the seat, not of the tools");
+  eq(Object.keys(channelSet).sort(), ["agent", "no_reply", "reply"], "a delegating CHANNEL standing seat does NOT get the carve-in — it is a property of the seat, not of the tools");
 
   const workerOnly = workerOnlyTools("standing");
   for (const name of DM_SEAT_CARVE_IN) {
-    ok(!workerOnly.includes(name), `the worker-capability index does NOT list ${name} as routable — an interactive challenge is not a thing a leaf worker can carry out`);
+    ok(!workerOnly.includes(name), `the worker-capability index does NOT list ${name} as routable — a verb the person must answer back is not a thing a leaf worker can carry out`);
   }
   ok(workerOnly.includes("purge_memory") && workerOnly.includes("connection_search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
 }
@@ -236,7 +236,7 @@ await withOneshot(true, () => {
   const dmSeatBit = bindFrom(mpimSeat).mode === "dm" || bindFrom(mpimSeat).mode === "mpim";
   ok(dmSeatBit, "the hooks/lean-seat.ts DM bit (mode-keyed) is TRUE for the group-DM window seat");
   for (const name of DM_SEAT_CARVE_IN) {
-    ok(allowedOnLeanSeat(name, dmSeatBit), `…so a narrowed group-DM window seat still holds ${name} — the interactive trio no worker can carry`);
+    ok(allowedOnLeanSeat(name, dmSeatBit), `…so a narrowed group-DM window seat still holds ${name} — a DM-walled self-verb the index never routes`);
   }
 
   eq(memoryRecallRouteFor("standing"), "agent", "a standing seat's recall route is delegation (unchanged) — the group DM's own memory verdict is mode-keyed and stays NONE (scripts/memory-resolve-test.ts)");

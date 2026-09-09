@@ -264,8 +264,8 @@ console.log("3. the golden:");
       nowMs: NOW,
       ownerLabel: "Ada Lovelace",
     }),
-    "The #proj-chat conversation already has this grant from you (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. Nobody can revoke it, so a new request stays refused while this one is live.",
-    "the duplicate refusal, OWNER-facing — the person who asked IS the owner, so it says 'you'",
+    "The #proj-chat conversation already has this grant from you (read a Notion page, for the next 12 hours (until 04:19 UTC)). Nothing new was requested — use the grant that is already there. You can end it early — send me a direct message and ask. Until then a new request stays refused while this one is live.",
+    "the duplicate refusal, OWNER-facing — the person who asked IS the owner, so it says 'you' AND offers them the end",
   );
 
   eq(
@@ -277,8 +277,8 @@ console.log("3. the golden:");
       nowMs: NOW,
       ownerLabel: "Ada Lovelace",
     }),
-    "That conversation already has this grant from Ada Lovelace (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. Nobody can revoke it, so a new request stays refused while this one is live.",
-    "the duplicate refusal, SEAT-facing — a third party reads the owner's name, never 'you'",
+    "That conversation already has this grant from Ada Lovelace (read a Notion page, for the next 12 hours (until 04:19 UTC)). Nothing new was requested — use the grant that is already there. Only Ada Lovelace can end it early, so a new request stays refused while this one is live.",
+    "the duplicate refusal, SEAT-facing — a third party reads the owner's name, never 'you', and is offered no control the verb would refuse them",
   );
 
   ok(
@@ -404,7 +404,7 @@ console.log("3. the golden:");
       "• Who ran it: Ada Lovelace (`discord/G1/U-ASKER`)",
       "• The grant: this conversation",
       "",
-      "This is the FIRST use of that grant, and the only notice you get for it. It stays live for the next 12 hours (until 21:29 UTC). There is no way to revoke it yet — it stops when it expires.",
+      "This is the FIRST use of that grant, and the only notice you get for it. It stays live for the next 12 hours (until 04:19 UTC). Tell me here to end it and I will end it now.",
     ].join("\n"),
     "the owner's first-use DM",
   );
@@ -599,23 +599,39 @@ console.log("5. the negative controls:");
   ok(disclosure.includes("`discord/G1/U-ASKER`"), "🔴 the room's disclosure notice still names the requester's PRINCIPAL KEY — the audit join, deliberately exempt from the lint");
   ok(grantOwnerNoticeText(leakyRow, undefined, NOW).includes("`discord/G1/U-ASKER`"), "…and so does the owner's first-use DM, for the same reason");
 
-  const OFFERS_REVOCATION = /(?:you|they|the owner)\s+(?:can|may|could|should)\s+revoke|unless you revoke|revoke it first/iu;
-  for (const mode of ["once", "session", "standing"] as const) {
-    const dm = grantOwnerNoticeText({ ...leakyRow, mode }, undefined, NOW);
-    ok(!OFFERS_REVOCATION.test(dm), `the owner's DM offers no revocation (${mode}) — nothing in the tree revokes a grant`);
-  }
+  const OFFERS_REVOCATION = /(?:you|they)\s+(?:can|may|could|should)\s+(?:revoke|end)\b|unless you revoke|revoke it first|send me a direct message and ask/iu;
+
+  const duplicateFacts = { conversationLabel: "#proj-chat", connector: "notion", expiresAt: SENTINELS.instant, mcpTool: "notion-fetch", nowMs: NOW, ownerLabel: "Ada" };
   ok(
-    grantOwnerNoticeText(leakyRow, undefined, NOW).includes("There is no way to revoke it yet"),
-    "…and a session grant's DM says the control is ABSENT rather than staying silent about it",
+    OFFERS_REVOCATION.test(grantDuplicateRefusalText("owner", duplicateFacts)),
+    "🔴 the duplicate refusal OFFERS the end to the OWNER — the route exists now, and they are the one principal it admits",
   );
+  ok(
+    !OFFERS_REVOCATION.test(grantDuplicateRefusalText("seat", duplicateFacts)),
+    "🔴 …and offers it to the REQUESTER never: the verb reaches the caller's OWN grants only, so the same words would be a control they cannot take",
+  );
+  ok(
+    grantDuplicateRefusalText("seat", duplicateFacts).includes("Only Ada can end it early"),
+    "…and the seat arm NAMES who can, rather than staying silent about the control",
+  );
+  ok(
+    grantDuplicateRefusalText("owner", duplicateFacts).includes("send me a direct message"),
+    "…and the owner arm names a DM, never \"here\": `revoke_credential_grant` refuses every non-DM conversation",
+  );
+
+  for (const mode of ["session", "standing"] as const) {
+    const dm = grantOwnerNoticeText({ ...leakyRow, mode }, undefined, NOW);
+    ok(dm.includes("Tell me here to end it and I will end it now."), `the owner's first-use DM names the route that ends it (${mode})`);
+    ok(dm.includes("It stays live for the next"), `…beside the rendered expiry phrase, never the raw ISO column (${mode})`);
+    ok(!dm.includes("There is no way to revoke it yet"), `…and no longer says the control is absent, which OPE-1637 made false (${mode})`);
+  }
+  const onceDm = grantOwnerNoticeText({ ...leakyRow, mode: "once" }, undefined, NOW);
+  ok(!onceDm.includes("Tell me here to end it"), "…and a ONCE grant offers nothing to end: its first call already spent it");
+  ok(!OFFERS_REVOCATION.test(onceDm), "…and offers it in no other words either — a spent grant has nothing left to revoke");
+
   ok(OFFERS_REVOCATION.test("It stays live until then unless you revoke it."), "NEGATIVE CONTROL: the matcher catches the promise OPE-1592 removed");
   ok(OFFERS_REVOCATION.test("The owner can revoke it first if they want to be asked again."), "…and the duplicate refusal's old sentence too");
-  ok(
-    !OFFERS_REVOCATION.test(
-      grantDuplicateRefusalText("owner", { conversationLabel: "#proj-chat", connector: "notion", expiresAt: SENTINELS.instant, mcpTool: "notion-fetch", nowMs: NOW, ownerLabel: "Ada" }),
-    ),
-    "…and neither does the duplicate refusal, which told the owner to revoke first",
-  );
+  ok(!OFFERS_REVOCATION.test("Only Ada can end it early, so a new request stays refused."), "NEGATIVE CONTROL: …and does NOT fire on a sentence that names the control while denying it");
   for (const audience of ["owner", "seat"] as const) {
     const dup = grantDuplicateRefusalText(audience, { conversationLabel: "#proj-chat", connector: "notion", expiresAt: SESSION_EXPIRY, mcpTool: "notion-fetch", nowMs: NOW, ownerLabel: "Ada" });
     ok(dup.includes("while this one is live"), `the duplicate refusal (${audience}) is bounded by the grant being LIVE, not by its expiry`);

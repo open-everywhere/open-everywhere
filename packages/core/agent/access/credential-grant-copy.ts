@@ -99,6 +99,61 @@ function plural(n: number, unit: string): string {
   return `${String(n)} ${unit}${n === 1 ? "" : "s"}`;
 }
 
+export interface GrantHoldingFacts {
+  readonly connector: string;
+  readonly mcpTool: string | undefined;
+  readonly quotedPurpose: string;
+  readonly expiresAt: string;
+  readonly nowMs: number;
+}
+
+export function grantHoldingPhrase(facts: GrantHoldingFacts): string {
+  const action = grantActionPhrase(facts.connector, facts.mcpTool);
+  const reason = facts.quotedPurpose.length === 0 ? "" : ` They asked for it to "${facts.quotedPurpose}".`;
+  return `${action.slice(0, 1).toUpperCase()}${action.slice(1)}, ${grantExpiryPhrase(facts.expiresAt, facts.nowMs)}.${reason}`;
+}
+
+export const GRANT_NONE_LIVE_TEXT =
+  "I can see nothing you are lending from the account you are messaging me with. If you approved a grant from a different account, ask me there.";
+
+export interface GrantRevokedHolding {
+  readonly phrase: string;
+  readonly told: boolean;
+}
+
+export function grantRevokedOwnerText(ended: readonly GrantRevokedHolding[], remaining: readonly string[]): string {
+  if (ended.length === 0) {
+    return "Nothing was ended — none of those numbers matched a grant you are still lending. Ask me to list them again and pick from that list.";
+  }
+  const lead = ended.length === 1 ? "That grant is ended." : `${String(ended.length)} grants are ended.`;
+  const one = ended.length === 1;
+  const untold = ended.filter((holding) => !holding.told).length;
+  const toldClause =
+    untold === 0
+      ? `The conversation that held ${one ? "it" : "them"} has been told, and the next call it tries is refused.`
+      : untold === ended.length
+        ? `I could not reach the conversation that held ${one ? "it" : "them"}, so ${one ? "it has" : "they have"} not been told. The next call ${one ? "it tries is" : "they try is"} refused either way.`
+        : "I told the conversations I could reach and marked the rest below. The next call any of them tries is refused either way.";
+  const what = ended.map((holding) => (holding.told ? `• ${holding.phrase}` : `• ${holding.phrase} — not told, I could not reach that conversation`)).join("\n");
+  const rest =
+    remaining.length === 0
+      ? "You are not lending your account to anything now."
+      : [
+          `You still lend ${remaining.length === 1 ? "one grant" : `${String(remaining.length)} grants`}:`,
+          ...remaining.map((phrase, i) => `${String(i + 1)}. ${phrase}`),
+          "These numbers are NEW — ending a grant renumbers the rest. Use the numbers in this list, never the ones from before.",
+        ].join("\n");
+  return `${lead} ${toldClause}\n${what}\n\n${rest}`;
+}
+
+export function grantRevokedRoomText(connector: string, mcpTool: string | undefined): string {
+  return (
+    `The owner has ended the credential grant this conversation held — it can no longer ${grantActionPhrase(connector, mcpTool)} with their ` +
+    `${connectorDisplayName(connector)} account. The borrowed tool may still appear in your tool list; every call on it is now refused. ` +
+    "Do not ask for it again unless somebody here asks you to."
+  );
+}
+
 export type GrantCopyAudience = "owner" | "seat";
 
 export interface GrantDuplicateFacts {
@@ -115,7 +170,10 @@ export function grantDuplicateRefusalText(audience: GrantCopyAudience, facts: Gr
   const when = facts.expiresAt === undefined ? "" : `, ${grantExpiryPhrase(facts.expiresAt, facts.nowMs)}`;
   const holder = grantConversationPhrase(facts.conversationLabel);
   const from = audience === "owner" ? "from you" : `from ${grantRequesterPhrase(facts.ownerLabel)}`;
-  const again = "Nobody can revoke it, so a new request stays refused while this one is live.";
+  const again =
+    audience === "owner"
+      ? "You can end it early — send me a direct message and ask. Until then a new request stays refused while this one is live."
+      : `Only ${grantRequesterPhrase(facts.ownerLabel)} can end it early, so a new request stays refused while this one is live.`;
   const lead = holder === "that conversation" ? "That conversation" : holder.replace(/^the /u, "The ");
   return `${lead} already has this grant ${from} (${action}${when}). Nothing new was requested — use the grant that is already there. ${again}`;
 }

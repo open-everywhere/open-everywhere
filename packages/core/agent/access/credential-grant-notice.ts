@@ -67,7 +67,7 @@ export function grantOwnerNoticeText(grant: CredentialGrantRow, requesterLabel: 
     "",
     grant.mode === "once"
       ? "That was a one-shot grant, so it is now spent. Nothing else can be run with it."
-      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live ${grantExpiryPhrase(grant.expiresAt, nowMs)}. There is no way to revoke it yet — it stops when it expires.`,
+      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live ${grantExpiryPhrase(grant.expiresAt, nowMs)}. Tell me here to end it and I will end it now.`,
   ].join("\n");
 }
 

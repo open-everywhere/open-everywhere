@@ -10,6 +10,8 @@ import {
   armDeclaredRoutinePermissions,
   unarmedDeclarations,
 } from "../routines/declared-permissions.js";
+import { resolveRoutineCollector } from "../routines/collector.js";
+import { resolveRoutineGate } from "../routines/gate.js";
 import { describeDeclaredPermissionKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
@@ -29,6 +31,8 @@ export interface RoutineCreateArgs {
   readonly sessionMode?: "job";
   readonly boundPolicy?: string;
   readonly permissions?: readonly string[];
+  readonly collectors?: readonly string[];
+  readonly gate?: string;
 }
 
 export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "tainted">): string[] {
@@ -38,6 +42,26 @@ export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "t
     return [`🔑 asked for standing permission to ${described.join(" · ")} — NOT granted, because it was authored in a turn that read external content; it will ask a human every time`];
   }
   return [`🔑 may, without asking: ${described.join(" · ")} — anything else will ask you first`];
+}
+
+export function collectorLines(args: Pick<RoutineCreateArgs, "collectors">): string[] {
+  const names = args.collectors ?? [];
+  if (names.length === 0) return [];
+  const described = names.map((n) => {
+    const def = resolveRoutineCollector(n);
+    return def ? `${n} (${def.describe})` : `${n} — no longer declared by this deployment, so it will collect nothing`;
+  });
+  return [`📥 reads BEFORE every run, under the permissions above: ${described.join(" · ")} — the result is handed to the run as data, never as instructions`];
+}
+
+export function gateLines(args: Pick<RoutineCreateArgs, "gate">): string[] {
+  if (!args.gate) return [];
+  const def = resolveRoutineGate(args.gate);
+  return [
+    def
+      ? `⛔ runs ONLY when: ${def.describe} — checked host-side before any session starts, so a run that should not happen costs nothing`
+      : `⛔ names the condition gate "${args.gate}", which this deployment no longer declares — it will therefore NEVER run until it is re-created`,
+  ];
 }
 
 const routineCreate: ActionKind<RoutineCreateArgs> = {
@@ -54,6 +78,8 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.sessionMode === "job" && args.boundPolicy ? [`⏹️ ${args.boundPolicy} — it will say so here, and you can start it again`] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       ...permissionLines(args),
+      ...collectorLines(args),
+      ...gateLines(args),
       `> ${args.prompt}`,
       `Target: ${args.surfaceKey}`,
     ];
@@ -77,6 +103,8 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.tainted ? { taintedAtCreation: true } : {}),
       ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
       ...(args.sessionMode === "job" ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
+      ...(args.collectors && args.collectors.length > 0 ? { collectors: [...args.collectors] } : {}),
+      ...(args.gate ? { gate: args.gate } : {}),
     };
     await addRoutine(args.partition, routine);
     const armed = await armDeclaredRoutinePermissions({

@@ -2,6 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { renderFailureBlock } from "./watch.js";
 import { renderPolicyBlock } from "./policy.js";
+import { renderCollectedBlock, type CollectedInput } from "./collector.js";
+import { renderFollowUpsBlock } from "./follow-ups.js";
 import type { Routine } from "./routine.js";
 
 export interface LegacyGithubEvent {
@@ -50,13 +52,17 @@ export function normalizeGithubEvent(eventType: string, payload: Record<string, 
 }
 
 export function eventPrompt(
-  routine: Pick<Routine, "prompt"> & Partial<Pick<Routine, "policy">>,
+  routine: Pick<Routine, "prompt"> & Partial<Pick<Routine, "policy" | "followUps">>,
   ev: { readonly summary: string; readonly url?: string; readonly entity?: string },
+  collected: readonly CollectedInput[] = [],
 ): string {
   const body = [ev.summary, ev.url, ev.entity].filter((s): s is string => Boolean(s)).join("\n");
   const rules = renderPolicyBlock(routine);
-  const head = rules.length > 0 ? `${renderFailureBlock()}\n\n${rules}` : renderFailureBlock();
-  return `${head}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event", ingestion: { kind: "routine-event", label: "github-event" } })}`;
+  const followUps = renderFollowUpsBlock(routine);
+  const head = [renderFailureBlock(), ...(rules.length > 0 ? [rules] : []), ...(followUps.length > 0 ? [followUps] : [])].join("\n\n");
+  const collectedBlock = renderCollectedBlock(collected);
+  const fenced = ingestUntrusted(body, { source: "github event", ingestion: { kind: "routine-event", label: "github-event" } });
+  return `${head}\n\n${routine.prompt}\n\n${fenced}${collectedBlock.length > 0 ? `\n\n${collectedBlock}` : ""}`;
 }
 
 export function verifyGithubSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {

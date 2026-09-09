@@ -155,6 +155,10 @@ async function livePermissionKinds(org: string, routine: PermissionedRoutine, no
   return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k) && !isLegacyConnectorOpKind(k));
 }
 
+export async function routinePermissionKinds(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
+  return await livePermissionKinds(org, routine, nowIso);
+}
+
 export async function listRoutinePermissions(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
   return (await livePermissionKinds(org, routine, nowIso)).map(describeDeclaredPermissionKind);
 }

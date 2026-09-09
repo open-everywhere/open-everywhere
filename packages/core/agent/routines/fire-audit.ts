@@ -10,6 +10,7 @@ export const ROUTINE_AUDIT = {
   disabled: "routine.disabled",
   stalled: "routine.stalled",
   runNow: "routine.run_now",
+  collectFailed: "routine.collect_failed",
 } as const;
 
 export type RoutineSkipReason =
@@ -22,7 +23,8 @@ export type RoutineSkipReason =
   | "audience_floor"
   | "creator_removed_from_room"
   | "creator_account_inactive"
-  | "halted";
+  | "halted"
+  | "condition_gate";
 
 export const SKIP_WINDOW_MS = 60 * 60_000;
 
@@ -50,6 +52,28 @@ export function skipThrottleKey(routineId: string, reason: RoutineSkipReason): s
   return `routineskip:${routineId}:${reason}`;
 }
 
+export function collectFailedThrottleKey(routineId: string): string {
+  return `routinecollect:${routineId}`;
+}
+
+async function admitThrottled(org: string, key: string, nowIso: string, deps: RoutineAuditDeps): Promise<number | null> {
+  let first = true;
+  try {
+    const markSeen =
+      deps.markSeen ?? ((o: string, k: string, at: string, ttl: number) => getOperationalStore().markEventSeen(o, k, at, ttl));
+    first = await markSeen(org, key, nowIso, SKIP_WINDOW_MS);
+  } catch {
+    first = true;
+  }
+  if (!first) {
+    suppressed.set(key, (suppressed.get(key) ?? 0) + 1);
+    return null;
+  }
+  const carried = suppressed.get(key) ?? 0;
+  suppressed.delete(key);
+  return carried;
+}
+
 async function write(entry: AuditInput, deps: RoutineAuditDeps): Promise<void> {
   await (deps.audit ?? appendAudit)(entry).catch(() => undefined);
 }
@@ -61,21 +85,8 @@ export async function auditRoutineSkip(
   deps: RoutineAuditDeps = {},
 ): Promise<boolean> {
   const nowIso = (deps.now?.() ?? new Date()).toISOString();
-  const key = skipThrottleKey(r.id, reason);
-  let first = true;
-  try {
-    const markSeen =
-      deps.markSeen ?? ((o: string, k: string, at: string, ttl: number) => getOperationalStore().markEventSeen(o, k, at, ttl));
-    first = await markSeen(r.org, key, nowIso, SKIP_WINDOW_MS);
-  } catch {
-    first = true;
-  }
-  if (!first) {
-    suppressed.set(key, (suppressed.get(key) ?? 0) + 1);
-    return false;
-  }
-  const carried = suppressed.get(key) ?? 0;
-  suppressed.delete(key);
+  const carried = await admitThrottled(r.org, skipThrottleKey(r.id, reason), nowIso, deps);
+  if (carried === null) return false;
   await write(
     {
       org: r.org,
@@ -86,6 +97,33 @@ export async function auditRoutineSkip(
         routineId: r.id,
         reason,
         ...extra,
+        ...(carried > 0 ? { suppressed: carried, windowMs: SKIP_WINDOW_MS } : {}),
+      },
+    },
+    deps,
+  );
+  return true;
+}
+
+export async function auditCollectorFailures(
+  r: Routine,
+  failures: readonly { readonly name: string; readonly failure: string; readonly detail?: string }[],
+  deps: RoutineAuditDeps = {},
+): Promise<boolean> {
+  if (failures.length === 0) return false;
+  const nowIso = (deps.now?.() ?? new Date()).toISOString();
+  const carried = await admitThrottled(r.org, collectFailedThrottleKey(r.id), nowIso, deps);
+  if (carried === null) return false;
+  await write(
+    {
+      org: r.org,
+      ...routineAuditScope(r),
+      principalId: deps.principalId ?? ROUTINE_DISPATCHER_PRINCIPAL,
+      action: ROUTINE_AUDIT.collectFailed,
+      detail: {
+        routineId: r.id,
+        failed: failures.map((f) => ({ collector: f.name, reason: f.failure, ...(f.detail ? { cause: f.detail } : {}) })),
+        count: failures.length,
         ...(carried > 0 ? { suppressed: carried, windowMs: SKIP_WINDOW_MS } : {}),
       },
     },

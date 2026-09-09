@@ -102,6 +102,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "remove_routine_rule",
       "revoke_routine_permissions",
       "record_watch_state",
+      "record_follow_up",
       "record_job_state",
       "complete_job",
       "report_run_failed",
@@ -121,7 +122,18 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "identity-and-access",
     headline: "Link somebody's other accounts, ask for access this scope lacks, stand up a new agent, explain why something is refused, review whether the access here still fits",
-    tools: ["link_identity", "confirm_link", "unlink_identity", "request_access", "request_credential_grant", "create_agent", "explain_permission", "permission_fit_report", "resume"],
+    tools: [
+      "link_identity",
+      "confirm_link",
+      "unlink_identity",
+      "request_access",
+      "request_credential_grant",
+      "revoke_credential_grant",
+      "create_agent",
+      "explain_permission",
+      "permission_fit_report",
+      "resume",
+    ],
   },
   {
     id: "spend-and-telemetry",

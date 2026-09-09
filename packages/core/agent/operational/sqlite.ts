@@ -3112,6 +3112,13 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map(grantFromSqliteRow);
   },
 
+  async liveCredentialGrantsForOwner(org, ownerPrincipalId, nowIso) {
+    const rows = getDb()
+      .prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND owner_principal_id = ? AND status = 'active' AND expires_at > ? ORDER BY created_at ASC`)
+      .all(org, ownerPrincipalId, nowIso) as GrantSqliteRow[];
+    return rows.map(grantFromSqliteRow);
+  },
+
   async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {
     const rows = getDb()
       .prepare(

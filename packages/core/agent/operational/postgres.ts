@@ -3644,6 +3644,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as GrantPgRow[]).map(grantFromPgRow);
     },
 
+    async liveCredentialGrantsForOwner(org, ownerPrincipalId, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_SELECT} WHERE org_id = $1 AND owner_principal_id = $2 AND status = 'active' AND expires_at > $3 ORDER BY created_at ASC`,
+        [org, ownerPrincipalId, nowIso],
+      );
+      return (rows as GrantPgRow[]).map(grantFromPgRow);
+    },
+
     async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {
       const { rows } = await client.query(
         `${GRANT_SELECT} WHERE org_id = $1 AND owner_principal_id = $2 AND connector = $3 AND mcp_tool = $4 AND scope_key = $5

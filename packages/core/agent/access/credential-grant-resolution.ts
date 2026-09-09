@@ -1,6 +1,6 @@
 import { postArm } from "../channels/post-arms.js";
 import { GRANT_MODE_WORDS, grantBorrowPhrase, grantModeIsBroader, grantModePhrase, type GrantApproveGate } from "./credential-grant-card.js";
-import { connectorDisplayName, grantExpiryPhrase, grantOwnerPhrase } from "./credential-grant-copy.js";
+import { connectorDisplayName, grantExpiryPhrase, grantOwnerPhrase, grantRevokedRoomText } from "./credential-grant-copy.js";
 import { postReply, type ReplyTarget } from "../channels/reply-post.js";
 import { credentialGrantDisclosureLine, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
@@ -12,7 +12,8 @@ export type GrantResolution =
   | { readonly kind: "approved"; readonly grant: CredentialGrantRow; readonly askedMode: CredentialGrantMode }
   | { readonly kind: "declined" }
   | { readonly kind: "expired" }
-  | { readonly kind: "refused"; readonly gate: GrantApproveGate };
+  | { readonly kind: "refused"; readonly gate: GrantApproveGate }
+  | { readonly kind: "revoked" };
 
 function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
   if (typeof raw !== "string" || raw.length === 0) return undefined;
@@ -52,6 +53,8 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
         `Nothing was granted and no tool is mounted. ${ownerLead} did not decline — the request simply timed out.`,
         "You can ask again if it is still needed.",
       ].join("\n");
+    case "revoked":
+      return grantRevokedRoomText(ask.connector, ask.mcpTool);
     case "refused":
       return [
         `${ownerLead} approved the credential grant — ${what} — but it could not be minted.`,

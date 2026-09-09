@@ -42,6 +42,10 @@ allow("secret", [
   ["OE_NOTION_SECRET_BROKER", "secrets bootstrap: which broker holds the Notion memory token."],
   ["OE_NOTION_SECRET_REF", "secrets bootstrap: the ref that broker resolves to the Notion memory token."],
   [
+    "OE_CONTROL_OAUTH_SIGNING_SECRET",
+    "the HS256 key the control plane's own authorization server signs access tokens and authorization codes with, and the resource server verifies them against (agent/control/oauth-tokens.ts). Infrastructure, not a roster: the clients, their secret DIGESTS and the allowed audiences are tracked literals in agent/control/oauth-clients.ts and change by pull request. Rotating this value revokes every outstanding token at once.",
+  ],
+  [
     "OE_CONTROL_INJECT_TOKENS",
     "the WAKE-INJECTION service tokens `POST /control/v1/test/wake` authenticates against — a disjoint family from OE_CONTROL_READ_TOKENS, and the sharper of the two (injection is a write and a spoofing vector).",
   ],

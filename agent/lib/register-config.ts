@@ -32,6 +32,7 @@ import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import "../identity/surfaces.js";
 import "../identity/authors.js";
+import "../routines/collectors.js";
 import "./register-docs.js";
 
 registerSettings(SETTINGS_OVERRIDES);

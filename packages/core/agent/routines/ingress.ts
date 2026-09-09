@@ -18,6 +18,7 @@ import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
+import { runPreFire, type PreFireOutcome } from "./pre-fire.js";
 import { normalizeDelivery, type NormalizedEvent, type StoredSubscription, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription, isEventTrigger, storedFilter } from "./event-match.js";
 import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
@@ -179,6 +180,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   let halted = 0;
   let ungranted = 0;
   let drifted = 0;
+  let gated = 0;
   let hydrated = 0;
   let withheld = 0;
   let lostFires = 0;
@@ -275,6 +277,29 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       }
     } catch {
     }
+    const pre = await runPreFire(r, (deps.now?.() ?? new Date()).toISOString()).catch(
+      (err: unknown): PreFireOutcome => ({
+        collected: [],
+        gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${String(err)}` },
+        tainted: false,
+      }),
+    );
+    if (!pre.gate.fire) {
+      gated++;
+      log(`event ${ev.summary} matched ${r.id} but its condition gate said no — SKIPPED (audited): ${pre.gate.why}`);
+      await auditRoutineSkip(
+        r,
+        "condition_gate",
+        {
+          ...(pre.gate.gate ? { gate: pre.gate.gate } : {}),
+          gateReason: pre.gate.why,
+          event: ev.event,
+          ...(ev.action ? { action: ev.action } : {}),
+        },
+        auditDeps,
+      );
+      continue;
+    }
     let entityBlock: string | undefined;
     if (ev.pointer) {
       const h: HydrationOutcome = await hydratePointer(ev.pointer, memo, deps.hydrate ?? {});
@@ -310,13 +335,17 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       authenticator: ev.source,
       principalType: "service",
       principalId: `${ev.source}:webhook`,
-      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal, fireWakeId), ...taintedFireAttrs(!ev.redacted) },
+      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal, fireWakeId), ...taintedFireAttrs(!ev.redacted || pre.tainted) },
     };
-    const message = eventPrompt(r, {
-      summary: ev.summary,
-      ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}),
-      ...(entityBlock ? { entity: entityBlock } : {}),
-    });
+    const message = eventPrompt(
+      r,
+      {
+        summary: ev.summary,
+        ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}),
+        ...(entityBlock ? { entity: entityBlock } : {}),
+      },
+      pre.collected,
+    );
     const deliver = async (): Promise<void> => {
       if (dest.origin) {
         const diverted = await divertTriggeredFire(
@@ -340,14 +369,14 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   if (matches.length > 0 || invalid > 0) {
     log(
       `event "${ev.summary}": ${matches.length} matched -> ${fired - lostFires} fired (${hydrated} hydrated), ${ungranted} ungranted, ` +
-        `${withheld} audience-withheld, ${overBudget} over-budget, ${halted} halted, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
+        `${withheld} audience-withheld, ${overBudget} over-budget, ${halted} halted, ${gated} condition-gated, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
         `${invalid} invalid-filter`,
     );
   }
   return {
     matched: matches.length,
     fired: fired - lostFires,
-    skipped: ungranted + unwired + overCap + overBudget + halted + withheld + drifted + lostFires,
+    skipped: ungranted + unwired + overCap + overBudget + halted + gated + withheld + drifted + lostFires,
   };
 }
 

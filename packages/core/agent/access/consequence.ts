@@ -355,6 +355,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
 
   record_watch_state: postTurn("none", open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker")),
+  record_follow_up: postTurn("none", open("writes a follow-up note onto the calling routine's OWN row, located via the dispatcher-stamped marker")),
   report_run_failed: postTurn("none", open(
     "a fire declaring that ITS OWN run did not do its work (OPE-177) — writes `lastOutcome: failed` plus a capped one-line reason onto the calling routine's OWN row (marker-located, never a supplied id), which the three-strike fold then honours. It is the only routine verb whose entire reach is to make the routine do LESS: it cannot post, cannot widen anything, and its worst case is a routine that stops early and announces that it did. Gating it would put a confirmation in front of the honesty mechanism, on a path with no human present to click it. The declared text is model-authored and quarantined to the audit rows, never to the host-composed disable notice",
   )),
@@ -392,6 +393,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
   request_credential_grant: open(
     "ASKS one named person to let this conversation spend their own connector credential (OPE-1060 S3). It grants nothing, sends nothing model-authored but a QUOTED purpose line, and writes one pending row. The rubric's consequential test — does the effect escape the conversation — is met by the DM, and the row is still `open`, for the same reason link_identity is: what escapes is a DECISION REQUEST addressed to the one person entitled to answer it, and the answer is the gate. A card here would ask a MEMBER-tier audience in the requesting room whether to ask the owner, which puts a person's consent to spend their own credential in front of their colleagues one step removed — the exact pressure the owner-DM venue exists to remove, and a weaker check than the owner's own card, not a stronger one. What bounds it instead: the domain must declare the grant role (no fallback), the turn must name exactly ONE verified requester, the ask must name one vendor tool the owner's own connection publishes and freeze its arguments explicitly, at most one ask per (requester, owner, tool slug, resource label) may be pending so a re-planning model cannot page anybody twice, the owner's card copy is host-authored throughout, and the ask dies on its own short TTL. A TAINTED turn is refused outright inside the tool — an `open` row has no card for this registry's taint column to floor, and content the turn fetched must never author the sentence an owner reads to decide",
+  ),
+
+  revoke_credential_grant: open(
+    "de-escalation only: ENDS a credential grant the CALLER's own account pays for (OPE-1637), and there is no configuration in which it widens anything — afterwards strictly fewer conversations can spend their credential. It is `open` for the reason `unlink_identity` is: gating the off switch for your own credential would mean needing somebody else's permission to stop lending it, which is the one direction this must never require. What bounds it instead is the LOOKUP, not a card — it takes no owner argument, so the acting principal's own principal key is the query key and a caller can neither read nor end anybody else's grants. Refuses outside a DM (a list of the conversations somebody lends their credential to is not a thing to render in front of their colleagues) and refuses without an ACTING principal, so an unattended fire cannot end its creator's grants. Audited (grant.revoked, route `thread`)",
   ),
 
   link_identity: open(
