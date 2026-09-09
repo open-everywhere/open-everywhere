@@ -523,4 +523,76 @@ console.log("F — a real `tidyTick` over a silo holding a marked bullet:");
   ok(survivor.includes("[[people]]"), "[F] …even on a line the tidy REWROTE — link-repair canonicalised the wikilink inside the marked bullet and the mark rode through");
 }
 
+console.log("H — a native seat's own edit reaches the STORE at its turn end, with no delegation:");
+{
+  const stored = (): string => tiers.get(tierId(BRAIN))?.files["MEMORY.md"] ?? "";
+  const version = (): number => tiers.get(tierId(BRAIN))?.version ?? 0;
+
+  tiers.set(tierId(BRAIN), { files: { "MEMORY.md": SEEDED }, version: 1 });
+  const seat = makeSeat("edit-seat", "native");
+
+  await inSession(seat, async () => {
+    await memory.events["session.started"]!({}, seat.ctx);
+  });
+  ok((seat.sandbox.read("MEMORY.md") ?? "").includes("pricing is reviewed quarterly"), "[H] precondition: the silo materialised into the seat's sandbox");
+
+  const before = version();
+  await inSession(seat, async () => {
+    await taint.events["turn.started"]!({}, seat.ctx);
+    await memory.events["turn.started"]!({}, seat.ctx);
+    markUntrustedIngestedThisTurn("web" as never);
+    seat.sandbox.put("MEMORY.md", `${seat.sandbox.read("MEMORY.md")}- 2026-08-27: Iris owns the renewals inbox\n`);
+    seat.sandbox.tierListings = 0;
+    await memory.events["turn.completed"]!({}, seat.ctx);
+  });
+  eq(seat.sandbox.tierListings, 3, "[H] the editing turn costs THREE tier reads for one writable tier — the diff, the persist's mark re-run, and the persist's own read");
+
+  ok(
+    stored().includes("Iris owns the renewals inbox"),
+    "[H] 🔴 THE FIX: the seat's own edit is IN THE STORE at turn end (RED before: no persist route armed without a delegation, so the bullet lived in the sandbox until rotation overwrote it)",
+  );
+  ok(version() > before, "[H] …and the provider really was written, not merely read back");
+  const storedBullet = stored().split("\n").find((l) => l.includes("Iris owns the renewals inbox")) ?? "";
+  ok(
+    MARKED(storedBullet),
+    "[H] 🔴 …and the PROVENANCE MARK rides with it — OPE-1250's own complaint was that the mark OPE-1222 makes this seat write never reached the store at all",
+  );
+
+  seat.ctx = seatCtx(seat, 1);
+  seat.sandbox.tierListings = 0;
+  await inSession(seat, async () => {
+    await taint.events["turn.started"]!({}, seat.ctx);
+    await memory.events["turn.started"]!({}, seat.ctx);
+    await memory.events["turn.completed"]!({}, seat.ctx);
+  });
+  eq(
+    seat.sandbox.tierListings,
+    1,
+    "[H] 🔴 NEGATIVE CONTROL: a turn that edited no tier costs ONE tier read — the diff, and no persist behind it. A standing seat pays per EDIT, never per turn",
+  );
+}
+{
+  tiers.set(tierId(BRAIN), { files: { "MEMORY.md": SEEDED }, version: 1 });
+  const seat = makeSeat("edit-seat-fanout", "native");
+  await inSession(seat, async () => {
+    await memory.events["session.started"]!({}, seat.ctx);
+  });
+  const before = tiers.get(tierId(BRAIN))?.version ?? 0;
+
+  const { armLiveTask } = await import("../agent/access/live-delegated-tasks.js");
+  await inSession(seat, async () => {
+    await taint.events["turn.started"]!({}, seat.ctx);
+    await memory.events["turn.started"]!({}, seat.ctx);
+    armLiveTask("task_live_h");
+    seat.sandbox.put("MEMORY.md", `${seat.sandbox.read("MEMORY.md")}- 2026-08-27: Jo owns the torn file\n`);
+    await memory.events["turn.completed"]!({}, seat.ctx);
+  });
+
+  eq(tiers.get(tierId(BRAIN))?.version ?? 0, before, "[H] 🔴 a LIVE delegated task withholds the persist — the fan-out guard's torn-file hazard is unchanged by this route");
+  ok(
+    !(tiers.get(tierId(BRAIN))?.files["MEMORY.md"] ?? "").includes("Jo owns the torn file"),
+    "[H] …so the possibly-torn bytes stay in the sandbox, where the delegation backstop's next attempt picks them up",
+  );
+}
+
 console.log(`\ntaint-provenance-join: ${n} assertions passed`);

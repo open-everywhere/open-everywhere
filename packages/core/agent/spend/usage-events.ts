@@ -15,6 +15,17 @@ export function usageEventsTtlDays(): number {
   return getSettings().spend.usageEventsTtlDays;
 }
 
+export function cacheReportedness(entry: {
+  readonly cacheTokensReported?: boolean;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly model?: string;
+}): { cacheTokensReported?: boolean } {
+  if (entry.cacheTokensReported !== undefined) return { cacheTokensReported: entry.cacheTokensReported };
+  if (entry.model === undefined) return {};
+  return { cacheTokensReported: entry.cacheReadTokens !== undefined || entry.cacheWriteTokens !== undefined };
+}
+
 export async function appendUsageEvent(entry: UsageEventInput): Promise<void> {
   const record: UsageEventEntry = {
     ...entry,
@@ -23,6 +34,7 @@ export async function appendUsageEvent(entry: UsageEventInput): Promise<void> {
     outputTokens: entry.outputTokens ?? 0,
     cacheReadTokens: entry.cacheReadTokens ?? 0,
     cacheWriteTokens: entry.cacheWriteTokens ?? 0,
+    ...cacheReportedness(entry),
   };
   try {
     await getOperationalStore().appendUsageEvent(record);

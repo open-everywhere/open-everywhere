@@ -472,7 +472,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       );
       ok(
         typeof ack.note === "string" && ack.note.includes("still working on it") && ack.note.includes("do not present what you have as the final result"),
-        "🔴 §10a/NOTE: …and it instructs the model to SAY SO in its own words — the host adds no line of its own, so an unwritten caveat is an unsaid one",
+        "🔴 §10a/NOTE: …and it instructs the model to SAY SO in its own words — the host adds no line of its own about the unfinished work, so an unwritten caveat is an unsaid one",
       );
     });
 
@@ -604,7 +604,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(!("PENDING_WORK_FRAME" in turnDelivery), "🔴 §10f: `turn-delivery` exports NO pending-work frame constant. OPE-1516 removed the host's line from the room; an export named here is that line coming back");
     ok(!("withPendingWorkFrame" in turnDelivery), "🔴 §10f: …and no `withPendingWorkFrame` helper either — the composition that applied it is gone, not merely unused");
     const labelled = withReplierPrefix("body", { taskLabel: "audit the ledger" });
-    ok(labelled === "[audit the ledger] body", "🔴 §10f: the replier tier label is now the ONLY host addition to a posted body — WHO is speaking, and nothing about what the message is");
+    ok(labelled === "[audit the ledger] body", "🔴 §10f: the replier tier label is the host addition every reply carries — WHO is speaking, and nothing about what the message is");
     ok(withReplierPrefix("body", undefined) === "body", "§10f: …and a bare supervisor reply is untouched, so no post carries a host addition by default");
   }
 }

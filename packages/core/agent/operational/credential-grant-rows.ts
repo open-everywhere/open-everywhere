@@ -216,7 +216,8 @@ export type CredentialGrantRefusal =
   | "owner_unresolvable"
   | "unverified_requester"
   | "unattended_wake"
-  | "halted";
+  | "halted"
+  | "connector_delisted";
 
 export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: string): CredentialGrantRefusal | undefined {
   if (row.status === "revoked") return "revoked";
@@ -250,6 +251,11 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
       return `Refused: this grant names no vendor tool to run, so ${what} can never be spent. Do not retry — ask again so a fresh grant is minted.`;
     case "no_transport":
       return `Refused: this deployment carries no transport for the granted connector, so the call cannot be sent. The grant itself is valid.`;
+    case "connector_delisted":
+      return (
+        `Refused: this deployment no longer admits credential grants for that connector. ${what} cannot be spent, ` +
+        `even where a route to the vendor still exists. The grant itself stays as ${row.ownerSlug} approved it. Do not retry.`
+      );
     case "owner_unresolvable":
       return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":

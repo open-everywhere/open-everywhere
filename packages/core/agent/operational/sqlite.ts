@@ -50,6 +50,9 @@ function getDb(): DatabaseSync {
       output_tokens      INTEGER NOT NULL DEFAULT 0,
       cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
       cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      -- OPE-1611 (mirrored in the ALTER list below): reasoning tokens, ATTRIBUTION only. No rate
+      -- table names a reasoning rate, so this never reaches usd_micros and no cap sees it.
+      reasoning_tokens   INTEGER NOT NULL DEFAULT 0,
       usd_micros         INTEGER NOT NULL DEFAULT 0, -- millionths of a dollar, DERIVED at write from the rate table (what caps sum)
       -- OPE-369: the GATEWAY's own billed figure for these same calls, when it published one.
       -- 0 on a cost_source='derived' row. Never read by a cap — see store.ts's CostSource section.
@@ -384,6 +387,11 @@ function getDb(): DatabaseSync {
       cache_write_tokens INTEGER NOT NULL DEFAULT 0,
       model              TEXT,
       detail             TEXT,                 -- JSON
+      -- OPE-1611 (mirrored in the ALTER list below): the cache/reasoning ATTRIBUTION pair. Both
+      -- NULLABLE on purpose — NULL is "the source reported nothing", a different fact from a
+      -- reported zero, and keeping the two apart is the whole point of the dimension.
+      cache_tokens_reported INTEGER,           -- 1 = the call reported a cache split; 0 = it did not; NULL = never asked
+      reasoning_tokens   INTEGER,              -- NULL = unreported; a number (0 included) = reported
       -- OPE-369 (mirrored in the ALTER list below, which is what an existing DB takes)
       usd_micros_measured INTEGER,             -- the gateway's billed figure for THIS call; NULL = nothing measured it
       cost_source        TEXT,                 -- 'measured' | 'derived'; NULL on pre-migration/non-model rows
@@ -658,6 +666,10 @@ function getDb(): DatabaseSync {
     "ALTER TABLE usage_events ADD COLUMN delegation_depth INTEGER",
     "ALTER TABLE usage_events ADD COLUMN root_session_id TEXT",
 
+    "ALTER TABLE usage_events ADD COLUMN cache_tokens_reported INTEGER",
+    "ALTER TABLE usage_events ADD COLUMN reasoning_tokens INTEGER",
+    "ALTER TABLE spend_ledger ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0",
+
     "ALTER TABLE identity_link_challenges ADD COLUMN initiating_tenant TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE identity_link_challenges ADD COLUMN claimed_tenant TEXT",
 
@@ -755,6 +767,7 @@ type SpendLedgerDbRow = {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  reasoning_tokens: number;
   usd_micros: number;
   usd_micros_measured: number;
   cost_source: string;
@@ -774,6 +787,7 @@ function spendRowFrom(r: SpendLedgerDbRow): SpendLedgerRow {
     outputTokens: r.output_tokens,
     cacheReadTokens: r.cache_read_tokens,
     cacheWriteTokens: r.cache_write_tokens,
+    reasoningTokens: r.reasoning_tokens,
     usdMicros: r.usd_micros,
     usdMicrosMeasured: r.usd_micros_measured,
     calls: r.calls,
@@ -797,6 +811,8 @@ type UsageEventRow = {
   cost_source: string | null;
   delegation_depth: number | null;
   root_session_id: string | null;
+  cache_tokens_reported: number | null;
+  reasoning_tokens: number | null;
 };
 
 function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
@@ -817,6 +833,8 @@ function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
     ...(r.cost_source ? { costSource: r.cost_source === "measured" ? ("measured" as const) : ("derived" as const) } : {}),
     ...(r.delegation_depth != null ? { delegationDepth: Number(r.delegation_depth) } : {}),
     ...(r.root_session_id ? { rootSessionId: r.root_session_id } : {}),
+    ...(r.cache_tokens_reported != null ? { cacheTokensReported: r.cache_tokens_reported === 1 } : {}),
+    ...(r.reasoning_tokens != null ? { reasoningTokens: Number(r.reasoning_tokens) } : {}),
     ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
   };
 }
@@ -1120,13 +1138,14 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `INSERT INTO spend_ledger
            (org_id, surface_key, principal_id, routine_id, model, period, cost_source,
-            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, usd_micros_measured, calls)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, usd_micros, usd_micros_measured, calls)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT(org_id, surface_key, principal_id, routine_id, model, period, cost_source) DO UPDATE SET
            input_tokens        = input_tokens        + excluded.input_tokens,
            output_tokens       = output_tokens       + excluded.output_tokens,
            cache_read_tokens   = cache_read_tokens   + excluded.cache_read_tokens,
            cache_write_tokens  = cache_write_tokens  + excluded.cache_write_tokens,
+           reasoning_tokens    = reasoning_tokens    + excluded.reasoning_tokens,
            usd_micros          = usd_micros          + excluded.usd_micros,
            usd_micros_measured = usd_micros_measured + excluded.usd_micros_measured,
            calls               = calls + 1`,
@@ -1143,6 +1162,7 @@ export const sqliteOperationalStore: OperationalStore = {
         write.outputTokens ?? 0,
         write.cacheReadTokens ?? 0,
         write.cacheWriteTokens ?? 0,
+        write.reasoningTokens ?? 0,
         write.usdMicros ?? 0,
         write.usdMicrosMeasured ?? 0,
       );
@@ -1156,17 +1176,19 @@ export const sqliteOperationalStore: OperationalStore = {
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
                 COALESCE(SUM(usd_micros), 0) AS usd_micros,
                 COALESCE(SUM(usd_micros_measured), 0) AS usd_micros_measured,
                 COALESCE(SUM(calls), 0) AS calls
          FROM spend_ledger WHERE ${["org_id = ?", ...conjuncts].join(" AND ")}`,
       )
-      .get(org, ...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; usd_micros: number; usd_micros_measured: number; calls: number };
+      .get(org, ...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; reasoning_tokens: number; usd_micros: number; usd_micros_measured: number; calls: number };
     return {
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheWriteTokens: row.cache_write_tokens,
+      reasoningTokens: row.reasoning_tokens,
       usdMicros: row.usd_micros,
       usdMicrosMeasured: row.usd_micros_measured,
       calls: row.calls,
@@ -1891,8 +1913,9 @@ export const sqliteOperationalStore: OperationalStore = {
         `INSERT INTO usage_events
            (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
-            usd_micros_measured, cost_source, delegation_depth, root_session_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            usd_micros_measured, cost_source, delegation_depth, root_session_id,
+            cache_tokens_reported, reasoning_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.org,
@@ -1912,6 +1935,8 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.costSource ?? null,
         entry.delegationDepth ?? null,
         entry.rootSessionId ?? null,
+        entry.cacheTokensReported === undefined ? null : entry.cacheTokensReported ? 1 : 0,
+        entry.reasoningTokens ?? null,
       );
   },
 
@@ -1920,7 +1945,8 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
-                usd_micros_measured, cost_source, delegation_depth, root_session_id
+                usd_micros_measured, cost_source, delegation_depth, root_session_id,
+                cache_tokens_reported, reasoning_tokens
          FROM usage_events WHERE org_id = ? AND session_id = ? ORDER BY seq ASC`,
       )
       .all(org, sessionId) as UsageEventRow[];
@@ -1951,6 +1977,13 @@ export const sqliteOperationalStore: OperationalStore = {
         `SELECT surface_key, principal_id, kind, routine_id, model,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+                -- OPE-1611: the attribution dimension AND its coverage. COALESCE keeps the sum an
+                -- integer when every row is NULL; the two counts say how many calls actually
+                -- reported, so a reader never mistakes an all-NULL group's 0 for "no caching".
+                -- (sqlite has no FILTER clause here, so the flag count is a SUM over 1/0.)
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+                COALESCE(SUM(CASE WHEN cache_tokens_reported = 1 THEN 1 ELSE 0 END), 0) AS cache_reported_calls,
+                COUNT(reasoning_tokens) AS reasoning_reported_calls,
                 COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
          FROM usage_events WHERE ${where.join(" AND ")}
          GROUP BY surface_key, principal_id, kind, routine_id, model`,
@@ -1965,6 +1998,9 @@ export const sqliteOperationalStore: OperationalStore = {
       output_tokens: number;
       cache_read_tokens: number;
       cache_write_tokens: number;
+      reasoning_tokens: number;
+      cache_reported_calls: number;
+      reasoning_reported_calls: number;
       events: number;
       sessions: number;
     }[];
@@ -1978,6 +2014,9 @@ export const sqliteOperationalStore: OperationalStore = {
       outputTokens: r.output_tokens,
       cacheReadTokens: r.cache_read_tokens,
       cacheWriteTokens: r.cache_write_tokens,
+      reasoningTokens: r.reasoning_tokens,
+      cacheReportedCalls: r.cache_reported_calls,
+      reasoningReportedCalls: r.reasoning_reported_calls,
       events: r.events,
       sessions: r.sessions,
     }));

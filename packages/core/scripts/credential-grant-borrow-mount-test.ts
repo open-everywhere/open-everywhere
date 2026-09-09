@@ -242,14 +242,14 @@ console.log("3. the broker sends a borrow row through the borrow transport:");
   );
 }
 
-console.log("5. every absence refuses no_transport by name:");
+console.log("5. permission is judged first, then every absence refuses no_transport by name:");
 {
   const store = getOperationalStore();
   const ctx = { nowMs: Date.now(), org: ORG, platform: "slack", requesterPrincipalId: "slack/W1/U-req", scopeKey: SCOPE, workspace: "W1" };
 
-  await store.addCredentialGrant(ORG, borrowRow({ connector: "linear", id: "grant-no-connection" }));
-  const noConnection = await runGrantedCall("grant-no-connection", {}, ctx);
-  eq(noConnection.ok === false ? noConnection.refused : "OK", "no_transport", "a connector this build carries no connection for refuses no_transport");
+  await store.addCredentialGrant(ORG, borrowRow({ connector: "linear", id: "grant-delisted-connector" }));
+  const delisted = await runGrantedCall("grant-delisted-connector", {}, ctx);
+  eq(delisted.ok === false ? delisted.refused : "OK", "connector_delisted", "a connector the reviewed list does not admit refuses connector_delisted");
 
   _resetGrantBorrowTransportsForTest();
   await store.addCredentialGrant(ORG, borrowRow({ id: "grant-no-transport" }));

@@ -13,6 +13,7 @@ import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir, writeTierFile } from "../memory/sandbox-sync.js";
 import { type ProvenanceWording, baselineOf, markAddedBullets, renderProvenanceWording } from "../memory/provenance-mark.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../access/taint-signal.js";
+import { liveTaskIds } from "../access/live-delegated-tasks.js";
 import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { lockMemoryRoot, memoryRootUnlockCommand } from "../memory/root-fence.js";
@@ -231,12 +232,13 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
 
 type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
 
-export type MemoryPersistOutcome = "completed" | "failed" | "settled";
+export type MemoryPersistOutcome = "completed" | "failed" | "settled" | "edited";
 
 const PERSIST_WHERE: Record<MemoryPersistOutcome, string> = {
   completed: "session.completed",
   failed: "session.failed",
   settled: "delegation settlement",
+  edited: "turn-end tree edit",
 };
 
 export type MemoryPersistContext = BindableContext & {
@@ -679,12 +681,13 @@ async function rebaseProvenanceAfterResync(ctx: MemoryPersistContext, resynced: 
   }
 }
 
-async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): Promise<void> {
+async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): Promise<readonly string[]> {
+  const edited: string[] = [];
   try {
     const state = provenanceBaseline.get();
-    if (state.armed !== true) return;
+    if (state.armed !== true) return edited;
     const target = await provenanceTargets(ctx);
-    if (target === null) return;
+    if (target === null) return edited;
     const tainted = untrustedIngestedThisTurn();
     const kinds = [...taintKindsThisTurn()];
     const wording: ProvenanceWording = tainted ? renderProvenanceWording(kinds) : { mark: "", attribution: "" };
@@ -696,6 +699,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
       const files = await readTierFromSandbox(target.sandbox, rm.tier);
       let current = files;
       const held = state.tiers?.[tid];
+      if (held !== undefined && !sameBaseline(held, baselineOf(files))) edited.push(tid);
       if (tainted && held !== undefined) {
         const pass = markAddedBullets(held, files, wording);
         for (const [rel, content] of Object.entries(pass.files)) {
@@ -710,7 +714,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
       tiers[tid] = baselineOf(current);
     }
     provenanceBaseline.update((cur) => ({ ...cur, armed: true, tiers }));
-    if (marked === 0) return;
+    if (marked === 0) return edited;
     log(`${where}: marked ${marked} added bullet(s) with external provenance in ${markedFiles.join(", ")}`);
     try {
       await appendAudit({
@@ -733,6 +737,39 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
     }
   } catch (err) {
     log(`${where}: provenance marking skipped (the turn is unaffected): ${String(err)}`);
+    return [];
+  }
+  return edited;
+}
+
+function sameBaseline(a: Record<string, readonly string[]>, b: Record<string, readonly string[]>): boolean {
+  const names = Object.keys(a);
+  if (names.length !== Object.keys(b).length) return false;
+  for (const rel of names) {
+    const left = a[rel];
+    const right = b[rel];
+    if (left === undefined || right === undefined || left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+async function persistEditedTreeAtTurnEnd(ctx: MemoryPersistContext, where: string, edited: readonly string[]): Promise<void> {
+  if (edited.length === 0) return;
+  try {
+    if (skipAsSubagentChild(ctx as unknown as HookContext, where)) return;
+    const live = liveTaskIds();
+    if (live.length > 0) {
+      log(`${where}: tree edit in ${edited.join(", ")} NOT persisted — ${live.length} delegated task(s) may be mid-write [${live.join(", ")}]`);
+      return;
+    }
+    const flush = await persistMemoryNow(ctx, "edited");
+    log(`${where}: persisted this session's OWN edit to ${edited.join(", ")} — ${flush.persisted} file(s) across ${flush.silos} silo(s), ${flush.changed} changed`);
+    if (flush.failed > 0) {
+      log(`${where}: 🔴 ${flush.failed} silo(s) FAILED this persist — those bytes stay in the sandbox and NO later turn re-reports this edit (see the residual note)`);
+    }
+  } catch (err) {
+    log(`${where}: the turn-end persist of this session's own edit failed (the bytes stay in the sandbox): ${String(err)}`);
   }
 }
 
@@ -878,11 +915,11 @@ export default defineHook({
     },
 
     "turn.completed": async (_event, ctx) => {
-      await markProvenanceForTurn(ctx, "turn.completed");
+      await persistEditedTreeAtTurnEnd(ctx, "turn.completed", await markProvenanceForTurn(ctx, "turn.completed"));
     },
 
     "turn.failed": async (_event, ctx) => {
-      await markProvenanceForTurn(ctx, "turn.failed");
+      await persistEditedTreeAtTurnEnd(ctx, "turn.failed", await markProvenanceForTurn(ctx, "turn.failed"));
     },
 
     "session.completed": async (_event, ctx) => {

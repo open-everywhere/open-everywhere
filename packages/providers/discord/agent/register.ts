@@ -2,6 +2,7 @@ import {
   registerIdentityMapper,
   registerCapabilityManifest,
   registerSurfaceParity,
+  registerProviderEvents,
   registerPostArm,
   registerWakeOriginCodec,
   registerReadAdapter,
@@ -19,6 +20,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { DISCORD_SURFACE_PARITY } from "./surface-parity.js";
+import { DISCORD_PROVIDER_EVENTS } from "./provider-events.js";
 import { registerDiscordOps } from "./ops.js";
 import { resolveDiscordTarget, discordReportTargetFor } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
@@ -36,6 +38,7 @@ export function registerDiscordProvider(): void {
   registerIdentityMapper("discord", bindDiscord);
   registerCapabilityManifest("discord", { midTurnPost: true, reactions: true });
   registerSurfaceParity("discord", DISCORD_SURFACE_PARITY);
+  registerProviderEvents("discord", DISCORD_PROVIDER_EVENTS);
   registerPostArm(discordPostArm);
   registerWakeOriginCodec("discord", discordWakeOriginCodec);
   registerReadAdapter(discordReadAdapter);

@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { normalizeGithubEvent, eventPrompt, verifyGithubSignature, gateGithubDelivery } from "../agent/routines/events.js";
-import { liftGithubEvent } from "../agent/routines/github-normalizer.js";
-import { evaluateSubscription } from "../agent/routines/event-match.js";
+import { liftGithubEvent, githubEventNormalizer } from "../agent/routines/github-normalizer.js";
+import { evaluateSubscription, validateSubscription } from "../agent/routines/event-match.js";
 import type { Routine } from "../agent/routines/routine.js";
 
 let passed = 0;
@@ -80,5 +80,69 @@ ok(noSecret !== null && noSecret.includes("GITHUB_WEBHOOK_SECRET"), "unset secre
 ok(gateGithubDelivery("", body, good, false) !== null, "empty-string secret is treated as unset -> rejected");
 ok(gateGithubDelivery(undefined, body, null, true) === null, "unset secret + the webhooks.allowUnverifiedGithub escape hatch -> accepted");
 ok(gateGithubDelivery(secret, body, "sha256=deadbeef", true) !== null, "escape hatch does NOT bypass verification when a secret IS set");
+
+const runPayload = {
+  action: "completed",
+  workflow: { name: "CI" },
+  workflow_run: {
+    id: 987654321,
+    name: "CI",
+    head_branch: "main",
+    head_sha: "cafebabe",
+    status: "completed",
+    conclusion: "failure",
+    html_url: "https://github.com/me/proj/actions/runs/987654321",
+  },
+  repository: { full_name: "me/proj", name: "proj", html_url: "https://github.com/me/proj" },
+  sender: { login: "github-actions[bot]" },
+};
+const runV1 = normalizeGithubEvent("workflow_run", runPayload);
+ok(runV1 !== null && runV1.event === "workflow_run" && runV1.action === "completed", "workflow_run: normalizes with its action");
+ok(runV1!.title === "CI", "workflow_run: the title is the workflow's name, read off the run object");
+ok(runV1!.url === "https://github.com/me/proj/actions/runs/987654321", "workflow_run: the url is the RUN's, never the repository's");
+ok(runV1!.number === undefined, "workflow_run: no issue-style number — GitHub numbers a run with `run_number`, not `number`");
+
+const runV2 = liftGithubEvent("workflow_run", runPayload);
+ok(runV2 !== null, "workflow_run: lifts onto the v2 model");
+ok(runV2!.fields["branch"] === "main", "workflow_run: `branch` is filterable — the half of `a red build on main` that says WHERE");
+ok(runV2!.fields["conclusion"] === "failure", "workflow_run: `conclusion` is filterable — the half that says RED");
+ok(runV2!.fields["status"] === "completed", "workflow_run: `status` carries the lifecycle, distinct from the verdict");
+ok(runV2!.fields["workflow"] === "CI", "workflow_run: `workflow` names which build, so one repo's many workflows are separable");
+for (const key of ["branch", "status", "conclusion", "workflow"]) {
+  ok(githubEventNormalizer.matchKeys.includes(key), `workflow_run: \`${key}\` is a DECLARED match key, so a filter may name it`);
+}
+ok(
+  runV2!.scope.some((s) => s.kind === "entity" && s.id === "987654321"),
+  "workflow_run: the entity scope step is the run id, so a subscription can narrow to one run",
+);
+const DOCUMENTED_RUN_FILTER = '.scope.container == "acme/web" and .fields.conclusion == "failure" and .fields.branch == "main"';
+let armed = true;
+try {
+  validateSubscription("github", DOCUMENTED_RUN_FILTER);
+} catch {
+  armed = false;
+}
+ok(armed, "workflow_run: the filter the docs print is ACCEPTED by validateSubscription — it can actually be armed");
+let refused = false;
+try {
+  validateSubscription("github", '.fields.conclusion == "failure" and .fields.branch == "main"');
+} catch {
+  refused = true;
+}
+ok(refused, "workflow_run: the same filter WITHOUT a container clause is REFUSED — the scope clause is load-bearing, not decoration");
+ok(runV2!.pointer === undefined, "workflow_run: NO fetch pointer — a run id is not an issue number, and the read adapter's endpoint only understands one");
+const releaseV2 = liftGithubEvent("release", {
+  action: "published",
+  release: { id: 55, name: "v1.2.0", html_url: "https://github.com/me/proj/releases/tag/v1.2.0" },
+  repository: { full_name: "me/proj", html_url: "https://github.com/me/proj" },
+});
+ok(releaseV2!.scope.some((s) => s.kind === "entity" && s.id === "55"), "release: the opaque id still narrows the scope path");
+ok(releaseV2!.pointer === undefined, "release: an opaque vendor id gets no pointer either — same rule, not a workflow_run special case");
+ok(liftGithubEvent("pull_request", prPayload)!.pointer?.id === "me/proj#42", "pull_request: an issue-style number STILL yields a fetch pointer");
+const pushV2 = liftGithubEvent("push", { ref: "refs/heads/main", repository: { full_name: "me/proj" } });
+ok(
+  pushV2!.fields["branch"] === undefined && pushV2!.fields["conclusion"] === undefined,
+  "the workflow_run keys are absent on every other event — a `conclusion` filter never matches a push",
+);
 
 console.log(`✓ events: ${passed} assertions passed`);

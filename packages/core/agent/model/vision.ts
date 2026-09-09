@@ -10,6 +10,7 @@ export interface ImageDescribeUsage {
   readonly outputTokens?: number;
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
+  readonly reasoningTokens?: number;
   readonly costUsd?: number;
   readonly generationId?: string;
 }

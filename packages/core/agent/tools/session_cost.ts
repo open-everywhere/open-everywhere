@@ -5,7 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { subagentParentOf } from "../hooks/spend.js";
 import { subagentRunOf } from "../spend/subagent-runs.js";
 import { usageForSession } from "../spend/usage-events.js";
-import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote } from "../spend/reporting.js";
+import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, tokenAttributionNote } from "../spend/reporting.js";
 import { estimateSandboxCostUsd } from "../spend/sandbox-pricing.js";
 
 export default defineTool({
@@ -26,6 +26,9 @@ export default defineTool({
     outputTokens: z.number().nonnegative(),
     cacheReadTokens: z.number().nonnegative(),
     cacheWriteTokens: z.number().nonnegative(),
+    reasoningTokens: z.number().nonnegative().describe("Reasoning tokens across the calls that REPORTED the dimension — read it with reasoningReportedCalls, never alone."),
+    cacheReportedCalls: z.number().int().nonnegative().describe("How many of `events` reported a cache split at all. The remainder's cache zeros assert nothing — see the note."),
+    reasoningReportedCalls: z.number().int().nonnegative().describe("How many of `events` reported a reasoning-token count at all."),
     costUsd: z.number().nonnegative().optional(),
     pricedModel: z.string().optional(),
     sandboxSeconds: z.number().nonnegative(),
@@ -47,6 +50,9 @@ export default defineTool({
     let outputTokens = 0;
     let cacheReadTokens = 0;
     let cacheWriteTokens = 0;
+    let reasoningTokens = 0;
+    let cacheReportedCalls = 0;
+    let reasoningReportedCalls = 0;
     let sandboxSeconds = 0;
     let costUsd: number | undefined;
 
@@ -61,6 +67,11 @@ export default defineTool({
       outputTokens += r.outputTokens;
       cacheReadTokens += r.cacheReadTokens;
       cacheWriteTokens += r.cacheWriteTokens;
+      if (r.cacheTokensReported === true) cacheReportedCalls++;
+      if (r.reasoningTokens !== undefined) {
+        reasoningTokens += r.reasoningTokens;
+        reasoningReportedCalls++;
+      }
       const rowCost = rowCostUsd(r, assumed);
       if (rowCost !== undefined) costUsd = (costUsd ?? 0) + rowCost;
     }
@@ -72,7 +83,10 @@ export default defineTool({
     );
     const sandboxCostUsd = sandboxSeconds > 0 ? estimateSandboxCostUsd(sandboxSeconds) : undefined;
 
-    const notes = [pricingNote(mix, assumed)];
+    const notes = [
+      pricingNote(mix, assumed),
+      tokenAttributionNote({ calls: events, cacheReadTokens, cacheWriteTokens, reasoningTokens, cacheReportedCalls, reasoningReportedCalls }),
+    ];
     if (delegatedRows > 0) {
       notes.push(`Includes ${delegatedRows} model call(s) made by subagent(s) this conversation delegated to — delegated work is part of what the conversation cost.`);
     }
@@ -92,6 +106,9 @@ export default defineTool({
       outputTokens,
       cacheReadTokens,
       cacheWriteTokens,
+      reasoningTokens,
+      cacheReportedCalls,
+      reasoningReportedCalls,
       ...(costUsd !== undefined ? { costUsd, pricedModel: assumed.model } : {}),
       sandboxSeconds: Math.round(sandboxSeconds),
       ...(sandboxCostUsd !== undefined ? { sandboxCostUsd } : {}),

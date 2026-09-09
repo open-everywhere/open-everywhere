@@ -11,6 +11,7 @@ import type { EditLocus } from "./reply-edit.js";
 import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
 import { markWakeRefusedThisTurn } from "./reply-signal.js";
+import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 
 export type { ReplierLabel };
 
@@ -205,7 +206,8 @@ export async function recordLandedPost(input: {
 }
 
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
-  const clean = truncateMemoryCitationPaths(text);
+  const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
+  const clean = provenance.body;
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
   const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
@@ -230,6 +232,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
         throw err;
       }
       await auditReplyPost(audit, realId, target.platform, body.length);
+      await auditReplyProvenance(audit, realId, target.platform, provenance.reads, provenance.shown);
       await recordLandedPost({
         org: audit?.org,
         editLocus: replyEditLocus(target),
@@ -284,11 +287,17 @@ async function dispatchReply(target: ReplyTarget, text: string, replier?: Replie
 }
 
 export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit, replier?: ReplierLabel): Promise<void> {
-  const clean = truncateMemoryCitationPaths(text);
+  const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
+  const clean = provenance.bare;
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
   const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
-  const chunks = arm?.splitText?.(body) ?? [body];
+  const split = arm?.splitText?.(body) ?? [body];
+  const chunks = [...split];
+  if (provenance.footer !== undefined) {
+    const last = chunks.reduce((best, c, i) => (c.trim() ? i : best), -1);
+    if (last >= 0) chunks[last] = `${chunks[last]}\n\n${provenance.footer}`;
+  }
   let firstId: string | undefined;
   try {
     for (const chunk of chunks) {
@@ -301,6 +310,7 @@ export async function postTerminalProse(target: ReplyTarget, text: string, audit
     throw err;
   }
   if (firstId === undefined) return;
-  await auditReplyPost(audit, firstId, target.platform, body.length);
+  await auditReplyPost(audit, firstId, target.platform, body.length + (provenance.footer === undefined ? 0 : provenance.footer.length + 2));
+  await auditReplyProvenance(audit, firstId, target.platform, provenance.reads, provenance.shown);
 }
 

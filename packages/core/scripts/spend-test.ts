@@ -307,6 +307,67 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
+  const usageEvents = await import("../agent/spend/usage-events.js");
+  const { cacheReportedness } = usageEvents;
+  const base = { org: "default", surfaceKey: "slack/T1/C7", sessionId: "sess-attr" };
+
+  eq(cacheReportedness({ model: "m", cacheReadTokens: 0 }), { cacheTokensReported: true }, "cacheReportedness: a reported ZERO is a report — the source answered the question");
+  eq(cacheReportedness({ model: "m" }), { cacheTokensReported: false }, "cacheReportedness: a model call that gave neither cache figure reported NOTHING");
+  eq(cacheReportedness({ model: "m", cacheWriteTokens: 5 }), { cacheTokensReported: true }, "cacheReportedness: either figure alone counts as a report");
+  eq(cacheReportedness({}), {}, "cacheReportedness: a model-LESS row (sandbox runtime) is never asked — the column stays absent");
+  eq(cacheReportedness({ model: "m", cacheTokensReported: false, cacheReadTokens: 9 }), { cacheTokensReported: false }, "cacheReportedness: an explicit answer from the writer always wins over the inference");
+
+  await usageEvents.appendUsageEvent({ ...base, ts: "2026-06-25T10:00:00Z", kind: "channel", model: "m-attr", inputTokens: 100, outputTokens: 10, cacheReadTokens: 40, reasoningTokens: 33 });
+  await usageEvents.appendUsageEvent({ ...base, ts: "2026-06-25T10:01:00Z", kind: "channel", model: "m-attr", inputTokens: 100, outputTokens: 10 });
+  await usageEvents.appendUsageEvent({ ...base, ts: "2026-06-25T10:02:00Z", kind: "sandbox", detail: { sandboxSeconds: 4 } });
+  const attrRows = await usageEvents.usageForSession("default", "sess-attr");
+  ok(attrRows.length === 3, "usage attribution: the three rows round-trip");
+  ok(attrRows[0].cacheTokensReported === true, "a call that reported a cache split is recorded as REPORTED");
+  ok(attrRows[0].reasoningTokens === 33, "a reported reasoning-token count round-trips as its own dimension");
+  ok(attrRows[1].cacheTokensReported === false, "a call whose source published NO cache split says so — its 0 cache tokens assert nothing");
+  ok(attrRows[1].reasoningTokens === undefined, "an unreported reasoning count stays ABSENT, never a fabricated 0");
+  ok(attrRows[1].cacheReadTokens === 0, "the summed cache column is untouched — the flag adds the missing fact beside it, it does not re-type it");
+  ok(attrRows[2].cacheTokensReported === undefined, "a sandbox-runtime row is never asked the cache question at all");
+
+  await usageEvents.appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C7", sessionId: "sess-attr-zero", ts: "2026-06-25T10:03:00Z", model: "m-attr", inputTokens: 5, reasoningTokens: 0 });
+  const zeroRow = (await usageEvents.usageForSession("default", "sess-attr-zero"))[0];
+  ok(zeroRow.reasoningTokens === 0, "a REPORTED zero reasoning count reads back as 0, not as absent (the negative control for the read-back guard)");
+
+  const attrSummary = (await usageEvents.usageSummary("default", { surfaceKeyPrefix: "slack/T1/C7" })).filter((r) => r.model === "m-attr" && r.kind === "channel");
+  ok(attrSummary.length === 1, "usageSummary: the two model calls group together");
+  ok(attrSummary[0].reasoningTokens === 33, "usageSummary: reasoning tokens sum across the group");
+  ok(attrSummary[0].cacheReportedCalls === 1 && attrSummary[0].events === 2, "usageSummary: 1 of the 2 calls reported a cache split — the coverage a report must show");
+  ok(attrSummary[0].reasoningReportedCalls === 1, "usageSummary: only the call that reported reasoning counts towards its coverage");
+
+  const { tokenAttribution, tokenAttributionNote } = await import("../agent/spend/reporting.js");
+  const agg = tokenAttribution(attrSummary);
+  ok(agg.calls === 2 && agg.reasoningTokens === 33 && agg.cacheReportedCalls === 1, "tokenAttribution: sums the dimensions and their coverage over rollup rows");
+  const note = tokenAttributionNote(agg);
+  ok(note.includes("1 of 2"), "tokenAttributionNote: states how many calls actually reported, not just the totals");
+  ok(!note.includes("$"), "🔴 tokenAttributionNote NEVER names a dollar figure — a saving inferred from tokens nothing billed against would be a guess");
+  const blindNote = tokenAttributionNote({ calls: 4, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, cacheReportedCalls: 0, reasoningReportedCalls: 0 });
+  ok(blindNote.includes("UNATTRIBUTED across all 4"), "tokenAttributionNote: a window with no cache tokens says UNATTRIBUTED, never 'no caching'");
+  ok(!blindNote.includes("Gateway") && !blindNote.includes("gateway"), "🔴 tokenAttributionNote: the arm where NO call published a cache field names no gateway — that silence is the provider payload's, not a backend's billing behaviour");
+  ok(blindNote.includes("no call published a cache field"), "…and it says which silence it is, so the two zero arms are distinguishable");
+  const publishedZeroNote = tokenAttributionNote({ calls: 12, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, cacheReportedCalls: 12, reasoningReportedCalls: 0 });
+  ok(publishedZeroNote.includes("UNATTRIBUTED across all 12"), "🔴 tokenAttributionNote: 12 calls that all PUBLISHED a zero cache field still read UNATTRIBUTED — a published zero is not a measurement that caching did not happen");
+  ok(publishedZeroNote.includes("12 call(s) published a cache field"), "…and the note says the field WAS published, so the limit is stated rather than hidden");
+  ok(publishedZeroNote.includes("Vercel AI Gateway backend"), "🔴 tokenAttributionNote: the published-zero arm attributes the discount to the Vercel AI Gateway BACKEND by name, not to 'this deployment's gateway' — ModelBackend is swappable");
+  const attributedNote = tokenAttributionNote({ calls: 3, cacheReadTokens: 900, cacheWriteTokens: 10, reasoningTokens: 0, cacheReportedCalls: 3, reasoningReportedCalls: 0 });
+  ok(attributedNote.includes("900 read / 10 write") && !attributedNote.includes("UNATTRIBUTED"), "tokenAttributionNote: a window with real cache tokens reports them (the positive control for the zero arm)");
+  ok(tokenAttributionNote({ calls: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, cacheReportedCalls: 0, reasoningReportedCalls: 0 }).includes("nothing to attribute"), "tokenAttributionNote: an empty window says so rather than reporting zeros");
+
+  const pAttr = { org: "default", platform: "slack", workspace: "T1", surface: "C8", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C8", key: "slack/T1/C8" };
+  await store.recordSpend(pAttr as never, { period: "2026-06", usage: { inputTokens: 100, outputTokens: 50, reasoningTokens: 70 }, model: PRICED_MODEL });
+  const attrTotals = await store.spendTotals("default", { surfaceKey: "slack/T1/C8", period: "2026-06" });
+  ok(attrTotals.reasoningTokens === 70, "the cap ledger records reasoning tokens as their own summed dimension");
+  ok(billableTokens(attrTotals) === 150, "🔴 …and they are CAP-NEUTRAL: billableTokens stays input + output, so an attribution dimension can never move a budget");
+  const attrUsd = attrTotals.usdMicros;
+  await store.recordSpend(pAttr as never, { period: "2026-06", usage: { inputTokens: 100, outputTokens: 50, reasoningTokens: 999999 }, model: PRICED_MODEL });
+  ok((await store.spendTotals("default", { surfaceKey: "slack/T1/C8", period: "2026-06" })).usdMicros === attrUsd * 2, "🔴 …and UNPRICED: a call with a huge reasoning count costs exactly what the identical call without one costs");
+}
+
+{
   const spendHook = (await import("../agent/hooks/spend.js")).default;
   const { stampModelCall } = await import("../agent/model/model-stamp.js");
   const usageEvents = await import("../agent/spend/usage-events.js");

@@ -1,0 +1,92 @@
+import type { ProviderEventDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
+
+export const GITHUB_PROVIDER_EVENTS: ProviderEventDeclaration = {
+  source: "github",
+  doc: "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+  events: [
+    {
+      event: "issues",
+      routing: "mapped",
+      match: [],
+      scope: ["entity"],
+      note: "an issue was opened, closed, labelled, assigned…; the entity step is the issue number, so the fire re-fetches the issue itself",
+    },
+    {
+      event: "issue_comment",
+      routing: "mapped",
+      match: [],
+      scope: ["entity", "sub"],
+      note: "a comment on an issue or on a pull request's timeline; the sub step is the comment id",
+    },
+    {
+      event: "pull_request",
+      routing: "mapped",
+      match: [],
+      scope: ["entity"],
+      note: "a pull request was opened, synchronised, merged…; the entity step is the pull-request number",
+    },
+    {
+      event: "pull_request_review",
+      routing: "mapped",
+      match: [],
+      scope: ["entity"],
+      note: "a review was submitted, edited or dismissed; the review itself is not addressable — the payload names it `review`, not `comment`",
+    },
+    {
+      event: "pull_request_review_comment",
+      routing: "mapped",
+      match: [],
+      scope: ["entity", "sub"],
+      note: "an inline comment on a line of a pull request's diff; the sub step is the comment id",
+    },
+    {
+      event: "push",
+      routing: "envelope",
+      match: [],
+      scope: [],
+      note: "commits were pushed to a ref; a push has no entity to fetch, and the ref is not mapped — a routine can match the repo and the sender only",
+    },
+    {
+      event: "check_run",
+      routing: "mapped",
+      match: [],
+      scope: ["entity"],
+      note: "one check's state changed; the entity step is GitHub's opaque run id, so it narrows a subscription but is not re-fetchable",
+    },
+    {
+      event: "check_suite",
+      routing: "envelope",
+      match: [],
+      scope: [],
+      note: "a whole suite of checks completed; unmapped — the payload's subject sits under `check_suite`, which the normalizer's subject chain does not name",
+    },
+    {
+      event: "workflow_run",
+      routing: "mapped",
+      match: ["branch", "status", "conclusion", "workflow"],
+      scope: ["entity"],
+      note: "an Actions run started or finished; the four keys are what makes `a red build on our main` expressible — `.scope.container == \"acme/web\" and .fields.conclusion == \"failure\" and .fields.branch == \"main\"`. The container clause is REQUIRED, not decoration: a github subscription that narrows by nothing is refused at create time",
+    },
+    {
+      event: "workflow_job",
+      routing: "envelope",
+      match: [],
+      scope: [],
+      note: "one job inside an Actions run changed state; unmapped — `workflow_run` is the run-level event and carries the same conclusion for the whole run",
+    },
+    {
+      event: "release",
+      routing: "mapped",
+      match: [],
+      scope: ["entity"],
+      note: "a release was published or edited; the entity step is GitHub's opaque release id, so it narrows a subscription but is not re-fetchable",
+    },
+    {
+      event: "installation",
+      routing: "none",
+      match: [],
+      scope: [],
+      note: "the App was installed, suspended or removed; the normalizer accepts it, but the payload names `repositories` and never `repository`, so it proves NO container step and the read-grant check refuses every delivery fail-closed — nothing can ever fire. The self-registering install leg reads it instead",
+    },
+  ],
+};

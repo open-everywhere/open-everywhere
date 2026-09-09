@@ -10,6 +10,7 @@ import {
 } from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { connectorTransportSpec } from "../connections/connector-transport.js";
+import { isCredentialGrantConnector } from "./credential-grant.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 import {
   GrantBorrowTransportAlreadyRegisteredError,
@@ -122,6 +123,9 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
 
   const mcpTool = grant.mcpTool;
   if (mcpTool === undefined) return refuse("no_lent_tool");
+
+  if (!isCredentialGrantConnector(grant.connector)) return refuse("connector_delisted");
+
   const path = resolveBorrowPath(grant, mcpTool);
   if (path === undefined) return refuse("no_transport");
 

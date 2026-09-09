@@ -30,7 +30,11 @@ export function normalizeGithubEvent(eventType: string, payload: Record<string, 
   const sender = str(obj(payload["sender"])?.["login"]);
 
   const subject =
-    obj(payload["pull_request"]) ?? obj(payload["issue"]) ?? obj(payload["check_run"]) ?? obj(payload["release"]);
+    obj(payload["pull_request"]) ??
+    obj(payload["issue"]) ??
+    obj(payload["check_run"]) ??
+    obj(payload["release"]) ??
+    obj(payload["workflow_run"]);
   const number = typeof subject?.["number"] === "number" ? (subject["number"] as number) : undefined;
   const title = str(subject?.["title"]) ?? str(subject?.["name"]);
   const url = str(subject?.["html_url"]) ?? str(obj(payload["repository"])?.["html_url"]);

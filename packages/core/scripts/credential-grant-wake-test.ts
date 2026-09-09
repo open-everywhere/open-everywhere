@@ -187,16 +187,22 @@ console.log("6. the refusal copy names the boundary and the vocabulary stays exh
   ok(message.includes("nobody is in the room"), "…and names the boundary in words the model can act on");
   ok(message.includes("rowan"), "…and names the owner whose credential stayed unspent");
   ok(message.includes("Do not retry"), "…and tells the model not to loop on it");
-  const every: readonly CredentialGrantRefusal[] = [
+  const every = [
     "revoked",
     "expired",
     "burned",
     "out_of_scope",
+    "no_lent_tool",
     "no_transport",
     "owner_unresolvable",
     "unverified_requester",
     "unattended_wake",
-  ];
+    "halted",
+    "connector_delisted",
+  ] as const satisfies readonly CredentialGrantRefusal[];
+  type Missing = Exclude<CredentialGrantRefusal, (typeof every)[number]>;
+  const noneMissing: Missing extends never ? true : Missing = true;
+  ok(noneMissing === true, "🔴 the list holds every name in the union — checked by the compiler, not by this line");
   ok(
     every.every((reason) => credentialGrantRefusalMessage(row("g-copy", "session"), reason).length > 0),
     "every name in the vocabulary has copy — the switch is exhaustive",

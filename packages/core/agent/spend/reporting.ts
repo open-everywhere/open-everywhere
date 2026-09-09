@@ -138,6 +138,57 @@ export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): stri
   return parts.join(" ");
 }
 
+export interface TokenAttribution {
+  readonly calls: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
+  readonly cacheReportedCalls: number;
+  readonly reasoningReportedCalls: number;
+}
+
+export function tokenAttribution(
+  rows: readonly Pick<UsageSummaryRow, "cacheReadTokens" | "cacheWriteTokens" | "reasoningTokens" | "cacheReportedCalls" | "reasoningReportedCalls" | "events">[],
+): TokenAttribution {
+  const acc = { calls: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, cacheReportedCalls: 0, reasoningReportedCalls: 0 };
+  for (const r of rows) {
+    acc.calls += r.events;
+    acc.cacheReadTokens += r.cacheReadTokens;
+    acc.cacheWriteTokens += r.cacheWriteTokens;
+    acc.reasoningTokens += r.reasoningTokens;
+    acc.cacheReportedCalls += r.cacheReportedCalls;
+    acc.reasoningReportedCalls += r.reasoningReportedCalls;
+  }
+  return acc;
+}
+
+export function tokenAttributionNote(a: TokenAttribution): string {
+  if (a.calls === 0) return "No model calls in scope — nothing to attribute.";
+  const parts: string[] = [];
+  const cacheTokens = a.cacheReadTokens + a.cacheWriteTokens;
+  parts.push(
+    cacheTokens === 0
+      ? a.cacheReportedCalls === 0
+        ? `Cache: UNATTRIBUTED across all ${a.calls} call(s) — no call published a cache field at all, ` +
+          `so nothing here says whether caching happened.`
+        : `Cache: UNATTRIBUTED across all ${a.calls} call(s) — no cache tokens were reported at all ` +
+          `(${a.cacheReportedCalls} call(s) published a cache field, every one of them zero). A zero is NOT a measurement that caching did not happen: ` +
+          `on the Vercel AI Gateway backend a cached call is billed at the discount while the cached-token count reads 0 ` +
+          `(docs/security/spend-and-cost.md), so on that backend the saving shows in the cost and never in the split.`
+      : `Cache: ${a.cacheReadTokens} read / ${a.cacheWriteTokens} write token(s)` +
+        (a.cacheReportedCalls < a.calls
+          ? `; ${a.calls - a.cacheReportedCalls} of ${a.calls} call(s) published no cache field at all, so nothing is claimed about those.`
+          : ` across ${a.calls} call(s), all of which published a cache field.`),
+  );
+  parts.push(
+    a.reasoningReportedCalls === 0
+      ? `Reasoning tokens: UNREPORTED on all ${a.calls} call(s).`
+      : `Reasoning: ${a.reasoningTokens} token(s) across ${a.reasoningReportedCalls} of ${a.calls} call(s) that reported the dimension.`,
+  );
+  parts.push("These are ATTRIBUTION counts only — no dollar figure is derived from them, and the billed cost above stands unchanged.");
+  return parts.join(" ");
+}
+
 export interface CostDrift {
   readonly measuredUsd: number;
   readonly derivedUsd: number;

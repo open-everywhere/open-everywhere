@@ -42,12 +42,18 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const u = visionCallUsage("alibaba/qwen3-vl-instruct", {
-    usage: { inputTokens: 1500, outputTokens: 120, inputTokenDetails: { cacheReadTokens: 40, cacheWriteTokens: 9 } },
+    usage: {
+      inputTokens: 1500,
+      outputTokens: 120,
+      inputTokenDetails: { cacheReadTokens: 40, cacheWriteTokens: 9 },
+      outputTokenDetails: { reasoningTokens: 64 },
+    },
     providerMetadata: { gateway: { cost: 0.00042, generationId: "gen_abc123" } },
   });
   ok(u.model === "alibaba/qwen3-vl-instruct", "usage names the model the ROLE ASKED FOR (the gateway publishes no resolved-model field; inventing one would be worse)");
   ok(u.inputTokens === 1500 && u.outputTokens === 120, "usage carries in/out tokens");
   ok(u.cacheReadTokens === 40 && u.cacheWriteTokens === 9, "🔴 cache tokens are read from the NESTED usage.inputTokenDetails, exactly where eve reads them");
+  ok(u.reasoningTokens === 64, "🔴 reasoning tokens are read from the NESTED usage.outputTokenDetails — the ONLY live producer of the dimension, and a silent drift would be invisible");
   ok(u.costUsd === 0.00042, "the gateway's measured cost rides through (→ cost_source 'measured')");
   ok(u.generationId === "gen_abc123", "the gateway generation id rides through (the join key to the gateway's billing record)");
 }

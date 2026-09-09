@@ -21,6 +21,8 @@ import {
   dmBucketKey,
   summariseCostDrift,
   costDriftNote,
+  tokenAttribution,
+  tokenAttributionNote,
 } from "../spend/reporting.js";
 import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 import { fulfilPaneRead } from "../access/pane-venue.js";
@@ -100,6 +102,18 @@ export default defineTool({
       cacheWriteTokens: z.number(),
       costUsd: z.number().optional(),
     }),
+    tokenAttribution: z
+      .object({
+        calls: z.number(),
+        cacheReadTokens: z.number(),
+        cacheWriteTokens: z.number(),
+        reasoningTokens: z.number(),
+        cacheReportedCalls: z.number().describe("Calls whose source PUBLISHED a cache field at all — NOT a claim that the figure is informative, since a published value may be zero."),
+        reasoningReportedCalls: z.number().describe("Calls that reported a reasoning-token count at all."),
+      })
+      .describe(
+        "WHERE the tokens went, beside what they cost (OPE-1611) — cache-read, cache-write and reasoning counts over the same usage window, each with the number of calls that published the dimension at all. Deliberately carries NO dollar figure: the billed cost is costDrift.measuredUsd / totals.costUsd and nothing here re-derives it, because a saving inferred from a token count nothing billed against would be a guess. 🔴 A ZERO TOKEN COUNT MEANS UNKNOWN, NOT UNCACHED, whatever cacheReportedCalls says: on the Vercel AI Gateway backend a cached call is billed at the discount while the cached-token count reads 0, so on that backend the saving lands in the cost and never in the split. ModelBackend is swappable, so that sentence is about that backend and not about every deployment; where cacheReportedCalls is 0 no source published the dimension at all and nothing is claimed about caching. The `note` field states which of the two silences this window carries — quote it rather than reading the numbers alone.",
+      ),
     pricedModel: z.string().optional(),
     costDrift: z
       .object({
@@ -223,6 +237,7 @@ export default defineTool({
       const pricedGroups = bySurfaceAndKind.filter((r) => r.costUsd !== undefined);
       const totalsWithCost = { ...totals, ...(pricedGroups.length > 0 ? { costUsd: pricedGroups.reduce((sum, r) => sum + r.costUsd!, 0) } : {}) };
       const mix = pricingMix(nonSandbox, assumed);
+      const attribution = tokenAttribution(nonSandbox);
 
       const nowISO = new Date().toISOString();
       const currentPeriod = periodOf(nowISO);
@@ -306,6 +321,7 @@ export default defineTool({
       const notes = [
         pricingNote(mix, assumed),
         costDriftNote(costDrift),
+        tokenAttributionNote(attribution),
         "the bySurfaceAndKind usage-window figures exclude sandbox runtime (see session_cost for a conversation's sandbox seconds/$); the monthly ledger.*.usd figures DO include sandbox runtime (OPE-266) — an estimate priced at stop time from the platform rate, assuming the configured/default sandbox memory size.",
         "routinePredictions project future spend from this window's history and each surface's CURRENT active cron/interval routines — always an estimate, not a bill.",
         "ledger.surfaces/ledger.workspaces use the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
@@ -334,6 +350,7 @@ export default defineTool({
         since,
         bySurfaceAndKind: bySurfaceAndKind.map(labelled),
         totals: totalsWithCost,
+        tokenAttribution: attribution,
         ...(assumed.model ? { pricedModel: assumed.model } : {}),
         costDrift,
         ledger: {

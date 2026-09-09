@@ -17,15 +17,40 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-function subjectOf(payload: Record<string, unknown>): { entity?: string; sub?: string } {
-  const out: { entity?: string; sub?: string } = {};
-  const subject = obj(payload["pull_request"]) ?? obj(payload["issue"]) ?? obj(payload["check_run"]) ?? obj(payload["release"]);
+function subjectOf(payload: Record<string, unknown>): { entity?: string; fetchable?: boolean; sub?: string } {
+  const out: { entity?: string; fetchable?: boolean; sub?: string } = {};
+  const subject =
+    obj(payload["pull_request"]) ??
+    obj(payload["issue"]) ??
+    obj(payload["check_run"]) ??
+    obj(payload["release"]) ??
+    obj(payload["workflow_run"]);
   const num = subject?.["number"];
   const id = subject?.["id"];
-  if (typeof num === "number") out.entity = String(num);
-  else if (typeof id === "number" || typeof id === "string") out.entity = String(id);
+  if (typeof num === "number") {
+    out.entity = String(num);
+    out.fetchable = true;
+  } else if (typeof id === "number" || typeof id === "string") {
+    out.entity = String(id);
+    out.fetchable = false;
+  }
   const commentId = obj(payload["comment"])?.["id"];
   if (typeof commentId === "number" || typeof commentId === "string") out.sub = String(commentId);
+  return out;
+}
+
+function workflowRunFields(payload: Record<string, unknown>): Record<string, string> {
+  const run = obj(payload["workflow_run"]);
+  if (!run) return {};
+  const out: Record<string, string> = {};
+  const branch = str(run["head_branch"]);
+  if (branch) out["branch"] = branch;
+  const status = str(run["status"]);
+  if (status) out["status"] = status;
+  const conclusion = str(run["conclusion"]);
+  if (conclusion) out["conclusion"] = conclusion;
+  const workflow = str(run["name"]) ?? str(obj(payload["workflow"])?.["name"]);
+  if (workflow) out["workflow"] = workflow;
   return out;
 }
 
@@ -53,6 +78,7 @@ export function liftGithubEvent(eventType: string, payload: Record<string, unkno
   if (v1.number !== undefined) fields["number"] = String(v1.number);
   if (v1.title) fields["title"] = v1.title;
   if (v1.url) fields["url"] = v1.url;
+  Object.assign(fields, workflowRunFields(payload));
 
   return {
     source: GITHUB_EVENT_SOURCE,
@@ -63,7 +89,7 @@ export function liftGithubEvent(eventType: string, payload: Record<string, unkno
     fields,
     ...(deliveryId ? { deliveryId } : {}),
     summary: v1.summary,
-    ...(repo && subject.entity !== undefined
+    ...(repo && subject.entity !== undefined && subject.fetchable === true
       ? { pointer: { platform: "github", id: `${repo}#${subject.entity}`, ...(gone ? { gone: true } : {}) } }
       : {}),
   };
@@ -71,7 +97,7 @@ export function liftGithubEvent(eventType: string, payload: Record<string, unkno
 
 export const githubEventNormalizer: EventNormalizer = {
   source: GITHUB_EVENT_SOURCE,
-  matchKeys: ["event", "action", "repo", "sender"],
+  matchKeys: ["event", "action", "repo", "sender", "branch", "status", "conclusion", "workflow"],
   scopeKeys: ["repo"],
   scopeKinds: ["tenant", "container", "entity", "sub"],
   resolvesActor: true,

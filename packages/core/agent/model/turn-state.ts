@@ -24,6 +24,26 @@ async function withStoreDeadline<T>(work: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+const rowCalls = new Map<string, Promise<void>>();
+
+const NO_PENDING_CALL: Promise<void> = Promise.resolve();
+
+const CHAIN_FAILED: unique symbol = Symbol("turn-state-chain-failed");
+
+function chainRowCall<T>(pair: string, issue: () => Promise<T>): Promise<T | typeof CHAIN_FAILED> {
+  const pending = rowCalls.get(pair) ?? NO_PENDING_CALL;
+  const call: Promise<T | typeof CHAIN_FAILED> = pending.then(issue).then(
+    (value) => value,
+    () => CHAIN_FAILED,
+  );
+  const tail: Promise<void> = call.then(() => undefined);
+  rowCalls.set(pair, tail);
+  void tail.then(() => {
+    if (rowCalls.get(pair) === tail) rowCalls.delete(pair);
+  });
+  return call;
+}
+
 export interface DurableCloseout {
   readonly count: number;
   readonly reason: string;
@@ -79,11 +99,11 @@ export function parseTurnState(raw: string | null): TurnState | undefined {
 
 export async function readTurnState(pair: string): Promise<TurnState | undefined> {
   try {
-    const raw = await withStoreDeadline<string | null | typeof TIMED_OUT>(
-      getOperationalStore().getTaskResult(deploymentOrg(), turnStateRowKey(pair)),
+    const raw = await withStoreDeadline<string | null | typeof TIMED_OUT | typeof CHAIN_FAILED>(
+      chainRowCall(pair, () => getOperationalStore().getTaskResult(deploymentOrg(), turnStateRowKey(pair))),
       TIMED_OUT,
     );
-    return raw === TIMED_OUT ? undefined : parseTurnState(raw);
+    return raw === TIMED_OUT || raw === CHAIN_FAILED ? undefined : parseTurnState(raw);
   } catch {
     return undefined;
   }
@@ -91,13 +111,11 @@ export async function readTurnState(pair: string): Promise<TurnState | undefined
 
 export async function writeTurnState(pair: string, state: TurnState): Promise<void> {
   try {
+    const at = new Date().toISOString();
+    const body = JSON.stringify(state);
     await withStoreDeadline(
-      getOperationalStore().putTaskResult(
-        deploymentOrg(),
-        turnStateRowKey(pair),
-        JSON.stringify(state),
-        new Date().toISOString(),
-        TURN_STATE_TTL_MS,
+      chainRowCall(pair, () =>
+        getOperationalStore().putTaskResult(deploymentOrg(), turnStateRowKey(pair), body, at, TURN_STATE_TTL_MS),
       ),
       undefined,
     );
@@ -117,7 +135,10 @@ export async function stoppedAckSpent(pair: string): Promise<boolean> {
 
 export async function deleteTurnState(pair: string): Promise<void> {
   try {
-    await withStoreDeadline(getOperationalStore().deleteTaskResult(deploymentOrg(), turnStateRowKey(pair)), undefined);
+    await withStoreDeadline(
+      chainRowCall(pair, () => getOperationalStore().deleteTaskResult(deploymentOrg(), turnStateRowKey(pair))),
+      undefined,
+    );
   } catch {
   }
 }

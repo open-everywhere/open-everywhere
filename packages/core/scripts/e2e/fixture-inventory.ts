@@ -134,7 +134,12 @@ async function githubApi(
 
 interface GraphqlAnswer {
   readonly data?: Record<string, unknown>;
-  readonly errors?: { message?: string }[];
+  readonly errors?: { message?: string; extensions?: { userPresentableMessage?: string } }[];
+}
+
+function linearErrorText(answer: GraphqlAnswer): string | undefined {
+  const parts = (answer.errors ?? []).map((e) => e.extensions?.userPresentableMessage?.trim() || e.message?.trim()).filter((m): m is string => !!m);
+  return parts.length > 0 ? vendorDetail(parts.join("; ")) : undefined;
 }
 
 async function linearGraphql(apiKey: string, query: string, variables: Record<string, unknown>): Promise<GraphqlAnswer> {
@@ -262,7 +267,7 @@ async function resolveLinearRoom(ctx: ResolverContext, id: string): Promise<Reso
       const org = team.organization?.id;
       return { ok: true, name: `${team.name} (${team.key ?? "?"})`, key: org ? `linear/${org}/${id}` : undefined, detail: "team(id)" };
     }
-    last = answer.errors?.map((e) => e.message).join("; ") ?? "team(id) returned nothing";
+    last = linearErrorText(answer) ?? "team(id) returned nothing";
   }
   return { ok: false, detail: last };
 }
@@ -559,13 +564,14 @@ async function provisionLinear(env: Env, plan: ProvisionTarget, room: PlannedRoo
   );
   const team = (created.data?.teamCreate as { team?: { id?: string } } | undefined)?.team;
   if (!team?.id) {
-    const detail = created.errors?.map((e) => e.message).join("; ") ?? "teamCreate returned no team";
+    const detail = linearErrorText(created) ?? "teamCreate returned no team";
     return {
       room,
       state: "blocked",
       detail: `teamCreate: ${detail}`,
       grant:
-        `Linear (two steps, both required): (1) create the team by hand — Settings → Teams → New team, name "${want}", key "${key}"; ` +
+        `Linear: READ THE DETAIL ABOVE FIRST — it carries Linear's own reason. Where that reason is a PLAN team limit, the limit is on the workspace, so step (1) very likely refuses in the console too (nobody has driven it): try it, and if it refuses, only an upgrade or a freed team slot gets past. ` +
+        `Then, two steps, both required: (1) create the team by hand — Settings → Teams → New team, name "${want}", key "${key}"; ` +
         `(2) mint a personal API key IN THE WORKSPACE THAT TEAM LIVES IN, scoped to include it, and export it as ${keyVar}. A key cannot read a team outside its own scope — and never one outside its own WORKSPACE, whatever its team scope — so step (1) alone leaves the room unresolvable.`,
     };
   }

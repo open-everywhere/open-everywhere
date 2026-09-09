@@ -137,6 +137,7 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
         outputTokens: usage.outputTokens,
         cacheReadTokens: usage.cacheReadTokens,
         cacheWriteTokens: usage.cacheWriteTokens,
+        reasoningTokens: usage.reasoningTokens,
       });
     } catch (err) {
       console.warn(`[open-everywhere:usage] event append skipped: ${String(err)}`);

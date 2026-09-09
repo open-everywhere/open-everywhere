@@ -364,7 +364,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   registerImageDescriber({
     describe: async () => ({
       description: "a dashboard.",
-      usage: { model: VISION_MODEL, inputTokens: 1200, outputTokens: 90, cacheReadTokens: 7, costUsd: 0.0004, generationId: "gen_vision_1" },
+      usage: { model: VISION_MODEL, inputTokens: 1200, outputTokens: 90, cacheReadTokens: 7, reasoningTokens: 12, costUsd: 0.0004, generationId: "gen_vision_1" },
     }),
   });
   const SURFACE = domainKeyOf(resolvePartition(spendCtx("probe") as never));
@@ -383,6 +383,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(row.surfaceKey === SURFACE, "usage row: SPEND-grain surface key of the CALLING turn, not a synthetic vision scope");
   ok(row.principalId === "U_SPEND", "usage row: the calling turn's attributed principal — vision dollars reach that person's per-user budget");
   ok(row.inputTokens === 1200 && row.outputTokens === 90 && row.cacheReadTokens === 7, "usage row: in/out/cache tokens as the gateway reported them");
+  ok(row.reasoningTokens === 12, "🔴 usage row: the reasoning-token count rides from the describer's usage to the row — the dimension's only live producer, pinned end to end");
   ok(row.kind === "channel", "usage row: carries the CALLING TURN's origin kind — a vision call belongs to the turn that made it, so every kind-keyed read keeps counting it");
   ok(row.costSource === "measured" && row.usdMicrosMeasured === 400, "usage row: cost_source 'measured' + the gateway's exact micros");
   ok((row.detail as { generationId?: unknown } | undefined)?.generationId === "gen_vision_1", "usage row: the gateway generation id is the join key back to the gateway's own billing record");

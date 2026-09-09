@@ -197,4 +197,36 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   ok(Number(m?.usd) === 1.5 && Number(m?.usd_measured) === 1, "🔴 OPE-369: grouping by cost_source gives the APPLES-TO-APPLES drift pair — $1.50 derived vs $1.00 measured over the SAME call (the unfiltered $4 total would have overstated the divergence 3x)");
 }
 
-console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd)\n`);
+{
+  const attribution = [
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-1", principalId: "U_A", ts: "2026-07-05T10:00:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 5, cacheWriteTokens: 2, cacheTokensReported: true, reasoningTokens: 30 },
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-2", principalId: "U_A", ts: "2026-07-05T10:01:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: true, reasoningTokens: 0 },
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-3", principalId: "U_A", ts: "2026-07-05T10:02:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: false },
+  ];
+  for (const e of attribution) {
+    await sqlStore.appendUsageEvent({ org: ORG, ...e });
+    await pgStore.appendUsageEvent({ org: ORG, ...e });
+  }
+
+  const attr = await runBoth(
+    { dataset: "usage", scope: "org", groupBy: ["surface"], select: ["events", "cache_read_tokens", "cache_reported_calls", "reasoning_tokens", "reasoning_reported_calls"] },
+    orgScope,
+  );
+  ok(canon(attr.s.rows) === canon(attr.p.rows), "🔴 OPE-1611: the attribution measures are dual-engine identical — the boolean column reads the same on pg's real boolean and sqlite's 1/0");
+  const cb = attr.s.rows.find((r) => r.surface === "slack/T1/CATTR");
+  ok(Number(cb?.events) === 3, "OPE-1611: the fixture's three calls are all in scope (the denominator the coverage counts are read against)");
+  ok(Number(cb?.cache_read_tokens) === 5, "OPE-1611: the cache token sum counts only the call that carried tokens");
+  ok(Number(cb?.cache_reported_calls) === 2, "🔴 OPE-1611: cache_reported_calls counts the PUBLISHED-ZERO call too (2 of 3) — that is the whole distinction, and a sum alone cannot express it");
+  ok(Number(cb?.reasoning_tokens) === 30, "OPE-1611: the reasoning sum COALESCEs the unreported row to 0 rather than going NULL over the group");
+  ok(Number(cb?.reasoning_reported_calls) === 2, "🔴 OPE-1611: reasoning_reported_calls counts non-NULL only, so a REPORTED zero (attr-2) counts and an UNREPORTED one (attr-3) does not — the pair a truthiness read would collapse");
+
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30 });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30 });
+  const led = await runBoth({ dataset: "spend", scope: "org", groupBy: ["surface"], select: ["usd", "reasoning_tokens"] }, orgScope);
+  ok(canon(led.s.rows) === canon(led.p.rows), "OPE-1611: the ledger's reasoning_tokens measure is dual-engine identical");
+  const ledCb = led.s.rows.find((r) => r.surface === "slack/T1/CATTR");
+  ok(Number(ledCb?.reasoning_tokens) === 30, "🔴 OPE-1611: the spend dataset can READ the reasoning dimension it writes — before this it was summed on every upsert and returnable by nothing");
+  ok(Number(ledCb?.usd) === 0.001, "🔴 OPE-1611: the reasoning dimension is ATTRIBUTION only — the row's $ is exactly its usdMicros, unmoved by 30 reasoning tokens");
+}
+
+console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd, OPE-1611 attribution measures + coverage counts)\n`);

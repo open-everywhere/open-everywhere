@@ -10,6 +10,7 @@ import {
 } from "./reply-post.js";
 import { recordContainerAnswered } from "./answered-container-ledger.js";
 import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
+import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
@@ -59,7 +60,8 @@ export async function postUnifiedReply(
   replier?: ReplierLabel,
   intent?: PostIntent,
 ): Promise<string> {
-  const clean = truncateMemoryCitationPaths(text);
+  const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
+  const clean = provenance.body;
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
   const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
@@ -84,6 +86,7 @@ export async function postUnifiedReply(
         throw err;
       }
       await auditReplyPost(audit, realId, origin.platform, body.length);
+      await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown);
       await recordLandedPost({
         org: audit?.org,
         editLocus: unifiedEditLocus(origin),

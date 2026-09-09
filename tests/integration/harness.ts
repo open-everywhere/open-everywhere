@@ -718,6 +718,51 @@ export async function slackMentionWake(input: {
   return { status: res.status, body: await res.text() };
 }
 
+export async function slackDmWake(input: {
+  readonly channelId: string;
+  readonly userId: string;
+  readonly text: string;
+  readonly ts: string;
+  readonly kind?: "im" | "mpim";
+  readonly teamId?: string;
+  readonly eventId?: string;
+  readonly threadTs?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: slackDmWake before bootAgent.");
+  const { SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const teamId = input.teamId ?? SLACK_TEAM_ID;
+  const rawBody = JSON.stringify({
+    type: "event_callback",
+    team_id: teamId,
+    event_id: input.eventId ?? `EvDmIT${input.ts.replace(".", "")}`,
+    event_time: Math.floor(Number.parseFloat(input.ts)),
+    event: {
+      type: "message",
+      channel: input.channelId,
+      channel_type: input.kind ?? "im",
+      user: input.userId,
+      text: input.text,
+      ts: input.ts,
+      event_ts: input.ts,
+      team: teamId,
+      ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
+    },
+  });
+  const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET);
+  const res = await fetch(`${booted.base}${SYNTHETIC_SLACK_ROUTE}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": signed.timestamp,
+      "x-slack-signature": signed.signature,
+    },
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
 export function slackTs(atMs: number, micros: number): string {
   return `${Math.floor(atMs / 1_000)}.${String(micros % 1_000_000).padStart(6, "0")}`;
 }
@@ -787,6 +832,54 @@ export async function githubInstallationPost(input: {
     installation: { id: input.installationId, account: { login: input.owner, type: input.accountType ?? "Organization" } },
   });
   const headers: Record<string, string> = { "content-type": "application/json", "x-github-event": "installation" };
+  if (input.signed !== false) {
+    headers["x-hub-signature-256"] = input.signature ?? "sha256=" + createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+  }
+  const res = await fetch(`${booted.base}/eve/v1/github`, {
+    method: "POST",
+    headers,
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export const GITHUB_BOT_SLUG = "open-everywhere-it";
+
+export async function githubIssueCommentPost(input: {
+  readonly owner: string;
+  readonly repo: string;
+  readonly issueNumber: number;
+  readonly body: string;
+  readonly commentId: number;
+  readonly authorLogin?: string;
+  readonly authorAssociation?: string;
+  readonly issueTitle?: string;
+  readonly repoPrivate?: boolean;
+  readonly signed?: boolean;
+  readonly signature?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: githubIssueCommentPost before bootAgent.");
+  const rawBody = JSON.stringify({
+    action: "created",
+    repository: {
+      id: 900_000_001,
+      name: input.repo,
+      full_name: `${input.owner}/${input.repo}`,
+      private: input.repoPrivate ?? true,
+      owner: { login: input.owner, type: "User" },
+    },
+    issue: { number: input.issueNumber, title: input.issueTitle ?? "an integration-tier conversation" },
+    comment: {
+      id: input.commentId,
+      body: input.body,
+      created_at: new Date().toISOString(),
+      author_association: input.authorAssociation ?? "OWNER",
+      user: { login: input.authorLogin ?? "example-owner", type: "User", id: 900_001 },
+    },
+  });
+  const headers: Record<string, string> = { "content-type": "application/json", "x-github-event": "issue_comment" };
   if (input.signed !== false) {
     headers["x-hub-signature-256"] = input.signature ?? "sha256=" + createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
   }

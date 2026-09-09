@@ -500,6 +500,23 @@ export {
 } from "./routines/event-model.js";
 export type { EventNormalizer, NormalizedEvent, TriggerDelivery, ScopeStep, ScopeKind, EntityPointer } from "./routines/event-model.js";
 export {
+  registerProviderEvents,
+  providerEventsFor,
+  registeredProviderEventPlatforms,
+  checkProviderEvents,
+  renderProviderEventTable,
+  renderProviderEventInventory,
+  renderProviderEventMatrix,
+} from "./routines/provider-events.js";
+export type {
+  ProviderEvent,
+  ProviderEventDeclaration,
+  ProviderEventProblem,
+  EventRouting,
+  NormalizerFacts,
+  NormalizerProbe,
+} from "./routines/provider-events.js";
+export {
   registerEventScopeGrant,
   eventScopeGrant,
   registeredEventGrantSources,
@@ -726,6 +743,7 @@ export { recordSpend, spendTotals } from "./spend/store.js";
 export { periodOf } from "./spend/spend.js";
 export { estimateSandboxCostUsd } from "./spend/sandbox-pricing.js";
 export { routineIdOf } from "./hooks/spend.js";
+export { default as spendHook } from "./hooks/spend.js";
 
 export { liveTaskIds, liveTaskCount } from "./access/live-delegated-tasks.js";
 export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js";

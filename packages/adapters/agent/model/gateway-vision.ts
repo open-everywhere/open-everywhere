@@ -46,6 +46,7 @@ interface VisionCallTelemetry {
     readonly inputTokens?: number;
     readonly outputTokens?: number;
     readonly inputTokenDetails?: { readonly cacheReadTokens?: number; readonly cacheWriteTokens?: number };
+    readonly outputTokenDetails?: { readonly reasoningTokens?: number };
   };
   readonly providerMetadata?: Record<string, unknown>;
 }
@@ -72,6 +73,7 @@ export function visionCallUsage(id: string, res: VisionCallTelemetry): ImageDesc
     outputTokens: num(u?.outputTokens),
     cacheReadTokens: num(u?.inputTokenDetails?.cacheReadTokens),
     cacheWriteTokens: num(u?.inputTokenDetails?.cacheWriteTokens),
+    reasoningTokens: num(u?.outputTokenDetails?.reasoningTokens),
   };
   return {
     model: id,
@@ -79,6 +81,7 @@ export function visionCallUsage(id: string, res: VisionCallTelemetry): ImageDesc
     ...(tok.outputTokens !== undefined ? { outputTokens: tok.outputTokens } : {}),
     ...(tok.cacheReadTokens !== undefined ? { cacheReadTokens: tok.cacheReadTokens } : {}),
     ...(tok.cacheWriteTokens !== undefined ? { cacheWriteTokens: tok.cacheWriteTokens } : {}),
+    ...(tok.reasoningTokens !== undefined ? { reasoningTokens: tok.reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
     ...(generationId !== undefined ? { generationId } : {}),
   };

@@ -121,6 +121,7 @@ export interface SpendLedgerRow extends SpendLedgerKey {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
   readonly usdMicros: number;
   readonly usdMicrosMeasured: number;
   readonly calls: number;
@@ -136,6 +137,7 @@ export interface SpendLedgerWrite {
   readonly outputTokens?: number;
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
+  readonly reasoningTokens?: number;
   readonly usdMicros?: number;
   readonly usdMicrosMeasured?: number;
   readonly costSource?: CostSource;
@@ -155,6 +157,7 @@ export interface SpendTotals {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
   readonly usdMicros: number;
   readonly usdMicrosMeasured: number;
   readonly calls: number;
@@ -387,6 +390,8 @@ export interface UsageEventEntry {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  readonly cacheTokensReported?: boolean;
+  readonly reasoningTokens?: number;
   readonly model?: string;
   readonly usdMicrosMeasured?: number;
   readonly costSource?: CostSource;
@@ -420,6 +425,9 @@ export interface UsageSummaryRow {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
+  readonly cacheReportedCalls: number;
+  readonly reasoningReportedCalls: number;
   readonly events: number;
   readonly sessions: number;
 }

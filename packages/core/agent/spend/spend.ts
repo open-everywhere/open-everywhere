@@ -8,6 +8,7 @@ export interface Usage {
   readonly outputTokens?: number;
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
+  readonly reasoningTokens?: number;
   readonly costUsd?: number;
 }
 

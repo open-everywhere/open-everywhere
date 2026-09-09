@@ -32,6 +32,7 @@ export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void
     outputTokens: entry.usage.outputTokens ?? 0,
     cacheReadTokens: entry.usage.cacheReadTokens ?? 0,
     cacheWriteTokens: entry.usage.cacheWriteTokens ?? 0,
+    reasoningTokens: entry.usage.reasoningTokens ?? 0,
     usdMicros,
     ...(measuredMicros !== undefined ? { usdMicrosMeasured: measuredMicros, costSource: "measured" as const } : { costSource: "derived" as const }),
   });

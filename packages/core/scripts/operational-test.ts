@@ -217,6 +217,15 @@ const store = makeOperationalPostgresStore(client);
   ok(chan?.inputTokens === 110 && chan.outputTokens === 55 && chan.events === 2 && chan.sessions === 1, "usage events: usageSummary sums tokens + counts events/sessions per group");
   ok((await store.usageSummary("globex")).every((r) => r.sessions === 1), "usage events: usageSummary is org-isolated");
 
+  await store.appendUsageEvent({ org: "acme", surfaceKey: "slack/T1/C5", sessionId: "sess-attr", ts: "2026-06-24T10:30:00Z", kind: "channel", model: "m-attr", inputTokens: 90, outputTokens: 9, cacheReadTokens: 40, cacheWriteTokens: 0, cacheTokensReported: true, reasoningTokens: 0 });
+  await store.appendUsageEvent({ org: "acme", surfaceKey: "slack/T1/C5", sessionId: "sess-attr", ts: "2026-06-24T10:31:00Z", kind: "channel", model: "m-attr", inputTokens: 90, outputTokens: 9, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: false });
+  const attrRows = await store.usageForSession("acme", "sess-attr");
+  ok(attrRows[0].cacheTokensReported === true && attrRows[0].reasoningTokens === 0, "pg attribution: a REPORTED zero reasoning count survives the read back as 0, not as absent");
+  ok(attrRows[1].cacheTokensReported === false && attrRows[1].reasoningTokens === undefined, "pg attribution: an unreported dimension reads back ABSENT — the row never claims a zero it was not given");
+  const attrGroup = (await store.usageSummary("acme", { surfaceKeyPrefix: "slack/T1/C5" })).find((r) => r.model === "m-attr");
+  ok(attrGroup?.events === 2 && attrGroup.cacheReportedCalls === 1, "pg attribution: the rollup counts how many calls REPORTED a cache split, so an all-zero group cannot read as 'no caching'");
+  ok(attrGroup?.reasoningTokens === 0 && attrGroup.reasoningReportedCalls === 1, "pg attribution: the rollup separates the reasoning SUM from how many calls contributed to it");
+
   ok((await store.pruneUsageEvents("acme", "2099-01-01T00:00:00Z")) === 0, "usage events: pruneUsageEvents is a no-op on Postgres (append-only)");
   ok((await store.usageForSession("acme", "sess-1")).length === 2, "usage events: rows survive the no-op prune untouched");
 

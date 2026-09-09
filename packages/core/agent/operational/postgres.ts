@@ -38,6 +38,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      output_tokens      bigint NOT NULL DEFAULT 0,
      cache_read_tokens  bigint NOT NULL DEFAULT 0,
      cache_write_tokens bigint NOT NULL DEFAULT 0,
+     -- OPE-1611 (mirrored in the ALTER list below): reasoning tokens, ATTRIBUTION only. No rate
+     -- table names a reasoning rate, so this never reaches usd_micros and no cap sees it.
+     reasoning_tokens   bigint NOT NULL DEFAULT 0,
      usd_micros         bigint NOT NULL DEFAULT 0,   -- millionths of a dollar, DERIVED at write from the rate table (what caps sum)
      -- OPE-369: the GATEWAY's own billed figure for these same calls, when it published one.
      -- 0 on a cost_source='derived' row. Never read by a cap — see store.ts's CostSource section.
@@ -323,6 +326,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      cache_write_tokens bigint NOT NULL DEFAULT 0,
      model              text,
      detail             text,
+     -- OPE-1611 (mirrored in the ALTER list below): the two attribution dimensions the cache/
+     -- reasoning question needs. Both NULLABLE on purpose — NULL is "the source reported nothing",
+     -- which is a different fact from a reported zero, and that difference is the whole ticket.
+     cache_tokens_reported boolean,          -- true = the call reported a cache split; false = it did not; NULL = never asked
+     reasoning_tokens   bigint,              -- NULL = unreported; a number (0 included) = reported
      -- OPE-369 (mirrored in the ALTER list below, which is what an existing DB takes)
      usd_micros_measured bigint,             -- the gateway's billed figure for THIS call; NULL = nothing measured it
      cost_source        text,                -- 'measured' | 'derived'; NULL on pre-migration/non-model rows
@@ -491,6 +499,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      key   text PRIMARY KEY,
      value text NOT NULL
    )`,
+  `ALTER TABLE spend_ledger ADD COLUMN IF NOT EXISTS reasoning_tokens bigint NOT NULL DEFAULT 0`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_tokens_reported boolean`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_tokens bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -1140,13 +1151,14 @@ function mutableTableGrantsSql(role: string): string[] {
 const UPSERT_SPEND =
   `INSERT INTO spend_ledger
      (org_id, surface_key, principal_id, routine_id, model, period, cost_source,
-      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, usd_micros_measured, calls)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 1)
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, usd_micros, usd_micros_measured, calls)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 1)
    ON CONFLICT (org_id, surface_key, principal_id, routine_id, model, period, cost_source) DO UPDATE SET
      input_tokens        = spend_ledger.input_tokens        + excluded.input_tokens,
      output_tokens       = spend_ledger.output_tokens       + excluded.output_tokens,
      cache_read_tokens   = spend_ledger.cache_read_tokens   + excluded.cache_read_tokens,
      cache_write_tokens  = spend_ledger.cache_write_tokens  + excluded.cache_write_tokens,
+     reasoning_tokens    = spend_ledger.reasoning_tokens    + excluded.reasoning_tokens,
      usd_micros          = spend_ledger.usd_micros          + excluded.usd_micros,
      usd_micros_measured = spend_ledger.usd_micros_measured + excluded.usd_micros_measured,
      calls               = spend_ledger.calls + 1`;
@@ -1449,6 +1461,7 @@ type SpendLedgerPgRow = {
   output_tokens: number | string;
   cache_read_tokens: number | string;
   cache_write_tokens: number | string;
+  reasoning_tokens: number | string | null;
   usd_micros: number | string;
   usd_micros_measured: number | string;
   cost_source: string;
@@ -1468,6 +1481,7 @@ function spendRowFromPg(r: SpendLedgerPgRow): SpendLedgerRow {
     outputTokens: Number(r.output_tokens),
     cacheReadTokens: Number(r.cache_read_tokens),
     cacheWriteTokens: Number(r.cache_write_tokens),
+    reasoningTokens: Number(r.reasoning_tokens ?? 0),
     usdMicros: Number(r.usd_micros),
     usdMicrosMeasured: Number(r.usd_micros_measured),
     calls: Number(r.calls),
@@ -1492,6 +1506,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         write.outputTokens ?? 0,
         write.cacheReadTokens ?? 0,
         write.cacheWriteTokens ?? 0,
+        write.reasoningTokens ?? 0,
         write.usdMicros ?? 0,
         write.usdMicrosMeasured ?? 0,
       ]);
@@ -1504,18 +1519,20 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
                 COALESCE(SUM(usd_micros), 0) AS usd_micros,
                 COALESCE(SUM(usd_micros_measured), 0) AS usd_micros_measured,
                 COALESCE(SUM(calls), 0) AS calls
          FROM spend_ledger WHERE ${["org_id = $1", ...renderSpendConjuncts(conjuncts, 1)].join(" AND ")}`,
         [org, ...params],
       );
-      const r = rows[0] as { input_tokens: number | string; output_tokens: number | string; cache_read_tokens: number | string; cache_write_tokens: number | string; usd_micros: number | string; usd_micros_measured: number | string; calls: number | string };
+      const r = rows[0] as { input_tokens: number | string; output_tokens: number | string; cache_read_tokens: number | string; cache_write_tokens: number | string; reasoning_tokens: number | string; usd_micros: number | string; usd_micros_measured: number | string; calls: number | string };
       return {
         inputTokens: Number(r.input_tokens),
         outputTokens: Number(r.output_tokens),
         cacheReadTokens: Number(r.cache_read_tokens),
         cacheWriteTokens: Number(r.cache_write_tokens),
+        reasoningTokens: Number(r.reasoning_tokens),
         usdMicros: Number(r.usd_micros),
         usdMicrosMeasured: Number(r.usd_micros_measured),
         calls: Number(r.calls),
@@ -2233,8 +2250,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `INSERT INTO usage_events
            (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
-            usd_micros_measured, cost_source, delegation_depth, root_session_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            usd_micros_measured, cost_source, delegation_depth, root_session_id,
+            cache_tokens_reported, reasoning_tokens)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           entry.org,
           entry.surfaceKey,
@@ -2253,6 +2271,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           entry.costSource ?? null,
           entry.delegationDepth ?? null,
           entry.rootSessionId ?? null,
+          entry.cacheTokensReported ?? null,
+          entry.reasoningTokens ?? null,
         ],
       );
     },
@@ -2261,7 +2281,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } = await client.query(
         `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
-                usd_micros_measured, cost_source, delegation_depth, root_session_id
+                usd_micros_measured, cost_source, delegation_depth, root_session_id,
+                cache_tokens_reported, reasoning_tokens
          FROM usage_events WHERE org_id = $1 AND session_id = $2 ORDER BY seq ASC`,
         [org, sessionId],
       );
@@ -2282,6 +2303,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         cost_source: string | null;
         delegation_depth: number | string | null;
         root_session_id: string | null;
+        cache_tokens_reported: boolean | null;
+        reasoning_tokens: number | string | null;
       }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
@@ -2299,6 +2322,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.cost_source ? { costSource: r.cost_source === "measured" ? ("measured" as const) : ("derived" as const) } : {}),
         ...(r.delegation_depth != null ? { delegationDepth: Number(r.delegation_depth) } : {}),
         ...(r.root_session_id ? { rootSessionId: r.root_session_id } : {}),
+        ...(r.cache_tokens_reported != null ? { cacheTokensReported: r.cache_tokens_reported } : {}),
+        ...(r.reasoning_tokens != null ? { reasoningTokens: Number(r.reasoning_tokens) } : {}),
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
     },
@@ -2328,6 +2353,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `SELECT surface_key, principal_id, kind, routine_id, model,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+                -- OPE-1611: the attribution dimension AND its coverage. COALESCE keeps the sum an
+                -- integer when every row is NULL; the two counts say how many calls actually
+                -- reported, so a reader never mistakes an all-NULL group's 0 for "no caching".
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+                COUNT(*) FILTER (WHERE cache_tokens_reported) AS cache_reported_calls,
+                COUNT(reasoning_tokens) AS reasoning_reported_calls,
                 COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
          FROM usage_events WHERE ${where.join(" AND ")}
          GROUP BY surface_key, principal_id, kind, routine_id, model`,
@@ -2343,6 +2374,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         output_tokens: number;
         cache_read_tokens: number;
         cache_write_tokens: number;
+        reasoning_tokens: number | string;
+        cache_reported_calls: number | string;
+        reasoning_reported_calls: number | string;
         events: number;
         sessions: number;
       }[]).map((r) => ({
@@ -2355,6 +2389,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         outputTokens: Number(r.output_tokens),
         cacheReadTokens: Number(r.cache_read_tokens),
         cacheWriteTokens: Number(r.cache_write_tokens),
+        reasoningTokens: Number(r.reasoning_tokens),
+        cacheReportedCalls: Number(r.cache_reported_calls),
+        reasoningReportedCalls: Number(r.reasoning_reported_calls),
         events: Number(r.events),
         sessions: Number(r.sessions),
       }));

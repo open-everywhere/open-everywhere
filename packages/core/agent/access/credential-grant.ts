@@ -27,7 +27,7 @@ export const CREDENTIAL_GRANT_ROLES: readonly CredentialGrantRole[] = [
   { connector: "notion", role: "user-oauth" },
 ];
 
-function isCredentialGrantConnector(connector: string): boolean {
+export function isCredentialGrantConnector(connector: string): boolean {
   return CREDENTIAL_GRANT_ROLES.some((r) => r.connector === connector);
 }
 

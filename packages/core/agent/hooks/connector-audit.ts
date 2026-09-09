@@ -1,9 +1,10 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
+import { noteConnectorRead, PROVENANCE_READ_TIER } from "../channels/reply-provenance.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -29,6 +30,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     let platform = "unknown";
     let workspace = "unknown";
     let surface: string | undefined;
+    let surfaceKey: string | undefined;
     let principalId: string | undefined;
     try {
       const p = resolvePartition(ctx as unknown as BindableContext);
@@ -36,8 +38,17 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       platform = p.platform;
       workspace = p.workspace;
       surface = p.surface;
+      surfaceKey = p.surfaceKey;
       principalId = bindFrom(ctx as unknown as BindableContext).principalId;
     } catch {
+    }
+
+    if (!result.isError && status !== "error" && tiers.tier === PROVENANCE_READ_TIER) {
+      noteConnectorRead(currentTurnId(ctx as unknown as BindableContext), {
+        connection,
+        op,
+        ...(surfaceKey !== undefined ? { surfaceKey } : {}),
+      });
     }
 
     await appendAudit({

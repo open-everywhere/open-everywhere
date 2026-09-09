@@ -32,7 +32,9 @@ const { resolvePartition } = await import("../agent/memory/partition.js");
 const { markThreadEngaged, isThreadStopped } = await import("../agent/channels/engagement.js");
 const { resolvePrimaryModel } = await import("../agent/model/routing.js");
 const { STEP_BOUNDARY_ACTION, STEP_BOUNDARY_MARKER, _resetStepBoundaryCountsForTest } = await import("../agent/model/step-boundary.js");
-const { deleteTurnState, turnPairKey, turnStateRowKey, TURN_STATE_STORE_DEADLINE_MS } = await import("../agent/model/turn-state.js");
+const { deleteTurnState, readTurnState, writeTurnState, turnPairKey, turnStateRowKey, TURN_STATE_STORE_DEADLINE_MS } = await import(
+  "../agent/model/turn-state.js"
+);
 const {
   CLOSEOUT_REFUSAL_LIMIT,
   _resetTurnCloseoutForTest,
@@ -644,6 +646,112 @@ resetSettingsForTest();
   ok(healthy.backendCalls === 1, "§15/CONTROL: with the store answering again, the round-trip is unchanged");
 }
 
+{
+  const pair = turnPairKey("session-16", "turn_1600");
+  await deleteTurnState(pair);
+
+  const realPut = store.putTaskResult.bind(store);
+  const realDelete = store.deleteTaskResult.bind(store);
+  let settled = 0;
+  let slowPutsLeft = 1;
+  const SLOW_PUT_MS = TURN_STATE_STORE_DEADLINE_MS * 2;
+  (store as unknown as Record<string, unknown>)["putTaskResult"] = async (...args: Parameters<typeof realPut>): Promise<void> => {
+    if (slowPutsLeft > 0) {
+      slowPutsLeft -= 1;
+      await new Promise((r) => setTimeout(r, SLOW_PUT_MS));
+    }
+    await realPut(...args);
+    settled += 1;
+  };
+  (store as unknown as Record<string, unknown>)["deleteTaskResult"] = async (...args: Parameters<typeof realDelete>): Promise<boolean> => {
+    const out = await realDelete(...args);
+    settled += 1;
+    return out;
+  };
+  const drained = async (n: number): Promise<boolean> => {
+    for (let i = 0; i < 200 && settled < n; i++) await new Promise((r) => setTimeout(r, 25));
+    return settled >= n;
+  };
+  try {
+    const startedAt = Date.now();
+    await writeTurnState(pair, { steps: 10 });
+    const abandonedAfter = Date.now() - startedAt;
+    ok(
+      abandonedAfter >= TURN_STATE_STORE_DEADLINE_MS - 25 && abandonedAfter < SLOW_PUT_MS,
+      `§16/PRECONDITION: the first write really was ABANDONED at the deadline (${abandonedAfter} ms, store call ${SLOW_PUT_MS} ms) — without that this leg proves nothing`,
+    );
+    ok(settled === 0, "§16/PRECONDITION: …and it had not landed yet, so the overtake window is genuinely open");
+
+    const queuedAt = Date.now();
+    await writeTurnState(pair, { steps: 11, stoppedAck: true });
+    const queuedFor = Date.now() - queuedAt;
+    ok(
+      queuedFor < SLOW_PUT_MS - TURN_STATE_STORE_DEADLINE_MS / 2,
+      `§16: 🔴 the QUEUED caller still pays only the deadline (${queuedFor} ms, predecessor ${SLOW_PUT_MS} ms) — ordering must not put a predecessor's hang on the round-trip`,
+    );
+
+    ok(await drained(2), "§16/PRECONDITION: both store calls settled, so the row below is read at its final value");
+    const final = await readTurnState(pair);
+    ok(final?.steps === 11, `§16: 🔴 the row holds the SECOND write's count — an abandoned write does not rewind it (read ${String(final?.steps)})`);
+    ok(final?.stoppedAck === true, "§16: 🔴 …and the stand-down valve stays SPENT — the un-spent read is one more post into a conversation the person asked the seat to leave");
+
+    slowPutsLeft = 1;
+    settled = 0;
+    await writeTurnState(pair, { steps: 12 });
+    await deleteTurnState(pair);
+    ok(await drained(2), "§16/PRECONDITION: the slow write and the delete both settled");
+    const afterDelete = await readTurnState(pair);
+    ok(afterDelete?.steps === 0, `§16: 🔴 a delete issued after an abandoned write wins — the row is GONE, not resurrected (read ${JSON.stringify(afterDelete)})`);
+  } finally {
+    (store as unknown as Record<string, unknown>)["putTaskResult"] = realPut;
+    (store as unknown as Record<string, unknown>)["deleteTaskResult"] = realDelete;
+  }
+
+  {
+    const pair2 = turnPairKey("session-16", "turn_1602");
+    const realPut = store.putTaskResult.bind(store);
+    let slowPutsLeft = 0;
+    const SLOW_PUT_MS = TURN_STATE_STORE_DEADLINE_MS * 4;
+    (store as unknown as Record<string, unknown>)["putTaskResult"] = async (...args: Parameters<typeof realPut>): Promise<void> => {
+      if (slowPutsLeft > 0) {
+        slowPutsLeft -= 1;
+        await new Promise((r) => setTimeout(r, SLOW_PUT_MS));
+      }
+      await realPut(...args);
+    };
+    try {
+      await deleteTurnState(pair2);
+      await writeTurnState(pair2, { steps: 5 });
+      ok((await readTurnState(pair2))?.steps === 5, "§16/PRECONDITION: the row is staged at steps 5 with a healthy store");
+
+      slowPutsLeft = 1;
+      await writeTurnState(pair2, { steps: 5, stoppedAck: true });
+
+      const stored = await readTurnState(pair2);
+      if (stored !== undefined) await writeTurnState(pair2, { ...stored, steps: stored.steps + 1 });
+
+      await new Promise((r) => setTimeout(r, SLOW_PUT_MS + 400));
+      const final = await readTurnState(pair2);
+      ok(
+        final?.stoppedAck === true,
+        `§16: 🔴 a read cannot observe bytes an abandoned write is about to replace — the valve stays SPENT (read ${JSON.stringify(final)}). RED with the READ off the chain: the fast read returns {steps:5}, its writer spreads that, and the chain lands {steps:6} last`,
+      );
+      ok(stored === undefined, "§16: …because the queued read lost its OWN deadline race and answered `undefined`, so the writer skipped a row it had not seen");
+    } finally {
+      (store as unknown as Record<string, unknown>)["putTaskResult"] = realPut;
+      await deleteTurnState(pair2);
+    }
+  }
+
+  const healthyPair = turnPairKey("session-16", "turn_1601");
+  await deleteTurnState(healthyPair);
+  await writeTurnState(healthyPair, { steps: 10 });
+  await writeTurnState(healthyPair, { steps: 11, stoppedAck: true });
+  const healthy = await readTurnState(healthyPair);
+  ok(healthy?.steps === 11 && healthy.stoppedAck === true, "§16/CONTROL: against a healthy store the second write is what the row holds");
+  await deleteTurnState(healthyPair);
+}
+
 rmSync(dir, { recursive: true, force: true });
 
-console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip)`);
+console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip, an abandoned write cannot overtake its successor)`);

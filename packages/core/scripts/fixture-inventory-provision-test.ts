@@ -177,6 +177,66 @@ const LINEAR_OWN_KEY_ROOM: PlannedRoom = { ...ROOM("linear", "E2E_ADDRESSED_LINE
   ok(rec.calls.every((c) => c.auth === "k"), `linear: …and it is the base key on the wire (auths seen: ${JSON.stringify([...new Set(rec.calls.map((c) => c.auth))])})`);
 }
 
+function linearRefusingScript(rec: Recorder, extension?: string): typeof fetch {
+  return scripted(rec, (_url, _method, body) => {
+    const query = String((body as { query?: string }).query ?? "");
+    if (query.includes("teamCreate")) {
+      return {
+        data: { teamCreate: null },
+        errors: [{ message: "Access denied", ...(extension === undefined ? {} : { extensions: { userPresentableMessage: extension } }) }],
+      };
+    }
+    return { data: { teams: { nodes: [{ id: "X", name: "other" }], pageInfo: { hasNextPage: false, endCursor: null } } } };
+  });
+}
+
+const PLAN_LIMIT = "You have reached the limit of teams allowed in your current plan.";
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearRefusingScript(rec, PLAN_LIMIT), () => PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM));
+  ok(outcome.state === "blocked", "linear: a refused teamCreate BLOCKS the room — it is never reported as created");
+  ok(
+    outcome.detail?.includes(PLAN_LIMIT) === true,
+    `🔴 linear: …and the detail carries Linear's OWN reason, not the "Access denied" class — the whole difference between an operator who upgrades the plan and one who retries the create by hand (got: ${JSON.stringify(outcome.detail)})`,
+  );
+  ok(
+    outcome.grant?.includes("READ THE DETAIL ABOVE FIRST") === true,
+    `linear: …and the grant line sends the operator to that detail before its by-hand steps (got: ${JSON.stringify(outcome.grant)})`,
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearRefusingScript(rec), () => PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM));
+  ok(outcome.state === "blocked", "linear: an error with no `userPresentableMessage` still blocks");
+  ok(
+    outcome.detail?.includes("Access denied") === true,
+    `linear: …and falls back to \`message\`, so a refusal Linear does not annotate still names something (got: ${JSON.stringify(outcome.detail)})`,
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(linearRefusingScript(rec, "   "), () => PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM));
+  ok(
+    outcome.detail?.includes("Access denied") === true,
+    `🔴 linear: a BLANK \`userPresentableMessage\` falls back to \`message\` — an empty reason is worse than the class it replaced (got: ${JSON.stringify(outcome.detail)})`,
+  );
+}
+{
+  const rec = recorder();
+  const guid = "00000000-0000-4000-8000-000000000020";
+  const outcome = await withPatchedFetch(linearRefusingScript(rec, `Team ${guid} is not accessible`), () =>
+    PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM),
+  );
+  ok(
+    outcome.detail?.includes(guid) === false,
+    `🔴 linear: the vendor's own text is REDACTED before it becomes operator prose — this string is published into docs/dev/e2e-fixtures.md (got: ${JSON.stringify(outcome.detail)})`,
+  );
+  ok(
+    outcome.detail?.includes("<guid>") === true,
+    `linear: …and the redaction leaves the sentence readable rather than dropping it (got: ${JSON.stringify(outcome.detail)})`,
+  );
+}
+
 const SLACK_ENV = { E2E_SLACK_USER_TOKEN: "t", E2E_SLACK_BOT_USER_ID: "UBOT" };
 const SLACK_ROOM = ROOM("slack", "E2E_ADDRESSED_SLACK_CHANNEL");
 const WANT_SLACK = roomName(PLAN.slug, "slack");

@@ -216,6 +216,7 @@ export default defineTool({
           ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
           ...(u.cacheReadTokens !== undefined ? { cacheReadTokens: u.cacheReadTokens } : {}),
           ...(u.cacheWriteTokens !== undefined ? { cacheWriteTokens: u.cacheWriteTokens } : {}),
+          ...(u.reasoningTokens !== undefined ? { reasoningTokens: u.reasoningTokens } : {}),
           ...(u.costUsd !== undefined ? { costUsd: u.costUsd } : {}),
         },
         model: u.model,

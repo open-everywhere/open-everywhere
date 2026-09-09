@@ -4,6 +4,7 @@ import { postArm } from "./post-arms.js";
 import { isOwnPost, type OwnPostLedgerDeps } from "./own-post-ledger.js";
 import { markNotApplied, platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { truncateMemoryCitationPaths } from "./turn-delivery.js";
+import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import type { ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
@@ -98,7 +99,8 @@ export async function editPostedMessage(
   audit: ReplyAudit,
   ledgerDeps: OwnPostLedgerDeps = {},
 ): Promise<void> {
-  text = truncateMemoryCitationPaths(text);
+  const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
+  text = provenance.body;
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);
@@ -110,6 +112,7 @@ export async function editPostedMessage(
   }
   if (swallowRoomOp(`a ${locus.platform} edit (${text.length}c)`)) {
     await auditReplyEdit(audit, messageId, locus.platform, text.length);
+    await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
     return;
   }
   try {
@@ -119,4 +122,5 @@ export async function editPostedMessage(
     throw err;
   }
   await auditReplyEdit(audit, messageId, locus.platform, text.length);
+  await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
 }
