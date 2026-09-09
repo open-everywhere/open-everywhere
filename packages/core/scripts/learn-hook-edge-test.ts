@@ -206,5 +206,47 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   ok(await observed(brief), "control: the SAME words spoken by a human in a seat ARE recorded — so the two skips above measure the context, not a dead reader");
 }
 
+{
+  const { registerConfig, getConfig } = await import("../agent/access/config.js");
+  const { registerSettings, defineSettings } = await import("../agent/settings/settings.js");
+  const { registerConfigPrProvider } = await import("../agent/credentials/config-pr.js");
+  const { SKILL_PROPOSAL_PR_ACTION } = await import("../agent/memory/dream/skill-proposal-pr.js");
+
+  const accessRequests = { configRepo: "acme/config", configBase: "main", baseBundles: () => [], baseBindings: () => [] };
+  registerConfig({ ...getConfig(), loadAccessRequests: () => accessRequests });
+  registerSettings(defineSettings({ memory: { skillProposalPr: true } }));
+
+  const opened: { head: string; base: string; title: string }[] = [];
+  const written: { path: string; branch: string }[] = [];
+  registerConfigPrProvider({
+    resolveWriteToken: async () => "fake-token",
+    committer: () => ({ name: "open-everywhere[bot]", email: "bot@example.invalid" }),
+    getBranchSha: async (a) => (a.branch === "main" ? "basesha" : null),
+    ensureBranch: async () => {},
+    getFile: async () => null,
+    putFile: async (a) => {
+      written.push({ path: a.path, branch: a.branch });
+    },
+    openOrReopenPr: async (a) => {
+      opened.push({ head: a.head, base: a.base, title: a.title });
+      return { url: "https://example.invalid/pull/99", number: 99, updated: false, reopened: false };
+    },
+  });
+
+  const request = "rebuild the search index for the docs site";
+  const container = new FakeEveContext();
+  for (let i = 1; i <= 3; i += 1) {
+    await deliver(container, seatCtx("sess-proposal", `delivery-proposal-${i}`), request);
+  }
+
+  ok(opened.length === 1, "🔴 REACHABILITY: three deliveries of one request cross the recurrence gate and the HOOK opens a proposal pull request");
+  ok(opened[0]!.base === "main" && opened[0]!.head.startsWith("skill-proposal/"), "…head is the proposal branch, base is the config repo's base branch");
+  ok(written.length === 1 && written[0]!.path.startsWith(".agents/skills/"), "…and exactly one skill file is written, where a repo skill is discovered");
+  ok(written.every((w) => w.branch !== "main"), "🔴 …and nothing was written to the base branch, on the real hook path too");
+
+  const rows = await readAudit({ org: ORG, action: SKILL_PROPOSAL_PR_ACTION });
+  ok(rows.length === 1 && rows[0]!.detail?.["pr"] === 99, "…the attempt left its audit row, which is what a later crossing reads corrections back from");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ learn-hook-edge: ${passed} assertions passed`);

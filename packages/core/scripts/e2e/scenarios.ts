@@ -40,6 +40,16 @@ import {
 } from "./grant-fence-rows.js";
 import { DEFAULT_GRANT_THREAD_SINK, readGrantThreadRecord, resolveGrantThread, writeGrantThreadRecord } from "./grant-thread-record.js";
 import {
+  actingIdentityRead,
+  allOrdinaryInstallReads,
+  CONNECTOR_ACTING_IDENTITY_ACTION,
+  HUMAN_ACTING_IDENTITY,
+  installReads,
+  INSTALL_IDENTITY,
+  ownAccountRefusals,
+  renderActingIdentityRead,
+} from "./own-account-rows.js";
+import {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   dispatchAddressings,
@@ -2321,6 +2331,126 @@ export const SCENARIOS: readonly Scenario[] = [
       const bogus = await not.forgeCommentCreated(ctx.targetUrl, "00000000-0000-0000-0000-000000000000");
       ctx.gate(bogus.status === 200, "webhook gate: a signed replay for an unfetchable comment id is acked fail-soft (200, no post)");
       await archiveAnchors();
+    },
+  },
+  {
+    id: "S-OWN-ACCOUNT-NOTION",
+    title: "Own-account gate: a live 'use my own Notion account' ask REFUSES the team-key read (connector.acting_identity), with an ordinary read on the same page as the negative control",
+    requires: ["notionAmbient"],
+    surface: "notion",
+    suite: "core",
+    optional: false,
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const not = ctx.notionAmbient!;
+      if (!ctx.auditRead)
+        ctx.skip(
+          `no audit reader is wired (set ${ENV.targetUrl} + E2E_CONTROL_READ_TOKEN). The ${CONNECTOR_ACTING_IDENTITY_ACTION} row is this leg's only ` +
+            `observable — the reply text cannot say which account read the page, and this room carries this leg's own earlier phrasings.`,
+        );
+      const auditRead = ctx.auditRead!;
+      const readWindow = async (sinceIso: string) => actingIdentityRead(await auditRead({ sinceIso, limit: 1000, platform: "notion" }), NOTION_CONNECTOR);
+      const diagnose = async (sinceIso: string): Promise<string> => {
+        try {
+          const all = await auditRead({ sinceIso, limit: 1000 });
+          const mine = all.filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION);
+          return (
+            `un-narrowed, the window held ${all.length} row(s) across actions [${[...new Set(all.map((r) => r.action))].sort().join(", ") || "none"}] and ` +
+            `${mine.length} ${CONNECTOR_ACTING_IDENTITY_ACTION} row(s) on platforms [${[...new Set(mine.map((r) => r.platform))].sort().join(", ") || "none"}]`
+          );
+        } catch (err) {
+          return `the diagnostic un-narrowed read failed: ${String(err)}`;
+        }
+      };
+      const runTag = factToken("own");
+      const anchors = [
+        await not.appendParagraphBlock(`e2e S-OWN-ACCOUNT-NOTION anchor A (${runTag}) — safe to archive`),
+        await not.appendParagraphBlock(`e2e S-OWN-ACCOUNT-NOTION anchor B (${runTag}) — safe to archive`),
+      ];
+      const archiveAnchors = async () => {
+        for (const b of anchors) await not.archiveBlock(b);
+      };
+      const bodyAsk =
+        "quote ONE full sentence from this page's own body, word for word — from the page itself, not from this comment thread. " +
+        "If you cannot read the page, say so plainly and do not invent a sentence.";
+      try {
+        await sleep(SILENCE_WINDOW);
+        const sinceOrdinary = new Date(Date.now() - 15_000).toISOString();
+        const cOrdinary = await not.createBlockDiscussion(anchors[0], `OE — ${runTag}-ordinary: ${bodyAsk}`);
+        ctx.gate(cOrdinary.discussionId.length > 0, "negative control: the ordinary ask minted its own discussion");
+        const replyOrdinary = await not.awaitBotReplyIn(cOrdinary.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+        const ordinaryRead = await pollOptional(
+          async () => {
+            const read = await readWindow(sinceOrdinary);
+            return read.rows.length > 0 || read.undecodable > 0 ? read : undefined;
+          },
+          { timeoutMs: REPLY_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row for the ordinary Notion read` },
+        );
+        ctx.log(
+          `S-OWN-ACCOUNT-NOTION arm 1 (ordinary read, page ${not.pageId}) — ${ordinaryRead ? renderActingIdentityRead(ordinaryRead) : "no audit row appeared inside the wait"}. ` +
+            `Surfaces stamped: ${ordinaryRead ? [...new Set(ordinaryRead.rows.map((r) => r.surface ?? "unstamped"))].sort().join(", ") || "none" : "none"}. ` +
+            `Reply (REPORTED, never scored — this room carries this leg's own history): ${JSON.stringify(replyOrdinary.text.slice(0, 400))}`,
+        );
+        if (ordinaryRead === undefined)
+          ctx.skip(
+            `the ordinary ask was answered without reaching a gated Notion read — no ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window, so the ` +
+              `own-account arm has no proven path to refuse and this run observed nothing. The seat's own reply is not evidence either way. ` +
+              `${await diagnose(sinceOrdinary)}. Re-run, or narrow the ask further; a page whose body the wake envelope already carries is the usual cause.`,
+          );
+        const control = ordinaryRead!;
+        ctx.gate(
+          allOrdinaryInstallReads(control),
+          `negative control: an ask naming NO account ran under the team identity — every ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window is ` +
+            `refused=false, askRecognised=false, identity=${INSTALL_IDENTITY}. Without this the refusal below is satisfiable by a gate that refuses ` +
+            `everything. Saw: ${renderActingIdentityRead(control)}`,
+        );
+        await sleep(SILENCE_WINDOW);
+
+        const sinceOwn = new Date(Date.now() - 15_000).toISOString();
+        const cOwn = await not.createBlockDiscussion(
+          anchors[1],
+          `OE — ${runTag}-own: read this Notion page using my own Notion account, and ${bodyAsk}`,
+        );
+        ctx.gate(cOwn.discussionId !== cOrdinary.discussionId, "the own-account ask minted a DIFFERENT discussion from the negative control");
+        const replyOwn = await pollOptional(
+          async () => (await not.allComments()).find((c) => not.isBotComment(c) && c.discussionId === cOwn.discussionId && !isPendingWorkHandoff(c.text)),
+          { timeoutMs: REPLY_WAIT, what: "a bot reply to the own-account ask (REPORTED — the leg gates on the audit row)" },
+        );
+        const ownRead =
+          (await pollOptional(
+            async () => {
+              const read = await readWindow(sinceOwn);
+              return ownAccountRefusals(read).length > 0 ? read : undefined;
+            },
+            { timeoutMs: REPLY_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row refusing the own-account ask` },
+          )) ?? (await readWindow(sinceOwn));
+        const refusals = ownAccountRefusals(ownRead);
+        const leaked = installReads(ownRead);
+        ctx.log(
+          `S-OWN-ACCOUNT-NOTION arm 2 (own-account ask) — ${renderActingIdentityRead(ownRead)}. ` +
+            `Reply (REPORTED, never scored): ${replyOwn ? JSON.stringify(replyOwn.text.slice(0, 400)) : "none inside the wait"}. ` +
+            `Team-identity reads on this window: ${leaked.length} — REPORTED, not gated: arm 1's worker can settle after this window opens, and a ` +
+            `late row of its own carries detail identical to one of arm 2's, so a gate here would red on a correct system.`,
+        );
+        if (refusals.length === 0 && ownRead.rows.length === 0 && ownRead.undecodable === 0)
+          ctx.skip(
+            `the own-account ask was answered without reaching a gated Notion read — no ${CONNECTOR_ACTING_IDENTITY_ACTION} row on this arm's window at ` +
+              `all, so nothing chose a credential and there is no substitution to report. Arm 1 proved the path exists on this deployment; it cannot ` +
+              `prove this turn took it, and a seat that says "I cannot act as you" without reading is a correct outcome this leg cannot observe. ` +
+              `${await diagnose(sinceOwn)}.`,
+          );
+        ctx.gate(
+          refusals.length > 0,
+          `THE LEG: the ask "read this Notion page using my own Notion account" was REFUSED at the credential choice — ` +
+            `${refusals.length} ${CONNECTOR_ACTING_IDENTITY_ACTION} row(s) with refused=true, requiredIdentity=${HUMAN_ACTING_IDENTITY} and askRecognised=true ` +
+            `(tools: ${[...new Set(refusals.map((r) => r.tool))].sort().join(", ") || "none"}). A red means a gated Notion read DID choose a credential on ` +
+            `this turn and the gate did not refuse it — a member asked to act as themselves and the deployment answered on the team integration anyway, ` +
+            `which is OPE-1525 live. Saw: ${renderActingIdentityRead(ownRead)}`,
+        );
+      } finally {
+        await archiveAnchors();
+      }
     },
   },
   {

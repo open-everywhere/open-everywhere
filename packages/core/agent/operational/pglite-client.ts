@@ -157,6 +157,7 @@ export async function registerOperationalPglite(dir = pgliteOperationalDataDir()
 export function registerOperationalPgliteLazy(
   dir = pgliteOperationalDataDir(),
   onFirstOpen?: () => void | Promise<void>,
+  opts: { readonly readOnly?: boolean } = {},
 ): OperationalStore {
   const preexisting = readLock(pgliteLockPath(dir));
   if (preexisting && preexisting.pid !== process.pid && pidIsLive(preexisting.pid)) {
@@ -167,7 +168,7 @@ export function registerOperationalPgliteLazy(
   const open = async (): Promise<PgClient> => {
     opening ??= (async () => {
       const { client } = await openOperationalPglite(dir);
-      await initOperationalSchema(client);
+      if (!opts.readOnly) await initOperationalSchema(client);
       void (async () => {
         try {
           await onFirstOpen?.();

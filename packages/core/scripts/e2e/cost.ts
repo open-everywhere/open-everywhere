@@ -15,6 +15,15 @@ export interface RunCostReport {
   readonly slices: readonly UsageSlice[];
   readonly totalUsd: number;
   readonly unpricedModels: readonly string[];
+  readonly excluded?: UsageWindowExcludedWire;
+}
+
+export interface UsageWindowExcludedWire {
+  readonly surfaceKeys: readonly string[];
+  readonly calls: number;
+  readonly estimatedUsd: number;
+  readonly unpricedModels: readonly string[];
+  readonly sessionsUpperBound: number;
 }
 
 export interface UsageWindowWireRow {
@@ -28,7 +37,7 @@ export interface UsageWindowWireRow {
   readonly estimatedUsd?: number;
 }
 
-export function buildCostReport(rows: readonly UsageWindowWireRow[]): RunCostReport {
+export function buildCostReport(rows: readonly UsageWindowWireRow[], excluded?: UsageWindowExcludedWire): RunCostReport {
   const slices: UsageSlice[] = [];
   const unpriced = new Set<string>();
   let total = 0;
@@ -47,7 +56,7 @@ export function buildCostReport(rows: readonly UsageWindowWireRow[]): RunCostRep
       estimatedUsd: r.estimatedUsd,
     });
   }
-  return { slices, totalUsd: total, unpricedModels: [...unpriced].sort() };
+  return { slices, totalUsd: total, unpricedModels: [...unpriced].sort(), ...(excluded ? { excluded } : {}) };
 }
 
 export async function fetchRunUsage(
@@ -56,7 +65,7 @@ export async function fetchRunUsage(
   sinceIso: string,
   workspaceKeys: readonly string[],
   sessionStartedAfter?: string,
-): Promise<readonly UsageWindowWireRow[]> {
+): Promise<{ readonly rows: readonly UsageWindowWireRow[]; readonly excluded?: UsageWindowExcludedWire }> {
   const base = targetUrl.replace(/\/+$/, "");
   const qs = new URLSearchParams({ since: sinceIso, workspaces: workspaceKeys.join(",") });
   if (sessionStartedAfter) qs.set("sessionStartedAfter", sessionStartedAfter);
@@ -67,9 +76,9 @@ export async function fetchRunUsage(
     const detail = (await res.text().catch(() => "")).slice(0, 200);
     throw new Error(`GET /control/v1/usage → ${res.status}${detail ? ` (${detail})` : ""}`);
   }
-  const parsed = (await res.json()) as { rows?: UsageWindowWireRow[] };
+  const parsed = (await res.json()) as { rows?: UsageWindowWireRow[]; excluded?: UsageWindowExcludedWire };
   if (!Array.isArray(parsed.rows)) throw new Error("GET /control/v1/usage returned no rows array (malformed response)");
-  return parsed.rows;
+  return { rows: parsed.rows, ...(parsed.excluded ? { excluded: parsed.excluded } : {}) };
 }
 
 export function defaultExpectedModels(): readonly string[] {
@@ -112,5 +121,18 @@ export function renderCostReport(report: RunCostReport): string[] {
     `e2e run cost: ${fmtUsd(report.totalUsd)}` +
       (report.unpricedModels.length ? ` (+ unpriced: ${report.unpricedModels.join(", ")})` : ""),
   );
+  if (report.excluded === undefined) {
+    lines.push("excluded by the run's session bound: not reported (the read carried no session bound, or the deployment predates the field)");
+  } else if (report.excluded.calls === 0) {
+    lines.push("excluded by the run's session bound: none — every session with usage in this window started inside it");
+  } else {
+    const e = report.excluded;
+    lines.push(
+      `🔴 excluded by the run's session bound: ${e.calls} call(s), ${fmtUsd(e.estimatedUsd)}` +
+        (e.unpricedModels.length ? ` (+ unpriced: ${e.unpricedModels.join(", ")})` : "") +
+        ` across up to ${e.sessionsUpperBound} session(s) on [${e.surfaceKeys.join(", ")}]` +
+        " — a standing seat outlives a run, so its whole spend is dropped from the figure above",
+    );
+  }
   return lines;
 }

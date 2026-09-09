@@ -7,6 +7,7 @@ import { auditRecurrenceLedger, signatureDigest } from "../memory/dream/recurren
 import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
+import { openSkillProposalPr } from "../memory/dream/skill-proposal-pr.js";
 import { appendAudit } from "../audit/audit.js";
 import { triggerMessageBody } from "../channels/wake-envelope.js";
 
@@ -104,6 +105,19 @@ async function consolidate(ctx: HookContext): Promise<void> {
   if (result.skillProposal) {
     await recordProposal(p.org, result.skillProposal, binding.principalId);
     log(`proposed SKILL.md for repeated workflow "${result.signature}" (${result.count}×)`);
+    try {
+      const pr = await openSkillProposalPr(p.org, result.skillProposal, dedupeKey !== undefined ? { delivery: dedupeKey } : {});
+      if (pr.opened) {
+        log(
+          `skill proposal PR ${pr.url} (${pr.updated ? "updated" : "opened"}${pr.reopened ? ", REOPENED after a decline" : ""}) — ` +
+            `${pr.corrections === null ? "corrections unreadable" : `${pr.corrections} correction(s) carried`}, ${pr.refusedCorrections} refused`,
+        );
+      } else {
+        log(`skill proposal PR not opened: ${pr.skipped}`);
+      }
+    } catch (err) {
+      log(`skill proposal PR failed: ${String(err)}`);
+    }
   }
 }
 

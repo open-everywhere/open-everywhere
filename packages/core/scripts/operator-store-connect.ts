@@ -11,6 +11,10 @@ import {
   resolveOperationalSelection,
 } from "../agent/operational/provider.js";
 
+export interface OperatorStoreOpts {
+  readonly readOnly?: boolean;
+}
+
 export interface OperatorStoreTarget {
   readonly id: string;
   readonly label: string;
@@ -40,12 +44,12 @@ export function loadRootOfTrustEnv(path: string): readonly string[] {
   return applied;
 }
 
-export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
+export async function connectOperatorStore(opts: OperatorStoreOpts = {}): Promise<OperatorStoreTarget> {
   if (connected) return connected;
   const selection = resolveOperationalSelection();
 
   if (selection.floor === "pglite") {
-    registerOperationalPgliteLazy();
+    registerOperationalPgliteLazy(undefined, undefined, { readOnly: opts.readOnly === true });
     resetOperationalStore();
     requireArmedOperationalFloor();
     connected = { id: "postgres", label: "embedded Postgres floor (PGlite, local data dir)" };
@@ -62,7 +66,7 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
       );
     }
     const client = await neonClient(url);
-    await initOperationalSchema(client);
+    if (!opts.readOnly) await initOperationalSchema(client);
     registerOperationalPostgres(client);
     resetOperationalStore();
     connected = { id: "postgres", label: "hosted Postgres (DATABASE_URL)" };
@@ -73,12 +77,12 @@ export async function connectOperatorStore(): Promise<OperatorStoreTarget> {
   return connected;
 }
 
-export async function connectOperatorStoreForCli(argv: readonly string[] = process.argv): Promise<OperatorStoreTarget> {
+export async function connectOperatorStoreForCli(argv: readonly string[] = process.argv, opts: OperatorStoreOpts = {}): Promise<OperatorStoreTarget> {
   const flag = argv.indexOf("--root-env");
   loadRootOfTrustEnv(resolve(flag >= 0 ? (argv[flag + 1] ?? ".env.local") : ".env.local"));
   const orgFlag = argv.indexOf("--org");
   declareOperatorOrg(orgFlag >= 0 ? argv[orgFlag + 1] : undefined);
-  return await connectOperatorStore();
+  return await connectOperatorStore(opts);
 }
 
 export function declareOperatorOrg(org: string | undefined): void {
@@ -93,11 +97,14 @@ export function resetOperatorStoreConnection(): void {
 
 async function neonClient(connectionString: string): Promise<PgClient> {
   const pkg = "@neondatabase/serverless";
-  let Pool: new (cfg: { connectionString: string }) => { query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }> };
+  type Conn = { query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>; release(err?: unknown): void };
+  type NeonPool = new (cfg: { connectionString: string }) => {
+    query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+    connect(): Promise<Conn>;
+  };
+  let Pool: NeonPool;
   try {
-    ({ Pool } = (await import(pkg)) as {
-      Pool: new (cfg: { connectionString: string }) => { query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }> };
-    });
+    ({ Pool } = (await import(pkg)) as { Pool: NeonPool });
   } catch (err) {
     throw new Error(
       `cannot open hosted Postgres: the ${pkg} driver is not installed in this checkout (${String(err instanceof Error ? err.message : err)}). ` +
@@ -105,5 +112,18 @@ async function neonClient(connectionString: string): Promise<PgClient> {
     );
   }
   const pool = new Pool({ connectionString });
-  return { query: (text, params) => pool.query(text, params) };
+  return {
+    query: (text, params) => pool.query(text, params),
+    withConnection: async (fn) => {
+      const conn = await pool.connect();
+      try {
+        const result = await fn({ query: (text, params) => conn.query(text, params) });
+        conn.release();
+        return result;
+      } catch (err) {
+        conn.release(err);
+        throw err;
+      }
+    },
+  };
 }

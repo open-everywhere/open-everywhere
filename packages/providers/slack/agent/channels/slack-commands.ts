@@ -1,6 +1,17 @@
 import { defineChannel, POST } from "eve/channels";
 import { verifySlackSignature } from "./slack-front.js";
-import { bindFrom, runOeCommand, parseSlackCommandText, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  bindFrom,
+  runOeCommand,
+  parseSlackCommandText,
+  resolvePartition,
+  getOperationalStore,
+  admittedTenantsFromConfig,
+  unadmittedTenantLog,
+  UNADMITTED_TENANT_DROP_REASON,
+  type BindableContext,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { slackTenantAdmission } from "./slack-tenant-fence.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:slack-commands] ${msg}`);
@@ -33,6 +44,25 @@ export function bindableForSlashCommand(params: URLSearchParams): BindableContex
   };
 }
 
+async function auditCommandDropped(teamId: string | undefined, channelId: string | undefined, reason: string): Promise<void> {
+  try {
+    const p = resolvePartition({
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+    } as BindableContext);
+    await getOperationalStore().appendAudit({
+      ts: new Date().toISOString(),
+      org: p.org,
+      platform: p.platform,
+      workspace: p.workspace,
+      surface: p.surface,
+      action: "surface.wake_dropped",
+      detail: { reason, door: "slash-command", channel: channelId ?? null, team: teamId ?? null },
+    });
+  } catch {
+  }
+}
+
 function ephemeralResponse(text: string): Response {
   return new Response(JSON.stringify({ response_type: "ephemeral", text }), {
     status: 200,
@@ -42,13 +72,21 @@ function ephemeralResponse(text: string): Response {
 
 export default defineChannel({
   routes: [
-    POST(SLACK_COMMANDS_ROUTE, async (req, { attachSession }) => {
+    POST(SLACK_COMMANDS_ROUTE, async (req, { attachSession, waitUntil }) => {
       const rawBody = await req.text();
       if (!verifySlackSignature(rawBody, req.headers, process.env.SLACK_SIGNING_SECRET)) {
         return new Response("unauthorized", { status: 401 });
       }
 
       const params = new URLSearchParams(rawBody);
+      const teamId = formField(params, "team_id");
+
+      if (slackTenantAdmission(teamId) === "unadmitted") {
+        console.log(unadmittedTenantLog("slack", teamId!, admittedTenantsFromConfig("slack")));
+        waitUntil(auditCommandDropped(teamId, formField(params, "channel_id"), UNADMITTED_TENANT_DROP_REASON));
+        return new Response(null, { status: 200 });
+      }
+
       const command = formField(params, "command");
       if (command !== "/oe") {
         log(`unexpected slash command "${command ?? "?"}" hit the /oe route — check the Slack app's Slash Command config`);

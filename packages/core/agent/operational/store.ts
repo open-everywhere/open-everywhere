@@ -4,6 +4,7 @@ import type { ModelReasoning } from "../memory/domain.js";
 import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-window.js";
 import type { SessionTailEntry } from "../channels/session-tail.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow } from "./credential-grant-rows.js";
+import type { AuditEpochSeal } from "../audit/chain.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -91,6 +92,11 @@ export interface AuditChainRow {
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
   readonly prevSha: string | null;
+}
+
+export interface AuditChainEpochWritten {
+  readonly seal: AuditEpochSeal;
+  readonly markerSeq: number;
 }
 
 export interface AuditFilter {
@@ -711,6 +717,7 @@ export interface OperationalStore {
   readAudit(filter: AuditFilter): Promise<AuditEntry[]>;
   listAuditOrgs(): Promise<string[]>;
   readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
+  sealAuditChainEpoch(org: string, sealedBy: string): Promise<AuditChainEpochWritten | null>;
 
   setSpendLimit(org: string, scopeKey: string, level: CapLevel, limit: SpendLimitAmount, meta?: OverrideMeta): Promise<void>;
   clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;

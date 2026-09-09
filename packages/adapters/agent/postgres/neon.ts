@@ -18,16 +18,35 @@ export async function registerNeon(connectionString = process.env.DATABASE_URL):
   const { Pool } = mod;
   const pool = new Pool({ connectionString }) as {
     query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+    connect(): Promise<PooledConnection>;
     on?(event: "error", listener: (err: unknown) => void): unknown;
   };
   attachPoolErrorHandler(pool);
-  const client: PgClient = { query: (text, params) => pool.query(text, params) };
+  const client: PgClient = {
+    query: (text, params) => pool.query(text, params),
+    withConnection: async (fn) => {
+      const conn = await pool.connect();
+      try {
+        const result = await fn({ query: (text, params) => conn.query(text, params) });
+        conn.release();
+        return result;
+      } catch (err) {
+        conn.release(err);
+        throw err;
+      }
+    },
+  };
 
   await initPostgresSchema(client);
   await initOperationalSchema(client);
   registerPostgres(client);
   registerOperationalPostgres(client);
   return client;
+}
+
+interface PooledConnection {
+  query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+  release(err?: unknown): void;
 }
 
 interface NeonConfig {

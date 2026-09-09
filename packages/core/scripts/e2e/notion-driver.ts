@@ -107,6 +107,9 @@ export class NotionDriver {
   get botUserId(): string {
     return this.cfg.botUserId;
   }
+  get pageId(): string {
+    return this.cfg.pageId;
+  }
   get webhookSecret(): string | undefined {
     return this.cfg.webhookSecret;
   }

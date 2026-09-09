@@ -7,7 +7,9 @@ import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
-import { auditRowSha } from "../audit/chain.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
 
@@ -984,19 +986,114 @@ async function recordAuditIntegrity(
   const org = deploymentOrg();
   const ts = new Date().toISOString();
   try {
-    let prevSha: string | null = null;
+    const insert = async (conn: PgClient, prevSha: string | null): Promise<void> => {
+      await conn.query(
+        `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail, prev_sha)
+         VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3, $4)`,
+        [ts, org, JSON.stringify(detail), prevSha],
+      );
+    };
     try {
-      prevSha = await nextAuditPrevSha(client, org);
-    } catch {
+      await withAuditChainLock(client, org, async (conn) => insert(conn, await nextAuditPrevSha(conn, org)));
+    } catch (chainErr) {
+      console.error(
+        `[open-everywhere:operational] the audit.integrity row could not be chain-linked (${String(chainErr)}); ` +
+          "writing it UNCHAINED — the chain verifier will report a break at this row.",
+      );
+      await insert(client, null);
     }
-    await client.query(
-      `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail, prev_sha)
-       VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3, $4)`,
-      [ts, org, JSON.stringify(detail), prevSha],
-    );
   } catch (err) {
     console.error(`[open-everywhere:operational] could not record audit.integrity row: ${String(err)}`);
   }
+}
+
+const AUDIT_CHAIN_LOCK_CLASS = createHash("sha256").update("open-everywhere:audit-chain").digest().readInt32BE(0);
+
+export function auditChainLockKey(org: string): number {
+  return createHash("sha256").update(org).digest().readInt32BE(0);
+}
+
+const AUDIT_CHAIN_LOCK_TIMEOUT_MS = 10_000;
+
+async function readAuditChainRows(client: PgClient, org: string, tail?: number): Promise<AuditChainRow[]> {
+  const cols = "seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha";
+  const sql =
+    tail && tail > 0
+      ? `SELECT ${cols} FROM (
+           SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT $2
+         ) sub ORDER BY seq ASC`
+      : `SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq ASC`;
+  const { rows } = await client.query(sql, tail && tail > 0 ? [org, tail] : [org]);
+  return (rows as {
+    seq: number | string;
+    ts: string;
+    org_id: string;
+    platform: string;
+    workspace: string;
+    surface: string | null;
+    principal_id: string | null;
+    action: string;
+    detail: string | null;
+    prev_sha: string | null;
+  }[]).map(
+    (r): AuditChainRow => ({
+      seq: Number(r.seq),
+      ts: r.ts,
+      org: r.org_id,
+      platform: r.platform,
+      workspace: r.workspace,
+      ...(r.surface ? { surface: r.surface } : {}),
+      ...(r.principal_id ? { principalId: r.principal_id } : {}),
+      action: r.action,
+      ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
+      prevSha: r.prev_sha,
+    }),
+  );
+}
+
+const heldAuditChainLocks = new AsyncLocalStorage<Map<string, PgClient>>();
+
+async function withAuditChainLock<T>(client: PgClient, org: string, body: (conn: PgClient) => Promise<T>): Promise<T> {
+  const held = heldAuditChainLocks.getStore();
+  const outer = held?.get(org);
+  if (outer !== undefined) return await body(outer);
+  return withOrgAuditLock(org, async () => {
+    const next = new Map(held ?? []);
+    if (!client.withConnection) {
+      next.set(org, client);
+      return await heldAuditChainLocks.run(next, () => body(client));
+    }
+    return await client.withConnection<T>(async (conn) => {
+      next.set(org, conn);
+      await conn.query("BEGIN");
+      try {
+        await conn.query(`SET LOCAL lock_timeout = ${AUDIT_CHAIN_LOCK_TIMEOUT_MS}`);
+        await conn.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [AUDIT_CHAIN_LOCK_CLASS, auditChainLockKey(org)]);
+        const result = await heldAuditChainLocks.run(next, () => body(conn));
+        await conn.query("COMMIT");
+        return result;
+      } catch (err) {
+        await conn.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      }
+    });
+  });
+}
+
+let auditChainSerialisationWarned = false;
+function warnIfAuditChainCannotSerialise(client: PgClient): void {
+  if (client.withConnection || auditChainSerialisationWarned) return;
+  auditChainSerialisationWarned = true;
+  console.warn(
+    "[open-everywhere:operational] this Postgres client offers no withConnection seam, so audit-chain appends are serialised " +
+      "IN-PROCESS ONLY. That is correct for the embedded PGlite floor (one writer by construction). On a POOLED hosted client it " +
+      "means concurrent instances can fork the chain — give the client a withConnection implementation " +
+      "(packages/adapters/agent/postgres/neon.ts is the reference).",
+  );
+}
+
+export function _resetAuditChainSerialisationWarnForTest(): void {
+  auditChainSerialisationWarned = false;
 }
 
 async function nextAuditPrevSha(client: PgClient, org: string): Promise<string | null> {
@@ -1025,6 +1122,7 @@ async function nextAuditPrevSha(client: PgClient, org: string): Promise<string |
 }
 
 export async function initOperationalSchema(client: PgClient): Promise<void> {
+  warnIfAuditChainCannotSerialise(client);
   const owner = await ownsAuditTable(client);
 
   if (owner === false) {
@@ -1645,22 +1743,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async appendAudit(entry: AuditEntry) {
-      const prevSha = await nextAuditPrevSha(client, entry.org);
-      await client.query(
-        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          entry.ts,
-          entry.org,
-          entry.platform,
-          entry.workspace,
-          entry.surface ?? null,
-          entry.principalId ?? null,
-          entry.action,
-          entry.detail ? JSON.stringify(entry.detail) : null,
-          prevSha,
-        ],
-      );
+      await withAuditChainLock(client, entry.org, async (conn) => {
+        const prevSha = await nextAuditPrevSha(conn, entry.org);
+        await conn.query(
+          `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            entry.ts,
+            entry.org,
+            entry.platform,
+            entry.workspace,
+            entry.surface ?? null,
+            entry.principalId ?? null,
+            entry.action,
+            entry.detail ? JSON.stringify(entry.detail) : null,
+            prevSha,
+          ],
+        );
+      });
     },
 
     async readAudit(filter: AuditFilter) {
@@ -1720,41 +1820,23 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async readAuditChain(org, opts) {
-      const tail = opts?.tailLimit;
-      const cols = "seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha";
-      const sql =
-        tail && tail > 0
-          ? `SELECT ${cols} FROM (
-               SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT $2
-             ) sub ORDER BY seq ASC`
-          : `SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq ASC`;
-      const { rows } = await client.query(sql, tail && tail > 0 ? [org, tail] : [org]);
-      return (rows as {
-        seq: number | string;
-        ts: string;
-        org_id: string;
-        platform: string;
-        workspace: string;
-        surface: string | null;
-        principal_id: string | null;
-        action: string;
-        detail: string | null;
-        prev_sha: string | null;
-      }[]).map(
-        (r): AuditChainRow => ({
-          seq: Number(r.seq),
-          ts: r.ts,
-          org: r.org_id,
-          platform: r.platform,
-          workspace: r.workspace,
-          ...(r.surface ? { surface: r.surface } : {}),
-          ...(r.principal_id ? { principalId: r.principal_id } : {}),
-          action: r.action,
-          ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
-          prevSha: r.prev_sha,
-        }),
-      );
+      return readAuditChainRows(client, org, opts?.tailLimit);
     },
+
+    async sealAuditChainEpoch(org, sealedBy) {
+      return withAuditChainLock(client, org, async (conn) => {
+        const rows = await readAuditChainRows(conn, org);
+        const seal = auditEpochSealFor(rows);
+        if (seal === null) return null;
+        const { rows: written } = await conn.query(
+          `INSERT INTO audit_entry (ts, org_id, platform, workspace, principal_id, action, detail, prev_sha)
+           VALUES ($1, $2, 'db', 'postgres', $3, $4, $5, NULL) RETURNING seq`,
+          [new Date().toISOString(), org, sealedBy, AUDIT_CHAIN_EPOCH_ACTION, JSON.stringify(auditEpochDetail(seal))],
+        );
+        return { seal, markerSeq: Number((written[0] as { seq: number | string }).seq) };
+      });
+    },
+
 
     async setSpendLimit(org, scopeKey, level, limit, meta) {
       assertSpendLimitAmount(limit);

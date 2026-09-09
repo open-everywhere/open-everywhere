@@ -2,19 +2,26 @@ process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import type { RouteHandlerArgs } from "eve/channels";
 import {
   registerConfig,
   registerIdentityMapper,
   defineDomain,
+  getOperationalStore,
+  UNADMITTED_TENANT_DROP_REASON,
+  MULTI_TENANT_ENV,
   _resetDeploymentIdentityForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildFrontHandler, ThreadFifo } from "../agent/channels/slack-front.js";
-import { bindableForSlashCommand } from "../agent/channels/slack-commands.js";
+import slackCommandsChannel, { bindableForSlashCommand } from "../agent/channels/slack-commands.js";
+import { routeSupervisorEvent, type SupervisorRouteDeps } from "../agent/channels/slack-events.js";
 import { bindSlack, forwardedSlackEnterpriseId, withForwardedSlackEnvelope } from "../agent/channels/slack-identity.js";
+import { parseSlackShortcutPayload, shortcutMessageEvent } from "../agent/channels/slack-shortcut.js";
+import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
   delete process.env[k];
 }
 
@@ -272,6 +279,190 @@ const attrsOf = async (carrier: Parameters<typeof withForwardedSlackEnvelope>[0]
   ok(!("enterprise_id" in attrs(plain)), "slash NEGATIVE CONTROL: a single-workspace command stamps NO enterprise_id — an absent rung, not an empty one");
   eq(bindSlack(plain).trustEnterprise, undefined, "slash NEGATIVE CONTROL: 🔴 …so it contributes no rung, and its walk is byte-identical to what it was");
   eq(attrs(plain)["team_id"], TEAM, "slash NEGATIVE CONTROL: the workspace it always carried is untouched");
+}
+
+const FOREIGN_TEAM = "T_FOREIGN";
+const FOREIGN_CHANNEL = "C_FOREIGN";
+
+async function droppedRows(ts: string): Promise<Record<string, unknown>[]> {
+  const store = getOperationalStore();
+  for (let i = 0; i < 20; i++) {
+    const rows = await store.readAudit({ org: "default", action: "surface.wake_dropped" });
+    const mine = rows.filter((r) => (r.detail as { ts?: unknown } | undefined)?.ts === ts);
+    if (mine.length > 0) return mine.map((r) => (r.detail ?? {}) as Record<string, unknown>);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return [];
+}
+
+const inboundFrom = (channelId: string, ts: string, teamId: string) =>
+  ({
+    channelId,
+    ts,
+    threadTs: ts,
+    markdown: "<@UBOT> chase order 4417",
+    text: "<@UBOT> chase order 4417",
+    author: { userId: USER, isBot: false },
+    teamId,
+    attachments: [],
+    raw: { channel_type: "channel" },
+  }) as never;
+
+{
+  const ts = "9101.100";
+  const outcome = await withForwardedSlackEnvelope({ enterpriseId: OTHER_GRID, channelId: FOREIGN_CHANNEL, ts }, () =>
+    admitInbound(fakeCtx(), inboundFrom(FOREIGN_CHANNEL, ts, FOREIGN_TEAM), false),
+  );
+  eq(outcome, null, "refusal(mention): 🔴 a mention forwarded from a FOREIGN enterprise's workspace is DROPPED — eve dispatches no turn, so nothing binds, matches a roster or resolves a credential under an aliasing identity");
+
+  const rows = await droppedRows(ts);
+  eq(rows.length, 1, "refusal(mention): …and the operator gets exactly ONE surface.wake_dropped row (a silent drop is unreadable in a webhook process)");
+  eq(rows[0]?.reason, UNADMITTED_TENANT_DROP_REASON, "refusal(mention): the row names WHY through the one greppable reason string");
+  eq(rows[0]?.door, "mention", "refusal(mention): …which door refused it");
+  eq(rows[0]?.team, FOREIGN_TEAM, "refusal(mention): …and WHICH workspace — the fact the decision turned on, since the fence reads the workspace and not the Grid");
+}
+
+{
+  const ts = "9102.100";
+  const attrs = await attrsOf({ enterpriseId: OTHER_GRID, channelId: CHANNEL, ts }, CHANNEL, ts);
+  eq(
+    attrs["enterprise_id"],
+    OTHER_GRID,
+    "refusal(mention) CONTROL: 🔴 an ADMITTED workspace carrying a FOREIGN enterprise_id is still ADMITTED, and the foreign rung is stamped verbatim — admission reads the workspace, and the rung only ever reaches a declaration the operator wrote",
+  );
+  eq((await droppedRows(ts)).length, 0, "refusal(mention) CONTROL: …and no wake_dropped row is written for it");
+}
+
+{
+  const supervisorDeps = (wakes: unknown[]): SupervisorRouteDeps => ({
+    confirmInternalWithMeta: async () => ({ internal: true, memberCount: 12 }),
+    getOrCreateSession: async (_org, _sk, channelId) => ({ token: `${channelId}:oe-sup:g1`, generation: 1, freshGeneration: false, tail: [] }),
+    touchSession: async () => {},
+    wake: async (input) => {
+      wakes.push(input);
+    },
+    now: () => "2026-03-12T14:44:00Z",
+  });
+
+  const shortcutPayload = (channelId: string, ts: string, over: Record<string, unknown>) => ({
+    type: "message_action",
+    callback_id: "escalate",
+    trigger_id: `TRG_${ts}`,
+    user: { id: USER },
+    channel: { id: channelId },
+    message: { ts, text: "the order never shipped", user: "U_AUTHOR" },
+    ...over,
+  });
+
+  const spellings: { readonly name: string; readonly over: Record<string, unknown> }[] = [
+    { name: "enterprise object", over: { enterprise: { id: OTHER_GRID }, team: { id: FOREIGN_TEAM } } },
+    { name: "enterprise_id string", over: { enterprise_id: OTHER_GRID, team: { id: FOREIGN_TEAM } } },
+    { name: "team.enterprise_id", over: { team: { id: FOREIGN_TEAM, enterprise_id: OTHER_GRID } } },
+  ];
+
+  let i = 0;
+  for (const spelling of spellings) {
+    const ts = `92${i++}0.100`;
+    const sc = parseSlackShortcutPayload(shortcutPayload(FOREIGN_CHANNEL, ts, spelling.over));
+    ok(sc !== null, `refusal(shortcut/${spelling.name}): the payload parses to a shortcut at all (a null here would make the refusal below vacuous)`);
+    eq(sc!.enterpriseId, OTHER_GRID, `refusal(shortcut/${spelling.name}): 🔴 the foreign Grid is READ off this spelling — so the refusal below is a refusal of a delivery we could see the Grid on, never an accident of a lost rung`);
+    eq(sc!.teamId, FOREIGN_TEAM, `refusal(shortcut/${spelling.name}): …beside the foreign workspace the fence reads`);
+
+    const sev = shortcutMessageEvent(sc!, FOREIGN_CHANNEL, "channel", 1769564200000);
+    const wakes: unknown[] = [];
+    const out = await routeSupervisorEvent(sev, supervisorDeps(wakes), { directMention: true });
+    eq(out.deliver, false, `refusal(shortcut/${spelling.name}): 🔴 the shortcut is REFUSED — the interactivity door is not a way around the fence the Events API doors carry`);
+    eq(out.reason, UNADMITTED_TENANT_DROP_REASON, `refusal(shortcut/${spelling.name}): …for the tenant reason, not some other gate`);
+    eq(wakes.length, 0, `refusal(shortcut/${spelling.name}): …and NO wake was dispatched, which is the property that matters`);
+
+    const rows = await droppedRows(ts);
+    eq(rows.length, 1, `refusal(shortcut/${spelling.name}): the operator gets one surface.wake_dropped row`);
+    eq(rows[0]?.reason, UNADMITTED_TENANT_DROP_REASON, `refusal(shortcut/${spelling.name}): naming the same greppable reason`);
+    eq(rows[0]?.team, FOREIGN_TEAM, `refusal(shortcut/${spelling.name}): …and the workspace it refused`);
+  }
+
+  {
+    const ts = "9299.100";
+    const sc = parseSlackShortcutPayload(shortcutPayload(CHANNEL, ts, { enterprise: { id: OTHER_GRID }, team: { id: TEAM } }));
+    const sev = shortcutMessageEvent(sc!, CHANNEL, "channel", 1769564200000);
+    const wakes: unknown[] = [];
+    const out = await routeSupervisorEvent(sev, supervisorDeps(wakes), { directMention: true });
+    ok(out.deliver && wakes.length === 1, "refusal(shortcut) CONTROL: the same shortcut from the ADMITTED workspace WAKES — the fence refuses a workspace, never the door");
+    eq((await droppedRows(ts)).length, 0, "refusal(shortcut) CONTROL: …and writes no wake_dropped row");
+  }
+
+  {
+    const sc = parseSlackShortcutPayload(shortcutPayload(FOREIGN_CHANNEL, "9298.100", { enterprise: { id: OTHER_GRID } }));
+    eq(sc!.enterpriseId, OTHER_GRID, "refusal(shortcut) GAP: an org-wide payload names the foreign Grid…");
+    eq(sc!.teamId, undefined, "refusal(shortcut) GAP: …and names NO workspace");
+    eq(
+      slackTenantAdmission(sc!.teamId),
+      "proceed",
+      "refusal(shortcut) GAP: 🔴 so the tenant fence PROCEEDS — it classifies the workspace, and a foreign enterprise with no workspace names no tenant it can refuse",
+    );
+  }
+}
+
+{
+  const routeDef = (
+    slackCommandsChannel as unknown as {
+      routes: readonly { method: string; path: string; handler: (req: Request, args: RouteHandlerArgs) => Promise<Response> }[];
+    }
+  ).routes[0]!;
+
+  const previousSecret = process.env.SLACK_SIGNING_SECRET;
+  process.env.SLACK_SIGNING_SECRET = SECRET;
+
+  const commandRequest = (body: string): Request => {
+    const ts = String(Math.floor(Date.now() / 1000));
+    return new Request("https://oe.test/eve/v1/slack/commands", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": `v0=${createHmac("sha256", SECRET).update(`v0:${ts}:${body}`).digest("hex")}`,
+      },
+      body,
+    });
+  };
+  const slashBody = (teamId: string, channelId: string, enterpriseId?: string) =>
+    new URLSearchParams({ command: "/oe", text: "status", team_id: teamId, channel_id: channelId, user_id: USER, ...(enterpriseId ? { enterprise_id: enterpriseId } : {}) }).toString();
+
+  const routeArgs = (deferred: Promise<unknown>[]): RouteHandlerArgs =>
+    ({ waitUntil: (p: Promise<unknown>) => deferred.push(p) }) as unknown as RouteHandlerArgs;
+
+  {
+    const deferred: Promise<unknown>[] = [];
+    const res = await routeDef.handler(commandRequest(slashBody(FOREIGN_TEAM, FOREIGN_CHANNEL, OTHER_GRID)), routeArgs(deferred));
+    eq(res.status, 200, "refusal(slash): the refusal answers 200 — Slack must not retry a delivery we decided against");
+    eq(await res.text(), "", "refusal(slash): 🔴 …with an EMPTY body: the operator gets the signal and the foreign workspace learns nothing, the same posture every wake door's silent drop takes");
+    eq(deferred.length, 1, "refusal(slash): 🔴 the audit write was handed to `waitUntil`, not fired and forgotten — the response goes back at once, so a bare promise would race the serverless freeze and lose the only durable signal this refusal has");
+    await Promise.all(deferred);
+
+    const store = getOperationalStore();
+    let refusal: Record<string, unknown> | undefined;
+    for (let i = 0; i < 20 && !refusal; i++) {
+      const rows = await store.readAudit({ org: "default", action: "surface.wake_dropped" });
+      refusal = rows.map((r) => (r.detail ?? {}) as Record<string, unknown>).find((d) => d.door === "slash-command");
+      if (!refusal) await new Promise((r) => setTimeout(r, 10));
+    }
+    ok(refusal !== undefined, "refusal(slash): the refusal writes a surface.wake_dropped row naming the slash-command door");
+    eq(refusal?.reason, UNADMITTED_TENANT_DROP_REASON, "refusal(slash): …with the same greppable reason every other door writes");
+    eq(refusal?.team, FOREIGN_TEAM, "refusal(slash): …and the workspace it refused");
+  }
+
+  {
+    const deferred: Promise<unknown>[] = [];
+    const res = await routeDef.handler(commandRequest(slashBody(TEAM, CHANNEL, OTHER_GRID)), routeArgs(deferred));
+    eq(res.status, 200, "refusal(slash) CONTROL: the admitted workspace's `/oe status` still answers 200");
+    eq(deferred.length, 0, "refusal(slash) CONTROL: …deferring NOTHING — an admitted command writes no drop row, so the count above is the refusal's own");
+    const body = (await res.json()) as { response_type?: string; text?: string };
+    eq(body.response_type, "ephemeral", "refusal(slash) CONTROL: …with a real ephemeral answer, not the refusal's empty body");
+    ok((body.text ?? "").length > 0, "refusal(slash) CONTROL: …carrying rendered command output");
+  }
+
+  if (previousSecret === undefined) delete process.env.SLACK_SIGNING_SECRET;
+  else process.env.SLACK_SIGNING_SECRET = previousSecret;
 }
 
 console.log(`✓ slack-enterprise-rung-test: ${n} assertion(s) passed`);

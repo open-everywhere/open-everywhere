@@ -492,6 +492,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
     "J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion",
+    "S-OWN-ACCOUNT-NOTION",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
@@ -528,8 +529,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
-    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
+    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE+S-OWN-ACCOUNT-NOTION(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -538,7 +539,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-PR-SESSION,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -567,6 +568,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-LINK-SLACK requires slack + syntheticDm (the initiator's DM turns — a driver-posted DM never wakes) + slackSecondary (a genuinely SECOND real account; link-store.ts refuses a self-claim, so this flow cannot be driven from one identity)",
   );
   ok(req("J-WORKFLOW") === "slack+synthetic+pr", "J-WORKFLOW requires slack + synthetic + pr (the read→PR→remember→recall chain reuses the PR drive)");
+  ok(
+    req("S-OWN-ACCOUNT-NOTION") === "notionAmbient",
+    "S-OWN-ACCOUNT-NOTION (OPE-1599) requires only notionAmbient — J-NOT's own fixture, no new env var. It needs no `notion` capability: E2E_NOTION_CHANNEL's " +
+      "room cannot produce the connector.acting_identity row at all (neither Notion read tool mounts there), which is why the leg drives a NOTION-origin turn",
+  );
 
   ok(req("J-ENGAGED-slack") === "slack+engagedSlack", "J-ENGAGED-slack requires slack + engagedSlack (the base xoxp driver, rebound onto the addressed-only channel)");
   ok(req("J-ENGAGED-discord") === "discord+engagedDiscord", "J-ENGAGED-discord requires discord + engagedDiscord");
@@ -2914,9 +2920,24 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(report.slices[1].estimatedUsd === undefined, "unpriced slice carries no dollar figure (evidence rule)");
   ok(report.slices[2].model === "(unstamped)", "a model-less wire row renders as (unstamped)");
   const lines = renderCostReport(report);
-  ok(lines[lines.length - 1].startsWith("e2e run cost: $2.0000"), "total line renders the priced sum");
-  ok(lines[lines.length - 1].includes("test/unpriced"), "total line names what it could NOT price");
+  const totalLine = lines.find((l) => l.startsWith("e2e run cost:")) ?? "";
+  ok(totalLine.startsWith("e2e run cost: $2.0000"), "total line renders the priced sum");
+  ok(totalLine.includes("test/unpriced"), "total line names what it could NOT price");
   ok(lines[0].includes("3 calls") && lines[0].includes("1000000in/500000out"), "slice line shows calls + tokens");
+
+  const exclusionLine = (r: Parameters<typeof renderCostReport>[0]): string => renderCostReport(r).find((l) => l.includes("excluded by the run's session bound")) ?? "";
+  ok(exclusionLine(report).includes("not reported"), "OPE-1622: a report with NO excluded block says 'not reported' — the deployment's read predates the field");
+  ok(
+    exclusionLine(buildCostReport(rows, { surfaceKeys: [], calls: 0, estimatedUsd: 0, unpricedModels: [], sessionsUpperBound: 0 })).includes("none"),
+    "OPE-1622: an excluded count of ZERO renders as 'none' — a real answer, distinct from 'not reported'",
+  );
+  const hidden = exclusionLine(
+    buildCostReport(rows, { surfaceKeys: ["teams/tenant-a/general"], calls: 9, estimatedUsd: 1.5, unpricedModels: ["mystery/x"], sessionsUpperBound: 2 }),
+  );
+  ok(hidden.includes("9 call(s)") && hidden.includes("$1.5000"), "OPE-1622: 🔴 a non-zero exclusion prints the calls and the dollars the total does NOT contain");
+  ok(hidden.includes("teams/tenant-a/general"), "OPE-1622: …and names the surface whose figure is short — the question a bare $0.0000 leaves unanswered");
+  ok(hidden.includes("up to 2 session(s)"), "OPE-1622: …with the session figure worded as the upper bound it is, never as an exact count");
+  ok(hidden.includes("mystery/x"), "OPE-1622: …and names an unpriced model among the excluded rows, so the excluded $ is not read as complete");
 
   const { checkExpectedModels } = await import("../packages/core/scripts/e2e/cost.js");
   const ok1 = checkExpectedModels(rows, ["test/model-a", "test/unpriced"]);
@@ -3438,6 +3459,79 @@ rmSync(dir, { recursive: true, force: true });
   );
   ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
   ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
+}
+
+{
+  const {
+    actingIdentityRead,
+    allOrdinaryInstallReads,
+    CONNECTOR_ACTING_IDENTITY_ACTION,
+    HUMAN_ACTING_IDENTITY,
+    installReads,
+    INSTALL_IDENTITY,
+    ownAccountRefusals,
+    renderActingIdentityRead,
+  } = await import("../packages/core/scripts/e2e/own-account-rows.js");
+
+  ok(CONNECTOR_ACTING_IDENTITY_ACTION === "connector.acting_identity", "the action key is the writer's own, imported rather than re-typed");
+  ok(INSTALL_IDENTITY === "install" && HUMAN_ACTING_IDENTITY === "human-acting", "the two identities are the ratified CredentialGrantFamily members");
+
+  const aiRow = (detail: Record<string, unknown>, over: Partial<AuditWireEntry> = {}): AuditWireEntry => ({
+    ts: "2026-05-13T23:30:00.000Z",
+    org: "o",
+    platform: "notion",
+    workspace: "w",
+    surface: "page-1",
+    action: CONNECTOR_ACTING_IDENTITY_ACTION,
+    detail,
+    ...over,
+  });
+  const ordinary = aiRow({ askRecognised: false, connector: "notion", identity: "install", reason: "no-own-account-ask", refused: false, requiredIdentity: "install", tool: "read_notion_page" });
+  const refusal = aiRow({ askRecognised: true, connector: "notion", reason: "own-account-ask-no-grant", refused: true, requiredIdentity: "human-acting", tool: "read_notion_page" });
+
+  const both = actingIdentityRead([ordinary, refusal], "notion");
+  ok(both.rows.length === 2 && both.undecodable === 0, "both emitted shapes decode — the refusal carries no `identity` and must still decode");
+  ok(both.rows[1].identity === undefined && both.rows[1].refused, "a refused row decodes with no identity, which is the writer's own contract");
+  ok(
+    actingIdentityRead([ordinary, refusal], "linear").rows.length === 0,
+    "NEGATIVE: the connector is MATCHED — a Linear question reads none of Notion's rows, so one vendor's decision can never answer another's",
+  );
+  ok(
+    actingIdentityRead([aiRow({ askRecognised: false, connector: "notion", identity: "install", reason: "r", refused: false, requiredIdentity: "install", tool: "read_notion_page" }, { action: "connector.use" })], "notion").rows.length === 0,
+    "NEGATIVE: a row under a different ACTION is not an acting-identity row however its detail reads",
+  );
+  const shapeChanged = actingIdentityRead([aiRow({ connector: "notion", reason: "own-account-ask-no-grant", refused: "true", requiredIdentity: "human-acting", tool: "read_notion_page" })], "notion");
+  ok(
+    shapeChanged.rows.length === 0 && shapeChanged.undecodable === 1,
+    "a row carrying the action and connector but NOT the detail shape is COUNTED undecodable, never dropped silently — the change most likely to make the leg vacuous",
+  );
+
+  ok(ownAccountRefusals(both).length === 1 && ownAccountRefusals(both)[0].tool === "read_notion_page", "ownAccountRefusals finds the refusal and names the tool it stopped");
+  ok(ownAccountRefusals(actingIdentityRead([ordinary], "notion")).length === 0, "NEGATIVE: an ordinary read is not a refusal");
+  ok(
+    ownAccountRefusals(actingIdentityRead([aiRow({ askRecognised: true, connector: "notion", reason: "x", refused: true, requiredIdentity: "install", tool: "read_notion_page" })], "notion")).length === 0,
+    "NEGATIVE: a refusal that did NOT require human-acting is some other refusal — all three conditions are load-bearing",
+  );
+  ok(
+    ownAccountRefusals(actingIdentityRead([aiRow({ askRecognised: false, connector: "notion", reason: "x", refused: true, requiredIdentity: "human-acting", tool: "read_notion_page" })], "notion")).length === 0,
+    "NEGATIVE: a refusal with askRecognised=false was not produced by a person naming their account",
+  );
+
+  ok(allOrdinaryInstallReads(actingIdentityRead([ordinary, ordinary], "notion")), "the negative control passes when every row on the window is an ordinary team-identity read");
+  ok(!allOrdinaryInstallReads(both), "NEGATIVE: a window holding a refusal is not an ordinary-read window");
+  ok(
+    !allOrdinaryInstallReads(actingIdentityRead([], "notion")),
+    "VACUITY: an EMPTY window is false — a gate that was never reached must never read as a gate that refused nothing",
+  );
+  ok(!allOrdinaryInstallReads(shapeChanged), "NEGATIVE: an undecodable row on the window fails the control rather than being ignored");
+  ok(
+    !allOrdinaryInstallReads(actingIdentityRead([aiRow({ askRecognised: false, connector: "notion", identity: "human-acting", reason: "x", refused: false, requiredIdentity: "install", tool: "read_notion_page" })], "notion")),
+    "NEGATIVE: a row that RAN under human-acting is not an install read, whatever it required",
+  );
+  ok(installReads(both).length === 1, "installReads counts the team-identity reads the leg reports beside its gate");
+
+  ok(renderActingIdentityRead(actingIdentityRead([{ ...ordinary, action: "notion.dispatched" }], "notion")).includes("notion.dispatched"), "an empty read names the actions the window DID hold, so a red says what it saw");
+  ok(renderActingIdentityRead(both).includes("refused=true") && renderActingIdentityRead(both).includes("read_notion_page"), "the read-out names each row's verdict and tool — printed on a pass too, so a green does not read as bare success");
 }
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +

@@ -5,6 +5,7 @@ import type { MemoryFiles, Tier } from "./store.js";
 
 export interface PgClient {
   query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+  withConnection?<T>(fn: (client: PgClient) => Promise<T>): Promise<T>;
 }
 
 const SCHEMA_STATEMENTS: readonly string[] = [

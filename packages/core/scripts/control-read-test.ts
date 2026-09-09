@@ -155,9 +155,18 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 
   const withBoundRes = await get(`${q}&sessionStartedAfter=${encodeURIComponent(boundIso)}`, SECRET);
   ok(withBoundRes.status === 200, "OPE-402: sessionStartedAfter query param → 200 on a good ISO value");
-  const withBoundBody = (await withBoundRes.json()) as { rows: { surfaceKey: string; calls: number }[]; sessionStartedAfter?: string };
+  const withBoundBody = (await withBoundRes.json()) as {
+    rows: { surfaceKey: string; calls: number }[];
+    sessionStartedAfter?: string;
+    excluded?: { surfaceKeys: string[]; calls: number; estimatedUsd: number; sessionsUpperBound: number };
+  };
   ok(withBoundBody.rows.find((r) => r.surfaceKey === "slack/T1/C3") === undefined, "OPE-402: with sessionStartedAfter set, s-late's session is excluded wholesale over HTTP");
   ok(withBoundBody.sessionStartedAfter === boundIso, "OPE-402: the response echoes the applied sessionStartedAfter bound");
+
+  ok(withBoundBody.excluded?.calls === 1, "OPE-1622: 🔴 the wire response reports the excluded call count beside the total — the dropped row is named, not merely absent");
+  ok(withBoundBody.excluded?.surfaceKeys.join(",") === "slack/T1/C3", "OPE-1622: …naming the surface whose figure is short");
+  ok(withBoundBody.excluded?.sessionsUpperBound === 1, "OPE-1622: …with the excluded session upper bound");
+  ok(!("excluded" in withoutBoundBody), "OPE-1622: an unbounded query gets NO excluded block — absent means 'no bound applied', never 'nothing excluded'");
 
   const badBound = await get(`${q}&sessionStartedAfter=not-a-date`, SECRET);
   ok(badBound.status === 400, "OPE-402: unparseable sessionStartedAfter → 400, same contract as since");

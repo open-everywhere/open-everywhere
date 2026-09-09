@@ -314,9 +314,20 @@ export interface UsageWindowResult {
   readonly totalUsd: number;
   readonly unpricedModels: readonly string[];
   readonly sessionStartedAfter?: string;
+  readonly excluded?: UsageWindowExcluded;
+}
+
+export interface UsageWindowExcluded {
+  readonly surfaceKeys: readonly string[];
+  readonly calls: number;
+  readonly estimatedUsd: number;
+  readonly unpricedModels: readonly string[];
+  readonly sessionsUpperBound: number;
 }
 
 const WORKSPACE_KEY_SHAPE = /^[^/\s]+\/[^/\s]+$/;
+
+const USAGE_SEP = "\u0000";
 
 export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowResult> {
   const parsedSince = Date.parse(q.sinceIso);
@@ -346,11 +357,27 @@ export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowR
     keys.map((wk) => usageSummary(org, { sinceTs: since, surfaceKeyPrefix: `${wk}/`, ...(sessionStartedAfter !== undefined ? { sessionStartedAfter } : {}) })),
   );
 
-  const SEP = "\u0000";
+  const { rows, totalUsd, unpricedModels } = priceGroups(grouped);
+  if (sessionStartedAfter === undefined) return { org, since, workspaceKeys: keys, rows, totalUsd, unpricedModels };
+
+  const unbounded = await Promise.all(keys.map((wk) => usageSummary(org, { sinceTs: since, surfaceKeyPrefix: `${wk}/` })));
+  return {
+    org,
+    since,
+    workspaceKeys: keys,
+    rows,
+    totalUsd,
+    unpricedModels,
+    sessionStartedAfter,
+    excluded: excludedByBound(grouped, unbounded),
+  };
+}
+
+function priceGroups(grouped: readonly (readonly UsageSummaryRow[])[]): { rows: UsageWindowRow[]; totalUsd: number; unpricedModels: string[] } {
   const acc = new Map<string, { surfaceKey: string; model?: string; calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }>();
   for (const rows of grouped) {
     for (const r of rows) {
-      const key = `${r.surfaceKey}${SEP}${r.model ?? ""}`;
+      const key = `${r.surfaceKey}${USAGE_SEP}${r.model ?? ""}`;
       const a = acc.get(key) ?? { surfaceKey: r.surfaceKey, ...(r.model ? { model: r.model } : {}), calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
       a.calls += r.events;
       a.inputTokens += r.inputTokens;
@@ -371,8 +398,44 @@ export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowR
       else totalUsd += usd;
       return { ...r, ...(usd !== undefined ? { estimatedUsd: usd } : {}) };
     });
+  return { rows, totalUsd, unpricedModels: [...unpriced].sort() };
+}
 
-  return { org, since, workspaceKeys: keys, rows, totalUsd, unpricedModels: [...unpriced].sort(), ...(sessionStartedAfter !== undefined ? { sessionStartedAfter } : {}) };
+function excludedByBound(
+  bounded: readonly (readonly UsageSummaryRow[])[],
+  unbounded: readonly (readonly UsageSummaryRow[])[],
+): UsageWindowExcluded {
+  const grainKey = (r: UsageSummaryRow): string =>
+    [r.surfaceKey, r.principalId ?? "", r.kind ?? "", r.routineId ?? "", r.model ?? ""].join(USAGE_SEP);
+  const boundedByGrain = new Map<string, UsageSummaryRow>();
+  for (const rows of bounded) for (const r of rows) boundedByGrain.set(grainKey(r), r);
+
+  const diffs: UsageSummaryRow[] = [];
+  const surfaceKeys = new Set<string>();
+  let calls = 0;
+  let sessionsUpperBound = 0;
+  for (const rows of unbounded) {
+    for (const u of rows) {
+      const b = boundedByGrain.get(grainKey(u));
+      const events = Math.max(0, u.events - (b?.events ?? 0));
+      sessionsUpperBound += Math.max(0, u.sessions - (b?.sessions ?? 0));
+      if (events === 0) continue;
+      calls += events;
+      surfaceKeys.add(u.surfaceKey);
+      diffs.push({
+        ...u,
+        events,
+        sessions: Math.max(0, u.sessions - (b?.sessions ?? 0)),
+        inputTokens: Math.max(0, u.inputTokens - (b?.inputTokens ?? 0)),
+        outputTokens: Math.max(0, u.outputTokens - (b?.outputTokens ?? 0)),
+        cacheReadTokens: Math.max(0, u.cacheReadTokens - (b?.cacheReadTokens ?? 0)),
+        cacheWriteTokens: Math.max(0, u.cacheWriteTokens - (b?.cacheWriteTokens ?? 0)),
+      });
+    }
+  }
+
+  const priced = priceGroups([diffs]);
+  return { surfaceKeys: [...surfaceKeys].sort(), calls, estimatedUsd: priced.totalUsd, unpricedModels: priced.unpricedModels, sessionsUpperBound };
 }
 
 export interface SkillsListQuery {

@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,6 +18,7 @@ const CORE_DIR = join(HERE, "..");
 const REPO_ROOT = join(CORE_DIR, "..", "..");
 const TSX_CLI = join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const CLI = join(HERE, "verify-audit-chain.ts");
+const SEAL_CLI = join(HERE, "seal-audit-epoch.ts");
 
 const workDir = mkdtempSync(join(tmpdir(), "oe-chain-cli-"));
 const DB = join(workDir, "audit.sqlite3");
@@ -34,6 +36,16 @@ interface CliResult {
 
 function runCli(args: string[], sqlitePath: string = DB): CliResult {
   const r = spawnSync(process.execPath, [TSX_CLI, CLI, ...args], {
+    encoding: "utf8",
+    cwd: CORE_DIR,
+    env: { ...process.env, OE_OPERATIONAL_PROVIDER: "sqlite", OE_SQLITE_PATH: sqlitePath },
+  });
+  if (r.error) throw r.error;
+  return { code: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
+}
+
+function runSeal(args: string[], sqlitePath: string = DB): CliResult {
+  const r = spawnSync(process.execPath, [TSX_CLI, SEAL_CLI, ...args], {
     encoding: "utf8",
     cwd: CORE_DIR,
     env: { ...process.env, OE_OPERATIONAL_PROVIDER: "sqlite", OE_SQLITE_PATH: sqlitePath },
@@ -64,6 +76,8 @@ await seed("mutated", 3);
 await seed("deleted", 3);
 await seed("windowed", 6);
 await seed("headless", 4);
+await seed("manybreaks", 12);
+await seed("sealed", 4);
 
 function seqsOf(org: string): number[] {
   const db = new DatabaseSync(DB);
@@ -75,6 +89,7 @@ function seqsOf(org: string): number[] {
 }
 
 const mutatedSeqs = seqsOf("mutated");
+const manySeqs = seqsOf("manybreaks");
 const deletedSeqs = seqsOf("deleted");
 
 {
@@ -83,6 +98,7 @@ const deletedSeqs = seqsOf("deleted");
     db.prepare("UPDATE audit_entry SET detail = ? WHERE seq = ?").run(JSON.stringify({ n: 999 }), mutatedSeqs[1]);
     db.prepare("DELETE FROM audit_entry WHERE seq = ?").run(deletedSeqs[1]);
     db.prepare("DELETE FROM audit_entry WHERE seq = ?").run(seqsOf("headless")[0]);
+    for (const i of [2, 5, 8]) db.prepare("DELETE FROM audit_entry WHERE seq = ?").run(manySeqs[i]);
   } finally {
     db.close();
   }
@@ -98,15 +114,18 @@ const deletedSeqs = seqsOf("deleted");
 {
   const r = runCli(["--org", "mutated"]);
   ok(r.code === 1, `mutated: a mutated row exits 1 (got ${r.code})`);
-  ok(r.out.includes(`BREAK at seq ${mutatedSeqs[2]}`), `mutated: stdout names the SUCCESSOR's seq ${mutatedSeqs[2]}`);
+  ok(new RegExp(`seq ${mutatedSeqs[2]} \\(`).test(r.out), `mutated: stdout names the SUCCESSOR's seq ${mutatedSeqs[2]}`);
+  ok(/1 BROKEN LINK\(S\)/.test(r.out), "mutated: the per-org line counts the broken links");
   ok(!/chain intact/.test(r.out), "mutated: stdout never calls a broken chain intact");
-  ok(/broken chain/.test(r.out), "mutated: the summary states a broken chain");
+  ok(/broken link\(s\) across/.test(r.out), "mutated: the summary states the broken-link total");
+  ok(/Broken links by action/.test(r.out), "mutated: the summary breaks the count down by action — the write-side diagnostic");
+  ok(/^\s+1\s+a\.2$/m.test(r.out), "mutated: the per-action table names the action the broken row carries (a.2, the successor)");
 }
 
 {
   const r = runCli(["--org", "deleted"]);
   ok(r.code === 1, `deleted: a deleted row exits 1 (got ${r.code})`);
-  ok(r.out.includes(`BREAK at seq ${deletedSeqs[2]}`), `deleted: stdout names the next surviving row's seq ${deletedSeqs[2]}`);
+  ok(new RegExp(`seq ${deletedSeqs[2]} \\(`).test(r.out), `deleted: stdout names the next surviving row's seq ${deletedSeqs[2]}`);
 }
 
 {
@@ -205,7 +224,242 @@ const deletedSeqs = seqsOf("deleted");
   for (const org of ["intact", "mutated", "deleted", "windowed", "headless"]) {
     ok(r.out.includes(org), `all-orgs: the scan reports org ${org}`);
   }
-  ok(r.out.includes("3 org(s) with a broken chain"), "all-orgs: the summary counts exactly the three broken orgs");
+  ok(/across 4 org\(s\)/.test(r.out), "all-orgs: the summary counts every broken org (mutated, deleted, headless, manybreaks)");
+}
+
+{
+  const r = runCli(["--org", "manybreaks"]);
+  ok(r.code === 1, `enumerate: a chain with three deletions exits 1 (got ${r.code})`);
+  ok(/3 BROKEN LINK\(S\)/.test(r.out), "enumerate: the per-org line counts all three, not one");
+  for (const i of [3, 6, 9]) {
+    ok(new RegExp(`seq ${manySeqs[i]} \\(`).test(r.out), `enumerate: the successor of each deleted row is named (seq ${manySeqs[i]})`);
+  }
+  ok(/3 broken link\(s\) across 1 org\(s\)/.test(r.out), "enumerate: the summary totals the broken links");
+
+  const capped = runCli(["--org", "manybreaks", "--max-detail", "1"]);
+  ok(capped.code === 1, `enumerate: --max-detail does not change the exit code (got ${capped.code})`);
+  ok(/3 BROKEN LINK\(S\)/.test(capped.out), "enumerate: --max-detail leaves the count at three");
+  ok(/2 more not printed/.test(capped.out), "enumerate: --max-detail says how many it withheld");
+  ok(!new RegExp(`seq ${manySeqs[9]} \\(`).test(capped.out), "enumerate: --max-detail really withholds the later sites");
+  ok(runCli(["--org", "manybreaks", "--max-detail", "0"]).code === 2, "enumerate: --max-detail 0 is an argument error");
+}
+
+{
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare("UPDATE audit_entry SET prev_sha = NULL WHERE org_id = 'sealed'").run();
+    } finally {
+      db.close();
+    }
+  }
+  const unsealed = runCli(["--org", "sealed"]);
+  ok(unsealed.code === 1, `epoch: an unsealed pre-chain era exits 1 (got ${unsealed.code})`);
+  ok(/prev_sha is null mid-chain/.test(unsealed.out), "epoch: the unsealed era is reported as null links, not silently accepted");
+
+  const dry = runSeal(["--org", "sealed", "--sealed-by", "rowan"]);
+  ok(dry.code === 0, `epoch: a dry-run seal exits 0 (got ${dry.code})`);
+  ok(/DRY RUN/.test(dry.out), "epoch: without --go the command says it wrote nothing");
+  ok(runCli(["--org", "sealed"]).code === 1, "epoch: the dry run really wrote nothing — the era is still unsealed");
+
+  const sealed = runSeal(["--org", "sealed", "--sealed-by", "rowan", "--go"]);
+  ok(sealed.code === 0, `epoch: --go seals and exits 0 (got ${sealed.code})`);
+  ok(/Epoch marker appended/.test(sealed.out), "epoch: the command confirms the marker landed");
+  ok(/--accept-epoch \d+/.test(sealed.out), "epoch: the sealer prints the exact --accept-epoch the verifier needs");
+
+  const unvouched = runCli(["--org", "sealed"]);
+  ok(unvouched.code === 4, `epoch: an UNACKNOWLEDGED epoch exits 4, not 0 (got ${unvouched.code})`);
+  ok(/NOT ACKNOWLEDGED/.test(unvouched.out), "epoch: the run says the epoch was not acknowledged");
+  ok(!/chain intact/.test(unvouched.out), "epoch: an unacknowledged epoch never yields the words 'chain intact'");
+  ok(/does not certify the chain/.test(unvouched.out), "epoch: the summary refuses to certify");
+
+  const sealedSeq = seqsOf("sealed").at(-1)!;
+  const after = runCli(["--org", "sealed", "--accept-epoch", String(sealedSeq)]);
+  ok(after.code === 0, `epoch: an ACKNOWLEDGED epoch verifies (got ${after.code}) — the marker is not a break`);
+  ok(!/chain intact/.test(after.out), "epoch: an org whose sealed era covered breaks is never called 'chain intact'");
+  ok(/no broken link OUTSIDE the sealed era/.test(after.out), "epoch: the verdict says exactly what was and was not checked by link");
+  ok(runCli(["--org", "sealed", "--accept-epoch", "999999"]).code === 4, "epoch: acknowledging the WRONG seq does not vouch for the epoch that is there");
+  ok(runCli(["--accept-epoch", "abc"]).code === 2, "epoch: --accept-epoch takes a seq, not a word");
+  ok(runCli(["--accept-epoch"]).code === 2, "epoch: a trailing --accept-epoch with no value exits 2");
+  ok(/sealed chain epoch at seq/.test(after.out), "epoch: the verifier REPORTS the epoch it crossed");
+  ok(/seal VERIFIED/.test(after.out), "epoch: a full walk re-verifies the era digest");
+  ok(/already broken when sealed/.test(after.out), "epoch: the marker's recorded break count is printed — the seal hides nothing");
+  ok(/3 of them already broken when sealed/.test(after.out), "epoch: the recorded count is the era's REAL break count, not zero");
+  ok(/3 link break\(s\) inside the sealed era are covered by the seal/.test(after.out), "epoch: the verifier says how many link breaks the seal covers");
+  ok(/ERA-DIGEST evidence/.test(after.out), "epoch: the verifier states what evidence pre-epoch rows still carry");
+
+  ok(runSeal(["--org", "sealed", "--sealed-by", "rowan", "--go"]).code === 1, "epoch: sealing again with no rows since exits 1");
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare("UPDATE audit_entry SET detail = ? WHERE seq = ?").run(JSON.stringify({ n: 4242 }), seqsOf("sealed")[1]);
+    } finally {
+      db.close();
+    }
+  }
+  const tampered = runCli(["--org", "sealed", "--accept-epoch", String(sealedSeq)]);
+  ok(tampered.code === 1, `epoch: mutating a pre-epoch row exits 1 even with the epoch acknowledged (got ${tampered.code})`);
+  ok(/era digest/.test(tampered.out), "epoch: the break names the era digest — pre-epoch rows are still under detection");
+  ok(!/chain intact/.test(tampered.out), "epoch: a failed seal is never called intact");
+
+  const sealHelp = runSeal(["--help"]);
+  ok(sealHelp.code === 0, `epoch: the sealer's --help exits 0 (got ${sealHelp.code})`);
+  for (const code of ["0", "1", "2", "5"]) {
+    ok(new RegExp(`(^|[^0-9])${code}\\s`, "m").test(sealHelp.out), `epoch: the sealer's --help documents exit code ${code}`);
+  }
+  ok(/READ-ONLY/.test(sealHelp.out), "epoch: the sealer's --help says the dry run opens the store read-only");
+
+  ok(runSeal(["--sealed-by", "rowan"]).code === 2, "epoch: seal without --org exits 2 — an epoch row is permanent, so the org is never guessed");
+  ok(runSeal(["--org", "sealed"]).code === 2, "epoch: seal without --sealed-by exits 2 — an operator act carries a name");
+  ok(runSeal(["--org", "nosuchorg", "--sealed-by", "t", "--go"]).code === 1, "epoch: sealing an org with no rows exits 1 and writes nothing");
+}
+
+{
+  const { auditEpochDetail, auditEraDigest, walkAuditChain, AUDIT_CHAIN_EPOCH_ACTION } = await import("../agent/audit/chain.js");
+  const forgeOrg = "forged";
+  await seed(forgeOrg, 6);
+  const forgeSeqs = seqsOf(forgeOrg);
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare("DELETE FROM audit_entry WHERE seq = ?").run(forgeSeqs[2]);
+    } finally {
+      db.close();
+    }
+  }
+  const broken = runCli(["--org", forgeOrg]);
+  ok(broken.code === 1, `forged: the era really is broken before the forgery (got ${broken.code})`);
+
+  const era = await store.readAuditChain(forgeOrg);
+  const forged = auditEpochDetail({
+    rowsBefore: era.length,
+    firstSeqBefore: era[0].seq,
+    lastSeqBefore: era.at(-1)!.seq,
+    breaksBefore: walkAuditChain(era, { expectGenesis: true }).breaks.length,
+    eraDigest: auditEraDigest(era),
+  });
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare(
+        "INSERT INTO audit_entry (ts, org_id, platform, workspace, principal_id, action, detail, prev_sha) VALUES (?, ?, 'db', 'sqlite', 'mallory', ?, ?, NULL)",
+      ).run("2026-07-02T00:00:00Z", forgeOrg, AUDIT_CHAIN_EPOCH_ACTION, JSON.stringify(forged));
+    } finally {
+      db.close();
+    }
+  }
+  const forgedRun = runCli(["--org", forgeOrg]);
+  ok(forgedRun.code !== 0, `forged: a forged epoch does NOT turn the chain green (got ${forgedRun.code})`);
+  ok(forgedRun.code === 4, `forged: the run exits 4 — an unacknowledged epoch (got ${forgedRun.code})`);
+  ok(!/chain intact/.test(forgedRun.out), "forged: the words 'chain intact' never appear");
+  ok(/seal VERIFIED/.test(forgedRun.out), "forged: the seal itself does verify — which is exactly why verification alone is not enough");
+  ok(/NOT ACKNOWLEDGED/.test(forgedRun.out), "forged: the run names the epoch nobody vouched for");
+  ok(/link break\(s\) inside the sealed era/.test(forgedRun.out), "forged: the run says how many link breaks the seal covers");
+}
+
+{
+  await seed("orphanedera", 3);
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare("UPDATE audit_entry SET prev_sha = NULL WHERE org_id = 'orphanedera'").run();
+    } finally {
+      db.close();
+    }
+  }
+  const sealed = runSeal(["--org", "orphanedera", "--sealed-by", "rowan", "--go"]);
+  ok(sealed.code === 0, `orphaned-epoch: the era seals first (got ${sealed.code})`);
+  const markerSeq = seqsOf("orphanedera").at(-1)!;
+  await seed("orphanedera", 1);
+
+  {
+    const db = new DatabaseSync(DB);
+    try {
+      db.prepare("DELETE FROM audit_entry WHERE org_id = 'orphanedera' AND seq < ?").run(markerSeq);
+    } finally {
+      db.close();
+    }
+  }
+  ok(seqsOf("orphanedera")[0] === markerSeq, "orphaned-epoch: the marker really is the first row now");
+
+  const full = runCli(["--org", "orphanedera"]);
+  ok(full.code === 1, `orphaned-epoch: a full walk exits 1 — the seal claims an era that is gone (got ${full.code})`);
+  ok(!/chain intact/.test(full.out), "orphaned-epoch: the words 'chain intact' never appear");
+  ok(/sealed chain epoch at seq/.test(full.out), "orphaned-epoch: the epoch at row 0 is REPORTED, not read as a genesis row");
+  ok(/claims 3 preceding row\(s\) but 0 are present/.test(full.out), "orphaned-epoch: the break names the row-count disagreement");
+
+  const windowed = runCli(["--org", "orphanedera", "--tail", "2"]);
+  ok(windowed.code === 4, `orphaned-epoch: a window whose first row is the marker exits 4, not 0 (got ${windowed.code})`);
+  ok(/NOT ACKNOWLEDGED/.test(windowed.out), "orphaned-epoch: the window names the epoch nobody vouched for");
+  ok(!/chain intact/.test(windowed.out), "orphaned-epoch: the window never calls it intact either");
+}
+
+{
+  const { openOperationalPglite } = await import("../agent/operational/pglite-client.js");
+  const { initOperationalSchema, makeOperationalPostgresStore } = await import("../agent/operational/postgres.js");
+  const floorDir = join(workDir, "pglite-floor");
+  const floorEnv: NodeJS.ProcessEnv = { ...process.env, OE_PGLITE_DIR: floorDir };
+  delete floorEnv.OE_OPERATIONAL_PROVIDER;
+  delete floorEnv.OE_SQLITE_PATH;
+  delete floorEnv.DATABASE_URL;
+
+  async function floorState(): Promise<{ readonly actions: string[]; readonly forced: boolean }> {
+    const open = await openOperationalPglite(floorDir);
+    try {
+      const rows = await open.client.query("SELECT action FROM audit_entry WHERE org_id = 'floor' ORDER BY seq ASC");
+      const posture = await open.client.query("SELECT relforcerowsecurity AS force FROM pg_class WHERE oid = to_regclass('audit_entry')");
+      return {
+        actions: (rows.rows as { action: string }[]).map((r) => r.action),
+        forced: (posture.rows[0] as { force: boolean }).force === true,
+      };
+    } finally {
+      await open.close();
+    }
+  }
+
+  {
+    const open = await openOperationalPglite(floorDir);
+    await initOperationalSchema(open.client);
+    const floorStore = makeOperationalPostgresStore(open.client);
+    for (let i = 0; i < 3; i++) {
+      await floorStore.appendAudit({
+        ts: `2026-07-03T00:0${i}:00Z`,
+        org: "floor",
+        platform: "slack",
+        workspace: "T1",
+        action: `f.${i}`,
+        detail: { n: i },
+      });
+    }
+    await open.client.query("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY");
+    await open.close();
+  }
+  const before = await floorState();
+  ok(before.actions.length === 3 && !before.forced, "floor: the fixture starts at 3 rows with the append-only posture BROKEN");
+
+  const verified = spawnSync(process.execPath, [TSX_CLI, CLI, "--org", "floor"], { encoding: "utf8", cwd: CORE_DIR, env: floorEnv });
+  ok(verified.status === 0, `floor: the verifier walks the floor chain and exits 0 (got ${verified.status}) — ${verified.stderr?.slice(0, 200) ?? ""}`);
+  ok(/embedded Postgres floor/.test(verified.stdout ?? ""), "floor: the run really went to the embedded floor, not the sqlite stand-in");
+  const afterVerify = await floorState();
+  assert.deepEqual(afterVerify.actions, before.actions, "floor: the verifier appended NO row — the chain it walked is byte-for-byte the one it found");
+  n++;
+  ok(!afterVerify.actions.includes("audit.integrity"), "floor: no audit.integrity row was written into the chain under inspection");
+  ok(!afterVerify.forced, "floor: the verifier repaired NO posture — it reports, it does not act");
+
+  const dry = spawnSync(process.execPath, [TSX_CLI, SEAL_CLI, "--org", "floor", "--sealed-by", "rowan"], { encoding: "utf8", cwd: CORE_DIR, env: floorEnv });
+  ok(dry.status === 0, `floor: the sealer's dry run exits 0 (got ${dry.status}) — ${dry.stderr?.slice(0, 200) ?? ""}`);
+  ok(/DRY RUN/.test(dry.stdout ?? ""), "floor: the sealer's dry run says it wrote nothing");
+  const afterDry = await floorState();
+  assert.deepEqual(afterDry.actions, before.actions, "floor: the sealer's DRY RUN appended no row either");
+  n++;
+  ok(!afterDry.forced, "floor: the dry run repaired no posture — the evidence an operator came to read is untouched");
+
+  const control = spawnSync(process.execPath, [TSX_CLI, SEAL_CLI, "--org", "floor", "--sealed-by", "rowan", "--go"], { encoding: "utf8", cwd: CORE_DIR, env: floorEnv });
+  ok(control.status === 0, `floor control: the sealer's --go run exits 0 (got ${control.status}) — ${control.stderr?.slice(0, 200) ?? ""}`);
+  const afterControl = await floorState();
+  ok(afterControl.actions.includes("audit.integrity"), "floor control: a WRITING connect does append an audit.integrity row on this same fixture");
+  ok(afterControl.forced, "floor control: a writing connect also repairs the posture — which is exactly what a read command must not do");
+  ok(afterControl.actions.at(-1) === "audit.chain_epoch", "floor control: the --go run also appended its epoch marker");
 }
 
 rmSync(workDir, { recursive: true, force: true });

@@ -301,6 +301,22 @@ _setDeploymentIdentityForTest({ org: CTL_ORG });
   ok("OPE-402: with sessionStartedAfter set, the late-flusher's session is excluded wholesale (leak closed)", boundedRow?.calls === 2);
   ok("OPE-402: sessionStartedAfter echoes the normalised bound actually applied", viewWithBound.sessionStartedAfter === lateFlushWindowStart);
   ok("OPE-402: unparseable sessionStartedAfter is refused, same as sinceIso", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack/TW1"], sessionStartedAfter: "not-a-time" })));
+
+  ok("OPE-1622: no bound in the query → NO excluded block (its absence means 'no bound applied', never 'nothing excluded')", viewWithoutBound.excluded === undefined);
+  ok("OPE-1622: 🔴 with the bound applied, the read REPORTS the excluded slice rather than only shrinking the total", viewWithBound.excluded !== undefined);
+  ok("OPE-1622: …and counts the rows it removed exactly — one in-window write from the pre-window session", viewWithBound.excluded?.calls === 1);
+  ok("OPE-1622: …naming WHICH surface's total is short, which is the question a $0.0000 leaves unanswered", viewWithBound.excluded?.surfaceKeys.join(",") === "slack/TW1/C1");
+  ok("OPE-1622: …with the excluded session count as an upper bound beside it", viewWithBound.excluded?.sessionsUpperBound === 1);
+  const unboundedTotal = viewWithoutBound.totalUsd;
+  ok(
+    "OPE-1622: 🔴 excluded.estimatedUsd is real money, priced the same way the included rows are — included + excluded reconciles to the unbounded total",
+    (viewWithBound.excluded?.estimatedUsd ?? 0) > 0 && Math.abs(viewWithBound.totalUsd + (viewWithBound.excluded?.estimatedUsd ?? 0) - unboundedTotal) < 1e-12,
+  );
+  ok("OPE-1622: …and names no unpriced model, because the excluded rows carry a priced one", viewWithBound.excluded?.unpricedModels.length === 0);
+
+  const nothingExcluded = await usageWindowView({ org: UW_ORG, sinceIso: lateFlushWindowStart, workspaceKeys: ["slack/TW1"], sessionStartedAfter: iso(t0 - 999999) });
+  ok("OPE-1622 CONTROL: a bound before every session's first row excludes NOTHING — a reported zero, not an absent block", nothingExcluded.excluded?.calls === 0 && nothingExcluded.excluded?.surfaceKeys.length === 0);
+  ok("OPE-1622 CONTROL: …and the total is then the unbounded one, so the excluded slice really was empty", Math.abs(nothingExcluded.totalUsd - unboundedTotal) < 1e-12);
 }
 
 {

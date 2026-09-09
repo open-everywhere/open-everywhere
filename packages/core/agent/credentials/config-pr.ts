@@ -8,6 +8,16 @@ export interface ConfigFileContent {
   readonly sha: string;
 }
 
+export interface ConfigPrFeedback {
+  readonly kind: "review" | "comment";
+  readonly author: string;
+  readonly body: string;
+  readonly authorAssociation?: string;
+  readonly bot?: boolean;
+  readonly state?: string;
+  readonly at?: string;
+}
+
 export interface ConfigPrOutcome {
   readonly url: string;
   readonly number: number;
@@ -45,6 +55,8 @@ export interface ConfigPrProvider {
     body: string;
     token: string;
   }): Promise<ConfigPrOutcome>;
+
+  listPrFeedback?(args: { repo: string; number: number; token: string }): Promise<readonly ConfigPrFeedback[]>;
 }
 
 let registered: ConfigPrProvider | undefined;

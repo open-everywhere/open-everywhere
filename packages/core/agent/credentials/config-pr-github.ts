@@ -6,6 +6,7 @@ import {
   registerConfigPrProvider,
   type CommitIdentity,
   type ConfigFileContent,
+  type ConfigPrFeedback,
   type ConfigPrOutcome,
   type ConfigPrProvider,
 } from "./config-pr.js";
@@ -68,6 +69,45 @@ async function openOrReopenPr(
   return { url: reopened.html_url, number: reopened.number, updated: true, reopened: true };
 }
 
+interface RawFeedbackItem {
+  user?: { login?: string; type?: string };
+  body?: string;
+  author_association?: string;
+  state?: string;
+  submitted_at?: string;
+  created_at?: string;
+}
+
+async function listPrFeedback(
+  args: { repo: string; number: number; token: string },
+  fetchFn: PrFetchFn,
+  apiBase: string,
+): Promise<readonly ConfigPrFeedback[]> {
+  const get = async (url: string): Promise<RawFeedbackItem[]> => {
+    const res = await fetchFn(url, { method: "GET", headers: prApiHeaders(args.token) });
+    if (!res.ok) throw new Error(`github PR feedback read failed for ${url}: ${res.status} ${await res.text()}`);
+    const body = (await res.json()) as RawFeedbackItem[] | null;
+    return Array.isArray(body) ? body : [];
+  };
+  const item = (raw: RawFeedbackItem, kind: "review" | "comment"): ConfigPrFeedback => ({
+    kind,
+    author: raw.user?.login ?? "(unknown)",
+    body: raw.body ?? "",
+    ...(raw.author_association !== undefined ? { authorAssociation: raw.author_association } : {}),
+    ...(raw.user?.type !== undefined ? { bot: raw.user.type === "Bot" } : {}),
+    ...(kind === "review" && raw.state !== undefined ? { state: raw.state } : {}),
+    ...(raw.submitted_at ?? raw.created_at ? { at: (raw.submitted_at ?? raw.created_at)! } : {}),
+  });
+  const [reviews, comments] = await Promise.all([
+    get(`${apiBase}/repos/${args.repo}/pulls/${args.number}/reviews?per_page=100`),
+    get(`${apiBase}/repos/${args.repo}/issues/${args.number}/comments?per_page=100`),
+  ]);
+  return [
+    ...reviews.filter((r) => (r.state ?? "").toUpperCase() !== "PENDING").map((r) => item(r, "review")),
+    ...comments.map((c) => item(c, "comment")),
+  ];
+}
+
 export function makeGitHubConfigPrProvider(
   deps: {
     contents?: Pick<GitHubContents, "getFile" | "putFile">;
@@ -102,6 +142,9 @@ export function makeGitHubConfigPrProvider(
     },
     async openOrReopenPr(args): Promise<ConfigPrOutcome> {
       return openOrReopenPr(args, fetchFn, apiBase);
+    },
+    async listPrFeedback(args): Promise<readonly ConfigPrFeedback[]> {
+      return listPrFeedback(args, fetchFn, apiBase);
     },
   };
 }

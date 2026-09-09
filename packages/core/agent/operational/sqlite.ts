@@ -9,7 +9,7 @@ import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
-import { auditRowSha } from "../audit/chain.js";
+import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
 
 function dbPath(): string {
@@ -1299,6 +1299,7 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async appendAudit(entry: AuditEntry) {
+    return withOrgAuditLock(entry.org, async () => {
     const handle = getDb();
     const last = handle
       .prepare(
@@ -1339,6 +1340,7 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.detail ? JSON.stringify(entry.detail) : null,
         prevSha,
       );
+    });
   },
 
   async readAudit(filter: AuditFilter) {
@@ -1432,6 +1434,21 @@ export const sqliteOperationalStore: OperationalStore = {
         prevSha: r.prev_sha,
       }),
     );
+  },
+
+  async sealAuditChainEpoch(org, sealedBy) {
+    return withOrgAuditLock(org, async () => {
+      const rows = await sqliteOperationalStore.readAuditChain(org);
+      const seal = auditEpochSealFor(rows);
+      if (seal === null) return null;
+      const written = getDb()
+        .prepare(
+          `INSERT INTO audit_entry (ts, org_id, platform, workspace, principal_id, action, detail, prev_sha)
+           VALUES (?, ?, 'db', 'sqlite', ?, ?, ?, NULL)`,
+        )
+        .run(new Date().toISOString(), org, sealedBy, AUDIT_CHAIN_EPOCH_ACTION, JSON.stringify(auditEpochDetail(seal)));
+      return { seal, markerSeq: Number(written.lastInsertRowid) };
+    });
   },
 
   async setSpendLimit(org, scopeKey, level, limit, meta) {

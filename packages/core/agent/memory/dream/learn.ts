@@ -1,3 +1,4 @@
+import { defangProposalField } from "./correction.js";
 import type { RecurrenceLedger } from "./recurrence.js";
 import { workflowSignature } from "./recurrence.js";
 import type { Proposal } from "./proposal.js";
@@ -39,7 +40,7 @@ function proposedSkillSketch(signature: string, request: string, count: number):
     `This workflow recurred ${count} times, so the dream cycle proposes capturing it as a reusable skill.`,
     ``,
     `## Trigger`,
-    `Requests like: "${request.slice(0, 200)}"`,
+    `Requests like: "${defangProposalField(request, 200)}"`,
     ``,
     `## Steps`,
     `1. (fill in the repeated steps — the cycle detected the pattern, a human authors the procedure)`,
