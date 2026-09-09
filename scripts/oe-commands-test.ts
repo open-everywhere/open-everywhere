@@ -236,6 +236,52 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
 }
 
 {
+  type VersionAnswer = {
+    version: string;
+    deploymentSha: string;
+    evePin: string;
+    contextWindowTokens?: number;
+    compactionThresholdTokens?: number;
+  };
+  const agentVersion = (await import("@open-everywhere/core/agent/tools/agent_version.js")).default;
+  const runTool = async (): Promise<VersionAnswer> => (await agentVersion.execute({}, {} as never)) as unknown as VersionAnswer;
+
+  registerAppInfo({
+    version: "0.0.0",
+    primaryModel: "zai/glm-5.2",
+    utilityModel: "deepseek/deepseek-v4-flash",
+    deploymentSha: "sha-abc",
+    evePin: "0.44.0",
+    contextWindowTokens: 1_050_000,
+    compactionThresholdTokens: 525_000,
+  });
+  const answer = await runTool();
+  ok(answer.deploymentSha === "sha-abc", "agent_version returns the registered deployment sha");
+  ok(answer.version === APP_VERSION_UNVERSIONED, "…and the NORMALISED version, so the tool and the command answer the same word");
+  ok(answer.contextWindowTokens === 1_050_000, "🔴 agent_version returns the registered context window");
+  ok(answer.compactionThresholdTokens === 525_000, "🔴 …and the registered compaction threshold — the number `/oe status` prints");
+
+  const grouped = (v: unknown) => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const rendered = renderStatus(getAppInfo(), "sqlite");
+  ok(
+    rendered.includes(`context window: \`${grouped(answer.contextWindowTokens)}\` tokens`) &&
+      rendered.includes(`fires at \`${grouped(answer.compactionThresholdTokens)}\``),
+    "🔴 the command's line and the tool's fields carry the SAME two numbers — the disagreement the tool's header claims to prevent",
+  );
+
+  registerAppInfo({ version: "1.2.3", primaryModel: "m", utilityModel: "u", deploymentSha: "sha-def", evePin: "0.44.0" });
+  const halfAnswer = await runTool();
+  ok(halfAnswer.deploymentSha === "sha-def", "the second registration reached the tool (so the fields below are read fresh, not cached)");
+  ok(halfAnswer.contextWindowTokens === undefined, "🔴 NEGATIVE CONTROL: an app that registered no window gets NO window field — never a default");
+  ok(halfAnswer.compactionThresholdTokens === undefined, "…and no threshold field either");
+
+  const declared = Object.keys((agentVersion.outputSchema as { shape: Record<string, unknown> }).shape);
+  ok(declared.includes("contextWindowTokens") && declared.includes("compactionThresholdTokens"), "🔴 both fields are DECLARED in the output schema, not merely returned");
+
+  resetAppInfo();
+}
+
+{
   const def = buildOeDiscordCommandDefinition() as {
     name: string;
     type: number;

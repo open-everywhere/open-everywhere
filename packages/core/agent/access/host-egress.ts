@@ -5,6 +5,7 @@ import type { BindableContext } from "../identity/binding.js";
 import type { ReachableHost } from "./resolver.js";
 import { resolveAccessFor } from "./request.js";
 import { narrowByConnectorOverride } from "./connector-scope.js";
+import { withExtraEgressHosts } from "./extra-hosts.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostCallAuditFields } from "./egress.js";
 import { haltScopeForCtx, resolveHalt } from "./halt.js";
@@ -233,7 +234,7 @@ export interface ReachDeps {
 export async function assertEgressReach(ctx: BindableContext, rawUrl: string, deps: ReachDeps = {}): Promise<URL> {
   const tool = deps.tool ?? DEFAULT_TOOL_LABEL;
   const url = parseHttpUrl(rawUrl, tool);
-  const hosts = (deps.hosts ?? ((c: BindableContext) => resolveAccessFor(c).reachableHosts))(ctx);
+  const hosts = withExtraEgressHosts((deps.hosts ?? ((c: BindableContext) => resolveAccessFor(c).reachableHosts))(ctx));
   const entry = reachableEntry(url.hostname, hosts);
   const deny = async (reason: ReachDenyReason): Promise<never> => {
     await auditToolAction(ctx, "egress.hostside.deny", {

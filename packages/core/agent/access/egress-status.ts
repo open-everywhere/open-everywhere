@@ -78,16 +78,16 @@ export function renderEgressStatus(input: EgressStatusInput): string {
 export const EGRESS_README = `# Egress from this sandbox
 
 Network access out of this sandbox is **default-deny**. Only the hosts listed in
-\`STATUS.json\` (beside this file) are reachable; everything else fails at the firewall.
+\`STATUS.json\` are reachable; everything else fails at the firewall.
 
 Read \`STATUS.json\` first. It carries the enforcement state, every allowed host with any
-method/path narrowing on it, and \`policyFingerprint\` — the id of the exact policy in force.
+method/path narrowing on it, and \`policyFingerprint\`.
 
 ## If a request was blocked
 
 **Do not retry it, and do not try to route around it.** A denial here is policy, not an
 outage: a retry, a mirror, a proxy, a different port and a different DNS name all fail the
-same way, and the only thing they cost is your turn. Nothing about the block is transient.
+same way, and the only thing they cost is your turn.
 
 **Report it instead**, in your answer, naming the host you needed and what you needed it
 for. The policy that denied you is on the record — an \`egress.policy\` audit row carries the
@@ -107,15 +107,16 @@ credentialed one. It then lands on the session's next turn.
 
 **Never add an \`Authorization\` header yourself.** Where \`credentialInjected\` is true in
 \`STATUS.json\`, the firewall stamps the credential onto the request as it leaves. You do not
-hold that secret and cannot read it — that is the design, not a gap. A 401 from such a host
-means the credential is wrong or expired upstream, so report it; do not go looking for a key.
+hold that secret and cannot read it. A 401 from such a host means the credential is wrong or
+expired upstream, so report it; do not go looking for a key.
 
 **\`web_fetch\` and \`web_search\` do not run in here.** They execute host-side, outside this
 sandbox. That changes WHO enforces, not WHAT is allowed: \`web_fetch\` is fenced against this
 same allow-list before it dispatches, so a host absent from \`STATUS.json\` is refused there
 too — audibly, naming the host, unlike the silent failure you get in here. \`web_search\` runs
-inside the model call and is bounded by neither. This file describes commands **you** run in
-this sandbox: \`curl\`, \`git\`, \`npm\`, and anything else you shell out to.
+inside the model call and is bounded by neither. \`github.com\` is the exception: a repo grant
+lists it for \`git\`, not for \`web_fetch\`. This file is about what **you** run in here:
+\`curl\`, \`git\`, \`npm\`.
 
 ## If \`enforcement\` is not "enforced"
 

@@ -118,7 +118,7 @@ export function renderHelp(): string {
   return [
     "*/oe* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — " +
       "these work even during a spend-cap decline or a model/gateway outage):",
-    "• `/oe status` — deploy sanity: app version, deployment sha, eve pin, model config, memory provider.",
+    "• `/oe status` — deploy sanity: deployment sha, eve pin, model config, memory provider, telemetry — plus the app version and the context window with its compaction threshold, each where this deployment carries one.",
     "• `/oe stop` — stand down the turn running in this channel (free, instant, works over a spend cap).",
     "• `/oe budget` — this channel's and workspace's effective spend caps + current-month spend.",
     "• `/oe budget raise <usd>` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).",

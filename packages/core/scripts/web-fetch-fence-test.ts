@@ -347,6 +347,52 @@ async function refusal(fn: () => unknown): Promise<string> {
   }
 }
 
+{
+  const { registerExtraEgressHosts, resetExtraEgressHostsForTest } = await import("../agent/access/extra-hosts.js");
+  const { compileNetworkPolicy } = await import("../agent/access/egress.js");
+  const { summariseEgressPolicy } = await import("../agent/access/egress-status.js");
+  const { resolveAccessFor } = await import("../agent/access/request.js");
+
+  const beforeRegistry = await refusal(() => assertEgressReach(CTX, "https://qa.acme.test/x", { tool: "web_fetch", narrow: passThrough }));
+  ok(beforeRegistry.includes('"qa.acme.test"'), "🔴 NEGATIVE CONTROL: an unregistered capability host is refused host-side");
+
+  registerExtraEgressHosts("agent-browser", ["QA.Acme.test "]);
+  try {
+    const listed = summariseEgressPolicy(
+      await compileNetworkPolicy(resolveAccessFor(CTX), async () => ({}), async (ids) => ids),
+    ).allow.map((e) => e.host);
+    ok(listed.includes("qa.acme.test"), "the capability host IS listed by the sandbox status the agent reads");
+    ok(listed.includes("raw.githubusercontent.com"), "…alongside the bundle's own declared host, so the list under test carries both sources");
+
+    for (const host of listed) {
+      if (host.startsWith("*")) continue;
+      const url = await assertEgressReach(CTX, `https://${host}/probe`, { tool: "web_fetch", narrow: passThrough });
+      ok(url.hostname === host, `🔴 a host listed by the sandbox status is admitted by the host-side check: ${host}`);
+    }
+
+    const sibling = await refusal(() => assertEgressReach(CTX, "https://evil-qa.acme.test/x", { tool: "web_fetch", narrow: passThrough }));
+    ok(sibling.includes('"evil-qa.acme.test"'), "🔴 NEGATIVE CONTROL: the registry admits one EXACT host, never a suffix of it");
+
+    registerExtraEgressHosts("collide", ["api.acme.test"]);
+    const revoked = await refusal(() =>
+      assertEgressReach(CTX, "https://api.acme.test/x", {
+        tool: "web_fetch",
+        hosts: hostsOf([{ host: "api.acme.test", viaConnection: "conn-1" }]),
+        narrow: async () => [],
+      }),
+    );
+    ok(
+      revoked === egressReachDenial("web_fetch", "api.acme.test", "connector-revoked"),
+      "🔴 a declared CREDENTIALED entry keeps its connection id — the registry adds hosts, it never replaces one, so the revoke still bites",
+    );
+  } finally {
+    resetExtraEgressHostsForTest();
+  }
+
+  const afterReset = await refusal(() => assertEgressReach(CTX, "https://qa.acme.test/x", { tool: "web_fetch", narrow: passThrough }));
+  ok(afterReset.includes('"qa.acme.test"'), "…and emptying the registry closes the host again, so the admission tracked the registry throughout");
+}
+
 console.log(
-  `\n✓ web-fetch-fence: ${n} assertions passed (shared reach decision + legible refusal + live-resolver default + break-glass revoke parity + audited deny + real mounted wiring + per-hop redirect fence)\n`,
+  `\n✓ web-fetch-fence: ${n} assertions passed (shared reach decision + legible refusal + live-resolver default + break-glass revoke parity + audited deny + real mounted wiring + per-hop redirect fence + one-table status/host-side join)\n`,
 );

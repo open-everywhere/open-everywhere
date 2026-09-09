@@ -3,7 +3,7 @@ import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "./normalized-wake.js";
 
 interface RepliedThisTurn {
   readonly turnId: string;
-  readonly replied: true;
+  readonly posts: number;
 }
 
 const slot = defineState<RepliedThisTurn | null>("open-everywhere.replied-this-turn", () => null);
@@ -11,7 +11,7 @@ const slot = defineState<RepliedThisTurn | null>("open-everywhere.replied-this-t
 export function markRepliedThisTurn(turnId: string | undefined): void {
   if (turnId === undefined || turnId.length === 0) return;
   try {
-    slot.update(() => ({ turnId, replied: true }));
+    slot.update((prev) => ({ turnId, posts: prev !== null && prev.turnId === turnId ? prev.posts + 1 : 1 }));
   } catch {
   }
 }
@@ -27,13 +27,13 @@ export function consumeRepliedThisTurn(turnId: string | undefined): boolean {
   }
 }
 
-function hasRepliedThisTurn(turnId: string | undefined): boolean {
-  if (turnId === undefined || turnId.length === 0) return false;
+function postsThisTurn(turnId: string | undefined): number {
+  if (turnId === undefined || turnId.length === 0) return 0;
   try {
     const cur = slot.get();
-    return cur !== null && cur.turnId === turnId;
+    return cur !== null && cur.turnId === turnId ? cur.posts : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
@@ -186,10 +186,19 @@ export function wasStoppedAckSpentThisTurn(turnId: string | undefined): boolean 
   }
 }
 
+function replyCarriesTheAcknowledgement(): boolean {
+  try {
+    const arm = peekDeliveryArm();
+    return arm === "wake-addressed" || arm === "reply-only";
+  } catch {
+    return false;
+  }
+}
+
 interface StoodDownThisTurn {
   readonly turnId: string;
   readonly stoodDown: true;
-  readonly postedBefore: boolean;
+  readonly postsBefore: number;
 }
 
 const stoodDownSlot = defineState<StoodDownThisTurn | null>("open-everywhere.stood-down-this-turn", () => null);
@@ -199,8 +208,8 @@ export const NO_REPLY_AFTER_STAND_DOWN_ACTION = "reply.no_reply_after_stand_down
 export function markStoodDownThisTurn(turnId: string | undefined): void {
   if (turnId === undefined || turnId.length === 0) return;
   try {
-    const postedBefore = hasRepliedThisTurn(turnId);
-    stoodDownSlot.update(() => ({ turnId, stoodDown: true, postedBefore }));
+    const postsBefore = postsThisTurn(turnId);
+    stoodDownSlot.update(() => ({ turnId, stoodDown: true, postsBefore }));
   } catch {
   }
 }
@@ -225,7 +234,8 @@ export function standDownAckOwedThisTurn(turnId: string | undefined): boolean {
   }
   if (mark === null || mark.turnId !== turnId) return false;
   if (wasStoppedAckSpentThisTurn(turnId)) return false;
-  return mark.postedBefore || !hasRepliedThisTurn(turnId);
+  if (!replyCarriesTheAcknowledgement()) return true;
+  return postsThisTurn(turnId) <= mark.postsBefore;
 }
 
 export function standDownAckOwedMessage(ackRoute: string): string {

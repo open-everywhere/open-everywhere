@@ -202,6 +202,7 @@ async function enrol(ctx: unknown, threadTs: string): Promise<void> {
   await inSession(async () => {
     const ctx = threadCtx("C_POSTED", "1830.1", "turn_1");
     await enrol(ctx, "1830.1");
+    markDeliveryArm("reply-only");
     await standDown.execute({ reason: "asked me to stop following" }, ctx);
     ok(standDownAckOwedThisTurn("turn_1"), "the debt stands the moment the stand-down runs");
     markRepliedThisTurn("turn_1");
@@ -230,6 +231,76 @@ async function enrol(ctx: unknown, threadTs: string): Promise<void> {
   });
 
   await inSession(async () => {
+    const ctx = threadCtx("C_PRE_THEN_POST", "1836.1", "turn_1");
+    await enrol(ctx, "1836.1");
+    markDeliveryArm("wake-addressed");
+    markRepliedThisTurn("turn_1");
+    await standDown.execute({ reason: "asked me to stop following" }, ctx);
+    ok(standDownAckOwedThisTurn("turn_1"), "the debt stands while only the PRECEDING post has landed (the (d) state)");
+    markRepliedThisTurn("turn_1");
+    ok(
+      !standDownAckOwedThisTurn("turn_1"),
+      "🔴 OPE-1596: a post that lands AFTER the stand-down discharges it even on a turn that had ALREADY posted",
+    );
+    const res = await noReply.execute({ reason: "user_requested_silence" }, ctx);
+    ok(res.acknowledged === true, "…so the `no_reply` is accepted rather than refused for the rest of the turn");
+    ok(peekNoReplyThisTurn() === "user_requested_silence", "…and the silence is recorded normally");
+  });
+
+  await inSession(async () => {
+    const ctx = threadCtx("C_ARM_GATE", "1836.2", "turn_1");
+    await enrol(ctx, "1836.2");
+    markDeliveryArm("dual-mode");
+    markRepliedThisTurn("turn_1");
+    await standDown.execute({ reason: "asked me to stop following" }, ctx);
+    markRepliedThisTurn("turn_1");
+    ok(
+      standDownAckOwedThisTurn("turn_1"),
+      "🔴 a post AFTER the stand-down discharges NOTHING on a prose-posting arm — the acknowledgement there is the final text",
+    );
+    let message = "";
+    try {
+      await noReply.execute({ reason: "user_requested_silence" }, ctx);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    ok(message.includes("still owes the one-line acknowledgement"), "…so the `no_reply` is REFUSED, and the final text still has to be written");
+    ok(peekNoReplyThisTurn() === null, "🔴 …with NO silence recorded — a recorded silence is what drops the final text");
+  });
+
+  await inSession(async () => {
+    const ctx = threadCtx("C_PRE_TWICE", "1837.1", "turn_1");
+    await enrol(ctx, "1837.1");
+    markDeliveryArm("dual-mode");
+    markRepliedThisTurn("turn_1");
+    markRepliedThisTurn("turn_1");
+    await standDown.execute({ reason: "asked me to stop following" }, ctx);
+    ok(
+      standDownAckOwedThisTurn("turn_1"),
+      "🔴 NEGATIVE CONTROL: TWO posts that both PRECEDED the stand-down still discharge nothing — the snapshot moved with them",
+    );
+    let message = "";
+    try {
+      await noReply.execute({ reason: "user_requested_silence" }, ctx);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    ok(message.includes("still owes the one-line acknowledgement"), "…and the `no_reply` is refused, exactly as in (d)");
+  });
+
+  await inSession(async () => {
+    markRepliedThisTurn("turn_1");
+    markRepliedThisTurn("turn_1");
+    const ctx = threadCtx("C_NEWTURN", "1838.1", "turn_2");
+    await enrol(ctx, "1838.1");
+    markDeliveryArm("wake-addressed");
+    await standDown.execute({ reason: "asked me to stop following" }, ctx);
+    ok(standDownAckOwedThisTurn("turn_2"), "the new turn owes the acknowledgement — the earlier turn's posts are not its own");
+    markRepliedThisTurn("turn_2");
+    ok(!standDownAckOwedThisTurn("turn_2"), "🔴 …and ONE post discharges it, so `postsThisTurn` never showed the snapshot an earlier turn's total");
+  });
+
+  await inSession(async () => {
     markStoodDownThisTurn("turn_1");
     ok(standDownAckOwedThisTurn("turn_1"), "the mark answers for the turn that set it");
     ok(!standDownAckOwedThisTurn("turn_2"), "🔴 …and for no other turn — the mark self-invalidates at the turn boundary");
@@ -247,5 +318,5 @@ async function enrol(ctx: unknown, threadTs: string): Promise<void> {
 }
 
 console.log(
-  `✓ stand-down-ack: ${n} assertions passed (the arm seam + the resolver's stamp + the tool note per arm + the owed-acknowledgement refusal + its discharges with the order test, its turn keying and its fail-off)`,
+  `✓ stand-down-ack: ${n} assertions passed (the arm seam + the resolver's stamp + the tool note per arm + the owed-acknowledgement refusal + its discharges with the counted order test, its turn keying and its fail-off)`,
 );

@@ -4,7 +4,7 @@ export const CONTRIBUTIONS = {
   contributions: [
     { kind: "tool", name: "add_label", module: "agent/tools/add_label.js", summary: "Add a label to a ticket — a Linear issue or a GitHub issue/PR." },
     { kind: "tool", name: "add_routine_rule", module: "agent/tools/add_routine_rule.js", summary: "PROPOSE a standing rule for ONE routine — a short instruction every future run of that routine must follow, e.g." },
-    { kind: "tool", name: "agent_version", module: "agent/tools/agent_version.js", summary: "State which version of this agent is currently running: the OE package version, the deployment's commit sha, and the eve framework version." },
+    { kind: "tool", name: "agent_version", module: "agent/tools/agent_version.js", summary: "State which version of this agent is currently running: the OE package version, the deployment's commit sha, the eve framework version, and this deployment's context window with the token count compaction fires at." },
     { kind: "tool", name: "assign", module: "agent/tools/assign.js", summary: "PROPOSE assigning a ticket — a Linear issue or a GitHub issue/PR — to someone." },
     { kind: "tool", name: "aws", module: "agent/tools/aws.js", summary: "Run an AWS CLI command under this channel's granted AWS role (e.g." },
     { kind: "tool", name: "browser_tools", module: "agent/tools/browser_tools.js", summary: "browser_tools — the resolver FILE that mounts the flag-gated agent-browser tool family (OPE-43)." },
