@@ -24,7 +24,7 @@ export function notionQuestionKey(token: unknown, namespaced: boolean): string |
   return namespaced ? bareTokenFromEveContext(token) : token;
 }
 
-export function notionDiscussionIdOf(auth: NotionAnswerAuth | undefined): string | undefined {
+function notionDiscussionIdOf(auth: NotionAnswerAuth | undefined): string | undefined {
   const v = auth?.attributes?.["discussion_id"];
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }

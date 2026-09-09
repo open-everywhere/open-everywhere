@@ -12,6 +12,7 @@ import {
   supervisorGrainFor,
   type SupervisorGrain,
 } from "../channels/unified-supervisor.js";
+import { noteGenerationForRetirement } from "../channels/generation-retirement.js";
 import { claimRuntimeRotation } from "../channels/runtime-rotation.js";
 import { rotationTrigger } from "../channels/turn-delivery.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
@@ -145,6 +146,7 @@ export async function healFireParentGeneration(
     mintRotationToken(grain, next, () => {
       throw new Error("healFireParentGeneration: a per-container token is unreachable behind the unified grain guard");
     });
+  noteGenerationForRetirement({ org, registryKey: grain.registryKey, token: existing.token });
   if (trigger === "runtime-changed") {
     const row = await store.rotateChannelSession(org, grain.registryKey, mintToken(), atIso);
     return row.generation;

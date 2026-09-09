@@ -14,7 +14,7 @@ export function routineCardWaitCeilingSeconds(elapsedSeconds: number | undefined
   return FUNCTION_WALL_CEILING_SECONDS - elapsed - TURN_TAIL_RESERVE_SECONDS;
 }
 
-export const ROUTINE_CARD_POLL_INTERVAL_MS = 2_000;
+const ROUTINE_CARD_POLL_INTERVAL_MS = 2_000;
 
 export type RoutineCardWaitOutcome =
   | "disarmed"

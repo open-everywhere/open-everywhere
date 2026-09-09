@@ -182,7 +182,7 @@ export function stringifyGrants(grants: GrantsFile): string {
   return JSON.stringify({ bundles: canonical.bundles, bindings: canonical.bindings.map(canonicalBinding) }, null, 2) + "\n";
 }
 
-export const GRANTS_MODULE: OverlayModuleGrammar = {
+const GRANTS_MODULE: OverlayModuleGrammar = {
   what: "grants overlay",
   header: overlayModuleHeader("grants overlay", "packages/core/agent/access/grants-codemod.ts"),
   typeImport: 'import type { GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";',

@@ -15,8 +15,8 @@ export interface OpenEverywhereDiscordAuth {
   readonly attributes: Record<string, string>;
 }
 
-export const DISCORD_CHANNEL_DM = "1";
-export const DISCORD_CHANNEL_GROUP_DM = "3";
+const DISCORD_CHANNEL_DM = "1";
+const DISCORD_CHANNEL_GROUP_DM = "3";
 
 export interface DiscordIdentityInput {
   readonly userId: string;

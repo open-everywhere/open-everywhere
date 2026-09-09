@@ -79,11 +79,11 @@ const WAKE_ADDRESSINGS: readonly WakeAddressing[] = ["direct", "direct-mention",
 
 const ADDRESSED_ADDRESSINGS: readonly WakeAddressing[] = ["direct", "direct-mention"];
 
-export type InjectedAddressing =
+type InjectedAddressing =
   | { readonly ok: true; readonly addressing: WakeAddressing }
   | { readonly ok: false; readonly error: string };
 
-export function resolveInjectedAddressing(body: {
+function resolveInjectedAddressing(body: {
   readonly addressing?: unknown;
   readonly reason?: unknown;
   readonly mention?: unknown;

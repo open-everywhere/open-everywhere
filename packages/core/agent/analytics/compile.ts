@@ -33,10 +33,10 @@ export const analyticsQuerySchema = z.object({
 
 export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
 
-export const AGGREGATE_LIMIT_MAX = 200;
+const AGGREGATE_LIMIT_MAX = 200;
 export const ROWS_LIMIT_MAX = 100;
 export const AGGREGATE_SCAN_CAP = 5000;
-export const MAX_WINDOW_DAYS = 365;
+const MAX_WINDOW_DAYS = 365;
 
 export type OutputDimKind = "column" | "ts" | "domain";
 export interface OutputDim {

@@ -212,7 +212,7 @@ export type ApproveGrantOutcome =
       readonly prompted?: boolean;
     };
 
-export const GRANT_CONSENT_LINK_TTL_MS = 60 * 60 * 1000;
+const GRANT_CONSENT_LINK_TTL_MS = 60 * 60 * 1000;
 
 export async function approveCredentialGrant(
   stamps: GrantAuditStamps,
@@ -432,9 +432,9 @@ export async function sweepCredentialGrants(org: string, nowIso: string): Promis
   return { asks, cardsUpdated, grants: await store.expireCredentialGrants(org, nowIso), requesterNotices };
 }
 
-export const GRANT_LAPSE_NOTICE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const GRANT_LAPSE_NOTICE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
-export type GrantSweepNotice = GrantNoticeOutcome | "withheld_stale";
+type GrantSweepNotice = GrantNoticeOutcome | "withheld_stale";
 
 export interface GrantSweepReport {
   readonly asks: number;

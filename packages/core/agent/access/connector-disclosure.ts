@@ -52,7 +52,7 @@ export function _resetConnectorEntitlementProbeForTest(): void {
   probe = null;
 }
 
-export function connectorEntitlementProbe(): ConnectorEntitlementProbe | null {
+function connectorEntitlementProbe(): ConnectorEntitlementProbe | null {
   return probe;
 }
 

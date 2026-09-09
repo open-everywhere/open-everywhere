@@ -126,7 +126,7 @@ export function resolveChatDmTargetFrom(
   );
 }
 
-export function resolveChatDmTarget(ctx: BindableContext, domains: readonly Domain[], requested: string): ChatDmTarget {
+function resolveChatDmTarget(ctx: BindableContext, domains: readonly Domain[], requested: string): ChatDmTarget {
   return resolveChatDmTargetFrom(callerDomainKey(ctx), grantedAddresses(ctx), domains, requested);
 }
 

@@ -86,7 +86,7 @@ export function memoryWriteRefusal(rawPath: string, plan: MemoryPlan): string | 
   );
 }
 
-export function assertMemoryWriteAllowed(toolName: string, filePath: string, ctx: ToolContext): void {
+function assertMemoryWriteAllowed(toolName: string, filePath: string, ctx: ToolContext): void {
   if (memoryWriteTarget(filePath) === null) return;
   let plan: MemoryPlan;
   try {

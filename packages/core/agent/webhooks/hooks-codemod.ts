@@ -90,7 +90,7 @@ export function stringifyHooks(file: HooksFile): string {
   return JSON.stringify({ hooks }, null, 2) + "\n";
 }
 
-export const HOOKS_MODULE: OverlayModuleGrammar = {
+const HOOKS_MODULE: OverlayModuleGrammar = {
   what: "hooks overlay",
   header: overlayModuleHeader("webhook-hooks overlay", "packages/core/agent/webhooks/hooks-codemod.ts"),
   typeImport: 'import type { HooksFile } from "@open-everywhere/core/agent/webhooks/hooks-codemod.js";',

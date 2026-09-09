@@ -28,7 +28,7 @@ export function withGrantRoomContext<T>(context: GrantRoomContext, fn: () => Pro
   return roomContext.run(context, fn);
 }
 
-export function grantRoomContext(): GrantRoomContext | undefined {
+function grantRoomContext(): GrantRoomContext | undefined {
   return roomContext.getStore();
 }
 

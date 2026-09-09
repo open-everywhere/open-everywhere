@@ -13,7 +13,7 @@ export const DM_SEAT_ROTATE_TURN_BUDGET = Number(process.env.OE_DM_SEAT_ROTATE_T
 
 export const DM_SEAT_ROTATE_TOKEN_BUDGET = Number(process.env.OE_DM_SEAT_ROTATE_TOKEN_BUDGET) || 5_000_000;
 
-export const DM_SEAT_ROTATE_QUIET_GAP_HOURS = Number(process.env.OE_DM_SEAT_ROTATE_QUIET_GAP_HOURS) || 0;
+const DM_SEAT_ROTATE_QUIET_GAP_HOURS = Number(process.env.OE_DM_SEAT_ROTATE_QUIET_GAP_HOURS) || 0;
 
 export function dmSeatThresholds(): Required<Omit<RotationThresholds, "runtimeChanged">> {
   const hours = DM_SEAT_ROTATE_QUIET_GAP_HOURS;

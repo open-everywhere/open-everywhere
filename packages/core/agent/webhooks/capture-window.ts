@@ -9,7 +9,7 @@ export interface CaptureSubject {
   readonly posture: WebhookPosture;
 }
 
-export const CAPTURE_WINDOW_DEFAULT_MS = 15 * 60_000;
+const CAPTURE_WINDOW_DEFAULT_MS = 15 * 60_000;
 
 export const CAPTURE_DOCUMENT_MAX_CHARS = 16_384;
 

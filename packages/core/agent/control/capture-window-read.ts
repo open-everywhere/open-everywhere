@@ -10,9 +10,9 @@ import { configHookPosture, findWebhook } from "../webhooks/config.js";
 import { getConfig } from "../access/config.js";
 import type { Partition } from "../memory/partition.js";
 
-export const WEBHOOK_CAPTURE_READ = "webhook.capture_read";
+const WEBHOOK_CAPTURE_READ = "webhook.capture_read";
 
-export const WEBHOOK_CAPTURE_ARM = "webhook.capture_arm";
+const WEBHOOK_CAPTURE_ARM = "webhook.capture_arm";
 
 export interface CaptureSample {
   readonly seq: number;

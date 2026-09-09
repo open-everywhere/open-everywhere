@@ -9,9 +9,9 @@ import { auditRoutineRunNow } from "../routines/fire-audit.js";
 import { DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { getOperationalStore } from "../operational/provider.js";
 
-export const RUN_NOW_WINDOW_MS = DISPATCH_TICK_MINUTES * 60_000;
+const RUN_NOW_WINDOW_MS = DISPATCH_TICK_MINUTES * 60_000;
 
-export function runNowThrottleKey(routineId: string): string {
+function runNowThrottleKey(routineId: string): string {
   return `routinerunnow:${routineId}`;
 }
 

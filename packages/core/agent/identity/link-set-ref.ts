@@ -1,4 +1,4 @@
-export const LINK_SET_REF_PREFIX = "linkSet:";
+const LINK_SET_REF_PREFIX = "linkSet:";
 
 export function isLinkSetRef(value: string): boolean {
   return value.startsWith(LINK_SET_REF_PREFIX);

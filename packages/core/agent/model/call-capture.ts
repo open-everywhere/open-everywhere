@@ -14,7 +14,7 @@ export const CAPTURE_SCHEMA_VERSION = 1;
 
 export const CAPTURE_MAX_BODY_B64_BYTES = 8_000_000;
 
-export const MAX_TRACKED_CAPTURE_TURNS = 512;
+const MAX_TRACKED_CAPTURE_TURNS = 512;
 
 interface TurnCounts {
   attempted: number;
@@ -26,7 +26,7 @@ interface TurnCounts {
 
 const counts = new Map<string, TurnCounts>();
 
-export function captureCountKey(sessionId: string | undefined, turnId: string | undefined): string {
+function captureCountKey(sessionId: string | undefined, turnId: string | undefined): string {
   return `${sessionId ?? ""}:${turnId ?? ""}`;
 }
 
@@ -93,7 +93,7 @@ export function bodySha256(serialised: string): string {
   return createHash("sha256").update(serialised, "utf8").digest("hex");
 }
 
-export function gzipBase64(serialised: string): string {
+function gzipBase64(serialised: string): string {
   return gzipSync(Buffer.from(serialised, "utf8")).toString("base64");
 }
 
@@ -134,7 +134,7 @@ function captureBackend<TModel extends RoutableModel>(backend: ModelBackend<TMod
   };
 }
 
-export function captureModel<TModel extends RoutableModel>(inner: TModel, site: CaptureSite): TModel {
+function captureModel<TModel extends RoutableModel>(inner: TModel, site: CaptureSite): TModel {
   const record = async (options: RoutedCallOptions): Promise<void> => {
     const c = entry(captureCountKey(site.sessionId, site.turnId));
     c.attempted += 1;

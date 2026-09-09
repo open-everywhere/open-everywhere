@@ -154,7 +154,7 @@ export function ruleStampsCredential(rule: { readonly transform?: readonly unkno
   return (rule.transform ?? []).length > 0;
 }
 
-export const WRITE_HOSTS_ROW_CAP = 20;
+const WRITE_HOSTS_ROW_CAP = 20;
 
 export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): Record<string, unknown> {
   const listed = writeHosts.slice(0, WRITE_HOSTS_ROW_CAP).map((h) => ({

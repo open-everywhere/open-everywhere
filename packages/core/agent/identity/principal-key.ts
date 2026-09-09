@@ -1,6 +1,6 @@
 export const PRINCIPAL_KEY = /^[a-z0-9][a-z0-9-]*\/[^/\s]+$/u;
 
-export const TENANT_PRINCIPAL_KEY = /^[a-z0-9][a-z0-9-]*\/[^/\s]+\/[^/\s]+$/u;
+const TENANT_PRINCIPAL_KEY = /^[a-z0-9][a-z0-9-]*\/[^/\s]+\/[^/\s]+$/u;
 
 export const UNNAMED_TENANT = "dev";
 
@@ -17,7 +17,7 @@ export function tryPrincipalKey(platform: string, tenant: string | undefined | n
   return `${platform}/${named}/${id}`;
 }
 
-export function principalTenantUnresolvableMessage(platform: string, id?: string): string {
+function principalTenantUnresolvableMessage(platform: string, id?: string): string {
   return (
     `cannot name the ${platform} tenant for ${id ? `"${id}"` : "this person"}: on ${platform} a person id is issued PER ` +
     `WORKSPACE, so a principal key has to carry which workspace it came from ("${platform}/<tenant-id>/<native-id>"), and this ` +

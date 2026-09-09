@@ -49,7 +49,7 @@ export function directoryAutoConfirm(env: NodeJS.ProcessEnv = process.env): Dire
   );
 }
 
-export const DIRECTORY_SYNC_ACTOR = "directory-sync";
+const DIRECTORY_SYNC_ACTOR = "directory-sync";
 
 export const DIRECTORY_SYNC_ACTION = "identity.directory.sync";
 
@@ -494,7 +494,7 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
   return out;
 }
 
-export function directorySyncOrgs(env: NodeJS.ProcessEnv = process.env): string[] {
+function directorySyncOrgs(env: NodeJS.ProcessEnv = process.env): string[] {
   const raw = env.OE_TIDY_ORGS;
   if (!raw) return ["default"];
   const orgs = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);

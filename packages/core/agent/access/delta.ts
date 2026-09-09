@@ -16,7 +16,7 @@ export type RequestingScope =
   | { readonly level: "principal"; readonly principal: string }
   | { readonly level: "group"; readonly group: string };
 
-export function scopeAddress(scope: RequestingScope): string {
+function scopeAddress(scope: RequestingScope): string {
   switch (scope.level) {
     case "surface":
       return scope.surface;
@@ -110,7 +110,7 @@ export function definedConnectorCredentials(
   return [...(cfg?.credentials ?? [])].map((c) => c.id).sort();
 }
 
-export function scopeWhere(scope: RequestingScope): string {
+function scopeWhere(scope: RequestingScope): string {
   switch (scope.level) {
     case "surface":
       return `surface ${scope.surface}`;
@@ -121,7 +121,7 @@ export function scopeWhere(scope: RequestingScope): string {
   }
 }
 
-export function scopeHere(scope: RequestingScope): string {
+function scopeHere(scope: RequestingScope): string {
   switch (scope.level) {
     case "surface":
       return "this channel";
@@ -132,7 +132,7 @@ export function scopeHere(scope: RequestingScope): string {
   }
 }
 
-export function scopeTarget(scope: RequestingScope): string {
+function scopeTarget(scope: RequestingScope): string {
   return scope.level === "surface" ? scope.surface : `${scope.level}:${scopeAddress(scope)}`;
 }
 

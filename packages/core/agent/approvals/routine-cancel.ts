@@ -5,7 +5,7 @@ import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
-export interface RoutineCancelArgs {
+interface RoutineCancelArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly surfaceKey: string;

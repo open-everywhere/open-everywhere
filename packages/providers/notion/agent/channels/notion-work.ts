@@ -37,7 +37,7 @@ export function notionWorkMount(ctx: BindableContext, domains: () => readonly Do
   }
 }
 
-export function notionWorkGrantForDomain(domain: Domain): NotionWorkGrant | undefined {
+function notionWorkGrantForDomain(domain: Domain): NotionWorkGrant | undefined {
   if (!hasWorkGrant(domain, NOTION_PROVIDER, NOTION_WORK_CREDENTIAL)) return undefined;
   const credential = workGrantCredential(domain, NOTION_PROVIDER, NOTION_WORK_CREDENTIAL);
   return credential ? { domain, credential } : undefined;

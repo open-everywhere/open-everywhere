@@ -6,7 +6,7 @@ import { issueRevealLink, revealPageAvailable, REVEAL_GRANT_TTL_MS } from "./rev
 
 export const HANDSHAKE_REVEAL_PRINCIPAL = "operator:deploy-log";
 
-export const FINGERPRINT_HEX_CHARS = 8;
+const FINGERPRINT_HEX_CHARS = 8;
 
 export function secretFingerprint(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex").slice(0, FINGERPRINT_HEX_CHARS);

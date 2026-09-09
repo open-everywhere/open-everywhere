@@ -1,6 +1,6 @@
 export const RATE_LIMITED_STATUS = 429;
 
-export const FORBIDDEN_STATUS = 403;
+const FORBIDDEN_STATUS = 403;
 
 export function isRateLimitedForbidden(res: RetryableResponse, nowMs: number): boolean {
   if (res.status !== FORBIDDEN_STATUS) return false;

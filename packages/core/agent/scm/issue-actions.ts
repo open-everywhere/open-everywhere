@@ -14,7 +14,7 @@ export function parseGithubEntityId(id: string): { repo: string; number: number 
   return { repo: m[1], number: Number(m[2]) };
 }
 
-export async function resolveIssueWriteToken(
+async function resolveIssueWriteToken(
   repo: string,
   app = getGitHubApp(),
   capabilities: readonly RepoCapability[] = [],

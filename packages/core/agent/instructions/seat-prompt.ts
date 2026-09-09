@@ -1,4 +1,4 @@
-export const SURFACE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+const SURFACE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   slack: "Slack",
   discord: "Discord",
   teams: "Microsoft Teams",

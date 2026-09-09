@@ -24,7 +24,7 @@ export interface NotionAncestryVerdict {
   readonly hops: number;
 }
 
-export const NOTION_ANCESTRY_MAX_HOPS = 8;
+const NOTION_ANCESTRY_MAX_HOPS = 8;
 
 export const NOTION_ANCESTRY_TTL_MS = 60_000;
 
@@ -116,7 +116,7 @@ export interface NotionAncestryCache {
   readonly entries: Map<string, CacheEntry>;
 }
 
-export const notionAncestryCache: NotionAncestryCache = { entries: new Map() };
+const notionAncestryCache: NotionAncestryCache = { entries: new Map() };
 
 export function clearNotionAncestryCache(cache: NotionAncestryCache = notionAncestryCache): void {
   cache.entries.clear();

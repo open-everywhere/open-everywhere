@@ -71,7 +71,7 @@ export interface TeamsEngagementDeps {
   readonly now?: () => string;
 }
 
-export function teamsSeamPartition(a: TeamsMessageActivity): Partition | null {
+function teamsSeamPartition(a: TeamsMessageActivity): Partition | null {
   try {
     const auth = buildTeamsAuth({
       userId: a.from.id,

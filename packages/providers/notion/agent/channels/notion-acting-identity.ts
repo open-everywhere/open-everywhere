@@ -1,7 +1,7 @@
 import { connectorActingIdentityForTurn, type BindableContext, type OwnAccountVendor } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_PROVIDER } from "./notion-credentials.js";
 
-export const NOTION_OWN_ACCOUNT_VENDOR: OwnAccountVendor = { aliases: ["notion.so"], connector: NOTION_PROVIDER };
+const NOTION_OWN_ACCOUNT_VENDOR: OwnAccountVendor = { aliases: ["notion.so"], connector: NOTION_PROVIDER };
 
 export async function assertNotionActingIdentity(ctx: BindableContext, tool: string): Promise<void> {
   const verdict = await connectorActingIdentityForTurn(ctx, NOTION_OWN_ACCOUNT_VENDOR, tool);

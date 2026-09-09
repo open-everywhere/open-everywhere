@@ -27,7 +27,7 @@ export const CREDENTIAL_GRANT_ROLES: readonly CredentialGrantRole[] = [
   { connector: "notion", role: "user-oauth" },
 ];
 
-export function isCredentialGrantConnector(connector: string): boolean {
+function isCredentialGrantConnector(connector: string): boolean {
   return CREDENTIAL_GRANT_ROLES.some((r) => r.connector === connector);
 }
 
@@ -175,7 +175,7 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
   }
 }
 
-export const GRANT_ONCE_TTL_MS = 60 * 60 * 1000;
+const GRANT_ONCE_TTL_MS = 60 * 60 * 1000;
 export const GRANT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const GRANT_STANDING_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 

@@ -284,7 +284,7 @@ export async function probeSessionExists(session: ProbeableSession, budgetMs: nu
   }
 }
 
-export function transcriptNotFound(sessionId: string): Response {
+function transcriptNotFound(sessionId: string): Response {
   const classified = classifySessionId(sessionId);
   const hint =
     classified.kind === "native"

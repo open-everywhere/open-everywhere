@@ -1,6 +1,6 @@
 import { defineState } from "eve/context";
 
-export interface PendingDelegation {
+interface PendingDelegation {
   readonly taskId: string;
   readonly parentWakeId?: string;
 }

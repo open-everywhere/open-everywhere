@@ -119,7 +119,7 @@ const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium",
 
 export const MEMORY_WRITE_MAX_BYTES = 64 * 1024;
 
-export function assertMemoryFileWritable(relPath: string, content?: string): void {
+function assertMemoryFileWritable(relPath: string, content?: string): void {
   const base = relPath.split("/").pop() ?? relPath;
   if (base.startsWith("_")) {
     throw new Error(`"${relPath}" looks like a host-internal operational marker (a "_"-prefixed name, e.g. "_onboarded") — refusing to touch it from the control plane.`);

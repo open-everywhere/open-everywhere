@@ -94,9 +94,9 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
 
 const REFUSED_WAKE_MAX = 200;
 
-export const POST_PLATFORM_ERROR_REASON = "platform-error";
+const POST_PLATFORM_ERROR_REASON = "platform-error";
 
-export async function auditReplyPostFailed(
+async function auditReplyPostFailed(
   audit: ReplyAudit | undefined,
   platform: string,
   failure: PlatformFailureClass,

@@ -4,7 +4,7 @@ import type { ChannelReadOutput, ReadOutputLine } from "./channel-read.js";
 
 export const SEAT_READ_INLINE_CAP = 12_000;
 
-export const READ_SPOOL_DIR = "reads";
+const READ_SPOOL_DIR = "reads";
 
 export interface ReadSpool {
   readonly path?: string;

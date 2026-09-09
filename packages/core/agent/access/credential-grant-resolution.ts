@@ -13,7 +13,7 @@ export type GrantResolution =
   | { readonly kind: "expired" }
   | { readonly kind: "refused"; readonly gate: GrantApproveGate };
 
-export function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
+function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
   if (typeof raw !== "string" || raw.length === 0) return undefined;
   let parsed: unknown;
   try {

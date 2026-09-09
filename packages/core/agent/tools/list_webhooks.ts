@@ -10,7 +10,7 @@ const POSTURE_CONSEQUENCE: Readonly<Record<ReturnType<typeof configHookPosture>,
   projection: "projection (only the declared fields reach the model, as untrusted data)",
 };
 
-export function describeConfigHook(hook: WebhookHook): string {
+function describeConfigHook(hook: WebhookHook): string {
   const shape = isFusedHook(hook) ? `fires ${hook.target}` : "emit-only (routines decide what happens)";
   return `"${hook.id}" (${hook.source}) — ${shape}; ${POSTURE_CONSEQUENCE[configHookPosture(hook)] ?? "UNKNOWN posture — treat as content-bearing"}`;
 }

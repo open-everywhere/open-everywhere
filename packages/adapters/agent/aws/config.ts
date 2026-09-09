@@ -1,9 +1,9 @@
-export const OE_AWS_ENABLED_ENV = "OE_AWS_ENABLED";
-export const OE_AWS_REGION_ENV = "OE_AWS_REGION";
+const OE_AWS_ENABLED_ENV = "OE_AWS_ENABLED";
+const OE_AWS_REGION_ENV = "OE_AWS_REGION";
 
-export const OE_AWS_SSO_REGION_ENV = "OE_AWS_SSO_REGION";
-export const OE_AWS_SSO_CLIENT_ID_ENV = "OE_AWS_SSO_CLIENT_ID";
-export const OE_AWS_SSO_SCOPES_ENV = "OE_AWS_SSO_SCOPES";
+const OE_AWS_SSO_REGION_ENV = "OE_AWS_SSO_REGION";
+const OE_AWS_SSO_CLIENT_ID_ENV = "OE_AWS_SSO_CLIENT_ID";
+const OE_AWS_SSO_SCOPES_ENV = "OE_AWS_SSO_SCOPES";
 
 export function awsAccessEnabled(): boolean {
   const raw = process.env[OE_AWS_ENABLED_ENV];

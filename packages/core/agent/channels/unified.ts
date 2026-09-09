@@ -24,6 +24,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
+import { drainGenerationRetirements } from "./generation-retirement.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
@@ -347,6 +348,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     const org = deploymentOrg();
     await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
+    await drainGenerationRetirements(from, { org, incomingToken: t.token }, { labelsFor: auditLabels });
     const answerText = typeof input.message === "string" ? input.message : undefined;
     if (t.answer) {
       const bare = bareTokenFromEveContext(t.token) ?? t.token;

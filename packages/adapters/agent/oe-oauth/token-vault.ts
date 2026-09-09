@@ -64,7 +64,7 @@ interface PendingRecord {
   readonly consumed?: boolean;
 }
 
-export interface PendingSweepReport {
+interface PendingSweepReport {
   readonly scanned: number;
   readonly deleted: number;
   readonly live: number;

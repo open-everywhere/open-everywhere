@@ -297,7 +297,7 @@ export async function routeDiscordReaction(rx: DiscordRelayReaction, deps: Disco
   return ingestReaction(reaction, deps.sink);
 }
 
-export function liveDiscordReactionDeps(attachSession?: AttachSessionForCancel): DiscordReactionRouteDeps {
+function liveDiscordReactionDeps(attachSession?: AttachSessionForCancel): DiscordReactionRouteDeps {
   return { sink: liveReactionSink(), ...(attachSession ? { attachSession } : {}) };
 }
 

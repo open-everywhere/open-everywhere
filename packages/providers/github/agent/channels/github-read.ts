@@ -104,7 +104,7 @@ function commentLine(comment: RawComment): RenderedLine {
   return { ...authorFields(comment.user), ts: comment.created_at ?? "", text: (comment.body ?? "").trim() };
 }
 
-export async function assertGithubContainerAllowed(ctx: BindableContext, target: GitHubContainer): Promise<void> {
+async function assertGithubContainerAllowed(ctx: BindableContext, target: GitHubContainer): Promise<void> {
   const bound = bindFrom(ctx).target as { owner?: unknown } | undefined;
   const boundOwner = typeof bound?.owner === "string" ? bound.owner : undefined;
   if (boundOwner === undefined || boundOwner.toLowerCase() !== target.owner.toLowerCase()) {

@@ -26,7 +26,7 @@ export interface LearnResult {
   readonly skillProposal: Proposal | null;
 }
 
-export function proposedSkillSketch(signature: string, request: string, count: number): string {
+function proposedSkillSketch(signature: string, request: string, count: number): string {
   const name = signature.split(" ").slice(0, 4).join("-") || "recurring-workflow";
   return [
     `---`,

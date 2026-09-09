@@ -24,7 +24,7 @@ export function defineRole(role: Role): Role {
   return role;
 }
 
-export function roleByName(name: string | undefined, roles: readonly Role[]): Role | undefined {
+function roleByName(name: string | undefined, roles: readonly Role[]): Role | undefined {
   if (!name) return undefined;
   return roles.find((r) => r.name === name);
 }

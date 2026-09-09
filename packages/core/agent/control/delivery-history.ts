@@ -13,19 +13,19 @@ import type { Routine } from "../routines/routine.js";
 
 export const WEBHOOK_HISTORY_READ = "webhook.history_read";
 
-export const WEBHOOK_DELIVERY_ACTIONS = {
+const WEBHOOK_DELIVERY_ACTIONS = {
   fired: "webhook.fired",
   declined: "webhook.declined",
   rejected: "webhook.rejected",
 } as const;
 
-export const HISTORY_WINDOW_MS = FORENSIC_WINDOW_MS;
+const HISTORY_WINDOW_MS = FORENSIC_WINDOW_MS;
 
-export const HISTORY_SCAN_LIMIT = FORENSIC_SCAN_LIMIT;
+const HISTORY_SCAN_LIMIT = FORENSIC_SCAN_LIMIT;
 
 export const HISTORY_MAX_DELIVERIES = 25;
 
-export const HISTORY_MAX_MISSES = 10;
+const HISTORY_MAX_MISSES = 10;
 
 export const HISTORY_DETAIL_MAX_CHARS = 300;
 

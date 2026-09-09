@@ -90,7 +90,7 @@ async function noteAudienceChange(
   }
 }
 
-export const DM_DELIVERY_ACTION = "chat.dm";
+const DM_DELIVERY_ACTION = "chat.dm";
 
 export interface DmDeliveryWhere {
   readonly org: string;

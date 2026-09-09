@@ -4,7 +4,7 @@ import type { Routine } from "./routine.js";
 
 export const MATCH_STAMP_WINDOW_MS = 60_000;
 
-export function matchStampThrottleKey(routineId: string): string {
+function matchStampThrottleKey(routineId: string): string {
   return `routinematch:${routineId}`;
 }
 

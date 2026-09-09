@@ -10,7 +10,7 @@ export const TEAMS_READ_BOUNDARY_SOURCES: readonly string[] = [
   "https://learn.microsoft.com/en-us/microsoftteams/platform/graph-api/rsc/resource-specific-consent",
 ];
 
-export const TEAMS_READ_BOUNDARY_ACTION = "teams.read_boundary";
+const TEAMS_READ_BOUNDARY_ACTION = "teams.read_boundary";
 
 export function decodeJwtRoles(token: string): readonly string[] | undefined {
   const parts = token.split(".");
@@ -28,7 +28,7 @@ export function decodeJwtRoles(token: string): readonly string[] | undefined {
   return roles.filter((r): r is string => typeof r === "string");
 }
 
-export function tenantWideRolesIn(roles: readonly string[]): readonly string[] {
+function tenantWideRolesIn(roles: readonly string[]): readonly string[] {
   return TENANT_WIDE_CHANNEL_READ_ROLES.filter((r) => roles.includes(r));
 }
 

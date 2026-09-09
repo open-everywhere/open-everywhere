@@ -21,7 +21,7 @@ function isAuthPendingOutput(output: unknown): boolean {
   return typeof output === "object" && output !== null && (output as Record<string, unknown>)[AUTH_PENDING_BRAND] === true;
 }
 
-export interface ToolModelOutputShape {
+interface ToolModelOutputShape {
   type: string;
   value: unknown;
 }

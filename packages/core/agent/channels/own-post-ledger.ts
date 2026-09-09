@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 
-export const OWN_POST_KEY_PREFIX = "ownpost:";
+const OWN_POST_KEY_PREFIX = "ownpost:";
 
 export const OWN_POST_TTL_MS = 6 * 60 * 60_000;
 

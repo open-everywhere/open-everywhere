@@ -23,9 +23,9 @@ import { canDispatchRoutinesOn } from "../schedules/routine-dispatch.js";
 
 export const DEFAULT_CHECK_INTERVAL_MINUTES = 15;
 export const MIN_CHECK_INTERVAL_MINUTES = 5;
-export const MAX_CHECK_INTERVAL_MINUTES = 1440;
+const MAX_CHECK_INTERVAL_MINUTES = 1440;
 
-export type SubscribeStopReason = "settled" | "cap";
+type SubscribeStopReason = "settled" | "cap";
 
 function prTitleFence(repo: string, number: number, title: string, repoPrivate: boolean | undefined): string {
   noteIngestionVerdict({ kind: "github", label: "subscribe_pr:title", ...(repoPrivate !== undefined ? { repoPrivate } : {}) }, false);

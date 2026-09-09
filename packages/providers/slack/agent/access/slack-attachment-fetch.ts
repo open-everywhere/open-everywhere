@@ -13,7 +13,7 @@ const ATTACHMENT_VERB = "GET";
 
 const SLACK_FILE_HOSTS: ReadonlySet<string> = new Set(["files.slack.com"]);
 
-export function isSlackFileHost(hostname: string): boolean {
+function isSlackFileHost(hostname: string): boolean {
   return SLACK_FILE_HOSTS.has(hostname.toLowerCase());
 }
 

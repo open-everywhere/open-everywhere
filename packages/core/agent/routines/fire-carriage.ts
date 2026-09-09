@@ -6,7 +6,7 @@ import type { Routine } from "./routine.js";
 export const FIRE_ATTRS_SENT_ACTION = "routine.fire_attrs_sent";
 export const FIRE_ATTRS_SEEN_ACTION = "routine.fire_attrs_seen";
 
-export function attributeKeyNames(attributes: Readonly<Record<string, unknown>> | undefined): readonly string[] {
+function attributeKeyNames(attributes: Readonly<Record<string, unknown>> | undefined): readonly string[] {
   return Object.keys(attributes ?? {}).sort();
 }
 

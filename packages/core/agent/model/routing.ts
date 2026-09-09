@@ -86,7 +86,7 @@ export const liveIdentity: Pick<RoutingDeps, "domains" | "roles" | "modelPolicy"
   },
 };
 
-export function identityFromContext(ctx: BindableContext): { surfaceKey: string; surfaceMatch: DomainMatch | undefined } {
+function identityFromContext(ctx: BindableContext): { surfaceKey: string; surfaceMatch: DomainMatch | undefined } {
   const surfaceKey = domainKeyOf(resolvePartition(ctx));
   let surfaceMatch: DomainMatch | undefined;
   try {

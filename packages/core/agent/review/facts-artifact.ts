@@ -11,13 +11,13 @@ export const CONFIG_DIFF_WORKFLOW_PATH = ".github/workflows/config-diff.yml";
 
 export const CONFIG_DIFF_ARTIFACT_NAME = "config-diff";
 
-export const CONFIG_DIFF_JSON_ENTRY = "config-diff.json";
+const CONFIG_DIFF_JSON_ENTRY = "config-diff.json";
 
-export const OVERLAY_GATE_ENTRY = "access-diff.md";
+const OVERLAY_GATE_ENTRY = "access-diff.md";
 
-export const MAX_OVERLAY_REPORT_CHARS = 8000;
+const MAX_OVERLAY_REPORT_CHARS = 8000;
 
-export const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
 export const CONFIG_DIFF_TRIGGER_PATHS: readonly string[] = [
   "agent/**",

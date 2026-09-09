@@ -6,7 +6,7 @@ import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
-export interface RoutinePolicyAddArgs {
+interface RoutinePolicyAddArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly surfaceKey: string;
@@ -88,7 +88,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
   },
 };
 
-export interface RoutinePolicyRemoveArgs {
+interface RoutinePolicyRemoveArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly surfaceKey: string;

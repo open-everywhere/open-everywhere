@@ -140,11 +140,11 @@ export const DATASETS: Readonly<Record<DatasetName, DatasetSpec>> = { audit: AUD
 
 export const DATASET_NAMES = Object.keys(DATASETS) as DatasetName[];
 
-export function dimNames(dataset: DatasetName): string[] {
+function dimNames(dataset: DatasetName): string[] {
   return Object.keys(DATASETS[dataset].dims);
 }
 
-export function measureNames(dataset: DatasetName): string[] {
+function measureNames(dataset: DatasetName): string[] {
   return Object.keys(DATASETS[dataset].measures);
 }
 

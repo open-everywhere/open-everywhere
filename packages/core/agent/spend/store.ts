@@ -74,7 +74,7 @@ export interface SurfacePeriodSpend {
   readonly calls: number;
 }
 
-export function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): SurfacePeriodSpend[] {
+function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): SurfacePeriodSpend[] {
   const byKey = new Map<
     string,
     { org: string; surfaceKey: string; period: string; tokens: number; usdMicros: number; measuredMicros: number; derivedOnMeasuredMicros: number; measuredCalls: number; calls: number }

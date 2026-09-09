@@ -53,7 +53,7 @@ export function newHydrationMemo(): HydrationMemo {
   return new Map();
 }
 
-export function hydrationMemoKey(platform: string, id: string): string {
+function hydrationMemoKey(platform: string, id: string): string {
   return `${platform}\u0000${id}`;
 }
 

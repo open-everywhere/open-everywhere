@@ -16,7 +16,7 @@ export interface SlackAttachmentRecord {
   readonly platform?: "slack";
 }
 
-export const SLACK_ATTACHMENT_TTL_MS = 24 * 60 * 60 * 1000;
+const SLACK_ATTACHMENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 const MAX_ENTRIES = 1000;
 const registry = new Map<string, SlackAttachmentRecord>();

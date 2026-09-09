@@ -53,7 +53,7 @@ export const LINK_CONSENT_CLICK_PREFIX = "oe-link:";
 
 export type LinkConsentVerdict = "confirm" | "deny";
 
-export const LINK_CONSENT_CLICK_ID_MAX = 100;
+const LINK_CONSENT_CLICK_ID_MAX = 100;
 
 export function linkConsentClickId(challengeId: string, verdict: LinkConsentVerdict): string {
   const id = `${LINK_CONSENT_CLICK_PREFIX}${challengeId}:${verdict}`;

@@ -57,7 +57,7 @@ export function turnKind(ctx: DelegatableContext, continuationToken?: unknown): 
   }
 }
 
-export function turnWindowToken(ctx: BindableContext): string | undefined {
+function turnWindowToken(ctx: BindableContext): string | undefined {
   return bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
 }
 

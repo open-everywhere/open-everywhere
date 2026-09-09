@@ -13,7 +13,7 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 
-export const REACT_REASONS = ["ack", "noise"] as const;
+const REACT_REASONS = ["ack", "noise"] as const;
 
 const reactEntry = defineTool({
         description:

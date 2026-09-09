@@ -7,7 +7,7 @@ import { isSafeBranchName } from "../scm/git.js";
 import { emitGroupsModule } from "./groups-codemod.js";
 import { groupPlanIsNoop, renderGroupPlan, type GroupSyncPlan } from "./group-sync.js";
 
-export const DEFAULT_GROUPS_OVERLAY_PATH = "agent/identity/groups.generated.ts";
+const DEFAULT_GROUPS_OVERLAY_PATH = "agent/identity/groups.generated.ts";
 
 export type GroupsDeliveryConfig = AccessRequestsConfig & { readonly configRepo: string };
 

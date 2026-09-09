@@ -2,7 +2,7 @@ import { prApiHeaders, type PrFetchFn } from "./pr.js";
 
 export const MAX_DIFF_CHARS = 100_000;
 
-export const MAX_DIFF_FILES = 500;
+const MAX_DIFF_FILES = 500;
 
 export interface PrDiffSnapshot {
   readonly repo: string;

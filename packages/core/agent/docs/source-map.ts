@@ -1,4 +1,4 @@
-export const SURFACE_DOC_DIR = "docs/deploy/surfaces";
+const SURFACE_DOC_DIR = "docs/deploy/surfaces";
 
 export const UNIVERSAL_SURFACE_DOCS: readonly string[] = ["support-matrix.md"];
 

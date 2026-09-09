@@ -642,10 +642,10 @@ async function reactionFeedbackDelivery(body: string): Promise<void> {
   slog(`reaction feedback on issue ${rx.issueId ?? "?"}: ${out.ingested ? out.outcome.reason : out.reason}`);
 }
 
-export const LINEAR_MENTION_HANDOFF_TEXT =
+const LINEAR_MENTION_HANDOFF_TEXT =
   "Working on it — the org's cross-surface agent is answering; the reply will land here in a moment.";
 
-export const LINEAR_MENTION_DIVERT_FAILED_TEXT =
+const LINEAR_MENTION_DIVERT_FAILED_TEXT =
   "Open Everywhere couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
 
 interface MentionRoutingVerdict {

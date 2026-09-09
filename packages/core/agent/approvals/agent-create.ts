@@ -80,13 +80,13 @@ export function requireAgentCreateConfig(override?: AccessRequestsConfig): Enabl
   return cfg as EnabledAgentCreateConfig;
 }
 
-export function agentMemoryClause(spec: AgentSpec): string {
+function agentMemoryClause(spec: AgentSpec): string {
   return spec.memory.kind === "new-readonly"
     ? `a new READ-ONLY \`${inlineForReview(spec.memory.provider)}\` silo (\`${inlineForReview(agentSiloName(spec))}\`)`
     : `the existing silo \`${inlineForReview(spec.memory.silo)}\``;
 }
 
-export function agentSentence(spec: AgentSpec): string {
+function agentSentence(spec: AgentSpec): string {
   const titled = spec.title ? ` (“${inlineForReview(spec.title)}”)` : "";
   const exposed = spec.exposed ? ", EXPOSED to a wider audience" : "";
   return `Create agent "${inlineForReview(spec.name)}"${titled} — reading ${agentMemoryClause(spec)}, bound to this channel${exposed}`;

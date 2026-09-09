@@ -29,7 +29,7 @@ export const BROKER_INTAKE_CAPS: Readonly<Record<string, BrokerIntakeRoute>> = {
   env: { hostWrite: false, operatorOnly: true },
 };
 
-export function brokerHostWrite(broker: string): boolean {
+function brokerHostWrite(broker: string): boolean {
   return BROKER_INTAKE_CAPS[broker]?.hostWrite === true;
 }
 

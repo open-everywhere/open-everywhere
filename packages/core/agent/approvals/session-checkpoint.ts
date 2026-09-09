@@ -17,7 +17,7 @@ export function checkpointTtlHours(): number {
   return getSettings().approvals.checkpointTtlHours;
 }
 
-export interface SessionCheckpointArgs {
+interface SessionCheckpointArgs {
   readonly org: string;
   readonly scopeKey: string;
   readonly sessionId: string;

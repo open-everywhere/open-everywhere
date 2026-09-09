@@ -18,7 +18,7 @@ const MAX_PROMPT_BODY_CHARS = 200_000;
 
 const DEFAULT_BUDGET_FRACTION = 0.9;
 
-export function resultReducePrompt(input: { readonly body: string; readonly budget: number; readonly ctx: ResultReduceContext }): string {
+function resultReducePrompt(input: { readonly body: string; readonly budget: number; readonly ctx: ResultReduceContext }): string {
   const what = input.ctx.toolName === undefined ? "a tool result" : `the result of \`${input.ctx.toolName}\``;
   return [
     `The text below is ${what}. It is too long to show in full, so it must be shortened before an`,

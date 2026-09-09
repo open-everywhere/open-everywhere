@@ -52,7 +52,7 @@ export async function readGithubEntity(id: string, opts: GithubEntityReadOpts = 
   };
 }
 
-export const githubEntityReadAdapter: EntityReadAdapter = {
+const githubEntityReadAdapter: EntityReadAdapter = {
   platform: GITHUB_ENTITY_PLATFORM,
   readsNetwork: true,
   read(id: string): Promise<HydrationOutcome> {

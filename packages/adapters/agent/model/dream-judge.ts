@@ -45,7 +45,7 @@ export function resolvedDreamCallSettings(
   return s;
 }
 
-export function gatewayDreamCompletion(defaults: GatewayRoutedDefaults): DreamCompletion {
+function gatewayDreamCompletion(defaults: GatewayRoutedDefaults): DreamCompletion {
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({

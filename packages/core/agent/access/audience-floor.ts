@@ -69,7 +69,7 @@ export function _resetGovernanceMemberSupplierForTest(): void {
   supplier = null;
 }
 
-export function governanceMemberSupplier(): GovernanceMemberSupplier {
+function governanceMemberSupplier(): GovernanceMemberSupplier {
   return supplier ?? (async () => undefined);
 }
 

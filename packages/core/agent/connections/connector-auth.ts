@@ -174,11 +174,11 @@ export type ConnectorAuthorizationStarter = (
 export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (vercelConnector, params, options) =>
   requireUserAuthFlow(vercelConnector).startAuthorization(vercelConnector, params, options);
 
-export function personalAuthUrlClause(url: string): string {
+function personalAuthUrlClause(url: string): string {
   return `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `;
 }
 
-export function connectorAuthRequiredUserMessage(connector: string, authorizeClause: string): string {
+function connectorAuthRequiredUserMessage(connector: string, authorizeClause: string): string {
   return (
     `connection "${connector}": your personal account isn't connected yet. ` +
     authorizeClause +

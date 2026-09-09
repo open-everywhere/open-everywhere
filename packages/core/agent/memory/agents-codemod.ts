@@ -303,7 +303,7 @@ export function stringifyAgents(file: AgentsFile): string {
   return JSON.stringify(canonical, null, 2) + "\n";
 }
 
-export const AGENTS_MODULE: OverlayModuleGrammar = {
+const AGENTS_MODULE: OverlayModuleGrammar = {
   what: "agents overlay",
   header: overlayModuleHeader("agents overlay", "packages/core/agent/memory/agents-codemod.ts"),
   typeImport: 'import type { AgentsFile } from "@open-everywhere/core/agent/memory/agents-codemod.js";',

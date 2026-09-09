@@ -128,7 +128,7 @@ export async function fetchDiscordBackscrollLines(
   }
 }
 
-export const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
+const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
 
 const DISCORD_RAW_FETCH_PAGE_LIMIT = 100;
 

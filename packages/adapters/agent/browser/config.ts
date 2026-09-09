@@ -1,7 +1,7 @@
 import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 
-export const AGENT_BROWSER_FLAG = "browser.enabled";
-export const AGENT_BROWSER_DOMAINS_ENV = "browser.domains";
+const AGENT_BROWSER_FLAG = "browser.enabled";
+const AGENT_BROWSER_DOMAINS_ENV = "browser.domains";
 
 export interface AgentBrowserConfig {
   readonly domains: readonly string[];

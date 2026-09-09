@@ -12,7 +12,7 @@ export function setConnectorContentOrigin(declared: ConnectorContentOriginMap): 
   }
 }
 
-export function currentConnectorContentOrigin(): ConnectorContentOriginMap {
+function currentConnectorContentOrigin(): ConnectorContentOriginMap {
   try {
     return connectorContentOriginSlot.get();
   } catch {

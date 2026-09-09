@@ -2,14 +2,14 @@ import { open, stat } from "node:fs/promises";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { planTailRead, reduceDenialLog, type DenialScan } from "./egress-denial-log.js";
 
-export const EGRESS_DENIED_ACTION = "egress.denied";
+const EGRESS_DENIED_ACTION = "egress.denied";
 
 export const DEFAULT_POLL_MS = 60_000;
 export const MIN_POLL_MS = 5_000;
 
 export const MAX_HOSTS_PER_PASS = 20;
 
-export const MAX_READ_BYTES = 4 * 1024 * 1024;
+const MAX_READ_BYTES = 4 * 1024 * 1024;
 
 export interface EgressAttribution {
   readonly org: string;

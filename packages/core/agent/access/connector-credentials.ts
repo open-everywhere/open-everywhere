@@ -48,7 +48,7 @@ export interface CredentialHomeRef {
   readonly config: Readonly<Record<string, unknown>>;
 }
 
-export const VERCEL_CONNECT_HOME_KIND = "vercel-connect";
+const VERCEL_CONNECT_HOME_KIND = "vercel-connect";
 
 export function vercelConnectorHome(connector: string): CredentialHomeRef {
   return { kind: VERCEL_CONNECT_HOME_KIND, config: { connector } };

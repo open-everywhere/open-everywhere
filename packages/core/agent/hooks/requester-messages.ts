@@ -23,7 +23,7 @@ export function captureEligible(ctx: HookContext): boolean {
   return true;
 }
 
-export function captureReceivedMessage(event: HookEvent<"message.received">, ctx: HookContext): void {
+function captureReceivedMessage(event: HookEvent<"message.received">, ctx: HookContext): void {
   try {
     if (!captureEligible(ctx)) return;
     const { message, turnId } = event.data;

@@ -126,7 +126,7 @@ export function domainsBucket(count: number): string {
   return "6+";
 }
 
-export interface TelemetryConfig {
+interface TelemetryConfig {
   readonly enabled: boolean;
   readonly debug: boolean;
   readonly url: string;

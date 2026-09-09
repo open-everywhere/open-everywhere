@@ -203,6 +203,7 @@ const ORG = "acme";
 
 {
   const retirementVerb = /\.reset\(/;
+  const RETIREMENT_CALL_SITES = ["packages/core/agent/channels/generation-retirement.ts"];
   const CREDENTIAL_CACHE_RESETS = ["teamsGraphToken", "installationToken", "linearAppActorToken"] as const;
   const sourceRoots = [
     "agent",
@@ -234,9 +235,14 @@ const ORG = "acme";
   const offenders: string[] = [];
   for (const root of sourceRoots) walk(root, offenders);
   eq(
-    offenders,
-    [],
-    `🔴 no OE source calls eve's session retirement verb — a rotation abandons the outgoing generation instead (found: ${offenders.join(", ") || "none"})`,
+    offenders.sort(),
+    RETIREMENT_CALL_SITES,
+    `🔴 exactly ONE OE source calls eve's session retirement verb, and it is the generation-retirement drain (found: ${offenders.join(", ") || "none"})`,
+  );
+  const retirement = readFileSync(join(REPO_ROOT, RETIREMENT_CALL_SITES[0]!), "utf8");
+  ok(
+    /if \(!isUnifiedSupervisorToken\(token\)\) return;/.test(retirement),
+    "🔴 the retirement drain still refuses a non-window token — only `unified` seats are ever retired",
   );
 
   ok(scanned > 200, `NEGATIVE CONTROL: the walk actually read the trees (${scanned} source files scanned)`);
@@ -301,5 +307,5 @@ const ORG = "acme";
 
 console.log(
   `✓ runtime-rotation: ${n} assertions passed (OPE-599 pre-dispatch heal: claim, permanence, chain rung, eight live call sites; ` +
-    `OPE-1373: rotation abandons rather than retires, so eve 0.48.0's terminal emit is unreachable)`,
+    `OPE-627: rotation retires the outgoing generation, and eve 0.48.0's terminal emit stays unreachable from the seats it retires)`,
 );

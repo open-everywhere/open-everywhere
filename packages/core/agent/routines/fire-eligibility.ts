@@ -45,7 +45,7 @@ export const liveRoomMembership: RoomMembershipCheck = async (channelId, userId)
 
 const accountActiveCache = new Map<string, { readonly active: boolean; readonly at: number }>();
 
-export const liveAccountActive: AccountActiveCheck = async (userId) => {
+const liveAccountActive: AccountActiveCheck = async (userId) => {
   if (userId.length === 0) return undefined;
   const hit = accountActiveCache.get(userId);
   if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.active;

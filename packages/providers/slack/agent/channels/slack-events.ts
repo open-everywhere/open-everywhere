@@ -293,7 +293,7 @@ function extractSlackMessageUnfurlLines(messageBlocks: unknown): string[] {
   return out;
 }
 
-export function hasSharedMessageAttachment(o: Record<string, unknown>): boolean {
+function hasSharedMessageAttachment(o: Record<string, unknown>): boolean {
   const lines = extractSlackMessageUnfurlLines(o["message_blocks"]);
   return o["is_share"] === true || o["is_msg_unfurl"] === true || o["is_reply_unfurl"] === true || lines.length > 0;
 }
@@ -835,7 +835,7 @@ export async function auditDmDriverAdmitted(ev: ParsedMessageEvent, dmKind: "im"
   });
 }
 
-export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
+async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
   return slackSpendGate({
     bindable: bindableForJoin(ev),
     mode: slackMode(channelType, ev.channelId),
@@ -1300,7 +1300,7 @@ export async function announceSlackSilentRoom(
   return true;
 }
 
-export async function slackChannelVendorExternal(channelId: string): Promise<boolean> {
+async function slackChannelVendorExternal(channelId: string): Promise<boolean> {
   const { meta } = await channelInternalAndMeta(channelId).catch(() => ({ meta: undefined as ChannelJoinMeta | undefined }));
   return meta?.vendorExternal === true;
 }
@@ -1342,7 +1342,7 @@ export async function applySlackExternalPolicy(
   return verdict;
 }
 
-export function externalPolicyDropReason(verdict: SlackExternalVerdict): string {
+function externalPolicyDropReason(verdict: SlackExternalVerdict): string {
   return `externalPolicy verdict "${verdict}" — the wake is suppressed`;
 }
 
@@ -1500,7 +1500,7 @@ export function transcriptFromHistory(history: unknown): string | undefined {
   return kept.join("\n");
 }
 
-export async function fetchChannelTranscript(channelId: string): Promise<string | undefined> {
+async function fetchChannelTranscript(channelId: string): Promise<string | undefined> {
   const res = await slackForm("conversations.history", `channel=${encodeURIComponent(channelId)}&limit=${TRANSCRIPT_MESSAGES}`);
   return res ? transcriptFromHistory(res) : undefined;
 }
@@ -1522,7 +1522,7 @@ export function fetchUserProfileNames(userId: string): Promise<{ name?: string; 
   return p;
 }
 
-export const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(id);
+const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(id);
 
 const SLACK_ROSTER_PAGE = 200;
 const SLACK_ROSTER_MAX_PAGES = 10;

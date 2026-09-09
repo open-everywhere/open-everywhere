@@ -190,7 +190,7 @@ export async function discordEditMessage(channelId: string, messageId: string, c
   }
 }
 
-export const DISCORD_EMOJI_MAP: Readonly<Record<string, string>> = {
+const DISCORD_EMOJI_MAP: Readonly<Record<string, string>> = {
   thumbsup: "👍",
   "+1": "👍",
   thumbsdown: "👎",

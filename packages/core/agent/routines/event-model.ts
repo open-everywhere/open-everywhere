@@ -181,7 +181,7 @@ export function redactEvent(ev: NormalizedEvent, declaredSource: string): Normal
   };
 }
 
-export function projectEvent(ev: NormalizedEvent, declaredSource: string, keys: readonly string[]): NormalizedEvent {
+function projectEvent(ev: NormalizedEvent, declaredSource: string, keys: readonly string[]): NormalizedEvent {
   const { url: _url, ...matchable } = ev.fields as Record<string, string>;
   const url = ev.fields["url"];
   const fields = keys.includes("url") && url !== undefined ? { ...matchable, url } : matchable;

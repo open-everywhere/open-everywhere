@@ -2,7 +2,7 @@ import { defineHook, type HookContext, type HookEvent } from "eve/hooks";
 import { recordRequesterIdentity } from "../access/requester-identity.js";
 import type { BindableContext } from "../identity/binding.js";
 
-export function captureRequesterIdentity(event: HookEvent<"message.received">, ctx: HookContext): void {
+function captureRequesterIdentity(event: HookEvent<"message.received">, ctx: HookContext): void {
   try {
     const { message, turnId } = event.data;
     recordRequesterIdentity(

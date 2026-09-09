@@ -34,7 +34,7 @@ export interface WebhookRejection {
   readonly reason: string;
 }
 
-export const UNKNOWN_HOOK_REJECTION: WebhookRejection = { status: 404, reason: "unknown webhook id" };
+const UNKNOWN_HOOK_REJECTION: WebhookRejection = { status: 404, reason: "unknown webhook id" };
 
 export type WebhookGateOutcome =
   | { readonly ok: true; readonly keyIndex: number | null; readonly replayKey?: string }

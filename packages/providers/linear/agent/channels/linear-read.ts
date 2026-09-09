@@ -13,7 +13,7 @@ import { enrichIssueTeam } from "./linear.js";
 import { assertLinearIssueAllowed } from "./linear-scope.js";
 import { linearWorkOrg } from "./linear-work.js";
 
-export const LINEAR_FETCH_COMMENTS = 100;
+const LINEAR_FETCH_COMMENTS = 100;
 const LINEAR_CHANNEL_DEFAULT_LIMIT = 50;
 const LINEAR_THREAD_DEFAULT_LIMIT = 100;
 

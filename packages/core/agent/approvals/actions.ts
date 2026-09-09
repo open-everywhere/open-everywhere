@@ -238,7 +238,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
   },
 };
 
-export interface ConnectorRevokeArgs {
+interface ConnectorRevokeArgs {
   readonly org: string;
   readonly scopeKey: string;
   readonly connector: string;
@@ -264,7 +264,7 @@ const connectorRevoke: ActionKind<ConnectorRevokeArgs> = {
   },
 };
 
-export interface ConnectorClearArgs {
+interface ConnectorClearArgs {
   readonly org: string;
   readonly scopeKey: string;
   readonly connector: string;

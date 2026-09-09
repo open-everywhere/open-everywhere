@@ -41,7 +41,7 @@ function firstHextet(ip: string): number {
   return g ? parseInt(g, 16) : 0;
 }
 
-export function isDeniedIp(ip: string): boolean {
+function isDeniedIp(ip: string): boolean {
   const fam = net.isIP(ip);
   if (fam === 4) return isDeniedIpv4(ip);
   if (fam === 6) {
@@ -199,7 +199,7 @@ export const EGRESS_REPORT_PROTOCOL =
 
 export type ReachDenyReason = "not-allowlisted" | "connector-revoked" | "halted";
 
-export type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
+type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
 
 export const MAX_REDIRECT_HOPS = 5;
 

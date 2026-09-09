@@ -58,7 +58,7 @@ export interface CredentialGrantRow {
   readonly revokedAt?: string;
 }
 
-export const CREDENTIAL_GRANT_NAMESPACE = "grant";
+const CREDENTIAL_GRANT_NAMESPACE = "grant";
 
 export function isGrantNameSegment(segment: string): boolean {
   return /^[a-z0-9]+(?:_[a-z0-9]+)*$/u.test(segment);

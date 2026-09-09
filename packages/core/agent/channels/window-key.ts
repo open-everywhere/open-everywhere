@@ -39,7 +39,7 @@ export function windowKeyForDomain(domain: string, generation: number): WindowKe
   return { domain, windowId: domain, generation };
 }
 
-export const TASK_WINDOW_ID_RE = /^t\//;
+const TASK_WINDOW_ID_RE = /^t\//;
 
 export function taskWindowId(channelKey: string, threadTs: string, nonce?: string): string {
   if (channelKey.length === 0 || threadTs.length === 0) {
@@ -70,7 +70,7 @@ export function isTaskWindowToken(token: unknown): boolean {
   return key !== undefined && isTaskWindowId(key.windowId);
 }
 
-export const THREAD_SEAT_WINDOW_ID_RE = /^s\//;
+const THREAD_SEAT_WINDOW_ID_RE = /^s\//;
 
 export function threadSeatWindowId(channelKey: string, threadTs: string): string {
   if (channelKey.length === 0 || threadTs.length === 0) {

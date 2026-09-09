@@ -6,14 +6,14 @@ export const TEMPLATE_TREES = {
   "subagents/fresh_eyes_review": "agent/subagents/fresh_eyes_review",
 } as const;
 
-export type TemplateTreeName = keyof typeof TEMPLATE_TREES;
+type TemplateTreeName = keyof typeof TEMPLATE_TREES;
 
 export interface TemplateFile {
   readonly path: string;
   readonly content: string;
 }
 
-export function templatesRoot(fromUrl: string = import.meta.url): string {
+function templatesRoot(fromUrl: string = import.meta.url): string {
   let dir = dirname(fileURLToPath(fromUrl));
   for (;;) {
     const candidate = join(dir, "templates");
@@ -38,7 +38,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-export function readTemplateTree(name: TemplateTreeName, fromUrl: string = import.meta.url): TemplateFile[] {
+function readTemplateTree(name: TemplateTreeName, fromUrl: string = import.meta.url): TemplateFile[] {
   const src = join(templatesRoot(fromUrl), ...name.split("/"));
   if (!existsSync(src)) throw new Error(`Template tree "${name}" is missing from ${templatesRoot(fromUrl)}.`);
   const dest = TEMPLATE_TREES[name];

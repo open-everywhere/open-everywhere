@@ -7,7 +7,7 @@ export type AwsScreenVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: "credential-read" | "argv-option" | "allow-list"; readonly reason: string };
 
-export const AWS_REFUSED_ARGV_OPTIONS: readonly string[] = [
+const AWS_REFUSED_ARGV_OPTIONS: readonly string[] = [
   "--endpoint-url",
   "--ca-bundle",
   "--no-verify-ssl",
@@ -16,7 +16,7 @@ export const AWS_REFUSED_ARGV_OPTIONS: readonly string[] = [
   "--debug",
 ];
 
-export const AWS_CREDENTIAL_SELF_READ_SUBCOMMANDS: readonly string[] = ["export-credentials", "list"];
+const AWS_CREDENTIAL_SELF_READ_SUBCOMMANDS: readonly string[] = ["export-credentials", "list"];
 
 const CLI_SERVICE_TO_IAM_PREFIX: Readonly<Record<string, string>> = {
   s3api: "s3",

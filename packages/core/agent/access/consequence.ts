@@ -660,7 +660,7 @@ export interface PostTurnWriteSite {
   readonly primitive: string;
 }
 
-export const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
+const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
   "packages/core/agent/operational/store.ts": "the operational-store INTERFACE that declares the routine verbs; a type signature, not a call site",
   "packages/core/agent/schedules/dispatch.ts": "the HOST dispatcher tick. It patches nextRunAt/lastOutcome on rows it is already firing, outside any session — there is no turn here to be tainted",
   "packages/core/agent/routines/outcome-fold.ts": "the host-side outcome fold (three-strike disable + stall detection). It reads what a fire DID and writes bookkeeping; it never authors instruction text",

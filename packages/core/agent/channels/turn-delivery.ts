@@ -137,7 +137,7 @@ export function rotationClockMsFromDays(raw: string | undefined, defaultDays: nu
   return rotationClockMs(days);
 }
 
-export function rotationClockMs(days: number): number {
+function rotationClockMs(days: number): number {
   return days > 0 ? days * 86_400_000 : Number.POSITIVE_INFINITY;
 }
 

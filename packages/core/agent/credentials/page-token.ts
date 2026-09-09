@@ -12,7 +12,7 @@ void _audiencesAreTotal;
 
 export const REVEAL_GRANT_CONNECTOR = "webhook-reveal";
 
-export const RESERVED_GRANT_CONNECTORS: readonly string[] = [REVEAL_GRANT_CONNECTOR];
+const RESERVED_GRANT_CONNECTORS: readonly string[] = [REVEAL_GRANT_CONNECTOR];
 
 export function isReservedGrantConnector(connector: string): boolean {
   return RESERVED_GRANT_CONNECTORS.includes(connector);

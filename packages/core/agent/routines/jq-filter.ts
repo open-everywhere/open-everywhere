@@ -16,11 +16,11 @@ const DOC_PATH = "/event.json";
 
 export const FILTER_MAX_LENGTH = 1000;
 
-export const FILTER_PROBE_BUDGET_MS = 250;
+const FILTER_PROBE_BUDGET_MS = 250;
 
 const PROBE_RUNS = 3;
 
-export const JQ_LIMITS: ExecutionLimits = {
+const JQ_LIMITS: ExecutionLimits = {
   maxJqIterations: 1_000,
   maxCommandCount: 2,
   maxCallDepth: 32,
@@ -63,7 +63,7 @@ export function filterDocument(ev: NormalizedEvent): EventFilterDocument {
   };
 }
 
-export function probeDocument(source: string, matchKeys: readonly string[]): EventFilterDocument {
+function probeDocument(source: string, matchKeys: readonly string[]): EventFilterDocument {
   const fields: Record<string, string> = {};
   for (const k of matchKeys.slice(0, FIELDS_MAX_KEYS)) fields[k] = "x".repeat(FIELD_VALUE_MAX);
   for (let i = Object.keys(fields).length; i < FIELDS_MAX_KEYS; i++) fields[`probe_${i}`] = "x".repeat(FIELD_VALUE_MAX);

@@ -6,10 +6,10 @@ import { getConfig } from "./config.js";
 
 export type AdminSubject = { readonly ok: true; readonly principalId: string } | { readonly ok: false; readonly message: string };
 
-export const ADMIN_NO_ACTING_MESSAGE =
+const ADMIN_NO_ACTING_MESSAGE =
   "No verified sender id on this turn — no acting principal resolved, so there is no caller to check admin standing for.";
 
-export function adminUnverifiedMessage(reason: string): string {
+function adminUnverifiedMessage(reason: string): string {
   return (
     `this action needs to know who asked, and this turn cannot say: ${reason}. ` +
     "Admin standing is checked against the person who asked, never against whoever else this session was serving, so it is refused rather than guessed. " +

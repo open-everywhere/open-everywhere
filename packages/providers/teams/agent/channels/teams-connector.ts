@@ -49,12 +49,12 @@ export async function teamsConnectorWrite(
   return { ok: res.ok, status: res.status, body: await parseTeamsResponseBody(res) };
 }
 
-export function toPostedTeamsActivity(body: unknown): { id: string } {
+function toPostedTeamsActivity(body: unknown): { id: string } {
   const id = body !== null && typeof body === "object" && typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : "";
   return { id };
 }
 
-export function formatTeamsConnectorErrorBody(body: unknown): string {
+function formatTeamsConnectorErrorBody(body: unknown): string {
   const text = typeof body === "string" ? body : JSON.stringify(body);
   if (text === undefined || text.length === 0) return "empty response body";
   return text.length <= 1000 ? text : `${text.slice(0, 997)}...`;

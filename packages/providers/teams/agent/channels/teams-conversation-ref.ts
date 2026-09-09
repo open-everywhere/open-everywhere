@@ -8,7 +8,7 @@ export const TEAMS_PERSONAL_ADDRESS_KIND = "personal";
 
 export const TEAMS_TEAM_ADDRESS_KIND = "team";
 
-export const TEAMS_CONVERSATION_ADDRESS_KIND = "conversation";
+const TEAMS_CONVERSATION_ADDRESS_KIND = "conversation";
 
 export const TEAMS_TEAM_ADDRESS_READ_LIMIT = 8;
 

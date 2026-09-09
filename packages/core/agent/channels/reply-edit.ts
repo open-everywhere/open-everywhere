@@ -70,7 +70,7 @@ export async function auditReplyEditRefused(
   }).catch(() => undefined);
 }
 
-export async function auditReplyEdit(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
+async function auditReplyEdit(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
   if (!audit) return;
   await appendAudit({
     org: audit.org,

@@ -59,7 +59,7 @@ function log(msg: string): void {
   console.log(`[open-everywhere:memory] ${msg}`);
 }
 
-export function hashContent(s: string): string {
+function hashContent(s: string): string {
   return createHash("sha1").update(s).digest("hex");
 }
 
@@ -175,7 +175,7 @@ export function guardDestructiveWrites(
 
 const MAX_AUDITED_DELETIONS = 50;
 
-export function deletionDigests(
+function deletionDigests(
   hostCurrent: MemoryFiles,
   files: MemoryFiles,
 ): { readonly perFile: readonly { file: string; removed: readonly { sha256: string; chars: number }[] }[]; readonly total: number } {

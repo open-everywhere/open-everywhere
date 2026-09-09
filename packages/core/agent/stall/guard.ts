@@ -13,7 +13,7 @@ export function stallThreshold(): number {
 
 export const RESULT_HASH_CAP_BYTES = 8192;
 
-export const STALL_ALLOWLIST: ReadonlySet<string> = new Set(["reply", "react", "no_reply", "agent"]);
+const STALL_ALLOWLIST: ReadonlySet<string> = new Set(["reply", "react", "no_reply", "agent"]);
 
 export function isGuardedTool(toolName: string): boolean {
   return !STALL_ALLOWLIST.has(toolName);
@@ -54,7 +54,7 @@ export interface StallState {
   pending: Record<string, CallRef>;
 }
 
-export function initialStallState(): StallState {
+function initialStallState(): StallState {
   return { turnId: null, signature: null, count: 0, armed: null, strikes: 0, strikeRef: null, pending: {} };
 }
 
@@ -65,7 +65,7 @@ function reduceTurn(state: StallState, turnId: string | null): StallState {
   return { ...initialStallState(), turnId, pending: state.pending };
 }
 
-export function reduceRequest(state: StallState, turnId: string | null, callId: string, toolName: string, input: unknown): StallState {
+function reduceRequest(state: StallState, turnId: string | null, callId: string, toolName: string, input: unknown): StallState {
   const s = reduceTurn(state, turnId);
   if (!isGuardedTool(toolName)) return s;
   const pending: Record<string, CallRef> = { ...s.pending, [callId]: { toolName, inputKey: inputKeyOf(input) } };
@@ -95,7 +95,7 @@ export function reduceResult(state: StallState, turnId: string | null, callId: s
   return { ...s, signature, count: 1, armed: null, strikes, strikeRef, pending };
 }
 
-export function takeTrip(state: StallState, toolName: string, input: unknown): { tripped: boolean; strikes: number; state: StallState } {
+function takeTrip(state: StallState, toolName: string, input: unknown): { tripped: boolean; strikes: number; state: StallState } {
   if (!isGuardedTool(toolName) || !state.armed) return { tripped: false, strikes: 0, state };
   const inputKey = inputKeyOf(input);
   if (state.armed.toolName !== toolName || state.armed.inputKey !== inputKey) return { tripped: false, strikes: 0, state };

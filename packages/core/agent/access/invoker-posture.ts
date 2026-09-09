@@ -2,7 +2,7 @@ export type InvokerPosture = "untrusted-remote" | "unattended-fire" | "attended-
 
 export const INVOKER_POSTURE_ATTR = "oe_invoker_posture";
 
-export const INVOKER_POSTURE_RANK: Readonly<Record<InvokerPosture, number>> = {
+const INVOKER_POSTURE_RANK: Readonly<Record<InvokerPosture, number>> = {
   "untrusted-remote": 0,
   "unattended-fire": 1,
   "attended-fire": 2,
@@ -13,11 +13,11 @@ export function narrowerInvokerPosture(a: InvokerPosture, b: InvokerPosture): In
   return INVOKER_POSTURE_RANK[a] <= INVOKER_POSTURE_RANK[b] ? a : b;
 }
 
-export function isInvokerPosture(v: unknown): v is InvokerPosture {
+function isInvokerPosture(v: unknown): v is InvokerPosture {
   return typeof v === "string" && Object.prototype.hasOwnProperty.call(INVOKER_POSTURE_RANK, v);
 }
 
-export function parseInvokerPosture(v: unknown): InvokerPosture {
+function parseInvokerPosture(v: unknown): InvokerPosture {
   return isInvokerPosture(v) ? v : "interactive";
 }
 
@@ -56,7 +56,7 @@ export function withheldForInvokerPosture(posture: InvokerPosture, delegatedWork
 
 const EMPTY: ReadonlySet<string> = new Set<string>();
 
-export function allowedUnderInvokerPosture(name: string, posture: InvokerPosture, withheld: ReadonlySet<string> = withheldForInvokerPosture(posture)): boolean {
+function allowedUnderInvokerPosture(name: string, posture: InvokerPosture, withheld: ReadonlySet<string> = withheldForInvokerPosture(posture)): boolean {
   return !withheld.has(name);
 }
 

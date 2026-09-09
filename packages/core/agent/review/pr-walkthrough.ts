@@ -19,9 +19,9 @@ export const FACTS_LABEL = "🧮 FACTS — computed in CI, no model in the path"
 
 export const NARRATION_LABEL = "🗣️ NARRATION — a language model's opinion, not a computed fact";
 
-export const MAX_NARRATION_CHARS = 1200;
+const MAX_NARRATION_CHARS = 1200;
 
-export const MAX_NARRATION_ITEMS = 40;
+const MAX_NARRATION_ITEMS = 40;
 
 export const SNAPSHOT_BLIND_SPOTS: readonly { readonly headline: string; readonly gloss: string }[] = [
   {

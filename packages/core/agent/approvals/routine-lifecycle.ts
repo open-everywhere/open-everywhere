@@ -25,7 +25,7 @@ function clip(s: string): string {
   return t.length > CARD_PROMPT_CHARS ? `${t.slice(0, CARD_PROMPT_CHARS)}…` : t;
 }
 
-export interface RoutineEditArgs {
+interface RoutineEditArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly surfaceKey: string;
@@ -96,7 +96,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
   },
 };
 
-export interface RoutineEnableArgs {
+interface RoutineEnableArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly surfaceKey: string;

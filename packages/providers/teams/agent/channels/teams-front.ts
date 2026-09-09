@@ -132,7 +132,7 @@ function authForActivity(a: TeamsMessageActivity): OpenEverywhereTeamsAuth {
 
 export type TeamsRosterProbeFor = (activity: TeamsMessageActivity) => TeamsRosterProbe | undefined;
 
-export async function teamsAuthWithUserType<A extends OpenEverywhereTeamsAuth>(
+async function teamsAuthWithUserType<A extends OpenEverywhereTeamsAuth>(
   auth: A,
   a: TeamsMessageActivity,
   probeFor?: TeamsRosterProbeFor,

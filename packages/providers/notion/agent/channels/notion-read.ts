@@ -85,7 +85,7 @@ export function notionChannelLines(comments: readonly NotionCommentSummary[], pa
   return lines;
 }
 
-export function notionThreadLines(comments: readonly NotionCommentSummary[], discussionId: string, pageId: string): RenderedLine[] {
+function notionThreadLines(comments: readonly NotionCommentSummary[], discussionId: string, pageId: string): RenderedLine[] {
   const mine = comments.filter((c) => c.discussionId === discussionId);
   return mine.map((c, index) => ({
     ...authorFields(c),

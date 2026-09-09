@@ -6,8 +6,8 @@ export const EXTERNAL_PROVENANCE_PREFIX = "[external-provenance:";
 
 export const EXTERNAL_CLAIM_PREFIX = "[unverified claim";
 
-export const EXTERNAL_CLAIM_LEAD = `${EXTERNAL_CLAIM_PREFIX}; the turn ingested `;
-export const EXTERNAL_PROVENANCE_LEAD = `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested `;
+const EXTERNAL_CLAIM_LEAD = `${EXTERNAL_CLAIM_PREFIX}; the turn ingested `;
+const EXTERNAL_PROVENANCE_LEAD = `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested `;
 
 const UNNAMED_SOURCE = "external content";
 
@@ -95,12 +95,12 @@ export function recastAsAttributedClaim(line: string, attribution: string): stri
   return `${head[1]!}${lead}${attribution} ${statement}`;
 }
 
-export interface LineCarriers {
+interface LineCarriers {
   readonly attribution: string | null;
   readonly mark: string | null;
 }
 
-export function carriersOf(line: string): LineCarriers {
+function carriersOf(line: string): LineCarriers {
   let attribution: string | null = null;
   let mark: string | null = null;
   for (const [found] of line.matchAll(provenanceCarrierPattern())) {

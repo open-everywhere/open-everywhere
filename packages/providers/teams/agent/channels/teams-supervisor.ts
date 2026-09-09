@@ -13,7 +13,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
-export function teamsSupervisorSentinel(generation: number): string {
+function teamsSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
 }
 
@@ -35,7 +35,7 @@ export function teamsSingleWindowPrivacyOk(f: TeamsSingleWindowFacts): boolean {
   return f.vouched === true;
 }
 
-export function teamsSingleWindowMentionPolicy(singleWindow: boolean, isMention: boolean, facts: TeamsSingleWindowFacts): SingleWindowMentionPolicy {
+function teamsSingleWindowMentionPolicy(singleWindow: boolean, isMention: boolean, facts: TeamsSingleWindowFacts): SingleWindowMentionPolicy {
   return singleWindowMentionPolicy(singleWindow, isMention, teamsSingleWindowPrivacyOk(facts));
 }
 

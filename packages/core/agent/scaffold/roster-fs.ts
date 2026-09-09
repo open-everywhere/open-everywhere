@@ -6,7 +6,7 @@ import { serializeLock, type PlanFile, type ResolvedPackage, type DeclaredPackag
 import type { RosterLock } from "./roster-config.js";
 
 export const CONFIG_FILE = "roster.config.ts";
-export const LOCK_FILE = "roster.lock.json";
+const LOCK_FILE = "roster.lock.json";
 
 export function findRepoRoot(start: string): string | undefined {
   let dir = resolvePath(start);

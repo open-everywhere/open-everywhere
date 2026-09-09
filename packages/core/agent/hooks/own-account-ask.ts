@@ -5,7 +5,7 @@ import { OE_OWN_ACCOUNT_ASK_ATTR, renderOwnAccountStamp } from "../connections/o
 import { namedOwnAccountVendor, type OwnAccountAsk, type OwnAccountVendor } from "../connections/own-account-ask.js";
 import { captureEligible } from "./requester-messages.js";
 
-export function ownAccountVendors(): readonly OwnAccountVendor[] {
+function ownAccountVendors(): readonly OwnAccountVendor[] {
   return credentialGrantConnectors().map((connector) => ({ connector }));
 }
 
@@ -29,7 +29,7 @@ export function askBodyOf(text: string | undefined): string | undefined {
   return triggerMessageBody(text);
 }
 
-export function stampOwnAccountAsk(event: HookEvent<"message.received">, ctx: HookContext): OwnAccountAsk | undefined {
+function stampOwnAccountAsk(event: HookEvent<"message.received">, ctx: HookContext): OwnAccountAsk | undefined {
   try {
     if (!captureEligible(ctx)) return undefined;
     const { message } = event.data;

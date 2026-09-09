@@ -27,7 +27,7 @@ export function consumeRepliedThisTurn(turnId: string | undefined): boolean {
   }
 }
 
-export function hasRepliedThisTurn(turnId: string | undefined): boolean {
+function hasRepliedThisTurn(turnId: string | undefined): boolean {
   if (turnId === undefined || turnId.length === 0) return false;
   try {
     const cur = slot.get();
@@ -184,14 +184,6 @@ export function wasStoppedAckSpentThisTurn(turnId: string | undefined): boolean 
   } catch {
     return false;
   }
-}
-
-export function stoppedRefusalMessage(): string {
-  return (
-    "You were asked to stand down in this conversation and that stop is recorded, so nothing was posted. " +
-    "Your acknowledgement has already gone out; anything further here is exactly what the person asked you to stop doing. " +
-    `${END_TURN_WITH_SENTINEL_INSTRUCTION} Someone @mentioning you is what brings you back.`
-  );
 }
 
 interface StoodDownThisTurn {

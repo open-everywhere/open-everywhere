@@ -10,9 +10,9 @@ import { postArm } from "./post-arms.js";
 
 export const REDRIVE_ACTION = "unified.turn.redrive";
 
-export const REDRIVE_GUARD_PREFIX = "unified-redrive:";
+const REDRIVE_GUARD_PREFIX = "unified-redrive:";
 
-export const REDRIVE_GUARD_TTL_MS = WAKE_TARGET_TTL_MS;
+const REDRIVE_GUARD_TTL_MS = WAKE_TARGET_TTL_MS;
 
 export function redriveGuardKey(wakeId: string): string {
   return `${REDRIVE_GUARD_PREFIX}${wakeId}`;

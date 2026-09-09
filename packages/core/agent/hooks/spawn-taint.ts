@@ -36,7 +36,7 @@ import { notePendingDelegation, noteDelegationSettled } from "../access/pending-
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
-export const TAINT_VERDICT_ACTION = "taint.verdict";
+const TAINT_VERDICT_ACTION = "taint.verdict";
 
 registerTaintVerdictSink((row: TaintVerdictRow) => {
   void appendAudit({
@@ -94,7 +94,7 @@ export function openTaintTurn(ctx: HookContext): void {
   announceTaintOff(ctx);
 }
 
-export const TAINT_MODE_ACTION = "taint.mode";
+const TAINT_MODE_ACTION = "taint.mode";
 
 const taintModeAnnounced = defineState<boolean>("open-everywhere.taint-mode-announced", () => false);
 
@@ -186,7 +186,7 @@ registerTaintKindObserver(() => {
   recordTurnTaintForChildren();
 });
 
-export const TAINT_FORWARD_ACTION = "taint.forward";
+const TAINT_FORWARD_ACTION = "taint.forward";
 
 export const OE_PARENT_TURN_TAINTED_ATTR = "oe_parent_turn_tainted";
 
@@ -324,7 +324,7 @@ function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
   }
 }
 
-export function recordDispatchTurnForChildren(): boolean {
+function recordDispatchTurnForChildren(): boolean {
   try {
     const who = turnIdentity.get();
     if (who === null || who.attrs === null) return false;

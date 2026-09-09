@@ -4,8 +4,8 @@ import { ingestUntrusted } from "../access/untrusted.js";
 
 export const MAX_REVIEWS = 30;
 export const MAX_REVIEW_COMMENTS = 50;
-export const MAX_ISSUE_COMMENTS = 50;
-export const MAX_CHECKS = 50;
+const MAX_ISSUE_COMMENTS = 50;
+const MAX_CHECKS = 50;
 export const MAX_BODY_CHARS = 2000;
 
 export interface PrFeedbackReview {

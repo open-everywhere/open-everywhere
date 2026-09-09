@@ -118,7 +118,7 @@ export async function ingestReaction(r: IngestedReaction, deps: ReactionSinkDeps
   return { recorded: true, onBotReply: true, reason: `reaction ${r.verb} on a bot reply — feedback recorded` };
 }
 
-export function emitReactionTelemetry(r: IngestedReaction): void {
+function emitReactionTelemetry(r: IngestedReaction): void {
   emitTelemetry(r.verb === "added" ? "oe.reaction.added" : "oe.reaction.removed", {
     "oe.surface": r.surface,
     "oe.on_bot_reply": r.onBotReply,

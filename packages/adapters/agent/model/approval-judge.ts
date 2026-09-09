@@ -20,7 +20,7 @@ export function approvalJudgeCallSettings(
   };
 }
 
-export function gatewayApprovalJudgeCompletion(defaults: GatewayRoutedDefaults): ApprovalJudgeCompletion {
+function gatewayApprovalJudgeCompletion(defaults: GatewayRoutedDefaults): ApprovalJudgeCompletion {
   return async (prompt, pass) => {
     const s = approvalJudgeCallSettings(pass, defaults);
     const { text } = await generateText({

@@ -306,7 +306,7 @@ export function renderFrameworkSentinel(name: string, reason: string): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function renderProvidersModule(
+function renderProvidersModule(
   providers: readonly { readonly id: string; readonly pkg: string; readonly module: string; readonly exportName: string; readonly about?: string }[],
 ): string {
   const lines = [

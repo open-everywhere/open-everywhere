@@ -39,7 +39,7 @@ export function clampReasoning(requested: ModelReasoning | undefined, ceiling: M
   return requested;
 }
 
-export function modelProviderOf(id: string): string {
+function modelProviderOf(id: string): string {
   const i = id.indexOf("/");
   return i === -1 ? id : id.slice(0, i);
 }

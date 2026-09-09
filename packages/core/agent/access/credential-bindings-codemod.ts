@@ -123,7 +123,7 @@ export function stringifyCredentialBindings(file: CredentialBindingsFile): strin
   return JSON.stringify({ overrides }, null, 2) + "\n";
 }
 
-export const CREDENTIAL_BINDINGS_MODULE: OverlayModuleGrammar = {
+const CREDENTIAL_BINDINGS_MODULE: OverlayModuleGrammar = {
   what: "credential-bindings overlay",
   header: overlayModuleHeader("credential-bindings overlay", "packages/core/agent/access/credential-bindings-codemod.ts"),
   typeImport: 'import type { CredentialBindingsFile } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";',

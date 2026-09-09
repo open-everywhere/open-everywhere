@@ -150,7 +150,7 @@ export async function assertNotionWorkPageAllowed(
   throw new ChannelScopeError(notionScopeRefusal(pageId, verdict));
 }
 
-export function notionBlockRefusal(blockId: string, callerDomain: string | undefined): string {
+function notionBlockRefusal(blockId: string, callerDomain: string | undefined): string {
   const scope = callerDomain ? `domain "${callerDomain}"` : "this session's";
   return (
     `Notion block "${blockId}" could not be resolved to a page in ${scope} read scope, so it is refused. ` +
@@ -159,7 +159,7 @@ export function notionBlockRefusal(blockId: string, callerDomain: string | undef
   );
 }
 
-export function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict): string {
+function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict): string {
   const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this page's (no domain owns this session's page)";
   return (
     `Notion page "${pageId}" is not in ${scope} read scope. The agent may only read pages in its ` +
@@ -168,7 +168,7 @@ export function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict):
   );
 }
 
-export function notionPageOrBlockRefusal(id: string, verdict: NotionScopeVerdict, resolvedPage: string | null): string {
+function notionPageOrBlockRefusal(id: string, verdict: NotionScopeVerdict, resolvedPage: string | null): string {
   if (resolvedPage) {
     const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this session's";
     return (

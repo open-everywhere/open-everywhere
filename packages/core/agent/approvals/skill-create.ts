@@ -5,7 +5,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
-export interface SkillCreateArgs {
+interface SkillCreateArgs {
   readonly org: string;
   readonly domain: string;
   readonly name: string;

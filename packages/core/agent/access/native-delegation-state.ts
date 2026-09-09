@@ -15,7 +15,7 @@ export function setNativeDelegationSeat(verdict: NativeDelegationVerdict): void 
   }
 }
 
-export function currentNativeDelegationSeat(): NativeDelegationVerdict {
+function currentNativeDelegationSeat(): NativeDelegationVerdict {
   try {
     return slot.get();
   } catch {

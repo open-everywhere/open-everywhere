@@ -25,7 +25,7 @@ export type LinkEvidence =
       readonly externalId?: string;
     };
 
-export function evidenceLabel(e: LinkEvidence): string {
+function evidenceLabel(e: LinkEvidence): string {
   switch (e.kind) {
     case "challenge":
       return `challenge:${e.challengeId}`;

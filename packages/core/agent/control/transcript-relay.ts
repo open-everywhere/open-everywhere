@@ -8,7 +8,7 @@ import { listRoutineFires } from "../routines/fire-audit.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 
-export const TRANSCRIPT_RELAY_SECRET_ENV = "OE_TRANSCRIPT_RELAY_SECRET";
+const TRANSCRIPT_RELAY_SECRET_ENV = "OE_TRANSCRIPT_RELAY_SECRET";
 
 export const TRANSCRIPT_RELAY_PATH = "/eve/v1/internal/transcript";
 
@@ -18,13 +18,13 @@ export const TRANSCRIPT_RELAY_MAX_BODY_BYTES = 16 * 1024;
 
 export const TRANSCRIPT_RELAY_MAX_SKEW_MS = 5 * 60 * 1000;
 
-export const TRANSCRIPT_RELAY_TIMEOUT_MS = 20_000;
+const TRANSCRIPT_RELAY_TIMEOUT_MS = 20_000;
 
-export const TRANSCRIPT_RELAY_MAX_EVENTS = 600;
+const TRANSCRIPT_RELAY_MAX_EVENTS = 600;
 
-export const TRANSCRIPT_RELAY_IDLE_MS = 1500;
+const TRANSCRIPT_RELAY_IDLE_MS = 1500;
 
-export const TRANSCRIPT_RELAY_PROBE_MS = 3000;
+const TRANSCRIPT_RELAY_PROBE_MS = 3000;
 
 export const TRANSCRIPT_RELAY_MAX_FIRE_DEPTH = 10;
 

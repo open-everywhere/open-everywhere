@@ -21,7 +21,7 @@ import { postOnce, outboundKey } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
 import { createHash } from "node:crypto";
 
-export function deterministicChildWakeId(callId: string): string {
+function deterministicChildWakeId(callId: string): string {
   return createHash("sha256").update(`oe-oneshot:${callId}`).digest("hex").slice(0, 32);
 }
 

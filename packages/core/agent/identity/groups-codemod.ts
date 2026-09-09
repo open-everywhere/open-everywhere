@@ -68,7 +68,7 @@ export function stringifyGroups(file: GroupsFile): string {
   return JSON.stringify({ groups }, null, 2) + "\n";
 }
 
-export const GROUPS_MODULE: OverlayModuleGrammar = {
+const GROUPS_MODULE: OverlayModuleGrammar = {
   what: "person-groups overlay",
   header: overlayModuleHeader("person-groups overlay", "packages/core/agent/identity/groups-codemod.ts"),
   typeImport: 'import type { GroupsFile } from "@open-everywhere/core/agent/identity/groups-codemod.js";',

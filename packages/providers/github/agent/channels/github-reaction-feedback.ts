@@ -180,15 +180,15 @@ export async function routeGitHubReactionFeedback(
   return outcomes;
 }
 
-export function githubReactionClaimKey(p: GitHubReactionPartition, key: string): string {
+function githubReactionClaimKey(p: GitHubReactionPartition, key: string): string {
   return `github-reaction:${p.surfaceKey}\u001f${key}`;
 }
 
-export async function liveGitHubReactionRecorded(p: GitHubReactionPartition, key: string): Promise<boolean> {
+async function liveGitHubReactionRecorded(p: GitHubReactionPartition, key: string): Promise<boolean> {
   return getOperationalStore().noticeClaimed(deploymentOrg(), githubReactionClaimKey(p, key));
 }
 
-export async function liveGitHubReactionMarkRecorded(p: GitHubReactionPartition, key: string, atIso: string): Promise<void> {
+async function liveGitHubReactionMarkRecorded(p: GitHubReactionPartition, key: string, atIso: string): Promise<void> {
   await getOperationalStore().claimNotice(deploymentOrg(), githubReactionClaimKey(p, key), atIso);
 }
 

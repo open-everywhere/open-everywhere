@@ -17,7 +17,7 @@ export function pgliteLockPath(dir: string): string {
   return `${dir}.lock`;
 }
 
-export function pgliteClient(pg: PGlite): PgClient {
+function pgliteClient(pg: PGlite): PgClient {
   return { query: (text, params) => pg.query(text, params ? [...params] : undefined) };
 }
 

@@ -12,7 +12,7 @@ import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials
 import type { NotionParentLink } from "./notion-ancestry-trust.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
-export function notionVersion(): string {
+function notionVersion(): string {
   const v = process.env.NOTION_VERSION;
   return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
 }
@@ -512,7 +512,7 @@ export async function updateComment(
   }
 }
 
-export interface NotionFileUploadObject {
+interface NotionFileUploadObject {
   readonly id?: string;
   readonly upload_url?: string;
   readonly status?: string;

@@ -7,7 +7,7 @@ import { githubConversationKey } from "./github-identity.js";
 
 export const GITHUB_REACTION_POLL_HOURLY_BUDGET = 60;
 
-export const GITHUB_POLL_BUDGET_TTL_MS = 6 * 60 * 60 * 1000;
+const GITHUB_POLL_BUDGET_TTL_MS = 6 * 60 * 60 * 1000;
 
 export const GITHUB_REACTION_POLL_BUDGET_ACTION = "github.reaction_poll_budget";
 
@@ -17,7 +17,7 @@ export const GITHUB_POSTED_MARK_TIMEOUT_MS = 2000;
 
 const BUDGET_AUDIT_TTL_MS = 2 * 60 * 60 * 1000;
 
-export function githubPostedClaimKey(owner: string | undefined, repo: string | undefined, number: number | undefined): string | undefined {
+function githubPostedClaimKey(owner: string | undefined, repo: string | undefined, number: number | undefined): string | undefined {
   const anchor = githubConversationKey(owner, repo, number);
   return anchor ? `github-posted:${anchor}` : undefined;
 }

@@ -1,4 +1,4 @@
-export interface RichText {
+interface RichText {
   readonly plain_text?: string;
   readonly href?: string | null;
   readonly type?: string;
@@ -24,7 +24,7 @@ export interface BlockNode {
 
 export const PAGE_BLOCK_TYPES = new Set(["child_page", "child_database"]);
 
-export const PLACEHOLDER_BLOCK_TYPES = new Set([
+const PLACEHOLDER_BLOCK_TYPES = new Set([
   "image", "video", "audio", "file", "pdf", "embed", "bookmark", "link_preview", "table", "unsupported",
 ]);
 

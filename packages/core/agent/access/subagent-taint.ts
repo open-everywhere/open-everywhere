@@ -2,7 +2,7 @@ import { getOperationalStore } from "../operational/provider.js";
 
 const MARKER_PREFIX = "oe-subagent-taint:";
 
-export const SUBAGENT_TAINT_TTL_MS = 6 * 60 * 60 * 1000;
+const SUBAGENT_TAINT_TTL_MS = 6 * 60 * 60 * 1000;
 
 export function subagentTaintKey(childToken: string): string {
   return `${MARKER_PREFIX}${childToken}`;

@@ -131,7 +131,7 @@ const refusedSlot = defineState<FoldRefusedRooms | null>("open-everywhere.reply-
 
 const MAX_REFUSED_ROOMS = 32;
 
-export function markFoldRefusedThisTurn(turnId: string | undefined, room: string | undefined): void {
+function markFoldRefusedThisTurn(turnId: string | undefined, room: string | undefined): void {
   if (turnId === undefined || turnId.length === 0) return;
   if (typeof room !== "string" || room.length === 0) return;
   try {
@@ -144,7 +144,7 @@ export function markFoldRefusedThisTurn(turnId: string | undefined, room: string
   }
 }
 
-export function wasFoldRefusedThisTurn(turnId: string | undefined, room: string | undefined): boolean {
+function wasFoldRefusedThisTurn(turnId: string | undefined, room: string | undefined): boolean {
   if (turnId === undefined || turnId.length === 0) return false;
   if (typeof room !== "string" || room.length === 0) return false;
   try {

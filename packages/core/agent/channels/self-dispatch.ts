@@ -11,7 +11,7 @@ import { deploymentOrg } from "../identity/binding.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 
-export const SPAWN_DISPATCH_SECRET_ENV = "OE_SPAWN_DISPATCH_SECRET";
+const SPAWN_DISPATCH_SECRET_ENV = "OE_SPAWN_DISPATCH_SECRET";
 
 export const SELF_DISPATCH_PATH = "/eve/v1/unified/dispatch";
 
@@ -19,7 +19,7 @@ export const SELF_DISPATCH_SIGNATURE_HEADER = "x-oe-dispatch-signature";
 
 export const SELF_DISPATCH_MAX_BODY_BYTES = 512 * 1024;
 
-export const SELF_DISPATCH_MAX_SKEW_MS = 5 * 60 * 1000;
+const SELF_DISPATCH_MAX_SKEW_MS = 5 * 60 * 1000;
 
 export const SELF_DISPATCH_TIMEOUT_MS = 15_000;
 

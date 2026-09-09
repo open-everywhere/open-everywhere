@@ -8,14 +8,14 @@ import type { Tier } from "../memory/store.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
-export interface MemoryPurgeLocation {
+interface MemoryPurgeLocation {
   readonly siloName: string;
   readonly provider: string;
   readonly tierId: string;
   readonly file: string;
 }
 
-export interface MemoryPurgeArgs {
+interface MemoryPurgeArgs {
   readonly org: string;
   readonly partition: Partition;
   readonly bullets: readonly { readonly sha256: string; readonly chars: number }[];

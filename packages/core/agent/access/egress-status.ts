@@ -2,7 +2,7 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { lockCommand, unlockCommand } from "../memory/readonly.js";
 import { ruleStampsCredential } from "./egress.js";
 
-export const EGRESS_DIR = "egress";
+const EGRESS_DIR = "egress";
 export const EGRESS_STATUS_PATH = `${EGRESS_DIR}/STATUS.json`;
 export const EGRESS_README_PATH = `${EGRESS_DIR}/README.md`;
 

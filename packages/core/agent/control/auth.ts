@@ -170,7 +170,7 @@ export function staticTokenVerifier(opts: { token: string; subject?: string }): 
 
 export const SERVICE_TOKEN_ISSUER = "service-token";
 
-export const READ_TOKEN_ENV = "OE_CONTROL_READ_TOKENS";
+const READ_TOKEN_ENV = "OE_CONTROL_READ_TOKENS";
 export const INJECT_TOKEN_ENV = "OE_CONTROL_INJECT_TOKENS";
 
 export interface ServiceTokenEntry {

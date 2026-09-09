@@ -13,7 +13,7 @@ export interface BrowserToolEntry {
   toModelOutput?(output: any): any;
 }
 
-export const BROWSER_TOOLS_SLUG = "browser_tools";
+const BROWSER_TOOLS_SLUG = "browser_tools";
 
 export const BROWSER_TOOL_NAMES = [
   "browser_navigate",

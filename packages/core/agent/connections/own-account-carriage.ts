@@ -20,7 +20,7 @@ export function parseOwnAccountStamp(raw: string | undefined): { readonly sessio
   return { ask: { ambiguous: flag === AMBIGUOUS_FLAG, connector }, sessionId };
 }
 
-export function readOwnAccountAttr(ctx: BindableContext): string | undefined {
+function readOwnAccountAttr(ctx: BindableContext): string | undefined {
   const attrs = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
   const raw = attrs?.[OE_OWN_ACCOUNT_ASK_ATTR];
   const first = Array.isArray(raw) ? raw[0] : raw;

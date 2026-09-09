@@ -13,7 +13,7 @@ function formField(params: URLSearchParams, name: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
-export function bindableForSlashCommand(params: URLSearchParams): BindableContext {
+function bindableForSlashCommand(params: URLSearchParams): BindableContext {
   return {
     channel: { kind: "slack" },
     session: {

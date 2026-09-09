@@ -9,11 +9,11 @@ export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 const TOKEN_FIELD = "t";
 const VALUE_FIELD = "k";
 
-export async function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+async function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): Promise<string> {
   return getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
 }
 
-export function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return pageBaseUrl(env);
 }
 

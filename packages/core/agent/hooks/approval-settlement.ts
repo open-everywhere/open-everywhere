@@ -46,7 +46,7 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-export async function auditApprovalSettled(event: unknown, ctx: HookContext): Promise<void> {
+async function auditApprovalSettled(event: unknown, ctx: HookContext): Promise<void> {
   try {
     const data = dataOf(event);
     const outcome = str(data?.outcome);
@@ -66,7 +66,7 @@ export async function auditApprovalSettled(event: unknown, ctx: HookContext): Pr
   }
 }
 
-export async function auditApprovalCandidate(event: unknown, ctx: HookContext): Promise<void> {
+async function auditApprovalCandidate(event: unknown, ctx: HookContext): Promise<void> {
   try {
     const data = dataOf(event);
     const outcome = str(data?.outcome);

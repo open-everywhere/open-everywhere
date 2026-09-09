@@ -5,11 +5,11 @@ export interface OverlayModuleGrammar {
   readonly typeName: string;
 }
 
-export function overlayModulePrefix(g: OverlayModuleGrammar): string {
+function overlayModulePrefix(g: OverlayModuleGrammar): string {
   return `${g.header}\n${g.typeImport}\n\nexport default `;
 }
 
-export function overlayModuleSuffix(g: OverlayModuleGrammar): string {
+function overlayModuleSuffix(g: OverlayModuleGrammar): string {
   return ` satisfies ${g.typeName};\n`;
 }
 

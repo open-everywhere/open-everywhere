@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -281,6 +281,19 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
   ok(next.backendCalls === 1, "§3: …so the next round-trip is the ordinary routed model and the turn keeps going");
 }
 
+const AUTHORED_COPY_EXTENSIONS = [".ts", ".js", ".md"] as const;
+
+function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: string }[] {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap((e) => {
+    if (e.name === "dist" || e.name === "node_modules") return [];
+    const child = new URL(`${e.name}${e.isDirectory() ? "/" : ""}`, dir);
+    if (e.isDirectory()) return authoredSourcesUnder(child);
+    if (!AUTHORED_COPY_EXTENSIONS.some((ext) => e.name.endsWith(ext))) return [];
+    return [{ url: child, src: readFileSync(child, "utf8") }];
+  });
+}
+
 {
   _resetTurnCloseoutForTest();
   const inTurn = newSession();
@@ -306,6 +319,12 @@ registerSettings({ turn: { stepBudget: 1000, stepBackstopMultiple: 3 } });
   ok(/stand down/i.test(again.error!), "§4: refused with the stand-down steer, not some incidental error");
   ok(/already posted here once this turn/i.test(again.error!), "§4/COPY: the refusal says the turn has already POSTED once — true whether or not that post acknowledged the stop");
   ok(!/acknowledgement has already gone out/i.test(again.error!), "§4/COPY: …and never claims an acknowledgement went out, which is false in a turn that only posted an ordinary message into a stopped conversation");
+  const copySources = authoredSourcesUnder(new URL("../../", import.meta.url));
+  ok(copySources.length > 500, "§4/COPY: the source walk really read the tree — a walk that found nothing would pass the next assertion for free");
+  const falseAckCopy = /acknowledgement\s+has\s+already\s+gone\s+out/i;
+  const selfPath = new URL(import.meta.url).pathname;
+  const reintroduced = copySources.filter((f) => f.url.pathname !== selfPath && falseAckCopy.test(f.src));
+  ok(reintroduced.length === 0, `§4/COPY: no authored source under packages/ carries the false acknowledgement sentence — found in ${reintroduced.map((f) => f.url.pathname).join(", ")}`);
   ok(posted.length === before + 1, "§4/ROOM: NOTHING further reached the room. This is the assertion the six live re-posts exist for");
 
   await settle();

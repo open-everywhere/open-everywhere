@@ -5,7 +5,7 @@ import { READ_PERMISSIONS } from "./mint.js";
 
 export const GIT_BROKER_HOSTS = ["github.com", "codeload.github.com"] as const;
 
-export const MAX_MINT_REPOS = 500;
+const MAX_MINT_REPOS = 500;
 
 export function brokerAuthHeader(token: string): Record<string, string> {
   return { Authorization: `Basic ${Buffer.from(`x-access-token:${token}`, "utf-8").toString("base64")}` };

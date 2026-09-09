@@ -197,7 +197,7 @@ export function registerFailureFacetJudge(judge: FailureFacetJudge): void {
   registeredFacetJudge = judge;
 }
 
-export function failureFacetJudge(): FailureFacetJudge | null {
+function failureFacetJudge(): FailureFacetJudge | null {
   return registeredFacetJudge;
 }
 

@@ -73,7 +73,7 @@ function safeConsentRoute(read: () => boolean): boolean {
   }
 }
 
-export function ownAccountAskForTurn(ctx: BindableContext, vendors: readonly OwnAccountVendor[]): OwnAccountAsk | undefined {
+function ownAccountAskForTurn(ctx: BindableContext, vendors: readonly OwnAccountVendor[]): OwnAccountAsk | undefined {
   const adopted = adoptedOwnAccountAsk(ctx, vendors);
   if (adopted !== undefined) return adopted;
   try {
@@ -107,7 +107,7 @@ function domainsForCtx(ctx: BindableContext): readonly Domain[] {
   }
 }
 
-export function grantLookupScope(ctx: BindableContext): string | undefined {
+function grantLookupScope(ctx: BindableContext): string | undefined {
   const root = delegationRootSessionId(ctx);
   if (root !== undefined && root.length > 0) return root;
   if (isSubagentChildContext(ctx)) return undefined;

@@ -235,7 +235,7 @@ export function installConsoleCapture(): void {
   console.error = wrap("error", capturedConsole.error);
 }
 
-export function installProcessCapture(): void {
+function installProcessCapture(): void {
   if (processCaptured) return;
   processCaptured = true;
   process.on("uncaughtExceptionMonitor", (err, origin) => {

@@ -145,7 +145,7 @@ function arrivalJoinKey(routineKey: string | undefined, permissionKind: string |
   return routine === undefined ? undefined : `${routine}\u0000${permissionKind}`;
 }
 
-export function argvOfCommandLabel(label: string): readonly string[] {
+function argvOfCommandLabel(label: string): readonly string[] {
   const sep = label.indexOf(":");
   if (sep < 0) return [label];
   return [label.slice(0, sep), label.slice(sep + 1)];
@@ -414,7 +414,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
   return [...awsOut, ...chainOut, ...egressOut, ...connectorOut];
 }
 
-export function grantUsageEvidence(
+function grantUsageEvidence(
   rows: readonly EvidenceRow[],
   grants: readonly DeclaredGrants[],
   window: EvidenceWindow,

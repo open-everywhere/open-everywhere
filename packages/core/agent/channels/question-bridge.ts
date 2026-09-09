@@ -117,7 +117,7 @@ export const QUESTION_ANSWER_DROPPED_AUDIT_ACTION = "input_response.dropped";
 
 const BRIDGED_QUESTION_PREFIX = "oe-question-bridge:";
 
-export const BRIDGED_QUESTION_TTL_MS = WAKE_TARGET_TTL_MS;
+const BRIDGED_QUESTION_TTL_MS = WAKE_TARGET_TTL_MS;
 
 export function bridgedQuestionKey(bareToken: string): string {
   return `${BRIDGED_QUESTION_PREFIX}${bareToken}`;

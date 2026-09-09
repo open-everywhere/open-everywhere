@@ -115,7 +115,7 @@ export interface AuditChainReadable {
   readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
 }
 
-export const BOOT_TAIL_LIMIT = 32;
+const BOOT_TAIL_LIMIT = 32;
 
 export async function verifyAuditChainTail(store: AuditChainReadable, opts?: { readonly perOrgTail?: number }): Promise<AuditChainOrgReport[]> {
   const tailLimit = opts?.perOrgTail ?? BOOT_TAIL_LIMIT;
