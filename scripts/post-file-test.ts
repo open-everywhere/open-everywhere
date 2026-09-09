@@ -468,4 +468,10 @@ await inSession(async () => {
 setBlobPutter(undefined);
 registerBlobConfig(false);
 
-console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, blob-hosting opt-in, audit)\n`);
+const { loadBlobHosting: shippedBlobHosting } = await import("../agent/blob/hosting.js");
+ok(
+  shippedBlobHosting().enabled === false,
+  "the SHIPPED org config keeps Blob hosting OFF (agent/blob/hosting.ts) — the fail-closed default, and the reason post_file's eve-native approval card cannot be raised on this tree",
+);
+
+console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, blob-hosting opt-in, the shipped org config, audit)\n`);

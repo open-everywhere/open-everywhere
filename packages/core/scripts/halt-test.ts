@@ -167,6 +167,11 @@ registerConfig({
       scope: halt.haltScopeFor({ org: ORG, scopeKey: SURFACE, domain: DOMAIN, principalId: "U1" }),
     },
     {
+      arrow: "the approval CLICK (the decide plane's halt read)",
+      file: "approvals/flow.ts",
+      scope: halt.haltScopeFor({ org: ORG, scopeKey: SURFACE, domain: DOMAIN, principalId: "U1" }),
+    },
+    {
       arrow: "both routine legs",
       file: "routines/fire-halt.ts",
       scope: halt.haltScopeFor({ org: ORG, scopeKey: SURFACE, principalId: "U1" }),

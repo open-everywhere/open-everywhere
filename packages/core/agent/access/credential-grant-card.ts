@@ -9,6 +9,7 @@ import {
   type CredentialGrantAskRow,
   type CredentialGrantMode,
   type CredentialGrantRow,
+  type GrantJsonObject,
 } from "../operational/credential-grant-rows.js";
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
@@ -47,7 +48,7 @@ export function parseGrantCardActionId(raw: string | undefined): { readonly askI
   return { answer, askId };
 }
 
-function grantModePhrase(mode: CredentialGrantMode): string {
+export function grantModePhrase(mode: CredentialGrantMode): string {
   return mode === "once" ? GRANT_MODE_WORDS.once : `for ${GRANT_MODE_WORDS[mode]}`;
 }
 
@@ -98,10 +99,19 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
 }
 
 function askActionSentence(ask: CredentialGrantAskRow, lead: "want" | "wanted"): string {
-  const action = grantActionPhrase(ask.connector, ask.mcpTool);
-  const target = grantResourceTargetLabel(ask);
   const opening = lead === "want" ? "They want to" : "They asked to";
-  return target === undefined ? `${opening} ${action}.` : `${opening} ${action} — "${quotedPurpose(target)}".`;
+  return `${opening} ${grantBorrowPhrase(ask)}.`;
+}
+
+export function grantBorrowPhrase(row: {
+  readonly connector: string;
+  readonly mcpTool?: string;
+  readonly resource: string;
+  readonly frozenArgs?: GrantJsonObject;
+}): string {
+  const action = grantActionPhrase(row.connector, row.mcpTool);
+  const target = grantResourceTargetLabel(row);
+  return target === undefined ? action : `${action} — "${quotedPurpose(target)}"`;
 }
 
 function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string): string {

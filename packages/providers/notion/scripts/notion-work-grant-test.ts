@@ -427,8 +427,9 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     ({
       channel: { kind: "slack" },
       session: {
-        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" }, principalId: "U1", principalType: "slack-user" } },
+        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|turn_1|notion" }, principalId: "U1", principalType: "slack-user" } },
         id: "sess-seat",
+        turn: { id: "turn_1" },
       },
     }) as unknown as BindableContext;
 
@@ -436,9 +437,10 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     ({
       channel: { kind: "subagent", continuationToken: "subagent:sess-seat:call_1" },
       session: {
-        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" } } },
+        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|turn_1|notion" } } },
         id: "sess-child",
         parent: { callId: "call_1", sessionId: "sess-seat" },
+        turn: { id: "turn_0" },
       },
     }) as unknown as BindableContext;
 
@@ -446,8 +448,9 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     ({
       channel: { kind: "subagent", continuationToken: "subagent:sess-seat:call_1" },
       session: {
-        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|notion" } } },
+        auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|turn_1|notion" } } },
         id: "sess-child",
+        turn: { id: "turn_0" },
       },
     }) as unknown as BindableContext;
 
@@ -482,14 +485,31 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     ({
       channel: { kind: "slack" },
       session: {
-        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-somebody-else|notion" }, principalId: "U1", principalType: "slack-user" } },
+        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-somebody-else|turn_1|notion" }, principalId: "U1", principalType: "slack-user" } },
         id: "sess-seat",
+        turn: { id: "turn_1" },
       },
     }) as unknown as BindableContext;
   await assert.rejects(
     () => execute({ page: SPEC_PAGE }, strayStamp("C_DEV")),
     /work credential "soak-work-key"/,
     "negative control: a stamp from another session leaves the read on the team family",
+  );
+  passed++;
+
+  const staleSeat = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: { current: { attributes: { team_id: "T1", channel_id: channel, oe_own_account_ask: "sess-seat|turn_1|notion" }, principalId: "U1", principalType: "slack-user" } },
+        id: "sess-seat",
+        turn: { id: "turn_2" },
+      },
+    }) as unknown as BindableContext;
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, staleSeat("C_DEV")),
+    /work credential "soak-work-key"/,
+    "🔴 a stamp from the seat's PREVIOUS turn is not re-adopted — the stale bag reaches the team family, as it did before the ask (OPE-1597)",
   );
   passed++;
 
@@ -517,7 +537,7 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   const askingNotionSeat: BindableContext = {
     channel: { kind: "notion" },
     session: {
-      auth: { current: { attributes: { workspace_id: WS, page_id: SPEC_PAGE, oe_own_account_ask: "sess-seat|notion" }, principalId: "U_NOTION", principalType: "notion-user" } },
+      auth: { current: { attributes: { workspace_id: WS, page_id: SPEC_PAGE, oe_own_account_ask: "sess-seat|turn_1|notion" }, principalId: "U_NOTION", principalType: "notion-user" } },
       id: "sess-seat",
     },
   } as unknown as BindableContext;

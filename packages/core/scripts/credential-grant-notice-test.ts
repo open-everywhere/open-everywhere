@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -163,11 +163,35 @@ const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclo
 console.log("1. the host-authored copy:");
 {
   const row = { ownerSlug: "rowan_hale", requesterPrincipalId: "slack/T1/U-req" };
-  const text = grantRoomNoticeText("acting as rowan_hale — granted tool `read_page` on `notion:page/abc123`", row, "2026-05-04T05:52:01.000Z");
+  const line = "acting as rowan_hale — granted tool `read_page` on `notion:page/abc123`";
+  const text = grantRoomNoticeText(line, row, "2026-05-04T05:52:01.000Z");
   ok(text.includes("acting as rowan_hale — granted tool"), "the room copy carries the broker's disclosure line VERBATIM — the model authors none of it");
   ok(text.includes("`slack/T1/U-req`'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner");
   ok(text.includes("run with rowan_hale's credential"), "…and the owner only as the credential holder");
-  ok(text.includes("2026-05-04T05:52:01.000Z"), "…and a per-call timestamp, so two uses of one unchanging grant row never render as byte-identical text");
+
+  ok(text.includes("Granted-credential use at 05:52 UTC."), "the room reads a clock time");
+  ok(!text.includes("2026-05-04T05:52:01.000Z"), "…and never the ISO instant the column holds");
+  eq(
+    grantRoomNoticeText(line, row, "not-an-instant"),
+    `Granted-credential use. This is \`slack/T1/U-req\`'s act, run with rowan_hale's credential.\n${line}`,
+    "…and a stamp that does not parse names NO time rather than falling back to the bytes",
+  );
+  ok(
+    grantRoomNoticeText(line, { ...row, ownerSlug: "1300000000000000103" }, "2026-05-04T05:52:01.000Z").includes("run with the owner's credential"),
+    "…and an id-shaped owner slug is dropped for a phrase, never printed",
+  );
+
+  eq(
+    grantRoomNoticeText(line, row, "2026-05-04T05:52:01.000Z"),
+    grantRoomNoticeText(line, row, "2026-05-04T05:52:59.999Z"),
+    "two uses of one grant row inside a minute now render identically — so the dedupe must not be armed",
+  );
+  {
+    const src = readFileSync(new URL("../agent/access/credential-grant-notice.ts", import.meta.url), "utf8");
+    const body = src.slice(src.indexOf("export async function postGrantRoomNotice"));
+    const call = /await postReply\(target, grantRoomNoticeText\(line, grant, atIso, requesterLabel\)\);/u;
+    ok(call.test(body.slice(0, body.indexOf("\n}"))), "🔴 postGrantRoomNotice passes postReply NO ReplyAudit, so no org reaches postOnce and the text-keyed dedupe never runs");
+  }
   eq(grantUseNoticeKey("g1"), "grant-use:g1", "the owner-notice latch is keyed per grant, so two grants never share one notice");
 }
 
@@ -189,8 +213,8 @@ const sessionGrant = await mintGrant("session-standing", "standing");
 
   eq(dmed.length, dmsAfterCard + 1, "THE OWNER GOT A DM on the first use of their grant");
   eq(dmed[dmed.length - 1].principalId, "U-owner", "…addressed to the OWNER's own DM, the same 1:1 the approval card lives in");
-  ok(dmed[dmed.length - 1].text.includes("Your notion credential was just used"), "…saying their credential was spent");
-  ok(dmed[dmed.length - 1].text.includes(sessionGrant), "…and naming the grant id, which is what a revocation needs");
+  ok(dmed[dmed.length - 1].text.includes("Your Notion credential was just used"), "…saying their credential was spent, naming the vendor as a person writes it");
+  ok(!dmed[dmed.length - 1].text.includes(sessionGrant), "…and NOT the grant id: it was there only for a revocation no route reaches (OPE-1637)");
   ok(dmed[dmed.length - 1].actions === undefined, "…with no buttons: this deployment has no revoke click route, and a dead button is worse than none");
 }
 
@@ -200,7 +224,7 @@ console.log("3. the SECOND use: the room sees it again, the owner is not paged a
   const dmsBefore = dmed.length;
   const result = await callThroughMount("session-standing");
   ok(result.ok, "the second call on the same standing grant succeeded");
-  eq(posted.length, postsBefore + 1, "the room sees the SECOND use too — every granted call discloses, and the timestamp keeps postOnce from swallowing it");
+  eq(posted.length, postsBefore + 1, "the room sees the SECOND use too — every granted call discloses, and the unarmed dedupe (§1's source pin) is what keeps postOnce from swallowing an identical body");
   eq(dmed.length, dmsBefore, "…and the owner is NOT DMed again: the notice is a first-use affordance, not a pager");
   eq(await store.noticeClaimed(ORG, grantUseNoticeKey(sessionGrant)), true, "…because the lifetime claim for this grant is already held");
 }
@@ -360,8 +384,11 @@ console.log("9. the two halves called directly:");
     false,
     "…and a grant whose claim is already held delivers nothing, however it is called",
   );
-  ok(grantOwnerNoticeText(grant).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it — the person they would be revoking against");
-  ok(!grantOwnerNoticeText(grant).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
+  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it, by the principal key the `grant.used` row also carries (OPE-1083)");
+  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
+  ok(!/(?:you|they|the owner)\s+(?:can|may|could|should)\s+revoke|unless you revoke|revoke it first/iu.test(grantOwnerNoticeText(grant, undefined, NOW)), "the owner's DM OFFERS no revocation, because nothing in the tree revokes a grant");
+  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("There is no way to revoke it yet"), "…and says the control is ABSENT rather than staying silent about it");
+  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes(grant.id), "…and it prints no grant id, whose only stated purpose was that revocation");
 }
 
 console.log("10. a registered display-name arm resolves a label, and the principal key stays visible too:");

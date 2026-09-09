@@ -342,8 +342,12 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
   eq(posted[0]?.target, ROOM, "…at the target the ASK pinned, not at anything resolved at click time");
   ok(posted[0]?.text.includes("approved"), "…and it says the grant was approved");
   ok(
-    posted[0]?.text.includes("grant__rowan_long_notion__notion_fetch_launch_page"),
-    "…and it NAMES the PINNED tool the chat now holds — the one fact the room needs to act, and never a recomposed name",
+    !posted[0]?.text.includes("grant__rowan_hale_notion__notion_fetch_launch_page"),
+    "…and it never shows the room the MINTED TOOL NAME",
+  );
+  ok(
+    posted[0]?.text.includes("The tool is in this conversation's tool list from the next turn."),
+    "…it says the tool ARRIVES instead — the one fact the seat's own tool list cannot carry",
   );
 
   posted.length = 0;

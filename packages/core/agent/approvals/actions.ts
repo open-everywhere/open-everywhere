@@ -158,6 +158,7 @@ function spendChangeLines(args: SpendSetArgs): string[] {
 const spendSet: ActionKind<SpendSetArgs> = {
   kind: "spend.set",
   policy: "admin",
+  volatileArgs: ["coverage"],
   summarize(args) {
     return [
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,

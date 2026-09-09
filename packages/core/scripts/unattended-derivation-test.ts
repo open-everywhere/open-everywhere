@@ -32,7 +32,7 @@ const { requestApproval } = await import("../agent/approvals/flow.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { principalIdOf, actingPrincipalIdOf, unattendedOf } = await import("../agent/access/request.js");
 const { bridgedContext } = await import("../agent/identity/binding-bridge.js");
-const { routineFireAttributes, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+const { routineFireAttributes, webhookFireAttributes, serviceTokenFireAttributes } = await import("../agent/routines/fire-auth.js");
 
 const ORG = "test-org";
 const TEAM = "T1";
@@ -88,6 +88,26 @@ const human = liveCtx();
   ok(unattendedOf(webhookFire) === true, "derive: a WEBHOOK fire derives true — the family that used to bind `webhook:<hookId>` and satisfy every presence gate");
   ok(unattendedOf(human) === false, "derive: 🔴 a LIVE HUMAN turn on the same channel derives EXACTLY false — the control has to distinguish, not just refuse");
   ok(actingPrincipalIdOf(human) === HUMAN, "derive: …and that human's acting principal is really there, so the false is earned and not an empty bag reading as attended");
+}
+
+{
+  const SVC = "svc:e2e-harness";
+  const doorCtx = (attributes: Attrs, principalId = SVC): never =>
+    ({
+      channel: { kind: "slack" },
+      session: { auth: { current: { authenticator: "oe-service-token", principalId, principalType: "service", attributes } } },
+    }) as never;
+
+  const readDoor = doorCtx(serviceTokenFireAttributes("read"));
+  const injectDoor = doorCtx(serviceTokenFireAttributes("inject"), "svc:eval-inject");
+  ok(unattendedOf(readDoor) === true, "door: the READ door's real bag derives unattended: true");
+  ok(unattendedOf(injectDoor) === true, "door: the WAKE-INJECTION family value derives true too — one builder, so the marker does not depend on which family verified the caller");
+  ok(principalIdOf(readDoor) === SVC, "door: the BOUND principal is still the service id — the audit trail's answer to WHICH service called is untouched");
+  ok(actingPrincipalIdOf(readDoor) === undefined, "door: 🔴 …and the ACTING principal is gone, so every `if (!actingPrincipalIdOf(ctx)) throw` presence gate refuses a token caller");
+
+  const unmarked = doorCtx({ oe_token_family: "read" });
+  ok(unattendedOf(unmarked) === false, "door: 🔴 the marker-LESS bag derives false — the assertion above is earned by the marker, not by `principalType: \"service\"`");
+  ok(actingPrincipalIdOf(unmarked) === SVC, "door: 🔴 …and it answers presence with the service id, which is exactly the hole OPE-278 measured one fire family over");
 }
 
 {

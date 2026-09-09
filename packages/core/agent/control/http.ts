@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildControlServer } from "./server.js";
 import { SERVICE_TOKEN_ISSUER, type AdminIdentity } from "./auth.js";
+import type { TranscriptExportReader } from "./transcript-export.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 
@@ -10,6 +11,7 @@ export interface AdminHttpOptions {
   readonly requiredRole?: string;
   readonly includeWrites?: boolean;
   readonly allowUnauthenticated?: boolean;
+  readonly readTranscript?: TranscriptExportReader;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -78,7 +80,13 @@ export async function handleControlRequest(
     });
   }
 
-  const server = buildControlServer({ includeWrites: opts.includeWrites, actor, roles, readOnly: identity?.readOnly === true });
+  const server = buildControlServer({
+    includeWrites: opts.includeWrites,
+    actor,
+    roles,
+    readOnly: identity?.readOnly === true,
+    ...(opts.readTranscript ? { readTranscript: opts.readTranscript } : {}),
+  });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     void transport.close();

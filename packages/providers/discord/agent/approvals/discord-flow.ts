@@ -148,6 +148,8 @@ export function discordResponseFor(res: ApprovalClickResolution): DiscordInterac
       return ephemeral("Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.");
     case "clicker-denied":
       return ephemeral(clickerFloorRefusalNotice(res.reason));
+    case "halted":
+      return ephemeral(res.notice);
     case "contradicted":
       return ephemeral(judgeContradictionNotice(res.contradiction));
     case "decided": {

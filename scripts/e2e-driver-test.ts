@@ -56,6 +56,7 @@ const {
   resolveSynthetic,
   resolveSlackPrivate,
   resolveSlackChannelB,
+  resolveSlackMpim,
   resolveSlackCapFixture,
   resolveSyntheticDm,
   resolveSlackUser2,
@@ -199,7 +200,30 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "slackUnified add-on misses exactly E2E_SLACK_UNIFIED_CHANNEL_A + E2E_SLACK_UNIFIED_CHANNEL_B (the domain name is defaulted, never required)",
   );
 
-  const caps = resolveCapabilities(empty);
+  const MPIM_TRACKED = { [ENV.slackMpimChannel]: "G0TRACKED" };
+  const mpimFromRepo = resolveSlackMpim(empty, MPIM_TRACKED);
+  ok(
+    mpimFromRepo.ok && mpimFromRepo.cfg.channel === "G0TRACKED",
+    "🔴 with E2E_SLACK_MPIM_CHANNEL unset, J-MPIM's room resolves from the tracked inventory — the whole point: a deployment nobody edited cannot lose the id",
+  );
+  const mpimEnvWins = resolveSlackMpim({ [ENV.slackMpimChannel]: "G0ENV" }, MPIM_TRACKED);
+  ok(mpimEnvWins.ok && mpimEnvWins.cfg.channel === "G0ENV", "the variable stays an OVERRIDE — set, it wins over the tracked id");
+  const mpimNowhere = resolveSlackMpim(empty, {});
+  ok(
+    !mpimNowhere.ok && mpimNowhere.missing.join(",") === ENV.slackMpimChannel,
+    "🔴 the control: absent from BOTH is still a skip naming the variable — never a red, and never a resolved room that does not exist",
+  );
+  const mpimDeclaredEmpty = resolveSlackMpim(empty, { [ENV.slackMpimChannel]: "" });
+  ok(
+    !mpimDeclaredEmpty.ok,
+    "the second control: a tracked entry DECLARED with an empty id resolves nothing — declared is not provisioned, which is the state this repository ships in",
+  );
+  ok(
+    resolveCapabilities(empty, MPIM_TRACKED).available.size === 0,
+    "🔴 a tracked room id alone is NOT a live capability — an env with no credentials stays full dry mode, which the runner passes by design",
+  );
+
+  const caps = resolveCapabilities(empty, {});
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
   ok(!caps.includeOptional, "optional scenarios excluded by default");
 
@@ -214,8 +238,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     [ENV.targetUrl]: "https://oe.example.test/",
     [ENV.slackSigningSecret]: "shhh",
   };
-  const capsBase = resolveCapabilities(base);
+  const capsBase = resolveCapabilities(base, {});
   ok(capsBase.available.size === 3, "base env (no add-on vars): exactly the three base capabilities");
+  const capsBaseTracked = resolveCapabilities(base, MPIM_TRACKED);
+  ok(capsBaseTracked.available.has("slackMpim"), "🔴 base Slack creds + a tracked room id = a LIVE slackMpim, so J-MPIM RUNS with no variable set");
+  ok(capsBaseTracked.available.size === 4, "…and exactly one capability more — nothing else moves with it");
   ok(
     capsBase.missing.slackPrivate.join(",") === ENV.slackPrivateChannel &&
       capsBase.missing.slackChannelB.join(",") === ENV.slackChannelB &&
@@ -247,11 +274,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     [ENV.slackUnifiedChannelA]: "C0UNIA",
     [ENV.slackUnifiedChannelB]: "C0UNIB",
   };
-  const capsFull = resolveCapabilities(full);
+  const capsFull = resolveCapabilities(full, {});
   ok(capsFull.available.size === 15, "full env: all fifteen capabilities live");
   ok(capsFull.available.has("engagedSlack"), "J-ENGAGED-slack is LIVE on an env that carries E2E_SLACK_PRIVATE_CHANNEL — it drives the reused room rather than skipping");
   ok(!capsFull.available.has("engagedGithub"), "J-ENGAGED-github stays DARK on a full operator env — it reads no var another fixture already sets");
-  const capsWithEngagedGithub = resolveCapabilities({ ...full, [ENGAGED_ROOM_VARS.github]: "example-owner/oe-e2e-addressed-github" });
+  const capsWithEngagedGithub = resolveCapabilities({ ...full, [ENGAGED_ROOM_VARS.github]: "example-owner/oe-e2e-addressed-github" }, {});
   ok(capsWithEngagedGithub.available.has("engagedGithub"), "…and comes up on its OWN var, so the capability is wired rather than merely unresolvable");
   ok(capsWithEngagedGithub.available.size === 16, "one var, one more capability — nothing else moves with it");
   ok(capsFull.available.has("connectorWrite"), "connectorWrite comes up with the bound channel — no arming declaration stands between the fixture and the capability");
@@ -462,13 +489,13 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S-LINK-SLACK", "J-MPIM", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
-    "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
+    "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
     "J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on;)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on;)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
     "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"]);
@@ -483,8 +510,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725). 🔴 NO J-ENGAGED JOURNEY IS OPTIONAL: all six are core, because every provider wires the §2.5 seam (OPE-1500 landed Teams, OPE-1501 the three ticketing surfaces). Each still self-skips until its own room is provisioned, which is a skip and never a green",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-EVE-CARD,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) PLUS S-EVE-CARD (OPE-1056: the first live drive of the EVE-MINTED approval card — it needs the same consented personal Notion grant the other connector legs need, and it publishes then archives a real page) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725). 🔴 NO J-ENGAGED JOURNEY IS OPTIONAL: all six are core, because every provider wires the §2.5 seam (OPE-1500 landed Teams, OPE-1501 the three ticketing surfaces). Each still self-skips until its own room is provisioned, which is a skip and never a green",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -501,8 +528,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
-    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
+    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -511,7 +538,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -717,10 +744,28 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const baseOnly = new Set(["slack", "discord", "synthetic"] as const);
   const s11 = skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false);
   ok(s11 === `missing slackPrivate driver (set ${ENV.slackPrivateChannel})`, "S11 skip names exactly E2E_SLACK_PRIVATE_CHANNEL");
-  const jmpim = skipReason(SCENARIOS.find((s) => s.id === "J-MPIM")!, baseOnly, missing, false);
+  const jmpimScenario = SCENARIOS.find((s) => s.id === "J-MPIM")!;
+  const jmpim = skipReason(jmpimScenario, baseOnly, missing, false);
+  const noSlack = new Set(["discord", "synthetic"] as const);
+  const roomPresent = { ...missing, slackMpim: [] as readonly string[] };
+  const jmpimRoomOk = skipReason(jmpimScenario, noSlack, roomPresent, false);
   ok(
-    jmpim === `missing slackMpim driver (set ${ENV.slackMpimChannel})`,
+    jmpimRoomOk?.includes("mpim:write") === false,
+    `🔴 …and NO remedy when slackMpim itself resolved — the gap is the base driver, and a remedy naming the room would send the operator at a fixture that is present (got: ${JSON.stringify(jmpimRoomOk)})`,
+  );
+  ok(
+    jmpim?.startsWith(`missing slackMpim driver (set ${ENV.slackMpimChannel})`) === true,
     "J-MPIM skip names exactly E2E_SLACK_MPIM_CHANNEL — the group DM is the one fixture it cannot derive",
+  );
+  ok(jmpim?.includes("mpim:write") === true, "🔴 J-MPIM's skip names the Slack USER scope the driver app is missing — the actual blocker, not just the variable");
+  ok(jmpim?.includes("provision-mpim") === true, "…and the command that opens the room once that scope exists");
+  ok(
+    skipCategory(jmpimScenario, baseOnly, false) === "missing-capability",
+    "…and it stays a SKIP, never a red — the remedy rides the same missing-capability category the runner skips on",
+  );
+  ok(
+    skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false)?.includes("—") === false,
+    "the control: a capability whose gap IS its variable carries no remedy clause",
   );
   const j2 = skipReason(SCENARIOS.find((s) => s.id === "J2")!, baseOnly, missing, false);
   ok(j2?.includes(ENV.slackChannelB) === true && j2.includes("slackChannelB"), "J2 skip names E2E_SLACK_CHANNEL_B");
@@ -938,6 +983,36 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "approveButton ignores a reject-only button (it keys on the approve prefix)",
   );
   ok(approveButton({ ts: "1.4", text: "x", actions: [{ actionId: "oe_approval:approve:row-x" }] })?.org === "", "a value-less approve button decodes org as empty (flow.ts fail-softs it)");
+
+  const { eveNativeApprovalButtons } = await import("../packages/core/scripts/e2e/journey.js");
+  const deploy142 = {
+    ts: "2.1",
+    text: "Approve tool call: notion__notion-create-pages",
+    actions: [
+      { actionId: "eve_input:tool-approval:req-1:button:1", value: "cancel", text: "Cancel" },
+      { actionId: "eve_input:tool-approval:req-1:button:0", value: "approve", text: "Approve" },
+    ],
+  };
+  const d142 = eveNativeApprovalButtons(deploy142);
+  ok(d142?.approve.actionId === "eve_input:tool-approval:req-1:button:0", "eveNativeApprovalButtons reads the approve side off `value:\"approve\"` (deploy #142's Approve/Cancel card, in the pinned eve's shapes)");
+  ok(d142?.deny?.actionId === "eve_input:tool-approval:req-1:button:1", "…and the deny side off `value:\"cancel\"` — the option id the pinned eve actually stamps — so the label set is not the only thing finding it");
+  const allowDeny = eveNativeApprovalButtons({ ts: "2.2", text: "allow?", actions: [{ actionId: "b1", text: "Deny" }, { actionId: "b2", text: "Allow" }] });
+  ok(allowDeny?.approve.actionId === "b2" && allowDeny.deny?.actionId === "b1", "eveNativeApprovalButtons falls back to the LABEL set (Allow/Deny) when the buttons carry no value");
+  ok(
+    eveNativeApprovalButtons({ ts: "2.3", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default", text: "Approve" }, { actionId: "oe_approval:reject:row-9", value: "default", text: "Reject" }] }) === undefined,
+    "eveNativeApprovalButtons REFUSES an OE-minted card — every `oe_approval:` button is dropped before the match, however it is labelled",
+  );
+  ok(eveNativeApprovalButtons({ ts: "2.4", text: "decided" }) === undefined, "eveNativeApprovalButtons returns undefined for a decided/button-less message");
+  ok(
+    eveNativeApprovalButtons({ ts: "2.5", text: "connect?", actions: [{ actionId: "oe_connect:notion:api-key", value: "default", text: "Set API key" }] }) === undefined,
+    "eveNativeApprovalButtons returns undefined for the connector-OFFER card (neither an approve value nor an approve label)",
+  );
+  const approveOnly = eveNativeApprovalButtons({ ts: "2.6", text: "x", actions: [{ actionId: "b3", value: "approve", text: "Approve" }] });
+  ok(
+    approveOnly?.approve.actionId === "b3" && approveOnly.deny === undefined,
+    "an approve-only card still DECODES, with no deny side — rather than mis-reading the approve button as both, or answering undefined",
+  );
+
   const seen: string[] = [];
   const wrapped = legGate((cond, label) => seen.push(`${cond}|${label}`), "teardown");
   wrapped(true, "cleared the override");

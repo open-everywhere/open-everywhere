@@ -1,5 +1,6 @@
 import type { RouteHandlerArgs } from "eve/channels";
-import { injectTokenEntries, verifyInjectToken } from "./auth.js";
+import { routeAuth } from "eve/channels/auth";
+import { injectTokenEntries, injectTokenAuth } from "./auth.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -122,9 +123,8 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
   const entries = injectTokenEntries();
   if (!testWakeEnabled() || entries.length === 0) return new Response("not found", { status: 404 });
 
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyInjectToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await routeAuth(req, injectTokenAuth(entries));
+  if (identity instanceof Response) return identity;
 
   let body: Partial<TestWakeRequest>;
   try {
@@ -301,9 +301,9 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
     org,
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "test_wake", domain, injectedPlatform: platform, surfaceKey, addressing, wakeId, messageCount: coalesced ? coalesced.length : 1 },
+    detail: { service: identity.principalId, view: "test_wake", domain, injectedPlatform: platform, surfaceKey, addressing, wakeId, messageCount: coalesced ? coalesced.length : 1 },
   }).catch(() => undefined);
 
   try {

@@ -1,4 +1,4 @@
-import { adoptedOwnAccountAsk, parseOwnAccountStamp, renderOwnAccountStamp } from "../agent/connections/own-account-carriage.js";
+import { TURN_UNKNOWN, adoptedOwnAccountAsk, parseOwnAccountStamp, renderOwnAccountStamp } from "../agent/connections/own-account-carriage.js";
 import {
   actingIdentityAuditDetail,
   ambiguousAccountRefusal,
@@ -11,6 +11,9 @@ import {
   type OwnAccountVendor,
 } from "../agent/connections/own-account-ask.js";
 import { decideConnectorActingIdentity, holdsPersonalGrant, ownAccountAskFromMessages } from "../agent/connections/own-account-gate.js";
+import { stampOwnAccountAsk } from "../agent/hooks/own-account-ask.js";
+import type { HookContext, HookEvent } from "eve/hooks";
+import { egressPolicyFingerprint, enforceEgress } from "../agent/hooks/egress.js";
 import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
 import type { CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -165,43 +168,99 @@ ok(actingIdentityAuditDetail(noAsk, "notion", "read_notion_page").identity === "
 
 console.log("§3 the carriage");
 
-const roundTrip = parseOwnAccountStamp(renderOwnAccountStamp("sess-1", ask));
+const roundTrip = parseOwnAccountStamp(renderOwnAccountStamp("sess-1", "turn_0", ask));
 ok(roundTrip?.ask.connector === "notion" && roundTrip.ask.ambiguous === false, "render/parse round-trips a plain ask");
-const roundTripAmbiguous = parseOwnAccountStamp(renderOwnAccountStamp("sess-1", ambiguousAsk));
+ok(roundTrip?.turnId === "turn_0", "…and carries the turn half (OPE-1597)");
+const roundTripAmbiguous = parseOwnAccountStamp(renderOwnAccountStamp("sess-1", "turn_0", ambiguousAsk));
 ok(roundTripAmbiguous?.ask.ambiguous === true, "…and carries the ambiguity flag");
-ok(!renderOwnAccountStamp("sess-1", ask).includes(" "), "🔴 the wire shape carries identifiers only — no member words ride the event log");
+ok(!renderOwnAccountStamp("sess-1", "turn_0", ask).includes(" "), "🔴 the wire shape carries identifiers only — no member words ride the event log");
+ok(parseOwnAccountStamp(renderOwnAccountStamp("sess-1", undefined, ask))?.turnId === TURN_UNKNOWN, "an unnameable turn renders the sentinel, not an empty field");
 ok(parseOwnAccountStamp("sess-1") === undefined, "a one-field value is not a stamp");
-ok(parseOwnAccountStamp("|notion") === undefined, "an empty session half is not a stamp");
-ok(parseOwnAccountStamp("sess-1|notion|nonsense") === undefined, "an unknown third field is not a stamp");
+ok(parseOwnAccountStamp("sess-1|turn_0") === undefined, "a two-field value is not a stamp");
+ok(parseOwnAccountStamp("|turn_0|notion") === undefined, "an empty session half is not a stamp");
+ok(parseOwnAccountStamp("sess-1||notion") === undefined, "an empty turn half is not a stamp");
+ok(parseOwnAccountStamp("sess-1|turn_0|notion|nonsense") === undefined, "an unknown fourth field is not a stamp");
 ok(parseOwnAccountStamp(undefined) === undefined, "an absent value is not a stamp");
+ok(parseOwnAccountStamp("seat-1|notion") === undefined, "🔴 the pre-turn-half stamp shape is refused, not adopted");
 
-function ctxWith(stamp: string | unknown, sessionId: string, parentRoot?: string): BindableContext {
+function ctxWith(stamp: string | unknown, sessionId: string, parentRoot?: string, turnId?: string): BindableContext {
   return {
     session: {
       auth: { current: { attributes: { oe_own_account_ask: stamp } } },
       id: sessionId,
       ...(parentRoot === undefined ? {} : { parent: { rootSessionId: parentRoot } }),
+      ...(turnId === undefined ? {} : { turn: { id: turnId } }),
     },
   } as unknown as BindableContext;
 }
 
-function tokenOnlyChildCtx(stamp: string, sessionId: string, parent: string): BindableContext {
+function tokenOnlyChildCtx(stamp: string, sessionId: string, parent: string, turnId?: string): BindableContext {
   return {
     channel: { continuationToken: `subagent:${parent}:call_1`, kind: "subagent" },
-    session: { auth: { current: { attributes: { oe_own_account_ask: stamp } } }, id: sessionId },
+    session: {
+      auth: { current: { attributes: { oe_own_account_ask: stamp } } },
+      id: sessionId,
+      ...(turnId === undefined ? {} : { turn: { id: turnId } }),
+    },
   } as unknown as BindableContext;
 }
 
-const seatStamp = renderOwnAccountStamp("seat-1", ask);
+const seatStamp = renderOwnAccountStamp("seat-1", "turn_4", ask);
 ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1"), VENDORS)?.connector === "notion", "the seat that stamped it adopts it");
 ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "worker-9", "seat-1"), VENDORS)?.connector === "notion", "a worker whose ROOT is that seat adopts it");
-ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("other-seat", ask), "worker-9", "seat-1"), VENDORS) === undefined, "a stamp from ANOTHER session is not adopted");
-ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("other-seat", ask), "seat-1"), VENDORS) === undefined, "…nor by an unrelated seat holding a stale bag");
+ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("other-seat", "turn_4", ask), "worker-9", "seat-1"), VENDORS) === undefined, "a stamp from ANOTHER session is not adopted");
+ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("other-seat", "turn_4", ask), "seat-1"), VENDORS) === undefined, "…nor by an unrelated seat holding a stale bag");
 ok(adoptedOwnAccountAsk(ctxWith([seatStamp], "seat-1"), VENDORS)?.connector === "notion", "eve's string[] collapse is tolerated");
 ok(adoptedOwnAccountAsk(tokenOnlyChildCtx(seatStamp, "worker-9", "seat-1"), VENDORS)?.connector === "notion", "🔴 a worker whose ONLY linkage is the subagent token adopts it");
-ok(adoptedOwnAccountAsk(tokenOnlyChildCtx(renderOwnAccountStamp("other-seat", ask), "worker-9", "seat-1"), VENDORS) === undefined, "…and the token arm still refuses a stamp naming another session");
+ok(adoptedOwnAccountAsk(tokenOnlyChildCtx(renderOwnAccountStamp("other-seat", "turn_4", ask), "worker-9", "seat-1"), VENDORS) === undefined, "…and the token arm still refuses a stamp naming another session");
 ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1"), [{ connector: "linear" }]) === undefined, "🔴 a stamp for ANOTHER vendor is not adopted");
 ok(adoptedOwnAccountAsk({} as BindableContext, VENDORS) === undefined, "an empty context adopts nothing");
+
+console.log("§3b the turn half");
+
+ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1", undefined, "turn_4"), VENDORS)?.connector === "notion", "the stamping seat adopts its own stamp on the SAME turn");
+ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1", undefined, "turn_5"), VENDORS) === undefined, "🔴 …and NOT on a later turn — the stale-bag re-adoption OPE-1597 names");
+ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("seat-1", "turn_5", ask), "seat-1", undefined, "turn_5"), VENDORS)?.connector === "notion", "a stamp written on THIS turn is adopted, whatever the turn is called");
+ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "worker-9", "seat-1", "turn_0"), VENDORS)?.connector === "notion", "🔴 a worker on ITS OWN turn_0 still adopts its seat's turn_4 stamp");
+ok(adoptedOwnAccountAsk(tokenOnlyChildCtx(seatStamp, "worker-9", "seat-1", "turn_1"), VENDORS)?.connector === "notion", "…and so does a token-only worker");
+ok(adoptedOwnAccountAsk(ctxWith(renderOwnAccountStamp("seat-1", undefined, ask), "seat-1", undefined, "turn_9"), VENDORS)?.connector === "notion", "a stamp whose producer could not name a turn is still adopted");
+ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1"), VENDORS)?.connector === "notion", "…and so is any stamp when the READER cannot name its own turn");
+
+console.log("§3c the producer's clear");
+
+function producerCtx(sessionId: string, attrs: Record<string, unknown>, turnId?: string): HookContext {
+  return {
+    session: {
+      auth: { current: { attributes: attrs } },
+      id: sessionId,
+      ...(turnId === undefined ? {} : { turn: { id: turnId } }),
+    },
+  } as unknown as HookContext;
+}
+function delivery(message: string): HookEvent<"message.received"> {
+  return { data: { message } } as unknown as HookEvent<"message.received">;
+}
+
+const OWN_ACCOUNT_SENTENCE = "please use my own notion account for this";
+const bagA: Record<string, unknown> = {};
+stampOwnAccountAsk(delivery(OWN_ACCOUNT_SENTENCE), producerCtx("seat-1", bagA, "turn_1"));
+ok(bagA["oe_own_account_ask"] === "seat-1|turn_1|notion", "the producer stamps session, turn and connector");
+
+stampOwnAccountAsk(delivery("what did we ship last week?"), producerCtx("seat-1", bagA, "turn_2"));
+ok(bagA["oe_own_account_ask"] === undefined, "🔴 a later delivery naming no account CLEARS this session's own stamp");
+
+const bagB: Record<string, unknown> = {};
+stampOwnAccountAsk(delivery(OWN_ACCOUNT_SENTENCE), producerCtx("seat-2", bagB, "turn_1"));
+stampOwnAccountAsk(delivery(OWN_ACCOUNT_SENTENCE), producerCtx("seat-2", bagB, "turn_2"));
+ok(bagB["oe_own_account_ask"] === "seat-2|turn_2|notion", "…and a second ask re-stamps with the NEW turn");
+
+const bagC: Record<string, unknown> = { oe_own_account_ask: renderOwnAccountStamp("seat-1", "turn_1", ask) };
+stampOwnAccountAsk(delivery("unrelated words"), producerCtx("worker-9", bagC, "turn_0"));
+ok(bagC["oe_own_account_ask"] === "seat-1|turn_1|notion", "🔴 a stamp naming ANOTHER session is never cleared");
+
+const bagD: Record<string, unknown> = {};
+stampOwnAccountAsk(delivery(OWN_ACCOUNT_SENTENCE), producerCtx("seat-3", bagD));
+ok(bagD["oe_own_account_ask"] === `seat-3|${TURN_UNKNOWN}|notion`, "a producer that cannot name its turn stamps the sentinel");
 
 console.log("§4 the gate");
 
@@ -306,6 +365,40 @@ const auditThrows = await decideConnectorActingIdentity({
   vendor: NOTION,
 });
 ok(auditThrows.refusal !== undefined, "a failed audit write never swallows the verdict");
+
+console.log("§5 why the egress plane is not covered");
+
+{
+  const parentPolicy = { allow: { "api.notion.com": [{ transform: [{ headers: { authorization: "Bearer TEAM" } }] }], "github.com": [] } };
+  const narrowedByChild = { allow: { "github.com": [] } };
+  const audited: { action: string; detail: Record<string, unknown> }[] = [];
+  const applied: unknown[] = [];
+  const childDeps = (policy: unknown) => ({
+    resolve: () => ({ scopeKey: "slack/T1/C1", connectors: [], connectorContentOrigin: {}, connections: [], reachableHosts: [] }),
+    compile: async () => policy,
+    apply: async (p: unknown) => void applied.push(p),
+    lastApplied: () => undefined,
+    rememberApplied: () => undefined,
+    lastConnectors: () => undefined,
+    rememberConnectors: () => undefined,
+    scope: () => ({ org: "default", platform: "slack", workspace: "T1", surface: "C1", principalId: "U1" }),
+    audit: async (e: { action: string; detail?: Record<string, unknown> }) => void audited.push({ action: e.action, detail: e.detail ?? {} }),
+    stamp: () => undefined,
+    stampConnectorContentOrigin: () => undefined,
+    parentPublishedFingerprint: async () => egressPolicyFingerprint(parentPolicy as never),
+  });
+
+  const narrowed = await enforceEgress("session.started", childDeps(narrowedByChild) as never);
+  ok(narrowed.abortError !== undefined, "🔴 a worker that narrows its own egress policy for an own-account ask ABORTS the delegated job — the tripwire, not a withholding");
+  ok(applied.length === 0, "…and applies nothing, so the member gets a failed job rather than a refused vendor call");
+  ok(
+    audited.some((a) => a.action === "egress.policy" && a.detail["reason"] === "subagent-binding-divergence"),
+    "…audited as a binding divergence, which names neither the ask nor the vendor (the OPE-680 misdiagnosis shape)",
+  );
+
+  const unnarrowed = await enforceEgress("session.started", childDeps(parentPolicy) as never);
+  ok(unnarrowed.abortError === undefined && applied.length === 1, "a worker that compiles what its parent published runs normally — the abort is the NARROWING, not the delegation");
+}
 
 console.log(failures === 0 ? "\nown-account gate: PASS" : `\nown-account gate: ${String(failures)} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

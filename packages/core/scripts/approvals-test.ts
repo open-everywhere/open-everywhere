@@ -1494,4 +1494,285 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(stillRefused.ok === false, "admitInputResponse: a failed audit write does not turn a refusal into an allow");
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission)\n`);
+{
+  const store = getOperationalStore();
+  const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
+  let ts = 900;
+  const post = async () => ({ ok: true, ts: `${ts++}.0` }) as never;
+  const proposal = (coverage: unknown) => ({
+    org: "default",
+    kind: "spend.set" as const,
+    args: { org: "default", scopeKey: "slack/T12/C12", level: "surface", monthlyUsd: 250, currentCap: null, currentUsd: null, coverage },
+    scopeKey: "slack/T12/C12",
+    requestedBy: "U_REQUESTER",
+    channelId: "C12",
+    chain: { unattended: false },
+  });
+  const inTurn = <T>(sessionId: string, turnId: string, fn: () => Promise<T>): Promise<T> =>
+    inSession(async () => {
+      resetTurnClock(turnId, Date.now(), sessionId);
+      return fn();
+    });
+
+  ok(actionKind("spend.set")?.volatileArgs?.includes("coverage") === true, "OPE-1556 fixture: `spend.set` declares `coverage` as its one volatile (measured) arg");
+
+  const delivery1 = await inTurn("sess-redeliver", "turn_3", () => requestApproval(proposal({ measured: "full", windowDays: 30 }), { post }));
+  const delivery2 = await inTurn("sess-redeliver", "turn_3", () => requestApproval(proposal({ measured: "gap", windowDays: 30, unratedModels: ["m-1"], unobservedModels: [] }), { post }));
+  ok(delivery1.deduped !== true, "OPE-1556 fixture: the first delivery is a real mint");
+  ok(delivery2.deduped === true && delivery2.id === delivery1.id, "🔴 OPE-1556: a REDELIVERED step body that re-measured coverage lands on the card it already minted — one ask, one card");
+  ok(
+    (await store.listPendingActions("default")).filter((r) => r.scopeKey === "slack/T12/C12").length === 1,
+    "🔴 OPE-1556: exactly ONE pending row exists for the redelivered proposal — the second clickable card is gone",
+  );
+
+  const reask = await inTurn("sess-redeliver", "turn_4", () => requestApproval(proposal({ measured: "gap", windowDays: 30, unratedModels: ["m-2"], unobservedModels: [] }), { post }));
+  ok(reask.deduped !== true && reask.id !== delivery1.id, "🔴 OPE-1556 NEGATIVE CONTROL: a genuine re-ask in a LATER turn still mints its OWN card with its own freshly-measured coverage");
+
+  const otherFigure = await inTurn("sess-redeliver", "turn_3", () =>
+    requestApproval({ ...proposal({ measured: "full", windowDays: 30 }), args: { ...proposal(undefined).args, monthlyUsd: 999, coverage: { measured: "full", windowDays: 30 } } }, { post }),
+  );
+  ok(otherFigure.deduped !== true && otherFigure.id !== delivery1.id, "🔴 OPE-1556: a DIFFERENT proposed figure in the same turn is a different ask — the redelivery key drops the measurement, never the request");
+
+  const minted = await store.getPendingAction("default", delivery1.id);
+  ok(
+    (JSON.parse(minted!.argsJson) as { coverage?: { measured?: string } }).coverage?.measured === "full",
+    "🔴 OPE-1556: the frozen row still carries the coverage measured when the approver was asked — only the dedup KEY drops it",
+  );
+
+  const raced = (coverage: unknown) => {
+    const p = proposal(coverage);
+    return { ...p, args: { ...p.args, monthlyUsd: 777 } };
+  };
+  const [raceA, raceB] = await Promise.all([
+    inTurn("sess-race", "turn_9", () => requestApproval(raced({ measured: "full", windowDays: 30 }), { post })),
+    inTurn("sess-race", "turn_9", () => requestApproval(raced({ measured: "gap", windowDays: 30, unratedModels: ["m-3"], unobservedModels: [] }), { post })),
+  ]);
+  ok(raceA!.id === raceB!.id, "🔴 OPE-1556: two deliveries IN FLIGHT AT ONCE in one turn land on ONE card — the redelivery arm folds them although their measured coverage differs");
+
+  const noTurnA = await inSession(() => requestApproval(proposal({ measured: "no-traffic", windowDays: 30 }), { post }));
+  const noTurnB = await inSession(() => requestApproval(proposal({ measured: "none", why: "ledger unreachable" }), { post }));
+  ok(noTurnA.id !== noTurnB.id && noTurnB.deduped !== true, "OPE-1556: with no readable (session, turn) the guard is inert — two differing measurements mint two cards, exactly as before this shipped");
+}
+
+{
+  const store = getOperationalStore();
+  const { RESUME_TOOL, TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
+  const entryFor = async (action: string, id: string) => (await readAudit({ org: "default", action })).find((e) => e.detail?.id === id);
+  const haltRows = (address: { orgWide: true } | { orgWide: false; level: "surface" | "workspace" | "domain" | "user"; scopeKey: string }) => ({
+    rows: async () => [{ org: "default", address, active: true, setAt: "2026-09-09T00:00:00Z" }],
+  });
+  const haltUnreadable = {
+    rows: async (): Promise<never> => {
+      throw new Error("halt store outage");
+    },
+  };
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-pre", kind: "test.member", argsJson: "{}", domain: null }));
+  const halted = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-pre",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: true }),
+  });
+  ok(halted.outcome === "halted", "🔴 OPE-1604: an approve click on a PRE-HALT card during an org-wide halt resolves `halted`");
+  ok(memberExecuted.length === 0, "🔴 OPE-1604: and the kind's execute NEVER RAN — the refusal is the point, not the render");
+
+  const afterHalt = await store.getPendingAction("default", "p-halt-pre");
+  ok(afterHalt?.status === "pending" && afterHalt.decidedBy === null, "🔴 OPE-1604: the halted click edits NO row — the pending stays pending, undecided, for the same person to click after `resume`");
+
+  const rHalted = await entryFor("approval.denied", "p-halt-pre");
+  ok(rHalted?.detail?.reason === "halted", "OPE-1604: the refusal writes the shared `approval.denied` row with reason `halted`");
+  ok(rHalted?.detail?.halt === "orgWide", "OPE-1604: and the row names WHICH halt refused it (haltAuditDetail), so an incident review can join the refusal to the stop");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-clear", kind: "test.member", argsJson: "{}", domain: null }));
+  const cleared = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-clear",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: { rows: async () => [] },
+  });
+  ok(cleared.outcome === "decided", "🔴 OPE-1604 NEGATIVE CONTROL: with NO halt row the identical click decides normally");
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "🔴 OPE-1604 NEGATIVE CONTROL: and the kind's execute DID run — the refusal above is the halt, not a broken click path");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-elsewhere", kind: "test.member", argsJson: "{}", domain: null }));
+  const elsewhere = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-elsewhere",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: false, level: "surface", scopeKey: "slack/T1/C-SOMEWHERE-ELSE" }),
+  });
+  ok(elsewhere.outcome === "decided" && memberExecuted.includes("U_RANDOM_MEMBER"), "🔴 OPE-1604: a surface halt at an UNRELATED key does not refuse this click — the arrow reads the row's own address");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-surface", kind: "test.member", argsJson: "{}", domain: null }));
+  const atSurface = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-surface",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: false, level: "surface", scopeKey: "slack/T1/C1" }),
+  });
+  ok(atSurface.outcome === "halted" && memberExecuted.length === 0, "🔴 OPE-1604: a surface halt at the ROW'S OWN surface refuses the click");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-unreadable", kind: "test.member", argsJson: "{}", domain: null }));
+  const unreadable = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-unreadable",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltUnreadable,
+  });
+  ok(unreadable.outcome === "halted" && memberExecuted.length === 0, "🔴 OPE-1604: an UNREADABLE halt store refuses the click — fail-closed, like every other arrow");
+  ok(
+    unreadable.outcome === "halted" && unreadable.notice.includes("could not be read"),
+    "🔴 OPE-1604: and the notice names the fail-closed case, so nobody reads a store outage as an operator's stop",
+  );
+  ok((await entryFor("approval.denied", "p-halt-unreadable"))?.detail?.halt === "unreadable", "OPE-1604: the audit row distinguishes `unreadable` from a real address");
+
+  await store.addPendingAction(row({ id: "p-halt-reject", kind: "test.member", argsJson: "{}", domain: null }));
+  const rejectedUnderHalt = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-reject",
+    decision: "reject",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: true }),
+  });
+  ok(rejectedUnderHalt.outcome === "halted", "🔴 OPE-1604: a REJECT click is refused during a halt too — it consumes the row, which is an edit");
+  ok((await store.getPendingAction("default", "p-halt-reject"))?.status === "pending", "OPE-1604: …and that row is untouched as well");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-requester", kind: "test.member", argsJson: "{}", domain: null }));
+  const onRequester = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-requester",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: false, level: "user", scopeKey: "user:slack/T1/U_REQUESTER" }),
+  });
+  ok(onRequester.outcome === "halted" && memberExecuted.length === 0, "🔴 OPE-1604: a `user` halt on the row's REQUESTER refuses the click — the person axis is namable and it is the requester's");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-halt-clicker", kind: "test.member", argsJson: "{}", domain: null }));
+  const onClicker = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-clicker",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: false, level: "user", scopeKey: "user:slack/T1/U_RANDOM_MEMBER" }),
+  });
+  ok(onClicker.outcome === "decided" && memberExecuted.includes("U_RANDOM_MEMBER"), "🔴 OPE-1604 STATED LIMIT: a `user` halt on the CLICKER alone does NOT reach this arrow — measured, not merely written down");
+
+  const liftKind = (TOOL_CONSEQUENCE[RESUME_TOOL]?.via as { kind: string; action?: string }).action!;
+  let lifted = 0;
+  registerActionKind({
+    kind: liftKind,
+    policy: "admin",
+    summarize: () => ["lift the halt"],
+    async execute() {
+      lifted++;
+      return "halt lifted";
+    },
+  });
+  await store.addPendingAction(row({ id: "p-halt-lift", kind: liftKind, argsJson: "{}", domain: null }));
+  const lift = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-lift",
+    decision: "approve",
+    clickerId: "U_ORG_ADMIN",
+    clickerPlatform: "slack",
+    clickerTenant: "T1",
+    halt: haltRows({ orgWide: true }),
+  });
+  ok(lift.outcome === "decided" && lifted === 1, `🔴 OPE-1604: the LIFT card (\`${liftKind}\`) still decides and EXECUTES during an org-wide halt — a halt can never deny its own lift`);
+
+  lifted = 0;
+  await store.addPendingAction(row({ id: "p-halt-lift-unreadable", kind: liftKind, argsJson: "{}", domain: null }));
+  const liftUnreadable = await resolveApprovalClick({ org: "default", id: "p-halt-lift-unreadable", decision: "approve", clickerId: "U_ORG_ADMIN", clickerPlatform: "slack", clickerTenant: "T1", halt: haltUnreadable });
+  ok(liftUnreadable.outcome === "decided" && lifted === 1, "🔴 OPE-1604: the lift card decides even when the halt store cannot be READ — the fail-closed arrow never closes over the lift");
+
+  ok(RESUME_TOOL === "resume" && liftKind.length > 0, "OPE-1604: the exempt kind is read from TOOL_CONSEQUENCE's own row for the lift verb — one spelling, not two");
+
+  await store.addPendingAction(row({ id: "p-halt-venue", kind: "test.member", argsJson: "{}", domain: null, scopeKey: "linear/WS9/ISSUE-42", channelId: "C_ENG", postedTo: null }));
+  await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-venue",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    clickerPlatform: "slack",
+    clickerTenant: "T1",
+    clickContext: { surfaceKey: "slack/T1/C_INTRUDER" },
+    halt: haltRows({ orgWide: true }),
+  });
+  const rVenue = await entryFor("approval.denied", "p-halt-venue");
+  ok(rVenue?.detail?.reason === "halted", "OPE-1604 fixture: the foreign-room click during a halt is refused by the HALT arrow, which runs first");
+  ok(
+    rVenue?.detail?.venuePlatform === "linear" && rVenue?.detail?.venueWorkspace === "WS9",
+    "🔴 OPE-1604: the halted refusal names the ROW's own venue, never the unverified room the click came from — an intruder's workspace must not be recorded as the card's",
+  );
+
+  await store.addPendingAction(
+    row({ id: "p-halt-contradict", kind: "test.member", argsJson: "{}", domain: null, status: "approved", decidedBy: "chain:judge", decidedAt: "2026-09-09T00:00:00Z", expiresAt: "2026-09-09T00:00:00Z" }),
+  );
+  const contradicted = await resolveApprovalClick({
+    org: "default",
+    id: "p-halt-contradict",
+    decision: "contradict",
+    clickerId: "U_RANDOM_MEMBER",
+    halt: haltRows({ orgWide: true }),
+  });
+  ok(contradicted.outcome === "contradicted", "🔴 OPE-1604: a CONTRADICT click still resolves during a halt — the exempt verb, because it executes nothing and edits no pending row");
+}
+
+{
+  const store = getOperationalStore();
+
+  const fanOut = ["worker-a", "worker-b", "worker-c"].map((what) => ({
+    what,
+    args: { sessionId: "sess-fanout", what },
+  }));
+
+  memberExecuted = [];
+  const posted = await Promise.all(
+    fanOut.map((w) =>
+      inSession(() =>
+        requestApproval(
+          { org: "default", kind: "test.member", args: w.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+          { post: async () => ({ ok: true, ts: "999.000" }) as never },
+        ),
+      ),
+    ),
+  );
+
+  ok(posted.every((p) => p.deduped !== true), "🔴 OPE-251: N workers proposing DISTINCT frozen args in ONE parent turn mint N cards — none dedups against another");
+  ok(new Set(posted.map((p) => p.id)).size === fanOut.length, "🔴 OPE-251: and the N cards are N SEPARATE rows, each independently clickable");
+
+  const twin = await inSession(() =>
+    requestApproval(
+      { org: "default", kind: "test.member", args: fanOut[0]!.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { post: async () => ({ ok: true, ts: "999.000" }) as never },
+    ),
+  );
+  ok(twin.deduped === true && twin.id === posted[0]!.id, "🔴 OPE-251 NEGATIVE CONTROL: an IDENTICAL re-proposal folds onto the live card — the dedup is on the frozen args, and it still works");
+
+  const first = await resolveApprovalClick({ org: "default", id: posted[0]!.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER" });
+  ok(first.outcome === "decided" && memberExecuted.length === 1, "OPE-251: approving the first card decides and executes exactly that one worker's action");
+  const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
+  ok(
+    rest.every((s) => s === "pending"),
+    "🔴 OPE-251: the other workers' cards are STILL PENDING after the click — a session grant helps the NEXT worker, never the fan-out that is already carded",
+  );
+
+  ok(
+    (await store.getSessionApproval("default", "sess-fanout", "test.member", new Date().toISOString())) === null,
+    "🔴 OPE-251: `approve_session` on a non-grantable kind writes NO memo — the fan-out gap is a grant-IDENTITY gap (one session per worker), not a missing memo",
+  );
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 concurrent fan-out)\n`);

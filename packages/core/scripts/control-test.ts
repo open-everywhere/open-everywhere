@@ -9,6 +9,7 @@ import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import type { TranscriptExportRequest } from "../agent/control/transcript-export.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("control");
@@ -300,6 +301,74 @@ _setDeploymentIdentityForTest({ org: CTL_ORG });
   ok("OPE-402: with sessionStartedAfter set, the late-flusher's session is excluded wholesale (leak closed)", boundedRow?.calls === 2);
   ok("OPE-402: sessionStartedAfter echoes the normalised bound actually applied", viewWithBound.sessionStartedAfter === lateFlushWindowStart);
   ok("OPE-402: unparseable sessionStartedAfter is refused, same as sinceIso", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack/TW1"], sessionStartedAfter: "not-a-time" })));
+}
+
+{
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { TranscriptExportError, TRANSCRIPT_EXPORT_DEFAULT_LIMIT } = await import("../agent/control/transcript-export.js");
+
+  type ToolResult = { isError?: boolean; content: { type: string; text: string }[] };
+
+  const call = async (
+    build: Parameters<typeof buildControlServer>[0],
+    args: Record<string, unknown>,
+  ): Promise<ToolResult> => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const srv = buildControlServer(build);
+    await srv.connect(serverTransport);
+    const client = new Client({ name: "control-test", version: "0" });
+    await client.connect(clientTransport);
+    try {
+      return (await client.callTool({ name: "session_transcript", arguments: args })) as unknown as ToolResult;
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  };
+
+  const seen: TranscriptExportRequest[] = [];
+  const reader = async (req: TranscriptExportRequest) => {
+    seen.push(req);
+    return { sessionId: req.sessionId, startIndex: req.startIndex, nextIndex: req.startIndex + 2, complete: true, eventCount: 2, text: "03:00:01 [said] hello" };
+  };
+
+  const okRes = await call({ readTranscript: reader }, { sessionId: "wrun_abc" });
+  ok("session_transcript: an admin call succeeds", okRes.isError !== true);
+  ok("session_transcript: the answer is the rendered transcript, not JSON", okRes.content[0].text.includes("[said] hello") && !okRes.content[0].text.trimStart().startsWith("{"));
+  ok("session_transcript: the banner names the session and its completeness", okRes.content[0].text.includes("session wrun_abc") && okRes.content[0].text.includes("complete"));
+  ok("session_transcript: the untrusted banner rides every answer", okRes.content[0].text.includes("UNTRUSTED CONTENT"));
+  ok("session_transcript: paging defaults come from the module's constants", seen.length === 1 && seen[0].startIndex === 0 && seen[0].limit === TRANSCRIPT_EXPORT_DEFAULT_LIMIT);
+
+  await call({ readTranscript: reader }, { sessionId: "wrun_abc", startIndex: 40, limit: 7 });
+  ok("session_transcript: explicit paging reaches the reader", seen.length === 2 && seen[1].startIndex === 40 && seen[1].limit === 7);
+
+  const before = seen.length;
+  const denied = await call({ roles: ["domain:eng"], readTranscript: reader }, { sessionId: "wrun_abc" });
+  ok("session_transcript: a domain-scoped role is REFUSED", denied.isError === true && /forbidden/.test(denied.content[0].text));
+  ok("🔴 session_transcript: the refusal happens BEFORE the read — the reader is never called", seen.length === before);
+
+  const deniedUnconfigured = await call({ roles: ["viewer"] }, { sessionId: "wrun_abc" });
+  ok(
+    "session_transcript: an unauthorised caller on an UNCONFIGURED mount still gets the denial, never the configuration hint",
+    deniedUnconfigured.isError === true && /forbidden/.test(deniedUnconfigured.content[0].text) && !/OE_DEPLOY_CONTROL_TOKEN/.test(deniedUnconfigured.content[0].text),
+  );
+
+  const unconfigured = await call({}, { sessionId: "wrun_abc" });
+  ok(
+    "session_transcript: an unconfigured mount names the env an operator must set",
+    unconfigured.isError === true && /OE_DEPLOY_CONTROL_TOKEN/.test(unconfigured.content[0].text) && /E2E_TARGET_URL/.test(unconfigured.content[0].text),
+  );
+
+  const failing = await call(
+    {
+      readTranscript: async () => {
+        throw new TranscriptExportError("the deployment refused this process's control-read token (401).");
+      },
+    },
+    { sessionId: "wrun_abc" },
+  );
+  ok("session_transcript: a reader failure surfaces as a tool error with its own message", failing.isError === true && /refused this process's control-read token/.test(failing.content[0].text));
 }
 
 const server = buildControlServer();

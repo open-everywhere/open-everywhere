@@ -1,6 +1,7 @@
 
 import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
+import { routeAuth } from "eve/channels/auth";
 import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from "jose";
 import { createHash } from "node:crypto";
 import {
@@ -13,7 +14,11 @@ import {
   makeServiceTokenAuthenticator,
   verifyServiceToken,
   adminAuthenticatorFromEnv,
+  serviceTokenAuth,
+  injectTokenAuth,
   SERVICE_TOKEN_ISSUER,
+  SERVICE_TOKEN_AUTHENTICATOR,
+  INJECT_TOKEN_AUTHENTICATOR,
   roleCoversScope,
   scopeDenial,
   siloScopeDenial,
@@ -27,6 +32,8 @@ import { readAudit } from "../agent/audit/audit.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { FIRE_UNATTENDED_ATTR } from "../agent/identity/binding.js";
+import { TOKEN_FAMILY_ATTR } from "../agent/routines/fire-auth.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("control-auth");
@@ -324,4 +331,47 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
   delete process.env.OE_CONTROL_READ_TOKENS;
 }
 
-console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC, read-only service tokens)\n`);
+{
+  const readValue = "read-token-value";
+  const injectValue = "inject-token-value";
+  const sha = (v: string) => createHash("sha256").update(v, "utf-8").digest("hex");
+  const readEntries = parseServiceTokenEntries(`e2e-harness:${sha(readValue)}`);
+  const injectEntries = parseServiceTokenEntries(`eval-inject:${sha(injectValue)}`);
+  ok("(precondition) both token families parsed one entry each", readEntries.length === 1 && injectEntries.length === 1);
+
+  const req = (token: string | null, scheme = "Bearer") =>
+    new Request("https://deploy.example/control/v1/usage", { headers: token ? { authorization: `${scheme} ${token}` } : {} });
+
+  const readAuth = serviceTokenAuth(readEntries);
+  const injectAuth = injectTokenAuth(injectEntries);
+
+  const verified = await readAuth(req(readValue));
+  ok("read family: a matching bearer becomes an eve caller snapshot", verified !== null && verified !== undefined);
+  ok("read family: principalId is the audited service principal svc:<name>", verified?.principalId === "svc:e2e-harness");
+  ok("read family: the caller is a SERVICE principal, issued by the service-token issuer", verified?.principalType === "service" && verified?.issuer === SERVICE_TOKEN_ISSUER);
+  ok("read family: the snapshot names WHICH family admitted the caller", verified?.attributes[TOKEN_FAMILY_ATTR] === "read");
+  ok("read family: the authenticator is named, so an audit reader can tell the two doors apart", verified?.authenticator === SERVICE_TOKEN_AUTHENTICATOR);
+  ok("read family: the bag declares an UNATTENDED origin — a token door is machine-to-machine, never a human acting", verified?.attributes[FIRE_UNATTENDED_ATTR] === "true");
+
+  ok("read family: a wrong token SKIPS the walk entry (no snapshot)", (await readAuth(req("not-the-token"))) === null);
+  ok("read family: no authorization header at all skips", (await readAuth(req(null))) === null);
+  ok("read family: a non-Bearer scheme skips", (await readAuth(req(Buffer.from("u:p").toString("base64"), "Basic"))) === null);
+
+  ok("families stay disjoint: a READ token is refused by the injection walk", (await injectAuth(req(readValue))) === null);
+  ok("families stay disjoint: an INJECT token is refused by the read walk", (await readAuth(req(injectValue))) === null);
+  const injected = await injectAuth(req(injectValue));
+  ok("inject family: a matching bearer authenticates as svc:<name>, tagged as the inject family", injected?.principalId === "svc:eval-inject" && injected?.attributes[TOKEN_FAMILY_ATTR] === "inject");
+  ok("inject family: the authenticator is the injection one, never the read one", injected?.authenticator === INJECT_TOKEN_AUTHENTICATOR);
+  ok("inject family: the bag declares an UNATTENDED origin too — the marker cannot be on one door and missing on the other", injected?.attributes[FIRE_UNATTENDED_ATTR] === "true");
+
+  const refused = await routeAuth(req("not-the-token"), readAuth);
+  ok("walk: an unverified caller gets a Response, not a snapshot", refused instanceof Response);
+  const res = refused as Response;
+  ok("walk: the refusal is a 401", res.status === 401);
+  ok("walk: the 401 advertises the Bearer challenge the door actually accepts", (res.headers.get("www-authenticate") ?? "").toLowerCase().includes("bearer"));
+  ok("walk: the 401 is never cached", (res.headers.get("cache-control") ?? "").includes("no-store"));
+  const accepted = await routeAuth(req(readValue), readAuth);
+  ok("walk: a matching caller returns the snapshot, not a Response", !(accepted instanceof Response) && accepted.principalId === "svc:e2e-harness");
+}
+
+console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC, read-only service tokens, eve route-auth walk)\n`);

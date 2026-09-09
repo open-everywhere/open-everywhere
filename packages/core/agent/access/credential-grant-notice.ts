@@ -11,7 +11,8 @@ import {
   GrantRoomNoticeAlreadyRegisteredError,
   registerCoreGrantRoomNotice,
 } from "./grant-room-notice-registry.internal.js";
-import { GRANT_MODE_WORDS } from "./credential-grant-card.js";
+import { GRANT_MODE_WORDS, grantBorrowPhrase } from "./credential-grant-card.js";
+import { connectorDisplayName, grantClockPhrase, grantDisplayLabel, grantExpiryPhrase, grantOwnerPhrase } from "./credential-grant-copy.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 
 function log(line: string): void {
@@ -40,7 +41,8 @@ export async function resolveRequesterLabel(principalId: string): Promise<string
 }
 
 function requesterActorPhrase(principalId: string, requesterLabel: string | undefined): string {
-  return requesterLabel ? `${requesterLabel} (\`${principalId}\`)` : `\`${principalId}\``;
+  const label = grantDisplayLabel(requesterLabel);
+  return label === undefined ? `\`${principalId}\`` : `${label} (\`${principalId}\`)`;
 }
 
 export function grantRoomNoticeText(
@@ -50,21 +52,22 @@ export function grantRoomNoticeText(
   requesterLabel?: string,
 ): string {
   const actor = requesterActorPhrase(grant.requesterPrincipalId, requesterLabel);
-  return [`Granted-credential use at ${atIso}. This is ${actor}'s act, run with ${grant.ownerSlug}'s credential.`, line].join("\n");
+  const clock = grantClockPhrase(atIso);
+  const when = clock === undefined ? "Granted-credential use." : `Granted-credential use at ${clock}.`;
+  return [`${when} This is ${actor}'s act, run with ${grantOwnerPhrase(grant.ownerSlug)}'s credential.`, line].join("\n");
 }
 
-export function grantOwnerNoticeText(grant: CredentialGrantRow, requesterLabel?: string): string {
+export function grantOwnerNoticeText(grant: CredentialGrantRow, requesterLabel: string | undefined, nowMs: number): string {
   return [
-    `Your ${grant.connector} credential was just used in the conversation you approved.`,
+    `Your ${connectorDisplayName(grant.connector)} credential was just used in the conversation you approved.`,
     "",
-    `• Tool: \`${grant.verb}\``,
-    `• Resource: \`${grant.resource}\``,
+    `• What it did: ${grantBorrowPhrase(grant)}`,
     `• Who ran it: ${requesterActorPhrase(grant.requesterPrincipalId, requesterLabel)}`,
-    `• Grant: \`${grant.id}\` (${GRANT_MODE_WORDS[grant.mode]})`,
+    `• The grant: ${GRANT_MODE_WORDS[grant.mode]}`,
     "",
     grant.mode === "once"
       ? "That was a one-shot grant, so it is now spent. Nothing else can be run with it."
-      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live until ${grant.expiresAt} unless you revoke it.`,
+      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live ${grantExpiryPhrase(grant.expiresAt, nowMs)}. There is no way to revoke it yet — it stops when it expires.`,
   ].join("\n");
 }
 
@@ -103,7 +106,7 @@ export async function deliverGrantOwnerNotice(
   const won = await store.claimNotice(context.org, grantUseNoticeKey(grant.id), atIso);
   if (!won) return false;
   try {
-    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantOwnerNoticeText(grant, requesterLabel) });
+    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantOwnerNoticeText(grant, requesterLabel, Date.parse(atIso)) });
   } catch (err) {
     await auditOwnerNotice(context, grant, ask.ownerPlatform, "failed", err);
     throw err;

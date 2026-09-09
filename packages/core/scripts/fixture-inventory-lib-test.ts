@@ -4,6 +4,7 @@ import {
   PROVISION_PLAN,
   ROOM_VARS,
   SURFACE_ORDER,
+  TRACKED_ROOM_IDS,
   buildInventory,
   canonicalId,
   teamsSegment,
@@ -21,11 +22,14 @@ import {
   renderInventoryDoc,
   rowKey,
   resolutionKey,
+  roomIdFor,
   roomName,
   roomsUnseen,
   surfaceOfKey,
+  trackedRoomId,
   type BindingLike,
   type DomainLike,
+  type ParsedRow,
   type Resolution,
 } from "./e2e/fixture-inventory-lib.js";
 
@@ -437,5 +441,74 @@ for (const spec of ROOM_VARS) {
 ok(new Set(PROVISION_PLAN.map((p) => p.linearKey)).size === PROVISION_PLAN.length, "no two plans share a Linear team key");
 for (const plan of PROVISION_PLAN) ok(/^[A-Z0-9]{2,5}$/u.test(plan.linearKey), `${plan.domain}'s Linear key is a short upper-case key Linear accepts`);
 ok(new Set(PROVISION_PLAN.map((p) => p.slug)).size === PROVISION_PLAN.length, "no two plans share a room-name slug");
+
+for (const envVar of Object.keys(TRACKED_ROOM_IDS)) {
+  ok(
+    ROOM_VARS.some((r) => r.envVar === envVar),
+    `🔴 TRACKED_ROOM_IDS.${envVar} names a ROOM_VARS row — a key naming no room var is a literal nothing reads, the OPE-1539 shape in a second place`,
+  );
+}
+
+{
+  const TRACKED = { E2E_SLACK_MPIM_CHANNEL: "GTRACKED" };
+  ok(roomIdFor("E2E_SLACK_MPIM_CHANNEL", {}, TRACKED) === "GTRACKED", "with the variable unset, the room id comes from this repository");
+  ok(
+    roomIdFor("E2E_SLACK_MPIM_CHANNEL", { E2E_SLACK_MPIM_CHANNEL: "GENV" }, TRACKED) === "GENV",
+    "🔴 the environment WINS — the tracked id is a fallback, so an operator can still aim the pack at a room of their own",
+  );
+  ok(
+    roomIdFor("E2E_SLACK_MPIM_CHANNEL", { E2E_SLACK_MPIM_CHANNEL: "   " }, TRACKED) === "GTRACKED",
+    "a blank variable is not a value — it falls through to the tracked id rather than resolving to whitespace",
+  );
+  ok(roomIdFor("E2E_SLACK_MPIM_CHANNEL", {}, { E2E_SLACK_MPIM_CHANNEL: "" }) === undefined, "an entry with an EMPTY id resolves to nothing — declared is not provisioned");
+  ok(roomIdFor("E2E_SLACK_MPIM_CHANNEL", {}, {}) === undefined, "no variable and no tracked id resolves to nothing");
+  ok(trackedRoomId("E2E_SLACK_MPIM_CHANNEL", TRACKED) === "GTRACKED", "trackedRoomId reads the table it is given");
+  ok(trackedRoomId("E2E_SLACK_CHANNEL", TRACKED) === undefined, "…and answers nothing for a var the table does not carry");
+}
+
+{
+  const TRACKED = { E2E_SLACK_MPIM_CHANNEL: "GMPIM" };
+  const withTracked = buildInventory({
+    envValues: {},
+    declared: [],
+    resolutions: new Map([[resolutionKey("slack", "GMPIM"), { ok: true, name: "(group DM)", detail: "conversations.info" } as Resolution]]),
+    unresolvableSurfaces: [],
+    trackedIds: TRACKED,
+  });
+  const mpimRow = withTracked.rows.find((r) => r.id === "GMPIM");
+  ok(mpimRow !== undefined, "🔴 a room whose id this repository carries gets a ROW even with every variable unset — the table names the fixture a run would actually drive");
+  ok(mpimRow?.envVars.includes("E2E_SLACK_MPIM_CHANNEL") === true, "…filed under the variable that would otherwise carry it");
+  ok(mpimRow?.name === "(group DM)", "…and it is resolved through the vendor like any other room");
+  ok(
+    mpimRow?.note.includes("TRACKED_ROOM_IDS.E2E_SLACK_MPIM_CHANNEL") === true,
+    "…and the note says the id came from this repository, not from whoever ran the command — the two change by different means",
+  );
+  const without = buildInventory({ envValues: {}, declared: [], resolutions: new Map(), unresolvableSurfaces: [], trackedIds: {} });
+  ok(without.rows.every((r) => r.id !== "GMPIM"), "the control: with no tracked id and no variable, the room has no row");
+  const fromEnv = buildInventory({
+    envValues: { E2E_SLACK_MPIM_CHANNEL: "GMPIM" },
+    declared: [],
+    resolutions: new Map(),
+    unresolvableSurfaces: [],
+    trackedIds: TRACKED,
+  });
+  ok(
+    fromEnv.rows.find((r) => r.id === "GMPIM")?.note.includes("TRACKED_ROOM_IDS") === false,
+    "the second control: an id the ENVIRONMENT carried is not annotated as tracked — the note distinguishes, it does not decorate",
+  );
+}
+
+{
+  const committed: ParsedRow[] = [
+    { surface: "slack", id: "GMPIM", name: "(group DM)", envVars: ["E2E_SLACK_MPIM_CHANNEL"], claimants: ["unclaimed"], note: "—" },
+  ];
+  ok(roomsUnseen(committed, {}, { E2E_SLACK_MPIM_CHANNEL: "GMPIM" }).length === 0, "🔴 a room whose id is in this repository is never `unseen` — the write guard must not refuse over it");
+  ok(roomsUnseen(committed, {}, {}).length === 1, "the control: with no tracked id and the variable unset, the same row IS unseen and stops the write");
+  ok(
+    compareInventory(committed, [], {}, { E2E_SLACK_MPIM_CHANNEL: "GMPIM" }).stale,
+    "🔴 …and a tracked room the fresh run did NOT find is staleness — every run can see it, so its absence is a fact about the room",
+  );
+  ok(compareInventory(committed, [], {}, {}).stale === false, "the control: an untracked, unset row the fresh run cannot see is not staleness");
+}
 
 console.log(`✓ fixture-inventory-lib: ${passed} assertions passed`);

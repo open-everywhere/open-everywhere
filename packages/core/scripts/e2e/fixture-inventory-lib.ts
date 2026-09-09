@@ -154,6 +154,22 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_SOAK_LINEAR_LABEL_ID: "not-a-room",
 };
 
+export const TRACKED_ROOM_IDS: Readonly<Record<string, string>> = {
+  E2E_SLACK_MPIM_CHANNEL: "",
+};
+
+export function trackedRoomId(envVar: string, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): string | undefined {
+  return tracked[envVar]?.trim() || undefined;
+}
+
+export function roomIdFor(
+  envVar: string,
+  envValues: Readonly<Record<string, string | undefined>>,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): string | undefined {
+  return envValues[envVar]?.trim() || trackedRoomId(envVar, tracked);
+}
+
 export type ProvisionAction = "create" | "reuse";
 
 export interface PlannedRoom {
@@ -381,6 +397,7 @@ export interface InventoryInput {
   readonly declared: readonly DeclaredRoom[];
   readonly resolutions: ReadonlyMap<string, Resolution>;
   readonly unresolvableSurfaces: readonly SurfaceKind[];
+  readonly trackedIds?: Readonly<Record<string, string>>;
 }
 
 export interface Inventory {
@@ -414,7 +431,7 @@ export function inventoryVars(
 }
 
 export function buildInventory(input: InventoryInput): Inventory {
-  const { envValues, declared, resolutions, unresolvableSurfaces } = input;
+  const { envValues, declared, resolutions, unresolvableSurfaces, trackedIds = TRACKED_ROOM_IDS } = input;
   const blindSurfaces = new Set(unresolvableSurfaces);
 
   interface Draft {
@@ -447,11 +464,15 @@ export function buildInventory(input: InventoryInput): Inventory {
   }
 
   for (const spec of inventoryVars()) {
-    const value = envValues[spec.envVar]?.trim();
+    const value = roomIdFor(spec.envVar, envValues, trackedIds);
     if (!value) continue;
     const id = spec.surface === "teams" && value.startsWith("teams/") ? idOfKey(value) : value;
     const d = draftFor(spec.surface, id);
     if (!d.envVars.includes(spec.envVar)) d.envVars.push(spec.envVar);
+    if (!envValues[spec.envVar]?.trim()) {
+      const note = `id from this repository (\`TRACKED_ROOM_IDS.${spec.envVar}\`), not from the environment`;
+      if (!d.notes.includes(note)) d.notes.push(note);
+    }
     d.expectUnclaimed ??= spec.expectUnclaimed;
     d.neverProbe ??= spec.neverProbe;
   }
@@ -536,7 +557,7 @@ function cell(text: string): string {
 const HEADER = `# The e2e fixture inventory
 
 The rooms the e2e pack drives, with their live names. They live in three places — the \`E2E_*\` room
-vars in \`packages/core/scripts/e2e/env.ts\`, the surface keys in \`agent/memory/config/domains.ts\`,
+vars in \`packages/core/scripts/e2e/env.ts\`, the surface keys in \`agent/memory/config/domains/\`,
 and the surface-scoped bindings in \`agent/access/bundles.ts\` — and none of the three carries a
 name. This file does.
 
@@ -565,6 +586,12 @@ operator's Microsoft 365 tenant id, so the id lives in the environment and this 
 That is a choice about what this table is FOR, not a prohibition: a tenant id is a tracked literal
 by ruling, and no gate refuses one. A Teams row gives the reader the room's name and the variable
 that carries its id, which is what the rest of this file gives every other row.
+
+**A room id can live in Git rather than in an environment.** \`TRACKED_ROOM_IDS\` in
+\`fixture-inventory-lib.ts\` carries the id itself for such a room, and the pack reads it whenever the
+\`E2E_*\` variable is unset — the variable stays an override. A room id is a TRACKED literal by
+ruling, so this is where one belongs; a room that lives only in an environment is one nobody can
+provision, and J-MPIM skipped on five ships for exactly that reason. Those rows say so in their note.
 
 **A room can need a credential of its own.** A \`PlannedRoom\` may declare \`credentialVar\`, and the
 Linear addressed-only team does: it lives in a second Linear workspace, and a Linear personal API key
@@ -717,12 +744,13 @@ export function namesLost(committed: readonly ParsedRow[], generated: readonly I
 export function roomsUnseen(
   committed: readonly ParsedRow[],
   envValues: Readonly<Record<string, string | undefined>>,
+  trackedIds: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
 ): readonly string[] {
   const declared = new Set(ROOM_VARS.map((r) => r.envVar));
   const unseen: string[] = [];
   for (const row of committed) {
-    if (row.envVars.some((v) => Boolean(envValues[v]?.trim()))) continue;
-    const blind = row.envVars.filter((v) => declared.has(v) && !envValues[v]?.trim());
+    if (row.envVars.some((v) => Boolean(roomIdFor(v, envValues, trackedIds)))) continue;
+    const blind = row.envVars.filter((v) => declared.has(v) && !roomIdFor(v, envValues, trackedIds));
     if (blind.length === 0) continue;
     unseen.push(`${blind.join(", ")} unset here; writing would drop \`${row.name}\` or its env-var column`);
   }
@@ -733,6 +761,7 @@ export function compareInventory(
   committed: readonly ParsedRow[],
   generated: readonly InventoryRow[],
   envValues: Readonly<Record<string, string | undefined>>,
+  trackedIds: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
 ): Staleness {
   const reasons: string[] = [];
   const fresh = new Map(generated.map((r) => [rowKey(r), r]));
@@ -757,7 +786,7 @@ export function compareInventory(
 
   for (const [key, row] of old) {
     if (fresh.has(key)) continue;
-    const visible = row.envVars.length === 0 || row.envVars.some((v) => Boolean(envValues[v]?.trim()));
+    const visible = row.envVars.length === 0 || row.envVars.some((v) => Boolean(roomIdFor(v, envValues, trackedIds)));
     if (visible) reasons.push(`${key} is in the table and this run did not find it`);
   }
 

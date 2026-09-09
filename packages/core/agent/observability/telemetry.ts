@@ -89,6 +89,7 @@ export const OUTCOME_VALUES = Object.freeze([
   "not-judge-lift",
   "already-recorded",
   "recorded",
+  "halted",
 ] as const);
 
 const CLOSED_ATTR_VALUES: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({

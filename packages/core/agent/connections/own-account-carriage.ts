@@ -1,23 +1,28 @@
 import { classifySessionId } from "../channels/window-key.js";
-import { delegationRootSessionId, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, delegationRootSessionId, type BindableContext } from "../identity/binding.js";
 import type { OwnAccountAsk } from "./own-account-ask.js";
 
 export const OE_OWN_ACCOUNT_ASK_ATTR = "oe_own_account_ask";
 
 const AMBIGUOUS_FLAG = "ambiguous";
 
-export function renderOwnAccountStamp(sessionId: string, ask: OwnAccountAsk): string {
-  return `${sessionId}|${ask.connector}${ask.ambiguous ? `|${AMBIGUOUS_FLAG}` : ""}`;
+export const TURN_UNKNOWN = "-";
+
+export function renderOwnAccountStamp(sessionId: string, turnId: string | undefined, ask: OwnAccountAsk): string {
+  const turn = turnId !== undefined && turnId.length > 0 ? turnId : TURN_UNKNOWN;
+  return `${sessionId}|${turn}|${ask.connector}${ask.ambiguous ? `|${AMBIGUOUS_FLAG}` : ""}`;
 }
 
-export function parseOwnAccountStamp(raw: string | undefined): { readonly sessionId: string; readonly ask: OwnAccountAsk } | undefined {
+export function parseOwnAccountStamp(
+  raw: string | undefined,
+): { readonly sessionId: string; readonly turnId: string; readonly ask: OwnAccountAsk } | undefined {
   if (raw === undefined) return undefined;
   const parts = raw.split("|");
-  if (parts.length < 2 || parts.length > 3) return undefined;
-  const [sessionId, connector, flag] = parts;
-  if (!sessionId || !connector) return undefined;
-  if (parts.length === 3 && flag !== AMBIGUOUS_FLAG) return undefined;
-  return { ask: { ambiguous: flag === AMBIGUOUS_FLAG, connector }, sessionId };
+  if (parts.length < 3 || parts.length > 4) return undefined;
+  const [sessionId, turnId, connector, flag] = parts;
+  if (!sessionId || !turnId || !connector) return undefined;
+  if (parts.length === 4 && flag !== AMBIGUOUS_FLAG) return undefined;
+  return { ask: { ambiguous: flag === AMBIGUOUS_FLAG, connector }, sessionId, turnId };
 }
 
 function readOwnAccountAttr(ctx: BindableContext): string | undefined {
@@ -38,12 +43,22 @@ function adoptableSessions(ctx: BindableContext): readonly string[] {
   return out;
 }
 
+function turnHalfAdmits(ctx: BindableContext, stamp: { readonly sessionId: string; readonly turnId: string }): boolean {
+  const own = (ctx as { session?: { id?: string } }).session?.id;
+  if (typeof own !== "string" || own !== stamp.sessionId) return true;
+  if (stamp.turnId === TURN_UNKNOWN) return true;
+  const now = currentTurnId(ctx);
+  if (now === undefined) return true;
+  return now === stamp.turnId;
+}
+
 export function adoptedOwnAccountAsk(ctx: BindableContext, vendors: readonly { readonly connector: string }[]): OwnAccountAsk | undefined {
   try {
     const stamp = parseOwnAccountStamp(readOwnAccountAttr(ctx));
     if (stamp === undefined) return undefined;
     if (!vendors.some((v) => v.connector === stamp.ask.connector)) return undefined;
     if (!adoptableSessions(ctx).includes(stamp.sessionId)) return undefined;
+    if (!turnHalfAdmits(ctx, stamp)) return undefined;
     return stamp.ask;
   } catch {
     return undefined;

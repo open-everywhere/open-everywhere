@@ -23,7 +23,8 @@ import {
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
-import { haltScopeFor, resolveHalt } from "../access/halt.js";
+import { RESUME_TOOL, TOOL_CONSEQUENCE } from "../access/consequence.js";
+import { haltAuditDetail, haltRefusalMessage, haltScopeFor, resolveHalt, type HaltDeps } from "../access/halt.js";
 import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
@@ -40,7 +41,7 @@ import {
 import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
-import type { PendingActionRow, PendingStatus } from "./types.js";
+import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-purge.js";
 import "./access-request.js";
 import "./skill-create.js";
@@ -221,9 +222,31 @@ function wedgeActionId(identity: WedgeIdentity): string {
   const turn = readTurnClock();
   if (turn === undefined || turn === null || turn.turnId.length === 0 || turn.sessionId.length === 0) return randomUUID();
   const material = JSON.stringify([turn.sessionId, turn.turnId, identity.org, identity.kind, identity.scopeKey, identity.channelId, identity.threadTs, identity.argsJson, identity.requestedBy, identity.decidedBy]);
-  const hex = createHash("sha256").update(material).digest("hex");
+  return uuidFromDigest(createHash("sha256").update(material).digest("hex"));
+}
+
+const HALT_LIFT_ACTION_KIND: string | undefined = (() => {
+  const via = TOOL_CONSEQUENCE[RESUME_TOOL]?.via;
+  return via !== undefined && via.kind === "action-kind" ? via.action : undefined;
+})();
+
+function uuidFromDigest(hex: string): string {
   const variant = ((parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function redeliveryActionId(kindDef: Pick<ActionKind, "volatileArgs">, input: RequestApprovalInput): string | undefined {
+  const volatileArgs = kindDef.volatileArgs;
+  if (volatileArgs === undefined || volatileArgs.length === 0) return undefined;
+  const turn = readTurnClock();
+  if (turn === undefined || turn === null || turn.turnId.length === 0 || turn.sessionId.length === 0) return undefined;
+  const args = input.args;
+  const stable =
+    args !== null && typeof args === "object" && !Array.isArray(args)
+      ? Object.fromEntries(Object.entries(args as Record<string, unknown>).filter(([k]) => !volatileArgs.includes(k)))
+      : args;
+  const material = JSON.stringify([turn.sessionId, turn.turnId, input.org, input.kind, input.scopeKey, input.channelId, input.threadTs ?? null, JSON.stringify(stable ?? null), input.requestedBy]);
+  return uuidFromDigest(createHash("sha256").update(material).digest("hex"));
 }
 
 export function autoApprovedNote(what: string, autoApproved: AutoApprovedOutcome): string {
@@ -500,8 +523,20 @@ export async function requestApproval(
     return { id: dup.id, expiresAt: dup.expiresAt, deduped: true };
   }
 
-  const row: PendingActionRow = {
-    id: randomUUID(),
+  let id: string = randomUUID();
+  const redeliveryId = redeliveryActionId(kindDef, input);
+  if (redeliveryId !== undefined) {
+    const prior = await store.getPendingAction(input.org, redeliveryId);
+    if (prior === null) {
+      id = redeliveryId;
+    } else if (prior.status === "pending" && prior.expiresAt > nowIso) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "deduped" });
+      return { id: prior.id, expiresAt: prior.expiresAt, deduped: true };
+    }
+  }
+
+  let row: PendingActionRow = {
+    id,
     org: input.org,
     kind: input.kind,
     argsJson,
@@ -519,7 +554,20 @@ export async function requestApproval(
     decidedAt: null,
   };
 
-  await store.addPendingAction(row);
+  if (row.id === redeliveryId) {
+    if (!(await store.addPendingActionIfAbsent(row))) {
+      const winner = await store.getPendingAction(input.org, row.id);
+      if (winner !== null && winner.status === "pending" && winner.expiresAt > nowIso) {
+        emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "deduped" });
+        return { id: winner.id, expiresAt: winner.expiresAt, deduped: true };
+      }
+      const fresh: PendingActionRow = { ...row, id: randomUUID() };
+      await store.addPendingAction(fresh);
+      row = fresh;
+    }
+  } else {
+    await store.addPendingAction(row);
+  }
 
   const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
 
@@ -809,6 +857,7 @@ export type ApprovalClickResolution =
   | { readonly outcome: "denied"; readonly row: PendingActionRow }
   | { readonly outcome: "clicker-denied"; readonly row: PendingActionRow; readonly reason: ClickerFloorRefusal }
   | { readonly outcome: "lost-race" }
+  | { readonly outcome: "halted"; readonly row: PendingActionRow; readonly notice: string }
   | {
       readonly outcome: "decided";
       readonly row: PendingActionRow;
@@ -833,20 +882,22 @@ export interface ResolveApprovalClickInput {
   readonly clickerPlatform?: string;
   readonly clickerTenant?: string;
   readonly clickerIsGuest?: boolean;
+  readonly halt?: HaltDeps;
 }
 
 async function auditClickerDenial(
   org: string,
   row: PendingActionRow,
   clickerId: string,
-  reason: ClickerFloorRefusal | "not-admin",
+  reason: ClickerFloorRefusal | "not-admin" | "halted",
   clickSurfaceKey?: string,
+  extraDetail?: Record<string, unknown>,
 ): Promise<void> {
   await appendAudit({
     ...whereFromScope(org, row.scopeKey),
     principalId: clickerId,
     action: "approval.denied",
-    detail: { id: row.id, kind: row.kind, ...venueDetail(row, clickSurfaceKey), reason },
+    detail: { id: row.id, kind: row.kind, ...venueDetail(row, clickSurfaceKey), reason, ...extraDetail },
   }).catch(() => undefined);
 }
 
@@ -858,6 +909,23 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
 
   const contradicting = input.decision === "contradict";
   if (!contradicting && row.status !== "pending") return { outcome: "not-pending" };
+
+  if (!contradicting && row.kind !== HALT_LIFT_ACTION_KIND) {
+    const haltState = await resolveHalt(
+      haltScopeFor({
+        org: input.org,
+        scopeKey: row.scopeKey,
+        domain: row.domain,
+        ...(row.requestedBy ? { principalId: row.requestedBy } : {}),
+      }),
+      input.halt ?? {},
+    );
+    if (haltState.halted) {
+      await auditClickerDenial(input.org, row, input.clickerId, "halted", undefined, haltAuditDetail(haltState));
+      emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "halted" });
+      return { outcome: "halted", row, notice: haltRefusalMessage(haltState, "deciding this request") };
+    }
+  }
 
   const nowIso = new Date().toISOString();
   if (!contradicting && Date.parse(row.expiresAt) <= Date.now()) {
@@ -1224,6 +1292,9 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       case "clicker-denied":
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${clickerFloorRefusalNotice(res.reason)}`);
+        return true;
+      case "halted":
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${res.notice}`);
         return true;
       case "contradicted": {
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${judgeContradictionNotice(res.contradiction)}`);

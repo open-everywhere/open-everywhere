@@ -15,12 +15,15 @@ import {
   GRANT_ID_LEAK_PATTERNS,
   grantActionPhrase,
   grantConversationPhrase,
+  grantDuplicateRefusalText,
   grantExpiryPhrase,
   grantRequesterPhrase,
 } from "../agent/access/credential-grant-copy.js";
 import { credentialGrantRefusalNote } from "../agent/access/credential-grant-ask.js";
 import { credentialGrantMintVerdict, grantMintRefusalMessage, type GrantMintInput, type GrantMintRefusal } from "../agent/access/credential-grant.js";
-import { grantBorrowResourceLabel, grantJsonColumn, grantJsonFromColumn, grantResourceTargetLabel } from "../agent/operational/credential-grant-rows.js";
+import { grantOwnerNoticeText, grantRoomNoticeText } from "../agent/access/credential-grant-notice.js";
+import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
+import { credentialGrantDisclosureLine, grantBorrowResourceLabel, grantJsonColumn, grantJsonFromColumn, grantResourceTargetLabel } from "../agent/operational/credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 
 let n = 0;
@@ -63,6 +66,27 @@ const grant: Pick<CredentialGrantRow, "connector" | "mcpTool" | "expiresAt" | "m
   expiresAt: SESSION_EXPIRY,
   mcpTool: "notion-fetch",
   mode: "session",
+};
+
+const grantRow: CredentialGrantRow = {
+  askId: ask.id,
+  connector: "notion",
+  createdAt: ask.createdAt,
+  expiresAt: SESSION_EXPIRY,
+  frozenArgs: ask.frozenArgs,
+  id: "00000000-0000-4000-8000-000000000018",
+  mcpTool: "notion-fetch",
+  mode: "session",
+  ownerPrincipalId: ask.ownerPrincipalId,
+  ownerSlug: ask.ownerSlug,
+  purpose: ask.purpose,
+  requesterPrincipalId: ask.requesterPrincipalId,
+  resource: ask.resource,
+  scopeKey: ask.scopeKey,
+  status: "active",
+  tier: "read",
+  toolName: ask.toolName,
+  verb: ask.verb,
 };
 
 console.log("1. the phrase helpers:");
@@ -240,7 +264,7 @@ console.log("3. the golden:");
       nowMs: NOW,
       ownerLabel: "Ada Lovelace",
     }),
-    "The #proj-chat conversation already has this grant from you (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. Revoke it first if you want to be asked again.",
+    "The #proj-chat conversation already has this grant from you (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. Nobody can revoke it, so a new request stays refused while this one is live.",
     "the duplicate refusal, OWNER-facing — the person who asked IS the owner, so it says 'you'",
   );
 
@@ -253,7 +277,7 @@ console.log("3. the golden:");
       nowMs: NOW,
       ownerLabel: "Ada Lovelace",
     }),
-    "That conversation already has this grant from Ada Lovelace (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. The owner can revoke it first if they want to be asked again.",
+    "That conversation already has this grant from Ada Lovelace (read a Notion page, for the next 12 hours (until 21:29 UTC)). Nothing new was requested — use the grant that is already there. Nobody can revoke it, so a new request stays refused while this one is live.",
     "the duplicate refusal, SEAT-facing — a third party reads the owner's name, never 'you'",
   );
 
@@ -319,6 +343,94 @@ console.log("3. the golden:");
     ].join("\n"),
     "the refused card",
   );
+
+  const DISCLOSURE =
+    'acting as ada — granted tool `notion_fetch` on `Quarterly report — notion-fetch({id:quarterly-report})`, expires 2026-09-06T17:44:45.132Z, purpose: "summarise the quarter for the team"';
+
+  eq(
+    grantResolutionText(ask, { askedMode: "once", grant: grantRow, kind: "approved" }, NOW),
+    [
+      'ada approved the credential grant — read a Notion page — "Quarterly report".',
+      "The grant is for this conversation, for the next 12 hours (until 04:19 UTC).",
+      "The tool is in this conversation's tool list from the next turn.",
+      "ada granted MORE than was asked: the request was for once, and the grant is for this conversation.",
+      DISCLOSURE,
+    ].join("\n"),
+    "the room's resolution notice (approved, wider than asked)",
+  );
+
+  eq(
+    grantResolutionText(ask, { askedMode: "session", grant: { ...grantRow, toolName: undefined }, kind: "approved" }, NOW),
+    [
+      'ada approved the credential grant — read a Notion page — "Quarterly report".',
+      "The grant is for this conversation, for the next 12 hours (until 04:19 UTC).",
+      DISCLOSURE,
+    ].join("\n"),
+    "the room's resolution notice (approved, nothing mounts)",
+  );
+
+  eq(
+    grantResolutionText(ask, { kind: "declined" }, NOW),
+    'ada declined the credential grant — read a Notion page — "Quarterly report". Nothing was granted and no tool is mounted. Do not ask again for the same thing — find another way, or ask the room.',
+    "the room's resolution notice (declined)",
+  );
+
+  eq(
+    grantResolutionText(ask, { kind: "expired" }, NOW),
+    [
+      'The credential grant request — read a Notion page — "Quarterly report" — expired with no answer from ada.',
+      "Nothing was granted and no tool is mounted. ada did not decline — the request simply timed out.",
+      "You can ask again if it is still needed.",
+    ].join("\n"),
+    "the room's resolution notice (expired)",
+  );
+
+  eq(
+    grantResolutionText(ask, { gate: "tool_absent", kind: "refused" }, NOW),
+    [
+      'ada approved the credential grant — read a Notion page — "Quarterly report" — but it could not be minted.',
+      "Their Notion connection publishes no tool by that name, so there was nothing to lend.",
+      "Nothing was granted and no tool is mounted. Check the tool name and the arguments against the connection, then ask again.",
+    ].join("\n"),
+    "the room's resolution notice (refused)",
+  );
+
+  eq(
+    grantOwnerNoticeText(grantRow, "Ada Lovelace", NOW),
+    [
+      "Your Notion credential was just used in the conversation you approved.",
+      "",
+      '• What it did: read a Notion page — "Quarterly report"',
+      "• Who ran it: Ada Lovelace (`discord/G1/U-ASKER`)",
+      "• The grant: this conversation",
+      "",
+      "This is the FIRST use of that grant, and the only notice you get for it. It stays live for the next 12 hours (until 21:29 UTC). There is no way to revoke it yet — it stops when it expires.",
+    ].join("\n"),
+    "the owner's first-use DM",
+  );
+
+  eq(
+    grantOwnerNoticeText({ ...grantRow, mode: "once" }, undefined, NOW),
+    [
+      "Your Notion credential was just used in the conversation you approved.",
+      "",
+      '• What it did: read a Notion page — "Quarterly report"',
+      "• Who ran it: `discord/G1/U-ASKER`",
+      "• The grant: once",
+      "",
+      "That was a one-shot grant, so it is now spent. Nothing else can be run with it.",
+    ].join("\n"),
+    "the owner's first-use DM (once, no label)",
+  );
+
+  eq(
+    grantRoomNoticeText(DISCLOSURE, grantRow, "2026-03-20T21:19:45.132Z", "Ada Lovelace"),
+    [
+      "Granted-credential use at 14:29 UTC. This is Ada Lovelace (`discord/G1/U-ASKER`)'s act, run with ada's credential.",
+      DISCLOSURE,
+    ].join("\n"),
+    "the room's disclosure notice",
+  );
 }
 
 console.log("4. the leak lint:");
@@ -347,6 +459,33 @@ const leaky: CredentialGrantAskRow = {
 };
 
 const leakyGrant: Pick<CredentialGrantRow, "connector" | "mcpTool" | "expiresAt" | "mode"> = { ...grant, expiresAt: SENTINELS.instant };
+
+const leakyRow: CredentialGrantRow = {
+  askId: SENTINELS.guid,
+  connector: "notion",
+  createdAt: SENTINELS.instant,
+  expiresAt: SENTINELS.instant,
+  frozenArgs: { id: "quarterly-report" },
+  id: SENTINELS.guid,
+  mcpTool: "notion-fetch",
+  mode: "session",
+  ownerPrincipalId: `discord/${SENTINELS.snowflake}/${SENTINELS.snowflake}`,
+  ownerSlug: SENTINELS.snowflake,
+  purpose: "summarise the quarter for the team",
+  requesterPrincipalId: "discord/G1/U-ASKER",
+  resource: `Quarterly report — notion-fetch({tool:${SENTINELS.minted}})`,
+  scopeKey: SENTINELS.guid,
+  status: "active",
+  tier: "read",
+  toolName: SENTINELS.minted,
+  verb: "notion_fetch",
+};
+
+function withoutBrokerLine(text: string, row: CredentialGrantRow): string {
+  const line = credentialGrantDisclosureLine(row);
+  ok(text.endsWith(`\n${line}`), "the broker's disclosure line is exactly the tail of the notice — the split hides nothing");
+  return text.slice(0, text.length - line.length - 1);
+}
 const REFUSALS: readonly GrantMintRefusal[] = [
   "no_domain_grant",
   "unverified_requester",
@@ -388,6 +527,43 @@ const rendered: readonly { readonly what: string; readonly text: string }[] = [
   })),
   ...REFUSALS.map((reason) => ({ text: grantMintRefusalMessage("notion", reason), what: `the bare mint refusal "${reason}"` })),
   { text: credentialGrantRefusalNote("notion", "owner_unreachable"), what: "the unreachable-owner refusal" },
+  ...(["once", "session", "standing"] as const).map((mode) => ({
+    text: withoutBrokerLine(grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, mode }, kind: "approved" }, NOW), { ...leakyRow, mode }),
+    what: `the room's resolution notice (approved, ${mode})`,
+  })),
+  {
+    text: withoutBrokerLine(
+      grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, toolName: undefined }, kind: "approved" }, NOW),
+      { ...leakyRow, toolName: undefined },
+    ),
+    what: "the room's resolution notice (approved, nothing mounts)",
+  },
+  {
+    text: withoutBrokerLine(grantResolutionText(leaky, { askedMode: "session", grant: { ...leakyRow, mode: "standing" }, kind: "approved" }, NOW), { ...leakyRow, mode: "standing" }),
+    what: "the room's resolution notice (approved wider than asked)",
+  },
+  { text: grantResolutionText(leaky, { kind: "declined" }, NOW), what: "the room's resolution notice (declined)" },
+  { text: grantResolutionText(leaky, { kind: "expired" }, NOW), what: "the room's resolution notice (expired)" },
+  ...(["tool_absent", "frozen_args_unknown"] as const).map((gate) => ({
+    text: grantResolutionText(leaky, { gate, kind: "refused" }, NOW),
+    what: `the room's resolution notice (refused, ${gate})`,
+  })),
+  ...(["once", "session", "standing"] as const).map((mode) => ({
+    text: grantOwnerNoticeText({ ...leakyRow, mode }, undefined, NOW),
+    what: `the owner's first-use DM (${mode})`,
+  })),
+  { text: grantOwnerNoticeText(leakyRow, `discord/${SENTINELS.snowflake}`, NOW), what: "the owner's first-use DM (id-shaped requester label)" },
+  {
+    text: withoutBrokerLine(grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant), leakyRow),
+    what: "the room's disclosure notice",
+  },
+  {
+    text: withoutBrokerLine(
+      grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant, `discord/${SENTINELS.snowflake}`),
+      leakyRow,
+    ),
+    what: "the room's disclosure notice (id-shaped requester label)",
+  },
 ];
 
 ok(rendered.length >= 30, `the lint drives ${String(rendered.length)} rendered strings — the enumeration is the claim`);
@@ -418,6 +594,33 @@ console.log("5. the negative controls:");
     );
   }
   ok(!LEAK_PATTERNS.some(({ re }) => re.test("read a Notion page for the next 12 hours (until 04:19 UTC)")), "…and does NOT fire on ordinary product copy");
+
+  const disclosure = grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant);
+  ok(disclosure.includes("`discord/G1/U-ASKER`"), "🔴 the room's disclosure notice still names the requester's PRINCIPAL KEY — the audit join, deliberately exempt from the lint");
+  ok(grantOwnerNoticeText(leakyRow, undefined, NOW).includes("`discord/G1/U-ASKER`"), "…and so does the owner's first-use DM, for the same reason");
+
+  const OFFERS_REVOCATION = /(?:you|they|the owner)\s+(?:can|may|could|should)\s+revoke|unless you revoke|revoke it first/iu;
+  for (const mode of ["once", "session", "standing"] as const) {
+    const dm = grantOwnerNoticeText({ ...leakyRow, mode }, undefined, NOW);
+    ok(!OFFERS_REVOCATION.test(dm), `the owner's DM offers no revocation (${mode}) — nothing in the tree revokes a grant`);
+  }
+  ok(
+    grantOwnerNoticeText(leakyRow, undefined, NOW).includes("There is no way to revoke it yet"),
+    "…and a session grant's DM says the control is ABSENT rather than staying silent about it",
+  );
+  ok(OFFERS_REVOCATION.test("It stays live until then unless you revoke it."), "NEGATIVE CONTROL: the matcher catches the promise OPE-1592 removed");
+  ok(OFFERS_REVOCATION.test("The owner can revoke it first if they want to be asked again."), "…and the duplicate refusal's old sentence too");
+  ok(
+    !OFFERS_REVOCATION.test(
+      grantDuplicateRefusalText("owner", { conversationLabel: "#proj-chat", connector: "notion", expiresAt: SENTINELS.instant, mcpTool: "notion-fetch", nowMs: NOW, ownerLabel: "Ada" }),
+    ),
+    "…and neither does the duplicate refusal, which told the owner to revoke first",
+  );
+  for (const audience of ["owner", "seat"] as const) {
+    const dup = grantDuplicateRefusalText(audience, { conversationLabel: "#proj-chat", connector: "notion", expiresAt: SESSION_EXPIRY, mcpTool: "notion-fetch", nowMs: NOW, ownerLabel: "Ada" });
+    ok(dup.includes("while this one is live"), `the duplicate refusal (${audience}) is bounded by the grant being LIVE, not by its expiry`);
+    ok(!dup.includes("stays refused until it expires"), `…and never claims the refusal lasts until the expiry (${audience})`);
+  }
 }
 
 console.log(`\ncredential-grant-copy: ${String(n)} assertions passed.`);

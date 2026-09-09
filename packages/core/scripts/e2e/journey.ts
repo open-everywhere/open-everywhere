@@ -1,4 +1,4 @@
-import type { SlackDriver, SlackMessage } from "./slack-driver.js";
+import type { SlackDriver, SlackMessage, SlackMessageAction } from "./slack-driver.js";
 import type { SyntheticSlack } from "./synthetic.js";
 import { APPROVAL_PREFIX } from "./synthetic.js";
 import { pollOptional, pollUntil } from "./poll.js";
@@ -17,6 +17,21 @@ export function approveButton(m: SlackMessage): { pendingId: string; org: string
   const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));
   if (!btn) return undefined;
   return { pendingId: btn.actionId.slice(prefix.length), org: btn.value ?? "" };
+}
+
+const EVE_APPROVE_LABEL = /^(approve|allow)$/i;
+const EVE_DENY_LABEL = /^(reject|deny|cancel)$/i;
+const EVE_APPROVE_VALUES: ReadonlySet<string> = new Set(["approve"]);
+const EVE_DENY_VALUES: ReadonlySet<string> = new Set(["cancel", "reject"]);
+
+export function eveNativeApprovalButtons(
+  m: SlackMessage,
+): { readonly approve: SlackMessageAction; readonly deny?: SlackMessageAction } | undefined {
+  const buttons = (m.actions ?? []).filter((a) => !a.actionId.startsWith(APPROVAL_PREFIX));
+  const approve = buttons.find((a) => EVE_APPROVE_VALUES.has(a.value ?? "") || EVE_APPROVE_LABEL.test((a.text ?? "").trim()));
+  if (!approve) return undefined;
+  const deny = buttons.find((a) => a !== approve && (EVE_DENY_VALUES.has(a.value ?? "") || EVE_DENY_LABEL.test((a.text ?? "").trim())));
+  return deny ? { approve, deny } : { approve };
 }
 
 export type GateFn = (cond: boolean, label: string) => void;

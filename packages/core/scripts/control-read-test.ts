@@ -76,6 +76,11 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     new Request(`https://oe.example${CONTROL_READ_USAGE_PATH}${goodQuery}`, { headers: { authorization: `Basic ${SECRET}` } }),
   );
   ok(basic.status === 401, "a non-Bearer authorization scheme → 401");
+
+  const refused = await get(goodQuery, "not-the-token");
+  ok((refused.headers.get("www-authenticate") ?? "").toLowerCase().includes("bearer"), "the 401 advertises the Bearer challenge this door accepts");
+  ok((refused.headers.get("cache-control") ?? "").includes("no-store"), "the 401 is never cached");
+  ok((await get(goodQuery, SECRET)).headers.get("www-authenticate") === null, "a 200 carries no www-authenticate (the challenge is the refusal's, not the route's)");
 }
 
 {

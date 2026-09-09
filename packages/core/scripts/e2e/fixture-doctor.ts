@@ -8,6 +8,7 @@ import {
   type ProbeOutcome,
 } from "./fixture-doctor-lib.js";
 import { ENV, DEFAULT_TEAMS_REFRESH_SINK } from "./env.js";
+import { roomIdFor } from "./fixture-inventory-lib.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { NotionDriver } from "./notion-driver.js";
 
@@ -63,7 +64,7 @@ async function slackApi(token: string, method: string, params: Record<string, st
 async function probeSlackBase(env: Env): Promise<ProbeOutcome> {
   return safe("slack auth.test + conversations.info", async () => {
     const token = env[ENV.slackUserToken]!;
-    const channel = env[ENV.slackChannel]!;
+    const channel = roomIdFor(ENV.slackChannel, env)!;
     const auth = await slackApi(token, "auth.test");
     if (!auth.ok) return outcome(false, `auth.test failed: ${auth.error ?? "unknown"}`);
     const chan = await slackApi(token, "conversations.info", { channel });
@@ -102,7 +103,7 @@ async function probeSlackChannel(env: Env, channelVar: string): Promise<ProbeOut
   const token = env[ENV.slackUserToken];
   if (!token) return outcome(false, `no ${ENV.slackUserToken} available to call conversations.info`);
   return safe("slack conversations.info", async () => {
-    const channel = env[channelVar]!;
+    const channel = roomIdFor(channelVar, env)!;
     const res = await slackApi(token, "conversations.info", { channel });
     if (!res.ok) return outcome(false, `conversations.info(${channel}) failed: ${res.error ?? "unknown"}`);
     const info = res.channel as { is_archived?: boolean; name?: string } | undefined;
@@ -115,7 +116,7 @@ async function probeSlackDmChannel(env: Env, channelVar: string): Promise<ProbeO
   const token = env[ENV.slackUserToken];
   if (!token) return outcome(false, `no ${ENV.slackUserToken} available to call conversations.history`);
   return safe("slack conversations.history", async () => {
-    const channel = env[channelVar]!;
+    const channel = roomIdFor(channelVar, env)!;
     const res = await slackApi(token, "conversations.history", { channel, limit: "1" });
     if (!res.ok) return outcome(false, `conversations.history(${channel}) failed: ${res.error ?? "unknown"}`);
     return outcome(true, `conversations.history(${channelVar}=${channel}) ok (im:history scope)`);
@@ -128,7 +129,7 @@ async function probeSlackChannelPair(env: Env, channelVars: readonly [string, st
   return safe("slack conversations.info (pair)", async () => {
     const results = await Promise.all(
       channelVars.map(async (name) => {
-        const channel = env[name]!;
+        const channel = roomIdFor(name, env)!;
         const res = await slackApi(token, "conversations.info", { channel });
         const info = res.channel as { is_archived?: boolean } | undefined;
         return { name, channel, ok: res.ok && !info?.is_archived, error: res.error };
@@ -259,7 +260,7 @@ async function probeNotionPagePair(env: Env, pageVars: readonly [string, string]
   return safe("notion soak page-block reads (pair)", async () => {
     const results = await Promise.all(
       pageVars.map(async (name) => {
-        const pageId = env[name]!;
+        const pageId = roomIdFor(name, env)!;
         const res = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children?page_size=1`, {
           headers: { authorization: `Bearer ${driverKey}`, "notion-version": "2022-06-28" },
         });
@@ -326,7 +327,7 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
   }
 }
 
-const INVENTORY_COMMANDS = new Set(["inventory", "provision"]);
+const INVENTORY_COMMANDS = new Set(["inventory", "provision", "provision-mpim"]);
 
 async function main(): Promise<void> {
   if (args.length > 0 && INVENTORY_COMMANDS.has(args[0])) {

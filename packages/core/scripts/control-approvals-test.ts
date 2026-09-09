@@ -110,6 +110,28 @@ await client.connect(clientT);
 }
 
 {
+  await seed("pa-halted", { scopeKey: "slack/T1/C-HALT", tokens: 4444 });
+  await store.setHalt("default", { orgWide: true }, { setBy: "admin@example.com" });
+  const refused = await client.callTool({ name: "decide_pending_action", arguments: { org: "default", id: "pa-halted", decision: "approve" } });
+  ok("🔴 OPE-1604: a control-plane decide during an org-wide halt is REFUSED", refused.isError === true);
+  ok(
+    "🔴 OPE-1604: and it did NOT execute the frozen mutation — no cap was set",
+    (await effectiveCaps("default", "slack/T1", "slack/T1/C-HALT")).surfaceMonthlyTokens === undefined,
+  );
+  ok("🔴 OPE-1604: the halt edits no row — the pending is still pending for the same operator after `resume`", (await store.getPendingAction("default", "pa-halted"))?.status === "pending");
+  ok(
+    "🔴 OPE-1604: the door relays core's OWN halt sentence, not a generic \"unexpected resolution\" line",
+    JSON.stringify(refused.content ?? "").includes("halted") && !JSON.stringify(refused.content ?? "").includes("unexpected resolution"),
+  );
+
+  await store.clearHalt("default", { orgWide: true }, { clearedBy: "admin@example.com" });
+  const after = await callJson(client, "decide_pending_action", { org: "default", id: "pa-halted", decision: "approve" });
+  ok("🔴 OPE-1604 NEGATIVE CONTROL: with the halt cleared the identical decide succeeds and executes", after.ok === true && after.outcome === "decided");
+  ok("OPE-1604 NEGATIVE CONTROL: …and the frozen mutation really ran", (await effectiveCaps("default", "slack/T1", "slack/T1/C-HALT")).surfaceMonthlyTokens === 4444);
+  await callJson(client, "clear_spend_limit", { org: "default", scopeKey: "slack/T1/C-HALT", level: "surface" });
+}
+
+{
   const miss = await client.callTool({ name: "decide_pending_action", arguments: { org: "default", id: "does-not-exist", decision: "approve" } });
   ok("deciding an unknown pending → tool error", miss.isError === true);
 }
@@ -318,4 +340,4 @@ await client.connect(clientT);
 
 await client.close();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only; both also take the ORG-WIDE address, which needs \"admin\", governs the domain-less consults only, and is exclusive with \`domain\` in the schema)\n`);
+console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only; both also take the ORG-WIDE address, which needs \"admin\", governs the domain-less consults only, and is exclusive with \`domain\` in the schema; a decide during a break-glass halt is refused on this door too, in core's own words, editing no row — and succeeds once the halt is cleared)\n`);

@@ -16,9 +16,11 @@ import {
   planFor,
   renderInventoryDoc,
   resolutionKey,
+  roomIdFor,
   roomName,
   roomsUnseen,
   teamsSegment,
+  trackedRoomId,
   type BindingLike,
   type DomainLike,
   type PlannedRoom,
@@ -341,7 +343,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
   }
   for (const spec of inventoryVars()) {
     if (spec.neverProbe) continue;
-    const raw = env[spec.envVar]?.trim();
+    const raw = roomIdFor(spec.envVar, env);
     if (!raw) continue;
     const id = spec.surface === "teams" && raw.startsWith("teams/") ? raw.split("/").pop()! : raw;
     wanted.set(resolutionKey(spec.surface, id), { surface: spec.surface, id });
@@ -683,6 +685,95 @@ export const PROVISIONERS: Record<SurfaceKind, (env: Env, plan: ProvisionTarget,
   notion: provisionNotion,
 };
 
+const MPIM_THIRD_MEMBER_VARS: readonly string[] = [ENV.slackUser2Id, ENV.slackSecondaryUserId];
+
+export interface MpimOutcome {
+  readonly state: "opened" | "blocked";
+  readonly id?: string;
+  readonly detail: string;
+  readonly grant?: string;
+}
+
+export async function provisionSlackMpim(env: Env): Promise<MpimOutcome> {
+  const token = env[ENV.slackUserToken]?.trim();
+  if (!token) {
+    return { state: "blocked", detail: `no ${ENV.slackUserToken}`, grant: `Slack: export ${ENV.slackUserToken} (the driver user's xoxp) and re-run.` };
+  }
+  const bot = env[ENV.slackBotUserId]?.trim();
+  if (!bot) {
+    return {
+      state: "blocked",
+      detail: `no ${ENV.slackBotUserId} — a group DM the OE bot is not in can never wake it`,
+      grant: `Slack: export ${ENV.slackBotUserId} (OE's own bot USER id, U…/W…) and re-run.`,
+    };
+  }
+  const thirdVar = MPIM_THIRD_MEMBER_VARS.find((v) => env[v]?.trim());
+  if (!thirdVar) {
+    return {
+      state: "blocked",
+      detail: `no third member — a group DM needs one beyond the driver user and the bot (tried ${MPIM_THIRD_MEMBER_VARS.join(", ")})`,
+      grant: `Slack: export ${MPIM_THIRD_MEMBER_VARS[0]} with a REAL workspace member's user id and re-run — an invented U… opens nothing.`,
+    };
+  }
+  const opened = await slackPost(token, "conversations.open", { users: `${bot},${env[thirdVar]!.trim()}` });
+  if (opened.ok !== true) {
+    const error = String(opened.error ?? "unknown");
+    const needed = typeof opened.needed === "string" ? opened.needed : undefined;
+    const detail = vendorDetail(needed ? `conversations.open: ${error} (needs ${needed})` : `conversations.open: ${error}`);
+    return {
+      state: "blocked",
+      detail,
+      grant:
+        `Slack: READ THE DETAIL ABOVE FIRST — it carries Slack's own reason. For a missing scope, add ${needed ? `\`${vendorDetail(needed, 60)}\`` : "`mpim:write`"} ` +
+        `to the DRIVER app's USER scopes and reinstall it (a new xoxp is minted, so re-export ${ENV.slackUserToken}). ` +
+        `The DEPLOYMENT side needs \`mpim:history\` and \`mpim:read\` on the OE app, which this command cannot check.`,
+    };
+  }
+  const channel = opened.channel as { id?: string } | undefined;
+  if (!channel?.id) return { state: "blocked", detail: "conversations.open returned no channel id" };
+  if (!channel.id.startsWith("G")) {
+    return {
+      state: "blocked",
+      detail: `conversations.open returned a 1:1 channel, not a group DM — ${thirdVar} and ${ENV.slackBotUserId} may name the same user`,
+      grant: `Slack: point ${thirdVar} at a third, distinct workspace member and re-run.`,
+    };
+  }
+  return {
+    state: "opened",
+    id: channel.id,
+    detail: `open over the ${ENV.slackUserToken} user, ${ENV.slackBotUserId} and ${thirdVar}`,
+  };
+}
+
+async function runProvisionMpim(env: Env, dryRun: boolean): Promise<number> {
+  console.log(`e2e:fixtures provision-mpim (OPE-1640) — ${ENV.slackMpimChannel}: J-MPIM's group DM, the pack's only mpim room`);
+  if (dryRun) {
+    console.log(`  DRY RUN — nothing is opened. Would call conversations.open over the ${ENV.slackUserToken} user, ${ENV.slackBotUserId} and ${MPIM_THIRD_MEMBER_VARS.join(" or ")}.`);
+    return 0;
+  }
+  const outcome: MpimOutcome = await withTimeout(provisionSlackMpim(env), "slack conversations.open").catch((err: unknown) => ({
+    state: "blocked" as const,
+    detail: reason(err),
+  }));
+  if (outcome.state === "blocked") {
+    console.error(`  ✗ ${ENV.slackMpimChannel} — ${outcome.detail}`);
+    if (outcome.grant) console.error(`      ONE-TIME GRANT → ${outcome.grant}`);
+    return 1;
+  }
+  console.log(`  + ${ENV.slackMpimChannel} ${outcome.id} — ${outcome.detail}`);
+  const tracked = trackedRoomId(ENV.slackMpimChannel);
+  if (tracked === outcome.id) {
+    console.log("\n✓ e2e:fixtures provision-mpim: the room exists and this repository already carries its id.");
+    return 0;
+  }
+  console.log(`\n~ e2e:fixtures provision-mpim: the id is NOT in this repository${tracked ? " (the table names a different room)" : ""}.`);
+  console.log("  A room id is a tracked literal, so it changes by pull request. Put this line in");
+  console.log("  `packages/core/scripts/e2e/fixture-inventory-lib.ts`'s TRACKED_ROOM_IDS, then run");
+  console.log(`  \`npm run e2e:fixtures -- inventory\` and \`npm run docs:generate\`:\n`);
+  console.log(`    ${ENV.slackMpimChannel}: "${outcome.id}",`);
+  return 0;
+}
+
 export function writeEnvE2e(path: string, values: ReadonlyMap<string, string>): void {
   const existing = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
   const done = new Set<string>();
@@ -807,6 +898,9 @@ async function run(argv: readonly string[]): Promise<number> {
     }
     return runProvision(resolvedEnv(), domain, rest.includes("--dry-run"));
   }
-  console.error(`✗ e2e:fixtures: unknown command "${String(command)}" — use \`inventory\` or \`provision <domain>\`.`);
+  if (command === "provision-mpim") {
+    return runProvisionMpim(resolvedEnv(), rest.includes("--dry-run"));
+  }
+  console.error(`✗ e2e:fixtures: unknown command "${String(command)}" — use \`inventory\`, \`provision <domain>\` or \`provision-mpim\`.`);
   return 2;
 }

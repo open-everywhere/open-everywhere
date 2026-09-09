@@ -54,4 +54,39 @@ async function listen(server: import("node:http").Server): Promise<string> {
   server.close();
 }
 
+{
+  const unconfigured = createAdminHttpServer({ allowUnauthenticated: true });
+  const url = await listen(unconfigured);
+  const client = new Client({ name: "http-transcript", version: "0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+  const res = (await client.callTool({ name: "session_transcript", arguments: { sessionId: "wrun_abc" } })) as unknown as {
+    isError?: boolean;
+    content: { text: string }[];
+  };
+  ok("session_transcript over HTTP: an unconfigured mount names the env to set", res.isError === true && /OE_DEPLOY_CONTROL_TOKEN/.test(res.content[0].text));
+  await client.close();
+  unconfigured.close();
+}
+{
+  let asked = "";
+  const configured = createAdminHttpServer({
+    allowUnauthenticated: true,
+    readTranscript: async (req) => {
+      asked = req.sessionId;
+      return { sessionId: req.sessionId, startIndex: 0, nextIndex: 1, complete: true, eventCount: 1, text: "03:00:01 [said] hello" };
+    },
+  });
+  const url = await listen(configured);
+  const client = new Client({ name: "http-transcript", version: "0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+  const res = (await client.callTool({ name: "session_transcript", arguments: { sessionId: "wrun_abc" } })) as unknown as {
+    isError?: boolean;
+    content: { text: string }[];
+  };
+  ok(`session_transcript over HTTP: a configured mount answers with the render — got: ${res.content[0].text.slice(0, 200)}`, res.isError !== true && res.content[0].text.includes("[said] hello"));
+  ok("session_transcript over HTTP: the mount's reader is the one called, with the caller's session id", asked === "wrun_abc");
+  await client.close();
+  configured.close();
+}
+
 console.log(`\n✓ control HTTP transport: ${n} assertions passed (fail-closed + e2e round-trip)\n`);

@@ -1,4 +1,4 @@
-import { PROVISIONERS, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces } from "./e2e/fixture-inventory.js";
+import { PROVISIONERS, provisionSlackMpim, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces } from "./e2e/fixture-inventory.js";
 import { roomName, type PlannedRoom } from "./e2e/fixture-inventory-lib.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -373,5 +373,58 @@ ok(redactGuids("channel C0EXCHAN003 is fine") === "channel C0EXCHAN003 is fine",
 }
 ok(notionTitleOf({ properties: { Name: { type: "title", title: [{ plain_text: "oe-e2e" }] } } }) === "oe-e2e", "notionTitleOf reads whichever property is the title");
 ok(notionTitleOf({ properties: { Other: { type: "rich_text" } } }) === undefined, "notionTitleOf returns nothing when no property is a title");
+
+const MPIM_ENV = { E2E_SLACK_USER_TOKEN: "t", E2E_SLACK_BOT_USER_ID: "UBOT", E2E_SLACK_USER2_ID: "U2" };
+
+function mpimScript(rec: Recorder, answer: unknown): typeof fetch {
+  return scripted(rec, (url) => (url.includes("conversations.open") ? answer : undefined));
+}
+
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1" } }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "opened" && outcome.id === "GMPIM1", "mpim: conversations.open returns the group DM's id");
+  const body = rec.calls.find((c) => c.url.includes("conversations.open"))?.body as { users?: string } | undefined;
+  ok(body?.users === "UBOT,U2", "🔴 mpim: …opened over the OE BOT and a third member — two users plus the token's own identity is what makes it an mpim rather than a 1:1");
+  ok(
+    outcome.detail.includes("E2E_SLACK_USER2_ID") && !outcome.detail.includes("U2") && !outcome.detail.includes("UBOT"),
+    `🔴 mpim: the outcome names the VARIABLES its members came from, never the user ids — BOTH of them, so a later "opened over UBOT and …" cannot slip a Slack user id into a run log (got: ${JSON.stringify(outcome.detail)})`,
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1" } }), () =>
+    provisionSlackMpim({ E2E_SLACK_USER_TOKEN: "t", E2E_SLACK_BOT_USER_ID: "UBOT" }),
+  );
+  ok(outcome.state === "blocked", "mpim: with no third member the room is BLOCKED");
+  ok(rec.calls.length === 0, "…and Slack is never called — the refusal precedes the vendor, so no room is opened by accident");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: false, error: "missing_scope", needed: "mpim:write", provided: "im:write,chat:write" }), () =>
+    provisionSlackMpim(MPIM_ENV),
+  );
+  ok(outcome.state === "blocked" && outcome.id === undefined, "mpim: a refused open BLOCKS and publishes no id");
+  ok(outcome.detail.includes("mpim:write"), `🔴 mpim: …and the detail carries Slack's own \`needed\` scope, not just the "missing_scope" class (got: ${JSON.stringify(outcome.detail)})`);
+  ok(outcome.grant?.includes("mpim:write") === true, "mpim: …and the grant line names the same scope to add to the driver app");
+  ok(
+    !outcome.detail.includes("chat:write") && outcome.grant?.includes("chat:write") !== true,
+    "🔴 mpim: …and never Slack's `provided` list — what the token DOES hold is nobody's business in a report",
+  );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: false, error: "user_not_found" }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "blocked" && outcome.detail.includes("user_not_found"), "mpim: a refusal with no `needed` still names Slack's error");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "D0DM" } }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "blocked" && outcome.id === undefined, "🔴 mpim: a `D…` 1:1 is REFUSED and never published as the group DM");
+  ok(
+    !outcome.detail.includes("UBOT") && !outcome.detail.includes("U2"),
+    `mpim: …and that refusal names its two member variables, never their user ids (got: ${JSON.stringify(outcome.detail)})`,
+  );
+}
 
 console.log(`✓ fixture-inventory-provision: ${passed} assertions passed`);

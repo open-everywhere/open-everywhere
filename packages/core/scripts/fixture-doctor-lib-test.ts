@@ -221,4 +221,31 @@ function finding(overrides: Partial<FixtureFinding["classified"]> & { probe?: Fi
   ok(halfResult.ok === false, "a half-provisioned soak Slack/Notion pair flips the doctor RED — this is the assertion that goes false if the partial branch is ever dropped");
 }
 
+{
+  const MPIM: FixtureFamily = {
+    id: "slackMpim",
+    label: "Slack group DM (mpim)",
+    required: [{ name: "E2E_SLACK_MPIM_CHANNEL" }],
+    scenarios: "J-MPIM",
+    probe: "slack-dm-channel",
+    channelVar: "E2E_SLACK_MPIM_CHANNEL",
+  };
+  const TRACKED = { E2E_SLACK_MPIM_CHANNEL: "G0TRACKED" };
+  const tracked = classifyFixture({}, MPIM, TRACKED);
+  ok(
+    tracked.classification === "set",
+    `🔴 a room var whose id this repository carries classifies SET on an empty env — otherwise the doctor never probes the room the pack drives (got: ${tracked.classification})`,
+  );
+  ok(tracked.missing.length === 0, "…and reports no missing var, so the report does not tell an operator to set what is already there");
+  ok(
+    classifyFixture({}, MPIM, {}).classification === "absent",
+    "the control: with no tracked id and the variable unset, the same family is ABSENT",
+  );
+  const KNOB: FixtureFamily = { ...MPIM, required: [{ name: "E2E_SLACK_MPIM_CHANNEL", mustEqual: "1" }] };
+  ok(
+    classifyFixture({}, KNOB, TRACKED).classification === "absent",
+    "🔴 a `mustEqual` spec stays a plain environment read — a tracked room id must never arm a knob",
+  );
+}
+
 console.log(`✓ fixture-doctor-lib: ${passed} assertions passed`);

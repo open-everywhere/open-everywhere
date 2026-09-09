@@ -47,8 +47,24 @@ export function grantConversationPhrase(label: string | undefined): string {
 }
 
 export function grantRequesterPhrase(label: string | undefined): string {
+  return grantDisplayLabel(label) ?? "Someone this deployment cannot name";
+}
+
+export function grantDisplayLabel(label: string | undefined): string | undefined {
   const flat = labelWithoutIds(label);
-  return flat.length === 0 ? "Someone this deployment cannot name" : flat;
+  return flat.length === 0 ? undefined : flat;
+}
+
+export function grantOwnerPhrase(ownerSlug: string | undefined): string {
+  const flat = labelWithoutIds(ownerSlug);
+  return flat.length === 0 ? "the owner" : flat;
+}
+
+export function grantClockPhrase(atIso: string): string | undefined {
+  const at = Date.parse(atIso);
+  if (!Number.isFinite(at)) return undefined;
+  const d = new Date(at);
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
 }
 
 export function grantExpiryPhrase(expiresAtIso: string, nowMs: number): string {
@@ -99,7 +115,7 @@ export function grantDuplicateRefusalText(audience: GrantCopyAudience, facts: Gr
   const when = facts.expiresAt === undefined ? "" : `, ${grantExpiryPhrase(facts.expiresAt, facts.nowMs)}`;
   const holder = grantConversationPhrase(facts.conversationLabel);
   const from = audience === "owner" ? "from you" : `from ${grantRequesterPhrase(facts.ownerLabel)}`;
-  const revoke = audience === "owner" ? "Revoke it first if you want to be asked again." : "The owner can revoke it first if they want to be asked again.";
+  const again = "Nobody can revoke it, so a new request stays refused while this one is live.";
   const lead = holder === "that conversation" ? "That conversation" : holder.replace(/^the /u, "The ");
-  return `${lead} already has this grant ${from} (${action}${when}). Nothing new was requested — use the grant that is already there. ${revoke}`;
+  return `${lead} already has this grant ${from} (${action}${when}). Nothing new was requested — use the grant that is already there. ${again}`;
 }

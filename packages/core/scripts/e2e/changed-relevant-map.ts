@@ -15,7 +15,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "J1", "J2", "S-MEM-READ", "J3", "S6", "S8", "S9", "S10", "S11", "S13", "S14", "S-LINK-SLACK",
       "J4", "J-MPIM", "S20", "S23", "S24", "F-ART", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
       "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE",
-      "S-CONNECTOR-TIER", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
+      "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
       "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     ],
     why: "Slack is the default e2e surface — every scenario without its own dedicated surface drives through it (`surface: \"slack\"` or `\"cross\"` in scenarios.ts), so a Slack provider change is broadly relevant by construction, not an over-selection.",
@@ -47,15 +47,15 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "notion-provider",
     globs: ["packages/providers/notion/**"],
-    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE"],
+    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE"],
     why: "J-NOT and J-ENGAGED-notion are surface: \"notion\" — the second drives the ambient engagement seam (OPE-1501: a NAME-DROP engages the page, because Notion has no @mention of an integration) and is the only leg that reads the ingress's addressing-aware ambient gate. The rest all drive a live Notion connector (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE).",
   },
 
   {
     area: "approvals",
     globs: ["packages/core/agent/approvals/**", "packages/core/agent/access/approver-chain.ts", "packages/core/agent/access/approval-*.ts", "packages/core/agent/access/pre-approval-rules.ts"],
-    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "J-PR", "S-PR-SESSION", "F-SEC"],
-    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove.",
+    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC"],
+    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056).",
   },
   {
     area: "taint",
@@ -112,8 +112,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "credentials-and-connectors",
     globs: ["packages/core/agent/credentials/**", "packages/core/agent/connections/**"],
-    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT"],
-    why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario. S-ROUTINE-CONNECTOR-WRITE is the only leg on `withUnattendedConnectorFence` (connections/connector-auth.ts), and S-DISCORD-GRANT the only one on the credential-GRANT plane.",
+    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT"],
+    why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario. S-ROUTINE-CONNECTOR-WRITE is the only leg on `withUnattendedConnectorFence` (connections/connector-auth.ts), and S-DISCORD-GRANT the only one on the credential-GRANT plane. S-EVE-CARD is the only leg that SETTLES a `connectorApprovalPolicy()` card, so a change that stops eve receiving the policy — the OPE-1218 class, where the resolver drops a non-function `approval` — reds it.",
   },
   {
     area: "aws-tool",

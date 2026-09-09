@@ -421,6 +421,11 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
     (discordResponseFor({ outcome: "clicker-denied", row: row({ id: "p-cf" }), reason: "foreign-room" }) as { data: { content: string } }).data.content !== refused.data.content,
     "clicker-denied renders per-REASON copy, not one generic refusal",
   );
+
+  const haltedNotice = "Refused: deciding this request is halted. …";
+  const haltedResp = discordResponseFor({ outcome: "halted", row: row({ id: "p-halt" }), notice: haltedNotice }) as { type: number; data: { content: string; flags: number } };
+  ok(haltedResp.type === 4 && haltedResp.data.flags === 64, "OPE-1604: halted → ephemeral note, message untouched (the row stays pending for the same person to click after `resume`)");
+  ok(haltedResp.data.content === haltedNotice, "🔴 OPE-1604: the halted arm relays core's ONE halt sentence verbatim — Discord and Slack cannot drift on what a halt says");
 }
 
 type Resp = { type: number; data?: { content?: string; components?: unknown[]; flags?: number } };

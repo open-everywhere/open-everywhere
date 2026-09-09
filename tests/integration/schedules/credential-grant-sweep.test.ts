@@ -131,8 +131,12 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
 
   const lapseNotice = posts.find((p) => p.channelId === LAPSED_ROOM);
   expect(lapseNotice, `no lapse notice reached the requester's pinned conversation (posts: ${JSON.stringify(posts.map((p) => p.channelId))})`).toBeDefined();
-  expect(lapseNotice?.content).toContain("notion_fetch");
-  expect(lapseNotice?.content).toContain("expired");
+  expect(lapseNotice?.content, "the lapse notice does not say what was asked for in a person's terms").toContain("read a Notion page");
+  expect(lapseNotice?.content, "…and it does not carry the requester's own label for the page").toContain("Launch checklist");
+  expect(lapseNotice?.content, "the vendor's tool id reached the requester's room").not.toContain("notion_fetch");
+  expect(lapseNotice?.content, "…and so did its hyphenated spelling").not.toContain("notion-fetch");
+  expect(lapseNotice?.content, "…and so did the minted tool name, which is built from the OWNER's platform id").not.toContain("grant__");
+  expect(lapseNotice?.content, "the notice does not say the request expired").toContain("expired");
   expect(lapseNotice?.content, "the lapse notice must NOT read as a decline — nobody answered").toContain("did not decline");
   expect(posts.some((p) => p.channelId === ANSWERED_ROOM), "NEGATIVE CONTROL: the answered ask's room hears NOTHING — its owner already answered, and that answer was posted when they clicked").toBe(false);
   expect(

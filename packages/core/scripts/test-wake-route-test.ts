@@ -139,6 +139,10 @@ process.env.OE_CONTROL_INJECT_TOKENS = `eval-injector:${INJECT_SHA}`;
   ok((await post(goodBody(), "not-the-token")).status === 401, "armed + wrong token → 401");
   ok((await post(goodBody(), READ_SECRET)).status === 401, "🔴 a VALID OE_CONTROL_READ_TOKENS token is REFUSED by the wake route (401) — the read family is not an injection credential");
   ok(captured.length === 0, "a refused read token never reaches the divert seam");
+
+  const refused = await post(goodBody(), READ_SECRET);
+  ok((refused.headers.get("www-authenticate") ?? "").toLowerCase().includes("bearer"), "the injection door's 401 advertises the Bearer challenge");
+  ok((refused.headers.get("cache-control") ?? "").includes("no-store"), "the injection door's 401 is never cached");
 }
 
 {

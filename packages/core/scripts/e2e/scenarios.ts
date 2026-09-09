@@ -1,4 +1,4 @@
-import { auditSilencesExpected, ENV, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
+import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { deployedBuildCarries } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
@@ -64,7 +64,7 @@ import {
   TASK_SPAWNED_ACTION,
 } from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
-import { type SyntheticSlack } from "./synthetic.js";
+import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS } from "./read-channel-lib.js";
@@ -80,6 +80,7 @@ import {
   describeSpendGateRows,
   driveDecide,
   drivePrOpen,
+  eveNativeApprovalButtons,
   factToken,
   withoutMarker,
   parseLinkCode,
@@ -269,7 +270,9 @@ export function skipReason(
   if (category === "missing-capability") {
     const unmet = scenario.requires.filter((c) => !available.has(c));
     const vars = [...new Set(unmet.flatMap((c) => missing[c]))];
-    return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})`;
+    const remedies = unmet.filter((c) => missing[c].length > 0).map((c) => CAPABILITY_REMEDY[c]).filter((r): r is string => r !== undefined);
+    const tail = remedies.length > 0 ? ` — ${remedies.join("; ")}` : "";
+    return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})${tail}`;
   }
   if (category === "optional-not-included") {
     return explicitlyNamed
@@ -2340,9 +2343,6 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: htmlTs } = await slack.post(
         slack.mention("now post a small self-contained HTML artifact (a one-paragraph page) here as a file using post_file. Attach it, don't publish a public URL."),
       );
-      if (process.env.E2E_BLOB_PUBLISH === "1") {
-        ctx.log("E2E_BLOB_PUBLISH=1 — the Blob publish path (world-readable URL + approval) is opt-in; gating on the html attachment either way");
-      }
       const htmlReply = await slack.awaitFileReply(htmlTs, { timeoutMs: FILE_REPLY_WAIT, filetype: "html" });
       ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment (the safe attach fallback)");
 
@@ -3364,26 +3364,22 @@ export const SCENARIOS: readonly Scenario[] = [
           const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
           let pending: SlackMessage | undefined;
           for (const m of msgs) {
-            const buttons = m.actions ?? [];
-            const isApprovalCard = buttons.some((a) => a.value === "approve" || /^(allow|deny)$/i.test((a.text ?? "").trim()));
-            if (isApprovalCard) {
+            const buttons = eveNativeApprovalButtons(m);
+            if (buttons) {
               if (!clicked.has(m.ts)) {
                 clicked.add(m.ts);
-                const allow = buttons.find((a) => a.value === "approve" || /allow/i.test(a.text ?? ""));
-                if (allow) {
-                  const res = await synthetic.clickBlockAction({
-                    actionId: allow.actionId,
-                    blockId: allow.blockId,
-                    value: allow.value,
-                    buttonText: allow.text,
-                    userId,
-                    teamId,
-                    channelId: dm.channelId,
-                    messageTs: m.ts,
-                    threadTs: m.threadTs ?? anchorTs,
-                  });
-                  ctx.log(`approval card Allow → synthetic click ${res.status}`);
-                }
+                const res = await synthetic.clickBlockAction({
+                  actionId: buttons.approve.actionId,
+                  blockId: buttons.approve.blockId,
+                  value: buttons.approve.value,
+                  buttonText: buttons.approve.text,
+                  userId,
+                  teamId,
+                  channelId: dm.channelId,
+                  messageTs: m.ts,
+                  threadTs: m.threadTs ?? anchorTs,
+                });
+                ctx.log(`approval card Allow → synthetic click ${res.status}`);
               }
               continue;
             }
@@ -3404,6 +3400,161 @@ export const SCENARIOS: readonly Scenario[] = [
         answer.text,
         "DM personal-Notion: a real answer about the user's Notion pages",
       );
+    },
+  },
+  {
+    id: "S-EVE-CARD",
+    title:
+      "eve-native approval card, live (OPE-1056): a DM connector WRITE parks on the card EVE mints — not OE's governance card — the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click",
+    requires: ["slack", "syntheticDm", "synthetic"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 2_400_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      const { userId, teamId } = await ctx.slack!.identity();
+      const token = factToken("evecard");
+      const pageTitle = `OE eve-card ${token}`;
+      const sinceIso = new Date().toISOString();
+      const { ts: anchorTs } = await dm.post(
+        `create a new Notion page titled "${pageTitle}" with a one-line body that includes the exact token ${token}.`,
+      );
+
+      const card = await pollUntil(
+        async () => {
+          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+          for (const m of msgs) {
+            const buttons = eveNativeApprovalButtons(m);
+            if (buttons) return { message: m, buttons };
+          }
+          return undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: "the eve-native approval card on the DM connector write" },
+      ).catch(async (e: unknown) => {
+        await arming.recheck();
+        throw e;
+      });
+      ctx.log(
+        `eve-native card at ts ${card.message.ts}: approve action_id "${card.buttons.approve.actionId}"` +
+          ` (value ${JSON.stringify(card.buttons.approve.value)}, label ${JSON.stringify(card.buttons.approve.text)})` +
+          `${card.buttons.deny ? `, deny action_id "${card.buttons.deny.actionId}"` : ", no deny button read"}`,
+      );
+      const rawButtons = card.message.actions ?? [];
+      ctx.gate(
+        rawButtons.length > 0 && rawButtons.every((a) => !a.actionId.startsWith(APPROVAL_PREFIX)),
+        `S-EVE-CARD: none of the card's ${rawButtons.length} button(s) carries an "${APPROVAL_PREFIX}" action_id — eve minted this card, OE's approvals plane did not`,
+      );
+
+      const beforeClick = new Map<string, string>();
+      for (const m of await dm.collectBotMessagesAfter(anchorTs, anchorTs)) beforeClick.set(m.ts, m.text);
+
+      const clicked = await synthetic.clickBlockAction({
+        actionId: card.buttons.approve.actionId,
+        blockId: card.buttons.approve.blockId,
+        value: card.buttons.approve.value,
+        buttonText: card.buttons.approve.text,
+        userId,
+        teamId,
+        channelId: dm.channelId,
+        messageTs: card.message.ts,
+        threadTs: card.message.threadTs ?? anchorTs,
+      });
+      ctx.log(`${clicked.label}: Approve on the eve-native card ${card.message.ts} → ${clicked.status}`);
+      ctx.gate(clicked.status === 200, `S-EVE-CARD: the forged Approve click was accepted (${clicked.status})`);
+
+      const settled = await pollUntil(
+        async () => {
+          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+          let latest: SlackMessage | undefined;
+          for (const m of msgs) {
+            if (m.ts === card.message.ts) continue;
+            if (eveNativeApprovalButtons(m)) continue;
+            const text = m.text.trim();
+            if (text.length === 0 || isFillerAck(text)) continue;
+            const before = beforeClick.get(m.ts);
+            if (before !== undefined && before === m.text) continue;
+            if (!m.text.includes(token)) continue;
+            latest = m;
+          }
+          return latest;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: `a substantive bot reply naming ${token}, NEW or EDITED since the Approve click (the resumed turn)` },
+      ).catch(async (e: unknown) => {
+        await arming.recheck();
+        throw e;
+      });
+      await arming.recheck();
+      ctx.log(`S-EVE-CARD: the resumed turn answered at ts ${settled.ts} naming ${token}`);
+      ctx.gate(
+        !/\b(error|exception|traceback)\b/i.test(settled.text),
+        "S-EVE-CARD: the resumed turn reports no error (the click resumed the write rather than failing it)",
+      );
+
+      const reread = (await dm.collectBotMessagesAfter(anchorTs, anchorTs)).find((m) => m.ts === card.message.ts);
+      ctx.observe(
+        `S-EVE-CARD: the DECIDED eve-native card ${card.message.ts} ` +
+          `${reread === undefined ? "could not be re-read" : eveNativeApprovalButtons(reread) ? "STILL carries its buttons" : "has had its buttons removed"}` +
+          " — eve 0.52.2 re-renders it answered and drops the actions block; a card that still carries buttons means the settle never reached the surface.",
+      );
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({
+          sinceIso,
+          actions: ["approval.chain", "turn.native_input_requested", "approval.eve_settled", "connector.op"],
+        });
+        const count = (action: string): number => rows.filter((r) => r.action === action).length;
+        const settledRows = rows.filter((r) => r.action === "approval.eve_settled");
+        ctx.observe(
+          `S-EVE-CARD rows in this leg's window — approval.chain=${count("approval.chain")} (OE's own card's row; eve's card does not enter the approver chain) · ` +
+            `turn.native_input_requested=${count("turn.native_input_requested")} · approval.eve_settled=${count("approval.eve_settled")} ` +
+            `[outcomes ${JSON.stringify(settledRows.map((r) => (r.detail as { outcome?: unknown } | undefined)?.outcome))}] · ` +
+            `connector.op=${count("connector.op")}. The eve_settled outcome is the candidate GATE for the next increment (OPE-1056).`,
+        );
+      }
+
+      try {
+        const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
+        const teardownClicked = new Set<string>();
+        const done = await pollUntil(
+          async () => {
+            const msgs = await dm.collectBotMessagesAfter(teardownTs, teardownTs);
+            let answer: SlackMessage | undefined;
+            for (const m of msgs) {
+              if (teardownClicked.has(m.ts)) continue;
+              const buttons = eveNativeApprovalButtons(m);
+              if (buttons) {
+                teardownClicked.add(m.ts);
+                const res = await synthetic.clickBlockAction({
+                  actionId: buttons.approve.actionId,
+                  blockId: buttons.approve.blockId,
+                  value: buttons.approve.value,
+                  buttonText: buttons.approve.text,
+                  userId,
+                  teamId,
+                  channelId: dm.channelId,
+                  messageTs: m.ts,
+                  threadTs: m.threadTs ?? teardownTs,
+                });
+                ctx.log(`teardown: Approve on the archive card ${m.ts} → ${res.status}`);
+                continue;
+              }
+              const text = m.text.trim();
+              if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
+            }
+            return answer;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `a reply to the archive ask for "${pageTitle}"` },
+        );
+        ctx.observe(`S-EVE-CARD teardown: ${teardownClicked.size} archive card(s) clicked; the seat answered "${done.text.trim().slice(0, 160)}"`);
+      } catch (e) {
+        ctx.log(
+          `S-EVE-CARD teardown did NOT complete (${e instanceof Error ? e.message : String(e)}). ` +
+            `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
+        );
+      }
     },
   },
   {

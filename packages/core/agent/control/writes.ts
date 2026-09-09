@@ -339,6 +339,8 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             return errorResult(`decide_pending_action: not authorized to decide "${a.id}".`);
           case "clicker-denied":
             return errorResult(`decide_pending_action: the click for "${a.id}" was refused (${res.reason}).`);
+          case "halted":
+            return errorResult(`decide_pending_action: ${res.notice}`);
           case "contradicted":
             return errorResult(`decide_pending_action: "${a.id}" resolved as a judge contradiction, which this tool never requests.`);
           case "not-pending":

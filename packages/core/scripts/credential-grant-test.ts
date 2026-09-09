@@ -458,9 +458,10 @@ console.log("6. the owner's card:");
 console.log("7. the lapse copy:");
 {
   const ask = askRow("ask-lapse");
-  const lapse = grantResolutionText(ask, { kind: "expired" });
-  const declined = grantResolutionText(ask, { kind: "declined" });
-  ok(lapse.includes("`notion_fetch`") && lapse.includes(ask.resource), "the lapse notice names the exact tool and resource the room watched being asked for");
+  const lapse = grantResolutionText(ask, { kind: "expired" }, NOW);
+  const declined = grantResolutionText(ask, { kind: "declined" }, NOW);
+  ok(lapse.includes('read a Notion page — "Launch page"'), "the lapse notice names the borrow the way the owner's own card named it");
+  ok(!lapse.includes("`notion_fetch`") && !lapse.includes(ask.resource), "…and never the raw verb or the code-shaped resource column");
   ok(lapse.includes("expired") && lapse.includes("no answer"), "…and says the request TIMED OUT");
   ok(!lapse.includes("declined the credential grant"), "a lapse is NEVER reported as a decline — the owner made no decision at all");
   ok(lapse.includes("did not decline"), "…and it says so out loud, because 'expired' alone reads as a soft no");

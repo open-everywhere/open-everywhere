@@ -274,7 +274,7 @@ export async function approveCredentialGrant(
     tier: grant.tier,
     verb: grant.verb,
   });
-  await postGrantResolution(ask, { askedMode: pending.requestedMode, grant, kind: "approved" });
+  await postGrantResolution(ask, { askedMode: pending.requestedMode, grant, kind: "approved" }, nowMs);
   try {
     await approveGrantCard(ask, grant, nowMs);
   } catch (err) {
@@ -356,7 +356,7 @@ async function closeRefusedAsk(
     resource: grantAuditResource(ask),
     verb: ask.verb,
   });
-  await postGrantResolution(ask, { gate, kind: "refused" });
+  await postGrantResolution(ask, { gate, kind: "refused" }, Date.parse(nowIso));
   try {
     await refuseGrantCard(ask, gate);
   } catch (err) {
@@ -376,7 +376,7 @@ export async function declineCredentialGrant(stamps: GrantAuditStamps, askId: st
   await auditGrant(stamps, "grant.declined", declinerPrincipalId, { askId, reason: "declined" });
   const ask = await store.getCredentialGrantAsk(stamps.org, askId);
   if (ask !== null) {
-    await postGrantResolution(ask, { kind: "declined" });
+    await postGrantResolution(ask, { kind: "declined" }, nowMs);
     try {
       await declineGrantCard(ask);
     } catch (err) {
@@ -411,7 +411,7 @@ export async function sweepCredentialGrants(org: string, nowIso: string): Promis
       if (!won) continue;
       asks++;
       const fresh = ask.expiresAt > staleBefore;
-      const notice: GrantSweepNotice = fresh ? await postGrantResolution(ask, { kind: "expired" }) : "withheld_stale";
+      const notice: GrantSweepNotice = fresh ? await postGrantResolution(ask, { kind: "expired" }, Date.parse(nowIso)) : "withheld_stale";
       if (notice === "sent") requesterNotices++;
       const cardUpdated = fresh && (await expireGrantCard(ask, notice === "sent"));
       if (cardUpdated) cardsUpdated++;

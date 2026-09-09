@@ -1,6 +1,7 @@
 import type { AttachSessionFn } from "eve/channels";
+import { routeAuth } from "eve/channels/auth";
 import { classifySessionId } from "../channels/window-key.js";
-import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
+import { parseServiceTokenEntries, serviceTokenAuth, type EveSessionAuth } from "./auth.js";
 import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
@@ -31,13 +32,15 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-export async function handleUsageWindowRead(req: Request): Promise<Response> {
+async function authorizeRead(req: Request): Promise<EveSessionAuth | Response> {
   const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
   if (entries.length === 0) return new Response("not found", { status: 404 });
+  return routeAuth(req, serviceTokenAuth(entries));
+}
 
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+export async function handleUsageWindowRead(req: Request): Promise<Response> {
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const url = new URL(req.url);
   const since = (url.searchParams.get("since") ?? "").trim();
@@ -54,9 +57,9 @@ export async function handleUsageWindowRead(req: Request): Promise<Response> {
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "usage_window", since, workspaces: workspaces.join(","), ...(sessionStartedAfter ? { sessionStartedAfter } : {}) },
+    detail: { service: identity.principalId, view: "usage_window", since, workspaces: workspaces.join(","), ...(sessionStartedAfter ? { sessionStartedAfter } : {}) },
   });
 
   try {
@@ -67,12 +70,8 @@ export async function handleUsageWindowRead(req: Request): Promise<Response> {
 }
 
 export async function handleAuditWindowRead(req: Request): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const url = new URL(req.url);
   const p = (name: string): string | undefined => {
@@ -108,9 +107,9 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "audit", since, actions: actions.join(","), platform: base.platform ?? "", limit },
+    detail: { service: identity.principalId, view: "audit", since, actions: actions.join(","), platform: base.platform ?? "", limit },
   });
 
   try {
@@ -135,12 +134,8 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
 }
 
 export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const url = new URL(req.url);
   const domain = (url.searchParams.get("domain") ?? "").trim();
@@ -157,9 +152,9 @@ export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "unified_domain_audit", domain, sinceDays: sinceDays ?? 30 },
+    detail: { service: identity.principalId, view: "unified_domain_audit", domain, sinceDays: sinceDays ?? 30 },
   });
 
   try {
@@ -170,12 +165,8 @@ export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
 }
 
 export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const hasDeploymentId = (process.env.VERCEL_DEPLOYMENT_ID ?? "").trim().length > 0;
   const credentialBrokerArmed = credentialKeyArmed();
@@ -184,9 +175,9 @@ export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "runtime_signal", hasDeploymentId, credentialBrokerArmed },
+    detail: { service: identity.principalId, view: "runtime_signal", hasDeploymentId, credentialBrokerArmed },
   });
 
   return json(200, { hasDeploymentId, credentialBrokerArmed });
@@ -299,12 +290,8 @@ export async function handleSessionTranscriptRead(
   attachSession: AttachSessionFn,
   params: Readonly<Record<string, string>>,
 ): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const sessionId = (params["sessionId"] ?? "").trim();
   if (!sessionId) return json(400, { error: "expected path param: sessionId" });
@@ -321,9 +308,9 @@ export async function handleSessionTranscriptRead(
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "transcript", sessionId, startIndex, limit },
+    detail: { service: identity.principalId, view: "transcript", sessionId, startIndex, limit },
   });
 
   const session = attachSession(sessionId);
@@ -348,12 +335,8 @@ export async function handleSessionTranscriptRead(
 }
 
 export async function handleSessionModelCallsRead(req: Request, params: Readonly<Record<string, string>>): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   const sessionId = (params["sessionId"] ?? "").trim();
   if (!sessionId) return json(400, { error: "expected path param: sessionId" });
@@ -370,9 +353,9 @@ export async function handleSessionModelCallsRead(req: Request, params: Readonly
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "model_calls", sessionId, limit, includeBody, ...(turnId ? { turnId } : {}) },
+    detail: { service: identity.principalId, view: "model_calls", sessionId, limit, includeBody, ...(turnId ? { turnId } : {}) },
   });
 
   try {
@@ -384,20 +367,16 @@ export async function handleSessionModelCallsRead(req: Request, params: Readonly
 }
 
 export async function handleModelCallSessionsRead(req: Request): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
 
   await appendAudit({
     org: deploymentOrg(),
     platform: "control",
     workspace: "control",
-    principalId: identity.subject,
+    principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "model_call_sessions" },
+    detail: { service: identity.principalId, view: "model_call_sessions" },
   });
 
   try {

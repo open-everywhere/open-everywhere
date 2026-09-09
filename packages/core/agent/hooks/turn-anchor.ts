@@ -8,7 +8,7 @@ import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
 import { clearTurnAnchor, recordTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
 import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
-import { findCancelRequest, findCancelRequester, type CancelRequestRecord } from "../channels/turn-cancel.js";
+import { findCancelRequest, findCancelRequester, TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION, type CancelRequestRecord } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.js";
@@ -16,9 +16,7 @@ import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
-export const TURN_CANCELLED_ACTION = "turn.cancelled";
-
-export const TURN_STOP_IGNORED_ACTION = "turn.stop_ignored";
+export { TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION };
 
 export const IGNORED_STOP_NOTE = "The stop did not take effect — this turn ended on its own before the cancel reached it. Nothing was interrupted.";
 

@@ -416,5 +416,138 @@ const FIRE = {
   ok(registeredProjectionNames().includes("read_routine_transcript"), "registry: the authored projection is registered for replay under the mounted name");
 }
 
+{
+  const {
+    deploymentTranscriptReader,
+    renderTranscriptExport,
+    TranscriptExportError,
+    TRANSCRIPT_EXPORT_DEFAULT_LIMIT,
+    TRANSCRIPT_EXPORT_MAX_LIMIT,
+  } = await import("../agent/control/transcript-export.js");
+  const { resolveTranscriptSource } = await import("./control-transcript-source.js");
+
+  const TOKEN = "svc-token-value-never-printed";
+  const EVENTS = [
+    { index: 0, at: "2026-09-09T03:00:01.000Z", type: "message.received", data: { message: "run the thing" } },
+    { index: 1, at: "2026-09-09T03:00:02.000Z", type: "actions.requested", data: { actions: [{ toolName: "list_routines", callId: "c1", input: "{}" }] } },
+    { index: 2, at: "2026-09-09T03:00:03.000Z", type: "action.result", data: { status: "completed", result: { callId: "c1", output: "two routines" } } },
+    { index: 3, at: "2026-09-09T03:00:04.000Z", type: "message.completed", data: { message: "there are two routines" } },
+  ];
+
+  const stubFetch = (respond: () => Response): { calls: { url: string; headers: Record<string, string> }[]; impl: typeof fetch } => {
+    const calls: { url: string; headers: Record<string, string> }[] = [];
+    const impl = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
+      calls.push({ url: String(input), headers: init?.headers ?? {} });
+      return respond();
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  };
+  const jsonRes = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  {
+    const stub = stubFetch(() => jsonRes(200, { sessionId: "wrun_abc", found: true, startIndex: 0, nextIndex: 4, complete: true, count: 4, events: EVENTS }));
+    const read = deploymentTranscriptReader({ baseUrl: "https://agent.example.com/", token: TOKEN, fetchImpl: stub.impl });
+    const result = await read({ sessionId: "wrun_abc", startIndex: 0, limit: 600 });
+
+    ok(stub.calls.length === 1, "export: one request per page, no retry");
+    ok(
+      stub.calls[0].url === "https://agent.example.com/control/v1/session/wrun_abc/transcript?startIndex=0&limit=600",
+      "export: dials the mounted transcript route, trailing slash stripped, paging params carried",
+    );
+    ok(stub.calls[0].headers.authorization === `Bearer ${TOKEN}`, "export: presents the service token as a bearer, never as a query param");
+    ok(!stub.calls[0].url.includes(TOKEN), "🔴 export: the token is NEVER in the URL (a URL reaches access logs; a header does not)");
+    ok(result.text.includes("[woken with] run the thing"), "export: the wake renders");
+    ok(result.text.includes("[called] list_routines"), "export: the tool call renders with its name");
+    ok(result.text.includes("[list_routines returned:completed] two routines"), "export: the result renders against the call it answers");
+    ok(result.text.includes("[said] there are two routines"), "export: the final message renders");
+    ok(result.eventCount === 4 && result.nextIndex === 4 && result.complete, "export: paging facts come off the route's own body");
+
+    const empty = stubFetch(() => jsonRes(200, { startIndex: 0, nextIndex: 0, complete: true, events: [] }));
+    const emptyText = (await deploymentTranscriptReader({ baseUrl: "https://a.example", token: TOKEN, fetchImpl: empty.impl })({ sessionId: "wrun_x", startIndex: 0, limit: 10 })).text;
+    ok(!emptyText.includes("[said]") && emptyText.includes("no recorded events"), "export: negative control — an empty stream renders none of those lines");
+  }
+
+  {
+    const stub = stubFetch(() => jsonRes(200, { complete: false, events: EVENTS.slice(0, 2) }));
+    const result = await deploymentTranscriptReader({ baseUrl: "https://a.example", token: TOKEN, fetchImpl: stub.impl })({ sessionId: "wrun_abc", startIndex: 10, limit: 2 });
+    ok(result.nextIndex === 12, "export: a missing nextIndex falls back to startIndex + count, never to 0");
+    ok(!result.complete && result.text.includes("transcript truncated"), "export: an incomplete drain says the tail is missing");
+  }
+
+  {
+    const cases: { label: string; respond: () => Response; expect: RegExp }[] = [
+      { label: "401 names the token, not the session", respond: () => jsonRes(401, { error: "unauthorized" }), expect: /OE_CONTROL_READ_TOKENS/ },
+      { label: "a JSON 404 with found:false is a missing session", respond: () => jsonRes(404, { error: "no such session", found: false, sessionId: "wrun_x" }), expect: /no such session/ },
+      { label: "a bare 404 is a disarmed read plane or a wrong base URL", respond: () => new Response("not found", { status: 404 }), expect: /disarmed|not the deployment/ },
+      { label: "any other status is surfaced with its code", respond: () => jsonRes(500, { error: "boom" }), expect: /500/ },
+      { label: "a 200 with no events array is malformed, not empty", respond: () => jsonRes(200, { complete: true }), expect: /no events array/ },
+    ];
+    for (const c of cases) {
+      const stub = stubFetch(c.respond);
+      const read = deploymentTranscriptReader({ baseUrl: "https://a.example", token: TOKEN, fetchImpl: stub.impl });
+      let message = "";
+      let isExportError = false;
+      try {
+        await read({ sessionId: "wrun_x", startIndex: 0, limit: 10 });
+      } catch (err) {
+        isExportError = err instanceof TranscriptExportError;
+        message = err instanceof Error ? err.message : String(err);
+      }
+      ok(isExportError, `export: ${c.label} — raised as TranscriptExportError`);
+      ok(c.expect.test(message), `export: ${c.label} — the message names the fix (got: ${message.slice(0, 80)})`);
+      ok(!message.includes(TOKEN), `🔴 export: ${c.label} — the message carries no token value`);
+    }
+  }
+
+  {
+    const impl = (async () => {
+      throw new Error("getaddrinfo ENOTFOUND agent.example.com");
+    }) as unknown as typeof fetch;
+    let message = "";
+    try {
+      await deploymentTranscriptReader({ baseUrl: "https://agent.example.com", token: TOKEN, fetchImpl: impl })({ sessionId: "wrun_x", startIndex: 0, limit: 10 });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    ok(/could not reach/.test(message) && message.includes("agent.example.com"), "export: an unreachable deployment names the base URL it tried");
+    ok(!message.includes(TOKEN), "🔴 export: the unreachable message carries no token value");
+  }
+
+  {
+    const complete = renderTranscriptExport({ sessionId: "wrun_abc", startIndex: 0, nextIndex: 4, complete: true, eventCount: 4, text: "…" });
+    const partial = renderTranscriptExport({ sessionId: "wrun_abc", startIndex: 0, nextIndex: 600, complete: false, eventCount: 600, text: "…" });
+    ok(complete.split("\n")[0].includes("UNTRUSTED CONTENT"), "export banner: the untrusted warning is the FIRST line — this plane has no funnel to wrap the content in");
+    ok(partial.split("\n")[0].includes("UNTRUSTED CONTENT"), "export banner: …the first line on a partial page too");
+    ok(complete.includes("complete (the run reached a terminal event)"), "export banner: a complete page says so");
+    ok(partial.includes("INCOMPLETE — resume at startIndex=600"), "export banner: a partial page hands back the cursor to resume from");
+    ok(!complete.includes("INCOMPLETE"), "export banner: negative control — a complete page does NOT claim a cut tail");
+  }
+
+  {
+    const bare = resolveTranscriptSource({});
+    ok(bare.reader === undefined && bare.missing.length === 2, "source: an empty env resolves nothing and names BOTH missing inputs");
+    ok(bare.missing.some((m) => m.includes("OE_DEPLOY_CONTROL_TOKEN")), "source: …naming the deploy plane's token, not a new one");
+
+    const urlOnly = resolveTranscriptSource({ E2E_TARGET_URL: "https://a.example" });
+    ok(urlOnly.reader === undefined && urlOnly.missing.length === 1 && urlOnly.missing[0].includes("OE_DEPLOY_CONTROL_TOKEN"), "source: a URL alone names only the missing token");
+
+    const tokenOnly = resolveTranscriptSource({ OE_DEPLOY_CONTROL_TOKEN: TOKEN });
+    ok(tokenOnly.reader === undefined && tokenOnly.missing.length === 1 && tokenOnly.missing[0].includes("E2E_TARGET_URL"), "source: a token alone names only the missing URL");
+    ok(!JSON.stringify(tokenOnly).includes(TOKEN), "🔴 source: an unresolved result carries no token value");
+
+    const both = resolveTranscriptSource({ E2E_TARGET_URL: "https://a.example/", OE_DEPLOY_CONTROL_TOKEN: TOKEN });
+    ok(both.reader !== undefined && both.missing.length === 0, "source: both inputs present resolve a reader");
+    ok(both.baseUrl === "https://a.example", "source: the base URL is normalised (trailing slash dropped) for the ready line");
+
+    ok(resolveTranscriptSource({ OE_DEPLOY_ALIAS: "a.example", E2E_CONTROL_READ_TOKEN: TOKEN }).baseUrl === "https://a.example", "source: OE_DEPLOY_ALIAS becomes an https base, and E2E_CONTROL_READ_TOKEN is accepted as the token alias");
+    ok(
+      resolveTranscriptSource({ E2E_TARGET_URL: "https://first.example", OE_DEPLOY_BASE_URL: "https://second.example", OE_DEPLOY_CONTROL_TOKEN: TOKEN }).baseUrl === "https://first.example",
+      "source: E2E_TARGET_URL wins over OE_DEPLOY_BASE_URL — the same precedence deploy:smoke uses",
+    );
+
+    ok(TRANSCRIPT_EXPORT_DEFAULT_LIMIT > 0 && TRANSCRIPT_EXPORT_DEFAULT_LIMIT <= TRANSCRIPT_EXPORT_MAX_LIMIT, "export: the default page size sits inside the schema's own ceiling");
+  }
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ transcript-tool: ${n} assertions (same-channel routine transcript read — fence proven through eve's real replay path)`);

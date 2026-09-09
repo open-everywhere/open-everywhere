@@ -166,7 +166,9 @@ const grantRowFixture = {
   askId: "ask-card-1",
   connector: "notion",
   expiresAt: "2026-08-26T21:00:00.000Z",
+  frozenArgs: { id: "abc123" },
   id: "grant-card-1",
+  mcpTool: VENDOR_TOOL,
   mode: "session",
   ownerPrincipalId: OWNER,
   ownerSlug: "rowan_hale",
@@ -475,10 +477,10 @@ console.log("8. one reader-facing word per mode, on every surface that names one
       `…exactly one BUTTON carries that same word for \`${mode}\` — the word a person carries to every later surface`,
     );
 
-    const room = grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" });
-    ok(room.includes(`(${word})`), `the room confirmation spells \`${mode}\` as "${word}"`);
+    const room = grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" }, NOW);
+    ok(room.includes(`The grant is ${mode === "once" ? word : `for ${word}`}, `), `the room confirmation spells \`${mode}\` as "${word}"`);
 
-    ok(grantOwnerNoticeText(grant).includes(`(${word})`), `the owner's first-use DM spells \`${mode}\` as "${word}"`);
+    ok(grantOwnerNoticeText(grant, undefined, NOW).includes(`• The grant: ${word}`), `the owner's first-use DM spells \`${mode}\` as "${word}"`);
 
     const phrase = mode === "once" ? word : `for ${word}`;
     ok(
@@ -491,8 +493,8 @@ console.log("8. one reader-facing word per mode, on every surface that names one
   for (const mode of ["session", "standing"] as const) {
     const grant = { ...grantRowFixture, mode } as never;
     const ask = { ...askRowFixture, requestedMode: mode } as never;
-    ok(!grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" }).includes(`(${mode})`), `the room never prints the raw \`${mode}\` column value`);
-    ok(!grantOwnerNoticeText(grant).includes(`(${mode})`), `…nor does the owner's DM`);
+    ok(!grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" }, NOW).includes(mode), `the room never prints the raw \`${mode}\` column value`);
+    ok(!grantOwnerNoticeText(grant, undefined, NOW).includes(mode), `…nor does the owner's DM`);
     ok(!grantCardActions(ask).some((a) => a.label.includes(mode)), `…nor does any button label`);
   }
 }

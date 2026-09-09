@@ -1,4 +1,4 @@
-import { credentialVarFor, teamsSegment } from "./fixture-inventory-lib.js";
+import { TRACKED_ROOM_IDS, credentialVarFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
 
 export const ENV = {
   slackUserToken: "E2E_SLACK_USER_TOKEN",
@@ -129,6 +129,13 @@ export type Capability =
   | "engagedGithub"
   | "engagedLinear"
   | "engagedNotion";
+
+export const CAPABILITY_REMEDY: Partial<Record<Capability, string>> = {
+  slackMpim:
+    "the group DM does not exist yet — `npm run e2e:fixtures -- provision-mpim` opens it and prints the id for TRACKED_ROOM_IDS, " +
+    "but the DRIVER app needs the `mpim:write` USER scope first (measured 2026-09-09: `conversations.open` answers `missing_scope`), " +
+    "and the OE app needs `mpim:history` + `mpim:read` on the deployment side",
+};
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -323,10 +330,13 @@ export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtr
   return { ok: true, cfg: { channel: values[0] } };
 }
 
-export function resolveSlackMpim(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
-  const { values, missing } = need(env, [ENV.slackMpimChannel]);
-  if (missing.length > 0) return { ok: false, missing };
-  return { ok: true, cfg: { channel: values[0] } };
+export function resolveSlackMpim(
+  env: Env = process.env,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): Resolved<SlackExtraChannelConfig> {
+  const channel = roomIdFor(ENV.slackMpimChannel, env, tracked);
+  if (!channel) return { ok: false, missing: [ENV.slackMpimChannel] };
+  return { ok: true, cfg: { channel } };
 }
 
 export function resolveSlackCapFixture(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
@@ -559,14 +569,14 @@ export interface CapabilityReport {
   readonly includeOptional: boolean;
 }
 
-export function resolveCapabilities(env: Env = process.env): CapabilityReport {
+export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): CapabilityReport {
   const slack = resolveSlack(env);
   const discord = resolveDiscord(env);
   const teams = resolveTeams(env);
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
-  const slackMpim = resolveSlackMpim(env);
+  const slackMpim = resolveSlackMpim(env, tracked);
   const slackCapFixture = resolveSlackCapFixture(env);
   const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
@@ -596,7 +606,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
-  if (slackMpim.ok) available.add("slackMpim");
+  if (slack.ok && slackMpim.ok) available.add("slackMpim");
   if (slackCapFixture.ok) available.add("slackCapFixture");
   if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");

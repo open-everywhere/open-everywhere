@@ -1,4 +1,5 @@
 import { ENV, type Capability } from "./env.js";
+import { TRACKED_ROOM_IDS, roomIdFor } from "./fixture-inventory-lib.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -49,11 +50,11 @@ export interface ClassifiedFixture {
   readonly optionalMissing: readonly string[];
 }
 
-export function classifyFixture(env: Env, family: FixtureFamily): ClassifiedFixture {
+export function classifyFixture(env: Env, family: FixtureFamily, trackedIds: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): ClassifiedFixture {
   const present: string[] = [];
   const missing: string[] = [];
   for (const spec of family.required) {
-    const raw = env[spec.name]?.trim();
+    const raw = spec.mustEqual !== undefined ? env[spec.name]?.trim() : roomIdFor(spec.name, env, trackedIds);
     const isSet = spec.mustEqual !== undefined ? raw === spec.mustEqual : Boolean(raw && raw.length > 0);
     if (isSet) present.push(spec.name);
     else missing.push(spec.name);
@@ -68,8 +69,12 @@ export function classifyFixture(env: Env, family: FixtureFamily): ClassifiedFixt
   return { family, classification, present, missing, optionalPresent, optionalMissing };
 }
 
-export function classifyAll(env: Env, families: readonly FixtureFamily[]): readonly ClassifiedFixture[] {
-  return families.map((f) => classifyFixture(env, f));
+export function classifyAll(
+  env: Env,
+  families: readonly FixtureFamily[],
+  trackedIds: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): readonly ClassifiedFixture[] {
+  return families.map((f) => classifyFixture(env, f, trackedIds));
 }
 
 export interface ProbeOutcome {

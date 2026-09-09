@@ -51,3 +51,14 @@ export function webhookFireAttributes(
     [WEBHOOK_MARKER_ATTR]: hookId,
   };
 }
+
+export const TOKEN_FAMILY_ATTR = "oe_token_family";
+
+export type ControlTokenFamily = "read" | "inject";
+
+export function serviceTokenFireAttributes(family: ControlTokenFamily): Record<string, string> {
+  return {
+    [TOKEN_FAMILY_ATTR]: family,
+    [FIRE_UNATTENDED_ATTR]: "true",
+  };
+}

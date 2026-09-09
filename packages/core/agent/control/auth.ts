@@ -1,9 +1,11 @@
+import { extractBearerToken, withAuthChallenges, type AuthFn } from "eve/channels/auth";
 import { jwtVerify, createRemoteJWKSet, type JWTVerifyGetKey } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { serviceTokenFireAttributes } from "../routines/fire-auth.js";
 
 export interface AdminIdentity {
   readonly issuer: string;
@@ -286,4 +288,41 @@ export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<
   const service = serviceTokens.length > 0 ? makeServiceTokenAuthenticator(serviceTokens) : null;
   if (!service) return base;
   return async (req) => (await service(req)) ?? (base ? await base(req) : null);
+}
+
+export type EveSessionAuth = NonNullable<Awaited<ReturnType<AuthFn<Request>>>>;
+
+export const SERVICE_TOKEN_AUTHENTICATOR = "oe-service-token";
+export const INJECT_TOKEN_AUTHENTICATOR = "oe-inject-token";
+
+export function serviceTokenAuth(entries: readonly ServiceTokenEntry[]): AuthFn<Request> {
+  return withAuthChallenges((req) => {
+    const token = extractBearerToken(req.headers.get("authorization"));
+    const identity = token ? verifyServiceToken(token, entries) : null;
+    if (!identity) return null;
+    return {
+      authenticator: SERVICE_TOKEN_AUTHENTICATOR,
+      issuer: SERVICE_TOKEN_ISSUER,
+      principalId: identity.subject,
+      principalType: "service",
+      subject: identity.subject,
+      attributes: serviceTokenFireAttributes("read"),
+    };
+  }, [{ scheme: "Bearer" }]);
+}
+
+export function injectTokenAuth(entries: readonly ServiceTokenEntry[]): AuthFn<Request> {
+  return withAuthChallenges((req) => {
+    const token = extractBearerToken(req.headers.get("authorization"));
+    const identity = token ? verifyInjectToken(token, entries) : null;
+    if (!identity) return null;
+    return {
+      authenticator: INJECT_TOKEN_AUTHENTICATOR,
+      issuer: SERVICE_TOKEN_ISSUER,
+      principalId: identity.subject,
+      principalType: "service",
+      subject: identity.subject,
+      attributes: serviceTokenFireAttributes("inject"),
+    };
+  }, [{ scheme: "Bearer" }]);
 }

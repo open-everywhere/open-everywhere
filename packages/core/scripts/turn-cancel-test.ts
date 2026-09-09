@@ -15,7 +15,7 @@ import {
 } from "../agent/channels/cancel-note.js";
 import { parseOeCommandTokens, parseSlackCommandText, renderHelp, runStop } from "../agent/commands/core.js";
 import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "../agent/channels/turn-registry.js";
-import { cancelAnchoredTurn, isStopDirective, TURN_CANCEL_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
+import { cancelAnchoredTurn, isStopDirective, unpairedStops, TURN_CANCEL_ACTION, TURN_STOP_IGNORED_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
 import { appendAudit, readAudit } from "../agent/audit/audit.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 
@@ -550,7 +550,7 @@ const NO_REQUESTER_BASELINE =
 
   {
     const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
-    const { TURN_STOP_IGNORED_ACTION, IGNORED_STOP_NOTE, __setCancelSettleGraceForTest, __clearSettledCancelsForTest, __flushIgnoredStopChecksForTest, __pendingIgnoredStopCountForTest } = await import("../agent/hooks/turn-anchor.js");
+    const { IGNORED_STOP_NOTE, __setCancelSettleGraceForTest, __clearSettledCancelsForTest, __flushIgnoredStopChecksForTest, __pendingIgnoredStopCountForTest } = await import("../agent/hooks/turn-anchor.js");
     __setCancelSettleGraceForTest(600_000);
     const flush = async (): Promise<void> => __flushIgnoredStopChecksForTest();
 
@@ -940,4 +940,95 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
   ok(!shouldDeliverReply({ ...base, isEngaged: false, stopped: true }).deliver, "not engaged still drops first — order unchanged");
 }
 
-console.log(`✓ turn-cancel: ${passed} assertions passed (registry, cancel, note, /oe stop, stand_down registration)`);
+{
+  const base = Date.now();
+  const stamp = new Date(base).toISOString();
+  const seedRequest = async (org: string, sessionId: string, turnId: string, outcome: string, who = "U-asker") =>
+    appendAudit({
+      org,
+      platform: "slack",
+      workspace: "T1",
+      action: TURN_CANCEL_ACTION,
+      principalId: who,
+      ts: stamp,
+      detail: { via: "reaction", outcome, ...(sessionId ? { sessionId } : {}), ...(turnId ? { turnId } : {}), surfaceKey: "slack/T1/C1" },
+    });
+  const seedPartner = (org: string, action: string, sessionId: string, turnId: string) =>
+    appendAudit({ org, platform: "slack", workspace: "T1", action, ts: stamp, detail: { sessionId, turnId, surfaceKey: "slack/T1/C1" } });
+
+  const later = base + 5 * 60_000;
+
+  {
+    const org = "unpaired-a";
+    await seedRequest(org, "wrun_a", "turn_1", "requested");
+    const view = await unpairedStops({ org, now: later });
+    ok(view.unpaired.length === 1, `🔴 an ACCEPTED stop with no partner row is reported — got ${view.unpaired.length}`);
+    const row = view.unpaired[0]!;
+    ok(row.sessionId === "wrun_a" && row.turnId === "turn_1", "…keyed on BOTH ids, so an operator can find the turn");
+    ok(row.principalId === "U-asker" && row.via === "reaction", "…and it names who asked and through which affordance");
+    ok(row.ageMs === 5 * 60_000, `…and how long it has stood unpaired, exactly — got ${row.ageMs}`);
+    ok(view.requestsConsidered === 1 && view.requestsWithinGrace === 0 && view.requestsUndated === 0, "the denominator counts the one request it judged");
+    ok(!view.scanTruncated && !view.capped, "a single-row org truncates nothing");
+  }
+
+  {
+    const org = "unpaired-b";
+    await seedRequest(org, "wrun_b1", "turn_1", "requested");
+    await seedPartner(org, TURN_CANCELLED_ACTION, "wrun_b1", "turn_1");
+    await seedRequest(org, "wrun_b2", "turn_1", "requested");
+    await seedPartner(org, TURN_STOP_IGNORED_ACTION, "wrun_b2", "turn_1");
+    const view = await unpairedStops({ org, now: later });
+    ok(view.unpaired.length === 0, `🔴 a request paired by turn.cancelled OR turn.stop_ignored is NOT a finding — got ${view.unpaired.length}`);
+    ok(view.requestsConsidered === 2, "…and both were judged, not skipped");
+  }
+
+  {
+    const org = "unpaired-c";
+    await seedRequest(org, "wrun_c1", "turn_1", "requested");
+    await seedPartner(org, TURN_CANCELLED_ACTION, "wrun_c2", "turn_1");
+    const view = await unpairedStops({ org, now: later });
+    ok(view.unpaired.length === 1 && view.unpaired[0]!.sessionId === "wrun_c1", "🔴 a partner row from ANOTHER session does not pair — the join keys on both ids");
+  }
+
+  {
+    const org = "unpaired-d";
+    await seedRequest(org, "", "", "no_turn_found");
+    await seedRequest(org, "wrun_d", "turn_1", "no_active_turn");
+    await seedRequest(org, "wrun_d", "turn_2", "error");
+    const view = await unpairedStops({ org, now: later });
+    ok(view.unpaired.length === 0, "a no_turn_found / no_active_turn / error request is never a finding");
+    ok(view.requestsConsidered === 0, "…and none of them enters the denominator either");
+  }
+
+  {
+    const org = "unpaired-e";
+    await seedRequest(org, "wrun_e", "turn_1", "requested");
+    const fresh = await unpairedStops({ org, now: base });
+    ok(fresh.unpaired.length === 0 && fresh.requestsWithinGrace === 1, "a request younger than the grace is held back, and counted as held back");
+    const aged = await unpairedStops({ org, now: base, graceMs: 0 });
+    ok(aged.unpaired.length === 1, "…and a zero grace reports the same row, so the hold is the grace and not a filter");
+  }
+
+  {
+    const org = "unpaired-g";
+    await appendAudit({
+      org,
+      platform: "slack",
+      workspace: "T1",
+      action: TURN_CANCEL_ACTION,
+      ts: "not-a-timestamp",
+      detail: { via: "command", outcome: "requested", sessionId: "wrun_g", turnId: "turn_1" },
+    });
+    const view = await unpairedStops({ org, now: later });
+    ok(view.requestsUndated === 1, `an undated request is counted, not silently dropped — got ${view.requestsUndated}`);
+    ok(view.unpaired.length === 0 && view.requestsConsidered === 0, "…and it is neither reported nor counted as judged");
+  }
+
+  {
+    const view = await unpairedStops({ org: "unpaired-f", now: later });
+    ok(view.unpaired.length === 0 && view.requestsConsidered === 0, "an org with no rows of its own sees none of another org's unpaired stops");
+    ok(view.org === "unpaired-f", "…and the result names the org it answered for");
+  }
+}
+
+console.log(`✓ turn-cancel: ${passed} assertions passed (registry, cancel, note, /oe stop, stand_down registration, reader-side unpaired-stop join)`);

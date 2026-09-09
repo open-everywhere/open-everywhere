@@ -130,6 +130,97 @@ interface BuiltTool {
   );
 }
 
+{
+  const authored = described((o: { body: string }) => ({ type: "text", value: `EVE-CARRIED(${o.body})` }));
+  const entry = eveDefineTool({
+    description: "parity probe",
+    inputSchema: { type: "object", properties: {} },
+    execute: described(async () => ({ body: "RAW" })),
+    toModelOutput: authored,
+  });
+  const ctx = makeCtx();
+  await lifecycle.dispatchDynamicToolEvent({
+    ctx,
+    resolvers: [{ slug: "parity_tool", eventNames: ["session.started"], sourceId: "probe", events: { "session.started": () => entry } }],
+    event: { type: "session.started" },
+    messages: [],
+  });
+  const defs = builder.buildDynamicTools(ctx) as Array<Record<string, unknown>>;
+  ok(defs.length === 1 && defs[0].name === "parity_tool", "1D: the replayed tool is built for the model call");
+  ok(
+    registeredProjectionNames().includes("parity_tool") === false,
+    "1D: the name is NOT in OE's projection registry — so what follows is eve's behaviour alone, not ours",
+  );
+  const toolset = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: defs }) as Record<string, BuiltTool>;
+  const projected = await toolset["parity_tool"].toModelOutput!({ output: { body: "RAW" }, toolCallId: "c-parity" });
+  ok(
+    projected.type === "text" && projected.value === "EVE-CARRIED(RAW)",
+    "🔴 1D: eve 0.52.2 carries the AUTHORED projection through replay with NO OE arm on the toolset — the registered-names replace arm of projectToolSet is redundant (OPE-378's watch has FIRED)",
+  );
+
+  const bare = eveDefineTool({
+    description: "parity control",
+    inputSchema: { type: "object", properties: {} },
+    execute: described(async () => ({ body: "RAW" })),
+  });
+  const bareCtx = makeCtx();
+  await lifecycle.dispatchDynamicToolEvent({
+    ctx: bareCtx,
+    resolvers: [{ slug: "parity_control", eventNames: ["session.started"], sourceId: "probe", events: { "session.started": () => bare } }],
+    event: { type: "session.started" },
+    messages: [],
+  });
+  const bareDefs = builder.buildDynamicTools(bareCtx) as Array<Record<string, unknown>>;
+  const bareSet = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: bareDefs }) as Record<string, BuiltTool>;
+  const unprojected = await bareSet["parity_control"].toModelOutput!({ output: { body: "RAW" }, toolCallId: "c-control" });
+  ok(
+    unprojected.type === "json" && JSON.stringify(unprojected.value) === JSON.stringify({ body: "RAW" }),
+    "1D control: with NO authored projection the same path renders the raw output as json — the leg above reads the authored function, not a constant",
+  );
+}
+
+{
+  const badShape = { type: "not-a-model-output-type", value: "x" };
+  const authoredBad = described(() => badShape);
+  const entry = eveDefineTool({
+    description: "shape probe",
+    inputSchema: { type: "object", properties: {} },
+    execute: described(async () => ({ body: "RAW" })),
+    toModelOutput: authoredBad,
+  });
+  const ctx = makeCtx();
+  await lifecycle.dispatchDynamicToolEvent({
+    ctx,
+    resolvers: [{ slug: "shape_tool", eventNames: ["session.started"], sourceId: "probe", events: { "session.started": () => entry } }],
+    event: { type: "session.started" },
+    messages: [],
+  });
+  const defs = builder.buildDynamicTools(ctx) as Array<Record<string, unknown>>;
+  ok(defs.length === 1 && defs[0].name === "shape_tool", "1E: the shape probe survives replay — what follows measures the normalizer, not a dropped entry");
+  const eveOnly = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: defs }) as Record<string, BuiltTool>;
+  ok(typeof eveOnly["shape_tool"]?.toModelOutput === "function", "1E: …and eve built a toModelOutput for it, so the call below reaches the normalizer");
+  let refusal: unknown;
+  try {
+    await eveOnly["shape_tool"].toModelOutput!({ output: { body: "RAW" }, toolCallId: "c-shape" });
+  } catch (e) {
+    refusal = e;
+  }
+  const refusalError = refusal as { name?: string; toolName?: string } | undefined;
+  ok(
+    refusalError?.name === "ToolOutputSerializationError" && refusalError.toolName === "shape_tool",
+    "1E: eve REFUSES an authored projection whose shape its schema does not accept — a branded ToolOutputSerializationError naming this tool, so the normalizer is a real gate",
+  );
+
+  const withArm = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: defs }) as Record<string, BuiltTool>;
+  registerReplayModelProjection("shape_tool", (() => badShape) as never);
+  projectToolSet(withArm as unknown as Record<string, unknown>);
+  const unvalidated = await withArm["shape_tool"].toModelOutput!({ output: { body: "RAW" }, toolCallId: "c-shape2" });
+  ok(
+    unvalidated.type === "not-a-model-output-type",
+    "🔴 1E: the OE replace arm returns the authored shape UNVALIDATED — so the header's 'byte-identical' claim holds only for the text envelopes we author, and retiring the arm ADDS eve's validation rather than removing one",
+  );
+}
+
 function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltTool> {
   const converted = defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) }));
   return harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: converted }) as Record<string, BuiltTool>;
