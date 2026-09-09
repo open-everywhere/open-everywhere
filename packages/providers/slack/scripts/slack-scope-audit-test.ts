@@ -12,8 +12,8 @@ function ok(cond: boolean, label: string): void {
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const RUNBOOK_PATH = join(REPO_ROOT, "docs/deploy/surfaces/slack.md");
 const runbook = readFileSync(RUNBOOK_PATH, "utf8");
-const WIZARD_PATH = join(REPO_ROOT, "packages/create/src/steps/slack.ts");
-const wizard = readFileSync(WIZARD_PATH, "utf8");
+const MANIFEST_PATH = join(REPO_ROOT, "packages/providers/slack/agent/app-manifest.ts");
+const wizard = readFileSync(MANIFEST_PATH, "utf8");
 
 const REQUIRED_SCOPES: Record<string, string[]> = {
   "auth.test": [],
@@ -94,8 +94,14 @@ for (const method of found) {
   }
 }
 
-const botBlock = /\bbot:\s*\[([\s\S]*?)\]/.exec(wizard);
-ok(botBlock !== null, `packages/create/src/steps/slack.ts still declares its bot scopes as a literal \`bot: [ … ]\` array`);
+const codeOnly = (text: string): string =>
+  text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+const botBlock = /\bbot:\s*\[([\s\S]*?)\]/.exec(codeOnly(wizard));
+ok(botBlock !== null, `packages/providers/slack/agent/app-manifest.ts still declares its bot scopes as a literal \`bot: [ … ]\` array`);
 const manifestScopes = [...(botBlock?.[1] ?? "").matchAll(/"([a-z_]+:[a-z_]+)"/g)].map((m) => m[1] as string);
 ok(
   manifestScopes.length >= 10,
@@ -107,7 +113,7 @@ for (const scope of manifestScopes) {
   ok(
     runbook.includes(`\`${scope}\``),
     `docs/deploy/surfaces/slack.md documents "${scope}" (requested by the install wizard's manifest, ` +
-      `packages/create/src/steps/slack.ts) as a backtick-quoted Bot Token Scope bullet — the manifest may ` +
+      `packages/providers/slack/agent/app-manifest.ts) as a backtick-quoted Bot Token Scope bullet — the manifest may ` +
       `request FEWER scopes than the runbook, never ones the runbook doesn't explain`,
   );
 }
@@ -123,7 +129,7 @@ for (const method of ROSTER_METHODS) {
   for (const scope of REQUIRED_SCOPES[method] ?? []) {
     ok(
       manifestScopes.includes(scope),
-      `the install wizard's manifest (packages/create/src/steps/slack.ts) requests "${scope}" — required by ` +
+      `the install wizard's manifest (packages/providers/slack/agent/app-manifest.ts) requests "${scope}" — required by ` +
         `"${method}", which the governance roster calls on every room an approval card or a member-tier ` +
         `click lands in, DMs and group DMs included. Omitting it makes approvals in DMs fail on an ` +
         `unresolvable roster while ordinary chat keeps working (OPE-332).`,
@@ -142,7 +148,7 @@ for (const scope of SELF_ADMISSION_SCOPES) {
   );
   ok(
     !manifestScopes.includes(scope),
-    `🔴 the install wizard's manifest (packages/create/src/steps/slack.ts) must NOT request "${scope}" — ` +
+    `🔴 the install wizard's manifest (packages/providers/slack/agent/app-manifest.ts) must NOT request "${scope}" — ` +
       `it is what a deployer actually grants on Slack's consent screen, so a scope here is a scope the bot ` +
       `really holds. See this section's header.`,
   );

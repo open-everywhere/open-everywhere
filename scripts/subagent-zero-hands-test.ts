@@ -17,6 +17,12 @@ const eveTools = await readEveFrameworkTools();
 const required = [...eveTools.required].sort();
 ok(required.length > 0, "the installed eve declares at least one REQUIRED framework tool slot — with none, this whole suite would pass by iterating an empty list");
 ok(
+  required.length === 1,
+  `the installed eve declares ${required.length} required slot(s) [${required.join(", ")}], and this suite drives one. ` +
+    `RE-READ eve's \`assertFrameworkToolPolicy\` before authoring a replacement for the new slot: if the throw does not name it, ` +
+    `a disableTool() sentinel is still legal there and is the cheaper proof. If a replacement really is required, drive its body in clause 4 too.`,
+);
+ok(
   required.includes(CONNECTION_SEARCH),
   `the installed eve still requires "${CONNECTION_SEARCH}" — if it stopped, that authored tool became an undecided posture change and its slot should go back to a disableTool() sentinel`,
 );

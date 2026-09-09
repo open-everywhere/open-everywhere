@@ -4,6 +4,13 @@ import { generateKeyPairSync } from "node:crypto";
 import { readAudit, deploymentOrg, platformFailureClass, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubPostArm, _resetGitHubInstallationTokenCache } from "../agent/channels/github-post-arm.js";
 
+import { rmSync as __rmSuiteStore } from "node:fs";
+import { join as __joinSuiteStore } from "node:path";
+import { tmpdir as __tmpdirSuiteStore } from "node:os";
+const __suiteStoreDir = __joinSuiteStore(__tmpdirSuiteStore(), `open-everywhere-suite-github-post-arm-${process.pid}`);
+__rmSuiteStore(__suiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __joinSuiteStore(__suiteStoreDir, "ops.sqlite3");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

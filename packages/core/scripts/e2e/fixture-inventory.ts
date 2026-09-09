@@ -352,8 +352,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
     resolutions.set(key, answer);
   }
 
-  const teamsRosterVisible = Boolean(env.OE_TEAMS_INTERNAL_SURFACES?.trim() || env.OE_TEAMS_E2E_UNIFIED_SURFACE?.trim());
-  const inventory = buildInventory({ envValues: env, declared, resolutions, unresolvableSurfaces: blind, teamsRosterVisible });
+  const inventory = buildInventory({ envValues: env, declared, resolutions, unresolvableSurfaces: blind });
   const generated = renderInventoryDoc(inventory, { unresolvableSurfaces: blind });
   const docPath = join(REPO_ROOT, INVENTORY_DOC);
 

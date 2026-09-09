@@ -5,6 +5,9 @@ import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js
 import type { Connection } from "../agent/access/bundle.js";
 import type { AuditInput } from "../agent/audit/audit.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("egress-write-attribution");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

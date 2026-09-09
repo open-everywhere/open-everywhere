@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   OFF_CHAIN_BY_DESIGN,
@@ -9,6 +9,9 @@ import {
   ROOT_PKG_LABEL,
   ROOT_SUBPROCESS_LEGS,
   SHARD_COUNT,
+  SUITE_FILE_WITHOUT_SCRIPT,
+  suiteFilesOnDisk,
+  suiteFilesWithARunner,
   chainLegNames,
   chainLegs,
   legLabel,
@@ -88,6 +91,37 @@ describe("batched chain parity", () => {
       const names = chainLegNames(chain);
       expect(new Set(names).size, `${pkg.name}: test:chain names a leg more than once`).toBe(names.length);
     }
+  });
+
+  test("every suite FILE in the walked trees is run by some `test:*` script, or declared exempt", () => {
+    const withRunner = suiteFilesWithARunner();
+    const exempt = new Set([...SUITE_FILE_WITHOUT_SCRIPT.keys()].map((p) => join(REPO_ROOT, p)));
+    const orphans = [...suiteFilesOnDisk()]
+      .filter((f) => !withRunner.has(f) && !exempt.has(f))
+      .map((f) => relative(REPO_ROOT, f))
+      .sort();
+    expect(
+      orphans,
+      "suite files that no `test:*` script runs — either give each one a `test:*` script and chain it, or name it in SUITE_FILE_WITHOUT_SCRIPT with the reason it is run some other way",
+    ).toEqual([]);
+  });
+
+  test("every SUITE_FILE_WITHOUT_SCRIPT entry names a real file that really has no runner", () => {
+    const withRunner = suiteFilesWithARunner();
+    for (const [path, reason] of SUITE_FILE_WITHOUT_SCRIPT) {
+      const absolute = join(REPO_ROOT, path);
+      expect(existsSync(absolute), `SUITE_FILE_WITHOUT_SCRIPT names "${path}", which is not on disk`).toBe(true);
+      expect(
+        withRunner.has(absolute),
+        `SUITE_FILE_WITHOUT_SCRIPT names "${path}", but a \`test:*\` script does run it — delete the entry`,
+      ).toBe(false);
+      expect(reason.length, `SUITE_FILE_WITHOUT_SCRIPT entry "${path}" carries no reason`).toBeGreaterThan(20);
+    }
+  });
+
+  test("the two suite-file sets are both non-trivial", () => {
+    expect(suiteFilesOnDisk().size).toBeGreaterThan(400);
+    expect(suiteFilesWithARunner().size).toBeGreaterThan(400);
   });
 
   test("every workspace with `test:*` scripts declares a `test:chain`", () => {

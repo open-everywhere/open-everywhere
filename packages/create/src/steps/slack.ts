@@ -1,76 +1,6 @@
+import { slackAppManifestTemplate } from "@open-everywhere/provider-slack/agent/app-manifest.js";
 import type { StepContext, WizardIO, WizardStep } from "../engine.js";
 import { isSet, mergedEnv, writeEnvLocal } from "../env-file.js";
-
-export function slackManifest(): string {
-  return JSON.stringify(
-    {
-      display_information: { name: "Open Everywhere" },
-      features: {
-        bot_user: { display_name: "Open Everywhere", always_online: true },
-        slash_commands: [
-          {
-            command: "/oe",
-            url: "https://YOUR-DEPLOY-URL/eve/v1/slack/commands",
-            description: "Open Everywhere control commands — status, budget, stop.",
-            usage_hint: "stop | status | budget",
-            should_escape: false,
-          },
-        ],
-        shortcuts: [
-          {
-            name: "Send to Open Everywhere",
-            type: "message",
-            callback_id: "oe_message_shortcut",
-            description: "Wake the agent on this message.",
-          },
-          {
-            name: "Ask Open Everywhere",
-            type: "global",
-            callback_id: "oe_global_shortcut",
-            description: "Wake the agent in a DM.",
-          },
-        ],
-      },
-      oauth_config: {
-        scopes: {
-          bot: [
-            "app_mentions:read",
-            "chat:write",
-            "channels:history",
-            "commands",
-            "channels:read",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "im:write",
-            "groups:history",
-            "mpim:read",
-            "reactions:write",
-            "reactions:read",
-            "pins:read",
-            "pins:write",
-            "users:read",
-          ],
-        },
-      },
-      settings: {
-        event_subscriptions: {
-          request_url: "https://YOUR-DEPLOY-URL/eve/v1/slack",
-          bot_events: ["app_mention", "message.im", "reaction_added", "reaction_removed"],
-        },
-        interactivity: {
-          is_enabled: true,
-          request_url: "https://YOUR-DEPLOY-URL/eve/v1/slack",
-        },
-        org_deploy_enabled: false,
-        socket_mode_enabled: false,
-        token_rotation_enabled: false,
-      },
-    },
-    null,
-    2,
-  );
-}
 
 export const slackStep: WizardStep = {
   id: "slack",
@@ -85,7 +15,7 @@ export const slackStep: WizardStep = {
       summary: "Create a Slack app from the manifest below, then copy its bot token + signing secret.",
       instructions: [
         "https://api.slack.com/apps → Create New App → From an app manifest → paste:",
-        slackManifest(),
+        slackAppManifestTemplate(),
         "Install to your workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.",
         "Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.",
         "Replace YOUR-DEPLOY-URL in the manifest's request_url with your real deploy URL (or a tunnel URL locally) before Slack can verify it.",

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   declaredWorkspaceTrust,
   rootDmGrainAttrs,
@@ -45,6 +46,24 @@ export function buildSlackAuth(input: SlackIdentityInput): OpenEverywhereSlackAu
   const isDmFamily = input.channelType === "im" || input.channelType === "mpim" || (input.channelType === undefined && input.channelId.startsWith("D"));
   Object.assign(attributes, rootDmGrainAttrs(isDmFamily));
   return { authenticator: "slack", principalId: input.userId, principalType: "slack-user", attributes };
+}
+
+export interface ForwardedSlackEnvelope {
+  readonly enterpriseId: string;
+  readonly channelId: string;
+  readonly ts: string;
+}
+
+const forwardedEnvelope = new AsyncLocalStorage<ForwardedSlackEnvelope>();
+
+export function withForwardedSlackEnvelope<T>(envelope: ForwardedSlackEnvelope | undefined, fn: () => T): T {
+  return envelope === undefined ? fn() : forwardedEnvelope.run(envelope, fn);
+}
+
+export function forwardedSlackEnterpriseId(message: { readonly channelId: string; readonly ts: string }): string | undefined {
+  const carried = forwardedEnvelope.getStore();
+  if (!carried) return undefined;
+  return carried.channelId === message.channelId && carried.ts === message.ts ? carried.enterpriseId : undefined;
 }
 
 export interface ChannelFacts {

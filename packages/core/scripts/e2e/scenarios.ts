@@ -11,7 +11,7 @@ import { tsAfter } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import { isMissingChatScopeError } from "./teams-driver.js";
-import type { GithubDriver } from "./github-driver.js";
+import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import { pinNotionQueryPage } from "./notion-driver.js";
@@ -4733,6 +4733,12 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       requireAuditRead(ctx);
       const github = ctx.githubEngaged!;
+      const isPrivate = await github.isPrivate();
+      const publicSkip = engagedRepoSkipReason(github.repo, isPrivate);
+      if (publicSkip) ctx.skip(publicSkip);
+      if (isPrivate === undefined) {
+        ctx.log("J-ENGAGED-github: could not read the fixture repo's privacy — running anyway, because an unreadable probe is not evidence the floor blocks step (b)");
+      }
       const issue = await github.createIssue(
         `e2e engaged-seam probe ${factToken("eng")}`,
         "Opened by the OPE-1503 addressed-only journey. Closed on teardown.",

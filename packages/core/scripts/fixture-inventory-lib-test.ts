@@ -101,7 +101,6 @@ const inventory = buildInventory({
   declared,
   resolutions: RESOLUTIONS,
   unresolvableSurfaces: [],
-  teamsRosterVisible: true,
 });
 const row = (surface: string, id: string) => inventory.rows.find((r) => r.surface === surface && r.id === id)!;
 
@@ -128,7 +127,6 @@ const clean = buildInventory({
   declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
   resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#general", detail: "info" } as Resolution]]),
   unresolvableSurfaces: [],
-  teamsRosterVisible: true,
 });
 ok(clean.flags.length === 0, "one resolved, singly-claimed room raises no flag at all — the negative control for all three");
 
@@ -137,20 +135,34 @@ const blind = buildInventory({
   declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
   resolutions: new Map(),
   unresolvableSurfaces: ["slack"],
-  teamsRosterVisible: true,
 });
 ok(blind.rows[0].name === "?" && blind.rows[0].note.includes("no driver credential"), "a surface with no credential reads as not-looked-up");
 ok(blind.flags.filter((f) => f.kind === "unresolved").length === 0, "a surface with no credential raises no unresolved flag");
 
-const teamsBlindRoster = buildInventory({
+const teamsEngaged = buildInventory({
+  envValues: { E2E_ADDRESSED_TEAMS_SURFACE: "19:abc@thread.tacv2" },
+  declared: [],
+  resolutions: new Map([[resolutionKey("teams", "19:abc@thread.tacv2"), { ok: true, name: "General", detail: "x" } as Resolution]]),
+  unresolvableSurfaces: [],
+});
+ok(teamsEngaged.flags.length === 0, "the addressed-only Teams room raises no env-unclaimed flag — it is unclaimed by design");
+ok(
+  teamsEngaged.rows[0].note.includes("unclaimed by design — no explicit domain holds it — it falls to the `org` criteria domain"),
+  "…and the row states the design reason, never a retired env var",
+);
+ok(!teamsEngaged.rows[0].note.includes("OE_TEAMS"), "…and names no retired Teams environment variable at all");
+ok(!teamsEngaged.rows[0].note.includes("claim unknown"), "…and never claims the roster is unreadable");
+
+const teamsPlain = buildInventory({
   envValues: { E2E_TEAMS_CHANNEL_ID: "19:abc@thread.tacv2" },
   declared: [],
   resolutions: new Map([[resolutionKey("teams", "19:abc@thread.tacv2"), { ok: true, name: "General", detail: "x" } as Resolution]]),
   unresolvableSurfaces: [],
-  teamsRosterVisible: false,
 });
-ok(teamsBlindRoster.flags.length === 0, "with the Teams roster env unset, a Teams room raises no env-unclaimed flag");
-ok(teamsBlindRoster.rows[0].note.includes("claim unknown"), "…and the row says the claim is unknown instead");
+ok(
+  teamsPlain.flags.filter((f) => f.kind === "env-unclaimed").length === 1,
+  "a Teams room no domain claims and no spec excuses raises the env-unclaimed flag, like every other surface",
+);
 
 const doc = renderInventoryDoc(inventory, { unresolvableSurfaces: [] });
 
@@ -168,7 +180,6 @@ const piped = renderInventoryDoc(
     declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
     resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#a|b", detail: "x" } as Resolution]]),
     unresolvableSurfaces: [],
-    teamsRosterVisible: true,
   }),
   { unresolvableSurfaces: [] },
 );
@@ -227,7 +238,6 @@ const blindedSlack = buildInventory({
   declared,
   resolutions: new Map([...RESOLUTIONS].filter(([k]) => k !== resolutionKey("slack", "CA"))),
   unresolvableSurfaces: [],
-  teamsRosterVisible: true,
 });
 const lost = namesLost(namedBefore, blindedSlack.rows);
 ok(lost.length === 1, "a room that carried a name and now resolves to nothing is reported lost — exactly one");

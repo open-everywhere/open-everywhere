@@ -12,6 +12,7 @@ export interface ParsedSlackShortcut {
   readonly triggerId: string;
   readonly userId: string;
   readonly teamId?: string;
+  readonly enterpriseId?: string;
   readonly channelId?: string;
   readonly message?: {
     readonly text: string;
@@ -40,8 +41,9 @@ export function parseSlackShortcutPayload(raw: unknown): ParsedSlackShortcut | n
   const userId = str(obj(p.user)?.id);
   if (!callbackId || !triggerId || !userId) return null;
   const teamId = str(obj(p.team)?.id);
+  const enterpriseId = str(obj(p.enterprise)?.id) ?? str(p.enterprise_id) ?? str(obj(p.team)?.enterprise_id);
   if (type === "shortcut") {
-    return { kind: "global", callbackId, triggerId, userId, ...(teamId ? { teamId } : {}) };
+    return { kind: "global", callbackId, triggerId, userId, ...(teamId ? { teamId } : {}), ...(enterpriseId ? { enterpriseId } : {}) };
   }
   const channelId = str(obj(p.channel)?.id);
   const message = obj(p.message);
@@ -56,6 +58,7 @@ export function parseSlackShortcutPayload(raw: unknown): ParsedSlackShortcut | n
     triggerId,
     userId,
     ...(teamId ? { teamId } : {}),
+    ...(enterpriseId ? { enterpriseId } : {}),
     channelId,
     message: {
       text: typeof message.text === "string" ? message.text : "",
@@ -100,6 +103,7 @@ export function shortcutMessageEvent(
     ts: sc.kind === "message" && sc.message ? sc.message.ts : slackTsFromMs(nowMs),
     ...(sc.kind === "message" && sc.message?.threadTs ? { threadTs: sc.message.threadTs } : {}),
     ...(sc.teamId ? { teamId: sc.teamId } : {}),
+    ...(sc.enterpriseId ? { enterpriseId: sc.enterpriseId } : {}),
     userId: sc.userId,
     ...(channelType ? { channelType } : {}),
     text,

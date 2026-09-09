@@ -9,6 +9,7 @@ import {
   buildSlackAuth,
   channelFactsFromInfo,
   channelFactsFromRaw,
+  forwardedSlackEnterpriseId,
   partnerFactsFromInfo,
   slackMode,
   type ChannelFacts,
@@ -262,9 +263,11 @@ async function resolveFacts(ctx: SlackContext, message: SlackMessage, isDm: bool
 function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhereSlackAuth | null {
   const author = message.author;
   if (!author) return null;
+  const enterpriseId = forwardedSlackEnterpriseId(message);
   return buildSlackAuth({
     userId: author.userId,
     teamId: message.teamId,
+    ...(enterpriseId === undefined ? {} : { enterpriseId }),
     channelId: message.channelId,
     threadTs: message.threadTs,
     channelType: facts.channelType,

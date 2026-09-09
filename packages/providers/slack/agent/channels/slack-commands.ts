@@ -13,7 +13,8 @@ function formField(params: URLSearchParams, name: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
-function bindableForSlashCommand(params: URLSearchParams): BindableContext {
+export function bindableForSlashCommand(params: URLSearchParams): BindableContext {
+  const enterpriseId = formField(params, "enterprise_id");
   return {
     channel: { kind: "slack" },
     session: {
@@ -22,6 +23,7 @@ function bindableForSlashCommand(params: URLSearchParams): BindableContext {
           attributes: {
             team_id: formField(params, "team_id") ?? "",
             channel_id: formField(params, "channel_id") ?? "",
+            ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
           },
           principalId: formField(params, "user_id") ?? "",
           principalType: "slack-user",

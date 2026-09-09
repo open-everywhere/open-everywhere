@@ -13,6 +13,14 @@ import {
   CREDENTIAL_KEY_BYTES,
 } from "../agent/ops/quickstart.js";
 import { preflightAsync, registerPreflightProbe, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
+import {
+  DEPLOY_HOST_PLACEHOLDER,
+  normalizeDeployHost,
+  registerSurfaceAppManifest,
+  surfaceAppManifest,
+  surfaceAppManifestSurfaces,
+  _resetSurfaceAppManifestsForTest,
+} from "../agent/ops/surface-manifest.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -357,4 +365,88 @@ const ok = (label: string, cond: boolean) => {
   else process.env.CLAUDE_PROJECT_DIR = outerProjectKey;
 }
 
-console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning)\n`);
+{
+  _resetSurfaceAppManifestsForTest();
+
+  ok("a bare host normalises to itself", normalizeDeployHost("oe.example.com") === "oe.example.com");
+  ok("a scheme is stripped", normalizeDeployHost("https://oe.example.com") === "oe.example.com");
+  ok("http is stripped too", normalizeDeployHost("http://oe.example.com") === "oe.example.com");
+  ok("a trailing slash is stripped", normalizeDeployHost("https://oe.example.com/") === "oe.example.com");
+  ok("surrounding whitespace is trimmed", normalizeDeployHost("  oe.example.com  ") === "oe.example.com");
+  ok("a port survives", normalizeDeployHost("https://oe.example.com:8443") === "oe.example.com:8443");
+  ok("an empty value is refused", normalizeDeployHost("") === undefined);
+  ok("a whitespace-only value is refused", normalizeDeployHost("   ") === undefined);
+  ok("a full webhook URL is refused (it carries a path)", normalizeDeployHost("https://oe.example.com/eve/v1/slack") === undefined);
+  ok("a query string is refused", normalizeDeployHost("oe.example.com?x=1") === undefined);
+  ok("a fragment is refused", normalizeDeployHost("oe.example.com#f") === undefined);
+  ok("userinfo is refused", normalizeDeployHost("user@oe.example.com") === undefined);
+  ok("an internal space is refused", normalizeDeployHost("oe example.com") === undefined);
+  ok("a backslash is refused — it would become a JSON escape", normalizeDeployHost("oe\\bad.com") === undefined);
+  ok("a double quote is refused — it would break the document", normalizeDeployHost('oe.example.com"x') === undefined);
+  ok("a comma-separated pair is refused", normalizeDeployHost("oe.example.com,evil.com") === undefined);
+  ok("a bare scheme prefix is refused", normalizeDeployHost("https:example.com") === undefined);
+  ok("a non-numeric port is refused", normalizeDeployHost("oe.example.com:port") === undefined);
+  ok("markup is refused", normalizeDeployHost("evil.com<b>") === undefined);
+
+  ok("no surface is registered by default", surfaceAppManifestSurfaces().length === 0);
+  ok("an unregistered surface resolves to undefined", surfaceAppManifest("slack") === undefined);
+
+  registerSurfaceAppManifest("fake", {
+    format: "json",
+    consoleUrl: "https://console.example.test/apps",
+    steps: ["Open the console.", "Paste the manifest."],
+    collect: ["Bot token = FAKE_BOT_TOKEN"],
+    template: () =>
+      JSON.stringify({
+        events: { request_url: `https://${DEPLOY_HOST_PLACEHOLDER}/eve/v1/fake` },
+        interactivity: { request_url: `https://${DEPLOY_HOST_PLACEHOLDER}/eve/v1/fake` },
+      }),
+  });
+  ok("a registered surface is listed", surfaceAppManifestSurfaces().includes("fake"));
+
+  const unsubstituted = surfaceAppManifest("fake");
+  ok("with no host the placeholder is kept", unsubstituted?.manifest.includes(DEPLOY_HOST_PLACEHOLDER) === true);
+  ok("…and placeholdersRemaining counts EVERY one of them", unsubstituted?.placeholdersRemaining === 2);
+  ok("…and no host is reported", unsubstituted?.host === undefined);
+
+  const substituted = surfaceAppManifest("fake", { host: "oe.example.com" });
+  ok("every placeholder is substituted", substituted?.placeholdersRemaining === 0);
+  ok("…for real: the placeholder is gone from the document", substituted?.manifest.includes(DEPLOY_HOST_PLACEHOLDER) === false);
+  ok("…and both request URLs carry the host", (substituted?.manifest.match(/https:\/\/oe\.example\.com\/eve\/v1\/fake/g) ?? []).length === 2);
+  ok("…and the host is reported back", substituted?.host === "oe.example.com");
+  ok("the human clicks ride along", substituted?.steps.length === 2 && substituted.consoleUrl === "https://console.example.test/apps");
+  ok("…as does what the operator brings back", substituted?.collect.join(" ").includes("FAKE_BOT_TOKEN") === true);
+
+  const server = buildOpsServer();
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  const client = new Client({ name: "manifest-test", version: "0" });
+  await client.connect(ct);
+  const call = async (args: Record<string, unknown>) => {
+    const res = await client.callTool({ name: "surface_manifest", arguments: args });
+    return JSON.parse((res.content as { type: string; text: string }[])[0].text) as Record<string, unknown>;
+  };
+
+  const served = await call({ surface: "fake", baseUrl: "https://oe.example.com/" });
+  ok("surface_manifest serves the substituted manifest", served.ok === true && served.placeholdersRemaining === 0);
+  ok("…carrying the real host", String(served.manifest).includes("https://oe.example.com/eve/v1/fake"));
+  ok("…and the ordered human clicks", Array.isArray(served.steps) && (served.steps as string[]).length === 2);
+
+  const bare = await call({ surface: "fake" });
+  ok("omitting baseUrl keeps the placeholder", bare.ok === true && bare.placeholdersRemaining === 2);
+
+  const unknown = await call({ surface: "teams" });
+  ok("an unregistered surface is refused, not invented", unknown.ok === false && unknown.manifest === undefined);
+  ok("…and the refusal names what IS registered", (unknown.available as string[]).includes("fake"));
+
+  for (const bad of ["https://oe.example.com/eve/v1/fake", "   ", "oe example.com"]) {
+    const refused = await call({ surface: "fake", baseUrl: bad });
+    ok(`surface_manifest refuses a baseUrl that is not a host (${JSON.stringify(bad)})`, refused.ok === false);
+    ok("…and returns no document at all", refused.manifest === undefined);
+  }
+
+  await client.close();
+  _resetSurfaceAppManifestsForTest();
+}
+
+console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest)\n`);

@@ -5,10 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { quickstartPlan, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
+import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces } from "./surface-manifest.js";
 
 export const OPS_TOOL_NAMES = [
   "preflight",
   "quickstart",
+  "surface_manifest",
   "scaffold_env",
   "scaffold_credential_key",
   "secret_set",
@@ -91,6 +93,53 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       inputSchema: { goal: z.enum(["local", "slack", "github", "deploy"]).default("local"), envPath: z.string().optional() },
     },
     (a) => json(quickstartPlan(a.goal, mergedEnv(a.envPath))),
+  );
+
+  server.registerTool(
+    "surface_manifest",
+    {
+      title: "Chat-app manifest",
+      description:
+        `Return the paste-ready app manifest for a chat surface (e.g. slack), with baseUrl substituted for the ${DEPLOY_HOST_PLACEHOLDER} ` +
+        "placeholder in every request URL, plus the ordered clicks the operator makes in the vendor console and the values they " +
+        "bring back. Read-only. Creating the app needs workspace-admin rights, so this is the hand-over for a step you cannot do. " +
+        "Omit baseUrl before the first deploy: the manifest then keeps the placeholder, and placeholdersRemaining says how many " +
+        "the operator must still replace by hand.",
+      inputSchema: {
+        surface: z.string().describe("the surface goal, e.g. \"slack\""),
+        baseUrl: z.string().optional().describe("this deployment's public origin, e.g. https://oe.example.com (scheme optional)"),
+      },
+    },
+    (a) => {
+      const available = surfaceAppManifestSurfaces();
+      let host: string | undefined;
+      if (a.baseUrl !== undefined) {
+        host = normalizeDeployHost(a.baseUrl);
+        if (host === undefined) {
+          return json({
+            ok: false,
+            surface: a.surface,
+            note:
+              `refusing to substitute the baseUrl you passed (${a.baseUrl.length} characters) — it is not a host. Pass this ` +
+              "deployment's origin: letters, digits, dots and hyphens, with an optional :port and an optional scheme. Not a " +
+              "path, and not a full webhook URL. The vendor rejects a malformed request URL at verification time.",
+          });
+        }
+      }
+      const resolved = surfaceAppManifest(a.surface, host === undefined ? {} : { host });
+      if (resolved === undefined) {
+        return json({
+          ok: false,
+          surface: a.surface,
+          available,
+          note:
+            available.length === 0
+              ? "no surface registered an app manifest in this process — the shipped entry is scripts/ops-mcp.ts, which registers the bundles before serving."
+              : `no app manifest is registered for "${a.surface}". Registered: ${available.join(", ")}.`,
+        });
+      }
+      return json({ ok: true, available, ...resolved });
+    },
   );
 
   server.registerTool(

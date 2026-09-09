@@ -10,6 +10,9 @@ import { getOperationalStore } from "../agent/operational/provider.js";
 import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("control");
+
 const PRICED_MODEL = builtInModelIds()[0];
 
 let n = 0;

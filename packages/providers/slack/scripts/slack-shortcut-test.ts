@@ -441,4 +441,96 @@ async function runFront(
   eq(g.dispatched.length, 1, "unresolved(global): a global shortcut resolves no room — it wakes the DM it opened, whatever conversations.info says");
 }
 
+{
+  const GRID = "E_GRID";
+  const OTHER_GRID = "E_OTHER";
+  const withGrid = { enterprise: { id: GRID } };
+
+  eq(parseSlackShortcutPayload(messageShortcut(withGrid))?.enterpriseId, GRID, "grid(parse): a MESSAGE shortcut carries the payload's `enterprise.id`");
+  eq(parseSlackShortcutPayload(globalShortcut(withGrid))?.enterpriseId, GRID, "grid(parse): …and so does a GLOBAL shortcut — both families take the same rung");
+  eq(
+    parseSlackShortcutPayload(messageShortcut())?.enterpriseId,
+    undefined,
+    "grid(parse) NEGATIVE CONTROL: an ordinary single-workspace payload names no enterprise — an absent rung, not an empty one",
+  );
+  ok(!("enterpriseId" in parseSlackShortcutPayload(messageShortcut())!), "grid(parse) NEGATIVE CONTROL: …and the key is ABSENT, so nothing downstream spreads an undefined");
+
+  {
+    const orgWide = parseSlackShortcutPayload(messageShortcut({ team: null, ...withGrid }));
+    eq(orgWide?.enterpriseId, GRID, "grid(parse): an ORG-WIDE install names only the enterprise (`team` is null) — the rung is still read");
+    eq(orgWide?.teamId, undefined, "grid(parse): …and the absent workspace stays absent rather than being invented from the enterprise");
+
+    const perWorkspace = parseSlackShortcutPayload(messageShortcut({ team: { id: TEAM, enterprise_id: GRID } }));
+    eq(perWorkspace?.enterpriseId, GRID, "grid(parse): 🔴 a PER-WORKSPACE install on a Grid nests the rung as `team.enterprise_id` — read it, or every such install loses the rung");
+    eq(perWorkspace?.teamId, TEAM, "grid(parse): …and its workspace is read as usual, from the same `team` object");
+
+    eq(
+      parseSlackShortcutPayload(messageShortcut({ team: null, enterprise_id: GRID }))?.enterpriseId,
+      GRID,
+      "grid(parse): 🔴 a top-level `enterprise_id` STRING is the third spelling — read it too, or an install that sends only this one loses the rung",
+    );
+
+    eq(
+      parseSlackShortcutPayload(messageShortcut({ team: { id: TEAM, enterprise_id: OTHER_GRID }, ...withGrid }))?.enterpriseId,
+      GRID,
+      "grid(parse): with more than one spelling present the top-level `enterprise` object wins — one answer, not a shape-dependent one",
+    );
+    eq(
+      parseSlackShortcutPayload(messageShortcut({ team: { id: TEAM, enterprise_id: OTHER_GRID }, enterprise_id: GRID }))?.enterpriseId,
+      GRID,
+      "grid(parse): …and the top-level string beats the one nested under `team`, so the order is widest-first throughout",
+    );
+  }
+
+  eq(
+    parseSlackShortcutPayload(messageShortcut({ team: null, context_enterprise_id: "E_FOREIGN" }))?.enterpriseId,
+    undefined,
+    "grid(parse): 🔴 `context_enterprise_id` is REFUSED — on a Connect payload it can name another org, so trusting it would let a foreign Grid vouch our room",
+  );
+
+  eq(
+    parseSlackShortcutPayload(messageShortcut({ user: { id: INVOKER, enterprise_user: { enterprise_id: "E_STRANGER" } } }))?.enterpriseId,
+    undefined,
+    "grid(parse): 🔴 the INVOKER's own `enterprise_user.enterprise_id` is NOT the room's rung — a stranger's Grid must never vouch our room",
+  );
+
+  eq(
+    shortcutMessageEvent(parseSlackShortcutPayload(messageShortcut(withGrid))!, DM_CHANNEL, "im").enterpriseId,
+    GRID,
+    "grid(map): `shortcutMessageEvent` spreads the rung onto the ParsedMessageEvent every wake route already reads",
+  );
+  ok(
+    !("enterpriseId" in shortcutMessageEvent(parseSlackShortcutPayload(messageShortcut())!, DM_CHANNEL, "im")),
+    "grid(map) NEGATIVE CONTROL: a non-Grid shortcut spreads NO key, so its wake auth is byte-identical to before",
+  );
+
+  {
+    const r = await runFront(urlencoded(messageShortcut(withGrid)));
+    eq(r.dispatched.length, 1, "grid(join): the Grid shortcut wakes exactly once, as any shortcut does");
+    eq(
+      (r.dispatched[0]!.auth.attributes ?? {})["enterprise_id"],
+      GRID,
+      "grid(join): 🔴 the dispatched wake auth carries `enterprise_id` — the attribute `bindSlack` turns into the trust rung above the workspace",
+    );
+  }
+  {
+    const plain = await runFront(urlencoded(messageShortcut()));
+    eq(plain.dispatched.length, 1, "grid(join) NEGATIVE CONTROL: the same click without an enterprise still wakes");
+    eq(
+      (plain.dispatched[0]!.auth.attributes ?? {})["enterprise_id"],
+      undefined,
+      "grid(join) NEGATIVE CONTROL: 🔴 …and stamps NO enterprise_id — the payload's `enterprise` object is what carries the rung, nothing else",
+    );
+  }
+  {
+    const global = await runFront(urlencoded(globalShortcut(withGrid)));
+    eq(global.dispatched.length, 1, "grid(join): a GLOBAL shortcut wakes the invoker's own DM");
+    eq(
+      (global.dispatched[0]!.auth.attributes ?? {})["enterprise_id"],
+      GRID,
+      "grid(join): …and carries the rung there too — both shortcut families reach the same stamp",
+    );
+  }
+}
+
 console.log(`✓ slack-shortcut-test: ${n} assertion(s) passed`);

@@ -984,6 +984,17 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { engagedRepoSkipReason } = await import("../packages/core/scripts/e2e/github-driver.js");
+  const publicReason = engagedRepoSkipReason("acme/fixture", false);
+  ok(publicReason !== undefined, "a PUBLIC fixture repo yields a skip reason");
+  ok(publicReason!.includes("acme/fixture"), "…which names the repo the operator must fix");
+  ok(publicReason!.includes("PUBLIC") && publicReason!.includes("githubEngagedFollowUpReach"), "…and names the privacy floor that makes step (b) unreachable");
+  ok(publicReason!.includes("E2E_ADDRESSED_GITHUB_REPO"), "…and the variable that points the journey elsewhere");
+  ok(engagedRepoSkipReason("acme/fixture", true) === undefined, "a PRIVATE fixture repo yields no skip — the journey runs");
+  ok(engagedRepoSkipReason("acme/fixture", undefined) === undefined, "an UNREADABLE probe yields no skip either — unknown privacy is not evidence the floor blocks step (b)");
+}
+
+{
   const { buildAgentSessionEvent, FORGE_SESSION_ID, FORGE_ORGANIZATION_ID, FORGE_ISSUE_ID, FORGE_CREATOR_ID } = await import(
     "../packages/core/scripts/e2e/linear-driver.js"
   );

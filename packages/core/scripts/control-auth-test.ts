@@ -28,6 +28,9 @@ import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("control-auth");
+
 let n = 0;
 const ok = (label: string, cond: boolean) => {
   assert.ok(cond, label);

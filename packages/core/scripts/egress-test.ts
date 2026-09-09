@@ -6,6 +6,9 @@ import type { Connection } from "../agent/access/bundle.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("egress");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { Agent, ProxyAgent } from "undici";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("host-egress-proxy");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

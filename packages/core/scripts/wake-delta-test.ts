@@ -16,6 +16,9 @@ import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import type { AuditEntry } from "../agent/audit/audit.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("wake-delta");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

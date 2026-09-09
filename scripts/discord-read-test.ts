@@ -20,6 +20,9 @@ import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "@open-everywhere/core/agent/identity/author-trust.js";
 
+import { pinSuiteStore } from "../packages/core/scripts/_suite-store.js";
+pinSuiteStore("discord-read");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

@@ -79,9 +79,10 @@ import {
   slackExternalPolicyForRoom,
   applySlackExternalPolicy,
   stripUnfencedSlackAttachments,
+  slackEnterpriseIdFromEnvelope,
   _resetAuthorMemberCache,
 } from "./slack-events.js";
-import { buildSlackAuth } from "./slack-identity.js";
+import { buildSlackAuth, withForwardedSlackEnvelope, type ForwardedSlackEnvelope } from "./slack-identity.js";
 import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
 import {
   parseSlackShortcutPayload,
@@ -330,6 +331,24 @@ export interface FrontOptions {
 
 const OK = () => new Response("ok");
 
+function forwardedEnvelopeOf(rawBody: string): ForwardedSlackEnvelope | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const env = parsed as SlackEventEnvelope;
+  const enterpriseId = slackEnterpriseIdFromEnvelope(env);
+  if (enterpriseId === undefined) return undefined;
+  const event = env.event;
+  const channelId = typeof event?.channel === "string" ? event.channel : undefined;
+  const ts = typeof event?.ts === "string" ? event.ts : undefined;
+  if (!channelId || !ts) return undefined;
+  return { enterpriseId, channelId, ts };
+}
+
 function wakeKey(env: SlackEventEnvelope, channelId: string, ts: string, botIdentity = "default"): string {
   const eventId = typeof env.event_id === "string" ? env.event_id : undefined;
   return `${botIdentity}:${eventId ?? `${channelId}:${ts}`}`;
@@ -496,19 +515,20 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
-    const forwardNative = (): Promise<Response> => {
-      const fenced = stripUnfencedSlackAttachments(rawBody);
-      const ts = req.headers.get(SLACK_TIMESTAMP_HEADER);
-      const secret = signingSecret();
-      if (fenced === rawBody || !ts || !secret) {
-        return innerHandler(new Request(req.url, { method: "POST", headers: req.headers, body: rawBody }), args);
-      }
-      const headers = new Headers(req.headers);
-      headers.set(SLACK_SIGNATURE_HEADER, slackSignature(secret, ts, fenced));
-      headers.delete("content-length");
-      console.log("[open-everywhere:slack-front] stripped an unfenced link-unfurl attachment before the native forward (OPE-1380)");
-      return innerHandler(new Request(req.url, { method: "POST", headers, body: fenced }), args);
-    };
+    const forwardNative = (): Promise<Response> =>
+      withForwardedSlackEnvelope(forwardedEnvelopeOf(rawBody), () => {
+        const fenced = stripUnfencedSlackAttachments(rawBody);
+        const ts = req.headers.get(SLACK_TIMESTAMP_HEADER);
+        const secret = signingSecret();
+        if (fenced === rawBody || !ts || !secret) {
+          return innerHandler(new Request(req.url, { method: "POST", headers: req.headers, body: rawBody }), args);
+        }
+        const headers = new Headers(req.headers);
+        headers.set(SLACK_SIGNATURE_HEADER, slackSignature(secret, ts, fenced));
+        headers.delete("content-length");
+        console.log("[open-everywhere:slack-front] stripped an unfenced link-unfurl attachment before the native forward (OPE-1380)");
+        return innerHandler(new Request(req.url, { method: "POST", headers, body: fenced }), args);
+      });
 
     const send = ((input: { message: string; context?: readonly string[] }, opts: { auth: unknown; continuationToken: string; state?: unknown }) =>
       args.from(opts.continuationToken).send(input.message, {

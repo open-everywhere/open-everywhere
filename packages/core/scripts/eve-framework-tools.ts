@@ -38,8 +38,8 @@ export function readRequiredFrameworkToolSlots(eveRoot: string): string[] {
   if (declaration === null) {
     throw new Error(
       `eve framework tools: ${POLICY_PATH} exists but declares no readable ` +
-        `\`REQUIRED_FRAMEWORK_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that decides which ` +
-        `framework tool slots refuse a disableTool() sentinel. Guessing is not safe in both directions: an ` +
+        `\`REQUIRED_FRAMEWORK_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that declares which ` +
+        `framework tool slots an app may not simply disable. Guessing is not safe in both directions: an ` +
         `OVER-report exempts a slot from the sentinel demand and lets a hands-on tool sit there unreviewed, ` +
         `and an UNDER-report leaves the failure to surface as an \`eve build\` throw naming eve's file instead ` +
         `of OE's zero-hands invariant. Read eve's policy module and update this reader.`,

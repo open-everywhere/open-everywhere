@@ -70,7 +70,13 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
 
   { surface: "github", envVar: "E2E_ADDRESSED_GITHUB_REPO", what: "J-ENGAGED-github's addressed-only repo — NOT E2E_PR_REPO, which names e2e-unified's e2e-scratch", ownedBy: "e2e-engaged" },
   { surface: "discord", envVar: "E2E_ADDRESSED_DISCORD_CHANNEL", what: "J-ENGAGED-discord's addressed-only channel", ownedBy: "e2e-engaged" },
-  { surface: "teams", envVar: "E2E_ADDRESSED_TEAMS_SURFACE", what: "J-ENGAGED-teams's addressed-only channel — NOT E2E_TEAMS_CHANNEL_ID, which J-TEAMS drives", ownedBy: "e2e-engaged" },
+  {
+    surface: "teams",
+    envVar: "E2E_ADDRESSED_TEAMS_SURFACE",
+    what: "J-ENGAGED-teams's addressed-only channel — NOT E2E_TEAMS_CHANNEL_ID, which J-TEAMS drives",
+    ownedBy: "e2e-engaged",
+    expectUnclaimed: "no explicit domain holds it — it falls to the `org` criteria domain, which is addressed-only by default, and that default is the posture J-ENGAGED-teams drives",
+  },
   { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team", ownedBy: "e2e-engaged" },
   { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page", ownedBy: "e2e-engaged" },
 ];
@@ -375,7 +381,6 @@ export interface InventoryInput {
   readonly declared: readonly DeclaredRoom[];
   readonly resolutions: ReadonlyMap<string, Resolution>;
   readonly unresolvableSurfaces: readonly SurfaceKind[];
-  readonly teamsRosterVisible: boolean;
 }
 
 export interface Inventory {
@@ -409,7 +414,7 @@ export function inventoryVars(
 }
 
 export function buildInventory(input: InventoryInput): Inventory {
-  const { envValues, declared, resolutions, unresolvableSurfaces, teamsRosterVisible } = input;
+  const { envValues, declared, resolutions, unresolvableSurfaces } = input;
   const blindSurfaces = new Set(unresolvableSurfaces);
 
   interface Draft {
@@ -501,8 +506,6 @@ export function buildInventory(input: InventoryInput): Inventory {
     if (d.envVars.length > 0 && domainClaimants.length === 0) {
       if (d.expectUnclaimed) {
         notes.push(`unclaimed by design — ${d.expectUnclaimed}`);
-      } else if (d.surface === "teams" && !teamsRosterVisible) {
-        notes.push("claim unknown — the Teams roster is env-only (`OE_TEAMS_INTERNAL_SURFACES`) and was unset in the run that wrote this table");
       } else {
         flags.push({
           kind: "env-unclaimed",

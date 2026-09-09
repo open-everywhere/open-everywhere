@@ -16,6 +16,9 @@ import checkoutRepoGated from "../agent/tools/checkout_repo.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("scm-broker");
+
 const checkoutRepoTool = (await resolveWindowGated(checkoutRepoGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 
 let n = 0;

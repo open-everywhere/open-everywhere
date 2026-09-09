@@ -2,6 +2,16 @@ import type { GithubDriverConfig } from "./env.js";
 import { pollUntil } from "./poll.js";
 import { buildIssueCommentEvent, signGithubBody, type IssueCommentForgeInput } from "./github-forge.js";
 
+export function engagedRepoSkipReason(repo: string, isPrivate: boolean | undefined): string | undefined {
+  if (isPrivate !== false) return undefined;
+  return (
+    `${repo} is PUBLIC — the engaged follow-up arm floors on a private repository (githubEngagedFollowUpReach: a plain ` +
+    `follow-up wakes a full native turn, which a public repo would let any passer-by buy), so step (b) is unreachable ` +
+    `here for a configuration reason. Make the fixture repo private (Settings → General → Danger Zone), or point ` +
+    `E2E_ADDRESSED_GITHUB_REPO at a private repo`
+  );
+}
+
 export interface GithubComment {
   readonly id: number;
   readonly body: string;
@@ -52,6 +62,11 @@ export class GithubDriver {
       throw new Error(`github ${method} ${path} → ${res.status}${detail ? ` (${detail})` : ""}`);
     }
     return (await res.json()) as Record<string, unknown>;
+  }
+
+  async isPrivate(): Promise<boolean | undefined> {
+    const json = await this.api("GET", `/repos/${this.cfg.repo}`).catch(() => undefined);
+    return typeof json?.private === "boolean" ? json.private : undefined;
   }
 
   async createIssue(title: string, bodyText: string): Promise<number> {

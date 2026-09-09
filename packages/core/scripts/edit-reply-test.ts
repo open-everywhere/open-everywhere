@@ -1,14 +1,21 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
-function ok(cond: boolean, label: string): void {
+function ok(cond: boolean, label: string, diagnose?: () => void): void {
   if (!cond) {
     console.error(`✗ ${label}`);
+    if (diagnose) {
+      try {
+        diagnose();
+      } catch (e) {
+        console.error(`  (state capture failed: ${e instanceof Error ? e.message : String(e)})`);
+      }
+    }
     process.exit(1);
   }
   passed++;
@@ -16,6 +23,7 @@ function ok(cond: boolean, label: string): void {
 
 const dir = join(tmpdir(), `open-everywhere-edit-reply-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
+process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -424,6 +432,17 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(row?.text === "Four items: a, b, c, d.", "🔴 §16: …and its TEXT is REWRITTEN to the corrected message — the ring shows what the room now shows");
 }
 
+function captureRingState(leg: string, ring: readonly { readonly kind?: string; readonly at?: string; readonly id?: string; readonly text?: string }[]): () => void {
+  return () => {
+    console.error(`  §17/${leg} state capture:`);
+    console.error(`    store dir: ${dir}`);
+    console.error(`    ring rows (${ring.length}):`);
+    for (const entry of ring) console.error(`      ${entry.kind ?? "?"} ${entry.at ?? "?"} id=${entry.id ?? "—"} text=${JSON.stringify(entry.text ?? "")}`);
+    const leftovers = readdirSync(tmpdir()).filter((name) => name.startsWith("open-everywhere-edit-reply-test-"));
+    console.error(`    edit-reply-test dirs under ${tmpdir()} (${leftovers.length}): ${leftovers.join(", ") || "none"}`);
+  };
+}
+
 {
   const inTurn = newSession();
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
@@ -436,7 +455,11 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(eDef.edited !== true, "§17/DEFINITIVE: the edit was refused, as §12 already proves");
   let ring = await store.readSessionTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token);
   let row = ring.find((entry) => entry.id === r.id);
-  ok(row?.text === "Original text, unedited.", "🔴 §17/DEFINITIVE: the ring row is UNTOUCHED — a definitive failure proves nothing changed at the platform");
+  ok(
+    row?.text === "Original text, unedited.",
+    "🔴 §17/DEFINITIVE: the ring row is UNTOUCHED — a definitive failure proves nothing changed at the platform",
+    captureRingState("DEFINITIVE", ring),
+  );
 
   updateOutcome = "ambiguous";
   const eAmb = (await inTurn(() => callEdit(w, "turn_17", w, r.id as string, "This must not land on the ring either."))) as { edited?: boolean };
@@ -447,6 +470,7 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(
     row?.text === "Original text, unedited.",
     "🔴 §17/AMBIGUOUS: the ring row is STILL UNTOUCHED — an unconfirmed outcome must not claim the room changed, the same reasoning the ambiguous NOTE itself states to the model",
+    captureRingState("AMBIGUOUS", ring),
   );
 }
 
@@ -612,5 +636,4 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   );
 }
 
-rmSync(dir, { recursive: true, force: true });
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);

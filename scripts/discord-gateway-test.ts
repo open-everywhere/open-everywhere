@@ -63,6 +63,9 @@ import { finalMessageAction, NO_REPLY_SENTINEL } from "@open-everywhere/core/age
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
+import { pinSuiteStore } from "../packages/core/scripts/_suite-store.js";
+pinSuiteStore("discord-gateway");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

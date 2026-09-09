@@ -15,6 +15,13 @@ import {
 } from "../agent/channels/linear-credentials.js";
 import { readAudit, deploymentOrg, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { rmSync as __rmSuiteStore } from "node:fs";
+import { join as __joinSuiteStore } from "node:path";
+import { tmpdir as __tmpdirSuiteStore } from "node:os";
+const __suiteStoreDir = __joinSuiteStore(__tmpdirSuiteStore(), `open-everywhere-suite-linear-credentials-${process.pid}`);
+__rmSuiteStore(__suiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __joinSuiteStore(__suiteStoreDir, "ops.sqlite3");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

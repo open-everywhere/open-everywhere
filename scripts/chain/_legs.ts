@@ -213,6 +213,54 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
+export const SUITE_FILE_WITHOUT_SCRIPT: ReadonlyMap<string, string> = new Map([
+  [
+    "packages/core/scripts/wake-origin-fixtures-test.ts",
+    "the FROZEN stored-data oracle. Its INVOCATION lives at the app tier — root `test:wake-origin-fixtures` " +
+      "runs `scripts/wake-origin-fixtures-boot.ts`, which registers every provider bundle and then imports " +
+      "this file dynamically. A core script may not import a provider package (boundary-test.ts rule 1), so " +
+      "the oracle cannot own the script that runs it.",
+  ],
+  [
+    "scripts/agent-version-seam-bundle-test.ts",
+    "a `postbuild` leg: it reads the just-built bundle, which no `tsx`-tier `test:*` script can produce. It " +
+      "runs wherever `npm run build` runs, so it is already inside the build proof — the same reason " +
+      "`test:dynamic-closure-bundle` is in OFF_CHAIN_BY_DESIGN above.",
+  ],
+]);
+
+export function suiteFilesWithARunner(): Set<string> {
+  const out = new Set<string>();
+  const rootScripts = (JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
+  const sources: { dir: string; scripts: Record<string, string> }[] = [
+    { dir: REPO_ROOT, scripts: rootScripts },
+    ...workspacePackages().map((p) => ({ dir: p.dir, scripts: p.scripts })),
+  ];
+  for (const { dir, scripts } of sources) {
+    for (const [name, command] of Object.entries(scripts)) {
+      if (!name.startsWith("test:") || name === "test:chain") continue;
+      for (const m of command.matchAll(/(?:^|\s)tsx\s+(\S+\.ts)/g)) out.add(join(dir, m[1]!));
+    }
+  }
+  return out;
+}
+
+export function suiteFilesOnDisk(): Set<string> {
+  const out = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith("-test.ts")) out.add(path);
+    }
+  };
+  const roots = [REPO_ROOT, ...workspacePackages().map((p) => p.dir)].map((d) => join(d, "scripts"));
+  roots.push(join(REPO_ROOT, "deploy"));
+  for (const root of roots) if (existsSync(root)) walk(root);
+  return out;
+}
+
 export const SHARD_COUNT = 20;
 
 export function legsForShard(index: number, legs: ChainLeg[] = chainLegs()): ChainLeg[] {
