@@ -1,6 +1,6 @@
 import { connectorActingIdentityForTurn, type BindableContext, type OwnAccountVendor } from "@open-everywhere/core/agent/adapter-api.js";
 
-export const GITHUB_CONNECTOR = "github";
+const GITHUB_CONNECTOR = "github";
 
 export const GITHUB_OWN_ACCOUNT_VENDOR: OwnAccountVendor = { aliases: ["github.com"], connector: GITHUB_CONNECTOR };
 

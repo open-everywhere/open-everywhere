@@ -57,6 +57,7 @@ const {
   resolveSlackPrivate,
   resolveSlackChannelB,
   resolveSlackMpim,
+  resolveEngagedGithub,
   resolveSlackCapFixture,
   resolveSyntheticDm,
   resolveSlackUser2,
@@ -73,6 +74,7 @@ const {
   isLocalEvalTarget,
   resolveCapabilities,
   engagedLinearApiKey,
+  engagedLinearIdentity,
   resolveEngagedLinear,
   resolveEngagedTeams,
   DEFAULT_TEAMS_REFRESH_SINK,
@@ -223,6 +225,32 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "🔴 a tracked room id alone is NOT a live capability — an env with no credentials stays full dry mode, which the runner passes by design",
   );
 
+  const GH_TRACKED = { [ENGAGED_ROOM_VARS.github]: "owner/tracked-repo" };
+  const ghFromRepo = resolveEngagedGithub(empty, GH_TRACKED);
+  ok(
+    ghFromRepo.ok && ghFromRepo.cfg.id === "owner/tracked-repo",
+    "🔴 with E2E_ADDRESSED_GITHUB_REPO unset, J-ENGAGED-github's repo resolves from the tracked inventory — a deployment nobody edited cannot lose the id",
+  );
+  const ghEnvWins = resolveEngagedGithub({ [ENGAGED_ROOM_VARS.github]: "owner/env-repo" }, GH_TRACKED);
+  ok(ghEnvWins.ok && ghEnvWins.cfg.id === "owner/env-repo", "the variable stays an OVERRIDE — set, it wins over the tracked id");
+  const ghBlank = resolveEngagedGithub({ [ENGAGED_ROOM_VARS.github]: "   " }, GH_TRACKED);
+  ok(ghBlank.ok && ghBlank.cfg.id === "owner/tracked-repo", "a blank variable is not a value — it falls through to the tracked id rather than resolving to whitespace");
+  const ghNowhere = resolveEngagedGithub(empty, {});
+  ok(
+    !ghNowhere.ok && ghNowhere.missing.join(",") === ENGAGED_ROOM_VARS.github,
+    "🔴 the control: absent from BOTH is still a skip naming the variable — never a red, and never a resolved repo that does not exist",
+  );
+  const ghDeclaredEmpty = resolveEngagedGithub(empty, { [ENGAGED_ROOM_VARS.github]: "" });
+  ok(!ghDeclaredEmpty.ok, "the second control: a tracked entry DECLARED with an empty id resolves nothing — declared is not provisioned");
+  ok(
+    resolveCapabilities(empty, GH_TRACKED).available.size === 0,
+    "🔴 a tracked repo id alone is NOT a live capability — an env with no credentials stays full dry mode",
+  );
+  ok(
+    resolveCapabilities(empty, { ...MPIM_TRACKED, ...GH_TRACKED }).available.size === 0,
+    "…and both tracked rooms together are still full dry mode — the gates are per capability, not a single special case",
+  );
+
   const caps = resolveCapabilities(empty, {});
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
   ok(!caps.includeOptional, "optional scenarios excluded by default");
@@ -277,10 +305,20 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const capsFull = resolveCapabilities(full, {});
   ok(capsFull.available.size === 15, "full env: all fifteen capabilities live");
   ok(capsFull.available.has("engagedSlack"), "J-ENGAGED-slack is LIVE on an env that carries E2E_SLACK_PRIVATE_CHANNEL — it drives the reused room rather than skipping");
-  ok(!capsFull.available.has("engagedGithub"), "J-ENGAGED-github stays DARK on a full operator env — it reads no var another fixture already sets");
-  const capsWithEngagedGithub = resolveCapabilities({ ...full, [ENGAGED_ROOM_VARS.github]: "example-owner/oe-e2e-addressed-github" }, {});
-  ok(capsWithEngagedGithub.available.has("engagedGithub"), "…and comes up on its OWN var, so the capability is wired rather than merely unresolvable");
-  ok(capsWithEngagedGithub.available.size === 16, "one var, one more capability — nothing else moves with it");
+  ok(!capsFull.available.has("engagedGithub"), "J-ENGAGED-github stays DARK on a full operator env — it reads no var another fixture already sets, and `full` carries no GitHub driver either");
+  const githubDriver = {
+    [ENV.githubDriverToken]: "ghp-test",
+    [ENV.githubRepo]: "example-owner/e2e-scratch",
+    [ENV.githubAppSlug]: "oe-app",
+    [ENV.githubIssue]: "1",
+  };
+  const capsWithEngagedGithub = resolveCapabilities({ ...full, ...githubDriver, [ENGAGED_ROOM_VARS.github]: "example-owner/oe-e2e-addressed-github" }, {});
+  ok(capsWithEngagedGithub.available.has("engagedGithub"), "…and comes up on its OWN var beside the GitHub driver, so the capability is wired rather than merely unresolvable");
+  ok(capsWithEngagedGithub.available.size === 17, "the driver plus the room var: `github` and `engagedGithub`, and nothing else moves with them");
+  ok(
+    !resolveCapabilities({ ...full, ...githubDriver }, {}).available.has("engagedGithub"),
+    "🔴 the GitHub driver alone does NOT light engagedGithub — the engaged repo has a variable of its own, and reusing E2E_GITHUB_REPO or E2E_PR_REPO would aim the journey at e2e-unified's e2e-scratch",
+  );
   ok(capsFull.available.has("connectorWrite"), "connectorWrite comes up with the bound channel — no arming declaration stands between the fixture and the capability");
   const capFixtureCfg = resolveSlackCapFixture(full);
   ok(capFixtureCfg.ok && capFixtureCfg.cfg.channel === "C0CAP", "S10 cap-fixture cfg carries the dedicated throwaway channel");
@@ -465,16 +503,85 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 {
   const own = ENV.addressedLinearApiKey;
 
-  const noKey = resolveEngagedLinear({ [ENV.engagedLinearTeamId]: "team-uuid-1" });
+  const noKey = resolveEngagedLinear({ [ENV.engagedLinearTeamId]: "team-uuid-1" }, {});
   ok(!noKey.ok, "the addressed-only Linear team does not resolve while its own key is unset");
   ok(
     !noKey.ok && noKey.missing.some((m) => m.includes(own)),
     `…and the refusal NAMES that key, so the operator is not left to guess (got: ${noKey.ok ? "resolved" : noKey.missing.join("; ")})`,
   );
-  const withKey = resolveEngagedLinear({ [ENV.engagedLinearTeamId]: "team-uuid-1", [own]: "lin_api_addressed" });
-  ok(withKey.ok && withKey.cfg.id === "team-uuid-1", `with both set it resolves to the team id (got: ${withKey.ok ? withKey.cfg.id : "refused"})`);
-  const noTeam = resolveEngagedLinear({ [own]: "lin_api_addressed" });
+  const withKey = resolveEngagedLinear(
+    { [ENV.engagedLinearTeamId]: "team-uuid-1", [own]: "lin_api_addressed", [ENV.linearSoakAppUserId]: "app-user-2", [ENV.linearSoakAgentHandle]: "OE" },
+    {},
+  );
+  ok(withKey.ok && withKey.cfg.id === "team-uuid-1", `with the room and every workspace input set it resolves to the team id (got: ${withKey.ok ? withKey.cfg.id : withKey.missing.join("; ")})`);
+  const noTeam = resolveEngagedLinear({ [own]: "lin_api_addressed" }, {});
   ok(!noTeam.ok && noTeam.missing.includes(ENV.engagedLinearTeamId), "an unset team id still self-skips naming the team variable, unchanged by the key check");
+
+  const LINEAR_TRACKED = { [ENV.engagedLinearTeamId]: "team-from-git" };
+  const WORKSPACE_ENV = { [own]: "lin_api_addressed", [ENV.linearSoakAppUserId]: "app-user-2", [ENV.linearSoakAgentHandle]: "OE" };
+  const fromTable = resolveEngagedLinear(WORKSPACE_ENV, LINEAR_TRACKED);
+  ok(
+    fromTable.ok && fromTable.cfg.id === "team-from-git",
+    `🔴 with E2E_ADDRESSED_LINEAR_TEAM_ID unset, the team resolves from the tracked inventory — a deployment nobody edited cannot lose the id (got: ${fromTable.ok ? fromTable.cfg.id : fromTable.missing.join("; ")})`,
+  );
+  const envWins = resolveEngagedLinear({ ...WORKSPACE_ENV, [ENV.engagedLinearTeamId]: "team-from-env" }, LINEAR_TRACKED);
+  ok(envWins.ok && envWins.cfg.id === "team-from-env", "the variable stays an OVERRIDE — set, it wins over the tracked id");
+  const blank = resolveEngagedLinear({ ...WORKSPACE_ENV, [ENV.engagedLinearTeamId]: "   " }, LINEAR_TRACKED);
+  ok(blank.ok && blank.cfg.id === "team-from-git", "a blank variable is not a value — it falls through to the tracked id rather than resolving to whitespace");
+  const declaredEmpty = resolveEngagedLinear(WORKSPACE_ENV, { [ENV.engagedLinearTeamId]: "" });
+  ok(!declaredEmpty.ok, "the control: a tracked entry DECLARED with an empty id resolves nothing — declared is not provisioned");
+  const trackedNoKey = resolveEngagedLinear({}, LINEAR_TRACKED);
+  ok(
+    !trackedNoKey.ok && trackedNoKey.missing.some((m) => m.includes(own)),
+    `🔴 a tracked team id does NOT get past the key check — with ${own} unset it still self-skips naming that key (got: ${trackedNoKey.ok ? "resolved" : trackedNoKey.missing.join("; ")})`,
+  );
+  ok(
+    resolveCapabilities({}, LINEAR_TRACKED).available.size === 0,
+    "🔴 a tracked team id alone is NOT a live capability — an env with no credentials stays full dry mode",
+  );
+  const linearDriver = {
+    [ENV.linearApiKey]: "lin_api_base",
+    [ENV.linearTeamId]: "team-base",
+    [ENV.linearAppUserId]: "app-user-base",
+    [ENV.linearAgentHandle]: "OEBase",
+  };
+  ok(
+    resolveCapabilities({ ...linearDriver, ...WORKSPACE_ENV }, LINEAR_TRACKED).available.has("engagedLinear"),
+    "🔴 the room var stays unset and engagedLinear comes up from the tracked table — so `resolveCapabilities` really hands ITS `tracked` argument to this resolver",
+  );
+  ok(
+    !resolveCapabilities({ ...linearDriver, ...WORKSPACE_ENV }, {}).available.has("engagedLinear"),
+    "…and the control: the same environment against an EMPTY table leaves it dark, so the id came from the table rather than from anything in the environment",
+  );
+  ok(
+    resolveCapabilities({ ...linearDriver, ...WORKSPACE_ENV }, {}).missing.engagedLinear.join(",") === ENV.engagedLinearTeamId,
+    "…naming the team variable, so an operator with the workspace inputs and no room is told which one is missing",
+  );
+  ok(
+    resolveCapabilities(WORKSPACE_ENV, LINEAR_TRACKED).available.size === 0,
+    "🔴 the workspace inputs and a tracked team WITHOUT the Linear driver stay full dry mode — the capability is the base driver rebound, never a fixture of its own",
+  );
+
+  const noIdentity = resolveEngagedLinear({ [own]: "lin_api_addressed" }, LINEAR_TRACKED);
+  ok(!noIdentity.ok, "🔴 the key alone does NOT resolve the addressed-only team — its workspace's app identity is part of the room");
+  ok(
+    !noIdentity.ok && noIdentity.missing.some((m) => m.includes(ENV.linearSoakAppUserId) && m.includes(ENV.linearSoakAgentHandle)),
+    `…and the refusal NAMES both variables, so the operator is not left to guess (got: ${noIdentity.ok ? "resolved" : noIdentity.missing.join("; ")})`,
+  );
+  ok(!resolveEngagedLinear({ [own]: "k", [ENV.linearSoakAppUserId]: "app-user-2" }, LINEAR_TRACKED).ok, "the app-user id alone is not enough — the mention handle is read too");
+  ok(!resolveEngagedLinear({ [own]: "k", [ENV.linearSoakAgentHandle]: "OE" }, LINEAR_TRACKED).ok, "the handle alone is not enough — the app-user id is read too");
+  ok(resolveEngagedLinear(WORKSPACE_ENV, LINEAR_TRACKED).ok, "🔴 NEGATIVE CONTROL: with the key and both identity vars it RESOLVES — the gate is a real remedy, not a permanent refusal");
+  const baseIdentity = { appUserId: "app-user-base", agentHandle: "OEBase" };
+  const swapped = engagedLinearIdentity(WORKSPACE_ENV, baseIdentity);
+  ok(
+    swapped.appUserId === "app-user-2" && swapped.agentHandle === "OE",
+    `🔴 the engaged driver takes the TEAM'S workspace identity, never the base one (got: ${JSON.stringify(swapped)})`,
+  );
+  ok(
+    engagedLinearIdentity({}, baseIdentity).appUserId === baseIdentity.appUserId,
+    "NEGATIVE CONTROL: with neither var set it falls back to the base identity — a same-workspace room is unchanged, not broken by this pair existing",
+  );
+  ok(engagedLinearIdentity({ [ENV.linearSoakAppUserId]: "  app-user-2  " }, baseIdentity).appUserId === "app-user-2", "the value is trimmed, so a stray newline never becomes part of an id comparison");
 
   ok(engagedLinearApiKey({ [own]: "lin_api_addressed" }, "lin_api_base") === "lin_api_addressed", "the addressed team's OWN key wins where it is set");
   ok(engagedLinearApiKey({}, "lin_api_base") === "lin_api_base", "🔴 NEGATIVE CONTROL: unset falls back to the base driver key — a same-workspace room is unchanged, not broken by this variable existing");

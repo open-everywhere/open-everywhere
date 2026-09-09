@@ -83,7 +83,7 @@ export interface ReplyProvenance {
   readonly otherDomains: number;
 }
 
-export function provenanceForReply(
+function provenanceForReply(
   reads: readonly ConnectorRead[],
   audit: Pick<ReplyAudit, "platform" | "workspace" | "surface"> | undefined,
 ): ReplyProvenance | undefined {
@@ -118,7 +118,7 @@ function stripForgedFooter(text: string): string {
     .trimEnd();
 }
 
-export function renderProvenanceFooter(p: ReplyProvenance | undefined): string | undefined {
+function renderProvenanceFooter(p: ReplyProvenance | undefined): string | undefined {
   if (p === undefined) return undefined;
   const listed = p.named.slice(0, MAX_NAMED);
   const overflow = p.named.length - listed.length;
@@ -129,7 +129,7 @@ export function renderProvenanceFooter(p: ReplyProvenance | undefined): string |
   return `${PROVENANCE_FOOTER_PREFIX} ${parts.join(", ")}`;
 }
 
-export function withProvenanceFooter(text: string, p: ReplyProvenance | undefined): string {
+function withProvenanceFooter(text: string, p: ReplyProvenance | undefined): string {
   const body = stripForgedFooter(text);
   const footer = renderProvenanceFooter(p);
   return footer === undefined ? body : `${body}\n\n${footer}`;

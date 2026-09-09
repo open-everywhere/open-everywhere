@@ -422,6 +422,24 @@ export interface ProvisionOutcome {
   readonly name?: string;
   readonly detail: string;
   readonly grant?: string;
+  readonly trackedId?: boolean;
+}
+
+export function alreadyProvisioned(room: PlannedRoom, env: Env): ProvisionOutcome | undefined {
+  const known = roomIdFor(room.envVar, env);
+  if (!known) return undefined;
+  if (env[room.envVar]?.trim()) return { room, state: "found", id: known, detail: `${room.envVar} is already set` };
+  return {
+    room,
+    state: "found",
+    id: known,
+    detail: `this repository carries the id (TRACKED_ROOM_IDS.${room.envVar}) — leave ${room.envVar} unset`,
+    trackedId: true,
+  };
+}
+
+export function offersEnvWrite(o: ProvisionOutcome): boolean {
+  return (o.state === "created" || o.state === "found") && Boolean(o.id) && o.room.action === "create" && o.trackedId !== true;
 }
 
 async function provisionSlack(env: Env, plan: ProvisionTarget, room: PlannedRoom): Promise<ProvisionOutcome> {
@@ -729,13 +747,18 @@ export async function provisionSlackMpim(env: Env): Promise<MpimOutcome> {
         `The DEPLOYMENT side needs \`mpim:history\` and \`mpim:read\` on the OE app, which this command cannot check.`,
     };
   }
-  const channel = opened.channel as { id?: string } | undefined;
+  const channel = opened.channel as { id?: string; is_mpim?: unknown; is_im?: unknown } | undefined;
   if (!channel?.id) return { state: "blocked", detail: "conversations.open returned no channel id" };
-  if (!channel.id.startsWith("G")) {
+  if (channel.is_mpim !== true) {
+    const oneToOne = channel.is_im === true;
     return {
       state: "blocked",
-      detail: `conversations.open returned a 1:1 channel, not a group DM — ${thirdVar} and ${ENV.slackBotUserId} may name the same user`,
-      grant: `Slack: point ${thirdVar} at a third, distinct workspace member and re-run.`,
+      detail: oneToOne
+        ? `conversations.open returned a 1:1 channel (is_im), not a group DM — ${thirdVar} and ${ENV.slackBotUserId} may name the same user`
+        : "conversations.open returned a channel Slack does not call a group DM (no `is_mpim: true`)",
+      grant: oneToOne
+        ? `Slack: point ${thirdVar} at a third, distinct workspace member and re-run.`
+        : `Slack: re-run and read the raw answer — a room the vendor does not call an mpim is never published as ${ENV.slackMpimChannel}.`,
     };
   }
   return {
@@ -821,8 +844,9 @@ async function runProvision(env: Env, domain: string, dryRun: boolean): Promise<
       });
       continue;
     }
-    if (env[room.envVar]?.trim()) {
-      outcomes.push({ room, state: "found", id: env[room.envVar]!.trim(), detail: `${room.envVar} is already set` });
+    const known = alreadyProvisioned(room, env);
+    if (known) {
+      outcomes.push(known);
       continue;
     }
     if (dryRun) {
@@ -843,7 +867,7 @@ async function runProvision(env: Env, domain: string, dryRun: boolean): Promise<
     const shown = o.room.surface === "teams" ? (o.name ?? "(teams room)") : (o.id ?? "—");
     console.log(`  ${mark} ${o.room.surface.padEnd(8)} ${o.room.envVar.padEnd(32)} ${shown} — ${o.detail}`);
     if (o.grant) console.log(`      ONE-TIME GRANT → ${o.grant}`);
-    if ((o.state === "created" || o.state === "found") && o.id && o.room.action === "create") toWrite.set(o.room.envVar, o.id);
+    if (offersEnvWrite(o)) toWrite.set(o.room.envVar, o.id!);
   }
 
   if (toWrite.size > 0 && !dryRun) {

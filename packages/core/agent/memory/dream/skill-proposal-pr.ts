@@ -11,9 +11,9 @@ import { signatureDigest } from "./recurrence.js";
 
 export const SKILL_PROPOSAL_PR_ACTION = "memory.skill_proposal_pr";
 
-export const SKILL_PROPOSAL_BRANCH_PREFIX = "skill-proposal/";
+const SKILL_PROPOSAL_BRANCH_PREFIX = "skill-proposal/";
 
-export const MAX_PRIOR_PROPOSAL_PRS = 3;
+const MAX_PRIOR_PROPOSAL_PRS = 3;
 
 export interface SkillProposalPrResult {
   readonly opened: boolean;
@@ -57,11 +57,11 @@ export function skillProposalContent(sketch: string, corrections: readonly Corre
   return section ? `${body}\n${section}\n` : body;
 }
 
-export function skillProposalTitle(name: string): string {
+function skillProposalTitle(name: string): string {
   return `Skill proposal: ${name}`;
 }
 
-export function skillProposalBody(p: Proposal, name: string, corrections: readonly Correction[], refused: number): string {
+function skillProposalBody(p: Proposal, name: string, corrections: readonly Correction[], refused: number): string {
   const count = typeof p.detail?.["count"] === "number" ? (p.detail["count"] as number) : undefined;
   const request = typeof p.detail?.["request"] === "string" ? (p.detail["request"] as string) : undefined;
   const lines = [

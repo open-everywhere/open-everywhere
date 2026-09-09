@@ -111,9 +111,9 @@ export async function findCancelRequester(org: string, turnId: string, sessionId
   }
 }
 
-export const UNPAIRED_STOP_DEFAULT_WINDOW_MS = 24 * 60 * 60_000;
+const UNPAIRED_STOP_DEFAULT_WINDOW_MS = 24 * 60 * 60_000;
 export const UNPAIRED_STOP_MAX_WINDOW_MS = 30 * 24 * 60 * 60_000;
-export const UNPAIRED_STOP_DEFAULT_GRACE_MS = 60_000;
+const UNPAIRED_STOP_DEFAULT_GRACE_MS = 60_000;
 const UNPAIRED_STOP_SCAN = 1000;
 const UNPAIRED_STOP_DEFAULT_LIMIT = 200;
 

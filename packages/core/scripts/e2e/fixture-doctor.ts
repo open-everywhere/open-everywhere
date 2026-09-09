@@ -209,6 +209,25 @@ async function probeGithubPr(env: Env): Promise<ProbeOutcome> {
   });
 }
 
+async function probeGithubRepo(env: Env, repoVar: string): Promise<ProbeOutcome> {
+  return safe("github repo reachability", async () => {
+    const token = env[ENV.githubDriverToken]!;
+    const repo = roomIdFor(repoVar, env);
+    if (!repo) return outcome(false, `no repo for ${repoVar} — neither the variable nor TRACKED_ROOM_IDS carries one`);
+    const res = await githubApi(token, `/repos/${repo}`);
+    if (res.status === 404) {
+      return outcome(
+        false,
+        `GET /repos/${repo} → 404 — the repo is missing, OR the fine-grained ${ENV.githubDriverToken} does not list it among its selected repositories`,
+      );
+    }
+    if (res.status !== 200) return outcome(false, `GET /repos/${repo} → ${res.status}`);
+    const isPrivate = res.json["private"] === true;
+    if (!isPrivate) return outcome(false, `${repo} is PUBLIC — J-ENGAGED-github's non-mention arm refuses a public repo, so step (b) can never pass`);
+    return outcome(true, `${repo} reachable with the driver PAT, and private`);
+  });
+}
+
 async function probeLinear(env: Env): Promise<ProbeOutcome> {
   return safe("linear viewer + team", async () => {
     const apiKey = env[ENV.linearApiKey]!;
@@ -316,6 +335,8 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
       return { probe: await probeGithub(env) };
     case "github-pr":
       return { probe: await probeGithubPr(env) };
+    case "github-repo":
+      return { probe: await probeGithubRepo(env, f.repoVar!) };
     case "linear":
       return { probe: await probeLinear(env) };
     case "notion-ambient":

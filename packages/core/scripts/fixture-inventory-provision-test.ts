@@ -1,4 +1,4 @@
-import { PROVISIONERS, provisionSlackMpim, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces } from "./e2e/fixture-inventory.js";
+import { PROVISIONERS, provisionSlackMpim, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces, alreadyProvisioned, offersEnvWrite } from "./e2e/fixture-inventory.js";
 import { roomName, type PlannedRoom } from "./e2e/fixture-inventory-lib.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -382,7 +382,7 @@ function mpimScript(rec: Recorder, answer: unknown): typeof fetch {
 
 {
   const rec = recorder();
-  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1" } }), () => provisionSlackMpim(MPIM_ENV));
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1", is_mpim: true } }), () => provisionSlackMpim(MPIM_ENV));
   ok(outcome.state === "opened" && outcome.id === "GMPIM1", "mpim: conversations.open returns the group DM's id");
   const body = rec.calls.find((c) => c.url.includes("conversations.open"))?.body as { users?: string } | undefined;
   ok(body?.users === "UBOT,U2", "🔴 mpim: …opened over the OE BOT and a third member — two users plus the token's own identity is what makes it an mpim rather than a 1:1");
@@ -393,7 +393,7 @@ function mpimScript(rec: Recorder, answer: unknown): typeof fetch {
 }
 {
   const rec = recorder();
-  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1" } }), () =>
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "GMPIM1", is_mpim: true } }), () =>
     provisionSlackMpim({ E2E_SLACK_USER_TOKEN: "t", E2E_SLACK_BOT_USER_ID: "UBOT" }),
   );
   ok(outcome.state === "blocked", "mpim: with no third member the room is BLOCKED");
@@ -419,12 +419,42 @@ function mpimScript(rec: Recorder, answer: unknown): typeof fetch {
 }
 {
   const rec = recorder();
-  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "D0DM" } }), () => provisionSlackMpim(MPIM_ENV));
-  ok(outcome.state === "blocked" && outcome.id === undefined, "🔴 mpim: a `D…` 1:1 is REFUSED and never published as the group DM");
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "D0DM", is_im: true, is_mpim: false } }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "blocked" && outcome.id === undefined, "🔴 mpim: a 1:1 is REFUSED and never published as the group DM");
+  ok(outcome.detail.includes("is_im"), `mpim: …and the refusal names the flag it read, so the reason is checkable (got: ${JSON.stringify(outcome.detail)})`);
   ok(
     !outcome.detail.includes("UBOT") && !outcome.detail.includes("U2"),
     `mpim: …and that refusal names its two member variables, never their user ids (got: ${JSON.stringify(outcome.detail)})`,
   );
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "C0EXCHAN010", is_mpim: true, is_im: false } }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "opened" && outcome.id === "C0EXCHAN010", "🔴 mpim: a group DM Slack spells with a `C…` id is OPENED — the state comes from `is_mpim`, never from the first letter");
+}
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(mpimScript(rec, { ok: true, channel: { id: "C0UNKNOWN" } }), () => provisionSlackMpim(MPIM_ENV));
+  ok(outcome.state === "blocked" && outcome.id === undefined, "🔴 mpim: an answer with no `is_mpim` at all is REFUSED — the guard fails closed rather than trusting a bare id");
+  ok(!outcome.detail.includes("is_im"), `mpim: …and it does not claim a 1:1 it never saw (got: ${JSON.stringify(outcome.detail)})`);
+}
+
+{
+  const room: PlannedRoom = { ...ROOM("linear", "E2E_ADDRESSED_LINEAR_TEAM_ID"), action: "create" };
+
+  const tracked = alreadyProvisioned(room, {});
+  ok(tracked?.state === "found", "🔴 with the variable UNSET the room is already provisioned — the id comes from this repository, so `provision` never tries to make it again");
+  ok(tracked?.id === "1a000000-0000-4000-8000-000000000012", `…and it is the tracked team id (got ${JSON.stringify(tracked?.id)})`);
+  ok(tracked?.trackedId === true, "…marked as coming from the table rather than the environment");
+  ok(tracked?.detail.includes("leave E2E_ADDRESSED_LINEAR_TEAM_ID unset") === true, `…and the line tells the operator to leave the variable alone (got ${JSON.stringify(tracked?.detail)})`);
+  ok(offersEnvWrite(tracked!) === false, "🔴 …and it is NEVER offered for export — an export would become an override that outlives the table it copied");
+
+  const fromEnv = alreadyProvisioned(room, { E2E_ADDRESSED_LINEAR_TEAM_ID: "team-from-env" });
+  ok(fromEnv?.id === "team-from-env" && fromEnv.trackedId === undefined, `an id the operator exported is theirs, not the table's (got ${JSON.stringify(fromEnv?.id)})`);
+  ok(offersEnvWrite(fromEnv!) === true, "…and stays offered for export, so the pre-existing shape is unchanged");
+
+  const notTracked: PlannedRoom = { ...ROOM("notion", "E2E_ADDRESSED_NOTION_PAGE_ID"), action: "create" };
+  ok(alreadyProvisioned(notTracked, {}) === undefined, "🔴 NEGATIVE CONTROL: a room with no tracked id and no exported one is NOT provisioned — the provisioner still runs for it");
 }
 
 console.log(`✓ fixture-inventory-provision: ${passed} assertions passed`);

@@ -21,7 +21,7 @@ export class TranscriptExportError extends Error {}
 
 export const TRANSCRIPT_EXPORT_DEFAULT_LIMIT = 600;
 export const TRANSCRIPT_EXPORT_MAX_LIMIT = 5000;
-export const TRANSCRIPT_EXPORT_TIMEOUT_MS = 45_000;
+const TRANSCRIPT_EXPORT_TIMEOUT_MS = 45_000;
 
 export interface DeploymentTranscriptSource {
   readonly baseUrl: string;

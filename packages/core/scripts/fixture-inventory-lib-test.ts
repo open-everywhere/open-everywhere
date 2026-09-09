@@ -101,6 +101,7 @@ const RESOLUTIONS = new Map<string, Resolution>([
 ]);
 
 const inventory = buildInventory({
+  trackedIds: {},
   envValues: ENV_VALUES,
   declared,
   resolutions: RESOLUTIONS,
@@ -127,6 +128,7 @@ ok(!flag("env-unclaimed").some((f) => f.subject === "nobody/nothing"), "the nega
 ok(!flag("unresolved").some((f) => f.surface === "github"), "a never-probed room raises no unresolved flag");
 
 const clean = buildInventory({
+  trackedIds: {},
   envValues: { E2E_SLACK_CHANNEL: "CA" },
   declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
   resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#general", detail: "info" } as Resolution]]),
@@ -144,6 +146,7 @@ ok(blind.rows[0].name === "?" && blind.rows[0].note.includes("no driver credenti
 ok(blind.flags.filter((f) => f.kind === "unresolved").length === 0, "a surface with no credential raises no unresolved flag");
 
 const teamsEngaged = buildInventory({
+  trackedIds: {},
   envValues: { E2E_ADDRESSED_TEAMS_SURFACE: "19:abc@thread.tacv2" },
   declared: [],
   resolutions: new Map([[resolutionKey("teams", "19:abc@thread.tacv2"), { ok: true, name: "General", detail: "x" } as Resolution]]),
@@ -158,6 +161,7 @@ ok(!teamsEngaged.rows[0].note.includes("OE_TEAMS"), "…and names no retired Tea
 ok(!teamsEngaged.rows[0].note.includes("claim unknown"), "…and never claims the roster is unreadable");
 
 const teamsPlain = buildInventory({
+  trackedIds: {},
   envValues: { E2E_TEAMS_CHANNEL_ID: "19:abc@thread.tacv2" },
   declared: [],
   resolutions: new Map([[resolutionKey("teams", "19:abc@thread.tacv2"), { ok: true, name: "General", detail: "x" } as Resolution]]),
@@ -180,6 +184,7 @@ ok(doc.endsWith("\n") && !doc.includes("\n\n\n"), "the document ends with one ne
 
 const piped = renderInventoryDoc(
   buildInventory({
+    trackedIds: {},
     envValues: { E2E_SLACK_CHANNEL: "CA" },
     declared: collectDeclaredRooms([{ name: "e2e-unified", reach: ["slack/T1/CA"] }], []),
     resolutions: new Map([[resolutionKey("slack", "CA"), { ok: true, name: "#a|b", detail: "x" } as Resolution]]),

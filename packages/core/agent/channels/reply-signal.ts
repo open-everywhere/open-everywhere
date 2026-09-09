@@ -248,6 +248,42 @@ export function standDownAckOwedMessage(ackRoute: string): string {
   );
 }
 
+interface ForcedOverrides {
+  readonly turnId: string;
+  readonly entries: readonly { readonly key: string; readonly count: number }[];
+}
+
+const forcedSlot = defineState<ForcedOverrides | null>("open-everywhere.reply-forced-overrides", () => null);
+
+export const FORCED_OVERRIDE_TURN_LIMIT = 2;
+
+export const REPLY_FORCED_LOOP_REASON = "forced-override-repeat";
+
+function forcedKey(reason: string, on: string): string {
+  return `${reason}::${on}`;
+}
+
+export function noteForcedOverrideThisTurn(turnId: string | undefined, reason: string, on: string | undefined): number {
+  if (turnId === undefined || turnId.length === 0) return 1;
+  if (typeof reason !== "string" || reason.length === 0) return 1;
+  if (typeof on !== "string" || on.length === 0) return 1;
+  const key = forcedKey(reason, on);
+  try {
+    let next = 1;
+    forcedSlot.update((prev) => {
+      const entries = prev !== null && prev.turnId === turnId ? prev.entries : [];
+      const found = entries.find((e) => e.key === key);
+      next = (found?.count ?? 0) + 1;
+      const kept = entries.filter((e) => e.key !== key);
+      const room = kept.length >= MAX_DONE_WAKES ? kept.slice(kept.length - MAX_DONE_WAKES + 1) : kept;
+      return { turnId, entries: [...room, { key, count: next }] };
+    });
+    return next;
+  } catch {
+    return 1;
+  }
+}
+
 const armSlot = defineState<string | null>("open-everywhere.seat-delivery-arm", () => null);
 
 export function markDeliveryArm(kind: string): void {

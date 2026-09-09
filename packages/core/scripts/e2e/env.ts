@@ -1,4 +1,4 @@
-import { TRACKED_ROOM_IDS, credentialVarFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
+import { TRACKED_ROOM_IDS, credentialVarFor, identityVarsFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
 
 export const ENV = {
   slackUserToken: "E2E_SLACK_USER_TOKEN",
@@ -524,13 +524,22 @@ export function resolveEngagedTeams(env: Env = process.env): Resolved<EngagedRoo
   return { ok: true, cfg: { id } };
 }
 
-export function resolveEngagedGithub(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  return engagedRoom(env, ENGAGED_ROOM_VARS.github);
+export function resolveEngagedGithub(
+  env: Env = process.env,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): Resolved<EngagedRoomConfig> {
+  const repo = roomIdFor(ENGAGED_ROOM_VARS.github, env, tracked);
+  if (!repo) return { ok: false, missing: [ENGAGED_ROOM_VARS.github] };
+  return { ok: true, cfg: { id: repo } };
 }
 
-export function resolveEngagedLinear(env: Env = process.env): Resolved<EngagedRoomConfig> {
-  const room = engagedRoom(env, ENGAGED_ROOM_VARS.linear);
-  if (!room.ok) return room;
+export function resolveEngagedLinear(
+  env: Env = process.env,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): Resolved<EngagedRoomConfig> {
+  const id = roomIdFor(ENGAGED_ROOM_VARS.linear, env, tracked);
+  if (!id) return { ok: false, missing: [ENGAGED_ROOM_VARS.linear] };
+  const room: Resolved<EngagedRoomConfig> = { ok: true, cfg: { id } };
   const keyVar = credentialVarFor(ENGAGED_ROOM_VARS.linear);
   if (keyVar !== undefined && !env[keyVar]?.trim()) {
     return {
@@ -538,7 +547,26 @@ export function resolveEngagedLinear(env: Env = process.env): Resolved<EngagedRo
       missing: [`${keyVar} — this team is in its own Linear workspace, so ${ENV.linearApiKey} cannot see it (mint a personal API key in THAT workspace)`],
     };
   }
+  const identity = identityVarsFor(ENGAGED_ROOM_VARS.linear);
+  if (identity !== undefined) {
+    const unset = [identity.appUserVar, identity.agentHandleVar].filter((v) => !env[v]?.trim());
+    if (unset.length > 0) {
+      return {
+        ok: false,
+        missing: [`${unset.join(" and ")} — OE runs a SEPARATE app per Linear workspace, so this team needs its workspace's own app-user id and mention handle (${ENV.linearAppUserId} names a user that workspace does not have)`],
+      };
+    }
+  }
   return room;
+}
+
+export function engagedLinearIdentity(env: Env = process.env, fallback: { appUserId: string; agentHandle: string }): { appUserId: string; agentHandle: string } {
+  const identity = identityVarsFor(ENGAGED_ROOM_VARS.linear);
+  if (identity === undefined) return fallback;
+  return {
+    appUserId: env[identity.appUserVar]?.trim() || fallback.appUserId,
+    agentHandle: env[identity.agentHandleVar]?.trim() || fallback.agentHandle,
+  };
 }
 
 export function engagedLinearApiKey(env: Env = process.env, fallback: string): string {
@@ -596,8 +624,8 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   const engagedSlack = resolveEngagedSlack(env);
   const engagedDiscord = resolveEngagedDiscord(env);
   const engagedTeams = resolveEngagedTeams(env);
-  const engagedGithub = resolveEngagedGithub(env);
-  const engagedLinear = resolveEngagedLinear(env);
+  const engagedGithub = resolveEngagedGithub(env, tracked);
+  const engagedLinear = resolveEngagedLinear(env, tracked);
   const engagedNotion = resolveEngagedNotion(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
@@ -626,8 +654,8 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   if (engagedSlack.ok) available.add("engagedSlack");
   if (engagedDiscord.ok) available.add("engagedDiscord");
   if (engagedTeams.ok) available.add("engagedTeams");
-  if (engagedGithub.ok) available.add("engagedGithub");
-  if (engagedLinear.ok) available.add("engagedLinear");
+  if (github.ok && engagedGithub.ok) available.add("engagedGithub");
+  if (linear.ok && engagedLinear.ok) available.add("engagedLinear");
   if (engagedNotion.ok) available.add("engagedNotion");
   return {
     available,

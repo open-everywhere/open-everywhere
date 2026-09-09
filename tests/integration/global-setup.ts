@@ -39,7 +39,15 @@ export default async function globalSetup(): Promise<void> {
     return;
   }
   execFileSync("npm", ["run", "oe:build"], { cwd: root, stdio: "inherit" });
-  execFileSync("npx", ["eve", "build"], { cwd: root, stdio: "inherit" });
+  const inheritedNodeOptions = process.env.NODE_OPTIONS ?? "";
+  const eveBuildNodeOptions = inheritedNodeOptions.includes("--max-old-space-size")
+    ? inheritedNodeOptions
+    : [inheritedNodeOptions, "--max-old-space-size=6144"].filter(Boolean).join(" ");
+  execFileSync("npx", ["eve", "build"], {
+    cwd: root,
+    stdio: "inherit",
+    env: { ...process.env, NODE_OPTIONS: eveBuildNodeOptions },
+  });
   await prewarmJustBashTemplate(root);
   console.log(`integration global-setup: total ${((Date.now() - setupStartedAt) / 1000).toFixed(1)}s (oe:build + eve build + prewarm, all serial).`);
 }

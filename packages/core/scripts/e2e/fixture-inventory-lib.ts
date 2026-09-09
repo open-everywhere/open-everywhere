@@ -31,7 +31,13 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   { surface: "slack", envVar: "E2E_SLACK_PRIVATE_CHANNEL", what: "S11's private surface" },
   { surface: "slack", envVar: "E2E_SLACK_CHANNEL_B", what: "S12's second-domain channel (silo isolation)" },
   { surface: "slack", envVar: "E2E_SLACK_DM_CHANNEL", what: "the driver-user↔OE DM (S13/S14/J4)" },
-  { surface: "slack", envVar: "E2E_SLACK_MPIM_CHANNEL", what: "J-MPIM's group DM (mpim) — the pack's only group-DM room" },
+  {
+    surface: "slack",
+    envVar: "E2E_SLACK_MPIM_CHANNEL",
+    what: "J-MPIM's group DM (mpim) — the pack's only group-DM room",
+    expectUnclaimed:
+      'a group DM takes no memory and no criteria layer whatever a roster says — `resolveMemoryPlan` answers NONE for mode "mpim" and `domainMatchFor` returns undefined, so the flag\'s "resolves through the criteria domains" remedy does not apply here',
+  },
   { surface: "slack", envVar: "E2E_SLACK_SUPERVISOR_CHANNEL", what: "J-SUP's ambient-supervisor channel" },
   { surface: "slack", envVar: "E2E_SLACK_CAP_CHANNEL", what: "S10's throwaway spend-cap scope" },
   { surface: "slack", envVar: "E2E_NOTION_CHANNEL", what: "S24's Notion-connector-bound channel" },
@@ -155,7 +161,11 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
 };
 
 export const TRACKED_ROOM_IDS: Readonly<Record<string, string>> = {
-  E2E_SLACK_MPIM_CHANNEL: "",
+  E2E_ADDRESSED_LINEAR_TEAM_ID: "1a000000-0000-4000-8000-000000000012",
+
+  E2E_SLACK_MPIM_CHANNEL: "C0EXCHAN010",
+
+  E2E_ADDRESSED_GITHUB_REPO: "example-owner/oe-e2e-addressed-github",
 };
 
 export function trackedRoomId(envVar: string, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): string | undefined {
@@ -179,6 +189,7 @@ export interface PlannedRoom {
   readonly reuseOf?: string;
   readonly readByCode?: string;
   readonly credentialVar?: string;
+  readonly identityVars?: { readonly appUserVar: string; readonly agentHandleVar: string };
   readonly note: string;
 }
 
@@ -233,7 +244,8 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         action: "create",
         readByCode: "`env.ts`'s `ENGAGED_ROOM_VARS.linear` reads the var, so it is in ROOM_VARS — but the room is this plan's own to write, and the row declares `ownedBy: \"e2e-engaged\"`",
         credentialVar: "E2E_ADDRESSED_LINEAR_API_KEY",
-        note: "🔴 A TEAM IN A SECOND LINEAR WORKSPACE, and that is why it carries a key of its own (OPE-1590). It lives in `second-e2e-workspace`; E2E_LINEAR_API_KEY is a `the base e2e workspace` key and a Linear personal API key cannot read a team outside its own workspace at all. OPE-1581's grant line — re-mint the one key over both teams — reaches only teams inside ONE workspace, so it cannot join these two",
+        identityVars: { appUserVar: "E2E_SOAK_LINEAR_APP_USER_ID", agentHandleVar: "E2E_SOAK_LINEAR_AGENT_HANDLE" },
+        note: "🔴 A TEAM IN A SECOND LINEAR WORKSPACE, and that is why it carries a key of its own (OPE-1590) and that workspace's own app identity (OPE-1666). It lives in `second-e2e-workspace`; E2E_LINEAR_API_KEY is a `the base e2e workspace` key and a Linear personal API key cannot read a team outside its own workspace at all. OPE-1581's grant line — re-mint the one key over both teams — reaches only teams inside ONE workspace, so it cannot join these two. 🔴 THE TEAM ALREADY EXISTS AND `create` IS DEAD FOR THIS ROOM: Rowan opened it by hand on 2026-09-09 as `Addressed` (key TOM), so find-by-name for `oe-e2e-addressed-linear` can never match it. This repository carries its id in TRACKED_ROOM_IDS, and the provision loop short-circuits on that id rather than trying to make a second team",
       },
       {
         surface: "notion",
@@ -258,6 +270,14 @@ export function credentialVarFor(envVar: string): string | undefined {
   for (const plan of PROVISION_PLAN) {
     const room = plan.rooms.find((r) => r.envVar === envVar);
     if (room?.credentialVar !== undefined) return room.credentialVar;
+  }
+  return undefined;
+}
+
+export function identityVarsFor(envVar: string): { readonly appUserVar: string; readonly agentHandleVar: string } | undefined {
+  for (const plan of PROVISION_PLAN) {
+    const room = plan.rooms.find((r) => r.envVar === envVar);
+    if (room?.identityVars !== undefined) return room.identityVars;
   }
   return undefined;
 }

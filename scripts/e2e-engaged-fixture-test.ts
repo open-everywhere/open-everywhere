@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const EXPECTED_ROOMS = [
+  "linear/1a000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000012",
   "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000104",
   "discord/1300000000000000100/1300000000000000102",
+  "github/example-owner/oe-e2e-addressed-github",
 ] as const;
 
 const MUST_STAY_OUT: readonly (readonly [string, string])[] = [
@@ -167,4 +169,28 @@ const ok = (cond: boolean, label: string): void => {
   );
 }
 
-console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture by absence, grants nothing, exclusivity, the default posture the Slack journey rides)`);
+{
+  const { TRACKED_ROOM_IDS, idOfKey } = await import("../packages/core/scripts/e2e/fixture-inventory-lib.js");
+  const rosterRepo = EXPECTED_ROOMS.filter((k) => k.startsWith("github/")).map((k) => idOfKey(k));
+  ok(rosterRepo.length === 1, `exactly one GitHub repo sits in this roster (got ${JSON.stringify(rosterRepo)})`);
+  ok(
+    TRACKED_ROOM_IDS["E2E_ADDRESSED_GITHUB_REPO"] === rosterRepo[0],
+    `🔴 the repo the harness drives IS the repo this domain declares — TRACKED_ROOM_IDS.E2E_ADDRESSED_GITHUB_REPO is ${JSON.stringify(TRACKED_ROOM_IDS["E2E_ADDRESSED_GITHUB_REPO"])}, the roster says ${JSON.stringify(rosterRepo[0])}. Move one without the other and J-ENGAGED-github drives a repo whose posture no domain declares`,
+  );
+}
+
+{
+  const { TRACKED_ROOM_IDS, idOfKey } = await import("../packages/core/scripts/e2e/fixture-inventory-lib.js");
+  const rosterTeams = EXPECTED_ROOMS.filter((k) => k.startsWith("linear/")).map((k) => idOfKey(k));
+  ok(rosterTeams.length === 1, `exactly one Linear team sits in this roster (got ${JSON.stringify(rosterTeams)})`);
+  ok(
+    TRACKED_ROOM_IDS["E2E_ADDRESSED_LINEAR_TEAM_ID"] === rosterTeams[0],
+    `🔴 the team the harness drives IS the team this domain declares — TRACKED_ROOM_IDS.E2E_ADDRESSED_LINEAR_TEAM_ID is ${JSON.stringify(TRACKED_ROOM_IDS["E2E_ADDRESSED_LINEAR_TEAM_ID"])}, the roster says ${JSON.stringify(rosterTeams[0])}. Move one without the other and J-ENGAGED-linear drives a team whose posture no domain declares`,
+  );
+  ok(
+    TRACKED_ROOM_IDS["E2E_ADDRESSED_LINEAR_TEAM_ID"] !== "1a000000-0000-4000-8000-000000000011",
+    "🔴 …and it is NOT the base e2e workspace's E2E team — e2e-unified's driver team runs a unified window with an ambient supervisor, which answers the plain follow-up and masks the seam step (b) exists to prove",
+  );
+}
+
+console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture by absence, grants nothing, exclusivity, the default posture the Slack journey rides, the roster/harness room joins)`);

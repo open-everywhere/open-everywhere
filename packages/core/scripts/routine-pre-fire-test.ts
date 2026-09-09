@@ -59,6 +59,7 @@ const {
   validateRoutineCollectors,
 } = await import("../agent/routines/collector.js");
 const {
+  assertGateDeclarable,
   collectedBody,
   collectionComplete,
   evaluateRoutineGate,
@@ -154,6 +155,24 @@ const READ_KIND = connectorToolPermissionKind(READ_TOOL);
     { name: "queue", tool: READ_TOOL, args: { query: "status:open" }, describe: "the open queue" },
     { name: "deploys", tool: READ_TOOL, describe: "the current release" },
   ]);
+
+  throws(
+    () => assertGateDeclarable({ name: "Bad Name", describe: "x", decide: () => ({ fire: true, why: "y" }) }),
+    /not usable/u,
+    "config: a gate name outside the grammar is refused at boot — a routine names its gate by that word, and an unreadable name fails CLOSED at fire time",
+  );
+  throws(
+    () => assertGateDeclarable({ name: "no-describe", describe: "  ", decide: () => ({ fire: true, why: "y" }) }),
+    /one-line/u,
+    "config: a gate with no `describe` is refused — it is what a human reads on the routine's card",
+  );
+  let declarable = true;
+  try {
+    assertGateDeclarable({ name: "ok.gate", describe: "a declarable gate", decide: () => ({ fire: true, why: "y" }) });
+  } catch {
+    declarable = false;
+  }
+  ok(declarable, "config: a well-formed gate declaration is accepted — the negative control for the two refusals above");
 
   registerRoutineGates([
     {

@@ -19,6 +19,7 @@ export type ProbeKind =
   | "teams"
   | "github"
   | "github-pr"
+  | "github-repo"
   | "linear"
   | "linear-label"
   | "notion-ambient"
@@ -37,6 +38,7 @@ export interface FixtureFamily {
   readonly channelVars?: readonly [string, string];
   readonly pageVars?: readonly [string, string];
   readonly labelVar?: string;
+  readonly repoVar?: string;
 }
 
 export type FixtureClassification = "absent" | "partial" | "set";
@@ -334,6 +336,14 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     optional: [ENV.prBase, ENV.prUngrantedRepo],
     scenarios: "J-PR / J-WORKFLOW (consequential PR write)",
     probe: "github-pr",
+  },
+  {
+    id: "engagedGithub",
+    label: "GitHub ADDRESSED-ONLY fixture repo — J-ENGAGED-github's own repo (reuses the GitHub driver PAT)",
+    required: [v(ENV.githubDriverToken), v(ENV.engagedGithubRepo)],
+    scenarios: "J-ENGAGED-github (the addressed-only engaged seam on GitHub — OPE-1503)",
+    probe: "github-repo",
+    repoVar: ENV.engagedGithubRepo,
   },
   {
     id: "linear",

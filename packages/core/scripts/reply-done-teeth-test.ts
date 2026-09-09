@@ -28,7 +28,8 @@ const { unifiedSupervisorToken } = await import("../agent/channels/unified-super
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { seedTailWindow, tailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
-const { secondMessageValve } = await import("../agent/channels/reply-signal.js");
+const { secondMessageValve, FORCED_OVERRIDE_TURN_LIMIT, noteForcedOverrideThisTurn } = await import("../agent/channels/reply-signal.js");
+const { notePendingDelegation, noteDelegationSettled } = await import("../agent/access/pending-delegation-signal.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
@@ -436,6 +437,196 @@ const forcedRows = async (): Promise<Record<string, unknown>[]> =>
       (await forcedRows()).filter((d) => d["wakeId"] === wTurn).length === 0,
     "§7c/AUDIT: a multi-part answer draws neither a refusal nor an override — the guard stays out of its way entirely",
   );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_FORCED_ONCE");
+  const before = posted.length;
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  ok(seat !== null, "§8/CONTROL: the fixture's token is a STANDING seat, so the should-be-edit gate is live alongside the `done` teeth");
+
+  const notes = await inTurn(async () => {
+    seedTailWindow(seat);
+    const first = await callReply(w, "turn_80", w, "The answer, first time.", true);
+    ok(first.posted === true, "§8: the first `done:true` reply posts");
+    const second = await callReplyForced(w, "turn_80", w, "The answer, forced a second time.", true);
+    const third = await callReplyForced(w, "turn_80", w, "The answer, forced a third time.", true);
+    const fourth = await callReplyForced(w, "turn_80", w, "The answer, forced a fourth time.", true);
+    return { second, third, fourth };
+  });
+
+  ok(notes.second.posted === true, "§8: the second call OVERRIDES both verdicts and posts");
+  ok(notes.third.posted === true, "§8: 🔴 so does the third — the fix records less, it never blocks more");
+  ok(notes.fourth.posted === true, "§8: …and the fourth. The rule is untouched");
+  ok(posted.length === before + 4, "§8/ROOM: all four messages reached the room — nothing here is a duplicate-post block");
+
+  const forcedForW = (await forcedRows()).filter((d) => d["wakeId"] === w);
+  const reasons = forcedForW.map((d) => String(d["reason"])).sort();
+  ok(
+    reasons.filter((r) => r === "answered-this-turn-forced").length === 1,
+    `§8/AUDIT: 🔴 exactly ONE \`answered-this-turn-forced\` row for this wake in this turn — three forced calls drew it live 100 times (saw ${reasons.length} rows: ${reasons.join(", ")})`,
+  );
+  ok(
+    reasons.filter((r) => r === "should-be-edit-forced").length === 1,
+    "§8/AUDIT: 🔴 and exactly ONE `should-be-edit-forced` row — the second gate is recorded once per ROOM per turn, the key its own refusal record uses",
+  );
+  ok(reasons.length === 2, "§8/AUDIT: and nothing else — two overrides, two rows, whatever the model does afterwards");
+
+  ok(
+    typeof notes.second.note === "string" && notes.second.note.includes("edit_reply"),
+    "§8/NOTE: an overriding post is told to correct its own message with `edit_reply` rather than post again",
+  );
+  ok(notes.second.note!.includes("no_reply"), "§8/NOTE: …and that finishing the turn is the other way out");
+  ok(
+    !notes.second.note!.includes("a second call is refused"),
+    "§8/NOTE: 🔴 …and it no longer promises a refusal the model has just proved false — a host whose words do not track what it does teaches nothing",
+  );
+  ok(
+    notes.third.note!.includes("this turn ENDS after your next step"),
+    `§8/NOTE: past ${FORCED_OVERRIDE_TURN_LIMIT} overrides the note says the turn is ending — the loop terminator is announced, not silent (turn-closeout-test §17 proves it fires)`,
+  );
+  ok(
+    !notes.second.note!.includes("this turn ENDS after your next step"),
+    "§8/NOTE/CONTROL: the FIRST override says no such thing — one override is a judgement the ruling keeps possible",
+  );
+  ok(
+    !notes.third.note!.includes("Keep working if needed"),
+    "§8/NOTE: 🔴 …and a note that says the turn is ending does not also say 'keep working' — two sentences pulling opposite ways teach nothing",
+  );
+  ok(
+    notes.second.note!.includes("Keep working if needed"),
+    "§8/NOTE/CONTROL: a turn that is NOT ending still reads the ordinary tail",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_NO_OVERRIDE");
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  const first = await inTurn(async () => {
+    seedTailWindow(seat);
+    return await callReply(w, "turn_81", w, "One ordinary answer.", true);
+  });
+  ok(first.posted === true, "§8b/CONTROL: the ordinary reply posts");
+  ok((await forcedRows()).filter((d) => d["wakeId"] === w).length === 0, "§8b/CONTROL: and draws NO override row");
+  ok(
+    first.note!.includes("a second call is refused") && !first.note!.includes("edit_reply"),
+    "§8b/CONTROL: …and reads the plain note — the override copy rides only a call that really overrode a verdict",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_FORCED_REFUSED");
+  const before = posted.length;
+
+  const out = await inTurn(async () => {
+    const first = await callReply(w, "turn_82", w, "The answer, before the worker.", true);
+    ok(first.posted === true, "§8c: the first `done:true` reply posts and marks the wake answered");
+    notePendingDelegation("turn_82", "task_8c", w);
+    const refused = await callReplyForced(w, "turn_82", w, "A forced second answer over the running worker.", true);
+    return { refused };
+  });
+  ok(typeof out.refused.error === "string", "§8c/CONTROL: the forced call is REFUSED by the delegation gate — `force` does not open it");
+  ok(out.refused.posted !== true, "§8c/CONTROL: …and it reports no post");
+  ok(posted.length === before + 1, "§8c/ROOM: the room holds only the first answer");
+  ok(
+    (await forcedRows()).filter((d) => d["wakeId"] === w).length === 0,
+    "§8c/AUDIT: 🔴 and NO `reply.forced` row — an override recorded for a message the room never saw is a false row",
+  );
+
+  const later = await inTurn(async () => {
+    noteDelegationSettled("turn_82", "task_8c");
+    return await callReplyForced(w, "turn_82", w, "The worker reported; here is the real answer.", true);
+  });
+  ok(later.posted === true, "§8c: with nothing owing, the forced call posts");
+  ok(
+    (await forcedRows()).filter((d) => d["wakeId"] === w && d["reason"] === "answered-this-turn-forced").length === 1,
+    "§8c/AUDIT: 🔴 …and it is the FIRST recorded override for this wake — the refused call spent none of the turn's two",
+  );
+  ok(
+    !later.note!.includes("this turn ENDS after your next step"),
+    "§8c: 🔴 so the turn is NOT ended. A refused call that stole an override would have ended it here, on the first real one",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_FOLD_ONLY");
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  const out = await inTurn(async () => {
+    seedTailWindow(seat);
+    const part = await callReply(w, "turn_83", w, "Working on it — the first part.", false);
+    ok(part.posted === true, "§8d/CONTROL: a `done:false` part posts and records nothing in the done set");
+    ok(
+      part.note!.includes("This wake stays OPEN"),
+      "§8d/CONTROL: …and reads the open-wake note, so the teeth have provably not fired for this wake",
+    );
+    return await callReplyForced(w, "turn_83", w, "And here is the full answer.", true);
+  });
+  ok(out.posted === true, "§8d: the first `done:true` answer posts");
+  const rows = (await forcedRows()).filter((d) => d["wakeId"] === w).map((d) => String(d["reason"]));
+  ok(
+    rows.includes("should-be-edit-forced") && !rows.includes("answered-this-turn-forced"),
+    `§8d/CONTROL: 🔴 it overrode the FOLD verdict and not the done teeth — the state finding 1 needs (saw ${rows.join(", ") || "no rows"})`,
+  );
+  ok(
+    out.note!.includes("This wake is now ANSWERED") && out.note!.includes("a second call is refused"),
+    "§8d: 🔴 so the note reads the FIRST-ANSWER copy — the teeth WILL refuse the next call, and the note must say so",
+  );
+  ok(
+    !out.note!.includes("was already ANSWERED"),
+    "§8d: 🔴 …and never 'was already ANSWERED', which is false on a first answer. Branching this sentence on the turn-wide max is what made it false",
+  );
+  ok(
+    out.note!.includes("edit_reply"),
+    "§8d/CONTROL: the override note still rides — the fix narrows ONE sentence, it does not drop the steer",
+  );
+}
+
+{
+  const inTurn = newSession();
+  const wA = await wake("C_SIB_A");
+  const wB = await wake("C_SIB_B");
+  const before = posted.length;
+  const notes = await inTurn(async () => {
+    await callReply(wA, "turn_84", wA, "Answer to A.", true);
+    await callReply(wB, "turn_84", wB, "Answer to B.", true);
+    const a = await callReplyForced(wA, "turn_84", wA, "A, forced once more.", true);
+    const b = await callReplyForced(wB, "turn_84", wB, "B, forced once more.", true);
+    return { a, b };
+  });
+  ok(notes.a.posted === true && notes.b.posted === true, "§8e: both forced siblings post");
+  ok(posted.length === before + 4, "§8e/ROOM: all four messages reached the room");
+  const rowsA = (await forcedRows()).filter((d) => d["wakeId"] === wA && d["reason"] === "answered-this-turn-forced");
+  const rowsB = (await forcedRows()).filter((d) => d["wakeId"] === wB && d["reason"] === "answered-this-turn-forced");
+  ok(
+    rowsA.length === 1 && rowsB.length === 1,
+    `§8e/AUDIT: 🔴 ONE row per WAKE, so a coalesced turn writes one PER conversation, not one in total (A=${rowsA.length}, B=${rowsB.length})`,
+  );
+  ok(
+    !notes.a.note!.includes("this turn ENDS after your next step") && !notes.b.note!.includes("this turn ENDS after your next step"),
+    "§8e: 🔴 …and neither sibling's FIRST override ends the turn — the limit is per verdict per wake, never a turn-wide sum",
+  );
+}
+
+{
+  const inTurn = newSession();
+  await inTurn(async () => {
+    const R = "answered-this-turn-forced";
+    for (let i = 0; i < 40; i++) ok(noteForcedOverrideThisTurn("turn_85", R, `wake-${i}`) === 1, `§8f/CONTROL: key ${i} is a first override`);
+    ok(
+      noteForcedOverrideThisTurn("turn_85", R, "wake-39") === 2,
+      "§8f: 🔴 past the cap a key REPEATED in place still reaches 2, so a turn that repeats one key stays bounded",
+    );
+    ok(noteForcedOverrideThisTurn("turn_85", R, "wake-39") === 3, "§8f: …and keeps counting, so the latch stays armed");
+    ok(
+      noteForcedOverrideThisTurn("turn_85", R, "wake-0") === 1,
+      "§8f: 🔴 the OLDEST key was evicted, so it restarts at 1 — one extra row and one extra override, never an unbounded loop",
+    );
+    ok(noteForcedOverrideThisTurn("turn_86", R, "wake-39") === 1, "§8f/CONTROL: a different turn starts its own record");
+  });
 }
 
 console.log(`✓ reply-done-teeth: ${passed} assertions passed`);

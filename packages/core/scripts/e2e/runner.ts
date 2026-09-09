@@ -5,6 +5,7 @@ import {
   resolveEngagedTeams,
   resolveEngagedGithub,
   engagedLinearApiKey,
+  engagedLinearIdentity,
   resolveEngagedLinear,
   resolveEngagedNotion,
   resolveEngagedSlack,
@@ -158,7 +159,12 @@ async function main(): Promise<void> {
   const githubEngagedDriver = github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined;
   const linearEngagedDriver =
     linear.ok && engagedLinear.ok
-      ? new LinearDriver({ ...linear.cfg, teamId: engagedLinear.cfg.id, apiKey: engagedLinearApiKey(process.env, linear.cfg.apiKey) })
+      ? new LinearDriver({
+          ...linear.cfg,
+          teamId: engagedLinear.cfg.id,
+          apiKey: engagedLinearApiKey(process.env, linear.cfg.apiKey),
+          ...engagedLinearIdentity(process.env, { appUserId: linear.cfg.appUserId, agentHandle: linear.cfg.agentHandle }),
+        })
       : undefined;
   const notionEngagedDriver =
     notionAmbient.ok && engagedNotion.ok ? new NotionDriver({ ...notionAmbient.cfg, pageId: engagedNotion.cfg.id }) : undefined;

@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -42,10 +43,17 @@ const {
   turnCloseoutFor,
   turnCloseoutTripped,
 } = await import("../agent/model/turn-closeout.js");
-const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON, wasStoppedAckSpentThisTurn } = await import("../agent/channels/reply-signal.js");
+const {
+  REPLY_STOPPED_REFUSAL_REASON,
+  WAKE_DECLINED_REFUSAL_REASON,
+  wasStoppedAckSpentThisTurn,
+  FORCED_OVERRIDE_TURN_LIMIT,
+  REPLY_FORCED_LOOP_REASON,
+} = await import("../agent/channels/reply-signal.js");
 const { NO_REPLY_REDUNDANT_CLOSEOUT_REASON } = await import("../agent/tools/no_reply.js");
 const { STAND_DOWN_ACTION } = await import("../agent/tools/stand_down.js");
 const { notePendingDelegation } = await import("../agent/access/pending-delegation-signal.js");
+const { seedTailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type ModelBackend = import("../agent/model/routing.js").ModelBackend;
@@ -358,7 +366,7 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   ok((first as { posted?: boolean }).posted === true, "§5: the first post delivers");
   ok((second as { posted?: boolean }).posted === true, "§5: and so does the SECOND — a same-turn duplicate stays DISCOURAGED, never hard-blocked (OPE-1452)");
   ok(posted.length === before + 2, "§5/ROOM: both messages reached the room");
-  ok(turnCloseoutTripped("turn-closeout-test", "turn_400") === false, "§5: and neither armed the closeout — this change ends a turn the host already refused, it refuses nothing new");
+  ok(turnCloseoutTripped("turn-closeout-test", "turn_400") === false, "§5: and neither armed the closeout — an unforced duplicate is a matter of style, and this latch refuses nothing new");
 }
 
 {
@@ -752,6 +760,109 @@ resetSettingsForTest();
   await deleteTurnState(healthyPair);
 }
 
+{
+  _resetTurnCloseoutForTest();
+  const inTurn = newSession();
+  const openThread = "1757400560.001700";
+  const w = await wake("C_FORCED_LOOP", openThread);
+  const ctx = ctxFor(w, "turn_1700", "turn-closeout-test", openThread);
+  const partition = resolvePartition(ctx);
+  await markThreadEngaged(partition, openThread, new Date().toISOString(), { participating: true });
+  ok((await isThreadStopped(partition, openThread)) === false, "§17/CONTROL: this thread carries NO stored stop, so nothing below is the OPE-1520 arm wearing this leg's name");
+
+  const before = posted.length;
+  const armed = arm(ctx)!;
+  const post = (text: string, force?: boolean): Promise<{ posted?: boolean; note?: string; error?: string }> =>
+    inTurn(() =>
+      armed
+        .execute({ text, wake: w, done: true, ...(force === true ? { force: true } : {}) }, ctx)
+        .then((r) => r as { posted?: boolean; note?: string })
+        .catch((e: unknown) => ({ error: String(e) })),
+    );
+
+  const first = await post("The answer.");
+  ok(first.posted === true, "§17: the first `done:true` reply posts and marks the wake answered");
+  const second = await post("The answer, said again.", true);
+  ok(second.posted === true, "§17: the first OVERRIDE posts — the ruling keeps one possible");
+  ok(
+    turnCloseoutTripped("turn-closeout-test", "turn_1700") === false,
+    `§17/CONTROL: 🔴 and it arms NOTHING. The limit is ${FORCED_OVERRIDE_TURN_LIMIT}, so a single time-critical override never costs the turn its remaining steps`,
+  );
+
+  const third = await post("The answer, said a third time.", true);
+  ok(third.posted === true, "§17: 🔴 the SECOND override posts TOO — the loop is ended by ending the turn, never by refusing the message");
+  ok(posted.length === before + 3, "§17/ROOM: all three messages are in the room. This is the assertion that keeps the fix inside the rule");
+  const latch = turnCloseoutFor("turn-closeout-test", "turn_1700");
+  ok(latch?.reason === REPLY_FORCED_LOOP_REASON, `§17: …and the repeat armed the closeout under its OWN reason (saw ${latch?.reason ?? "nothing"})`);
+
+  const after = await inTurn(() => oneRoundTrip(ctx));
+  ok(after.backendCalls === 0, "§17: 🔴 so the NEXT model round-trip ends the turn instead of posting a fourth, fifth and fortieth time");
+  ok((after.text ?? "").includes(REPLY_FORCED_LOOP_REASON), "§17: …and the ending names the repeated override as its reason, so the transcript says why");
+  ok(
+    !(after.text ?? "").includes("refused a further attempt to speak"),
+    "§17/COPY: 🔴 the stub does not claim a refusal — on THIS arm the post landed, and copy the session reads back must not say otherwise",
+  );
+
+  await settle();
+  const rows = (await readAudit({ org: ORG, action: STEP_BOUNDARY_ACTION })).filter(
+    (r) => ((r.detail ?? {}) as Record<string, unknown>)["turnId"] === "turn_1700",
+  );
+  ok(rows.length === 1, "§17/AUDIT: one `turn.step_boundary` row for the turn ending");
+  ok(
+    ((rows[0]?.detail ?? {}) as Record<string, unknown>)["reason"] === REPLY_FORCED_LOOP_REASON,
+    "§17/AUDIT: …naming the repeated override, so this ending is countable apart from a refusal-armed one",
+  );
+}
+
+{
+  _resetTurnCloseoutForTest();
+  const inTurn = newSession();
+  const openThread = "1757400560.001800";
+  const w = await wake("C_OPEN_WAKE_LOOP", openThread);
+  const ctx = ctxFor(w, "turn_1800", "turn-closeout-test", openThread);
+  const partition = resolvePartition(ctx);
+  await markThreadEngaged(partition, openThread, new Date().toISOString(), { participating: true });
+
+  const before = posted.length;
+  const armed = arm(ctx)!;
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  ok(seat !== null, "§18/CONTROL: the fixture's token is a STANDING seat, the only grain that files a ring");
+  const part = (text: string, force?: boolean): Promise<{ posted?: boolean; note?: string; error?: string }> =>
+    inTurn(() => {
+      seedTailWindow(seat);
+      return armed
+        .execute({ text, wake: w, done: false, ...(force === true ? { force: true } : {}) }, ctx)
+        .then((r) => r as { posted?: boolean; note?: string })
+        .catch((e: unknown) => ({ error: String(e) }));
+    });
+
+  const p1 = await part("Part one.");
+  const p2 = await part("Part two.", true);
+  const p3 = await part("Part three.", true);
+  ok(p1.posted === true && p2.posted === true && p3.posted === true, "§18: all three `done:false` parts POST — nothing is blocked");
+  ok(posted.length === before + 3, "§18/ROOM: and all three are in the room");
+  ok(
+    p3.note!.includes("This wake stays OPEN"),
+    "§18/CONTROL: 🔴 the wake really is OPEN on the call that armed the latch — this is the state finding 2 is about",
+  );
+
+  const latch = turnCloseoutFor("turn-closeout-test", "turn_1800");
+  ok(latch?.reason === REPLY_FORCED_LOOP_REASON, `§18: the repeated override armed the latch with the wake open (saw ${latch?.reason ?? "nothing"})`);
+  const after = await inTurn(() => oneRoundTrip(ctx));
+  ok(after.backendCalls === 0, "§18: the turn ends on the next round-trip, so a `done:false` loop has a terminator too");
+  ok(
+    !(after.text ?? "").includes("closed its reply obligation"),
+    "§18/COPY: 🔴 the stub does NOT claim the turn had closed its reply obligation — false here, in a text the session reads back",
+  );
+  ok(
+    !(after.text ?? "").includes("refused a further attempt to speak"),
+    "§18/COPY: …and does not claim a refusal either — the post landed",
+  );
+
+  const row = await store.getUnifiedWakeRecord(ORG, w);
+  ok(row !== null && row.answeredAt === undefined, "§18: 🔴 the wake stays PENDING — ending the turn defers the rest of the answer, it does not drop it");
+}
+
 rmSync(dir, { recursive: true, force: true });
 
-console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip, an abandoned write cannot overtake its successor)`);
+console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip, an abandoned write cannot overtake its successor, a repeated forced override ends the turn without blocking its post)`);

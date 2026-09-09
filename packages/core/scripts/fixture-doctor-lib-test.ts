@@ -169,19 +169,31 @@ function finding(overrides: Partial<FixtureFinding["classified"]> & { probe?: Fi
   ok(new Set(ids).size === ids.length, "every family id in the real table is unique — no duplicate Capability entry");
 }
 {
+  const engagedGithub = FIXTURE_FAMILIES.find((f) => f.id === "engagedGithub");
+  ok(engagedGithub !== undefined, "the engagedGithub family is declared — J-ENGAGED-github's repo is censused, not assumed");
+  ok(engagedGithub?.probe === "github-repo", `…with a probe that calls the vendor (got ${JSON.stringify(engagedGithub?.probe)})`);
+  ok(engagedGithub?.repoVar === "E2E_ADDRESSED_GITHUB_REPO", `…on the variable the journey reads (got ${JSON.stringify(engagedGithub?.repoVar)})`);
+  const set = classifyFixture({ E2E_GITHUB_DRIVER_TOKEN: "ghp-test" }, engagedGithub!);
+  ok(set.classification === "set", `the family is SET on a driver token alone, because the repo id is in this repository (got ${set.classification})`);
+  const partial = classifyFixture({ E2E_GITHUB_DRIVER_TOKEN: "ghp-test" }, engagedGithub!, {});
+  ok(partial.classification === "partial", `the control: with no tracked id the same env is PARTIAL (got ${partial.classification})`);
+  ok(partial.missing.includes("E2E_ADDRESSED_GITHUB_REPO"), `…and it names the missing half (got ${JSON.stringify(partial.missing)})`);
+}
+{
   for (const f of FIXTURE_FAMILIES) {
     if (f.probe === "slack-channel" || f.probe === "slack-dm-channel")
       ok(typeof f.channelVar === "string" && f.channelVar.length > 0, `${f.probe} family "${f.id}" declares channelVar`);
     if (f.probe === "slack-channel-pair") ok(Array.isArray(f.channelVars) && f.channelVars.length === 2, `slack-channel-pair family "${f.id}" declares two channelVars`);
     if (f.probe === "notion-page-pair") ok(Array.isArray(f.pageVars) && f.pageVars.length === 2, `notion-page-pair family "${f.id}" declares two pageVars`);
     if (f.probe === "linear-label") ok(typeof f.labelVar === "string" && f.labelVar.length > 0, `linear-label family "${f.id}" declares labelVar`);
+    if (f.probe === "github-repo") ok(typeof f.repoVar === "string" && f.repoVar.length > 0, `github-repo family "${f.id}" declares repoVar`);
     if (f.probe === "presence-only") ok(typeof f.presenceOnlyReason === "string" && f.presenceOnlyReason.length > 0, `presence-only family "${f.id}" states why`);
     ok(f.required.length > 0, `family "${f.id}" declares at least one required var`);
     ok(f.scenarios.length > 0, `family "${f.id}" names what it gates`);
   }
 }
 {
-  const classified = classifyAll({}, FIXTURE_FAMILIES);
+  const classified = classifyAll({}, FIXTURE_FAMILIES, {});
   ok(classified.length === FIXTURE_FAMILIES.length, "classifyAll returns one entry per declared family");
   ok(classified.every((c) => c.classification === "absent"), "an empty env classifies every real family as absent");
   const findings: FixtureFinding[] = classified.map((c) => ({ classified: c }));

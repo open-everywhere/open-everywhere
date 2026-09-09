@@ -133,8 +133,8 @@ export function backstopReply(d: StepBoundaryDecision): string {
 
 function closedTurnReply(d: StepBoundaryDecision): string {
   return (
-    `${STEP_BOUNDARY_MARKER}: this turn had already closed its reply obligation, and the host then ` +
-    `refused a further attempt to speak (${d.closeoutReason ?? "closed"}). The turn is now ended by the ` +
+    `${STEP_BOUNDARY_MARKER}: the host had told this turn to stop speaking here, and it went on ` +
+    `speaking (${d.closeoutReason ?? "closed"}). The turn is now ended by the ` +
     `harness after ${d.count} model round-trips. Everything this turn posted stands, and any background ` +
     `work it started continues and reports on its own. The next message here wakes you.`
   );
@@ -214,7 +214,7 @@ export const STEP_BOUNDARY_ACTION = "turn.step_boundary";
 
 function crossingNote(tier: StepBoundaryTier): string {
   if (tier === "soft") return "the wrap-up instruction now rides every call this turn";
-  if (tier === "closed") return "the turn had closed its wake and was refused again, so it was ended here";
+  if (tier === "closed") return "the turn kept speaking after the host had told it to stop, so it was ended here";
   return "the turn was stopped by the text-only backstop";
 }
 

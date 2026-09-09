@@ -6,7 +6,16 @@ import { isThreadStopped } from "../channels/engagement.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { durableTurnKey, noteStoppedAck, stoppedAckSpent } from "../model/turn-state.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, replyEditLocus, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
+import {
+  resolveReplyTarget,
+  replyEditLocus,
+  postReply,
+  auditReplyRefused,
+  auditReplyForced,
+  replyAuditFor,
+  REPLY_DEDUPE_SKIPPED_ID,
+  type ReplierLabel,
+} from "../channels/reply-post.js";
 import {
   replyFreshness,
   staleReplyRefusalMessage,
@@ -36,6 +45,9 @@ import {
   REPLY_STOPPED_REFUSAL_REASON,
   markStoppedAckThisTurn,
   wasStoppedAckSpentThisTurn,
+  noteForcedOverrideThisTurn,
+  FORCED_OVERRIDE_TURN_LIMIT,
+  REPLY_FORCED_LOOP_REASON,
 } from "../channels/reply-signal.js";
 import { markStandDownSilenceThisTurn, REPLY_STAND_DOWN_ACK_ACTION } from "../channels/stand-down-silence.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -186,13 +198,16 @@ export const unifiedReplyEntry = defineTool({
         throw new Error(stoppedRefusalText());
       }
 
+      let doneOverrides = 0;
+      let staleOverrides = 0;
+      let doneForced = false;
       if (isWakeDoneThisTurn(turnId, input.wake)) {
         if (terminalPostClosesConversation(origin)) {
           await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_REFUSAL_REASON);
           throw new Error(replyRefusalMessage("answered", input.wake));
         }
         if (input.force === true) {
-          await auditReplyForced(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_FORCED_AUDIT_REASON);
+          doneForced = true;
         } else if (!wasDoneRefusedThisTurn(turnId, input.wake)) {
           markDoneRefusedThisTurn(turnId, input.wake);
           await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_REFUSAL_REASON);
@@ -206,6 +221,11 @@ export const unifiedReplyEntry = defineTool({
         throw new Error(delegationPendingRefusalMessage());
       }
 
+      if (doneForced) {
+        doneOverrides = noteForcedOverrideThisTurn(turnId, WAKE_DONE_FORCED_AUDIT_REASON, input.wake);
+        if (doneOverrides === 1) await auditReplyForced(replyAuditFor(bind, "tool", input.wake), WAKE_DONE_FORCED_AUDIT_REASON);
+      }
+
       if (!wasStaleRefusedThisTurn(turnId, input.wake)) {
         const freshness = await replyFreshness(store, org, { target: origin, windowToken, inputWake: input.wake, turnWake });
         if (freshness.stale && input.force !== true) {
@@ -213,10 +233,13 @@ export const unifiedReplyEntry = defineTool({
           await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STALE_REFUSAL_REASON);
           throw new Error(staleReplyRefusalMessage(freshness));
         }
-        if (freshness.stale) await auditReplyForced(replyAuditFor(bind, "tool", input.wake), REPLY_FORCED_AUDIT_REASON);
+        if (freshness.stale) {
+          staleOverrides = noteForcedOverrideThisTurn(turnId, REPLY_FORCED_AUDIT_REASON, input.wake);
+          if (staleOverrides === 1) await auditReplyForced(replyAuditFor(bind, "tool", input.wake), REPLY_FORCED_AUDIT_REASON);
+        }
       }
 
-      await refuseIfShouldFold({
+      const foldOverrides = await refuseIfShouldFold({
         store,
         window: tailWindow(),
         platform: origin.platform,
@@ -251,15 +274,29 @@ export const unifiedReplyEntry = defineTool({
         await store.markUnifiedWakeAnswered(org, input.wake, new Date().toISOString(), turnId).catch(() => undefined);
         markWakeDoneThisTurn(turnId, input.wake);
       }
+      const overrides = Math.max(doneOverrides, staleOverrides, foldOverrides);
+      if (overrides >= FORCED_OVERRIDE_TURN_LIMIT) await noteTurnCloseoutRefusal(bind, REPLY_FORCED_LOOP_REASON);
+
       const doneNote =
         input.done !== false
-          ? " This wake is now ANSWERED — do not reply to it again in this turn; a second call is refused."
+          ? doneOverrides === 0
+            ? " This wake is now ANSWERED — do not reply to it again in this turn; a second call is refused."
+            : " This wake was already ANSWERED and you overrode that verdict, so a further call is NOT refused — it just repeats you in the room."
           : " This wake stays OPEN (`done:false`) — reply to it again when the rest of the answer is ready.";
+      const editSteer = id === REPLY_DEDUPE_SKIPPED_ID ? "`edit_reply`" : `\`edit_reply\` with wake \`${input.wake}\` and message_id \`${id}\``;
+      const overrideNote =
+        overrides === 0
+          ? ""
+          : overrides >= FORCED_OVERRIDE_TURN_LIMIT
+            ? ` You have now overridden the same host verdict ${overrides} times in this turn, so this turn ENDS after your next step. Post nothing further here: to correct what you said, call ${editSteer}.`
+            : ` You overrode a host verdict, so this landed as a SECOND message beside your own last one. Prefer ${editSteer} over a third message here, and finish with \`no_reply\` when you are done.`;
+      const tailNote =
+        overrides >= FORCED_OVERRIDE_TURN_LIMIT ? " Your terminal prose is still discarded." : " Keep working if needed; your terminal prose is still discarded.";
       const pendingNote = owingTask !== undefined ? PENDING_WORK_INSTRUCTION : "";
       return {
         posted: true,
         id,
-        note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote}${pendingNote} Keep working if needed; your terminal prose is still discarded.`,
+        note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote}${overrideNote}${pendingNote}${tailNote}`,
       };
     },
 });

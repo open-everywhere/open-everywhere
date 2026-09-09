@@ -2,7 +2,7 @@ import { defineState } from "eve/context";
 import { postArm } from "./post-arms.js";
 import { isOwnPost, OWN_POST_TTL_MS, type OwnPostLedgerDeps, type OwnPostLocus } from "./own-post-ledger.js";
 import { auditReplyForced, auditReplyRefused, type ReplyAudit } from "./reply-post.js";
-import { secondMessageValve } from "./reply-signal.js";
+import { noteForcedOverrideThisTurn, secondMessageValve } from "./reply-signal.js";
 import type { SessionTailEntry } from "./session-tail.js";
 import type { TailWindow } from "./session-tail-record.js";
 
@@ -102,9 +102,9 @@ export async function refuseIfShouldFold(input: {
   readonly audit: ReplyAudit;
   readonly answeringWake?: string | undefined;
   readonly force?: boolean | undefined;
-}): Promise<void> {
+}): Promise<number> {
   const room = input.window?.container;
-  if (wasFoldRefusedThisTurn(input.turnId, room)) return;
+  if (wasFoldRefusedThisTurn(input.turnId, room)) return 0;
   const target = await replyFoldTarget({
     store: input.store,
     window: input.window,
@@ -112,10 +112,11 @@ export async function refuseIfShouldFold(input: {
     locus: input.locus,
     answeringWake: input.answeringWake,
   });
-  if (!target) return;
+  if (!target) return 0;
   if (input.force === true) {
-    await auditReplyForced(input.audit, REPLY_FOLD_FORCED_AUDIT_REASON);
-    return;
+    const overrides = noteForcedOverrideThisTurn(input.turnId, REPLY_FOLD_FORCED_AUDIT_REASON, room);
+    if (overrides === 1) await auditReplyForced(input.audit, REPLY_FOLD_FORCED_AUDIT_REASON);
+    return overrides;
   }
   markFoldRefusedThisTurn(input.turnId, room);
   await auditReplyRefused(input.audit, REPLY_FOLD_REFUSAL_REASON);

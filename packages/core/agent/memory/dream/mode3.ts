@@ -254,7 +254,7 @@ export async function buildMode3Report(
   return { org, windowStart, windowEnd, totalFailures, clusters: shaped };
 }
 
-export const DISCOVERY_ONLY_FOOTER =
+const DISCOVERY_ONLY_FOOTER =
   "_Discovery only — no PR opened this run. A human picks which fix sketch, if any, to act on._";
 
 export function formatMode3Report(report: Mode3Report, footer: string = DISCOVERY_ONLY_FOOTER): string {

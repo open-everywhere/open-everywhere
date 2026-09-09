@@ -9,14 +9,14 @@ export interface Correction {
 
 export type CorrectionRefusal = "empty" | "machine-author" | "no-standing";
 
-export const CORRECTION_STANDING = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
+const CORRECTION_STANDING = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
 
-export const MAX_CORRECTION_CHARS = 600;
+const MAX_CORRECTION_CHARS = 600;
 
 export const MAX_CORRECTIONS = 8;
 
-export const MAX_CORRECTION_AUTHOR_CHARS = 64;
-export const MAX_CORRECTION_STATE_CHARS = 32;
+const MAX_CORRECTION_AUTHOR_CHARS = 64;
+const MAX_CORRECTION_STATE_CHARS = 32;
 
 export function defangForProposal(body: string, maxChars: number = MAX_CORRECTION_CHARS): string {
   const stripped = body
