@@ -25,6 +25,7 @@ import {
 import { planClearSpendLimit, type ClearSpendLimitInput } from "../tools/clear_spend_limit.js";
 import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js";
 import type { SkillDomainRefusal } from "../skills/domain-skills.js";
+import { parseRateTokens, runRate, RATE_HELP_LINE, type RateCommand } from "./rate.js";
 
 export const OE_COMMAND_NAME = "oe";
 
@@ -80,6 +81,7 @@ export type OeCommand =
   | { readonly kind: "budget-raise"; readonly usd: number }
   | { readonly kind: "budget-clear" }
   | { readonly kind: "stop" }
+  | RateCommand
   | { readonly kind: "error"; readonly message: string };
 
 function parseBudgetTokens(rest: readonly string[]): OeCommand {
@@ -104,6 +106,7 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   if (!sub || sub === "help") return { kind: "help" };
   if (sub === "status") return { kind: "status" };
   if (sub === "stop") return { kind: "stop" };
+  if (sub === "rate") return parseRateTokens(rest);
   if (sub === "budget") return parseBudgetTokens(rest);
   return { kind: "error", message: `Unknown command "${sub}" — try "/oe help" to see what's available.` };
 }
@@ -125,6 +128,7 @@ export function renderHelp(): string {
     "• `/oe budget` — this channel's and workspace's effective spend caps + current-month spend.",
     "• `/oe budget raise <usd>` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).",
     "• `/oe budget clear` — propose clearing this channel's spend-limit override back to config (posts an approval card).",
+    RATE_HELP_LINE,
     "• `/oe help` — this message.",
   ].join("\n");
 }
@@ -426,5 +430,7 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps
       return runBudgetClear(binding);
     case "stop":
       return runStop(binding, deps.attachSession);
+    case "rate":
+      return runRate(binding, cmd.score);
   }
 }

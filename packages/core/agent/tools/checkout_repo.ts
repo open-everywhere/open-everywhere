@@ -9,6 +9,7 @@ import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
@@ -47,6 +48,7 @@ export default windowGated("checkout_repo", defineTool({
           `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
       );
     }
+    await assertGithubActingIdentity(ctx as BindableContext, "checkout_repo");
 
     const app = getGitHubApp();
     if (!app) {

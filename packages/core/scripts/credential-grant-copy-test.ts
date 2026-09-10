@@ -127,11 +127,11 @@ console.log("1. the phrase helpers:");
 
   eq(grantRequesterPhrase("Ada Lovelace"), "Ada Lovelace", "a resolved requester is named");
   eq(
-    grantRequesterPhrase("discord/1300000000000000103"),
+    grantRequesterPhrase("discord/9000000000000000003"),
     "Someone this deployment cannot name",
     "🔴 an ID-SHAPED label is DROPPED, not printed — the guard is structural, not a convention at one caller",
   );
-  eq(grantConversationPhrase("#300000000000000104"), "that conversation", "…and the same guard covers the room label a scope resolver answered with");
+  eq(grantConversationPhrase("#9000000000000000002"), "that conversation", "…and the same guard covers the room label a scope resolver answered with");
   eq(GRANT_ID_LEAK_PATTERNS.length, 4, "the guard and the gate share ONE list of four shapes");
   eq(
     grantRequesterPhrase(""),
@@ -344,8 +344,7 @@ console.log("3. the golden:");
     "the refused card",
   );
 
-  const DISCLOSURE =
-    'acting as ada — granted tool `notion_fetch` on `Quarterly report — notion-fetch({id:quarterly-report})`, expires 2026-09-06T17:44:45.132Z, purpose: "summarise the quarter for the team"';
+  const DISCLOSURE = `acting as ada — used ada's Notion account to read a Notion page — "Quarterly report", for the next 12 hours (until 04:19 UTC). The reason given was "summarise the quarter for the team".`;
 
   eq(
     grantResolutionText(ask, { askedMode: "once", grant: grantRow, kind: "approved" }, NOW),
@@ -438,8 +437,8 @@ console.log("4. the leak lint:");
 const SENTINELS = {
   guid: "00000000-0000-4000-8000-000000000018",
   instant: "2026-03-21T04:19:45.132Z",
-  minted: "grant__300000000000000104_notion__notion_fetch_notion_pag",
-  snowflake: "300000000000000104",
+  minted: "grant__9000000000000000002_notion__notion_fetch_notion_pag",
+  snowflake: "9000000000000000002",
 } as const;
 
 const LEAK_PATTERNS = GRANT_ID_LEAK_PATTERNS;
@@ -481,10 +480,8 @@ const leakyRow: CredentialGrantRow = {
   verb: "notion_fetch",
 };
 
-function withoutBrokerLine(text: string, row: CredentialGrantRow): string {
-  const line = credentialGrantDisclosureLine(row);
-  ok(text.endsWith(`\n${line}`), "the broker's disclosure line is exactly the tail of the notice — the split hides nothing");
-  return text.slice(0, text.length - line.length - 1);
+function brokerLine(row: CredentialGrantRow): string {
+  return credentialGrantDisclosureLine(row, NOW);
 }
 const REFUSALS: readonly GrantMintRefusal[] = [
   "no_domain_grant",
@@ -528,18 +525,15 @@ const rendered: readonly { readonly what: string; readonly text: string }[] = [
   ...REFUSALS.map((reason) => ({ text: grantMintRefusalMessage("notion", reason), what: `the bare mint refusal "${reason}"` })),
   { text: credentialGrantRefusalNote("notion", "owner_unreachable"), what: "the unreachable-owner refusal" },
   ...(["once", "session", "standing"] as const).map((mode) => ({
-    text: withoutBrokerLine(grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, mode }, kind: "approved" }, NOW), { ...leakyRow, mode }),
+    text: grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, mode }, kind: "approved" }, NOW),
     what: `the room's resolution notice (approved, ${mode})`,
   })),
   {
-    text: withoutBrokerLine(
-      grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, toolName: undefined }, kind: "approved" }, NOW),
-      { ...leakyRow, toolName: undefined },
-    ),
+    text: grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, toolName: undefined }, kind: "approved" }, NOW),
     what: "the room's resolution notice (approved, nothing mounts)",
   },
   {
-    text: withoutBrokerLine(grantResolutionText(leaky, { askedMode: "session", grant: { ...leakyRow, mode: "standing" }, kind: "approved" }, NOW), { ...leakyRow, mode: "standing" }),
+    text: grantResolutionText(leaky, { askedMode: "session", grant: { ...leakyRow, mode: "standing" }, kind: "approved" }, NOW),
     what: "the room's resolution notice (approved wider than asked)",
   },
   { text: grantResolutionText(leaky, { kind: "declined" }, NOW), what: "the room's resolution notice (declined)" },
@@ -554,16 +548,14 @@ const rendered: readonly { readonly what: string; readonly text: string }[] = [
   })),
   { text: grantOwnerNoticeText(leakyRow, `discord/${SENTINELS.snowflake}`, NOW), what: "the owner's first-use DM (id-shaped requester label)" },
   {
-    text: withoutBrokerLine(grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant), leakyRow),
+    text: grantRoomNoticeText(brokerLine(leakyRow), leakyRow, SENTINELS.instant),
     what: "the room's disclosure notice",
   },
   {
-    text: withoutBrokerLine(
-      grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant, `discord/${SENTINELS.snowflake}`),
-      leakyRow,
-    ),
+    text: grantRoomNoticeText(brokerLine(leakyRow), leakyRow, SENTINELS.instant, `discord/${SENTINELS.snowflake}`),
     what: "the room's disclosure notice (id-shaped requester label)",
   },
+  { text: brokerLine(leakyRow), what: "the broker's disclosure line" },
 ];
 
 ok(rendered.length >= 30, `the lint drives ${String(rendered.length)} rendered strings — the enumeration is the claim`);
@@ -582,9 +574,9 @@ console.log("5. the negative controls:");
   ok(card.includes("summarise the quarter"), "…and the model-authored purpose still renders, so the owner reads what was actually asked for");
 
   const old = [
-    "That conversation can now run `grant__300000000000000104_notion__notion_fetch_notion_pag` on `Notion page read — notion-fetch({})`",
+    "That conversation can now run `grant__9000000000000000002_notion__notion_fetch_notion_pag` on `Notion page read — notion-fetch({})`",
     "until 2026-03-21T04:19:45.132Z",
-    "discord/1300000000000000103 asks to use your notion credential",
+    "discord/9000000000000000003 asks to use your notion credential",
     "grant `00000000-0000-4000-8000-000000000018`",
   ];
   for (const line of old) {
@@ -595,9 +587,32 @@ console.log("5. the negative controls:");
   }
   ok(!LEAK_PATTERNS.some(({ re }) => re.test("read a Notion page for the next 12 hours (until 04:19 UTC)")), "…and does NOT fire on ordinary product copy");
 
-  const disclosure = grantRoomNoticeText(credentialGrantDisclosureLine(leakyRow), leakyRow, SENTINELS.instant);
+  const disclosure = grantRoomNoticeText(brokerLine(leakyRow), leakyRow, SENTINELS.instant);
   ok(disclosure.includes("`discord/G1/U-ASKER`"), "🔴 the room's disclosure notice still names the requester's PRINCIPAL KEY — the audit join, deliberately exempt from the lint");
   ok(grantOwnerNoticeText(leakyRow, undefined, NOW).includes("`discord/G1/U-ASKER`"), "…and so does the owner's first-use DM, for the same reason");
+
+  const line = brokerLine(leakyRow);
+  ok(line.startsWith("acting as "), "the broker's line still leads with the §8.2 `acting as` marker — the room's one spelling of 'this ran on somebody's credential'");
+  ok(line.includes("Notion account"), "…and names the ACCOUNT that paid, by the vendor's own name");
+  ok(line.includes("read a Notion page"), "…and what was done, in the reviewed phrase rather than the `verb` column");
+  ok(line.includes("for the next 12 hours (until 04:19 UTC)"), "…and how long is left, as a span and a clock time rather than the ISO column");
+  ok(line.includes('The reason given was "summarise the quarter for the team"'), "…and the requester's own reason, as quoted data");
+  ok(!line.includes("notion_fetch") && !line.includes("Quarterly report — notion-fetch("), "🔴 NEGATIVE CONTROL: neither the `verb` nor the whole `resource` column survives — those are the two shapes the rewrite removed");
+
+  ok(line.includes('read a Notion page — "Quarterly report"'), "🔴 the line names the TARGET, not only the action — a witness who cannot tell WHICH page is not witnessing");
+  ok(
+    credentialGrantDisclosureLine({ ...leakyRow, resource: grantBorrowResourceLabel("The launch brief", "notion-fetch", { id: "x" }) }, NOW).includes('— "The launch brief"'),
+    "…and it is a function of the row's own column, not a fixed phrase",
+  );
+  ok(
+    !credentialGrantDisclosureLine({ ...leakyRow, mcpTool: undefined }, NOW).includes(" — \""),
+    "…and a row with no recoverable label names no target rather than falling back to the raw column",
+  );
+
+  const unreviewed = credentialGrantDisclosureLine({ ...leakyRow, mcpTool: "notion-search" }, NOW);
+  ok(unreviewed.includes("read one thing in Notion"), "an unreviewed (connector, tool) pair falls to the generic floor rather than printing the vendor's id");
+  ok(unreviewed.includes("not one this deployment has a reviewed description for"), "…and the line SAYS the description is generic, so the room does not read the floor as a narrow act");
+  ok(!line.includes("not one this deployment has a reviewed description for"), "NEGATIVE CONTROL: the reviewed pair carries no such caution — the marker is a function of the pair, not boilerplate");
 
   const OFFERS_REVOCATION = /(?:you|they)\s+(?:can|may|could|should)\s+(?:revoke|end)\b|unless you revoke|revoke it first|send me a direct message and ask/iu;
 

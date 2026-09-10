@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { actingPrincipalIdOf } from "../access/request.js";
-import { ownerGrantListText, ownerLiveGrants, revokeOwnerGrants } from "../access/credential-grant-revoke.js";
+import { ownerGrantHandles, ownerGrantListText, ownerLiveGrants, revokeOwnerGrants } from "../access/credential-grant-revoke.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -10,30 +10,30 @@ import { resolvePartition } from "../memory/partition.js";
 export default defineTool({
   description:
     "List, or END, the credential grants the person you are talking to is lending — the grants that let another conversation spend THEIR own connector account. " +
-    "DM only, and it only ever reaches that person's own grants. Call it with `list` first: it answers with a numbered list, and the numbers are what `end` takes. " +
+    "DM only, and it only ever reaches that person's own grants. Call it with `list` first: `message` is a numbered list for the person to read, and `grants` pairs each of those numbers with the grant id `end` takes. " +
     "Ending a grant is immediate and cannot be undone, and its next call on the borrowed tool is refused. I also try to tell the conversation that held it — my answer says when I could not reach one, so relay that too. " +
-    "Relay the answer as it comes back — it is written for the person to read.",
+    "Relay `message` as it comes back — it is written for the person to read. Never show or repeat a grant id: it is for your next call, and it means nothing to them.",
   inputSchema: z.object({
     action: z.enum(["list", "end"]).describe("`list` reads what they are lending and changes nothing. `end` revokes."),
     all: z
       .boolean()
       .optional()
       .describe("For `end` only: end EVERY grant they are lending. Use it only when they said to end all of them, never as a shortcut for one."),
-    which: z
-      .array(z.number().int().positive())
+    grants: z
+      .array(z.string().min(1))
       .optional()
       .describe(
-        "For `end` only: the numbers from the list you just read, for example [1] or [1, 3]. " +
-          "Read the list in this same turn and take the numbers from it — never a number they or you remember from earlier. " +
-          "🔴 NAME EVERY NUMBER YOU MEAN IN ONE CALL. The numbers are positions in the live list, so ending one RENUMBERS the rest: " +
-          "a second `end` using the first list's numbers would end a grant nobody named, and a revoke cannot be undone. " +
-          "If you do call it again, use the numbers printed in the previous call's own answer.",
+        "For `end` only: the grant ids to end, copied from the `grants` field of a `list` you ran in THIS turn. " +
+          "The person says a NUMBER; you look that number up in `grants` and send its `id`. " +
+          "🔴 NEVER SEND A NUMBER HERE, and never an id you remember from an earlier turn — read the list again first. " +
+          "An id that names nothing live ends nothing and the answer says so, so a repeat of this call is safe.",
       ),
   }),
   outputSchema: z.object({
     ended: z.number(),
     live: z.number(),
     message: z.string(),
+    grants: z.array(z.object({ id: z.string(), number: z.number().int() })),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -61,16 +61,16 @@ export default defineTool({
 
     if (input.action === "list") {
       const holdings = await ownerLiveGrants(p.org, ownerKey, nowMs);
-      return { ended: 0, live: holdings.length, message: ownerGrantListText(holdings) };
+      return { ended: 0, grants: ownerGrantHandles(holdings), live: holdings.length, message: ownerGrantListText(holdings) };
     }
     const wantsAll = input.all === true;
-    const numbered = input.which ?? [];
-    if (wantsAll === (numbered.length > 0)) {
+    const named = input.grants ?? [];
+    if (wantsAll === (named.length > 0)) {
       throw new Error(
-        "To end a grant, give either the numbers from the list (`which`) or `all: true` — one of the two, never both and never neither. Read the list first.",
+        "To end a grant, give either the grant ids from the list (`grants`) or `all: true` — one of the two, never both and never neither. Read the list first.",
       );
     }
-    const outcome = await revokeOwnerGrants(stamps, ownerKey, wantsAll ? undefined : numbered, nowMs);
-    return { ended: outcome.ended.length, live: outcome.remaining.length, message: outcome.text };
+    const outcome = await revokeOwnerGrants(stamps, ownerKey, wantsAll ? undefined : named, nowMs);
+    return { ended: outcome.ended.length, grants: ownerGrantHandles(outcome.remaining), live: outcome.remaining.length, message: outcome.text };
   },
 });

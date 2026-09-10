@@ -200,7 +200,11 @@ for (const mode of ["once", "session", "standing"] as const) {
   eq(sent.length, sentBefore + 1, `[${mode}] the broker sent exactly one vendor call`);
   eq(sent[sent.length - 1].mcpTool, VENDOR_TOOL, `[${mode}] naming the vendor tool the ROW lends, in the vendor's own bytes`);
   eq(sent[sent.length - 1].input, { id: "abc123", page_size: 10 }, `[${mode}] and carrying the model's arguments UNCHANGED -- the broker injects nothing`);
-  ok(result.disclosure?.startsWith("acting as rowan_hale — granted tool") === true, `[${mode}] the result carries the HOST-AUTHORED acting-as line the model cannot write`);
+  const line = result.disclosure ?? "";
+  ok(line.startsWith("acting as rowan_hale — "), `[${mode}] the result carries the HOST-AUTHORED acting-as line the model cannot write`);
+  ok(line.includes("Notion account to read a Notion page"), `[${mode}] …naming the account that paid and what it did, in words`);
+  ok(/for the next \d+ (minute|hour|day)s? \(until/u.test(line), `[${mode}] …and how long is left as a span, never the row's ISO expiry`);
+  ok(!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u.test(line), `[${mode}] NEGATIVE CONTROL: no ISO instant survives into the room's most-read line`);
   ok(roomLines[roomLines.length - 1] === result.disclosure, `[${mode}] …and the same line went to the room notice arm, so the room sees it independently of what the model relays`);
 }
 

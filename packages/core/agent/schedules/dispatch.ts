@@ -13,7 +13,7 @@ import {
 } from "../routines/fire-eligibility.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
-import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
+import { auditRoutineDisabled, auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { auditFireAttrsSent } from "../routines/fire-carriage.js";
 import { checkBound } from "../routines/bound.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
@@ -21,7 +21,8 @@ import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, routinePermissionGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
-import { runPreFire, type PreFireOutcome } from "../routines/pre-fire.js";
+import { preFireFallback, runPreFire, type PreFireOutcome } from "../routines/pre-fire.js";
+import { gateWaitExpiredReason, gatedOnceExhausted } from "../routines/gate.js";
 import { taintedFireAttrs } from "../access/taint-signal.js";
 import { routinePartition } from "../routines/partition.js";
 import { routineFireHalted } from "../routines/fire-halt.js";
@@ -189,18 +190,17 @@ export async function dispatchTick(
       }
     } catch {
     }
-    const pre = await runPreFire(r, now.toISOString()).catch(
-      (err: unknown): PreFireOutcome => ({
-        collected: [],
-        gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${String(err)}` },
-        tainted: false,
-      }),
-    );
+    const pre = await runPreFire(r, now.toISOString()).catch((err: unknown): PreFireOutcome => preFireFallback(r, err));
     if (!pre.gate.fire) {
       gated++;
-      log(`GATED (condition not met): ${r.id} on ${r.surfaceKey} — ${pre.gate.why}`);
+      const gateExhausted = r.trigger.kind === "once" && gatedOnceExhausted(r.trigger.at, now);
+      log(`GATED (condition not met): ${r.id} on ${r.surfaceKey} — ${pre.gate.why}${gateExhausted ? " — WAIT EXPIRED, retiring the one-shot" : ""}`);
       await updateRoutine(r.org, r.surfaceKey, r.id, {
-        ...(r.trigger.kind === "once" ? {} : { nextRunAt: next ? next.toISOString() : null }),
+        ...(r.trigger.kind === "once"
+          ? gateExhausted
+            ? { nextRunAt: null, ...onceDisablePatch(r, now, gateWaitExpiredReason(r.gate)) }
+            : {}
+          : { nextRunAt: next ? next.toISOString() : null }),
         lastOutcome: "skipped",
         lastFailureReason: undefined,
       });
@@ -208,6 +208,12 @@ export async function dispatchTick(
         ...(pre.gate.gate ? { gate: pre.gate.gate } : {}),
         gateReason: pre.gate.why,
       }).catch(() => false);
+      if (gateExhausted) {
+        await auditRoutineDisabled(r, `once: ${gateWaitExpiredReason(r.gate)}`, r.consecutiveFailures, undefined, {
+          ...(pre.gate.gate ? { gate: pre.gate.gate } : {}),
+          gateReason: pre.gate.why,
+        }).catch(() => undefined);
+      }
       continue;
     }
     try {

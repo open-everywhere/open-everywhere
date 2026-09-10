@@ -1,14 +1,10 @@
 import { defineHook, type HookContext, type HookEvent } from "eve/hooks";
-import { credentialGrantConnectors } from "../access/credential-grant.js";
 import { isWakeEnvelopeShaped, triggerMessageBody } from "../channels/wake-envelope.js";
 import { OE_OWN_ACCOUNT_ASK_ATTR, parseOwnAccountStamp, renderOwnAccountStamp } from "../connections/own-account-carriage.js";
 import { namedOwnAccountVendor, type OwnAccountAsk, type OwnAccountVendor } from "../connections/own-account-ask.js";
+import { credentialGrantVendors, ownAccountAskVendors } from "../connections/own-account-vendors.js";
 import { currentTurnId, type BindableContext } from "../identity/binding.js";
 import { captureEligible } from "./requester-messages.js";
-
-function ownAccountVendors(): readonly OwnAccountVendor[] {
-  return credentialGrantConnectors().map((connector) => ({ connector }));
-}
 
 function writableAuthAttrs(ctx: HookContext): Record<string, unknown> | null {
   try {
@@ -50,9 +46,18 @@ export function stampOwnAccountAsk(event: HookEvent<"message.received">, ctx: Ho
     if (typeof sessionId !== "string" || sessionId.length === 0) return undefined;
     const attrs = writableAuthAttrs(ctx);
     if (attrs === null) return undefined;
-    const ask = namedOwnAccountVendor([body], ownAccountVendors());
+    let vendors: readonly OwnAccountVendor[];
+    let degraded = false;
+    try {
+      vendors = ownAccountAskVendors();
+    } catch (err) {
+      degraded = true;
+      vendors = credentialGrantVendors();
+      console.error(`[open-everywhere:own-account] grading this delivery with the credential-grant connectors only, and clearing no stamp: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const ask = namedOwnAccountVendor([body], vendors);
     if (ask === undefined) {
-      clearOwnStamp(attrs, sessionId);
+      if (!degraded) clearOwnStamp(attrs, sessionId);
       return undefined;
     }
     attrs[OE_OWN_ACCOUNT_ASK_ATTR] = renderOwnAccountStamp(sessionId, currentTurnId(ctx as unknown as BindableContext), ask);

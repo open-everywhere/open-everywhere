@@ -4,6 +4,8 @@ export type UserAuthSubject =
   | { readonly type: "user"; readonly id: string; readonly issuer?: string }
   | { readonly type: "app" };
 
+export type ConsentCarriage = unknown;
+
 export interface UserTokenMintParams {
   readonly subject: { readonly type: "user"; readonly id: string; readonly issuer?: string };
   readonly scopes?: readonly string[];
@@ -16,7 +18,7 @@ export interface UserAuthFlowProvider {
   startAuthorization(
     providerRef: string,
     params: { readonly subject: UserAuthSubject },
-    options: { readonly expiresInMs?: number },
+    options: { readonly expiresInMs?: number; readonly consent?: ConsentCarriage },
   ): Promise<{ url: string }>;
   isUserAuthRequired(error: unknown): boolean;
   environmentClaim(): Promise<string>;

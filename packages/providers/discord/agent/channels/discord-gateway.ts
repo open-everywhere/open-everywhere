@@ -1430,7 +1430,7 @@ export async function promoteParticipatingOnReply(state: DiscordGatewayState): P
     if (!coords) return;
     const rec = await getThreadEngagement(coords.p, coords.key);
     if (!rec) return;
-    await markThreadEngaged(coords.p, coords.key, new Date().toISOString(), { participating: true });
+    await markThreadEngaged(coords.p, coords.key, new Date().toISOString(), { participating: true, byOwnPost: true });
   } catch (err) {
     console.warn(`[open-everywhere:discord-gateway] participating-promote failed: ${String(err)}`);
   }
@@ -1567,10 +1567,11 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (rawAction.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
-      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+      const repliedThisTurn = consumeRepliedThisTurn(turnId);
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const noReplyToolCalledThisTurn = consumeNoReplyThisTurn() !== null;
-      const stoodDownSilentThisTurn = consumeStandDownSilenceThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const stoodDownSilentThisTurn = consumeStandDownSilenceThisTurn(turnId);
       const action: FinalMessageAction =
         stoodDownSilentThisTurn && rawAction.kind === "post" ? { kind: "silent", reason: STAND_DOWN_SILENCE_REASON } : rawAction;
       const plan = planCompletion({
@@ -1600,6 +1601,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
               creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
+              ...(turnId ? { turnId } : {}),
               route: "terminal",
             },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,

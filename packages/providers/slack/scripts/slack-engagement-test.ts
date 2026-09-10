@@ -13,6 +13,7 @@ import {
   resetSettingsForTest,
   defineSettings,
   normalizeFenceNonce,
+  STAND_DOWN_DELIVERY_REFUSAL,
   type EngagementRow,
   type ParticipationSignals,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -21,6 +22,7 @@ import {
   resolveSlackInboundText,
   stripUnfencedSlackAttachments,
   routeMessageEvent,
+  STOOD_DOWN_DROP_REASON,
   renderWakeMessage,
   turnEffectsFor,
   buildWakeTriggers,
@@ -85,6 +87,13 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+
+const standDownDropRows = async (): Promise<readonly { readonly detail?: Record<string, unknown> | null }[]> =>
+  ((await getOperationalStore().readAudit({ org: "default", action: "surface.wake_dropped" })) as readonly {
+    readonly detail?: Record<string, unknown> | null;
+  }[]).filter((r) => r.detail?.["reason"] === STOOD_DOWN_DROP_REASON);
+
+const settleAudit = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
 
 registerConfig({
   loadBundles: () => [],
@@ -571,11 +580,19 @@ registerConfig({
     woke.length = 0;
     out = await routeMessageEvent(ev({ text: "any follow-up at all" }), rowDeps(engagedRow(false)));
     ok(out.woke && woke.length === 1, "engaged + not stood down → the follow-up wakes normally");
+    await settleAudit();
+    ok((await standDownDropRows()).length === 0, "…and an ADMITTED wake writes NO drop row — the row below counts the stand-down, not every message");
 
     woke.length = 0;
     out = await routeMessageEvent(ev({ text: "any follow-up at all" }), rowDeps(engagedRow(true)));
     ok(!out.woke && woke.length === 0, "engaged + STOOD DOWN → dropped before any wake");
-    ok(/stand down/.test(out.reason), "…and the outcome says why, naming the stand-down");
+    ok(out.reason === STAND_DOWN_DELIVERY_REFUSAL, "…and the outcome carries the delivery policy's OWN refusal constant, which is what the drop row keys on");
+
+    await settleAudit();
+    const stoodDownDrops = await standDownDropRows();
+    ok(stoodDownDrops.length === 1, "🔴 the stood-down drop writes ONE surface.wake_dropped row — the trail the ship had no way to ask for");
+    ok(stoodDownDrops[0]?.detail?.["route"] === "routeMessageEvent", "…naming the route that dropped it");
+    ok(stoodDownDrops[0]?.detail?.["anchor"] === "1.1", "…and the ANCHOR, so it joins to engagement.stood_down for THIS conversation");
 
     woke.length = 0;
     out = await routeMessageEvent(ev({ text: "stop" }), rowDeps(engagedRow(false)));
@@ -1609,7 +1626,11 @@ registerConfig({
     wakes.length = 0;
     out = await routeSupervisorEvent(followUpEv, stoppedRowDeps);
     ok(!out.woke && wakes.length === 0, "STOPPED thread + non-mention follow-up → DROPPED before any wake (the live-found gap, now fixed)");
-    ok(/stopped/.test(out.reason), "the suppressed outcome reason says the thread is stopped");
+    ok(out.reason === STOOD_DOWN_DROP_REASON, "the suppressed outcome carries the route's OWN drop-reason constant, which is what the row below is keyed on");
+    await settleAudit();
+    const supDrops = (await standDownDropRows()).filter((r) => r.detail?.["route"] === "routeSupervisorEvent");
+    ok(supDrops.length === 1, "🔴 …and the supervisor drop writes ONE surface.wake_dropped row of its own");
+    ok(supDrops[0]?.detail?.["anchor"] === "77.7", "…carrying the ANCHOR, so it joins to engagement.stood_down for THIS conversation");
 
     const engagedRowDeps = supDeps(true, 12, { getEngagement: async () => row({ stopped: false }) });
     wakes.length = 0;

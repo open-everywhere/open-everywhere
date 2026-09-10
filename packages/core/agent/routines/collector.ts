@@ -132,7 +132,8 @@ export type CollectorFailure =
   | "permission_refused"
   | "no_reader"
   | "timeout"
-  | "read_failed";
+  | "read_failed"
+  | "collection_failed";
 
 export function describeCollectorFailure(failure: CollectorFailure, configValue?: string | number): string {
   switch (failure) {
@@ -146,6 +147,8 @@ export function describeCollectorFailure(failure: CollectorFailure, configValue?
       return `the read did not answer within ${configValue ?? COLLECTOR_DEFAULT_TIMEOUT_MS}ms and was abandoned`;
     case "read_failed":
       return "the read failed";
+    case "collection_failed":
+      return "the pre-fire collection step broke before this read ran";
   }
 }
 

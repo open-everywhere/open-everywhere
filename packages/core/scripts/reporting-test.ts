@@ -334,6 +334,25 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(otherWindow.usd === 4 && otherWindow.tokens === 400, "domainSpendWindow: a caller in the OTHER domain gets that domain's figures, never the first one's");
   ok(engWindow.usd !== otherWindow.usd, "domainSpendWindow: the two domains' answers differ — neither is the org-wide total");
   ok(!engWindow.periods.includes("2026-05"), "domainSpendWindow: a month outside the window is neither summed nor named");
+  {
+    const handed: { org?: string; periodFrom?: string; periodTo?: string }[] = [];
+    const recordingDeps = {
+      spendRollup: async (org?: string, filter?: { periodFrom?: string; periodTo?: string }) => {
+        handed.push({ org, periodFrom: filter?.periodFrom, periodTo: filter?.periodTo });
+        return rollup();
+      },
+      domains: domainsFixture,
+    };
+    const recorded = await domainSpendWindow("default", "eng", "2026-09-12T10:00:00Z", 30, recordingDeps as never);
+    ok(handed.length === 1 && handed[0]!.org === "default", "domainSpendWindow: reads the store ONCE, org-pinned");
+    ok(
+      handed[0]!.periodFrom === "2026-08" && handed[0]!.periodTo === "2026-09",
+      `🔴 OPE-1653 domainSpendWindow: bounds the store read to the window's first and last calendar month (got ${handed[0]!.periodFrom}..${handed[0]!.periodTo})`,
+    );
+    ok(handed[0]!.periodFrom! > "2026-05", "OPE-1653 domainSpendWindow: the bound really excludes the fixture's out-of-window month — it is not an open range");
+    ok(JSON.stringify(recorded.periods) === JSON.stringify([handed[0]!.periodFrom, handed[0]!.periodTo]), "OPE-1653 domainSpendWindow: the bound it reads with and the periods it REPORTS are the same two months");
+  }
+
   ok(engWindow.usd === 3, "domainSpendWindow: a foreign tenant's row on the same surface key never enters the sum");
   ok(
     JSON.stringify(Object.keys(engWindow).sort()) === JSON.stringify(["calls", "domain", "periods", "tokens", "usd"]),

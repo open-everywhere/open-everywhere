@@ -1,14 +1,17 @@
 
 import { readFileSync } from "node:fs";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX } from "../agent/operational/store.js";
+import { PROMOTER_LIST_MAX, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
+import { pinSuiteStore } from "./_suite-store.js";
 import {
   deploymentOrg,
   registeredDeploymentIdentity,
   _setDeploymentIdentityForTest,
 } from "../agent/identity/deployment-identity.js";
+
+pinSuiteStore("operational");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -77,6 +80,61 @@ const store = makeOperationalPostgresStore(client);
     const onlyMeasured = await store.spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period: "2026-06", costSource: "measured" });
     ok(onlyMeasured.usdMicros === 600 && onlyMeasured.usdMicrosMeasured === 500 && onlyMeasured.calls === 2, "OPE-369(pg): the costSource filter isolates the comparable pair (600 derived vs 500 measured over the same 2 calls)");
   }
+}
+
+{
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  const ORG = "period-parity";
+  const OTHER_ORG = "period-parity-other";
+  const writes = [
+    { surfaceKey: "slack/T5/C1", period: "2026-04", inputTokens: 4, usdMicros: 40 },
+    { surfaceKey: "slack/T5/C1", period: "2026-05", inputTokens: 5, usdMicros: 50 },
+    { surfaceKey: "slack/T5/C1", period: "2026-06", inputTokens: 6, usdMicros: 60 },
+    { surfaceKey: "slack/T5/C2", period: "2026-06", principalId: "U9", routineId: "r-9", model: "m-1", costSource: "measured", inputTokens: 7, outputTokens: 3, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 8, usdMicros: 70, usdMicrosMeasured: 65 },
+  ] as const;
+  for (const w of writes) {
+    await store.recordSpend(ORG, w);
+    await sqliteOperationalStore.recordSpend(ORG, w);
+  }
+  await store.recordSpend(OTHER_ORG, { surfaceKey: "slack/T5/C1", period: "2026-05", inputTokens: 999 });
+  await sqliteOperationalStore.recordSpend(OTHER_ORG, { surfaceKey: "slack/T5/C1", period: "2026-05", inputTokens: 999 });
+
+  const shape = (rows: readonly SpendLedgerRow[]): string =>
+    rows
+      .map((r) =>
+        JSON.stringify([r.org, r.surfaceKey, r.principalId, r.routineId, r.model, r.period, r.costSource, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.usdMicros, r.usdMicrosMeasured, r.calls]),
+      )
+      .sort()
+      .join(",");
+
+  const cases: { label: string; filter: SpendLedgerFilter; periods: string[] }[] = [
+    { label: "no filter — the whole history", filter: {}, periods: ["2026-04", "2026-05", "2026-06", "2026-06"] },
+    { label: "one exact period", filter: { period: "2026-05" }, periods: ["2026-05"] },
+    { label: "periodFrom alone (the since bound)", filter: { periodFrom: "2026-05" }, periods: ["2026-05", "2026-06", "2026-06"] },
+    { label: "periodTo alone (the until bound)", filter: { periodTo: "2026-05" }, periods: ["2026-04", "2026-05"] },
+    { label: "a two-month window", filter: { periodFrom: "2026-05", periodTo: "2026-06" }, periods: ["2026-05", "2026-06", "2026-06"] },
+    { label: "a window that matches nothing", filter: { periodFrom: "2026-07", periodTo: "2026-08" }, periods: [] },
+    { label: "a window ANDed with a surface", filter: { surfaceKey: "slack/T5/C1", periodFrom: "2026-05", periodTo: "2026-06" }, periods: ["2026-05", "2026-06"] },
+  ];
+
+  for (const c of cases) {
+    const pgRows = await store.listSpendLedger(ORG, c.filter);
+    const sqRows = await sqliteOperationalStore.listSpendLedger(ORG, c.filter);
+    ok(pgRows.map((r) => r.period).sort().join(",") === c.periods.join(","), `OPE-1653 list bound (pg): ${c.label} — expected [${c.periods.join(", ")}]`);
+    ok(shape(pgRows) === shape(sqRows), `🔴 OPE-1653 ADAPTER PARITY: ${c.label} — postgres and sqlite return byte-identical rows`);
+    ok(pgRows.every((r) => r.org === ORG), `OPE-1653 list bound (pg): ${c.label} — the org pin survives the period bound`);
+    ok(sqRows.every((r) => r.org === ORG), `OPE-1653 list bound (sqlite): ${c.label} — the org pin survives the period bound`);
+  }
+
+  ok((await store.listSpendLedger(ORG)).length === 4 && (await sqliteOperationalStore.listSpendLedger(ORG)).length === 4, "fixture control: both adapters really hold all four rows — every narrowing above is the FILTER's doing");
+  ok((await store.listSpendLedger(ORG, { period: "2026-05" })).length < (await store.listSpendLedger(ORG)).length, "OPE-1653: a bounded read returns FEWER rows than the unbounded one (pg)");
+  ok((await sqliteOperationalStore.listSpendLedger(ORG, { period: "2026-05" })).length < (await sqliteOperationalStore.listSpendLedger(ORG)).length, "OPE-1653: a bounded read returns FEWER rows than the unbounded one (sqlite)");
+  ok((await store.listSpendLedger(OTHER_ORG, { period: "2026-05" })).length === 1 && (await sqliteOperationalStore.listSpendLedger(OTHER_ORG, { period: "2026-05" })).length === 1, "fixture control: the foreign org's row exists in that period on both adapters — the org pin excluded it, not an empty ledger");
+  ok((await store.listSpendLedger(ORG, { periodTo: "2026-06" })).length === 4 && (await sqliteOperationalStore.listSpendLedger(ORG, { periodTo: "2026-06" })).length === 4, "🔴 OPE-1653: periodTo is INCLUSIVE on both adapters — the newest month is never dropped");
+
+  const summed = await store.spendTotals(ORG, { periodFrom: "2026-05", periodTo: "2026-06" });
+  const summedSq = await sqliteOperationalStore.spendTotals(ORG, { periodFrom: "2026-05", periodTo: "2026-06" });
+  ok(summed.inputTokens === 18 && summedSq.inputTokens === 18, "OPE-1653: the SUM read takes the same period range, identically on both adapters (5 + 6 + 7, April's 4 excluded)");
 }
 
 {
@@ -1377,4 +1435,4 @@ const store = makeOperationalPostgresStore(client);
 }
 
 await closeAllTestPg();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, routine prompt revisions, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, spend list period bound + postgres/sqlite adapter parity, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, routine prompt revisions, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);

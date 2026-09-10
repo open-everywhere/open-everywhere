@@ -1,4 +1,5 @@
 import { defineState } from "eve/context";
+import { durableTurnKey, stoppedAckSpent } from "../model/turn-state.js";
 
 interface StandDownSilence {
   readonly turnId: string;
@@ -24,6 +25,16 @@ export function peekStandDownSilenceThisTurn(turnId: string | undefined): boolea
   try {
     const cur = slot.get();
     return cur !== null && cur.turnId === turnId;
+  } catch {
+    return false;
+  }
+}
+
+export async function standDownSilenceLatchedDurably(sessionId: string | undefined, turnId: string | undefined): Promise<boolean> {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const pair = durableTurnKey(sessionId, turnId);
+    return pair === undefined ? false : await stoppedAckSpent(pair);
   } catch {
     return false;
   }

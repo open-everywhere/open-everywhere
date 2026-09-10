@@ -107,6 +107,6 @@ function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): Surface
   }));
 }
 
-export async function spendRollup(org?: string): Promise<SurfacePeriodSpend[]> {
-  return aggregateSpendBySurfacePeriod(await getOperationalStore().listSpendLedger(org));
+export async function spendRollup(org?: string, filter: SpendLedgerFilter = {}): Promise<SurfacePeriodSpend[]> {
+  return aggregateSpendBySurfacePeriod(await getOperationalStore().listSpendLedger(org, filter));
 }

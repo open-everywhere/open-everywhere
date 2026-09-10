@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
 
 export type CredentialGrantMode = "once" | "session" | "standing";
 
@@ -237,10 +238,11 @@ export function asGrantUndispatched(err: unknown): GrantUndispatchedError {
 }
 
 export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "ownerSlug" | "verb" | "resource">, reason: CredentialGrantRefusal): string {
-  const what = `\`${row.verb}\` on \`${row.resource}\`, granted by ${row.ownerSlug}`;
+  const owner = grantOwnerPhrase(row.ownerSlug);
+  const what = `\`${row.verb}\` on \`${row.resource}\`, granted by ${owner}`;
   switch (reason) {
     case "revoked":
-      return `Refused: ${row.ownerSlug} revoked this grant. ${what} is no longer spendable. Do not retry — ask again if it is still needed.`;
+      return `Refused: ${owner} revoked this grant. ${what} is no longer spendable. Do not retry — ask again if it is still needed.`;
     case "expired":
       return `Refused: this grant has expired. ${what} is no longer spendable. Do not retry — ask again if it is still needed.`;
     case "burned":
@@ -254,29 +256,41 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
     case "connector_delisted":
       return (
         `Refused: this deployment no longer admits credential grants for that connector. ${what} cannot be spent, ` +
-        `even where a route to the vendor still exists. The grant itself stays as ${row.ownerSlug} approved it. Do not retry.`
+        `even where a route to the vendor still exists. The grant itself stays as ${owner} approved it. Do not retry.`
       );
     case "owner_unresolvable":
-      return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
+      return `Refused: this grant does not name ${owner} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":
-      return `Refused: this turn names no single verified requester, so nobody can be recorded as having spent ${row.ownerSlug}'s credential. Do not retry.`;
+      return `Refused: this turn names no single verified requester, so nobody can be recorded as having spent ${owner}'s credential. Do not retry.`;
     case "halted":
       return (
         `Refused: everything consequential is paused for this deployment right now — someone pulled the break-glass halt, ` +
-        `so no credential is spendable, ${row.ownerSlug}'s included. ${what} stays granted and works again once an admin ` +
+        `so no credential is spendable, ${owner}'s included. ${what} stays granted and works again once an admin ` +
         `runs \`resume\`. Do not retry, and do not look for another route: the same halt covers them.`
       );
     case "unattended_wake":
       return (
         `Refused: the scheduler started this turn and nobody is in the room. A grant is spendable only where a person asked for it: ` +
-        `there is no requester to record against ${row.ownerSlug}'s credential, and nobody to read the "acting as ${row.ownerSlug}" notice. ` +
+        `there is no requester to record against ${owner}'s credential, and nobody to read the "acting as ${owner}" notice. ` +
         `${what} stays granted. Do not retry — it is spendable the next time a person addresses this conversation.`
       );
   }
 }
 
-export function credentialGrantDisclosureLine(row: Pick<CredentialGrantRow, "ownerSlug" | "verb" | "resource" | "expiresAt" | "purpose">): string {
-  return `acting as ${row.ownerSlug} — granted tool \`${row.verb}\` on \`${row.resource}\`, expires ${row.expiresAt}, purpose: "${quotedPurpose(row.purpose)}"`;
+export function credentialGrantDisclosureLine(
+  row: Pick<CredentialGrantRow, "ownerSlug" | "connector" | "mcpTool" | "resource" | "frozenArgs" | "expiresAt" | "purpose">,
+  nowMs: number,
+): string {
+  const owner = grantOwnerPhrase(row.ownerSlug);
+  const target = grantResourceTargetLabel(row);
+  const on = target === undefined || target.length === 0 ? "" : ` — "${target}"`;
+  const vague = grantActionIsReviewed(row.connector, row.mcpTool) ? "" : " (the exact vendor tool is not one this deployment has a reviewed description for)";
+  const reason = quotedPurpose(row.purpose);
+  const why = reason.length === 0 ? "" : ` The reason given was "${reason}".`;
+  return (
+    `acting as ${owner} — used ${owner}'s ${connectorDisplayName(row.connector)} account to ` +
+    `${grantActionPhrase(row.connector, row.mcpTool)}${on}${vague}, ${grantExpiryPhrase(row.expiresAt, nowMs)}.${why}`
+  );
 }
 
 export function grantBorrowResourceLabel(targetLabel: string, mcpTool: string, frozenArgs: GrantJsonObject): string {

@@ -122,8 +122,9 @@ export interface GrantRevokedHolding {
 }
 
 export function grantRevokedOwnerText(ended: readonly GrantRevokedHolding[], remaining: readonly string[]): string {
+  const rest = remainingText(remaining);
   if (ended.length === 0) {
-    return "Nothing was ended — none of those numbers matched a grant you are still lending. Ask me to list them again and pick from that list.";
+    return `Nothing was ended — none of what you named is still live. It may have ended already, or run out.\n\n${rest}`;
   }
   const lead = ended.length === 1 ? "That grant is ended." : `${String(ended.length)} grants are ended.`;
   const one = ended.length === 1;
@@ -135,15 +136,16 @@ export function grantRevokedOwnerText(ended: readonly GrantRevokedHolding[], rem
         ? `I could not reach the conversation that held ${one ? "it" : "them"}, so ${one ? "it has" : "they have"} not been told. The next call ${one ? "it tries is" : "they try is"} refused either way.`
         : "I told the conversations I could reach and marked the rest below. The next call any of them tries is refused either way.";
   const what = ended.map((holding) => (holding.told ? `• ${holding.phrase}` : `• ${holding.phrase} — not told, I could not reach that conversation`)).join("\n");
-  const rest =
-    remaining.length === 0
-      ? "You are not lending your account to anything now."
-      : [
-          `You still lend ${remaining.length === 1 ? "one grant" : `${String(remaining.length)} grants`}:`,
-          ...remaining.map((phrase, i) => `${String(i + 1)}. ${phrase}`),
-          "These numbers are NEW — ending a grant renumbers the rest. Use the numbers in this list, never the ones from before.",
-        ].join("\n");
   return `${lead} ${toldClause}\n${what}\n\n${rest}`;
+}
+
+function remainingText(remaining: readonly string[]): string {
+  if (remaining.length === 0) return "You are not lending your account to anything now.";
+  return [
+    `You still lend ${remaining.length === 1 ? "one grant" : `${String(remaining.length)} grants`}:`,
+    ...remaining.map((phrase, i) => `${String(i + 1)}. ${phrase}`),
+    "These numbers are NEW — ending a grant renumbers the rest. Use the numbers in this list, never the ones from before.",
+  ].join("\n");
 }
 
 export function grantRevokedRoomText(connector: string, mcpTool: string | undefined): string {

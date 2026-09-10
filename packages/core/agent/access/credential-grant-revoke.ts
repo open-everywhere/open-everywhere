@@ -10,6 +10,15 @@ export interface OwnerGrantHolding {
   readonly phrase: string;
 }
 
+export interface OwnerGrantHandle {
+  readonly id: string;
+  readonly number: number;
+}
+
+export function ownerGrantHandles(holdings: readonly OwnerGrantHolding[]): readonly OwnerGrantHandle[] {
+  return holdings.map((h) => ({ id: h.grant.id, number: h.ordinal }));
+}
+
 function holdingFacts(grant: CredentialGrantRow, nowMs: number): GrantHoldingFacts {
   return { connector: grant.connector, expiresAt: grant.expiresAt, mcpTool: grant.mcpTool, nowMs, quotedPurpose: quotedPurpose(grant.purpose) };
 }
@@ -39,11 +48,11 @@ export interface GrantRevokeOutcome {
 export async function revokeOwnerGrants(
   stamps: GrantAuditStamps,
   ownerPrincipalId: string,
-  which: readonly number[] | undefined,
+  grantIds: readonly string[] | undefined,
   nowMs: number,
 ): Promise<GrantRevokeOutcome> {
   const holdings = await ownerLiveGrants(stamps.org, ownerPrincipalId, nowMs);
-  const wanted = which === undefined ? holdings : holdings.filter((h) => which.includes(h.ordinal));
+  const wanted = grantIds === undefined ? holdings : holdings.filter((h) => grantIds.includes(h.grant.id));
   const ended: CredentialGrantRow[] = [];
   const endedHoldings: GrantRevokedHolding[] = [];
   const notices: GrantNoticeOutcome[] = [];

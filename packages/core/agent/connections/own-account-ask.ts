@@ -87,6 +87,7 @@ export interface ActingIdentityInput {
   readonly ask?: OwnAccountAsk;
   readonly personalGrantHeld: boolean;
   readonly consentRouteAvailable: boolean;
+  readonly deploymentAdmitsGrant: boolean;
   readonly callerCanSpendPersonal: boolean;
 }
 
@@ -111,19 +112,22 @@ export function decideActingIdentity(input: ActingIdentityInput): ActingIdentity
   return {
     askRecognised: true,
     reason: "own-account-ask-no-grant",
-    refusal: ownAccountRefusal(input.connector, input.consentRouteAvailable),
+    refusal: ownAccountRefusal(input.connector, input.consentRouteAvailable, input.deploymentAdmitsGrant),
     requiredIdentity: "human-acting",
   };
 }
 
-export function ownAccountRefusal(connector: string, consentRouteAvailable: boolean): string {
+export function ownAccountRefusal(connector: string, consentRouteAvailable: boolean, deploymentAdmitsGrant: boolean): string {
   const opening =
     `Refused: this request asks to act with the requester's own ${connector} account, and this chat holds no personal ` +
     `${connector} grant. Reading under the deployment's ${connector} integration would answer as the org, not as them, ` +
     `and they would have no way to see the difference.`;
   const route = consentRouteAvailable
     ? `Use \`request_credential_grant\` to ask them to lend their own ${connector} account, and tell the room the ask went out.`
-    : `This chat cannot raise a personal ${connector} grant — no domain here admits one — so there is no consent flow to start.`;
+    : deploymentAdmitsGrant
+      ? `This chat cannot raise a personal ${connector} grant — no domain here admits one — so there is no consent flow to start.`
+      : `This deployment cannot lend a personal ${connector} account at all: ${connector} admits no credential grant, so ` +
+        `there is no consent flow to start and no domain setting opens one. Do not tell them to connect their account.`;
   const fallback =
     `Otherwise say plainly, in the room, that you cannot act as them on ${connector}, and that you will use the shared ` +
     `${connector} integration only if they agree to it. Do not read under the shared integration until they say so.`;

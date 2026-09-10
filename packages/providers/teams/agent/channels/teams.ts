@@ -96,7 +96,8 @@ const native = teamsChannel({
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+      const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
       const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
@@ -127,6 +128,7 @@ const native = teamsChannel({
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
               creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
+              ...(turnId ? { turnId } : {}),
               route: "terminal",
             },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,

@@ -5,6 +5,7 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
+import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrFeedback, renderPrFeedbackForModel, type PrFeedbackDigest } from "../scm/pr-feedback.js";
 
@@ -50,6 +51,7 @@ export const getPrFeedbackEntry = defineTool({
           `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
       );
     }
+    await assertGithubActingIdentity(ctx as BindableContext, "get_pr_feedback");
     const token = await resolveReadToken(input.repo);
     return (await fetchPrFeedback({ repo: input.repo, number: input.number, token })) as unknown as z.infer<typeof prFeedbackOutputSchema>;
   },

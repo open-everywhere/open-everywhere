@@ -163,9 +163,9 @@ const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclo
 console.log("1. the host-authored copy:");
 {
   const row = { ownerSlug: "rowan_hale", requesterPrincipalId: "slack/T1/U-req" };
-  const line = "acting as rowan_hale — granted tool `read_page` on `notion:page/abc123`";
+  const line = "acting as rowan_hale — «the broker's disclosure line, whatever it says»";
   const text = grantRoomNoticeText(line, row, "2026-05-04T05:52:01.000Z");
-  ok(text.includes("acting as rowan_hale — granted tool"), "the room copy carries the broker's disclosure line VERBATIM — the model authors none of it");
+  ok(text.includes(line), "the room copy carries the broker's disclosure line VERBATIM — the model authors none of it, and this notice reads none of it");
   ok(text.includes("`slack/T1/U-req`'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner");
   ok(text.includes("run with rowan_hale's credential"), "…and the owner only as the credential holder");
 
@@ -177,7 +177,7 @@ console.log("1. the host-authored copy:");
     "…and a stamp that does not parse names NO time rather than falling back to the bytes",
   );
   ok(
-    grantRoomNoticeText(line, { ...row, ownerSlug: "1300000000000000103" }, "2026-05-04T05:52:01.000Z").includes("run with the owner's credential"),
+    grantRoomNoticeText(line, { ...row, ownerSlug: "9000000000000000003" }, "2026-05-04T05:52:01.000Z").includes("run with the owner's credential"),
     "…and an id-shaped owner slug is dropped for a phrase, never printed",
   );
 

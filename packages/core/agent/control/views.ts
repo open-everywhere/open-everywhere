@@ -65,7 +65,7 @@ export interface SpendView {
 
 export async function spendView(period: string = currentPeriod()): Promise<SpendView> {
   const org = deploymentOrg();
-  const rollup = (await spendRollup(org)).filter((r) => r.period === period);
+  const rollup = (await spendRollup(org, { period })).filter((r) => r.period === period);
 
   const limits = await activeSpendLimitsForOrg(org);
   const effCapsFor = (workspaceKey: string, surfaceKey: string): Caps => {

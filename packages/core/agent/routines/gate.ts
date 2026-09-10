@@ -92,3 +92,16 @@ export function evaluateRoutineGate(name: string | undefined, collected: readonl
   }
   return { fire: verdict.fire, gate: name, why: verdict.why };
 }
+
+export const GATE_WAIT_MS = 24 * 60 * 60_000;
+
+export function gatedOnceExhausted(scheduledAt: string | undefined, now: Date): boolean {
+  if (scheduledAt === undefined) return false;
+  const at = Date.parse(scheduledAt);
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at > GATE_WAIT_MS;
+}
+
+export function gateWaitExpiredReason(gate: string | undefined): string {
+  return `the condition gate${gate ? ` "${gate}"` : ""} never held within ${GATE_WAIT_MS / 3_600_000} hours`;
+}

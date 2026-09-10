@@ -161,6 +161,7 @@ export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dr
 export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
 export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
 export { stampModelCall, readModelStamp, swapModelStamp, withModelStampScope } from "./model/model-stamp.js";
+export { MODEL_AB_RATING_MIN, MODEL_AB_RATING_MAX } from "./model/ab-test.js";
 export type { BindableContext } from "./identity/binding.js";
 
 export { installLogShipping } from "./observability/ship.js";
@@ -168,6 +169,8 @@ export { initTelemetry, emitTelemetry, registerSurfaceCredentialProbe } from "./
 
 export { connectorActingIdentityForTurn, CONNECTOR_ACTING_IDENTITY_ACTION } from "./connections/own-account-gate.js";
 export type { ActingIdentityVerdict, OwnAccountVendor } from "./connections/own-account-ask.js";
+export { ownAccountVendorFor } from "./connections/own-account-vendors.js";
+export { assertGithubActingIdentity, GITHUB_CONNECTOR, GITHUB_OWN_ACCOUNT_VENDOR } from "./scm/github-acting-identity.js";
 
 export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
@@ -608,7 +611,7 @@ export type { SlackBridge, SlackFormFn, SlackReadCallFn } from "./channels/slack
 export { registerTeamsBridge, _resetTeamsBridgeForTest, teamsBridge } from "./channels/teams-bridge.js";
 export type { TeamsBridge, TeamsRoomMembershipCheck, TeamsAccountActiveCheck } from "./channels/teams-bridge.js";
 
-export { markThreadStopped, shouldDeliverReply, classifyParticipation } from "./channels/engagement.js";
+export { markThreadStopped, shouldDeliverReply, classifyParticipation, STAND_DOWN_DELIVERY_REFUSAL } from "./channels/engagement.js";
 export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.js";
 
 export { resolveWakeTrust, backscrollTrustResolver } from "./identity/wake-trust.js";

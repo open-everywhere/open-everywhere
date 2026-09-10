@@ -35,6 +35,7 @@ import {
   disengageThread,
   markThreadStopped,
   shouldDeliverReply,
+  STAND_DOWN_DELIVERY_REFUSAL,
   getOperationalStore,
   resolveExternalPolicy,
   externalPolicyOverrideFor,
@@ -644,7 +645,12 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     inThread,
     subtype: ev.subtype,
   });
-  if (!decision.deliver) return { ...decision, woke: false };
+  if (!decision.deliver) {
+    if (decision.reason === STAND_DOWN_DELIVERY_REFUSAL) {
+      auditEngagementWakeDropped(ev, STOOD_DOWN_DROP_REASON, { door: "engagement", route: "routeMessageEvent", anchor: ev.threadTs });
+    }
+    return { ...decision, woke: false };
+  }
 
   if (tenantFenceDeclined(ev, "routeMessageEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
 
@@ -775,6 +781,8 @@ function unvouchedBotAuthor(ev: ParsedMessageEvent): boolean {
 const BOT_AUTHOR_DROP_REASON = "bot author is not an allowlisted driver";
 
 const SPEND_DECLINED_DROP_REASON = "over spend cap — declined (refusal posted)";
+
+export const STOOD_DOWN_DROP_REASON = "thread stopped — deterministic silence until an explicit @-mention re-invites";
 
 function auditJoinWakeDropped(ev: ParsedChannelJoinEvent, p: Partition, reason: string): void {
   void (async () => {
@@ -1750,7 +1758,8 @@ export async function routeSupervisorEvent(
   const engRow = ev.threadTs && deps.getEngagement ? await deps.getEngagement(p, ev.threadTs) : null;
 
   if (ev.threadTs && !directMention && engRow?.stopped) {
-    return { deliver: false, reason: "thread stopped — deterministic silence until an explicit @-mention re-invites", woke: false };
+    auditEngagementWakeDropped(ev, STOOD_DOWN_DROP_REASON, { door: "engagement", route: "routeSupervisorEvent", anchor: ev.threadTs });
+    return { deliver: false, reason: STOOD_DOWN_DROP_REASON, woke: false };
   }
 
   if (tenantFenceDeclined(ev, "routeSupervisorEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };

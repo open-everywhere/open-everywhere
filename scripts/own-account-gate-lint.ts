@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { humanActingSupport, isHumanActing } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { credentialGrantConnectors } from "@open-everywhere/core/agent/access/credential-grant.js";
+import { humanActingConnectors } from "@open-everywhere/core/agent/connections/own-account-vendors.js";
 import {
   checkOwnAccountGateSites,
   findOwnAccountGateSites,
@@ -57,9 +57,7 @@ for (const dir of roots) {
 
 const connectors = credentialGrantConnectors();
 
-const humanActing = loadConnectorCredentials()
-  .filter((c) => humanActingSupport(c) === "supported" && c.credentials.some((cred) => isHumanActing(cred)))
-  .map((c) => c.connector);
+const humanActing = humanActingConnectors(loadConnectorCredentials());
 
 if (listOnly) {
   console.log(`connectors admitting a credential grant: ${connectors.join(", ") || "(none)"}`);

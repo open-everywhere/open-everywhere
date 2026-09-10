@@ -1,4 +1,4 @@
-import { ENGAGED_ROOM_VARS, ENV } from "./e2e/env.js";
+import { ENGAGED_ROOM_VARS, ENV, TRACKED_ROOM_RESOLVERS } from "./e2e/env.js";
 import {
   NON_ROOM_ENV,
   PROVISION_PLAN,
@@ -451,6 +451,38 @@ for (const envVar of Object.keys(TRACKED_ROOM_IDS)) {
   ok(
     ROOM_VARS.some((r) => r.envVar === envVar),
     `🔴 TRACKED_ROOM_IDS.${envVar} names a ROOM_VARS row — a key naming no room var is a literal nothing reads, the OPE-1539 shape in a second place`,
+  );
+}
+
+for (const envVar of Object.keys(TRACKED_ROOM_IDS)) {
+  const entry = TRACKED_ROOM_RESOLVERS[envVar];
+  ok(
+    entry !== undefined,
+    `🔴 TRACKED_ROOM_IDS.${envVar} has a resolver in TRACKED_ROOM_RESOLVERS — a tracked id with no resolver is a literal no leg consults, so its journey skips behind a green pack`,
+  );
+  if (entry === undefined) continue;
+
+  const others = Object.fromEntries(entry.alsoNeeds.map((v) => [v, `${v}-set`]));
+  const TRACKED = { [envVar]: "ROOM-FROM-THE-TABLE" };
+
+  ok(
+    entry.roomId(others, TRACKED) === "ROOM-FROM-THE-TABLE",
+    `🔴 ${entry.capability}'s resolver READS the table when ${envVar} is unset — this is the assertion that reds when a resolver stops consulting TRACKED_ROOM_IDS`,
+  );
+  ok(
+    entry.roomId({ ...others, [envVar]: "ROOM-FROM-THE-ENV" }, TRACKED) === "ROOM-FROM-THE-ENV",
+    `${entry.capability}'s resolver lets ${envVar} WIN — the tracked id is a fallback, so an operator can still aim the pack at a room of their own`,
+  );
+  ok(
+    entry.roomId(others, {}) === undefined,
+    `the control: ${entry.capability}'s resolver answers nothing when NEITHER ${envVar} nor the table carries the room`,
+  );
+}
+
+for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
+  ok(
+    Object.hasOwn(TRACKED_ROOM_IDS, envVar),
+    `🔴 TRACKED_ROOM_RESOLVERS.${envVar} names a key TRACKED_ROOM_IDS carries — a resolver row for an untracked room is a claim about a literal that is not there`,
   );
 }
 

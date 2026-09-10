@@ -1,3 +1,6 @@
+import { asConsentResumeRecord, resumeAfterConsent, type ConsentResumeOutcome } from "./consent-resume.js";
+import type { ConsentCarriage } from "./user-auth-flow.js";
+
 export const OE_OAUTH_CALLBACK_PATH = "/oauth/v1/callback";
 
 export interface OeOauthCallbackArgs {
@@ -9,6 +12,7 @@ export interface OeOauthCallbackResult {
   readonly ok: boolean;
   readonly connectionName?: string;
   readonly detail?: string;
+  readonly consent?: ConsentCarriage;
 }
 
 export type OeOauthCallbackCompleter = (args: OeOauthCallbackArgs) => Promise<OeOauthCallbackResult>;
@@ -43,6 +47,7 @@ function page(status: number, title: string, body: string): Response {
 export async function handleOeOauthCallback(
   req: Request,
   complete: OeOauthCallbackCompleter | null,
+  deps: OeOauthCallbackDeps = {},
 ): Promise<Response> {
   if (!complete) return new Response("not found", { status: 404 });
 
@@ -76,9 +81,39 @@ export async function handleOeOauthCallback(
   if (!result.ok) {
     return page(502, "Could not complete the connection", `The authorization exchange was rejected${result.detail ? `: ${esc(result.detail)}` : ""}.`);
   }
+  const resumed = await runConsentResume(result, deps);
   return page(
     200,
     "Connection authorized",
-    `The connection${result.connectionName ? ` <strong>${esc(result.connectionName)}</strong>` : ""} is now authorized. You can close this tab.`,
+    `The connection${result.connectionName ? ` <strong>${esc(result.connectionName)}</strong>` : ""} is now authorized. ` +
+      `${resumeClause(resumed)} You can close this tab.`,
   );
+}
+
+export interface OeOauthCallbackDeps {
+  readonly resume?: typeof resumeAfterConsent;
+}
+
+async function runConsentResume(
+  result: OeOauthCallbackResult,
+  deps: OeOauthCallbackDeps,
+): Promise<ConsentResumeOutcome | undefined> {
+  const record = asConsentResumeRecord(result.consent);
+  if (!record) return undefined;
+  try {
+    return await (deps.resume ?? resumeAfterConsent)(record);
+  } catch {
+    return undefined;
+  }
+}
+
+function resumeClause(outcome: ConsentResumeOutcome | undefined): string {
+  if (!outcome) return "";
+  if (!outcome.delivered) return "Go back to your conversation and ask again — I could not reach it from here.";
+  switch (outcome.verdict) {
+    case "offer":
+      return "I've said so in your conversation — tell me there to carry on with the request you paused.";
+    case "expired":
+      return "The request you paused is too old to pick up on its own; ask me again in your conversation.";
+  }
 }

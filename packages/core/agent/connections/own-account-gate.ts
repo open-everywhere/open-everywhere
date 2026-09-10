@@ -1,6 +1,6 @@
 import { auditToolAction } from "../audit/tool-action.js";
 import { getConfig } from "../access/config.js";
-import { domainsAdmitCredentialGrant } from "../access/credential-grant.js";
+import { domainsAdmitCredentialGrant, isCredentialGrantConnector } from "../access/credential-grant.js";
 import { requesterMessagesThisTurn } from "../access/requester-messages.js";
 import { askBodyOf } from "../hooks/own-account-ask.js";
 import { currentSessionId, delegationRootSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
@@ -23,6 +23,7 @@ export interface ConnectorActingIdentityDeps {
   readonly ask: () => OwnAccountAsk | undefined;
   readonly grants: () => Promise<readonly CredentialGrantRow[]>;
   readonly consentRouteAvailable: () => boolean;
+  readonly deploymentAdmitsGrant: () => boolean;
   readonly nowIso: string;
   readonly tool: string;
   readonly audit: (detail: Record<string, unknown>) => Promise<void>;
@@ -42,7 +43,8 @@ export async function decideConnectorActingIdentity(deps: ConnectorActingIdentit
     callerCanSpendPersonal: deps.callerCanSpendPersonal ?? false,
     connector: deps.vendor.connector,
     ...(ask === undefined ? {} : { ask }),
-    consentRouteAvailable: ask === undefined ? false : safeConsentRoute(deps.consentRouteAvailable),
+    consentRouteAvailable: ask === undefined ? false : safeRouteFact(deps.consentRouteAvailable),
+    deploymentAdmitsGrant: ask === undefined ? false : safeRouteFact(deps.deploymentAdmitsGrant),
     personalGrantHeld,
   });
   await deps.audit(actingIdentityAuditDetail(verdict, deps.vendor.connector, deps.tool)).catch(() => undefined);
@@ -65,7 +67,7 @@ async function safeGrants(read: () => Promise<readonly CredentialGrantRow[]>): P
   }
 }
 
-function safeConsentRoute(read: () => boolean): boolean {
+function safeRouteFact(read: () => boolean): boolean {
   try {
     return read();
   } catch {
@@ -122,6 +124,7 @@ export async function connectorActingIdentityForTurn(ctx: BindableContext, vendo
       await auditToolAction(ctx, CONNECTOR_ACTING_IDENTITY_ACTION, detail);
     },
     consentRouteAvailable: () => domainsAdmitCredentialGrant(domainsForCtx(ctx), vendor.connector),
+    deploymentAdmitsGrant: () => isCredentialGrantConnector(vendor.connector),
     grants: async () => {
       const scope = grantLookupScope(ctx);
       if (scope === undefined) return [];

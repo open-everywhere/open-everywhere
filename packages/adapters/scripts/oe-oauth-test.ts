@@ -790,4 +790,65 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   }
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, DCR endpoint backfill, typed errors)`);
+{
+  const clock = { t: 1_000_000_000 };
+  const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "RT-0", seq: 0, exchangeExpiresIn: 3600 };
+  const v = memVault();
+  const vault = makeOeOauthTokenVault(providers, {
+    vault: v,
+    fetch: makeMockFetch(s),
+    now: () => clock.t,
+    newState: () => "STATE-C",
+    newPkce: () => ({ verifier: "VER-C", challenge: "CHAL-C" }),
+    redirectUri: () => REDIRECT,
+  });
+
+  const carriage = { detourId: "det-x", connector: "notion", origin: { org: "acme", surfaceKey: "slack/T1/C1" } };
+  await vault.startAuthorization("notion", { type: "user", id: "U1" }, { consent: carriage });
+
+  const pendRef = "oe-oauth:pend:STATE-C";
+  const stored = JSON.parse((await v.read(pendRef))!) as { consent?: { detourId?: string } };
+  ok(stored.consent?.detourId === "det-x", "the carriage is persisted VERBATIM on the pending row");
+
+  const first = await vault.completeAuthorization("STATE-C", "CODE-1");
+  ok(first.providerRef === "notion", "the first consume completes the authorization");
+  ok((first.consent as { detourId?: string } | undefined)?.detourId === "det-x", "the first consume hands the carriage back verbatim");
+
+  const after = JSON.parse((await v.read(pendRef))!) as { consumed?: boolean; pkceVerifier?: string; consent?: unknown };
+  ok(after.consumed === true, "the row is marked consumed");
+  ok(after.pkceVerifier === "", "the verifier is scrubbed (unchanged behaviour)");
+  ok(after.consent === undefined, "🔴 the spent carriage is scrubbed too — no room, thread or principal id survives the consume");
+
+  let replayErr: unknown;
+  let replayed: { consent?: unknown } | undefined;
+  try {
+    replayed = await vault.completeAuthorization("STATE-C", "CODE-1");
+  } catch (e) {
+    replayErr = e;
+  }
+  ok(replayErr instanceof Error && /already used/i.test(replayErr.message), "a replayed state throws 'authorization state already used'");
+  ok(replayed === undefined, "a replayed state returns NOTHING — so there is no carriage for a return hop to act on twice");
+  ok(s.exchanges === 1, "the replay never reaches the token endpoint — the refusal runs before the exchange");
+
+  let unknownErr: unknown;
+  try {
+    await vault.completeAuthorization("STATE-NEVER-MINTED", "CODE-1");
+  } catch (e) {
+    unknownErr = e;
+  }
+  ok(unknownErr instanceof Error && /unknown or expired/i.test(unknownErr.message), "an unminted state is refused as unknown, not as consumed");
+
+  const vault2 = makeOeOauthTokenVault(providers, {
+    vault: memVault(),
+    fetch: makeMockFetch({ ...s, exchanges: 0 }),
+    now: () => clock.t,
+    newState: () => "STATE-D",
+    newPkce: () => ({ verifier: "VER-D", challenge: "CHAL-D" }),
+    redirectUri: () => REDIRECT,
+  });
+  await vault2.startAuthorization("notion", { type: "user", id: "U1" }, {});
+  const bare = await vault2.completeAuthorization("STATE-D", "CODE-2");
+  ok(bare.consent === undefined, "an authorization started with no carriage completes with none — nothing to resume, and no error");
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, DCR endpoint backfill, consent carriage single-use + scrub, typed errors)`);

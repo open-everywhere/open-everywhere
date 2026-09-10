@@ -132,9 +132,10 @@ export type Capability =
 
 export const CAPABILITY_REMEDY: Partial<Record<Capability, string>> = {
   slackMpim:
-    "the group DM does not exist yet — `npm run e2e:fixtures -- provision-mpim` opens it and prints the id for TRACKED_ROOM_IDS, " +
-    "but the DRIVER app needs the `mpim:write` USER scope first (measured 2026-09-09: `conversations.open` answers `missing_scope`), " +
-    "and the OE app needs `mpim:history` + `mpim:read` on the deployment side",
+    "the room EXISTS and TRACKED_ROOM_IDS carries its id, so this capability needs no variable — reaching this line means the id left that table. " +
+    "`npm run e2e:fixtures -- provision-mpim` re-opens the same group DM and prints the id to put back (Slack answers the same channel for the same member set). " +
+    "Opening the room is not reading it: the leg needs the `mpim:history` and `mpim:read` scopes on the driver app for `conversations.history` and `conversations.info`, " +
+    "and the OE app needs both on the deployment side, which no command here can check",
 };
 
 export interface SlackDriverConfig {
@@ -596,6 +597,45 @@ export interface CapabilityReport {
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
   readonly includeOptional: boolean;
 }
+
+export interface TrackedRoomResolver {
+  readonly capability: Capability;
+  readonly roomId: (env: Env, tracked: Readonly<Record<string, string>>) => string | undefined;
+  readonly alsoNeeds: readonly string[];
+}
+
+function roomExtraVars(envVar: string): readonly string[] {
+  const identity = identityVarsFor(envVar);
+  const credential = credentialVarFor(envVar);
+  return [...(credential ? [credential] : []), ...(identity ? [identity.appUserVar, identity.agentHandleVar] : [])];
+}
+
+export const TRACKED_ROOM_RESOLVERS: Readonly<Record<string, TrackedRoomResolver>> = {
+  [ENV.slackMpimChannel]: {
+    capability: "slackMpim",
+    roomId: (env, tracked) => {
+      const r = resolveSlackMpim(env, tracked);
+      return r.ok ? r.cfg.channel : undefined;
+    },
+    alsoNeeds: roomExtraVars(ENV.slackMpimChannel),
+  },
+  [ENGAGED_ROOM_VARS.github]: {
+    capability: "engagedGithub",
+    roomId: (env, tracked) => {
+      const r = resolveEngagedGithub(env, tracked);
+      return r.ok ? r.cfg.id : undefined;
+    },
+    alsoNeeds: roomExtraVars(ENGAGED_ROOM_VARS.github),
+  },
+  [ENGAGED_ROOM_VARS.linear]: {
+    capability: "engagedLinear",
+    roomId: (env, tracked) => {
+      const r = resolveEngagedLinear(env, tracked);
+      return r.ok ? r.cfg.id : undefined;
+    },
+    alsoNeeds: roomExtraVars(ENGAGED_ROOM_VARS.linear),
+  },
+};
 
 export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): CapabilityReport {
   const slack = resolveSlack(env);

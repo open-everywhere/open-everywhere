@@ -498,7 +498,8 @@ const slackMentionChannel = slackChannel({
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+      const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
       if (action.kind === "buffer-tool-status") {
         return;
       }
@@ -632,7 +633,7 @@ const slackMentionChannel = slackChannel({
           },
           async bind(tts, ownerToken) {
             if (!partition) return;
-            await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken });
+            await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken, byOwnPost: true });
           },
         });
         if (repliedThisTurn || cardPostedThisTurn) {
@@ -659,6 +660,7 @@ const slackMentionChannel = slackChannel({
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
               creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
+              ...(turnId ? { turnId } : {}),
               route: "terminal",
             },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
@@ -680,7 +682,7 @@ const slackMentionChannel = slackChannel({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
           });
-          await markThreadEngaged(p, threadTs, new Date().toISOString(), { participating: true });
+          await markThreadEngaged(p, threadTs, new Date().toISOString(), { participating: true, byOwnPost: true });
         }
       } catch {
       }

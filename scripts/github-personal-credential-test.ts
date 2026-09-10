@@ -7,13 +7,8 @@ import {
   findOwnAccountGateSites,
   type OwnAccountGateFile,
 } from "@open-everywhere/core/agent/access/own-account-gate-manifest.js";
-import {
-  expandConnectorGrant,
-  humanActingSupport,
-  isHumanActing,
-  principalOfCredential,
-  type ConnectorCredentials,
-} from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { expandConnectorGrant, humanActingSupport, isHumanActing, principalOfCredential, type ConnectorCredentials } from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { humanActingConnectors } from "@open-everywhere/core/agent/connections/own-account-vendors.js";
 import { credentialEndpointVerdict } from "@open-everywhere/core/agent/access/credential-endpoints.js";
 import { MEMBER_ROLES, memberGrantKey, memberPlaneGrants } from "@open-everywhere/core/agent/access/member-grant.js";
 import { CREDENTIAL_GRANT_ROLES, credentialGrantConnectors, domainsAdmitCredentialGrant } from "@open-everywhere/core/agent/access/credential-grant.js";
@@ -114,8 +109,7 @@ ok(!credentialEndpointVerdict(rules, "https://github.com/example-owner/ungranted
   const files: OwnAccountGateFile[] = [];
   for (const dir of roots) for (const full of tsFilesUnder(dir)) files.push({ file: relative(root, full), source: readFileSync(full, "utf8") });
 
-  const exempt = (c: ConnectorCredentials): boolean => humanActingSupport(c) === "supported" && c.credentials.some((cred) => isHumanActing(cred));
-  const humanActing = loadConnectorCredentials().filter(exempt).map((c) => c.connector);
+  const humanActing = humanActingConnectors(loadConnectorCredentials());
   ok(humanActing.includes(GITHUB), "github declares humanActing.supported AND holds a human-acting credential");
 
   const vendorFactOnly: ConnectorCredentials = {
@@ -126,7 +120,7 @@ ok(!credentialEndpointVerdict(rules, "https://github.com/example-owner/ungranted
     humanActing: { credentialTypes: ["user-oauth"], supported: true },
   };
   ok(humanActingSupport(vendorFactOnly) === "supported", "the control really does declare humanActing.supported — otherwise it would pass vacuously");
-  ok(!exempt(vendorFactOnly), "🔴 …but it does NOT enter the exemption list, because it holds no human-acting credential");
+  ok(humanActingConnectors([vendorFactOnly]).length === 0, "🔴 …but it does NOT enter the exemption list, because it holds no human-acting credential");
 
   const sites = findOwnAccountGateSites(files);
   ok(

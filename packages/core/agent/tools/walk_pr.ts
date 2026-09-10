@@ -4,6 +4,7 @@ import { resolveAccessFor } from "../access/request.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
+import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { describePrStatus, fetchPullRequestStatus, prStateLabel, resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrDiff } from "../scm/pr-diff.js";
@@ -44,6 +45,7 @@ export const walkPrEntry = defineTool({
           `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
       );
     }
+    await assertGithubActingIdentity(ctx as BindableContext, "walk_pr");
     const token = await resolveReadToken(input.repo);
     const [status, diff] = await Promise.all([
       fetchPullRequestStatus({ repo: input.repo, number: input.number, token }),

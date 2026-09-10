@@ -9,7 +9,7 @@ function arg(name: string): string | undefined {
 
 const period = arg("period") ?? new Date().toISOString().slice(0, 7);
 const target = await connectOperatorStoreForCli();
-const rollup = (await spendRollup()).filter((r) => r.period === period);
+const rollup = (await spendRollup(undefined, { period })).filter((r) => r.period === period);
 
 console.log(`\nSpend ledger: ${spendRoot()}   period: ${period}   store: ${target.label}`);
 console.log("─".repeat(70));

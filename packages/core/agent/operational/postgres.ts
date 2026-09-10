@@ -1637,11 +1637,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       };
     },
 
-    async listSpendLedger(org?: string) {
-      const { rows } =
-        org !== undefined
-          ? await client.query("SELECT * FROM spend_ledger WHERE org_id = $1", [org])
-          : await client.query("SELECT * FROM spend_ledger");
+    async listSpendLedger(org?: string, filter: SpendLedgerFilter = {}) {
+      const { conjuncts, params } = spendLedgerConjuncts(filter);
+      const orgParams = org !== undefined ? [org] : [];
+      const where = [...(org !== undefined ? ["org_id = $1"] : []), ...renderSpendConjuncts(conjuncts, orgParams.length)];
+      const { rows } = await client.query(
+        `SELECT * FROM spend_ledger${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`,
+        [...orgParams, ...params],
+      );
       return (rows as SpendLedgerPgRow[]).map(spendRowFromPg);
     },
 

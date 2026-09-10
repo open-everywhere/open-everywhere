@@ -10,8 +10,9 @@ import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
 import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
-import { markWakeRefusedThisTurn } from "./reply-signal.js";
+import { markWakeRefusedThisTurn, REPLY_STOPPED_REFUSAL_REASON } from "./reply-signal.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
+import { standDownSilenceLatchedDurably } from "./stand-down-silence.js";
 
 export type { ReplierLabel };
 
@@ -287,6 +288,10 @@ async function dispatchReply(target: ReplyTarget, text: string, replier?: Replie
 }
 
 export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit, replier?: ReplierLabel): Promise<void> {
+  if (await standDownSilenceLatchedDurably(audit.sessionId, audit.turnId)) {
+    await auditReplyRefused(audit, REPLY_STOPPED_REFUSAL_REASON);
+    return;
+  }
   const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
   const clean = provenance.bare;
   const arm = postArm(target.platform);

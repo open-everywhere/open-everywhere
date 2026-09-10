@@ -7,6 +7,7 @@ import { periodOf, UNKNOWN_MODEL, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
+import { readModelArm, MODEL_ARM_DETAIL_KEY, MODEL_AB_BUCKET_DETAIL_KEY, type ModelArmStamp } from "../model/ab-test.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
@@ -68,6 +69,7 @@ export interface AttributedModelCall {
   readonly model?: string;
   readonly generationId?: string;
   readonly what?: string;
+  readonly arm?: ModelArmStamp;
 }
 
 export async function recordModelCall(ctx: SpendAttributionContext, call: AttributedModelCall): Promise<void> {
@@ -115,6 +117,7 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
         principalId: bindFrom(ctx).principalId,
         kind: turnKind(ctx, token),
         ...((): { detail?: Readonly<Record<string, unknown>> } => {
+          const arm = call.arm;
           const detail = {
             ...(delegatedFrom
               ? stampSubagentRun({
@@ -125,6 +128,7 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
                 })
               : {}),
             ...(call.generationId !== undefined ? { [GENERATION_ID_DETAIL_KEY]: call.generationId } : {}),
+            ...(arm ? { [MODEL_ARM_DETAIL_KEY]: arm.arm, [MODEL_AB_BUCKET_DETAIL_KEY]: arm.bucketKey } : {}),
           };
           return Object.keys(detail).length > 0 ? { detail } : {};
         })(),
@@ -161,10 +165,12 @@ export default defineHook({
       })();
 
       const stampedModel = readModelStamp() ?? undefined;
+      const stampedArm = readModelArm() ?? undefined;
       await recordModelCall(ctx, {
         usage,
         ...(stampedModel !== undefined ? { model: stampedModel } : {}),
         ...(generationId !== undefined ? { generationId } : {}),
+        ...(stampedArm !== undefined ? { arm: stampedArm } : {}),
         what: "a turn step",
       });
 

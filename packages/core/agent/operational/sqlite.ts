@@ -1195,12 +1195,12 @@ export const sqliteOperationalStore: OperationalStore = {
     };
   },
 
-  async listSpendLedger(org?: string) {
-    const rows = (
-      org !== undefined
-        ? getDb().prepare("SELECT * FROM spend_ledger WHERE org_id = ?").all(org)
-        : getDb().prepare("SELECT * FROM spend_ledger").all()
-    ) as SpendLedgerDbRow[];
+  async listSpendLedger(org?: string, filter: SpendLedgerFilter = {}) {
+    const { conjuncts, params } = spendLedgerConjuncts(filter);
+    const where = [...(org !== undefined ? ["org_id = ?"] : []), ...conjuncts];
+    const rows = getDb()
+      .prepare(`SELECT * FROM spend_ledger${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`)
+      .all(...(org !== undefined ? [org] : []), ...params) as SpendLedgerDbRow[];
     return rows.map(spendRowFrom);
   },
 

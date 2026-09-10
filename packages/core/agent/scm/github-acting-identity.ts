@@ -1,8 +1,11 @@
-import { connectorActingIdentityForTurn, type BindableContext, type OwnAccountVendor } from "@open-everywhere/core/agent/adapter-api.js";
+import { connectorActingIdentityForTurn } from "../connections/own-account-gate.js";
+import { ownAccountVendorFor } from "../connections/own-account-vendors.js";
+import type { OwnAccountVendor } from "../connections/own-account-ask.js";
+import type { BindableContext } from "../identity/binding.js";
 
-const GITHUB_CONNECTOR = "github";
+export const GITHUB_CONNECTOR = "github";
 
-export const GITHUB_OWN_ACCOUNT_VENDOR: OwnAccountVendor = { aliases: ["github.com"], connector: GITHUB_CONNECTOR };
+export const GITHUB_OWN_ACCOUNT_VENDOR: OwnAccountVendor = ownAccountVendorFor(GITHUB_CONNECTOR);
 
 export async function assertGithubActingIdentity(ctx: BindableContext, tool: string): Promise<void> {
   const verdict = await connectorActingIdentityForTurn(ctx, GITHUB_OWN_ACCOUNT_VENDOR, tool);

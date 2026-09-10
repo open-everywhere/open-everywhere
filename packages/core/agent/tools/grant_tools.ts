@@ -33,7 +33,7 @@ function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => P
       ingestion: { kind: "connector", label },
       source,
     });
-    const disclosure = typeof row?.disclosure === "string" ? row.disclosure : credentialGrantDisclosureLine(grant);
+    const disclosure = typeof row?.disclosure === "string" ? row.disclosure : credentialGrantDisclosureLine(grant, Date.now());
     return { type: "text", value: `${fenced.value}\n\n${disclosure}` };
   };
 }

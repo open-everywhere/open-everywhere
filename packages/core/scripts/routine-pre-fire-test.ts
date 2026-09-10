@@ -51,6 +51,7 @@ const {
   collectRoutineInputs,
   collectionCarriesData,
   collectorDeclaration,
+  describeCollectorFailure,
   listRoutineCollectors,
   registerRoutineCollectorReader,
   registerRoutineCollectors,
@@ -63,6 +64,9 @@ const {
   collectedBody,
   collectionComplete,
   evaluateRoutineGate,
+  GATE_WAIT_MS,
+  gateWaitExpiredReason,
+  gatedOnceExhausted,
   listRoutineGates,
   registerRoutineGates,
   validateRoutineGate,
@@ -77,6 +81,7 @@ const {
   renderFollowUpsBlock,
   resolveFollowUp,
 } = await import("../agent/routines/follow-ups.js");
+const { preFireFallback } = await import("../agent/routines/pre-fire.js");
 const { renderScheduledMessage, renderWatchMessage } = await import("../agent/routines/watch.js");
 const { renderJobMessage } = await import("../agent/routines/job.js");
 const { renderFireMessage } = await import("../agent/routines/fire-message.js");
@@ -480,6 +485,108 @@ const T0 = new Date("2026-07-02T12:00:01.000Z");
     { name: "queue.non-empty", describe: "the queue has something in it", decide: (c) => ({ fire: (collectedBody(c, "queue") ?? "").length > 0, why: "read the queue" }) },
     { name: "always.no", describe: "never", decide: () => ({ fire: false, why: "this gate always says no" }) },
   ]);
+}
+
+{
+  resetRoutineSkipThrottle();
+  const DUE = "2026-07-03T09:00:00.000Z";
+  let reads = 0;
+  registerRoutineCollectorReader(async () => {
+    reads++;
+    return "";
+  });
+  await routineStore.addRoutine(
+    {} as never,
+    routine({ id: "r-once-ceiling", gate: "always.no", collectors: ["queue"], trigger: { kind: "once", at: DUE }, nextRunAt: DUE }),
+  );
+  await armDeclaredRoutinePermissions({
+    org: ORG,
+    routine: { id: "r-once-ceiling" },
+    declared: [`tool:${READ_TOOL}`],
+    grantedBy: "U_HUMAN",
+    tainted: false,
+    nowIso: DUE,
+  });
+
+  for (const at of ["2026-07-03T09:00:01.000Z", "2026-07-03T09:10:00.000Z", "2026-07-03T09:20:00.000Z"]) {
+    fires = [];
+    await tick(new Date(at));
+  }
+  ok(reads === 3, `ceiling: the collector ran once per due tick inside the wait (got ${reads})`);
+  const waiting = await routineStore.getRoutine(ORG, SURFACE, "r-once-ceiling");
+  ok(waiting?.status === "active" && waiting.nextRunAt === DUE, "ceiling: 🔴 inside the wait the one-shot is untouched — still active, still due, so 'not yet' is still the answer");
+  ok((await readAudit({ org: ORG, action: ROUTINE_AUDIT.disabled, limit: 200 })).every((r) => (r.detail as Record<string, unknown>)["routineId"] !== "r-once-ceiling"), "ceiling: …and NOTHING is retired yet — the negative control for the row below");
+
+  fires = [];
+  await tick(new Date("2026-07-04T09:00:02.000Z"));
+  ok(reads === 4, `ceiling: the expiring tick still evaluates, so it still collects (got ${reads})`);
+  const retired = await routineStore.getRoutine(ORG, SURFACE, "r-once-ceiling");
+  ok(retired?.status === "disabled", "ceiling: 🔴 past GATE_WAIT_MS the one-shot is RETIRED — the wait is bounded, not endless");
+  ok(String(retired?.disabledReason).includes("never held within 24 hours"), `ceiling: …and the row says why, in host-composed words (got ${JSON.stringify(retired?.disabledReason)})`);
+  ok(String(retired?.disabledReason).includes("always.no"), "ceiling: …naming the gate that never held");
+  ok(retired?.nextRunAt === null, "ceiling: …and its due time is cleared, so a retired row never reads as 'disabled, and yet due since yesterday'");
+  const disabledRows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.disabled, limit: 200 }))
+    .map((r) => r.detail as Record<string, unknown>)
+    .filter((d) => d["routineId"] === "r-once-ceiling");
+  ok(disabledRows.length === 1, `ceiling: 🔴 exactly ONE routine.disabled row — the final row, and it is UNTHROTTLED unlike the skip rows the wait wrote (got ${disabledRows.length})`);
+  ok(String(disabledRows[0]?.["reason"]).includes("never held within 24 hours"), "ceiling: the row carries the same host-composed reason the routine row does");
+  ok(disabledRows[0]?.["gate"] === "always.no", "ceiling: …and names the gate, so 'why did this stop?' has an answer");
+
+  fires = [];
+  await tick(new Date("2026-07-04T09:10:00.000Z"));
+  await tick(new Date("2026-07-05T09:10:00.000Z"));
+  ok(reads === 4, `ceiling: 🔴 the collector runs NO more times after the retirement — the read count is bounded (got ${reads})`);
+}
+
+{
+  const DUE = new Date("2026-07-03T09:00:00.000Z");
+  const within = new Date(DUE.getTime() + GATE_WAIT_MS - 1);
+  const past = new Date(DUE.getTime() + GATE_WAIT_MS + 1);
+  ok(!gatedOnceExhausted(DUE.toISOString(), DUE), "ceiling: a one-shot at its own due instant has not waited at all");
+  ok(!gatedOnceExhausted(DUE.toISOString(), within), "ceiling: one millisecond inside the wait is still waiting");
+  ok(gatedOnceExhausted(DUE.toISOString(), past), "ceiling: 🔴 one millisecond past it is exhausted — the boundary is the boundary");
+  ok(!gatedOnceExhausted(undefined, past), "ceiling: 🔴 an ABSENT instant fails towards waiting — a one-shot is never retired over an input this cannot read");
+  ok(!gatedOnceExhausted("not-a-date", past), "ceiling: 🔴 …and so does an unparseable one");
+  ok(gateWaitExpiredReason("always.no").includes('"always.no"'), "ceiling: the reason names the gate when there is one");
+  ok(!gateWaitExpiredReason(undefined).includes("undefined"), "ceiling: …and never prints the word `undefined` when there is not");
+}
+
+{
+  const twoCollectors = routine({ id: "r-fallback", collectors: ["queue", "incidents"] });
+  const open = preFireFallback(twoCollectors, new Error("the store went away"));
+  ok(open.collected.length === 2, `fallback: 🔴 one result per DECLARED collector, never an empty list (got ${open.collected.length})`);
+  ok(open.collected.every((c) => !c.ok), "fallback: every one of them FAILED — nothing here may read as data");
+  ok(
+    open.collected.map((c) => c.name).join(",") === "queue,incidents",
+    "fallback: …in the routine's own declared order, each under its own name, so the fire's block names them",
+  );
+  ok(
+    open.collected.every((c) => !c.ok && c.failure === describeCollectorFailure("collection_failed")),
+    "fallback: 🔴 the reason is a CLOSED-SET host-composed line — the fire reads it as fact outside the untrusted fence",
+  );
+  ok(
+    open.collected.every((c) => !c.ok && c.detail?.includes("the store went away") === true),
+    "fallback: what actually broke rides `detail`, which reaches the audit row and no model",
+  );
+  ok(open.gate.fire, "fallback: a routine with NO gate still FIRES — there is nothing to fail closed about, and cancelling it would be a new silence");
+  ok(!open.tainted, "fallback: 🔴 a fire whose every read failed is NOT tainted — it carries only our own prose");
+
+  const gated = preFireFallback(routine({ id: "r-fallback-gated", collectors: ["queue"], gate: "always.no" }), new Error("boom"));
+  ok(!gated.gate.fire, "fallback: 🔴 NEGATIVE CONTROL — a routine that declares a GATE fails CLOSED on the same break");
+  ok(gated.gate.gate === "always.no", "fallback: …and the verdict still names the gate, so the skip row can");
+
+  ok(renderCollectedBlock(open.collected).includes("NOT COLLECTED"), "fallback: 🔴 the failures reach the fire's message as NOT COLLECTED lines");
+  ok(renderCollectedBlock(open.collected).includes("incidents"), "fallback: …naming every collector, not just the first");
+
+  const legs = ["../agent/schedules/dispatch.ts", "../agent/routines/ingress.ts"];
+  for (const leg of legs) {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), leg), "utf8");
+    ok(src.includes("preFireFallback(r, err)"), `fallback: 🔴 ${leg} uses the SHARED fallback — a private copy is how this plane loses a control on one leg`);
+    ok(
+      !/runPreFire\([^)]*\)[\s\S]{0,400}?collected: \[\]/.test(src),
+      `fallback: …and ${leg} keeps no private "collected: []" fallback beside its runPreFire call`,
+    );
+  }
 }
 
 {

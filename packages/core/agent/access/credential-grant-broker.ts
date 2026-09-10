@@ -140,7 +140,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
   }
 
   const send = path.prepare(input);
-  const disclosure = credentialGrantDisclosureLine(grant);
+  const disclosure = credentialGrantDisclosureLine(grant, ctx.nowMs);
   await auditGrant(ctx, "grant.used", ctx.requesterPrincipalId, {
     connector: grant.connector,
     grantId: grant.id,

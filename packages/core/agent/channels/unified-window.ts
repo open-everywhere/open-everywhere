@@ -325,7 +325,7 @@ export function shouldBridgeAddressedProse(
   return addressing === "direct-mention" && !alreadyReplied && blockingRefusal === undefined;
 }
 
-export const BRIDGE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn"];
+export const BRIDGE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn", "stopped"];
 
 export function bridgeBlockingRefusal(reasons: readonly string[]): string | undefined {
   return reasons.find((r) => BRIDGE_BLOCKING_REFUSALS.includes(r));

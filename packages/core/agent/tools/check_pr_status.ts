@@ -5,6 +5,7 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
+import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { fetchPullRequestStatus, describePrStatus, resolveReadToken } from "../scm/pr-status.js";
 
 export const checkPrStatusEntry = defineTool({
@@ -31,6 +32,7 @@ export const checkPrStatusEntry = defineTool({
           `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
       );
     }
+    await assertGithubActingIdentity(ctx as BindableContext, "check_pr_status");
     const token = await resolveReadToken(input.repo);
     const status = await fetchPullRequestStatus({ repo: input.repo, number: input.number, token });
     return {

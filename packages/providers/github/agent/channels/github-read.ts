@@ -1,4 +1,5 @@
 import {
+  assertGithubActingIdentity,
   assertSurfaceAllowed,
   bindFrom,
   prApiHeaders,
@@ -12,7 +13,6 @@ import {
   type RetryPolicy,
   type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { assertGithubActingIdentity } from "./github-acting-identity.js";
 import { githubReviewThreadRoot } from "./github-identity.js";
 
 const GITHUB_CHANNEL_DEFAULT_LIMIT = 50;

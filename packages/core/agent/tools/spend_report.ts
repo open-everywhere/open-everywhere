@@ -242,7 +242,7 @@ export default defineTool({
       const nowISO = new Date().toISOString();
       const currentPeriod = periodOf(nowISO);
       const period = input.period ?? currentPeriod;
-      const orgLedgers = (await spendRollup(resolved.org))
+      const orgLedgers = (await spendRollup(resolved.org, { period }))
         .filter((l) => l.org === resolved.org && l.period === period)
         .filter((l) => !resolved.domain || domainOfUsageRow(l.surfaceKey, undefined, domains) === resolved.domain);
 

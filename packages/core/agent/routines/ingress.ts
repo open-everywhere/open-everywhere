@@ -18,7 +18,7 @@ import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
-import { runPreFire, type PreFireOutcome } from "./pre-fire.js";
+import { preFireFallback, runPreFire, type PreFireOutcome } from "./pre-fire.js";
 import { normalizeDelivery, type NormalizedEvent, type StoredSubscription, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription, isEventTrigger, storedFilter } from "./event-match.js";
 import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
@@ -277,13 +277,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       }
     } catch {
     }
-    const pre = await runPreFire(r, (deps.now?.() ?? new Date()).toISOString()).catch(
-      (err: unknown): PreFireOutcome => ({
-        collected: [],
-        gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${String(err)}` },
-        tainted: false,
-      }),
-    );
+    const pre = await runPreFire(r, (deps.now?.() ?? new Date()).toISOString()).catch((err: unknown): PreFireOutcome => preFireFallback(r, err));
     if (!pre.gate.fire) {
       gated++;
       log(`event ${ev.summary} matched ${r.id} but its condition gate said no — SKIPPED (audited): ${pre.gate.why}`);

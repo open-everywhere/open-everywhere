@@ -42,7 +42,7 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
         `The grant is ${grantModePhrase(resolution.grant.mode)}, ${grantExpiryPhrase(resolution.grant.expiresAt, nowMs)}.`,
         ...(mounts ? ["The tool is in this conversation's tool list from the next turn."] : []),
         ...breadthLines(resolution.grant, resolution.askedMode, owner),
-        credentialGrantDisclosureLine(resolution.grant),
+        credentialGrantDisclosureLine(resolution.grant, nowMs),
       ].join("\n");
     }
     case "declined":

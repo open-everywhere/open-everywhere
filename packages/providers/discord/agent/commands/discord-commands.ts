@@ -1,5 +1,7 @@
 import {
   bindFrom,
+  MODEL_AB_RATING_MAX,
+  MODEL_AB_RATING_MIN,
   OE_COMMAND_NAME,
   runOeCommand,
   type AttachSessionForCancel,
@@ -62,6 +64,17 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
   if (name === "status") return { kind: "status" };
   if (name === "stop") return { kind: "stop" };
   if (name === "help") return { kind: "help" };
+  if (name === "rate") {
+    const scoreOpt = findOpt(optArray(first.options), "score");
+    const score = num(scoreOpt?.value);
+    if (score === undefined || !Number.isInteger(score) || score < MODEL_AB_RATING_MIN || score > MODEL_AB_RATING_MAX) {
+      return {
+        kind: "error",
+        message: `"/oe rate" needs a whole "score" from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX} (got ${JSON.stringify(scoreOpt?.value)}).`,
+      };
+    }
+    return { kind: "rate", score };
+  }
   if (name === "budget") {
     const sub = optArray(first.options)[0];
     const subName = sub ? str(sub.name) : undefined;
@@ -133,6 +146,7 @@ export async function handleDiscordOeCommandInteraction(
 
 const SUB_COMMAND = 1;
 const SUB_COMMAND_GROUP = 2;
+const OPTION_INTEGER = 4;
 const OPTION_NUMBER = 10;
 const CHAT_INPUT = 1;
 
@@ -167,6 +181,21 @@ export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
       },
       { name: "status", description: "Deploy sanity: app version, model config, memory provider.", type: SUB_COMMAND },
       { name: "stop", description: "Stand down the turn running in this channel.", type: SUB_COMMAND },
+      {
+        name: "rate",
+        description: `Rate this channel's last answer (${MODEL_AB_RATING_MIN}-${MODEL_AB_RATING_MAX}) to mark the model A/B test.`,
+        type: SUB_COMMAND,
+        options: [
+          {
+            name: "score",
+            description: `${MODEL_AB_RATING_MIN} (worst) to ${MODEL_AB_RATING_MAX} (best).`,
+            type: OPTION_INTEGER,
+            required: true,
+            min_value: MODEL_AB_RATING_MIN,
+            max_value: MODEL_AB_RATING_MAX,
+          },
+        ],
+      },
       { name: "help", description: "List the /oe commands.", type: SUB_COMMAND },
     ],
   };

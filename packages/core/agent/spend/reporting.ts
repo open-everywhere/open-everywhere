@@ -92,7 +92,7 @@ export interface DomainSpendWindowDeps {
 export async function domainSpendWindow(org: string, domainName: string, nowISO: string, days: number, deps: DomainSpendWindowDeps = {}): Promise<DomainSpendWindow> {
   const periods = periodsCoveringDays(nowISO, days);
   const domains = deps.domains ?? getConfig().loadDomains();
-  const rows = await (deps.spendRollup ?? spendRollup)(org);
+  const rows = await (deps.spendRollup ?? spendRollup)(org, { periodFrom: periods[0], periodTo: periods[periods.length - 1] });
   const mine = rows.filter((l) => l.org === org && periods.includes(l.period) && domainOfUsageRow(l.surfaceKey, undefined, domains) === domainName);
   return {
     domain: domainName,

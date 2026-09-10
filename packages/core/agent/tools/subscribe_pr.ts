@@ -9,6 +9,7 @@ import { addRoutine, getRoutine, newRoutineId } from "../routines/store.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { describeTrigger, routineMarker, type Routine } from "../routines/routine.js";
 import { repoAllowed } from "../scm/provider.js";
+import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { wrapUntrusted } from "../access/untrusted.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import {
@@ -127,6 +128,7 @@ export const subscribePrEntry = defineTool({
           `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
       );
     }
+    await assertGithubActingIdentity(ctx as BindableContext, "subscribe_pr");
 
     const token = await resolveReadToken(input.repo);
     const status = await fetchPullRequestStatus({ repo: input.repo, number: input.number, token });

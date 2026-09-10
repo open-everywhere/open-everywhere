@@ -22,7 +22,10 @@ export function makeOeOauth(
       return { token: await vault.accessTokenFor(providerRef, { type: "user", id: params.subject.id }) };
     },
     async startAuthorization(providerRef, params, options): Promise<{ url: string }> {
-      return vault.startAuthorization(providerRef, toVaultSubject(params.subject), { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) });
+      return vault.startAuthorization(providerRef, toVaultSubject(params.subject), {
+        ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}),
+        ...(options.consent ? { consent: options.consent } : {}),
+      });
     },
     isUserAuthRequired(e: unknown): boolean {
       return isUserAuthRequiredError(e);
@@ -41,8 +44,8 @@ export function makeOeOauth(
 
   const completer: OeOauthCallbackCompleter = async ({ state, code }) => {
     try {
-      const { providerRef } = await vault.completeAuthorization(state, code);
-      return { ok: true, connectionName: providerRef };
+      const { providerRef, consent } = await vault.completeAuthorization(state, code);
+      return { ok: true, connectionName: providerRef, ...(consent ? { consent } : {}) };
     } catch (err) {
       return { ok: false, detail: err instanceof Error ? err.message : String(err) };
     }

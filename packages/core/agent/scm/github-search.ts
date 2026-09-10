@@ -1,3 +1,4 @@
+import { assertGithubActingIdentity } from "./github-acting-identity.js";
 import { getGitHubApp, repoAllowed } from "./provider.js";
 import type { GitHubApp } from "./app.js";
 import { CONVERSATION_READ_PERMISSIONS } from "./mint.js";
@@ -78,6 +79,7 @@ export const githubWorkSearchAdapter: WorkSearchAdapter = {
   async search(ctx: BindableContext, _domain: Domain | undefined, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
     const repos = resolveAccessFor(ctx).repos;
     if (repos.length === 0) throw new Error("this domain holds no GitHub repo grant.");
+    await assertGithubActingIdentity(ctx, "search");
     return searchGithubIssues(repos, query, opts.limit);
   },
 };

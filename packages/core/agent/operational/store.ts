@@ -155,6 +155,8 @@ export interface SpendLedgerFilter {
   readonly principalId?: string;
   readonly routineId?: string;
   readonly period?: string;
+  readonly periodFrom?: string;
+  readonly periodTo?: string;
   readonly costSource?: CostSource;
 }
 
@@ -182,7 +184,7 @@ export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: st
   }
   if (filter.surfaceKeyPrefix !== undefined) {
     conjuncts.push("surface_key LIKE ? ESCAPE '\\'");
-    params.push(`${filter.surfaceKeyPrefix.replace(/([\\%_])/g, "\\$1")}%`);
+    params.push(likePrefixPattern(filter.surfaceKeyPrefix));
   }
   if (filter.principalId !== undefined) {
     conjuncts.push("principal_id = ?");
@@ -195,6 +197,14 @@ export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: st
   if (filter.period !== undefined) {
     conjuncts.push("period = ?");
     params.push(filter.period);
+  }
+  if (filter.periodFrom !== undefined) {
+    conjuncts.push("period >= ?");
+    params.push(filter.periodFrom);
+  }
+  if (filter.periodTo !== undefined) {
+    conjuncts.push("period <= ?");
+    params.push(filter.periodTo);
   }
   if (filter.costSource !== undefined) {
     conjuncts.push("cost_source = ?");
@@ -703,7 +713,7 @@ export interface OperationalStore {
 
   recordSpend(org: string, write: SpendLedgerWrite): Promise<void>;
   spendTotals(org: string, filter?: SpendLedgerFilter): Promise<SpendTotals>;
-  listSpendLedger(org?: string): Promise<SpendLedgerRow[]>;
+  listSpendLedger(org?: string, filter?: SpendLedgerFilter): Promise<SpendLedgerRow[]>;
 
   listRoutines(org: string, surfaceKey: string): Promise<Routine[]>;
   getRoutine(org: string, surfaceKey: string, id: string): Promise<Routine | null>;

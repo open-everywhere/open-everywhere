@@ -11,7 +11,7 @@ import {
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
-import { GITHUB_OWN_ACCOUNT_VENDOR } from "../agent/channels/github-acting-identity.js";
+import { GITHUB_OWN_ACCOUNT_VENDOR } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson, walkRetry, READ_WALK_BUDGET_MS } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 

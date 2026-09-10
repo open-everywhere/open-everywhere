@@ -27,6 +27,8 @@ import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
 import { loadSpendCheckpoints } from "../spend/checkpoints.js";
 import { loadModelPolicy } from "../model/policy.js";
+import { registerModelAbTest } from "@open-everywhere/core/agent/model/ab-test.js";
+import { loadModelAbTest } from "../model/ab-test.js";
 import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
@@ -59,6 +61,8 @@ registerConfig({
   loadPrincipals,
   loadGroups,
 });
+
+registerModelAbTest(loadModelAbTest());
 
 setRegisteredConnectorCredentials(loadConnectorCredentials());
 

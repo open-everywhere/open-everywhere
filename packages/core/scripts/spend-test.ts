@@ -925,6 +925,25 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const may = (await spendRollup()).filter((r) => r.org === org && r.period === "2026-05");
   ok(may.find((r) => r.surfaceKey === `${wk}/C1`)?.usd === 1 && may.find((r) => r.surfaceKey === `${wk}/C2`)?.usd === 2, "spendRollup: a past period's per-surface breakdown is intact ($1 + $2 in May)");
 
+  {
+    const everyPeriod = await spendRollup(org);
+    ok(new Set(everyPeriod.map((r) => r.period)).size === 2, "fixture control: the unbounded rollup for this org spans BOTH periods — the bounds below are what narrow it");
+
+    const juneOnly = await spendRollup(org, { period: "2026-06" });
+    ok(juneOnly.length === 1 && juneOnly.every((r) => r.period === "2026-06"), "🔴 OPE-1653 spendRollup: a `period` filter reaches the store — May's rows never come back");
+    ok(juneOnly[0]?.usd === 5, "OPE-1653 spendRollup: the bounded read returns the SAME figures the unbounded one did ($5 in June)");
+
+    const mayOnly = await spendRollup(org, { period: "2026-05" });
+    ok(mayOnly.length === 2 && mayOnly.every((r) => r.period === "2026-05"), "OPE-1653 spendRollup: the other period bounds the other way — the filter is not a constant");
+    ok(mayOnly.length !== juneOnly.length, "OPE-1653 spendRollup: the two bounded reads DIFFER — neither is the whole ledger");
+
+    const window = await spendRollup(org, { periodFrom: "2026-05", periodTo: "2026-06" });
+    ok(window.length === everyPeriod.length, "OPE-1653 spendRollup: a periodFrom..periodTo range covering both months returns both (bounds are INCLUSIVE)");
+    ok((await spendRollup(org, { periodFrom: "2026-06" })).length === 1, "OPE-1653 spendRollup: periodFrom alone drops every EARLIER month");
+    ok((await spendRollup(org, { periodTo: "2026-05" })).length === 2, "OPE-1653 spendRollup: periodTo alone drops every LATER month");
+    ok((await spendRollup(org, { periodFrom: "2026-07", periodTo: "2026-08" })).length === 0, "OPE-1653 spendRollup: a range no row falls in returns nothing — the bound can refuse, not only widen");
+  }
+
   await opStore.setSpendLimit(org, `${wk}/C1`, "surface", { monthlyUsd: 10 }, { reason: "active" });
   await opStore.setSpendLimit(org, wk, "workspace", { monthlyUsd: 20 }, { reason: "expired", expiresAt: Date.now() - 1000 });
   const active = await activeSpendLimitsForOrg(org);

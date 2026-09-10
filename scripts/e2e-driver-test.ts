@@ -863,15 +863,20 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const roomPresent = { ...missing, slackMpim: [] as readonly string[] };
   const jmpimRoomOk = skipReason(jmpimScenario, noSlack, roomPresent, false);
   ok(
-    jmpimRoomOk?.includes("mpim:write") === false,
+    jmpimRoomOk?.includes("mpim:history") === false,
     `🔴 …and NO remedy when slackMpim itself resolved — the gap is the base driver, and a remedy naming the room would send the operator at a fixture that is present (got: ${JSON.stringify(jmpimRoomOk)})`,
   );
   ok(
     jmpim?.startsWith(`missing slackMpim driver (set ${ENV.slackMpimChannel})`) === true,
     "J-MPIM skip names exactly E2E_SLACK_MPIM_CHANNEL — the group DM is the one fixture it cannot derive",
   );
-  ok(jmpim?.includes("mpim:write") === true, "🔴 J-MPIM's skip names the Slack USER scope the driver app is missing — the actual blocker, not just the variable");
-  ok(jmpim?.includes("provision-mpim") === true, "…and the command that opens the room once that scope exists");
+  ok(
+    jmpim?.includes("the room EXISTS and TRACKED_ROOM_IDS carries its id") === true,
+    "🔴 J-MPIM's remedy states the room's REAL state — open, and its id tracked — never the pre-OPE-1662 'does not exist yet'",
+  );
+  ok(jmpim?.includes("mpim:history") === true, "🔴 …and it names the read scope that is actually missing, not the write scope the driver app already holds");
+  ok(jmpim?.includes("mpim:write") === false, "…and it no longer names `mpim:write`, which the driver app got before the room was opened");
+  ok(jmpim?.includes("provision-mpim") === true, "…and the command that re-opens the room if its id ever leaves the table");
   ok(
     skipCategory(jmpimScenario, baseOnly, false) === "missing-capability",
     "…and it stays a SKIP, never a red — the remedy rides the same missing-capability category the runner skips on",

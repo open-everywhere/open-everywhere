@@ -46,7 +46,12 @@ import {
   requireUserAuthFlow,
   userAuthFlowProvider,
   userAuthRequiredSignal,
+  type ConsentCarriage,
 } from "./user-auth-flow.js";
+import { randomUUID } from "node:crypto";
+import { recordConsentDetour, type ConsentOrigin } from "./consent-resume.js";
+import { resolveReplyTarget } from "../channels/reply-post.js";
+import { currentSessionId } from "../identity/binding.js";
 import {
   connectorAuthRequiredThisTurn,
   connectorAuthUrlThisTurn,
@@ -144,7 +149,7 @@ export type ConnectUserTokenMinter = (vercelConnector: string, params: ConnectUs
 export type ConnectAuthorizationStarter = (
   vercelConnector: string,
   params: { readonly subject: { readonly type: "user"; readonly id: string } },
-  options: { readonly expiresInMs?: number },
+  options: { readonly expiresInMs?: number; readonly consent?: ConsentCarriage },
 ) => Promise<{ url: string }>;
 
 export const AUTH_URL_TTL_MS = 15 * 60 * 1000;
@@ -243,6 +248,49 @@ async function memoSelfHealsUserGrant(
   return true;
 }
 
+async function consentOriginFromAuth(
+  ctx: SessionContext,
+  actorId: string,
+): Promise<ConsentOrigin | undefined> {
+  try {
+    const bindCtx = await surfaceContextFromAuth(ctx.session.auth);
+    if (!bindCtx) return undefined;
+    const target = resolveReplyTarget(bindCtx);
+    if (!target) return undefined;
+    const b = bindFrom(bindCtx);
+    const sessionId = currentSessionId(ctx as unknown as import("../identity/binding.js").BindableContext);
+    return {
+      org: b.org,
+      surfaceKey: `${b.platform}/${b.workspace}/${b.surface}`,
+      target,
+      principalId: actorId,
+      ...(sessionId ? { sessionId } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function consentCarriageFor(
+  connector: string,
+  ctx: SessionContext,
+  actorId: string,
+): Promise<ConsentCarriage | undefined> {
+  try {
+    const origin = await consentOriginFromAuth(ctx, actorId);
+    if (!origin) return undefined;
+    return await recordConsentDetour({
+      connector,
+      origin,
+      nowMs: Date.now(),
+      ttlMs: AUTH_URL_TTL_MS,
+      detourId: randomUUID(),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 export function userAwareProviderToken(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string; readonly directUrl?: string },
   deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
@@ -316,7 +364,14 @@ export function userAwareProviderToken(
           if (authRequired) {
             let url: string | undefined;
             try {
-              url = (await startAuth(connector, { subject: { type: "user", id: subjectId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+              const consent = await consentCarriageFor(opts.connector, ctx, actorId);
+              url = (
+                await startAuth(
+                  connector,
+                  { subject: { type: "user", id: subjectId } },
+                  { expiresInMs: AUTH_URL_TTL_MS, ...(consent ? { consent } : {}) },
+                )
+              ).url;
             } catch {
             }
             markConnectorAuthRequired(opts.connector, url);

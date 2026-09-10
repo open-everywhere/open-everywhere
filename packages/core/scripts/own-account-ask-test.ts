@@ -12,6 +12,7 @@ import {
 } from "../agent/connections/own-account-ask.js";
 import { decideConnectorActingIdentity, holdsPersonalGrant, ownAccountAskFromMessages } from "../agent/connections/own-account-gate.js";
 import { stampOwnAccountAsk } from "../agent/hooks/own-account-ask.js";
+import { registerConfig } from "../agent/access/config.js";
 import type { HookContext, HookEvent } from "eve/hooks";
 import { egressPolicyFingerprint, enforceEgress } from "../agent/hooks/egress.js";
 import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
@@ -109,49 +110,62 @@ console.log("§2 the decision");
 const ask: OwnAccountAsk = { ambiguous: false, connector: "notion" };
 const ambiguousAsk: OwnAccountAsk = { ambiguous: true, connector: "notion" };
 
-const noAsk = decideActingIdentity({ callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, personalGrantHeld: false });
+const noAsk = decideActingIdentity({ callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, deploymentAdmitsGrant: true, personalGrantHeld: false });
 ok(noAsk.identity === "install" && noAsk.refusal === undefined, "no ask ⇒ the install identity, unrefused (test 3: unchanged behaviour)");
 ok(noAsk.reason === "no-own-account-ask" && !noAsk.askRecognised, "…and the row's reason says why");
 
-const noGrant = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, personalGrantHeld: false });
+const noGrant = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, deploymentAdmitsGrant: true, personalGrantHeld: false });
 ok(noGrant.identity === undefined && noGrant.refusal !== undefined, "an own-account ask with NO grant refuses and names no runnable identity (test 1)");
 ok(noGrant.requiredIdentity === "human-acting", "…while still recording what the request required");
 ok(noGrant.reason === "own-account-ask-no-grant", "…with the reason that says it was the ask, not an error");
 ok(noGrant.refusal?.includes("request_credential_grant") === true, "…and the refusal names the consent route when one exists here");
 
-const noRoute = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: false, personalGrantHeld: false });
+const noRoute = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: false, deploymentAdmitsGrant: true, personalGrantHeld: false });
 ok(noRoute.refusal !== undefined && !noRoute.refusal.includes("request_credential_grant"), "no consent route ⇒ the refusal does NOT offer a tool that is not mounted");
 ok(noRoute.refusal?.includes("no domain here admits one") === true, "…it says plainly that there is no flow to start");
 ok(noRoute.reason === "own-account-ask-no-grant", "…and the verdict is the same refusal either way");
 
-const ambiguous = decideActingIdentity({ ask: ambiguousAsk, callerCanSpendPersonal: true, connector: "notion", consentRouteAvailable: true, personalGrantHeld: true });
+const noLendingRoute = decideActingIdentity({ ask: { ambiguous: false, connector: "github" }, callerCanSpendPersonal: false, connector: "github", consentRouteAvailable: false, deploymentAdmitsGrant: false, personalGrantHeld: false });
+ok(noLendingRoute.refusal?.includes("cannot lend a personal github account at all") === true, "a vendor with NO lending route is refused with the absence that is actually true");
+ok(noLendingRoute.refusal?.includes("no domain here admits one") === false, "…and never with the domain sentence, which would send an operator to a setting that cannot help");
+ok(noLendingRoute.refusal?.includes("request_credential_grant") === false, "…nor with a consent tool this deployment cannot mount for it");
+ok(noLendingRoute.reason === "own-account-ask-no-grant" && noLendingRoute.identity === undefined, "…and the verdict is still the refusal, unchanged by the wording");
+ok(noRoute.refusal?.includes("cannot lend a personal notion account at all") === false, "negative control: a vendor WITH a lending route never reads the structural sentence");
+
+const ambiguous = decideActingIdentity({ ask: ambiguousAsk, callerCanSpendPersonal: true, connector: "notion", consentRouteAvailable: true, deploymentAdmitsGrant: true, personalGrantHeld: true });
 ok(ambiguous.identity === undefined && ambiguous.refusal !== undefined, "🔴 an AMBIGUOUS ask refuses even with a grant held and a caller that could spend it");
 ok(ambiguous.reason === "own-account-ask-ambiguous" && ambiguous.refusal?.includes("which") === true, "…and asks the member which account they meant");
 
-const held = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, personalGrantHeld: true });
+const held = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: true, deploymentAdmitsGrant: true, personalGrantHeld: true });
 ok(held.requiredIdentity === "human-acting" && held.identity === undefined, "an own-account ask WITH a grant requires the human-acting identity (test 2)");
 ok(held.refusal?.includes("grant__") === true, "…and a caller with no personal arm is routed to the granted tool");
 
-const heldSpendable = decideActingIdentity({ ask, callerCanSpendPersonal: true, connector: "notion", consentRouteAvailable: true, personalGrantHeld: true });
+const heldSpendable = decideActingIdentity({ ask, callerCanSpendPersonal: true, connector: "notion", consentRouteAvailable: true, deploymentAdmitsGrant: true, personalGrantHeld: true });
 ok(heldSpendable.identity === "human-acting" && heldSpendable.refusal === undefined, "a caller that CAN spend the personal identity runs, unrefused");
 
 let installOnAsk = 0;
 let fieldMismatch = 0;
+let combinations = 0;
 for (const a of [ask, ambiguousAsk]) {
   for (const personalGrantHeld of [false, true]) {
     for (const consentRouteAvailable of [false, true]) {
-      for (const callerCanSpendPersonal of [false, true]) {
-        const v = decideActingIdentity({ ask: a, callerCanSpendPersonal, connector: "notion", consentRouteAvailable, personalGrantHeld });
-        if (v.identity === "install") installOnAsk += 1;
-        if ((v.identity === undefined) !== (v.refusal !== undefined)) fieldMismatch += 1;
+      for (const deploymentAdmitsGrant of [false, true]) {
+        for (const callerCanSpendPersonal of [false, true]) {
+          const v = decideActingIdentity({ ask: a, callerCanSpendPersonal, connector: "notion", consentRouteAvailable, deploymentAdmitsGrant, personalGrantHeld });
+          if (v.identity === "install") installOnAsk += 1;
+          if ((v.identity === undefined) !== (v.refusal !== undefined)) fieldMismatch += 1;
+          combinations += 1;
+        }
       }
     }
   }
 }
+ok(combinations === 32, "the sweep really covers every combination — a miscounted loop proves nothing");
 ok(installOnAsk === 0, "NO combination runs an own-account ask under the install identity");
-ok(fieldMismatch === 0, "🔴 `identity` is absent EXACTLY when `refusal` is present, over all 16 combinations");
+ok(fieldMismatch === 0, "🔴 `identity` is absent EXACTLY when `refusal` is present, over all 32 combinations");
 
-ok(ownAccountRefusal("notion", true) !== ownAccountRefusal("notion", false), "the two refusal sentences differ — the route half is real");
+const routeSentences = new Set([ownAccountRefusal("notion", true, true), ownAccountRefusal("notion", false, true), ownAccountRefusal("notion", false, false)]);
+ok(routeSentences.size === 3, "the three refusal sentences differ — both route halves are real");
 ok(personalRouteRefusal("notion").includes("notion"), "the granted-tool refusal names the connector");
 ok(ambiguousAccountRefusal("notion").includes("notion"), "the ambiguity refusal names the connector");
 
@@ -228,6 +242,17 @@ ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1"), VENDORS)?.connector === "n
 
 console.log("§3c the producer's clear");
 
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  loadConnectorCredentials: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+
 function producerCtx(sessionId: string, attrs: Record<string, unknown>, turnId?: string): HookContext {
   return {
     session: {
@@ -290,6 +315,7 @@ async function runGate(over: {
   ask?: () => OwnAccountAsk | undefined;
   grants?: () => Promise<readonly CredentialGrantRow[]>;
   consentRouteAvailable?: () => boolean;
+  deploymentAdmitsGrant?: () => boolean;
 }): Promise<GateRun> {
   const rows: Record<string, unknown>[] = [];
   const verdict = await decideConnectorActingIdentity({
@@ -299,6 +325,7 @@ async function runGate(over: {
     },
     callerCanSpendPersonal: false,
     consentRouteAvailable: over.consentRouteAvailable ?? (() => true),
+    deploymentAdmitsGrant: over.deploymentAdmitsGrant ?? (() => true),
     grants: over.grants ?? (async () => []),
     nowIso: NOW,
     tool: "read_notion_page",
@@ -359,6 +386,7 @@ const auditThrows = await decideConnectorActingIdentity({
   },
   callerCanSpendPersonal: false,
   consentRouteAvailable: () => true,
+  deploymentAdmitsGrant: () => true,
   grants: async () => [],
   nowIso: NOW,
   tool: "read_notion_page",

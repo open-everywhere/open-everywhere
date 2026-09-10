@@ -5,14 +5,24 @@ import type { WakeReason, WakeTrust, WakeMessageSender } from "./wake-envelope.j
 
 export const WARM_SILENT_LIMIT = 3;
 
-export async function markThreadEngaged(
-  p: Partition,
-  threadTs: string,
-  atIso: string,
-  opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned"; engagedBy?: string },
-): Promise<void> {
+export interface EngageOpts {
+  readonly participating?: boolean;
+  readonly ownerToken?: string;
+  readonly kind?: "thread" | "spawned";
+  readonly engagedBy?: string;
+  readonly byOwnPost?: boolean;
+}
+
+export function ownPostMustNotRevive(opts: EngageOpts | undefined, stopped: boolean): boolean {
+  return opts?.byOwnPost === true && opts.participating === true && stopped;
+}
+
+export async function markThreadEngaged(p: Partition, threadTs: string, atIso: string, opts?: EngageOpts): Promise<void> {
   try {
-    await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso, opts);
+    const { byOwnPost, ...store } = opts ?? {};
+    const stopped = byOwnPost === true && store.participating === true ? await isThreadStopped(p, threadTs) : false;
+    const effective = ownPostMustNotRevive(opts, stopped) ? { ...store, participating: false, engagedBy: undefined } : store;
+    await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso, effective);
   } catch (err) {
     console.warn(`[open-everywhere:engagement] markEngaged failed (${p.surfaceKey}/${threadTs}): ${String(err)}`);
   }
@@ -86,6 +96,8 @@ export interface ReplyDeliveryInput {
   readonly subtype?: string;
 }
 
+export const STAND_DOWN_DELIVERY_REFUSAL = "asked to stand down in this thread — @mention to pull the agent back in";
+
 export interface ReplyDecision {
   readonly deliver: boolean;
   readonly reason: string;
@@ -99,7 +111,7 @@ export function shouldDeliverReply(input: ReplyDeliveryInput): ReplyDecision {
   if (input.isAppMention) return { deliver: false, reason: "app_mention — handled by the mention path" };
   if (!input.inThread) return { deliver: false, reason: "not a thread reply — engagement is per-thread" };
   if (!input.isEngaged) return { deliver: false, reason: "thread is not engaged — only @mention/DM starts engagement" };
-  if (input.stopped) return { deliver: false, reason: "asked to stand down in this thread — @mention to pull the agent back in" };
+  if (input.stopped) return { deliver: false, reason: STAND_DOWN_DELIVERY_REFUSAL };
   return { deliver: true, reason: "engaged thread, human reply — deliver to the live session" };
 }
 

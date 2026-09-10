@@ -12,7 +12,7 @@ import { ownerGrantListText, ownerLiveGrants, revokeOwnerGrants } from "../agent
 import { registerGrantBorrowTransport, runGrantedCall } from "../agent/access/credential-grant-broker.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
-import { WINDOW_GATED_TOOLS } from "../agent/access/window-gate-manifest.js";
+import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { DM_SEAT_CARVE_IN, allowedOnLeanSeat } from "../agent/access/lean-seat.js";
 import { CONTRIBUTIONS } from "../agent/contributions.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
@@ -163,8 +163,22 @@ const mintGrant = async (opts: {
   return approved.grant.id;
 };
 
-const callTool = async (ctx: BindableContext, input: Record<string, unknown>): Promise<{ ended: number; live: number; message: string }> =>
+interface RevokeToolResult {
+  readonly ended: number;
+  readonly live: number;
+  readonly message: string;
+  readonly grants: readonly { readonly id: string; readonly number: number }[];
+}
+
+const callTool = async (ctx: BindableContext, input: Record<string, unknown>): Promise<RevokeToolResult> =>
   await inEveContext(new FakeEveContext(), async () => (await (revokeTool as { execute(i: unknown, c: unknown): Promise<unknown> }).execute(input, ctx)) as never);
+
+const idForNumber = async (ctx: BindableContext, number: number): Promise<string> => {
+  const listed = await callTool(ctx, { action: "list" });
+  const handle = listed.grants.find((g) => g.number === number);
+  assert.ok(handle !== undefined, `fixture: the listing offers an id for number ${String(number)}`);
+  return handle.id;
+};
 
 const refusal = async (ctx: BindableContext, input: Record<string, unknown>): Promise<string> => {
   try {
@@ -183,6 +197,7 @@ console.log("1. the verb is registered everywhere a static tool must be before a
     !Object.prototype.hasOwnProperty.call(WINDOW_GATED_TOOLS, "revoke_credential_grant"),
     "…and it is NOT grain-gated: the DM wall inside the tool is strictly narrower than any grain, and gating it would only strand the DM seat",
   );
+  ok(WINDOW_UNGATED_TOOLS.has("revoke_credential_grant"), "…because it is declared UNGATED outright — the posture is a row it holds, not a table it is missing from");
   ok(DM_SEAT_CARVE_IN.has("revoke_credential_grant"), "…the DM carve-in holds it, so a narrowed DM seat that delegates still keeps it");
   ok(allowedOnLeanSeat("revoke_credential_grant", true), "…a LEAN DM seat may hold it");
   ok(!allowedOnLeanSeat("revoke_credential_grant", false), "NEGATIVE CONTROL: a lean seat that is not a DM does not — the carve-in is seat-shaped, not a blanket roster row");
@@ -248,7 +263,11 @@ console.log("4. the OWNER's DM call ends the grant, tells the room, and the brok
   const ordinal = before.findIndex((h) => h.grant.id === grantA) + 1;
   ok(ordinal > 0, "fixture: grant A is on the owner's live list");
   const postsBefore = posted.length;
-  const result = await callTool(dmCtx("U-owner"), { action: "end", which: [ordinal] });
+  const listed = await callTool(dmCtx("U-owner"), { action: "list" });
+  eq(listed.grants.map((g) => g.number), before.map((h) => h.ordinal), "the listing's machine half numbers the same rows the message does");
+  eq(listed.grants.map((g) => g.id), before.map((h) => h.grant.id), "…and pairs each number with that row's own grant id");
+  for (const { name, re } of GRANT_ID_LEAK_PATTERNS) ok(!re.test(listed.message), `NEGATIVE CONTROL: the ids ride in \`grants\`, never in the person's copy — no ${name} in the message`);
+  const result = await callTool(dmCtx("U-owner"), { action: "end", grants: [listed.grants[ordinal - 1].id] });
 
   eq(result.ended, 1, "the tool ended exactly one grant");
   eq((await store.getCredentialGrant(ORG, grantA))?.status, "revoked", "…and the ROW is revoked — the store CAS ran, not just the copy");
@@ -275,6 +294,20 @@ console.log("4. the OWNER's DM call ends the grant, tells the room, and the brok
   eq((row?.detail as { route?: string }).route, "thread", "…recording HOW it was revoked: the owner said so in a conversation");
   eq(row?.principalId, OWNER_KEY, "…and WHO revoked it — the owner's own key, the same one the lookup was made with");
 
+  const postsAfterFirst = posted.length;
+  const auditBefore = (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.revoked").length;
+  const redelivered = await callTool(dmCtx("U-owner"), { action: "end", grants: [listed.grants[ordinal - 1].id] });
+  eq(redelivered.ended, 0, "🔴 THE REDELIVERED `end` ENDS NOTHING — the id names a row that is already revoked, so the live-list lookup does not offer it");
+  eq((await store.getCredentialGrant(ORG, grantB))?.status, "active", "🔴 …and grant B, which position 1 now points AT, is untouched: the repeat could not walk onto its neighbour");
+  eq(posted.length, postsAfterFirst, "…no second room notice, because nothing was ended to notify about");
+  eq(
+    (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.revoked").length,
+    auditBefore,
+    "…and no second `grant.revoked` audit row — the no-op is a real no-op, not a silent re-write",
+  );
+  ok(redelivered.message.includes("none of what you named is still live"), "…and the owner is told plainly that nothing matched");
+  ok(redelivered.message.includes("You still lend"), "…with the FRESH live list reprinted, so they need no second round trip to see what is left");
+
   const sentBefore = sent.length;
   const refused = await inEveContext(new FakeEveContext(), async () => {
     const ctx = roomCtx("chat-a");
@@ -298,8 +331,17 @@ console.log("5. NEGATIVE CONTROLS — every way the route must not fire:");
   ok((await refusal(dmCtx("U-owner", { channel: true }), { action: "end", all: true })).includes("DM-only"), "a CHANNEL seat is refused — the DM wall");
   ok((await refusal(dmCtx("U-owner", { attested: true }), { action: "end", all: true })).includes("verified person"), "an UNATTENDED fire is refused — no acting principal, so a routine cannot end its creator's grants");
   ok((await refusal(dmCtx("U-owner"), { action: "end" })).includes("never both and never neither"), "`end` with NEITHER `which` nor `all` is refused — an omitted target must never read as `all`");
-  ok((await refusal(dmCtx("U-owner"), { action: "end", all: true, which: [1] })).includes("never both and never neither"), "…and `end` with BOTH is refused too");
+  ok((await refusal(dmCtx("U-owner"), { action: "end", all: true, grants: [grantB] })).includes("never both and never neither"), "…and `end` with BOTH is refused too");
   eq(await liveIds(), before, "…and NONE of those four refusals revoked anything");
+  const schema = (revokeTool as unknown as { inputSchema: { safeParse(v: unknown): { success: boolean } } }).inputSchema;
+  ok(!schema.safeParse({ action: "end", grants: [1] }).success, "`end` carrying the list's NUMBER is refused by the schema — `grants` takes ids, so a position cannot even be expressed");
+  ok(schema.safeParse({ action: "end", grants: [grantB] }).success, "NEGATIVE CONTROL: the same call with a grant ID parses, so the refusal above is about the TYPE and not a broken schema");
+  const numbered = await callTool(dmCtx("U-owner"), { action: "end", grants: [1] as unknown as string[] });
+  eq(numbered.ended, 0, "…and a number that got past the schema still ends nothing — the filter matches row ids, never positions");
+  eq(await liveIds(), before, "…so it revoked nothing");
+  const foreign = await callTool(dmCtx("U-owner"), { action: "end", grants: ["00000000-0000-4000-8000-000000000018"] });
+  eq(foreign.ended, 0, "an id that names no grant of THIS owner ends nothing — the lookup is owner-keyed, so an id is not a capability");
+  eq(await liveIds(), before, "…and this owner's grants are untouched");
 
   const listed = await callTool(dmCtx("U-owner"), { action: "list" });
   eq(listed.ended, 0, "`list` ends nothing");
@@ -309,9 +351,9 @@ console.log("5. NEGATIVE CONTROLS — every way the route must not fire:");
   eq(stranger.ended, 0, "a DIFFERENT person's DM ends nothing — the query key is the CALLER's own principal, so there is no id a stranger could name");
   eq(await liveIds(), before, "…and this owner's grants are all still live");
 
-  const missing = await callTool(dmCtx("U-owner"), { action: "end", which: [99] });
-  eq(missing.ended, 0, "an ordinal that names no live grant ends nothing");
-  ok(missing.message.includes("none of those numbers matched"), "…and says so, rather than reporting a silent success");
+  const missing = await callTool(dmCtx("U-owner"), { action: "end", grants: ["no-such-grant"] });
+  eq(missing.ended, 0, "an id that names no live grant ends nothing");
+  ok(missing.message.includes("none of what you named is still live"), "…and says so, rather than reporting a silent success");
   eq(await liveIds(), before, "…and revokes nothing by accident");
 }
 
@@ -347,7 +389,7 @@ console.log("6b. ending one grant renumbers the rest, and the answer prints the 
   const three = await mintGrant({ pageId: "seq-3", purpose: "the third", scopeKey: "chat-seq-3" });
   eq((await ownerLiveGrants(ORG, OWNER_KEY, NOW + 3_000)).map((h) => h.grant.id), [one, two, three], "fixture: three grants, numbered 1, 2, 3 oldest first");
 
-  const first = await callTool(dmCtx("U-owner"), { action: "end", which: [1] });
+  const first = await callTool(dmCtx("U-owner"), { action: "end", grants: [await idForNumber(dmCtx("U-owner"), 1)] });
   eq(first.ended, 1, "ending number 1 ends one grant");
   eq((await store.getCredentialGrant(ORG, one))?.status, "revoked", "…and it is the grant that WAS number 1");
 
@@ -355,12 +397,14 @@ console.log("6b. ending one grant renumbers the rest, and the answer prints the 
   ok(first.message.includes("has been told"), "…and a room that WAS reached is reported as told, plainly");
   ok(!first.message.includes("not told"), "…with no unreachable-room marking on a call where every room was reached");
   ok(first.message.includes('1. Read a Notion page, ') && first.message.includes("the second"), "…printing the remaining grants NUMBERED, so the next `end` has a live list to read");
+  eq(first.grants.map((g) => g.id), [two, three], "…and the machine half is REBUILT from what is left, so the next `end` cannot spend an id for a grant that is gone");
+  eq(first.grants.map((g) => g.number), [1, 2], "…renumbered to match the message the person is reading");
   eq((await ownerLiveGrants(ORG, OWNER_KEY, NOW + 3_000)).map((h) => h.grant.id), [two, three], "…and the live list really did shift up by one");
 
-  const second = await callTool(dmCtx("U-owner"), { action: "end", which: [2] });
-  eq(second.ended, 1, "a second `end` on number 2 ends one grant");
-  eq((await store.getCredentialGrant(ORG, three))?.status, "revoked", "…and `2` resolves against the CURRENT list — the third grant, which the refreshed numbering calls 2");
-  eq((await store.getCredentialGrant(ORG, two))?.status, "active", "NEGATIVE CONTROL: the grant now numbered 1 is untouched, so the resolution really is positional and really is fresh");
+  const second = await callTool(dmCtx("U-owner"), { action: "end", grants: [first.grants[1].id] });
+  eq(second.ended, 1, "a second `end` on the number the fresh list calls 2 ends one grant");
+  eq((await store.getCredentialGrant(ORG, three))?.status, "revoked", "…and it is the third grant, which the refreshed numbering calls 2");
+  eq((await store.getCredentialGrant(ORG, two))?.status, "active", "NEGATIVE CONTROL: the grant now numbered 1 is untouched, so the number really was read against the CURRENT list");
   await revokeOwnerGrants(stamps, OWNER_KEY, undefined, NOW + 3_000);
 }
 

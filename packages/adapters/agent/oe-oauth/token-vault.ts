@@ -62,6 +62,7 @@ interface PendingRecord {
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly consumed?: boolean;
+  readonly consent?: unknown;
 }
 
 interface PendingSweepReport {
@@ -346,7 +347,11 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       return (await readJson<TokenRecord>(tokRef(providerRef, subject))) !== null;
     },
 
-    async startAuthorization(providerRef: string, subject: OeOauthSubject, options: { readonly expiresInMs?: number }): Promise<{ url: string }> {
+    async startAuthorization(
+      providerRef: string,
+      subject: OeOauthSubject,
+      options: { readonly expiresInMs?: number; readonly consent?: unknown },
+    ): Promise<{ url: string }> {
       const client = await ensureClient(providerRef);
       const redirectUri = redirectUriOf();
       if (!redirectUri) throw new Error(`connection "${providerRef}": OE_PUBLIC_BASE_URL is unset — cannot build a redirect_uri.`);
@@ -363,6 +368,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         ...(client.scopes ? { scopes: client.scopes } : {}),
         createdAt: now(),
         expiresAt: now() + (options.expiresInMs ?? pendingTtl),
+        ...(options.consent ? { consent: options.consent } : {}),
       };
       await vault.write(pendRef(state), JSON.stringify(pending), { connector: providerRef });
       const url = isStaticClient(client)
@@ -391,15 +397,19 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       return { url };
     },
 
-    async completeAuthorization(state: string, code: string): Promise<{ providerRef: string }> {
+    async completeAuthorization(state: string, code: string): Promise<{ providerRef: string; consent?: unknown }> {
       const pending = await readJson<PendingRecord>(pendRef(state));
       if (!pending) throw new Error("unknown or expired authorization state");
       if (pending.consumed) throw new Error("authorization state already used");
       if (now() > pending.expiresAt) throw new Error("authorization state expired");
       const tok = await exchangeForPending(pending, code);
       await storeToken(pending.providerRef, pending.subject, tok);
-      await vault.write(pendRef(state), JSON.stringify({ ...pending, consumed: true, pkceVerifier: "" }), { connector: pending.providerRef });
-      return { providerRef: pending.providerRef };
+      await vault.write(
+        pendRef(state),
+        JSON.stringify({ ...pending, consumed: true, pkceVerifier: "", consent: undefined }),
+        { connector: pending.providerRef },
+      );
+      return { providerRef: pending.providerRef, ...(pending.consent ? { consent: pending.consent } : {}) };
     },
 
     async accessTokenFor(providerRef: string, subject: OeOauthSubject): Promise<string> {

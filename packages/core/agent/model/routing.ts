@@ -10,6 +10,20 @@ import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
 import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
+import {
+  abBucketKey,
+  abThreadKey,
+  applyModelAb,
+  decideModelAb,
+  modelAbTestArmed,
+  noteModelAbArm,
+  readModelArm,
+  registeredModelAbTest,
+  resolveModelArm,
+  stampModelArm,
+  type ModelAbInput,
+  type ModelAbTest,
+} from "./ab-test.js";
 
 const loggedOnce = new Set<string>();
 function logOnce(kind: "warn" | "log", reason: string): void {
@@ -47,6 +61,7 @@ export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
   readonly roles?: () => readonly NamedKnobLayer[];
   readonly modelPolicy?: () => ModelPolicy | undefined;
   readonly domainModelPick?: (domainName: string) => Promise<DomainModelPick | null>;
+  readonly modelAbTest?: () => ModelAbTest | undefined;
   readonly backend: ModelBackend<TModel>;
 }
 
@@ -73,10 +88,11 @@ async function liveDomainModelPick(org: string, domainName: string): Promise<Dom
   return value;
 }
 
-export const liveIdentity: Pick<RoutingDeps, "domains" | "roles" | "modelPolicy" | "domainModelPick"> = {
+export const liveIdentity: Pick<RoutingDeps, "domains" | "roles" | "modelPolicy" | "domainModelPick" | "modelAbTest"> = {
   domains: () => getConfig().loadDomains(),
   roles: () => getConfig().loadRoles?.() ?? [],
   modelPolicy: () => getConfig().loadModelPolicy?.(),
+  modelAbTest: () => registeredModelAbTest(),
   domainModelPick: async (domainName) => {
     try {
       return await liveDomainModelPick(deploymentOrg(), domainName);
@@ -117,6 +133,7 @@ export async function resolveRoute(
   defaultId: string,
   deps: RoutingDeps,
   fallbackRole?: ModelRole,
+  ab?: ModelAbInput,
 ): Promise<ModelRoute> {
   try {
     const domains = deps.domains();
@@ -143,6 +160,8 @@ export async function resolveRoute(
       pickedRoute = rawRoute;
       logOnce("warn", `${role}: domain model pick lookup failed (${String(err)})`);
     }
+    const abDecision = ab ? decideModelAb(pickedRoute, defaultId, ab) : undefined;
+    const armedRoute = applyModelAb(pickedRoute, abDecision);
     let policy: ModelPolicy | undefined;
     try {
       policy = deps.modelPolicy?.();
@@ -157,12 +176,16 @@ export async function resolveRoute(
         effectiveCeiling = undefined;
       }
     }
-    const enveloped = applyModelPolicyToRoute(pickedRoute, policy, defaultId, effectiveCeiling, defaultId);
+    const enveloped = applyModelPolicyToRoute(armedRoute, policy, defaultId, effectiveCeiling, defaultId);
     for (const w of enveloped.warnings) logOnce("warn", `${role}: model policy: ${w}`);
     const forcedId = process.env.OE_FORCE_MODEL?.trim();
     const route: ModelRoute = forcedId
-      ? { ...pickedRoute, id: forcedId, tier: undefined, reasoning: enveloped.reasoning }
-      : { ...pickedRoute, id: enveloped.id, reasoning: enveloped.reasoning };
+      ? { ...armedRoute, id: forcedId, tier: undefined, reasoning: enveloped.reasoning }
+      : { ...armedRoute, id: enveloped.id, reasoning: enveloped.reasoning };
+    if (abDecision !== undefined) {
+      const ranId = route.id ?? defaultId;
+      stampModelArm({ arm: resolveModelArm(abDecision, ranId), bucketKey: abDecision.bucketKey, modelId: ranId });
+    }
     if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
       logOnce("log", `${role}: ${surfaceKey} → ${JSON.stringify(route)}`);
     }
@@ -230,7 +253,9 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string } },
   deps: RoutingDeps<TModel>,
+  event?: unknown,
 ): Promise<TModel> {
+  stampModelArm(null);
   let surfaceKey: string;
   let surfaceMatch: DomainMatch | undefined;
   try {
@@ -244,17 +269,25 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   }
 
   const supervisor = isSupervisorSession(ctx);
+  let ab: ModelAbInput | undefined;
+  try {
+    const test = deps.modelAbTest?.();
+    if (!supervisor && modelAbTestArmed(test)) ab = { test, bucketKey: abBucketKey(surfaceKey, abThreadKey(ctx)) };
+  } catch (err) {
+    logOnce("warn", `primary: model A/B test read failed (${String(err)}) — no arm`);
+  }
   let route: ModelRoute;
   try {
     route = supervisor
       ? await resolveRoute("supervisor", surfaceKey, surfaceMatch, defaults.primary.id, deps, "primary")
-      : await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps);
+      : await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps, undefined, ab);
   } catch (err) {
     logOnce("warn", `primary: route resolution failed (${String(err)}) — default model`);
     stampModelCall(defaults.primary.id);
     return deps.backend.model(defaults.primary.id);
   }
   stampModelCall(route.id ?? defaults.primary.id);
+  noteModelAbArm(ctx, readModelArm(), event);
   if (isNoOpRoute(route, defaults.primary.id)) return deps.backend.model(defaults.primary.id);
   return makeRoutedModel(() => route, defaults.primary, deps.backend);
 }
@@ -274,7 +307,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
     stampModelCall(defaults.primary.id);
     return turnBackstopModel(deps.backend.model(defaults.primary.id), boundaryStopReply(boundary));
   }
-  const routed = await resolveRoutedPrimaryModel(ctx, defaults, capturingDeps);
+  const routed = await resolveRoutedPrimaryModel(ctx, defaults, capturingDeps, event);
   if (boundary.tier !== "soft") return routed;
   reportStepBoundary(ctx, boundary);
   return withWrapUpNotice(routed, wrapUpNotice(boundary));
