@@ -4,6 +4,9 @@ import {
   assertSingleTenantPerTenantScopedPlatform,
   classifyTenantAdmission,
   multiTenantPrincipalsAllowed,
+  soleAdmittedTenant,
+  splitTenantRungs,
+  tenantRungOf,
   unadmittedTenantLog,
   MULTI_TENANT_ENV,
   UNADMITTED_TENANT_DROP_REASON,
@@ -107,8 +110,88 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
+  ok(tenantRungOf("slack", "T_ONE") === "workspace", "a Slack `T…` id names the WORKSPACE rung — the rung a person id is issued under");
+  ok(tenantRungOf("slack", "E_OURS") === "enterprise", "🔴 a Slack `E…` id names the ENTERPRISE rung — the shape rule that lets one reach segment carry either");
+  ok(tenantRungOf("discord", "E_OURS") === "workspace", "…and ONLY on Slack: no other platform has a rung above the workspace, so its ids are unchanged whatever they start with");
+
+  const split = splitTenantRungs("slack", ["T_ONE", "E_OURS", "T_TWO"]);
+  ok([...split.workspaces].sort().join(",") === "T_ONE,T_TWO", "the split puts every `T…` in the workspace set");
+  ok([...split.enterprises].join(",") === "E_OURS", "…and every `E…` in the enterprise set");
+
+  const workspaceOnly = new Set(["T_ONE"]);
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: workspaceOnly }) === "unadmitted",
+    "🔴 THE DEFECT: an org-wide install's delivery names a FOREIGN Grid and no workspace — it is now REFUSED, where the workspace-only rule read the blank workspace as `names no tenant` and admitted it",
+  );
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: undefined, admitted: workspaceOnly }) === "proceed",
+    "NEGATIVE CONTROL for that: a delivery naming NEITHER id still proceeds — proceed-path 4 survives, so the unmapped-channel guard keeps owning the blank-workspace case",
+  );
+
+  const enterpriseOnly = new Set(["E_OURS"]);
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OURS", admitted: enterpriseOnly }) === "proceed",
+    "a DECLARED Grid admits its own org-wide delivery — refusing here would break the deployment shape this rung exists to serve",
+  );
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: "T_SIBLING", enterprise: "E_OURS", admitted: enterpriseOnly }) === "proceed",
+    "…and admits a workspace UNDER it that is not declared in its own right: Slack puts `enterprise_id` beside `team_id`, so the delivery itself says the workspace belongs to that organisation",
+  );
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: "T_SIBLING", enterprise: undefined, admitted: enterpriseOnly }) === "unadmitted",
+    "🔴 …but a workspace that names NO organisation is still refused against an enterprise-only declaration — the admission is the operator's `E…` line doing the work, never the id shape being lenient",
+  );
+  ok(
+    classifyTenantAdmission({ platform: "slack", tenant: "E_OURS", enterprise: undefined, admitted: enterpriseOnly }) === "unadmitted",
+    "…and an id matched at the WRONG rung admits nothing: a `team_id` that happened to equal the declared Grid is judged against the workspace set, which does not hold it",
+  );
+
+  const both = new Set(["T_ONE", "E_OURS"]);
+  ok(classifyTenantAdmission({ platform: "slack", tenant: "T_ONE", enterprise: "E_OTHER", admitted: both }) === "proceed", "a DECLARED workspace proceeds whatever Grid it names — admission reads the workspace first, exactly as before");
+  ok(classifyTenantAdmission({ platform: "slack", tenant: "T_FOREIGN", enterprise: "E_OTHER", admitted: both }) === "unadmitted", "🔴 a foreign workspace under a foreign Grid is refused on both rungs");
+  ok(classifyTenantAdmission({ platform: "slack", tenant: "T_FOREIGN", enterprise: "E_OURS", admitted: both }) === "proceed", "…while the SAME foreign workspace under the DECLARED Grid proceeds — that is what declaring an organisation means");
+
+  ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: new Set() }) === "proceed", "(3) an EMPTY admitted set is INERT for the enterprise rung too");
+  process.env[MULTI_TENANT_ENV] = "1";
+  ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: workspaceOnly }) === "proceed", "(2) the operator opt-in reaches the enterprise rung too — one switch, every rung");
+  delete process.env[MULTI_TENANT_ENV];
+  ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: workspaceOnly }) === "unadmitted", "…and dropping it re-arms the enterprise rung (read live, not latched at import)");
+
+  const gridPlusWorkspace = [defineDomain({ name: "grid", reach: ["slack/E_OURS/C_ORG", "slack/T_ONE/C_A"], memory: "brain" })];
+  assertSingleTenantPerTenantScopedPlatform(gridPlusWorkspace);
+  ok(true, "🔴 a deployment declaring its Grid AND its one workspace BOOTS — the two ids name different rungs, so counting them together would refuse the shape this ticket exists to support");
+  assert.throws(
+    () => assertSingleTenantPerTenantScopedPlatform([defineDomain({ name: "two", reach: ["slack/E_OURS/C_ORG", "slack/T_ONE/C_A", "slack/T_TWO/C_B"], memory: "brain" })]),
+    /multi-tenant principal exposure/,
+    "…and TWO workspaces still refuse to boot, Grid entry or not — the aliasing that check names is between workspaces, and an `E…` line does not launder it",
+  );
+  n++;
+  assert.throws(
+    () => assertSingleTenantPerTenantScopedPlatform([defineDomain({ name: "two-orgs", reach: ["slack/E_OURS/C_ORG", "slack/E_THEIRS/C_ORG2"], memory: "brain" })]),
+    /multi-tenant principal exposure/,
+    "🔴 …and TWO ENTERPRISES refuse to boot as well — counting only the workspace rung would let two organisations in with no opt-in, which is the same aliasing one rung up",
+  );
+  n++;
+
+  ok(
+    soleAdmittedTenant("slack", gridPlusWorkspace) === undefined,
+    "🔴 a declared Grid makes the sole admitted tenant `undefined`, even beside one declared workspace — the `E…` entry admits every workspace under the organisation, so answering `T_ONE` would stamp that workspace onto people who are in a sibling one",
+  );
+  ok(
+    soleAdmittedTenant("slack", [defineDomain({ name: "org", reach: ["slack/E_OURS/C_ORG"], memory: "brain" })]) === undefined,
+    "…and an enterprise-only deployment has none either: a Grid id is not a workspace, and putting it in a principal key would fabricate a segment",
+  );
+  ok(
+    soleAdmittedTenant("slack", [defineDomain({ name: "one", reach: ["slack/T_ONE/C_A"], memory: "brain" })]) === "T_ONE",
+    "CONTROL: a plain single-workspace deployment still resolves its one workspace — the Grid rung must not make every deployment's tenant undecidable",
+  );
+}
+
+{
   const log = unadmittedTenantLog("slack", "T_TWO", new Set(["T_ONE"]));
   ok(log.includes("T_TWO") && log.includes("T_ONE"), "the log names the REFUSED tenant and what this deployment does admit");
+  const orgLog = unadmittedTenantLog("slack", undefined, new Set(["T_ONE"]), "E_OTHER");
+  ok(orgLog.includes("E_OTHER") && !orgLog.includes('workspace ""'), "🔴 a workspace-less refusal names the ENTERPRISE it refused — printing the absent workspace would leave the operator reading an empty string for the one fact that decided it");
   ok(log.includes("agent/memory/config/domains.ts") && log.includes(MULTI_TENANT_ENV), "…and both remedies: declare that tenant, or opt in explicitly");
   ok(UNADMITTED_TENANT_DROP_REASON.length > 0 && UNADMITTED_TENANT_DROP_REASON.includes("alias"), "the audit reason is one greppable string that says WHY, not just THAT");
 }

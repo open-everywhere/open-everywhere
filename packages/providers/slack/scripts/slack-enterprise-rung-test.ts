@@ -36,13 +36,15 @@ const OTHER_TS = "1769564199.111000";
 const SECRET = "shhh-signing-secret";
 const NOW_MS = 1769564200000;
 
+let declaredDomains = [defineDomain({ name: "support", reach: [`slack/${TEAM}/${CHANNEL}`], memory: "brain" })];
+
 registerIdentityMapper("slack", bindSlack);
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "support", reach: [`slack/${TEAM}/${CHANNEL}`], memory: "brain" })],
+  loadDomains: () => declaredDomains,
   loadSilos: () => [{ name: "brain", provider: "sqlite" }],
   domainsForSurface: ({ surface }) => (surface === CHANNEL ? ["support"] : []),
 });
@@ -392,14 +394,36 @@ const inboundFrom = (channelId: string, ts: string, teamId: string) =>
   }
 
   {
-    const sc = parseSlackShortcutPayload(shortcutPayload(FOREIGN_CHANNEL, "9298.100", { enterprise: { id: OTHER_GRID } }));
-    eq(sc!.enterpriseId, OTHER_GRID, "refusal(shortcut) GAP: an org-wide payload names the foreign Grid…");
-    eq(sc!.teamId, undefined, "refusal(shortcut) GAP: …and names NO workspace");
+    const ts = "9298.100";
+    const sc = parseSlackShortcutPayload(shortcutPayload(FOREIGN_CHANNEL, ts, { enterprise: { id: OTHER_GRID } }));
+    eq(sc!.enterpriseId, OTHER_GRID, "refusal(shortcut/org-wide): an org-wide payload names the foreign Grid…");
+    eq(sc!.teamId, undefined, "refusal(shortcut/org-wide): …and names NO workspace — so the refusal below turns on the enterprise alone");
     eq(
-      slackTenantAdmission(sc!.teamId),
-      "proceed",
-      "refusal(shortcut) GAP: 🔴 so the tenant fence PROCEEDS — it classifies the workspace, and a foreign enterprise with no workspace names no tenant it can refuse",
+      slackTenantAdmission(sc!.teamId, sc!.enterpriseId),
+      "unadmitted",
+      "refusal(shortcut/org-wide): 🔴 the tenant fence REFUSES it — a foreign enterprise with no workspace still names a tenant this deployment never declared",
     );
+
+    const sev = shortcutMessageEvent(sc!, FOREIGN_CHANNEL, "channel", 1769564200000);
+    eq(sev.teamId, undefined, "refusal(shortcut/org-wide): the mapped event carries no workspace…");
+    eq(sev.enterpriseId, OTHER_GRID, "refusal(shortcut/org-wide): …and carries the Grid, which is the rung the door reads");
+    const wakes: unknown[] = [];
+    const out = await routeSupervisorEvent(sev, supervisorDeps(wakes), { directMention: true });
+    eq(out.deliver, false, "refusal(shortcut/org-wide): 🔴 the supervisor door REFUSES the org-wide delivery — no turn runs under an identity we cannot place");
+    eq(out.reason, UNADMITTED_TENANT_DROP_REASON, "refusal(shortcut/org-wide): …for the tenant reason, not some other gate");
+    eq(wakes.length, 0, "refusal(shortcut/org-wide): …and NO wake was dispatched");
+    eq((await droppedRows(ts))[0]?.reason, UNADMITTED_TENANT_DROP_REASON, "refusal(shortcut/org-wide): the operator gets the same greppable row");
+  }
+
+  {
+    const previous = declaredDomains;
+    declaredDomains = [defineDomain({ name: "org-wide", reach: [`slack/${GRID}/${CHANNEL}`], memory: "brain" })];
+    const sc = parseSlackShortcutPayload(shortcutPayload(CHANNEL, "9297.100", { enterprise: { id: GRID } }));
+    const sev = shortcutMessageEvent(sc!, CHANNEL, "channel", 1769564200000);
+    const wakes: unknown[] = [];
+    const out = await routeSupervisorEvent(sev, supervisorDeps(wakes), { directMention: true });
+    ok(out.deliver && wakes.length === 1, "refusal(shortcut/org-wide) CONTROL: the same workspace-less shape from a DECLARED Grid WAKES — declaring `slack/E…/<channel>` is what admits an org-wide install");
+    declaredDomains = previous;
   }
 }
 

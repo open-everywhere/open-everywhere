@@ -25,6 +25,7 @@ import {
   bindableForReaction,
   slackSingleWindowMentionPolicy,
   slackDomainUsesUnifiedWindow,
+  slackFrontTenantFenceDeclined,
   type SlackEventEnvelope,
   type ParsedMessageEvent,
   type RouteOutcome,
@@ -83,6 +84,7 @@ import {
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth, withForwardedSlackEnvelope, type ForwardedSlackEnvelope } from "./slack-identity.js";
+import { holdRouteWork, routeHoldQuiesced, withSlackRouteHold } from "./slack-route-hold.js";
 import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
 import {
   parseSlackShortcutPayload,
@@ -409,31 +411,33 @@ export function recordWakeFailure(key: string, err: unknown): void {
     void flushLogShip();
   } catch {
   }
-  void (async () => {
-    try {
-      const p = resolvePartition({
-        channel: { kind: "slack" },
-        session: { auth: { current: { attributes: { team_id: "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-      } as Parameters<typeof resolvePartition>[0]);
-      const undeliveredAfterHeal = isUndeliveredAfterHeal(err);
-      await getOperationalStore().appendAudit({
-        ts: new Date().toISOString(),
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        action: "surface.wake_failed",
-        detail: {
-          fifoKey: key,
-          message: String(err instanceof Error ? err.message : err).slice(0, 500),
-          ...(undeliveredAfterHeal
-            ? { reason: "pruned-deployment-heal-retry-failed", remedy: "seat healed for its next wake; this message got no answer" }
-            : {}),
-        },
-      });
-    } catch {
-    }
-  })();
+  void holdRouteWork(
+    (async () => {
+      try {
+        const p = resolvePartition({
+          channel: { kind: "slack" },
+          session: { auth: { current: { attributes: { team_id: "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+        } as Parameters<typeof resolvePartition>[0]);
+        const undeliveredAfterHeal = isUndeliveredAfterHeal(err);
+        await getOperationalStore().appendAudit({
+          ts: new Date().toISOString(),
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          action: "surface.wake_failed",
+          detail: {
+            fifoKey: key,
+            message: String(err instanceof Error ? err.message : err).slice(0, 500),
+            ...(undeliveredAfterHeal
+              ? { reason: "pruned-deployment-heal-retry-failed", remedy: "seat healed for its next wake; this message got no answer" }
+              : {}),
+          },
+        });
+      } catch {
+      }
+    })(),
+  );
 }
 
 export function withSingleWindowDiversion(
@@ -508,7 +512,15 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     return (await mentionPolicyFor(channelId, surfaceKey)).suppressNative;
   };
 
-  return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
+  return (req: Request, args: RouteHandlerArgs): Promise<Response> =>
+    withSlackRouteHold(() => {
+      const held: RouteHandlerArgs = Object.assign(Object.create(args) as RouteHandlerArgs, {
+        waitUntil: (p: Promise<unknown>) => args.waitUntil(routeHoldQuiesced(p)),
+      });
+      return handleFrontRequest(req, held);
+    });
+
+  async function handleFrontRequest(req: Request, args: RouteHandlerArgs): Promise<Response> {
     const rawBody = await req.text();
     if (!verifySlackSignature(rawBody, req.headers, signingSecret(), now())) {
       return new Response("unauthorized", { status: 401 });
@@ -588,6 +600,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       dmKind: "im" | "mpim",
       driverAdmitted = false,
     ): Promise<void> => {
+      if (slackFrontTenantFenceDeclined(ev, `dm-${dmKind}`, "scheduleDmWake")) return;
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
       const isGroup = dmKind === "mpim";
@@ -697,6 +710,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.log(`[open-everywhere:slack-front] ${decision.dmKind} wake dropped — the envelope parsed to no channel/ts`);
         return OK();
       }
+      if (slackFrontTenantFenceDeclined(dev, `dm-${decision.dmKind}`, "front-dm-branch")) return OK();
       const driverAdmitted = Boolean(dev.botId) && dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
       if (driverAdmitted) {
         args.waitUntil(
@@ -766,6 +780,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
       }
       const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now(), { admitAttachments: shortcutFacts.appCanRead });
+      if (slackFrontTenantFenceDeclined(sev, `${sc.kind}-shortcut`, "front-shortcut-branch")) return new Response(null, { status: 200 });
       if (!(await notYetSeenKey(shortcutWakeKey(sc), sev))) return new Response(null, { status: 200 });
       const seedAttachments = (): void => {
         registerAttachments(sev);
@@ -964,7 +979,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       fifo.enqueue(threadKey, () => routeMessageEvent(ev, liveDeps(send)).then(logOutcome("engaged-thread", ev.channelId, ev.threadTs!))),
     );
     return OK();
-  };
+  }
 }
 
 export function frontSlackChannel<C extends Channel<any, any, any>>(inner: C, opts: FrontOptions = {}): C {

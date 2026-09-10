@@ -23,7 +23,16 @@ import {
   taskAgentLink,
   type TaskCallLink,
 } from "../access/subagent-taint.js";
-import { readTaskReceipt, taskViewsOf, terminalTaskNotification, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
+import {
+  readDelegationFailure,
+  readTaskReceipt,
+  taskViewsOf,
+  terminalTaskNotification,
+  terminalTaskViewsOf,
+  type DelegationFailure,
+  type TaskReceipt,
+  type TaskSummary,
+} from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
@@ -32,7 +41,7 @@ import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
-import { notePendingDelegation, noteDelegationSettled } from "../access/pending-delegation-signal.js";
+import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
@@ -410,6 +419,31 @@ export const TASK_STARTED_ACTION = "delegation.task_started";
 
 export const TASK_SETTLED_ACTION = "delegation.task_settled";
 
+export const TASK_FAILED_ACTION = "delegation.task_failed";
+
+async function noteDelegationFailure(
+  failure: Partial<DelegationFailure> & { readonly outcome: string },
+  taskId: string,
+  ownSessionId: string,
+  turnId: string | undefined,
+): Promise<void> {
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "ingest",
+    workspace: "delegation",
+    action: TASK_FAILED_ACTION,
+    detail: {
+      task: taskId,
+      call: failure.callId ?? "",
+      tool: failure.tool ?? "",
+      error: failure.errorClass ?? "",
+      outcome: failure.outcome,
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+      ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
 function parentSessionOfChildToken(childToken: string): string | undefined {
   const m = /^subagent:([^:]+):([^:]+)$/.exec(childToken);
   return m === null ? undefined : m[1]!;
@@ -503,7 +537,7 @@ export async function applyTaskSettlement(views: readonly TaskSummary[], ownSess
   const wakeTurnId = currentTurnId(bind);
   for (const view of views) noteDelegationSettled(wakeTurnId, view.taskId);
   for (const view of views) {
-    await installTaskWake({
+    const install = await installTaskWake({
       org: deploymentOrg(),
       taskId: view.taskId,
       status: view.status,
@@ -511,6 +545,10 @@ export async function applyTaskSettlement(views: readonly TaskSummary[], ownSess
       turnId: wakeTurnId,
       inheritedWakeId,
     });
+    if (install.outcome === "installed" && claimPromisedReport(view.taskId)) {
+      noteSettlementReportOwed(wakeTurnId, view.taskId, install.wakeId ?? undefined);
+    }
+    if (view.status === "failed") await noteDelegationFailure({ outcome: view.status }, view.taskId, ownSessionId, wakeTurnId);
   }
   let any = false;
   for (const view of views) any = (await adoptTaskTaint(view, ownSessionId)) || any;
@@ -587,6 +625,11 @@ export default defineHook({
           await applyTaskSettlement(terminal, ownSessionId, ctx);
           await flushSettledMemory(ctx as unknown as MemoryPersistContext, "task-settled");
           return;
+        }
+
+        const failure = readDelegationFailure(result);
+        if (failure !== null) {
+          await noteDelegationFailure(failure, "", ownSessionId, currentTurnId(ctx as unknown as BindableContext));
         }
 
         if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;

@@ -74,6 +74,7 @@ import {
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
+import { holdRouteWork } from "./slack-route-hold.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { admitSlackInputResponse } from "./slack-input-response.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
@@ -333,25 +334,27 @@ type InboundOutcome = { readonly auth: OpenEverywhereSlackAuth | null; readonly 
 
 const DROP = null;
 
-function auditWakeDropped(message: SlackMessage, reason: string, detail: Record<string, unknown> = {}): void {
-  void (async () => {
-    try {
-      const p = resolvePartition({
-        channel: { kind: "slack" },
-        session: { auth: { current: { attributes: { team_id: message.teamId ?? "", channel_id: message.channelId }, principalId: "", principalType: "slack-user" } } },
-      });
-      await getOperationalStore().appendAudit({
-        ts: new Date().toISOString(),
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        action: "surface.wake_dropped",
-        detail: { reason, channel: message.channelId, ts: message.ts, ...detail },
-      });
-    } catch {
-    }
-  })();
+function auditWakeDropped(message: SlackMessage, reason: string, detail: Record<string, unknown> = {}): Promise<void> {
+  return holdRouteWork(
+    (async () => {
+      try {
+        const p = resolvePartition({
+          channel: { kind: "slack" },
+          session: { auth: { current: { attributes: { team_id: message.teamId ?? "", channel_id: message.channelId }, principalId: "", principalType: "slack-user" } } },
+        });
+        await getOperationalStore().appendAudit({
+          ts: new Date().toISOString(),
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          action: "surface.wake_dropped",
+          detail: { reason, channel: message.channelId, ts: message.ts, ...detail },
+        });
+      } catch {
+      }
+    })(),
+  );
 }
 
 async function onInbound(
@@ -375,7 +378,7 @@ async function onInbound(
       console.log(
         `[open-everywhere:slack] bot-authored mention dropped — no turn (bot ${rawBotId ?? "?"} in team ${message.teamId ?? "?"} is not an allowlisted e2e driver)`,
       );
-      auditWakeDropped(message, "bot author is not an allowlisted driver", { botId: rawBotId ?? null, team: message.teamId ?? null });
+      await auditWakeDropped(message, "bot author is not an allowlisted driver", { botId: rawBotId ?? null, team: message.teamId ?? null });
       return DROP;
     }
     console.log(`[open-everywhere:slack] e2e driver accepted: bot-authored mention from ${rawBotId} in team ${message.teamId} (allowlisted)`);
@@ -383,9 +386,14 @@ async function onInbound(
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 
-  if (slackTenantAdmission(message.teamId) === "unadmitted") {
-    console.log(unadmittedTenantLog("slack", message.teamId!, admittedTenantsFromConfig("slack")));
-    auditWakeDropped(message, UNADMITTED_TENANT_DROP_REASON, { door: "mention", team: message.teamId ?? null });
+  const mentionEnterpriseId = forwardedSlackEnterpriseId(message);
+  if (slackTenantAdmission(message.teamId, mentionEnterpriseId) === "unadmitted") {
+    console.log(unadmittedTenantLog("slack", message.teamId, admittedTenantsFromConfig("slack"), mentionEnterpriseId));
+    await auditWakeDropped(message, UNADMITTED_TENANT_DROP_REASON, {
+      door: "mention",
+      team: message.teamId ?? null,
+      enterprise: mentionEnterpriseId ?? null,
+    });
     return DROP;
   }
 
@@ -393,7 +401,7 @@ async function onInbound(
     console.log(
       `[open-everywhere:slack] unmapped-channel wake dropped — no turn (channel ${message.channelId} resolved no team; map it in agent/memory/config/domains.ts)`,
     );
-    auditWakeDropped(message, UNMAPPED_WAKE_DROP_REASON, { door: "mention", channelType: facts.channelType ?? null });
+    await auditWakeDropped(message, UNMAPPED_WAKE_DROP_REASON, { door: "mention", channelType: facts.channelType ?? null });
     try {
       await ctx.thread.post(unmappedWakeCopy("slack", message.channelId));
     } catch {
@@ -447,7 +455,7 @@ export async function admitInbound(
     console.warn(
       `[open-everywhere:slack] wake admitted without a spend-gate consult — dropped fail-closed (${message.channelId}/${message.ts})`,
     );
-    auditWakeDropped(message, "admitted without a spend-gate consult — fail-closed");
+    await auditWakeDropped(message, "admitted without a spend-gate consult — fail-closed");
     return DROP;
   }
   return outcome;

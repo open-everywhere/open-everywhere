@@ -2,6 +2,27 @@ import { getConfig } from "./config.js";
 import { isTenantScopedPlatform, principalKeyReplacementHint } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 
+export type TenantRung = "workspace" | "enterprise";
+
+export interface TenantRungSets {
+  readonly workspaces: ReadonlySet<string>;
+  readonly enterprises: ReadonlySet<string>;
+}
+
+const ENTERPRISE_RUNG_PREFIX: ReadonlyMap<string, string> = new Map([["slack", "E"]]);
+
+export function tenantRungOf(platform: string, tenant: string): TenantRung {
+  const prefix = ENTERPRISE_RUNG_PREFIX.get(platform);
+  return prefix !== undefined && tenant.startsWith(prefix) ? "enterprise" : "workspace";
+}
+
+export function splitTenantRungs(platform: string, tenants: Iterable<string>): TenantRungSets {
+  const workspaces = new Set<string>();
+  const enterprises = new Set<string>();
+  for (const t of tenants) (tenantRungOf(platform, t) === "enterprise" ? enterprises : workspaces).add(t);
+  return { workspaces, enterprises };
+}
+
 export const MULTI_TENANT_ENV = "OE_ALLOW_MULTI_TENANT_PRINCIPALS";
 
 export function multiTenantPrincipalsAllowed(): boolean {
@@ -30,8 +51,9 @@ export function admittedTenantsFromConfig(platform: string): ReadonlySet<string>
 }
 
 export function soleAdmittedTenant(platform: string, domains: readonly Domain[]): string | undefined {
-  const tenants = admittedTenants(platform, domains);
-  return tenants.size === 1 ? [...tenants][0] : undefined;
+  const { workspaces, enterprises } = splitTenantRungs(platform, admittedTenants(platform, domains));
+  if (enterprises.size > 0) return undefined;
+  return workspaces.size === 1 ? [...workspaces][0] : undefined;
 }
 
 export function soleAdmittedTenantFromConfig(platform: string): string | undefined {
@@ -53,10 +75,15 @@ export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Doma
   }
   const bad: string[] = [];
   for (const platform of [...platforms].sort()) {
-    const tenants = [...admittedTenants(platform, domains)].sort();
-    if (tenants.length > 1) {
+    const rungs = splitTenantRungs(platform, admittedTenants(platform, domains));
+    for (const [rung, ids] of [
+      ["tenants", rungs.workspaces],
+      ["enterprises", rungs.enterprises],
+    ] as const) {
+      const tenants = [...ids].sort();
+      if (tenants.length <= 1) continue;
       bad.push(
-        `  "${platform}" declares ${tenants.length} tenants (${tenants.map((t) => JSON.stringify(t)).join(", ")}). ` +
+        `  "${platform}" declares ${tenants.length} ${rung} (${tenants.map((t) => JSON.stringify(t)).join(", ")}). ` +
           `On ${platform} a person id is issued PER TENANT, but a principal key is only \`${platform}/<id>\` — so two workspaces' members ` +
           `share one key, and every matcher over it (admin rosters, wake trust, approval clickers, a DM's personal credentials) can hand one ` +
           `person another's standing on a chance id collision. Keep one ${platform} tenant per deployment, or set ${MULTI_TENANT_ENV}=1 to accept ` +
@@ -82,23 +109,41 @@ export type TenantAdmissionDecision = "proceed" | "unadmitted";
 export interface TenantAdmissionInput {
   readonly platform: string;
   readonly tenant: string | undefined | null;
+  readonly enterprise?: string | undefined | null;
   readonly admitted: ReadonlySet<string>;
+}
+
+function namedId(value: string | undefined | null): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function classifyTenantAdmission(input: TenantAdmissionInput): TenantAdmissionDecision {
   if (!isTenantScopedPlatform(input.platform)) return "proceed";
   if (multiTenantPrincipalsAllowed()) return "proceed";
   if (input.admitted.size === 0) return "proceed";
-  const tenant = typeof input.tenant === "string" ? input.tenant.trim() : "";
-  if (tenant.length === 0) return "proceed";
-  return input.admitted.has(tenant) ? "proceed" : "unadmitted";
+  const tenant = namedId(input.tenant);
+  const enterprise = namedId(input.enterprise);
+  if (tenant.length === 0 && enterprise.length === 0) return "proceed";
+  const rungs = splitTenantRungs(input.platform, input.admitted);
+  if (tenant.length > 0 && rungs.workspaces.has(tenant)) return "proceed";
+  if (enterprise.length > 0 && rungs.enterprises.has(enterprise)) return "proceed";
+  return "unadmitted";
 }
 
 export const UNADMITTED_TENANT_DROP_REASON = "tenant is not admitted on this deployment — principal keys would alias";
 
-export function unadmittedTenantLog(platform: string, tenant: string, admitted: ReadonlySet<string>): string {
+export function unadmittedTenantLog(
+  platform: string,
+  tenant: string | undefined | null,
+  admitted: ReadonlySet<string>,
+  enterprise?: string | undefined | null,
+): string {
+  const named = [
+    ...(namedId(tenant) ? [`workspace "${namedId(tenant)}"`] : []),
+    ...(namedId(enterprise) ? [`enterprise "${namedId(enterprise)}"`] : []),
+  ];
   return (
-    `[open-everywhere:${platform}] wake dropped — tenant "${tenant}" is not admitted on this deployment ` +
+    `[open-everywhere:${platform}] wake dropped — ${named.join(" / ") || "a delivery naming no tenant"} is not admitted on this deployment ` +
     `(declared: ${[...admitted].sort().join(", ") || "none"}). A ${platform} person id is issued per tenant, so admitting a second one ` +
     `would let two people share one principal key. Add a channel for that tenant to agent/memory/config/domains.ts, or set ${MULTI_TENANT_ENV}=1 ` +
     "to accept multi-tenant principals deliberately (OPE-309)."

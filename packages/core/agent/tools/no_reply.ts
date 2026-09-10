@@ -11,6 +11,11 @@ import {
   standDownAckOwedMessage,
   NO_REPLY_AFTER_STAND_DOWN_ACTION,
 } from "../channels/reply-signal.js";
+import {
+  SETTLEMENT_REPORT_SKIPPED_ACTION,
+  refuseSettlementReport,
+  settlementReportOwedMessage,
+} from "../access/pending-delegation-signal.js";
 import { standDownAckRoute } from "./stand_down.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -77,13 +82,22 @@ export default defineTool({
           "call it and read the error; otherwise pick a named reason for silence.",
       );
     }
-    const standDownTurnId = currentTurnId(ctx as BindableContext);
-    if (standDownAckOwedThisTurn(standDownTurnId)) {
+    const turnIdForGuards = currentTurnId(ctx as BindableContext);
+    if (standDownAckOwedThisTurn(turnIdForGuards)) {
       await auditToolAction(ctx, NO_REPLY_AFTER_STAND_DOWN_ACTION, {
         reason: input.reason,
         ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
       });
       throw new Error(standDownAckOwedMessage(standDownAckRoute()));
+    }
+    const owedReport = refuseSettlementReport(turnIdForGuards);
+    if (owedReport !== undefined) {
+      await auditToolAction(ctx, SETTLEMENT_REPORT_SKIPPED_ACTION, {
+        task: owedReport,
+        reason: input.reason,
+        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+      });
+      throw new Error(settlementReportOwedMessage());
     }
     noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();

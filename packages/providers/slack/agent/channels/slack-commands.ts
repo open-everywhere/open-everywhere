@@ -44,7 +44,7 @@ export function bindableForSlashCommand(params: URLSearchParams): BindableContex
   };
 }
 
-async function auditCommandDropped(teamId: string | undefined, channelId: string | undefined, reason: string): Promise<void> {
+async function auditCommandDropped(teamId: string | undefined, channelId: string | undefined, reason: string, enterpriseId?: string): Promise<void> {
   try {
     const p = resolvePartition({
       channel: { kind: "slack" },
@@ -57,7 +57,7 @@ async function auditCommandDropped(teamId: string | undefined, channelId: string
       workspace: p.workspace,
       surface: p.surface,
       action: "surface.wake_dropped",
-      detail: { reason, door: "slash-command", channel: channelId ?? null, team: teamId ?? null },
+      detail: { reason, door: "slash-command", channel: channelId ?? null, team: teamId ?? null, enterprise: enterpriseId ?? null },
     });
   } catch {
   }
@@ -81,9 +81,10 @@ export default defineChannel({
       const params = new URLSearchParams(rawBody);
       const teamId = formField(params, "team_id");
 
-      if (slackTenantAdmission(teamId) === "unadmitted") {
-        console.log(unadmittedTenantLog("slack", teamId!, admittedTenantsFromConfig("slack")));
-        waitUntil(auditCommandDropped(teamId, formField(params, "channel_id"), UNADMITTED_TENANT_DROP_REASON));
+      const enterpriseId = formField(params, "enterprise_id");
+      if (slackTenantAdmission(teamId, enterpriseId) === "unadmitted") {
+        console.log(unadmittedTenantLog("slack", teamId, admittedTenantsFromConfig("slack"), enterpriseId));
+        waitUntil(auditCommandDropped(teamId, formField(params, "channel_id"), UNADMITTED_TENANT_DROP_REASON, enterpriseId));
         return new Response(null, { status: 200 });
       }
 

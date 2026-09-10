@@ -46,6 +46,21 @@ export interface Connection {
   readonly authorizationDetails?: readonly CredentialAuthorizationDetail[];
 }
 
+export function normaliseEgressHost(host: string): string {
+  return host.trim().toLowerCase();
+}
+
+export function egressHostsOverlap(a: string, b: string): boolean {
+  if (a === b) return true;
+  return wildcardCovers(a, b) || wildcardCovers(b, a);
+}
+
+function wildcardCovers(pattern: string, other: string): boolean {
+  if (!pattern.startsWith("*.")) return false;
+  const suffix = pattern.slice(1);
+  return other.endsWith(suffix) && other.length > suffix.length;
+}
+
 export type ConnectorContentOrigin = "internal" | "external";
 
 export interface ConnectorContentOriginOverrides {

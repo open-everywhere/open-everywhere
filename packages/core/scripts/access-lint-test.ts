@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
-import { lintBroadGrants, lintMethodNarrowing, lintAccessConfig } from "../agent/access/lint.js";
+import { lintBroadGrants, lintEgressHostCollisions, lintMethodNarrowing, lintAccessConfig, ownAccountWithholdingProblems } from "../agent/access/lint.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import type { Group } from "../agent/identity/groups.js";
+import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -151,11 +152,143 @@ ok(lintMethodNarrowing([credentialless]).length === 0, "a bundle with no connect
 }
 
 {
+  const twoInOne = defineBundle({
+    name: "two-in-one",
+    connections: [conn({ id: "notion-a", allowedWebsites: ["api.notion.com"] }), conn({ id: "notion-b", allowedWebsites: ["API.Notion.com"] })],
+  });
+  const withinBundle = lintEgressHostCollisions([twoInOne], []);
+  ok(withinBundle.length === 1, `two connections claiming one host inside ONE bundle is one problem (got ${withinBundle.length})`);
+  ok(withinBundle[0]!.includes("notion-a") && withinBundle[0]!.includes("notion-b"), "…and the message names BOTH connection ids");
+  ok(withinBundle[0]!.includes("api.notion.com"), "…and the normalised host, so a case-only difference is still one host");
+
+  const oneConn = defineBundle({
+    name: "one-conn",
+    connections: [conn({ id: "notion", allowedWebsites: ["api.notion.com", "api.notion.com", "mcp.notion.com"] })],
+  });
+  ok(lintEgressHostCollisions([oneConn], []).length === 0, "one connection claiming a host twice is ONE credential — clean");
+
+  const wildcard = defineBundle({
+    name: "wildcard",
+    connections: [
+      conn({ id: "notion-wild", allowedWebsites: ["*.notion.com"] }),
+      conn({ id: "notion-exact", allowedWebsites: ["api.notion.com"] }),
+    ],
+  });
+  const wild = lintEgressHostCollisions([wildcard], []);
+  ok(wild.length === 1, `a wildcard and an exact host under it are ONE destination — one problem (got ${wild.length})`);
+  ok(wild[0]!.includes("notion-wild") && wild[0]!.includes("notion-exact"), "…naming both connection ids");
+  ok(wild[0]!.includes("overlaps"), "…and saying the two spellings overlap rather than pretending they are equal");
+
+  const disjointWild = defineBundle({
+    name: "disjoint-wild",
+    connections: [
+      conn({ id: "a", allowedWebsites: ["*.notion.com"] }),
+      conn({ id: "b", allowedWebsites: ["api.linear.app"] }),
+    ],
+  });
+  ok(lintEgressHostCollisions([disjointWild], []).length === 0, "a wildcard and a host under a DIFFERENT suffix do not overlap — clean");
+  const apex = defineBundle({
+    name: "apex",
+    connections: [
+      conn({ id: "a", allowedWebsites: ["*.notion.com"] }),
+      conn({ id: "b", allowedWebsites: ["notion.com"] }),
+    ],
+  });
+  ok(lintEgressHostCollisions([apex], []).length === 0, "a leftmost-label wildcard does not cover the apex, which it cannot reach either — clean");
+}
+
+{
+  const a = defineBundle({ name: "team-a", connections: [conn({ id: "notion-a", allowedWebsites: ["api.notion.com"] })] });
+  const b = defineBundle({ name: "team-b", connections: [conn({ id: "notion-b", allowedWebsites: ["api.notion.com"] })] });
+
+  const nested = lintEgressHostCollisions([a, b], [at("team-a", "org"), at("team-b", "surface")]);
+  ok(nested.length === 1, `an org binding and a surface binding CAN co-resolve — one problem (got ${nested.length})`);
+  ok(nested[0]!.includes("notion-a") && nested[0]!.includes("notion-b"), "…naming both connection ids");
+
+  const twoRooms = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "surface", surface: "slack/T1/C1" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "surface", surface: "slack/T1/C2" } }),
+  ]);
+  ok(twoRooms.length === 0, "two connections for one host bound to two DIFFERENT rooms is the supported case — clean");
+
+  const otherTenant = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "tenant", tenant: "slack/T9" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "surface", surface: "slack/T1/C1" } }),
+  ]);
+  ok(otherTenant.length === 0, "a tenant binding and a surface in ANOTHER tenant never co-resolve — clean");
+  const sameTenant = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "tenant", tenant: "slack/T1" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "surface", surface: "slack/T1/C1" } }),
+  ]);
+  ok(sameTenant.length === 1, "…and a surface IN that tenant does — one problem");
+
+  const crossUniverse = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "org" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "principal", principal: "slack/T1/U1" } }),
+  ]);
+  ok(crossUniverse.length === 0, "a room binding and a DM binding are two universes — clean");
+
+  const oneDm = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "principal", principal: "slack/T1/U1" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "principal", principal: "slack/T1/U1" } }),
+  ]);
+  ok(oneDm.length === 1, "two bundles bound to ONE person's DM collide — the rule covers DMs too");
+  const twoPeople = lintEgressHostCollisions([a, b], [
+    defineBinding({ bundle: "team-a", scope: { level: "principal", principal: "slack/T1/U1" } }),
+    defineBinding({ bundle: "team-b", scope: { level: "principal", principal: "slack/T1/U2" } }),
+  ]);
+  ok(twoPeople.length === 0, "…and two DIFFERENT people's DMs are two sessions — clean");
+
+  const shared = defineBundle({ name: "team-c", connections: [conn({ id: "notion-a", allowedWebsites: ["api.notion.com"] })] });
+  ok(
+    lintEgressHostCollisions([a, shared], [at("team-a", "org"), at("team-c", "surface")]).length === 0,
+    "two bundles naming the SAME connection id resolve to one credential — clean",
+  );
+
+  const many = lintEgressHostCollisions([a, b], [at("team-a", "org"), at("team-b", "surface"), at("team-b", "tenant")]);
+  ok(many.length === 1, `one real clash is reported once, not once per binding pair (got ${many.length})`);
+}
+
+{
+  const withHosts: ConnectorCredentials[] = [
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "team", type: "api-key", secretRef: "N", broker: "env", endpoints: { hosts: ["api.notion.com"] } }] },
+  ];
+  ok(ownAccountWithholdingProblems(["notion"], withHosts).length === 0, "a credential-grant connector that declares its endpoint hosts is clean");
+
+  const noEndpoints: ConnectorCredentials[] = [
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "team", type: "api-key", secretRef: "N", broker: "env" }] },
+  ];
+  const bare = ownAccountWithholdingProblems(["notion"], noEndpoints);
+  ok(bare.length === 1, `a credential-grant connector whose catalogue declares no endpoint hosts is one problem (got ${bare.length})`);
+  ok(bare[0]!.includes("notion") && bare[0]!.includes("OPE-1549"), "…naming the connector and why it matters");
+
+  const missing = ownAccountWithholdingProblems(["linear"], withHosts);
+  ok(missing.length === 1 && missing[0]!.includes("NO credential catalogue"), "a credential-grant connector with no catalogue at all is reported, and says so");
+
+  ok(
+    ownAccountWithholdingProblems([], noEndpoints).length === 0,
+    "a connector that admits NO credential grant is not checked — `endpoints` stays an operator narrowing everywhere else",
+  );
+}
+
+{
   const problems = lintAccessConfig(
     [defineBundle({ name: "bad", connections: [conn({ methods: undefined })] })],
     [at("bad", "org")],
   );
   ok(problems.length === 2, `both lints report through lintAccessConfig (got ${problems.length}: ${JSON.stringify(problems)})`);
+}
+
+{
+  const clash = defineBundle({
+    name: "clash",
+    connections: [conn({ id: "notion-a", allowedWebsites: ["api.notion.com"] }), conn({ id: "notion-b", allowedWebsites: ["api.notion.com"] })],
+  });
+  const problems = lintAccessConfig([clash], [at("clash", "surface")]);
+  ok(
+    problems.some((p) => p.includes("notion-a") && p.includes("notion-b") && p.includes("api.notion.com")),
+    "lintAccessConfig reports the host collision — the lint is wired into the CI gate",
+  );
 }
 
 console.log(`✓ ${n} access-lint assertions passed`);

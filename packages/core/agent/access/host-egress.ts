@@ -2,10 +2,11 @@ import dnsPromises from "node:dns/promises";
 import net, { type LookupFunction } from "node:net";
 import { Agent, ProxyAgent, type Dispatcher } from "undici";
 import type { BindableContext } from "../identity/binding.js";
-import type { ReachableHost } from "./resolver.js";
+import { ownAccountEgressRefusalText, type OwnAccountEgressRefusal, type ReachableHost } from "./resolver.js";
 import { resolveAccessFor } from "./request.js";
 import { narrowByConnectorOverride } from "./connector-scope.js";
 import { withExtraEgressHosts } from "./extra-hosts.js";
+import { egressHostsOverlap } from "./bundle.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostCallAuditFields } from "./egress.js";
 import { haltScopeForCtx, resolveHalt } from "./halt.js";
@@ -198,7 +199,7 @@ export const EGRESS_REPORT_PROTOCOL =
   "it (a `domains` entry for an uncredentialed host, or a connection's `allowedWebsites` for a " +
   "credentialed one). It then lands on the session's next turn.";
 
-export type ReachDenyReason = "not-allowlisted" | "connector-revoked" | "halted";
+export type ReachDenyReason = "not-allowlisted" | "own-account-withheld" | "connector-revoked" | "halted";
 
 type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
 
@@ -211,7 +212,16 @@ export function redirectBoundDenial(tool: string, host: string): string {
   );
 }
 
-export function egressReachDenial(tool: string, host: string, reason: ReachDenyReason): string {
+export function egressReachDenial(tool: string, host: string, reason: ReachDenyReason, withheld?: OwnAccountEgressRefusal): string {
+  if (reason === "own-account-withheld") {
+    const why =
+      withheld !== undefined
+        ? ownAccountEgressRefusalText(withheld)
+        : `Host "${host}" is withheld from this session because its requester asked to act with their own account there. ` +
+          `Answering that here would mean a second credential on one host, which this deployment never allows. ` +
+          `Ask again in your DM with me, where a personal grant can be minted.`;
+    return `${tool}: the request was refused before it was made. ${why}`;
+  }
   const cause =
     reason === "not-allowlisted"
       ? `host "${host}" is not on this session's egress allow-list`
@@ -229,6 +239,7 @@ export interface ReachDeps {
   readonly narrow?: (ctx: BindableContext, ids: readonly string[]) => Promise<readonly string[] | null>;
   readonly halted?: (ctx: BindableContext) => Promise<boolean>;
   readonly rowFields?: Readonly<Record<string, unknown>>;
+  readonly withheld?: (ctx: BindableContext) => readonly OwnAccountEgressRefusal[];
 }
 
 export async function assertEgressReach(ctx: BindableContext, rawUrl: string, deps: ReachDeps = {}): Promise<URL> {
@@ -236,18 +247,23 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
   const url = parseHttpUrl(rawUrl, tool);
   const hosts = withExtraEgressHosts((deps.hosts ?? ((c: BindableContext) => resolveAccessFor(c).reachableHosts))(ctx));
   const entry = reachableEntry(url.hostname, hosts);
-  const deny = async (reason: ReachDenyReason): Promise<never> => {
+  const deny = async (reason: ReachDenyReason, withheld?: OwnAccountEgressRefusal): Promise<never> => {
     await auditToolAction(ctx, "egress.hostside.deny", {
       ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "denied" }),
       reason,
       tool,
       ...(deps.rowFields ?? {}),
     });
-    throw new Error(egressReachDenial(tool, url.hostname, reason));
+    throw new Error(egressReachDenial(tool, url.hostname, reason, withheld));
   };
   const halted = deps.halted ?? ((c: BindableContext) => resolveHalt(haltScopeForCtx(c)).then((s) => s.halted));
   if (await halted(ctx)) return deny("halted");
-  if (!entry) return deny("not-allowlisted");
+  if (!entry) {
+    const withheld = (deps.withheld ?? ((c: BindableContext) => resolveAccessFor(c).ownAccountEgressRefusals ?? []))(ctx);
+    const match = withheld.find((r) => egressHostsOverlap(r.host, url.hostname.trim().toLowerCase()));
+    if (match !== undefined) return deny("own-account-withheld", match);
+    return deny("not-allowlisted");
+  }
   if (entry.viaConnection !== null) {
     const narrow = deps.narrow ?? narrowByConnectorOverride;
     const granted = await narrow(ctx, [entry.viaConnection]);

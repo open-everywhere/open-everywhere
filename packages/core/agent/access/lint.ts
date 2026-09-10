@@ -1,4 +1,6 @@
-import { connectorGrantCredential, connectorGrantName, type Binding, type Bundle } from "./bundle.js";
+import { connectorGrantCredential, connectorGrantName, egressHostsOverlap, normaliseEgressHost, type Binding, type Bundle, type Scope } from "./bundle.js";
+import { isLinkSetRef } from "../identity/link-set-ref.js";
+import type { ConnectorCredentials } from "./connector-credentials.js";
 import { domainContainers, type Domain } from "../memory/domain.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 
@@ -175,6 +177,130 @@ export function lintCredentialCollisions(bundles: readonly Bundle[], bindings: r
   return problems;
 }
 
+const ROOM_LEVELS: ReadonlySet<Scope["level"]> = new Set(["org", "tenant", "domain", "surface"]);
+
+function tenantOfSurfaceKey(surface: string | undefined): string | undefined {
+  const parts = (surface ?? "").split("/");
+  return parts.length >= 3 ? `${parts[0]}/${parts[1]}` : undefined;
+}
+
+function bindingsCanCoResolve(a: Scope, b: Scope): boolean {
+  const aRoom = ROOM_LEVELS.has(a.level);
+  if (aRoom !== ROOM_LEVELS.has(b.level)) return false;
+  if (aRoom) {
+    if (a.level === "surface" && b.level === "surface") return a.surface === b.surface;
+    if (a.level === "tenant" && b.level === "tenant") return a.tenant === b.tenant;
+    if (a.level === "tenant" && b.level === "surface") return tenantOfSurfaceKey(b.surface) === a.tenant;
+    if (a.level === "surface" && b.level === "tenant") return tenantOfSurfaceKey(a.surface) === b.tenant;
+    return true;
+  }
+  if (a.level === "principal" && b.level === "principal") {
+    if (a.principal === undefined || b.principal === undefined) return true;
+    if (isLinkSetRef(a.principal) || isLinkSetRef(b.principal)) return true;
+    return a.principal === b.principal;
+  }
+  return true;
+}
+
+interface HostClaim {
+  readonly host: string;
+  readonly via: string;
+}
+
+function hostClaimsOf(bundle: Bundle): readonly HostClaim[] {
+  return (bundle.connections ?? []).flatMap((c) => c.allowedWebsites.map((h) => ({ host: normaliseEgressHost(h), via: c.id })));
+}
+
+function clashingClaims(a: readonly HostClaim[], b: readonly HostClaim[], same: boolean): { ids: string[]; where: string }[] {
+  const out: { ids: string[]; where: string }[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < a.length; i++) {
+    for (let j = same ? i + 1 : 0; j < b.length; j++) {
+      const x = a[i]!;
+      const y = b[j]!;
+      if (x.via === y.via) continue;
+      if (!egressHostsOverlap(x.host, y.host)) continue;
+      const ids = [x.via, y.via].sort();
+      const hosts = [x.host, y.host].sort();
+      const key = `${ids[0]} ${ids[1]} ${hosts[0]} ${hosts[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ ids, where: x.host === y.host ? hosts[0]! : `${hosts[0]} (which overlaps ${hosts[1]})` });
+    }
+  }
+  return out;
+}
+
+export function lintEgressHostCollisions(bundles: readonly Bundle[], bindings: readonly Binding[]): string[] {
+  const problems: string[] = [];
+  const claimsByBundle = new Map<string, readonly HostClaim[]>();
+  for (const bundle of bundles) claimsByBundle.set(bundle.name, hostClaimsOf(bundle));
+
+  for (const bundle of bundles) {
+    const claims = claimsByBundle.get(bundle.name) ?? [];
+    for (const clash of clashingClaims(claims, claims, true)) {
+      problems.push(
+        `bundle "${bundle.name}" has two connections (${clash.ids.join(", ")}) claiming host ${clash.where} — ` +
+          `the egress policy stamps ONE credential per host, so the grant listed last wins and the other is dead config. ` +
+          `One credential per host per session: give each connection its own host.`,
+      );
+    }
+  }
+
+  const seen = new Set<string>();
+  for (let i = 0; i < bindings.length; i++) {
+    for (let j = i + 1; j < bindings.length; j++) {
+      const a = bindings[i]!;
+      const b = bindings[j]!;
+      if (a.bundle === b.bundle) continue;
+      if (!bindingsCanCoResolve(a.scope, b.scope)) continue;
+      const aClaims = claimsByBundle.get(a.bundle);
+      const bClaims = claimsByBundle.get(b.bundle);
+      if (aClaims === undefined || bClaims === undefined) continue;
+      for (const clash of clashingClaims(aClaims, bClaims, false)) {
+        const pair = [a.bundle, b.bundle].sort();
+        const key = `${pair[0]}\u0000${pair[1]}\u0000${clash.where}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        problems.push(
+          `bundles "${pair[0]}" and "${pair[1]}" can both be in one session's reach ` +
+            `(${scopeLabel(a.scope)} + ${scopeLabel(b.scope)}) and their connections (${clash.ids.join(", ")}) both claim host ${clash.where} — ` +
+            `the egress policy stamps ONE credential per host, so that session would authenticate with whichever connection resolves last. ` +
+            `One credential per host per session: bind them at scopes that never resolve together, or give each connection its own host.`,
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
+export function ownAccountWithholdingProblems(
+  connectors: readonly string[],
+  catalogues: readonly ConnectorCredentials[],
+): string[] {
+  const byConnector = new Map(catalogues.map((c) => [c.connector, c]));
+  const problems: string[] = [];
+  for (const connector of [...new Set(connectors)].sort()) {
+    const catalogue = byConnector.get(connector);
+    const hosts = (catalogue?.credentials ?? []).flatMap((c) => c.endpoints?.hosts ?? []);
+    if (hosts.length > 0) continue;
+    problems.push(
+      `  connector "${connector}" admits a credential grant (CREDENTIAL_GRANT_ROLES, access/credential-grant.ts) but ` +
+        `${catalogue === undefined ? "has NO credential catalogue" : "no credential in its catalogue declares `endpoints.hosts`"}` +
+        ` — so the resolver cannot tell which hosts carry this vendor's key, and an "act with my own account" ask on the` +
+        ` egress route withholds nothing and is answered on the TEAM credential (OPE-1549). Declare the vendor's hosts on` +
+        ` at least one of its credentials in agent/access/connector-credentials.ts.`,
+    );
+  }
+  return problems;
+}
+
+function scopeLabel(scope: Scope): string {
+  const address = scope.tenant ?? scope.domain ?? scope.surface ?? scope.group ?? scope.principal;
+  return address === undefined ? scope.level : `${scope.level} ${address}`;
+}
+
 export function lintAccessConfig(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
@@ -185,6 +311,7 @@ export function lintAccessConfig(
     ...lintBroadGrants(bundles, bindings, domains, groups),
     ...lintMethodNarrowing(bundles),
     ...lintCredentialCollisions(bundles, bindings),
+    ...lintEgressHostCollisions(bundles, bindings),
   ];
 }
 

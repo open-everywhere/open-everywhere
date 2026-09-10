@@ -135,7 +135,12 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   ok(/`web_search` runs\s+inside the model call and is bounded by neither/.test(r), "…while keeping the two tools apart: web_search really is bounded by neither plane");
 
   ok(/dry-run/.test(r) && /unenforced/.test(r), "README explains the two non-enforced states rather than leaving them cryptic");
-  ok(r.length < 3000, "README stays a page an agent reads mid-task, not a manual chapter");
+  ok(/cannot use anyone's own account/.test(r), "🔴 README tells a shelling worker why an own-account host is missing from STATUS.json");
+  ok(/not a config gap/.test(r), "…and that it is NOT a config gap, so the agent does not open a widening PR for it");
+  ok(/## Three things/.test(r), "…and the section count matches what the section holds");
+  ok(/rest of THAT turn the host can still be listed here/.test(r), "🔴 README bounds the refusal to the NEXT turn, so a still-listed host is not read as an own-account one");
+  ok(/on the team key/.test(r), "…and names whose key that still-listed host carries");
+  ok(r.length < 3500, `README stays a page an agent reads mid-task, not a manual chapter (${r.length} chars)`);
 }
 
 {

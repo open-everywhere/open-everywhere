@@ -1,5 +1,5 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
-import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, repoGrantName, repoGrantCapabilities } from "./bundle.js";
+import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, egressHostsOverlap, normaliseEgressHost, repoGrantName, repoGrantCapabilities } from "./bundle.js";
 import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
 import { unionResourceCapabilities, type ResourceCapability } from "./resource-capabilities.js";
 import { resourceGrantCapabilities } from "./resource-grant.js";
@@ -26,6 +26,7 @@ export interface ResolveRequest {
   readonly groups?: readonly string[];
   readonly principalLinkSets?: readonly string[];
   readonly memberPlane?: readonly string[];
+  readonly ownAccountAsk?: { readonly connector: string };
 }
 
 export interface ReachableHost {
@@ -61,6 +62,7 @@ export interface EffectiveAccess {
   readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
   readonly preApprovalRules: readonly ResolvedPreApprovalRule[];
+  readonly ownAccountEgressRefusals?: readonly OwnAccountEgressRefusal[];
   readonly warnings: readonly string[];
 }
 
@@ -110,8 +112,60 @@ function scopeMatches(s: Scope, req: ResolveRequest): boolean {
   }
 }
 
-function normHost(h: string): string {
-  return h.trim().toLowerCase();
+const normHost = normaliseEgressHost;
+
+export class EgressHostCollisionError extends Error {
+  readonly collisions: readonly string[];
+  constructor(collisions: readonly string[]) {
+    super(
+      `two connections claim one host in this session's reach — one credential per host per session: ${collisions.join("; ")}. ` +
+        `The egress policy stamps ONE bearer per host, so the second grant is dead config and the room would authenticate with whichever the config lists last. ` +
+        `Give each connection its own host, or bind the two bundles at scopes that never resolve together.`,
+    );
+    this.name = "EgressHostCollisionError";
+    this.collisions = collisions;
+  }
+}
+
+export interface OwnAccountEgressRefusal {
+  readonly connector: string;
+  readonly host: string;
+  readonly viaConnection: string;
+}
+
+export function ownAccountEgressRefusalText(refusal: OwnAccountEgressRefusal): string {
+  return (
+    `This route cannot use your own ${refusal.connector} account. ` +
+    `The sandbox firewall stamps one credential per host, and ${refusal.host} is bound to this room's ${refusal.connector} connection ("${refusal.viaConnection}"). ` +
+    `Answering "use my own account" here would mean a second key on that host, which this deployment never allows. ` +
+    `So ${refusal.host} is withheld from this session instead of being reached on the team key. ` +
+    `Ask again in your DM with me, where a personal grant can be minted for your own account.`
+  );
+}
+
+function withheldForOwnAccountAsk(
+  ask: ResolveRequest["ownAccountAsk"],
+  hostMap: Map<string, ReachableHost>,
+  connections: readonly Connection[],
+  catalogues: readonly ConnectorCredentials[],
+): readonly OwnAccountEgressRefusal[] {
+  if (ask === undefined) return [];
+  const catalogue = catalogues.find((c) => c.connector === ask.connector);
+  if (catalogue === undefined) return [];
+  const vendorHosts = catalogue.credentials.flatMap((c) => (c.endpoints?.hosts ?? []).map((h) => normHost(h)));
+  if (vendorHosts.length === 0) return [];
+  const vendorConnections = new Set(
+    connections
+      .filter((c) => c.allowedWebsites.some((h) => vendorHosts.some((v) => egressHostsOverlap(normHost(h), v))))
+      .map((c) => c.id),
+  );
+  const withheld: OwnAccountEgressRefusal[] = [];
+  for (const [host, entry] of [...hostMap]) {
+    if (entry.viaConnection === null || !vendorConnections.has(entry.viaConnection)) continue;
+    withheld.push({ connector: ask.connector, host, viaConnection: entry.viaConnection });
+    hostMap.delete(host);
+  }
+  return withheld.sort((a, b) => a.host.localeCompare(b.host));
 }
 
 function contentOriginKey(spec: ConnectorContentOriginSpec): string {
@@ -180,18 +234,7 @@ export function resolveAccess(
 
   const connById = new Map<string, Connection>();
   for (const { bundle } of ordered) {
-    const seenHostsThisBundle = new Map<string, string>();
     for (const c of bundle.connections ?? []) {
-      for (const h of c.allowedWebsites) {
-        const key = normHost(h);
-        const prior = seenHostsThisBundle.get(key);
-        if (prior && prior !== c.id) {
-          warnings.push(
-            `bundle "${bundle.name}" has two connections (${prior}, ${c.id}) claiming host ${h}; resolution order within a scope is undefined`,
-          );
-        }
-        seenHostsThisBundle.set(key, c.id);
-      }
       connById.set(c.id, c);
     }
   }
@@ -202,6 +245,25 @@ export function resolveAccess(
     const key = normHost(d);
     if (!hostMap.has(key)) hostMap.set(key, { host: key, viaConnection: null });
   }
+  const claims = connections.flatMap((c) => c.allowedWebsites.map((h) => ({ host: normHost(h), via: c.id })));
+  const collisions: string[] = [];
+  const reported = new Set<string>();
+  for (let i = 0; i < claims.length; i++) {
+    for (let j = i + 1; j < claims.length; j++) {
+      const a = claims[i]!;
+      const b = claims[j]!;
+      if (a.via === b.via) continue;
+      if (!egressHostsOverlap(a.host, b.host)) continue;
+      const ids = [a.via, b.via].sort();
+      const hosts = [a.host, b.host].sort();
+      const key = `${ids[0]} ${ids[1]} ${hosts[0]} ${hosts[1]}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      const where = a.host === b.host ? hosts[0]! : `${hosts[0]} overlaps ${hosts[1]}`;
+      collisions.push(`${where} (connections ${ids.join(", ")})`);
+    }
+  }
+  if (collisions.length > 0) throw new EgressHostCollisionError(collisions);
   for (const c of connections) {
     for (const h of c.allowedWebsites) {
       hostMap.set(normHost(h), {
@@ -212,6 +274,8 @@ export function resolveAccess(
       });
     }
   }
+
+  const ownAccountEgressRefusals = withheldForOwnAccountAsk(req.ownAccountAsk, hostMap, connections, connectorCredentialsConfig);
   const reachableHosts = [...hostMap.values()].sort((a, b) => a.host.localeCompare(b.host));
 
   const repos = [...new Set(ordered.flatMap(({ bundle }) => (bundle.repos ?? []).map(repoGrantName)))].sort();
@@ -389,6 +453,7 @@ export function resolveAccess(
     connectorCredentials,
     instructionStack,
     preApprovalRules: preApprovalRules.rules,
+    ...(ownAccountEgressRefusals.length > 0 ? { ownAccountEgressRefusals } : {}),
     warnings,
   };
 }

@@ -962,4 +962,218 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
   }
 }
 
+{
+  const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+  const turnStarted = events["turn.started"]!;
+  const settlementWake = events["message.received"]!;
+  const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
+    readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<{ acknowledged?: boolean }>;
+  };
+  const { SETTLEMENT_REPORT_POSTED_ACTION, SETTLEMENT_REPORT_SKIPPED_ACTION, settlementReportOwedMessage } = await import(
+    "../agent/access/pending-delegation-signal.js"
+  );
+
+  const settledNote = (taskId: string, result: string) => `Background task ${taskId} (agent) is completed.\n\nResult:\n${result}`;
+
+  const callNoReply = async (turnWake: string, turnId: string): Promise<{ acknowledged?: boolean; error?: string }> =>
+    noReply.execute({ reason: "nothing_to_add" }, ctxFor(turnWake, turnId)).catch((e: unknown) => ({ error: String(e) }));
+
+  const rowsFor = async (action: string): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  const WORKER_RESULT = "The AWS identity is arn:aws:sts::111122223333:assumed-role/oe-readonly/session.";
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_1655", "222.1");
+    const TASK = "task_1655aaaabbbb";
+
+    await inTurn(async () => {
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_a"));
+      await hook({ data: { result: receiptResult("call_1655a", TASK) } }, ctxFor(wAsk, "turn_1655_a"));
+      const minted = await taskWakeId(ORG, TASK);
+      ok(typeof minted === "string" && minted.length > 0, "§13a/REACHABILITY: the REAL dispatch hook minted the task's wake identity");
+      const before = posted.length;
+      const ack = await callReply(wAsk, "turn_1655_a", wAsk, "I've started the read-only AWS identity check; I'll report what it returns.", false);
+      ok(ack.posted === true, "§13a: the hand-off note posts, exactly as §1 requires");
+      ok(posted.length === before + 1, "§13a/ROOM: one message so far — the note");
+
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_b"));
+      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_b"));
+      const wakeRows = await rowsFor("unified.task_wake");
+      ok(
+        wakeRows.some((d) => d.task === TASK && d.outcome === "installed"),
+        "🔴 §13b/REACHABILITY: the settlement really installed the task's reply address on this turn. Every assertion below is about a turn that CAN post, so a run where the install missed would prove nothing",
+      );
+
+      const skippedBefore = (await rowsFor(SETTLEMENT_REPORT_SKIPPED_ACTION)).length;
+      const quiet = await callNoReply(wAsk, "turn_1655_b");
+      ok(
+        typeof quiet.error === "string" && quiet.error.includes("the worker's report has now arrived"),
+        "🔴 §13c: `no_reply` on the settlement turn is REFUSED, and the copy names what the turn owes. This is the exact move five a live run scenarios made",
+      );
+      ok(quiet.acknowledged !== true, "§13c: …and no silence was recorded");
+      const skipped = await rowsFor(SETTLEMENT_REPORT_SKIPPED_ACTION);
+      ok(
+        skipped.length === skippedBefore + 1 && skipped[skipped.length - 1]?.task === TASK,
+        "🔴 §13c/AUDIT: exactly one skipped row, naming the task whose report was owed — the habit stays countable in prod's actions-only posture",
+      );
+      ok(
+        settlementReportOwedMessage().includes("`reply`"),
+        "§13c/COPY: the refusal names the tool that keeps the promise. A refusal that teaches nothing ends the turn in silence",
+      );
+
+      const roomBefore = posted.length;
+      const report = await callReply(wAsk, "turn_1655_b", wAsk, WORKER_RESULT, true);
+      ok(report.posted === true, "🔴 §13d: the worker's result posts on the settlement turn");
+      ok(posted.length === roomBefore + 1 && roomHas("assumed-role/oe-readonly"), "🔴 §13d/ROOM: the room received the worker's result, asserted on its content");
+      const link = await rowsFor(SETTLEMENT_REPORT_POSTED_ACTION);
+      ok(
+        link.some((d) => d.task === TASK && d.wake === wAsk),
+        "🔴 §13d/AUDIT: the settle → reply link — one row naming the task the settlement arrived for and the wake the report reached",
+      );
+
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_1655E", "222.4");
+    const TASK = "task_1655eeeeffff";
+    await inTurn(async () => {
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_e1"));
+      await hook({ data: { result: receiptResult("call_1655e", TASK) } }, ctxFor(wAsk, "turn_1655_e1"));
+      const ack = await callReply(wAsk, "turn_1655_e1", wAsk, "On it — I'll report what the worker finds.", false);
+      ok(ack.posted === true, "§13e/SETUP: the hand-off note posted, so a report is promised");
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_e2"));
+      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_e2"));
+      const report = await callReply(wAsk, "turn_1655_e2", wAsk, WORKER_RESULT, true);
+      ok(report.posted === true, "§13e/SETUP: …and the report posted on the settlement turn");
+      const quiet = await callNoReply(wAsk, "turn_1655_e2");
+      ok(
+        quiet.error === undefined,
+        "🔴 §13e: the FIRST `no_reply` after the report is ACCEPTED — the post itself discharged the duty. This turn drew no earlier refusal, so the valve cannot be what let it through",
+      );
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_1655H", "222.5");
+    const wOther = await wake("C_1655H_OTHER", "222.6");
+    const TASK = "task_1655hhhhiiii";
+    await inTurn(async () => {
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_h1"));
+      await hook({ data: { result: receiptResult("call_1655h", TASK) } }, ctxFor(wAsk, "turn_1655_h1"));
+      const ack = await callReply(wAsk, "turn_1655_h1", wAsk, "I've started it; I'll report back here.", false);
+      ok(ack.posted === true, "§13h/SETUP: the hand-off note posted into conversation A");
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_h2"));
+      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_h2"));
+
+      const linkBefore = (await rowsFor(SETTLEMENT_REPORT_POSTED_ACTION)).length;
+      const sibling = await callReply(wAsk, "turn_1655_h2", wOther, "Answering your other question first.", true);
+      ok(sibling.posted === true, "§13h: the answer to conversation B posts — the duty never silences a seat");
+      ok(
+        (await rowsFor(SETTLEMENT_REPORT_POSTED_ACTION)).length === linkBefore,
+        "🔴 §13h: …and writes NO settle → reply row. A row naming B would assert that conversation A had been told, while A heard nothing",
+      );
+      const quiet = await callNoReply(wAsk, "turn_1655_h2");
+      ok(
+        typeof quiet.error === "string" && quiet.error.includes("the worker's report has now arrived"),
+        "🔴 §13h: …and the duty is STILL armed — a post to a sibling conversation is not the report conversation A is waiting for",
+      );
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_1655F", "222.2");
+    const TASK = "task_1655ffffgggg";
+    await inTurn(async () => {
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_f1"));
+      await hook({ data: { result: receiptResult("call_1655f", TASK) } }, ctxFor(wAsk, "turn_1655_f1"));
+      const ack = await callReply(wAsk, "turn_1655_f1", wAsk, "Started it — I'll report back.", false);
+      ok(ack.posted === true, "§13f/SETUP: the hand-off note posted, so a report is promised");
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_f2"));
+      await settlementWake({ data: { message: settledNote(TASK, "nothing to report") } }, ctxFor(wAsk, "turn_1655_f2"));
+      const first = await callNoReply(wAsk, "turn_1655_f2");
+      ok(typeof first.error === "string", "§13f: the first silence is refused");
+      const second = await callNoReply(wAsk, "turn_1655_f2");
+      ok(
+        second.error === undefined,
+        "🔴 §13f: the SECOND call is accepted. This guard is a valve, not a wall — unlike the stand-down acknowledgement, a settlement report can be refused by a gate below the reply plane, so a turn with no move left must be able to end",
+      );
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_1655G", "222.3");
+    const TASK = "task_1655gggghhhh";
+    await inTurn(async () => {
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_g1"));
+      await hook({ data: { result: receiptResult("call_1655g", TASK) } }, ctxFor(wAsk, "turn_1655_g1"));
+      await turnStarted({}, ctxFor(wAsk, "turn_1655_g2"));
+      await settlementWake({ data: { message: settledNote(TASK, "a chore finished") } }, ctxFor(wAsk, "turn_1655_g2"));
+      const wakeRows = await rowsFor("unified.task_wake");
+      ok(
+        wakeRows.some((d) => d.task === TASK && d.outcome === "installed"),
+        "§13g/CONTROL: the settlement installed the address here too — so the leg below differs from §13c only in the missing promise",
+      );
+      const quiet = await callNoReply(wAsk, "turn_1655_g2");
+      ok(
+        quiet.error === undefined,
+        "🔴 §13g: a settlement the seat never announced leaves `no_reply` free. The PROMISE is the trigger, never the settlement",
+      );
+    });
+  }
+}
+
+{
+  const { TASK_FAILED_ACTION } = spawnTaint;
+  const failedRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action: TASK_FAILED_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  const failureResult = (callId: string, code: string, kind: string) => ({
+    callId,
+    kind: "subagent-result",
+    origin: "child",
+    isError: true,
+    outcome: { kind: "terminal", result: { error: { code, message: "Read tool exited with status 1." }, kind } },
+    output: { code, message: "Read tool exited with status 1." },
+    subagentName: "agent",
+  });
+
+  const inTurn = newSession();
+  const wAsk = await wake("C_1654", "333.1");
+
+  await inTurn(async () => {
+    const before = (await failedRows()).length;
+    await hook({ data: { result: failureResult("call_1654a", "SUBAGENT_EXECUTION_FAILED", "failed") } }, ctxFor(wAsk, "turn_1654_a"));
+    const rows = await failedRows();
+    ok(rows.length === before + 1, "🔴 §14a: a dead delegation writes EXACTLY ONE `delegation.task_failed` row. Before this it wrote none at all");
+    const row = rows[rows.length - 1] ?? {};
+    ok(row.call === "call_1654a", "§14a: …naming the call the seat made");
+    ok(row.error === "SUBAGENT_EXECUTION_FAILED", "🔴 §14a: …and the error class eve stamped, which is the string the shipper searched for and could not find");
+    ok(row.tool === "agent", "§14a: …and the tool, so an operator can see WHICH delegated read died");
+    ok(row.turn === "turn_1654_a", "🔴 §14a: …and the seat's turn id, which is what joins this row to the transcript that explains it");
+    ok(row.task === "", "§14a: the task id is EMPTY, and that is the honest answer — a delegation that died before it parked has no task to name");
+
+    await hook({ data: { result: failureResult("call_1654b", "AGENT_UNREACHABLE", "failed") } }, ctxFor(wAsk, "turn_1654_a"));
+    const sibling = await failedRows();
+    ok(
+      sibling.some((d) => d.error === "AGENT_UNREACHABLE"),
+      "🔴 §14b: a SIBLING error class is recorded too — the discriminator is eve's `isError`, never the code",
+    );
+
+    const beforeOk = (await failedRows()).length;
+    await hook({ data: { result: receiptResult("call_1654c", "task_1654cccc") } }, ctxFor(wAsk, "turn_1654_a"));
+    await hook(
+      { data: { result: { callId: "call_1654d", kind: "subagent-result", origin: "child", outcome: { kind: "terminal", result: { kind: "succeeded", output: "done" } }, output: "done", subagentName: "agent" } } },
+      ctxFor(wAsk, "turn_1654_a"),
+    );
+    ok((await failedRows()).length === beforeOk, "🔴 §14c/CONTROL: a parked receipt and a SUCCEEDED delegation return write no failure row at all");
+  });
+}
+
 console.log(`✓ reply-delegation-pending: ${passed} assertions passed`);

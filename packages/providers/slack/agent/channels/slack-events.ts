@@ -92,6 +92,7 @@ import {
 } from "./slack-identity.js";
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
+import { holdRouteWork } from "./slack-route-hold.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
@@ -744,7 +745,7 @@ export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, t
 }
 
 function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown> = {}): void {
-  void appendWakeDroppedRow(ev, reason, detail);
+  void holdRouteWork(appendWakeDroppedRow(ev, reason, detail));
 }
 
 async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown>): Promise<void> {
@@ -768,9 +769,22 @@ async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: str
 }
 
 function tenantFenceDeclined(ev: ParsedMessageEvent, route: string): boolean {
-  if (slackTenantAdmission(ev.teamId) !== "unadmitted") return false;
-  console.log(unadmittedTenantLog("slack", ev.teamId!, admittedTenantsFromConfig("slack")));
-  auditEngagementWakeDropped(ev, UNADMITTED_TENANT_DROP_REASON, { door: "engagement", route, team: ev.teamId ?? null });
+  return fenceDeclined(ev, "engagement", route);
+}
+
+export function slackFrontTenantFenceDeclined(ev: ParsedMessageEvent, door: string, route: string): boolean {
+  return fenceDeclined(ev, door, route);
+}
+
+function fenceDeclined(ev: ParsedMessageEvent, door: string, route: string): boolean {
+  if (slackTenantAdmission(ev.teamId, ev.enterpriseId) !== "unadmitted") return false;
+  console.log(unadmittedTenantLog("slack", ev.teamId, admittedTenantsFromConfig("slack"), ev.enterpriseId));
+  auditEngagementWakeDropped(ev, UNADMITTED_TENANT_DROP_REASON, {
+    door,
+    route,
+    team: ev.teamId ?? null,
+    enterprise: ev.enterpriseId ?? null,
+  });
   return true;
 }
 
@@ -785,20 +799,22 @@ const SPEND_DECLINED_DROP_REASON = "over spend cap — declined (refusal posted)
 export const STOOD_DOWN_DROP_REASON = "thread stopped — deterministic silence until an explicit @-mention re-invites";
 
 function auditJoinWakeDropped(ev: ParsedChannelJoinEvent, p: Partition, reason: string): void {
-  void (async () => {
-    try {
-      await getOperationalStore().appendAudit({
-        ts: new Date().toISOString(),
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        action: "surface.wake_dropped",
-        detail: { reason, door: "join" as SpendGateDoor, route: "routeChannelJoinEvent", channel: ev.channelId, ts: ev.ts },
-      });
-    } catch {
-    }
-  })();
+  void holdRouteWork(
+    (async () => {
+      try {
+        await getOperationalStore().appendAudit({
+          ts: new Date().toISOString(),
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          action: "surface.wake_dropped",
+          detail: { reason, door: "join" as SpendGateDoor, route: "routeChannelJoinEvent", channel: ev.channelId, ts: ev.ts },
+        });
+      } catch {
+      }
+    })(),
+  );
 }
 
 function auditIfBotAuthorDrop(ev: ParsedMessageEvent, door: SpendGateDoor, decisionReason: string | undefined): void {
@@ -2201,8 +2217,8 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
 
   const m = meta ?? { channelId: ev.channelId };
 
-  if (slackTenantAdmission(ev.teamId) === "unadmitted") {
-    console.log(unadmittedTenantLog("slack", ev.teamId!, admittedTenantsFromConfig("slack")));
+  if (slackTenantAdmission(ev.teamId, ev.enterpriseId) === "unadmitted") {
+    console.log(unadmittedTenantLog("slack", ev.teamId, admittedTenantsFromConfig("slack"), ev.enterpriseId));
     auditJoinWakeDropped(ev, p, UNADMITTED_TENANT_DROP_REASON);
     return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
   }

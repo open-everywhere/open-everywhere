@@ -103,12 +103,20 @@ config-as-code, and it changes by reviewed pull request against the bundle that 
 a \`domains\` entry for an uncredentialed host, or a connection's \`allowedWebsites\` for a
 credentialed one. It then lands on the session's next turn.
 
-## Two things that will save you a wrong guess
+## Three things that will save you a wrong guess
 
 **Never add an \`Authorization\` header yourself.** Where \`credentialInjected\` is true in
 \`STATUS.json\`, the firewall stamps the credential onto the request as it leaves. You do not
 hold that secret and cannot read it. A 401 from such a host means the credential is wrong or
 expired upstream, so report it; do not go looking for a key.
+
+**This route cannot use anyone's own account.** One credential per host per session, so an
+own-account ask withholds that vendor's hosts from \`STATUS.json\`. A worker never holds them.
+A seat is covered from the ask onward, and this file was written when the turn began — so for
+the rest of THAT turn the host can still be listed here, on the team key. Do not use it: the
+team key is never the answer to "act as me". A host missing for that reason is
+not a config gap: say so, and send the person to their DM with me, where a personal grant is
+minted.
 
 **\`web_fetch\` and \`web_search\` do not run in here.** They execute host-side, outside this
 sandbox. That changes WHO enforces, not WHAT is allowed: \`web_fetch\` is fenced against this

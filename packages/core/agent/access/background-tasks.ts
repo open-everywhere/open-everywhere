@@ -47,6 +47,36 @@ export function readTaskReceipt(result: unknown): TaskReceipt | null {
   }
 }
 
+export type DelegationFailure = {
+  readonly callId: string;
+  readonly errorClass: string;
+  readonly tool: string;
+  readonly outcome: string;
+};
+
+export function readDelegationFailure(result: unknown): DelegationFailure | null {
+  try {
+    const r = result as
+      | { kind?: unknown; callId?: unknown; isError?: unknown; subagentName?: unknown; outcome?: { result?: { kind?: unknown } }; output?: unknown }
+      | null;
+    if (r === null || typeof r !== "object") return null;
+    if (r.kind !== "subagent-result") return null;
+    if (r.isError !== true) return null;
+    const callId = r.callId;
+    if (typeof callId !== "string" || callId.length === 0) return null;
+    const code = (r.output as { code?: unknown } | null | undefined)?.code;
+    const outcome = r.outcome?.result?.kind;
+    return {
+      callId,
+      errorClass: typeof code === "string" && code.length > 0 ? code : "",
+      tool: typeof r.subagentName === "string" ? r.subagentName : "",
+      outcome: typeof outcome === "string" && outcome.length > 0 ? outcome : "failed",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const TERMINAL_TASK_STATUSES: readonly string[] = ["completed", "failed", "cancelled"];
 
 export type TaskSummary = {

@@ -1,4 +1,5 @@
-import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
+import assert from "node:assert/strict";
+import { EgressHostCollisionError, ownAccountEgressRefusalText, resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import { assertBindingsValid, assertBundlesValid, type Binding, type Bundle } from "../agent/access/bundle.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import type { PluginRegistry } from "../agent/plugins/types.js";
@@ -215,12 +216,144 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 }
 
 {
-  const bundles: Bundle[] = [{ name: "dup", connections: [
+  const dup: Bundle[] = [{ name: "dup", connections: [
     { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"] },
-    { id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["api.example.com"] },
+    { id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["API.example.com"] },
   ] }];
-  const bindings: Binding[] = [{ bundle: "dup", scope: { level: "surface", surface: "slack/T1/C1" } }];
-  ok(resolveAccessT(chan("T1", "C1"), bundles, bindings).warnings.some((w) => w.includes("claiming host")), "two connections claiming the same host in one scope warns");
+  const at1: Binding[] = [{ bundle: "dup", scope: { level: "surface", surface: "slack/T1/C1" } }];
+  let thrown: unknown;
+  try {
+    resolveAccessT(chan("T1", "C1"), dup, at1);
+  } catch (err) {
+    thrown = err;
+  }
+  ok(thrown instanceof EgressHostCollisionError, "two connections claiming one host REFUSES the resolve");
+  ok(
+    String(thrown).includes("api.example.com") && String(thrown).includes("connections a, b"),
+    `…and the message names the host and BOTH connection ids (got ${String(thrown)})`,
+  );
+
+  const split: Bundle[] = [
+    { name: "wide", connections: [{ id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"] }] },
+    { name: "narrow", connections: [{ id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["api.example.com"] }] },
+  ];
+  const twoScopes: Binding[] = [
+    { bundle: "wide", scope: { level: "org" } },
+    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
+  ];
+  assert.throws(() => resolveAccessT(chan("T1", "C1"), split, twoScopes), EgressHostCollisionError, "a clash across two bundles refuses too");
+
+  const onePrefixed: Bundle[] = [{ name: "one", connections: [
+    { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"], pathPrefixes: ["/v1/", "/v2/"] },
+  ] }];
+  const one = resolveAccessT(chan("T1", "C1"), onePrefixed, [{ bundle: "one", scope: { level: "surface", surface: "slack/T1/C1" } }]);
+  ok(one.reachableHosts.length === 1, "ONE connection with two path prefixes is still one reachable host");
+  ok(one.reachableHosts[0]!.pathPrefixes?.length === 2, "…carrying both prefixes");
+  ok(one.warnings.every((w) => !w.includes("claiming host")), "…and no collision warning survives anywhere");
+
+  const mixed: Bundle[] = [
+    { name: "open", domains: ["api.example.com"] },
+    { name: "keyed", connections: [{ id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"] }] },
+  ];
+  const m = resolveAccessT(chan("T1", "C1"), mixed, [
+    { bundle: "open", scope: { level: "org" } },
+    { bundle: "keyed", scope: { level: "surface", surface: "slack/T1/C1" } },
+  ]);
+  ok(m.reachableHosts.find((h) => h.host === "api.example.com")?.viaConnection === "a", "a credential-less domain plus one connection is ONE credential — the connection wins");
+
+  const sameId: Bundle[] = [
+    { name: "wide", connections: [{ id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"] }] },
+    { name: "narrow", connections: [{ id: "a", credentialType: "bearer", secretRef: "A2", allowedWebsites: ["api.example.com"] }] },
+  ];
+  const s = resolveAccessT(chan("T1", "C1"), sameId, twoScopes.map((b) => ({ ...b, bundle: b.bundle })));
+  ok(s.reachableHosts.length === 1 && s.reachableHosts[0]!.viaConnection === "a", "one connection id in two bundles resolves narrowest-wins, not a collision");
+}
+
+{
+  const bundles: Bundle[] = [{ name: "notion", connections: [
+    { id: "notion-rest", credentialType: "bearer", secretRef: "N", allowedWebsites: ["api.notion.com"] },
+    { id: "other", credentialType: "bearer", secretRef: "O", allowedWebsites: ["api.other.com"] },
+  ], domains: ["docs.notion.so"] }];
+  const bindings: Binding[] = [{ bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } }];
+  const catalogues: readonly ConnectorCredentials[] = [{
+    connector: "notion",
+    allows: ["api-key"],
+    credentials: [{ id: "team-key", type: "api-key", secretRef: "N", broker: "env", endpoints: { hosts: ["api.notion.com", "docs.notion.so"] } }],
+  }];
+
+  const withoutAsk = resolveAccess(chan("T1", "C1"), bundles, bindings, {}, catalogues);
+  ok(withoutAsk.reachableHosts.some((h) => h.host === "api.notion.com"), "with no ask the vendor host is reachable — the ordinary case is unchanged");
+  ok(withoutAsk.ownAccountEgressRefusals === undefined, "…and nothing is recorded as withheld");
+
+  const asked = resolveAccess({ ...chan("T1", "C1"), ownAccountAsk: { connector: "notion" } }, bundles, bindings, {}, catalogues);
+  ok(!asked.reachableHosts.some((h) => h.host === "api.notion.com"), "an own-account ask WITHHOLDS the vendor's credentialed host");
+  ok(
+    asked.reachableHosts.some((h) => h.host === "api.other.com" && h.viaConnection === "other"),
+    "…and leaves every other credentialed host alone",
+  );
+  ok(
+    asked.reachableHosts.some((h) => h.host === "docs.notion.so" && h.viaConnection === null),
+    "…and leaves the vendor's CREDENTIAL-LESS host reachable — it stamps nothing, so it is not the wrong identity",
+  );
+  const refusals = asked.ownAccountEgressRefusals ?? [];
+  ok(refusals.length === 1, `one refusal is recorded (got ${refusals.length})`);
+  ok(
+    refusals[0]?.connector === "notion" && refusals[0]?.host === "api.notion.com" && refusals[0]?.viaConnection === "notion-rest",
+    "…naming the connector, the host and the connection whose key would have been stamped",
+  );
+  ok(
+    ownAccountEgressRefusalText(refusals[0]!).includes("cannot use your own notion account"),
+    "…and the refusal text says the route cannot use your own account",
+  );
+  ok(ownAccountEgressRefusalText(refusals[0]!).includes("DM"), "…and names the route that can");
+
+  const elsewhere = resolveAccess({ ...chan("T1", "C1"), ownAccountAsk: { connector: "linear-mcp" } }, bundles, bindings, {}, catalogues);
+  ok(elsewhere.reachableHosts.length === withoutAsk.reachableHosts.length, "an ask for an unreached vendor withholds nothing");
+
+  const wider: Bundle[] = [{ name: "notion", connections: [
+    { id: "notion-rest", credentialType: "bearer", secretRef: "N", allowedWebsites: ["api.notion.com", "www.notion.so"] },
+  ] }];
+  const w = resolveAccess({ ...chan("T1", "C1"), ownAccountAsk: { connector: "notion" } }, wider, [{ bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } }], {}, catalogues);
+  ok(w.reachableHosts.length === 0, "every host the vendor's connection reaches is withheld, not only the ones the catalogue names");
+  ok((w.ownAccountEgressRefusals ?? []).map((r) => r.host).join(",") === "api.notion.com,www.notion.so", "…and each is recorded");
+
+  const wild: Bundle[] = [{ name: "notion", connections: [
+    { id: "notion-rest", credentialType: "bearer", secretRef: "N", allowedWebsites: ["*.notion.com"] },
+  ] }];
+  const wl = resolveAccess({ ...chan("T1", "C1"), ownAccountAsk: { connector: "notion" } }, wild, [{ bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } }], {}, catalogues);
+  ok(wl.reachableHosts.length === 0, "a wildcard connection covering the vendor's host is withheld too");
+
+  const blind: readonly ConnectorCredentials[] = [{ connector: "notion", allows: ["api-key"], credentials: [{ id: "team-key", type: "api-key", secretRef: "N", broker: "env" }] }];
+  const b = resolveAccess({ ...chan("T1", "C1"), ownAccountAsk: { connector: "notion" } }, bundles, bindings, {}, blind);
+  ok(b.reachableHosts.some((h) => h.host === "api.notion.com"), "a catalogue declaring no endpoint hosts withholds nothing — the config lint is what forbids that config");
+  ok(b.ownAccountEgressRefusals === undefined, "…and records no refusal it did not make");
+}
+
+{
+  const wildPair: Bundle[] = [{ name: "dup", connections: [
+    { id: "wild", credentialType: "bearer", secretRef: "A", allowedWebsites: ["*.notion.com"] },
+    { id: "exact", credentialType: "bearer", secretRef: "B", allowedWebsites: ["api.notion.com"] },
+  ] }];
+  const one: Binding[] = [{ bundle: "dup", scope: { level: "surface", surface: "slack/T1/C1" } }];
+  let thrown: unknown;
+  try {
+    resolveAccessT(chan("T1", "C1"), wildPair, one);
+  } catch (err) {
+    thrown = err;
+  }
+  ok(thrown instanceof EgressHostCollisionError, "🔴 a wildcard and an exact host under it REFUSE the resolve");
+  ok(String(thrown).includes("overlaps") && String(thrown).includes("connections exact, wild"), `…naming the overlap and both ids (got ${String(thrown)})`);
+
+  const disjoint: Bundle[] = [{ name: "ok", connections: [
+    { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["*.notion.com"] },
+    { id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["api.linear.app"] },
+  ] }];
+  ok(resolveAccessT(chan("T1", "C1"), disjoint, [{ bundle: "ok", scope: { level: "surface", surface: "slack/T1/C1" } }]).reachableHosts.length === 2, "a wildcard and a host under a DIFFERENT suffix both resolve");
+  const apex: Bundle[] = [{ name: "ok", connections: [
+    { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["*.notion.com"] },
+    { id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["notion.com"] },
+  ] }];
+  ok(resolveAccessT(chan("T1", "C1"), apex, [{ bundle: "ok", scope: { level: "surface", surface: "slack/T1/C1" } }]).reachableHosts.length === 2, "a leftmost-label wildcard does not cover the apex it cannot reach either");
 }
 
 {

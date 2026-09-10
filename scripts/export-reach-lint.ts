@@ -20,7 +20,6 @@ export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
   "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
   "packages/core/agent/access/group-request.ts::buildResolveRequestWithGroups",
   "packages/core/agent/access/permission-proposal.ts::PERMISSION_CONFIG_FILE",
-  "packages/core/agent/access/tenant-admission.ts::soleAdmittedTenant",
   "packages/core/agent/access/window-gated.ts::WINDOW_UNGATED_TOOLS",
   "packages/core/agent/access/window-gated.ts::checkWindowGateManifest",
   "packages/core/agent/blob/hosting.ts::assertBlobHostingValid",

@@ -54,7 +54,16 @@ import { auditToolAction } from "../audit/tool-action.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage, boundConversationOrigin, sameUnifiedConversation } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
-import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
+import {
+  DELEGATION_PENDING_REFUSAL_REASON,
+  SETTLEMENT_REPORT_POSTED_ACTION,
+  delegationPendingRefusalMessage,
+  dischargeSettlementReport,
+  notePromisedReport,
+  pendingDelegationOwing,
+  pendingDelegationsOwing,
+  settlementReportOwedOn,
+} from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -264,6 +273,26 @@ export const unifiedReplyEntry = defineTool({
       if (standDown.stopped) await spendStoppedAck(bind, turnId, "unified");
       markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);
+
+      if (owingTask !== undefined) {
+        for (const task of pendingDelegationsOwing(turnId, input.wake, addressedWakeThisTurn(turnId))) notePromisedReport(task);
+      }
+      const owedReport = settlementReportOwedOn(turnId);
+      if (owedReport !== undefined) {
+        let reachedIt = owedReport.wake === input.wake;
+        if (!reachedIt) {
+          try {
+            const owedOrigin = await boundConversationOrigin(store, org, owedReport.wake);
+            reachedIt = owedOrigin !== undefined && sameUnifiedConversation(owedOrigin, origin);
+          } catch {
+            reachedIt = false;
+          }
+        }
+        if (reachedIt) {
+          dischargeSettlementReport();
+          await auditToolAction(ctx, SETTLEMENT_REPORT_POSTED_ACTION, { task: owedReport.task, wake: input.wake });
+        }
+      }
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
       if (claimed.length > 0) {

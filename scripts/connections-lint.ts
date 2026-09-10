@@ -3,7 +3,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadBundles } from "../agent/access/bundles.js";
 import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
-import { connectorGrantCredentialProblems } from "@open-everywhere/core/agent/access/lint.js";
+import { connectorGrantCredentialProblems, ownAccountWithholdingProblems } from "@open-everywhere/core/agent/access/lint.js";
+import { credentialGrantConnectors } from "@open-everywhere/core/agent/access/credential-grant.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -24,6 +25,8 @@ for (const bundle of loadBundles()) {
 }
 
 const credentialProblems = connectorGrantCredentialProblems(loadBundles(), loadConnectorCredentials());
+
+const withholdingProblems = ownAccountWithholdingProblems(credentialGrantConnectors(), loadConnectorCredentials());
 
 const ungrantedMounts = mounted.filter((name) => !granted.has(name));
 const unmountedGrants = [...granted].filter((name) => !mounted.includes(name)).sort();
@@ -55,7 +58,15 @@ if (credentialProblems.length > 0) {
       `  credential it cannot find — so the capability reads as live and is not.`,
   );
 }
+if (withholdingProblems.length > 0) {
+  failed = true;
+  console.error(
+    `✗ connections-lint: credential-grant connector(s) whose catalogue names no endpoint hosts:\n${withholdingProblems.join("\n")}\n` +
+      `  Without those hosts the own-account refusal on the egress route withholds nothing, so a member\n` +
+      `  asking to act with their own account is answered on the deployment's own credential.`,
+  );
+}
 if (failed) process.exit(1);
 console.log(
-  `✓ connections-lint: ${mounted.length} mounted connection(s), all granted (${granted.size} grant(s) total), every grant names a configured credential`,
+  `✓ connections-lint: ${mounted.length} mounted connection(s), all granted (${granted.size} grant(s) total), every grant names a configured credential, every credential-grant connector declares its endpoint hosts`,
 );

@@ -371,4 +371,34 @@ function ok(cond: boolean, label: string): void {
   ok(JSON.stringify(b.filter((s) => shared.includes(s))) === JSON.stringify(shared), "🔴 the shared blocks appear in the SAME relative order on both paths");
 }
 
+{
+  const wakeAddressed = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "wake-addressed", pinned: false } });
+  const replyOnly = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "reply-only" } });
+  const closingText = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "closing-text" } });
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
+
+  ok(seat.includes("its report is OWED"), "🔴 §12: the seat is told the worker's report is OWED, not that relaying it is optional");
+  ok(
+    !seat.includes("if people are waiting on that outcome"),
+    "🔴 §12: …and the CONDITIONAL that the five a live run scenarios read is gone. A permission where a duty belongs is what they acted on",
+  );
+  ok(seat.includes("on the turn the completion notice arrives"), "🔴 §12: the copy names WHEN the report is owed — the settlement turn, not some later one");
+  ok(seat.includes("relaying it is your job, not echo"), "§12/CONTROL: the echo carve-out itself survives — this section sharpened it, it did not delete it");
+
+  ok(!worker.includes("its report is OWED"), "🔴 §12: the worker persona carries none of it — a worker delegates nothing, so it is owed nothing");
+
+  ok(wakeAddressed.includes("its report is OWED"), "🔴 §12: the `wake-addressed` arm reads the duty");
+  ok(replyOnly.includes("its report is OWED"), "🔴 §12: the `reply-only` arm reads it too — every live container-supervisor seat is on this arm");
+  ok(!closingText.includes("its report is OWED"), "🔴 §12: the `closing-text` arm mounts no working `reply`, so it reads no duty that names one");
+  ok(!closingText.includes("`reply`,"), "🔴 §12: …and instructs no `reply` call at all, which is what `test:instructions` refuses on that arm");
+  ok(closingText.includes("relaying it is your job, not echo"), "§12/CONTROL: the `closing-text` arm keeps the carve-out — only the `reply` route is withheld");
+
+  const refusal = "`no_reply` is refused on the settlement turn";
+  ok(wakeAddressed.includes(refusal), "🔴 §12: the unified arm states the host consequence, so the refusal in `no_reply` is a reminder rather than a surprise");
+  ok(!replyOnly.includes(refusal), "🔴 §12: the `reply-only` arm is NOT threatened — its per-surface door records no promise, so nothing there can refuse");
+  ok(!seat.includes(refusal), "🔴 §12: nor is `dual-mode`, for the same reason — every thread and DM seat reads the duty without a threat that cannot fire");
+  ok(!closingText.includes(refusal), "🔴 §12: nor `closing-text`, which reads none of the paragraph at all");
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);
