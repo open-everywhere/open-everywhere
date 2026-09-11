@@ -1,4 +1,5 @@
-import { ENGAGED_ROOM_VARS, ENV, TRACKED_ROOM_RESOLVERS } from "./e2e/env.js";
+import { ENGAGED_ROOM_VARS, ENV, S24_DEFAULT_QUERY, TRACKED_ROOM_RESOLVERS } from "./e2e/env.js";
+import { notionBlockPhrases } from "./e2e/egress-evidence.js";
 import {
   NON_ROOM_ENV,
   PROVISION_PLAN,
@@ -16,6 +17,8 @@ import {
   inventoryVars,
   isSyntheticDomain,
   namesLost,
+  notionQueryPageBody,
+  notionQueryPageTitle,
   parseInventoryDoc,
   planFor,
   redactId,
@@ -546,6 +549,27 @@ for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
     "🔴 …and a tracked room the fresh run did NOT find is staleness — every run can see it, so its absence is a fact about the room",
   );
   ok(compareInventory(committed, [], {}, {}).stale === false, "the control: an untracked, unset row the fresh run cannot see is not staleness");
+}
+
+{
+
+  const title = notionQueryPageTitle(S24_DEFAULT_QUERY);
+  ok(title.startsWith(S24_DEFAULT_QUERY), "🔴 the seeded page's title LEADS with the query, because Notion's search is a title search");
+  ok(title.includes("oe-e2e"), "…and still carries the `oe-e2e` marker every created fixture carries, as a suffix rather than a prefix");
+  ok(notionQueryPageTitle("  team   handbook  ") === title, "the title collapses whitespace, so a padded E2E_NOTION_QUERY resolves to the SAME page instead of seeding a second one");
+  ok(notionQueryPageTitle("release notes") !== title, "the control: a different query titles a different page");
+
+  const body = notionQueryPageBody(S24_DEFAULT_QUERY);
+  const asBlocks = body.map((line) => ({ type: "paragraph", paragraph: { rich_text: [{ plain_text: line }] } }));
+  const phrases = notionBlockPhrases(asBlocks);
+  ok(phrases.length >= body.length, "🔴 every seeded paragraph clears notionBlockPhrases's own bounds — a seeded page that yields no phrase fixes the search and leaves the rung dark");
+  ok(body.every((line) => phrases.includes(line)), "…each line by line, so no single paragraph is riding on the others");
+  ok(
+    notionBlockPhrases([{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Too short." }] } }]).length === 0,
+    "NEGATIVE CONTROL: the reader really rejects prose below its bounds, so the assertion above is not vacuous",
+  );
+  ok(body.some((line) => line.includes(S24_DEFAULT_QUERY)), "the body names the query, so a reader opening the page knows which leg it serves");
+  ok(new Set(body).size === body.length, "the seeded lines are distinct — a duplicate would de-duplicate inside the pin and shrink the phrase set silently");
 }
 
 console.log(`✓ fixture-inventory-lib: ${passed} assertions passed`);

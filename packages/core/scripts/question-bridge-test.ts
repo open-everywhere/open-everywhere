@@ -394,7 +394,7 @@ for (const [label, resolveOrigin] of [
   {
     const { readFileSync } = await import("node:fs");
     const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-    ok(/admitInputResponse\(\{/.test(unifiedSrc), "6: 🔴 the live decision runs the SAME admission the Slack/Teams widget arms run (approvals/input-response-floor.ts) — the transport is not the control");
+    ok(/admitInputResponse\(\{/.test(unifiedSrc), "6: 🔴 the live decision runs the SAME admission all five arms run (approvals/input-response-floor.ts) — the transport is not the control");
     ok(/\.respond\(\[\{ requestId: /.test(unifiedSrc), "6: …and the channel answers with `respond([{requestId, …}])`, the one shape routeDeliverPayload can route to a child");
     ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
     ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");

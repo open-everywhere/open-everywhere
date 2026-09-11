@@ -22,6 +22,7 @@ export interface LinearIssueRead {
   readonly id?: string;
   readonly identifier?: string;
   readonly title?: string;
+  readonly url?: string;
   readonly stateName?: string;
   readonly stateType?: string;
   readonly description: string;
@@ -42,6 +43,7 @@ interface RawIssue {
   id?: string;
   identifier?: string;
   title?: string;
+  url?: string;
   description?: string;
   createdAt?: string;
   creator?: { id?: string; name?: string; displayName?: string };
@@ -64,7 +66,7 @@ export async function readLinearIssue(issueRef: string, opts: LinearReadOpts = {
     api: opts.api,
     credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query:
-      "query OeReadIssue($id: String!, $first: Int!) { issue(id: $id) { id identifier title description createdAt " +
+      "query OeReadIssue($id: String!, $first: Int!) { issue(id: $id) { id identifier title url description createdAt " +
       "creator { id name displayName } state { name type } comments(first: $first) " +
       "{ nodes { id body createdAt parent { id } user { id name displayName } } pageInfo { hasNextPage } } } }",
     queryName: "OeReadIssue",
@@ -88,6 +90,7 @@ export async function readLinearIssue(issueRef: string, opts: LinearReadOpts = {
     id: str(issue.id),
     identifier: str(issue.identifier),
     title: str(issue.title),
+    url: str(issue.url),
     stateName: str(issue.state?.name),
     stateType: str(issue.state?.type),
     description: str(issue.description) ?? "",

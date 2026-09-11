@@ -5,6 +5,7 @@ export type SkipKind =
   | "missing-capability"
   | "optional-not-included"
   | "expensive-not-included"
+  | "fixture-missing"
   | "scenario-self-skip";
 
 export const SKIP_KINDS: readonly SkipKind[] = [
@@ -14,6 +15,7 @@ export const SKIP_KINDS: readonly SkipKind[] = [
   "missing-capability",
   "optional-not-included",
   "expensive-not-included",
+  "fixture-missing",
   "scenario-self-skip",
 ];
 

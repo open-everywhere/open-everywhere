@@ -262,6 +262,21 @@ export function roomName(slug: string, surface: SurfaceKind): string {
   return `oe-e2e-${slug}-${surface}`;
 }
 
+export function notionQueryPageTitle(query: string): string {
+  return `${query.trim().replace(/\s+/g, " ")} (oe-e2e fixture)`;
+}
+
+export function notionQueryPageBody(query: string): readonly string[] {
+  const term = query.trim().replace(/\s+/g, " ");
+  return [
+    `This page is the Open Everywhere end-to-end fixture for the search term "${term}".`,
+    `The harness pins this page, reads these sentences, and asks the deployment to repeat one of them word for word.`,
+    `Scenario S24 checks that a reply carries this workspace's own text rather than a fluent summary of it.`,
+    `The fixture rota meets on the second Tuesday of each month in the Kestrel room at 14:05.`,
+    `Requests for a new fixture room go to the harness owner, who answers within two working days.`,
+  ];
+}
+
 export function planFor(domain: string): ProvisionDomain | undefined {
   return PROVISION_PLAN.find((p) => p.domain === domain || p.slug === domain);
 }

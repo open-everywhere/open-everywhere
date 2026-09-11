@@ -26,6 +26,7 @@ const REQUIRED_SCOPES: Record<string, string[]> = {
   "conversations.open": ["im:write"],
   "chat.postMessage": ["chat:write"],
   "chat.update": ["chat:write"],
+  "chat.postEphemeral": ["chat:write"],
   "assistant.threads.setStatus": ["chat:write"],
   "pins.list": ["pins:read"],
   "pins.add": ["pins:write"],

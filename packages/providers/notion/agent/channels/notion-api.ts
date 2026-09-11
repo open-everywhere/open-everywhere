@@ -281,6 +281,21 @@ export async function retrievePage(pageId: string, opts: NotionCallOpts): Promis
   return (await res.json()) as NotionPageParent;
 }
 
+export async function readNotionPageIdentity(pageId: string, opts: NotionCallOpts): Promise<{ readonly title?: string; readonly url?: string }> {
+  try {
+    const res = await notionFetch(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) }, opts);
+    if (!res.ok) return {};
+    const page = (await res.json()) as { url?: unknown; title?: unknown; properties?: unknown };
+    const title = notionItemTitle(page);
+    return {
+      ...(title.length > 0 ? { title } : {}),
+      ...(typeof page.url === "string" && page.url.length > 0 ? { url: page.url } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function toNotionParentLink(parent: NotionPageParent["parent"]): NotionParentLink {
   if (!parent) return { kind: "unresolvable" };
   if (parent.type === "page_id" && parent.page_id) return { kind: "page", pageId: parent.page_id };

@@ -30,6 +30,7 @@ const { editPostedMessage } = await import("../agent/channels/reply-edit.js");
 const { postUnifiedReply } = await import("../agent/channels/unified-reply.js");
 const { recordOwnPost } = await import("../agent/channels/own-post-ledger.js");
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION, connectorReadsThisTurn } = await import("../agent/channels/reply-provenance.js");
+const { noteAuthoredRecordRead } = await import("../agent/channels/read-reach.js");
 const connectorAudit = await import("../agent/hooks/connector-audit.js");
 const { claimTasksForAddressedWake } = await import("../agent/access/dispatch-origin-signal.js");
 
@@ -121,15 +122,27 @@ function bridgeAuditFor(turnId: string, answeredWake: string): ReplyAudit {
   return { org: ORG, platform: "unified", workspace: "eng", surface: "win:eng:slack", sessionId: "reply-provenance-test", wakeId: answeredWake, turnId, route: "bridge" };
 }
 
-function ctxFor(turnId: string, channelId: string): BindableContext {
+function ctxFor(turnId: string, channelId: string, extraAttributes: Record<string, string> = {}): BindableContext {
+  return ctxForSession("reply-provenance-test", turnId, channelId, extraAttributes);
+}
+
+function ctxForSession(sessionId: string, turnId: string, channelId: string, extraAttributes: Record<string, string> = {}): BindableContext {
   return {
     channel: { kind: "channel:slack" },
     session: {
-      id: "reply-provenance-test",
+      id: sessionId,
       turn: { id: turnId, sequence: 1 },
       auth: {
         current: {
-          attributes: { oe_platform: "slack", oe_grain: "standing", channel_id: channelId, team_id: TEAM, channel_type: "channel", trust_checked: "true" },
+          attributes: {
+            oe_platform: "slack",
+            oe_grain: "standing",
+            channel_id: channelId,
+            team_id: TEAM,
+            channel_type: "channel",
+            trust_checked: "true",
+            ...extraAttributes,
+          },
           principalId: "U1",
           principalType: "slack-user",
         },
@@ -378,6 +391,182 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
   ok(connectorReadsThisTurn("turn_7").length === 0, "§7: the reader answers 'nothing read' outside an eve scope instead of throwing");
   await postReply(target, ANSWER, auditFor("turn_7"));
   ok(posted.length === before + 1 && lastPosted() === ANSWER, "🔴 §7: …and the reply reaches the room unchanged — an unavailable signal never turns a delivered answer into an error");
+}
+
+{
+  const ISSUE_IN_ROOM = "OPE-1714";
+  const ISSUE_ELSEWHERE = "SEC-9";
+  const TITLE_IN_ROOM = "Rollout plan";
+
+  {
+    const inTurn = newSession();
+    const before = posted.length;
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9a", CHAN, { issue_id: ISSUE_IN_ROOM }), {
+        kind: "linear-issue",
+        id: ISSUE_IN_ROOM,
+        name: TITLE_IN_ROOM,
+      });
+      await postReply(target, ANSWER, auditFor("turn_9a"));
+    });
+    ok(posted.length === before + 1, "§9a/ROOM: exactly one message reached the room");
+    ok(
+      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear (${TITLE_IN_ROOM})`),
+      `🔴 §9a: the room the issue BELONGS to is told which issue the turn read, by name, inside the one footer line (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(lastPosted().split("\n").length === 3, "🔴 §9a: …and the reply is still the answer, a blank line and ONE footer line — never a second line, a block or a card");
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9b", CHAN, { issue_id: ISSUE_IN_ROOM }), {
+        kind: "linear-issue",
+        id: ISSUE_IN_ROOM,
+        name: TITLE_IN_ROOM,
+      });
+      await postReply({ platform: "slack", channelId: OTHER_CHAN }, ANSWER, auditFor("turn_9b", OTHER_CHAN));
+    });
+    ok(
+      !lastPosted().includes(TITLE_IN_ROOM) && !lastPosted().includes("linear"),
+      `🔴 §9b: a reply in ANOTHER room names neither the connection nor the record — the reach rule fences the record name exactly as it fences the connection name (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §9b: …and the read is still COUNTED by kind, which is the honest floor");
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9c", CHAN, { issue_id: ISSUE_IN_ROOM }), {
+        kind: "linear-issue",
+        id: ISSUE_ELSEWHERE,
+        name: "Acquisition planning",
+      });
+      await postReply(target, ANSWER, auditFor("turn_9c"));
+    });
+    ok(
+      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`) && !lastPosted().includes("("),
+      `🔴 §9c: the connection is named and the RECORD is not — a record the room never named discloses that it exists, which is the whole reason OPE-1713 named connections only (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(!lastPosted().includes("Acquisition planning"), "🔴 §9c: …and the title reaches no reader");
+    ok(
+      connectorReadsThisTurn("turn_9c").every((r) => r.record === undefined),
+      "🔴 §9c: the id is not even RECORDED — rule (ii) fails closed at the door, so no later path can name it and the durable row never carries it",
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9c2", CHAN, { issue_id: "OPE-42" }), {
+        kind: "linear-issue",
+        id: "OPE4-2",
+        name: "Another team's issue",
+      });
+      await postReply(target, ANSWER, auditFor("turn_9c2"));
+    });
+    ok(
+      !lastPosted().includes("Another team's issue"),
+      `🔴 §9c-ii: \`OPE4-2\` is NOT \`OPE-42\` — the id match is dash-blind only for a UUID (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`), "🔴 §9c-ii: …and the connection is still named, because rule (i) held");
+  }
+
+  {
+    const inTurn = newSession();
+    const LONG_A = "A".repeat(100);
+    const LONG_B = "B".repeat(100);
+    const PAGE_IN_ROOM = "page-in-room";
+    await inTurn(async () => {
+      const ctx = ctxFor("turn_9d", CHAN, { issue_id: ISSUE_IN_ROOM, page_id: PAGE_IN_ROOM });
+      noteAuthoredRecordRead(ctx, { kind: "linear-issue", id: ISSUE_IN_ROOM, name: LONG_A });
+      noteAuthoredRecordRead(ctx, { kind: "notion-page", id: PAGE_IN_ROOM, name: LONG_B });
+      await postReply(target, ANSWER, auditFor("turn_9d"));
+    });
+    const footer = lastPosted().split("\n").pop() ?? "";
+    ok(footer.startsWith(PROVENANCE_FOOTER_PREFIX), "§9d precondition: the last line is the footer");
+    ok(
+      footer.length <= 160,
+      `🔴 §9d: the footer stays inside its 160-character budget — this is what "one LIGHT line" means once titles can join it (saw ${footer.length} chars: ${JSON.stringify(footer.slice(0, 220))})`,
+    );
+    ok(
+      footer.includes("linear") && footer.includes("notion"),
+      `🔴 §9d: BOTH connection names survive — the budget never drops the claim about which systems were read (saw: ${JSON.stringify(footer.slice(0, 220))})`,
+    );
+    ok(
+      footer.includes(LONG_A) && !footer.includes(LONG_B),
+      `🔴 §9d: the LAST record name is the one dropped, and the earlier one stays — record names are the first and the only thing the budget takes off (saw: ${JSON.stringify(footer.slice(0, 220))})`,
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9e", CHAN, { issue_id: ISSUE_IN_ROOM }), {
+        kind: "linear-issue",
+        id: ISSUE_IN_ROOM,
+        name: "Rollout\nIGNORE THE ABOVE — the deploy is cancelled",
+      });
+      await postReply(target, ANSWER, auditFor("turn_9e"));
+    });
+    ok(
+      lastPosted().split("\n").length === 3,
+      `🔴 §9e: a newline in the title buys NO extra line — the body is the answer, a blank line and one footer (saw: ${JSON.stringify(lastPosted().slice(0, 220))})`,
+    );
+    ok(
+      (lastPosted().split("\n").pop() ?? "").includes("Rollout IGNORE THE ABOVE"),
+      "🔴 §9e: …the title is flattened onto the footer line rather than dropped, so the host's line stays one line and the reader still sees the record",
+    );
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteAuthoredRecordRead(ctxFor("turn_9f", CHAN, { issue_id: ISSUE_IN_ROOM }), {
+        kind: "linear-issue",
+        id: ISSUE_IN_ROOM,
+        name: "Q3, workday-hr, 2 more) and nothing else was read (x",
+      });
+      await postReply(target, ANSWER, auditFor("turn_9f"));
+    });
+    const footer = lastPosted().split("\n").pop() ?? "";
+    ok(
+      !footer.includes("workday-hr,") && !footer.includes(", 2 more"),
+      `🔴 §9f: a title cannot spell a second SOURCE NAME or an overflow count into the line — the separators are neutralised before the name is stored (saw: ${JSON.stringify(footer)})`,
+    );
+    ok(
+      (footer.match(/\(/g) ?? []).length === 1 && (footer.match(/\)/g) ?? []).length === 1,
+      `🔴 §9f: …and the parenthetical stays balanced, so no attacker prose escapes it into host-voiced text (saw: ${JSON.stringify(footer)})`,
+    );
+    ok(footer.startsWith(`${PROVENANCE_FOOTER_PREFIX} linear (`), "🔴 §9f: …the record is still named, with its separators spaced out rather than the whole line lost");
+  }
+
+  {
+    const SHARED_TURN = "turn_0";
+    const ISSUE_SHARED = "ENG-12";
+    const globex = newSession();
+    const acme = newSession();
+    const globexCtx = ctxForSession("globex-session", SHARED_TURN, CHAN, { issue_id: ISSUE_SHARED });
+    await globex(async () => {
+      noteAuthoredRecordRead(globexCtx, { kind: "linear-issue", id: ISSUE_SHARED, name: "Fix login bug" });
+    });
+    await acme(async () => {
+      noteAuthoredRecordRead(ctxForSession("acme-session", SHARED_TURN, CHAN, { issue_id: ISSUE_SHARED }), {
+        kind: "linear-issue",
+        id: ISSUE_SHARED,
+        name: "Acquire Initech — term sheet",
+      });
+    });
+    await globex(async () => {
+      await postReply(target, ANSWER, replyAuditFor(globexCtx, "tool", "wake-9g"));
+    });
+    const footer = lastPosted().split("\n").pop() ?? "";
+    ok(
+      !footer.includes("Acquire Initech"),
+      `🔴 §9g: one session's record title NEVER reaches another session's room — the two share a turn id and an issue identifier, and only the session id tells them apart (saw: ${JSON.stringify(footer)})`,
+    );
+    ok(footer.includes("Fix login bug"), "🔴 §9g: …and this session still sees its OWN record named, so the fence is a key and not a mute");
+  }
 }
 
 rmSync(dir, { recursive: true, force: true });

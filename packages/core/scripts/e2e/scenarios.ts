@@ -1,10 +1,11 @@
-import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
+import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
+import { APPROVAL_ANSWER_HINT } from "../../agent/channels/question-bridge.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
@@ -16,7 +17,7 @@ import { isMissingChatScopeError } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
-import { notionMinuteFloor, pinNotionQueryPage, type NotionComment } from "./notion-driver.js";
+import { notionMinuteFloor, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
@@ -94,7 +95,7 @@ import {
   describeSpendGateRows,
   driveDecide,
   drivePrOpen,
-  eveNativeApprovalButtons,
+  eveRequestApprovalButtons,
   factToken,
   withoutMarker,
   parseLinkCode,
@@ -107,6 +108,13 @@ export class ScenarioSkip extends Error {
   constructor(reason: string) {
     super(reason);
     this.name = "ScenarioSkip";
+  }
+}
+
+export class FixtureMissing extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "FixtureMissing";
   }
 }
 
@@ -159,6 +167,7 @@ export interface ScenarioContext {
   judgePass3(rubric: Rubric, reply: string, label: string): Promise<void>;
   judgeReport(rubric: Rubric, reply: string, label: string): Promise<boolean>;
   skip(reason: string): never;
+  fixtureMissing(reason: string): never;
   log(line: string): void;
   observe(line: string): void;
   recordTiming(record: TimingsRecord): void;
@@ -1670,14 +1679,19 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const notion = ctx.notion!;
-      const query = ctx.notionQuery ?? "team handbook";
+      const query = ctx.notionQuery ?? S24_DEFAULT_QUERY;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const auditRead = ctx.auditRead!;
       const armedBefore = await deriveConnectorArming(auditRead, { connector: NOTION_CONNECTOR, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) });
       const notionDriverKey = process.env[ENV.notionDriverKey]?.trim();
-      const pin = notionDriverKey
+      const pin: NotionPagePinResult = notionDriverKey
         ? await pinNotionQueryPage({ driverKey: notionDriverKey, query })
-        : ({ ok: false, reason: `${ENV.notionDriverKey} is unset, so the harness cannot read the fixture page and has no phrase to demand` } as const);
+        : { ok: false, failure: "no-driver-key", hits: 0, reason: `${ENV.notionDriverKey} is unset, so the harness cannot read the fixture page and has no phrase to demand` };
+      if (!pin.ok && pin.failure === "search-empty")
+        ctx.log(
+          `S24 fixture — ${pin.reason}. The HTTP rung cannot be earned this run; the MCP rung still can, so the leg drives on ` +
+            `and reports \`fixture missing\` only if neither rung clears. SEED IT: \`npm run e2e:fixtures -- provision-notion-query-page\`.`,
+        );
       const sinceIso = new Date(Date.now() - 15_000).toISOString();
       const { ts: askTs } = await notion.post(
         notion.mention(
@@ -1727,9 +1741,9 @@ export const SCENARIOS: readonly Scenario[] = [
               : `NO egress.policy apply in this window opened ${NOTION_REST_HOST} with a credential (${egress.rows} policy row(s) on this channel; write-open hosts seen: ${egress.hostsSeen.join(", ") || "none"}) — an unchanged turn re-applies nothing and audits nothing, so this can mean no apply landed rather than a closed host`
           }; ${
             !pin.ok
-              ? `and NO page was pinned, so the answer half could not be scored at all — ${pin.reason}`
+              ? `and NO page was pinned (harness search hits: ${pin.hits}), so the answer half could not be scored at all — ${pin.reason}`
               : quoted !== undefined
-                ? `and the reply repeats a phrase of the pinned page "${pin.pin.title}" (${pin.pin.pageId}) word for word — "${quoted}" — which model prose and the open web do not carry, though it names no route and this leg's OWN earlier runs posted the same phrase into this channel`
+                ? `and the reply repeats a phrase of the pinned page "${pin.pin.title}" (${pin.pin.pageId}, top of ${pin.hits} search hit(s)) word for word — "${quoted}" — which model prose and the open web do not carry, though it names no route and this leg's OWN earlier runs posted the same phrase into this channel`
                 : `and the reply repeats NONE of the ${pin.pin.phrases.length} phrase(s) the harness read off the pinned page "${pin.pin.title}" (${pin.pin.pageId}), so nothing in it is beyond a prose answer's reach (if the workspace legitimately holds no match, point ${ENV.notionQuery} at a term it does hold)`
           }; the reply carries ${pageLinks.length} Notion page link(s), REPORTED and not scored (32 hex characters are inventable).`;
         const mcpRoute = evidence.length > 0;
@@ -1737,6 +1751,15 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log(
           `S24 rungs — MCP: ${mcpRoute ? "CLEARED" : "not cleared"} (${evidence.length} connector.op/connector.use row(s)); HTTP: ${httpRoute ? "CLEARED" : "not cleared"}. ${httpReading}`,
         );
+        if (!mcpRoute && !httpRoute && !pin.ok && pin.failure === "search-empty")
+          ctx.fixtureMissing(
+            `OPE-1722 — ${pin.reason}. The answer half had no phrase to demand, so the HTTP rung was unearnable, and no connector row landed ` +
+              `for the MCP rung either — ${armingNote(NOTION_CONNECTOR, armedBefore)}. The reply await and the judge gate above PASSED, so this ` +
+              `verdict asserts that the harness's own test data is gone, never that the deployment is broken. SEED IT: ` +
+              `\`npm run e2e:fixtures -- provision-notion-query-page\` from packages/core creates the page under the e2e page's own parent, ` +
+              `where the driver integration's connection is inherited. Point ${ENV.notionQuery} at a term the workspace already holds if you ` +
+              `would rather reuse a page. ${httpReading}`,
+          );
         if (!mcpRoute && !httpRoute && armedBefore.state !== "armed")
           ctx.skip(
             `OPE-1496 — ${armingNote(NOTION_CONNECTOR, armedBefore)}. On the credential bound here (\`team-key\`, endpoint rule \`api.notion.com\`) the ` +
@@ -3495,7 +3518,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const rToken = factToken("ctread");
       const { ts: readTs } = await connector.post(
         connector.mention(
-          `search Notion for "${ctx.notionQuery ?? "team handbook"}" and tell me the first result's title (ref ${rToken}). Just answer directly — no confirmation needed for a read.`,
+          `search Notion for "${ctx.notionQuery ?? S24_DEFAULT_QUERY}" and tell me the first result's title (ref ${rToken}). Just answer directly — no confirmation needed for a read.`,
         ),
       );
       const readReply = await connector.awaitThreadReply(readTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -3554,7 +3577,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
           let pending: SlackMessage | undefined;
           for (const m of msgs) {
-            const buttons = eveNativeApprovalButtons(m);
+            const buttons = eveRequestApprovalButtons(m);
             if (buttons) {
               if (!clicked.has(m.ts)) {
                 clicked.add(m.ts);
@@ -3623,7 +3646,7 @@ export const SCENARIOS: readonly Scenario[] = [
             const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
             let pending: SlackMessage | undefined;
             for (const m of msgs) {
-              const buttons = eveNativeApprovalButtons(m);
+              const buttons = eveRequestApprovalButtons(m);
               if (buttons) {
                 if (synthetic === undefined) {
                   ctx.log("an eve-native approval card appeared and the synthetic forge is not configured — it cannot be clicked, so this wait will run out");
@@ -3752,7 +3775,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-EVE-CARD",
     title:
-      "eve-native approval card, live (OPE-1056): a DM connector WRITE parks on the card EVE mints — not OE's governance card — the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click. 🔴 KNOWN RED: the unified window posts eve's request as TEXT and has no arm that can post an interactive card, so the card poll below always times out — see the head comment for the two ways to close it",
+      "the bridged approval CARD, live (OPE-1056/OPE-1720): a DM connector WRITE parks on eve's `tool-approval`, the unified post arm renders it as an interactive card that is NOT OE's governance card, the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "extended",
@@ -3775,7 +3798,7 @@ export const SCENARIOS: readonly Scenario[] = [
         async () => {
           const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
           for (const m of msgs) {
-            const buttons = eveNativeApprovalButtons(m);
+            const buttons = eveRequestApprovalButtons(m);
             if (buttons) return { message: m, buttons };
           }
           return undefined;
@@ -3793,7 +3816,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const rawButtons = card.message.actions ?? [];
       ctx.gate(
         rawButtons.length > 0 && rawButtons.every((a) => !a.actionId.startsWith(APPROVAL_PREFIX)),
-        `S-EVE-CARD: none of the card's ${rawButtons.length} button(s) carries an "${APPROVAL_PREFIX}" action_id — eve minted this card, OE's approvals plane did not`,
+        `S-EVE-CARD: none of the card's ${rawButtons.length} button(s) carries an "${APPROVAL_PREFIX}" action_id — this is eve's REQUEST, not OE's governance card, whichever plane rendered the blocks`,
       );
 
       const beforeClick = new Map<string, string>();
@@ -3819,7 +3842,7 @@ export const SCENARIOS: readonly Scenario[] = [
           let latest: SlackMessage | undefined;
           for (const m of msgs) {
             if (m.ts === card.message.ts) continue;
-            if (eveNativeApprovalButtons(m)) continue;
+            if (eveRequestApprovalButtons(m)) continue;
             const text = m.text.trim();
             if (text.length === 0 || isFillerAck(text)) continue;
             const before = beforeClick.get(m.ts);
@@ -3844,7 +3867,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const reread = (await dm.collectBotMessagesAfter(anchorTs, anchorTs)).find((m) => m.ts === card.message.ts);
       ctx.observe(
         `S-EVE-CARD: the DECIDED eve-native card ${card.message.ts} ` +
-          `${reread === undefined ? "could not be re-read" : eveNativeApprovalButtons(reread) ? "STILL carries its buttons" : "has had its buttons removed"}` +
+          `${reread === undefined ? "could not be re-read" : eveRequestApprovalButtons(reread) ? "STILL carries its buttons" : "has had its buttons removed"}` +
           " — eve 0.52.2 re-renders it answered and drops the actions block; a card that still carries buttons means the settle never reached the surface.",
       );
       if (ctx.auditRead) {
@@ -3871,7 +3894,7 @@ export const SCENARIOS: readonly Scenario[] = [
             let answer: SlackMessage | undefined;
             for (const m of msgs) {
               if (teardownClicked.has(m.ts)) continue;
-              const buttons = eveNativeApprovalButtons(m);
+              const buttons = eveRequestApprovalButtons(m);
               if (buttons) {
                 teardownClicked.add(m.ts);
                 const res = await synthetic.clickBlockAction({
@@ -3899,6 +3922,126 @@ export const SCENARIOS: readonly Scenario[] = [
       } catch (e) {
         ctx.log(
           `S-EVE-CARD teardown did NOT complete (${e instanceof Error ? e.message : String(e)}). ` +
+            `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
+        );
+      }
+    },
+  },
+  {
+    id: "S-EVE-BRIDGE",
+    title:
+      "a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified question bridge posts it as a readable request, a plain `Approve` reply carries eve's optionId back, and the SUSPENDED TURN RESUMES",
+    requires: ["slack", "syntheticDm"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 2_400_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      const token = factToken("evebridge");
+      const pageTitle = `OE eve-bridge ${token}`;
+      const sinceIso = new Date().toISOString();
+      const { ts: anchorTs } = await dm.post(
+        `create a new Notion page titled "${pageTitle}" with a one-line body that includes the exact token ${token}.`,
+      );
+
+      const asked = await pollUntil(
+        async () => {
+          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+          let latest: SlackMessage | undefined;
+          for (const m of msgs) if (m.text.includes(APPROVAL_ANSWER_HINT)) latest = m;
+          return latest;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: "the BRIDGED approval request, readable in the DM (the host answer line)" },
+      ).catch(async (e: unknown) => {
+        await arming.recheck();
+        throw e;
+      });
+      ctx.log(`S-EVE-BRIDGE: the bridged approval is readable at ts ${asked.ts}`);
+      ctx.gate(
+        asked.text.includes(APPROVAL_ANSWER_HINT),
+        "S-EVE-BRIDGE: the bridged request carries the host answer line, so the room is told a reply must NAME an option",
+      );
+      ctx.gate(
+        /\bApprove\b/.test(asked.text),
+        "S-EVE-BRIDGE: …and it prints the option the next leg types — a hint over an unprinted vocabulary would be a promise the room cannot keep",
+      );
+
+      const beforeAnswer = new Map<string, string>();
+      for (const m of await dm.collectBotMessagesAfter(anchorTs, anchorTs)) beforeAnswer.set(m.ts, m.text);
+
+      const { ts: answerTs } = await dm.post("Approve");
+      ctx.log(`S-EVE-BRIDGE: answered the bridged approval with "Approve" at ts ${answerTs}`);
+
+      const settled = await pollUntil(
+        async () => {
+          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+          let latest: SlackMessage | undefined;
+          for (const m of msgs) {
+            if (m.ts === asked.ts || m.text.includes(APPROVAL_ANSWER_HINT)) continue;
+            const text = m.text.trim();
+            if (text.length === 0 || isFillerAck(text)) continue;
+            const before = beforeAnswer.get(m.ts);
+            if (before !== undefined && before === m.text) continue;
+            if (!m.text.includes(token)) continue;
+            latest = m;
+          }
+          return latest;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: `a substantive bot reply naming ${token}, NEW or EDITED since the typed answer (the resumed turn)` },
+      ).catch(async (e: unknown) => {
+        await arming.recheck();
+        throw e;
+      });
+      await arming.recheck();
+      ctx.log(`S-EVE-BRIDGE: the resumed turn answered at ts ${settled.ts} naming ${token}`);
+      ctx.gate(
+        !/\b(error|exception|traceback)\b/i.test(settled.text),
+        "S-EVE-BRIDGE: the resumed turn reports no error (the typed answer resumed the write rather than failing it)",
+      );
+
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso, actions: ["input_response.routed", "connector.op"] });
+        const routed = rows.filter((r) => r.action === "input_response.routed");
+        const withOption = routed.filter((r) => typeof (r.detail as { optionId?: unknown } | undefined)?.optionId === "string");
+        ctx.gate(
+          withOption.length > 0,
+          `S-EVE-BRIDGE: 🔴 an input_response.routed row carries an optionId (${withOption.length} of ${routed.length} routed rows) — eve settles on optionId ALONE, so a routed answer without one DENIES the call`,
+        );
+        ctx.observe(`S-EVE-BRIDGE rows in this leg's window — input_response.routed=${routed.length} · connector.op=${rows.filter((r) => r.action === "connector.op").length}`);
+      } else {
+        ctx.observe("S-EVE-BRIDGE: no audit reader is wired, so the optionId half is UNPROVEN in this run — the reply gate above covers the resume only");
+      }
+
+      try {
+        const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
+        const answered = new Set<string>();
+        const done = await pollUntil(
+          async () => {
+            const msgs = await dm.collectBotMessagesAfter(teardownTs, teardownTs);
+            let answer: SlackMessage | undefined;
+            for (const m of msgs) {
+              if (m.text.includes(APPROVAL_ANSWER_HINT)) {
+                if (!answered.has(m.ts)) {
+                  answered.add(m.ts);
+                  await dm.post("Approve");
+                  ctx.log(`teardown: answered the archive approval ${m.ts} with "Approve"`);
+                }
+                continue;
+              }
+              const text = m.text.trim();
+              if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
+            }
+            return answer;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `a reply to the archive ask for "${pageTitle}"` },
+        );
+        ctx.observe(`S-EVE-BRIDGE teardown: ${answered.size} archive approval(s) answered; the seat answered "${done.text.trim().slice(0, 160)}"`);
+      } catch (e) {
+        ctx.log(
+          `S-EVE-BRIDGE teardown did NOT complete (${e instanceof Error ? e.message : String(e)}). ` +
             `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
         );
       }

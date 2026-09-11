@@ -600,7 +600,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION",
     "S-PROVENANCE-DM",
-    "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
+    "S-EVE-CARD", "S-EVE-BRIDGE", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
     "J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion",
     "S-OWN-ACCOUNT-NOTION",
@@ -622,7 +622,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-PROVENANCE-DM,S-EVE-CARD,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
     "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) PLUS S-EVE-CARD (OPE-1056: the first live drive of the EVE-MINTED approval card — it needs the same consented personal Notion grant the other connector legs need, and it publishes then archives a real page) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725). 🔴 NO J-ENGAGED JOURNEY IS OPTIONAL: all six are core, because every provider wires the §2.5 seam (OPE-1500 landed Teams, OPE-1501 the three ticketing surfaces). Each still self-skips until its own room is provisioned, which is a skip and never a green",
   );
 
@@ -640,7 +640,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S8",
+    nonSlack.join(",") === "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-BRIDGE,S-EVE-CARD,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S8",
     "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE+S-OWN-ACCOUNT-NOTION(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
@@ -650,7 +650,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -989,7 +989,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const counts = emptySkipCounts();
   ok(SKIP_KINDS.every((k) => counts[k] === 0), "emptySkipCounts starts every bucket at zero");
   ok(renderSkipBreakdown(counts) === "none", "renderSkipBreakdown reports 'none' when every bucket is zero — the negative control for the non-empty case below");
-  ok(SKIP_KINDS.length === 7, "the skip-reason taxonomy has exactly 7 closed categories");
+  ok(SKIP_KINDS.length === 8, "the skip-reason taxonomy has exactly 8 closed categories");
   counts["missing-capability"] = 3;
   counts["filtered-only"] = 1;
   ok(
@@ -1149,7 +1149,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
   ok(approveButton({ ts: "1.4", text: "x", actions: [{ actionId: "oe_approval:approve:row-x" }] })?.org === "", "a value-less approve button decodes org as empty (flow.ts fail-softs it)");
 
-  const { eveNativeApprovalButtons } = await import("../packages/core/scripts/e2e/journey.js");
+  const { eveRequestApprovalButtons } = await import("../packages/core/scripts/e2e/journey.js");
   const deploy142 = {
     ts: "2.1",
     text: "Approve tool call: notion__notion-create-pages",
@@ -1158,21 +1158,21 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       { actionId: "eve_input:tool-approval:req-1:button:0", value: "approve", text: "Approve" },
     ],
   };
-  const d142 = eveNativeApprovalButtons(deploy142);
-  ok(d142?.approve.actionId === "eve_input:tool-approval:req-1:button:0", "eveNativeApprovalButtons reads the approve side off `value:\"approve\"` (deploy #142's Approve/Cancel card, in the pinned eve's shapes)");
+  const d142 = eveRequestApprovalButtons(deploy142);
+  ok(d142?.approve.actionId === "eve_input:tool-approval:req-1:button:0", "eveRequestApprovalButtons reads the approve side off `value:\"approve\"` (a live run's Approve/Cancel card, in the pinned eve's shapes)");
   ok(d142?.deny?.actionId === "eve_input:tool-approval:req-1:button:1", "…and the deny side off `value:\"cancel\"` — the option id the pinned eve actually stamps — so the label set is not the only thing finding it");
-  const allowDeny = eveNativeApprovalButtons({ ts: "2.2", text: "allow?", actions: [{ actionId: "b1", text: "Deny" }, { actionId: "b2", text: "Allow" }] });
-  ok(allowDeny?.approve.actionId === "b2" && allowDeny.deny?.actionId === "b1", "eveNativeApprovalButtons falls back to the LABEL set (Allow/Deny) when the buttons carry no value");
+  const allowDeny = eveRequestApprovalButtons({ ts: "2.2", text: "allow?", actions: [{ actionId: "b1", text: "Deny" }, { actionId: "b2", text: "Allow" }] });
+  ok(allowDeny?.approve.actionId === "b2" && allowDeny.deny?.actionId === "b1", "eveRequestApprovalButtons falls back to the LABEL set (Allow/Deny) when the buttons carry no value");
   ok(
-    eveNativeApprovalButtons({ ts: "2.3", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default", text: "Approve" }, { actionId: "oe_approval:reject:row-9", value: "default", text: "Reject" }] }) === undefined,
-    "eveNativeApprovalButtons REFUSES an OE-minted card — every `oe_approval:` button is dropped before the match, however it is labelled",
+    eveRequestApprovalButtons({ ts: "2.3", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default", text: "Approve" }, { actionId: "oe_approval:reject:row-9", value: "default", text: "Reject" }] }) === undefined,
+    "eveRequestApprovalButtons REFUSES an OE-minted card — every `oe_approval:` button is dropped before the match, however it is labelled",
   );
-  ok(eveNativeApprovalButtons({ ts: "2.4", text: "decided" }) === undefined, "eveNativeApprovalButtons returns undefined for a decided/button-less message");
+  ok(eveRequestApprovalButtons({ ts: "2.4", text: "decided" }) === undefined, "eveRequestApprovalButtons returns undefined for a decided/button-less message");
   ok(
-    eveNativeApprovalButtons({ ts: "2.5", text: "connect?", actions: [{ actionId: "oe_connect:notion:api-key", value: "default", text: "Set API key" }] }) === undefined,
-    "eveNativeApprovalButtons returns undefined for the connector-OFFER card (neither an approve value nor an approve label)",
+    eveRequestApprovalButtons({ ts: "2.5", text: "connect?", actions: [{ actionId: "oe_connect:notion:api-key", value: "default", text: "Set API key" }] }) === undefined,
+    "eveRequestApprovalButtons returns undefined for the connector-OFFER card (neither an approve value nor an approve label)",
   );
-  const approveOnly = eveNativeApprovalButtons({ ts: "2.6", text: "x", actions: [{ actionId: "b3", value: "approve", text: "Approve" }] });
+  const approveOnly = eveRequestApprovalButtons({ ts: "2.6", text: "x", actions: [{ actionId: "b3", value: "approve", text: "Approve" }] });
   ok(
     approveOnly?.approve.actionId === "b3" && approveOnly.deny === undefined,
     "an approve-only card still DECODES, with no deny side — rather than mis-reading the approve button as both, or answering undefined",
@@ -2192,7 +2192,64 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       /detail\?\.connection\s*===\s*"notion"/.test(src),
       "🔴 OPE-1485 — S24's evidence filter still NAMES the connection, so a second binding on that channel cannot make the gate vacuous",
     );
+
+    ok(
+      /ctx\.fixtureMissing\(/.test(src),
+      "🔴 OPE-1722 — S24 ends on the DISTINCT `fixtureMissing` verdict, so a gone fixture never reaches the gate as a red",
+    );
+    ok(
+      /!\w*[mM]cpRoute\s*&&\s*!\w*[hH]ttpRoute\s*&&\s*!\w+\.ok\s*&&\s*\w+\.failure\s*===\s*"search-empty"/.test(src),
+      "🔴 OPE-1722 — the fixture verdict turns on the MEASURED rungs plus the pin's cause, so it reaches the state that actually reds",
+    );
+    {
+      const at = src.indexOf("fixtureMissing");
+      const guard = src.slice(Math.max(0, src.lastIndexOf("if(", at) === -1 ? src.lastIndexOf("if (", at) : src.lastIndexOf("if(", at)), at);
+      ok(!/armed/.test(guard), "🔴 OPE-1722 — and its guard names NO arming state: an arming clause would make it disjoint from the red, which is the defect this replaces");
+    }
+    ok(
+      src.indexOf("judgePass") < src.indexOf("fixtureMissing") && src.indexOf("notionPageLinks") < src.indexOf("fixtureMissing"),
+      "🔴 OPE-1722 — the fixture verdict is spent AFTER the reply await, the judge gate and both rung reads, so a broken deployment still reds through a missing fixture",
+    );
+    ok(
+      (src.match(/ctx\.fixtureMissing\(/g) ?? []).length === 1 && /"search-empty"/.test(src),
+      "🔴 OPE-1722 — exactly ONE fixture-missing bail, guarded by the `search-empty` member: the other four pin failures keep the OPE-1496 path",
+    );
+    for (const other of ["search-failed", "read-failed", "no-prose", "no-driver-key"])
+      ok(!new RegExp(`failure\\s*===\\s*"${other}"`).test(src), `🔴 OPE-1722 — NEGATIVE CONTROL: S24 branches on no pin failure but \`search-empty\` (\`${other}\` stays a printed reason)`);
+    ok(
+      /provision-notion-query-page/.test(src),
+      "🔴 OPE-1722 — the fixture-missing message NAMES the seeder command, so the one verdict with a one-line remedy carries it",
+    );
+    ok(
+      /never that the deployment is broken/.test(src),
+      "🔴 OPE-1722 — and it says outright what it does NOT assert about the deployment, which is the claim a live run's red got wrong",
+    );
+    ok(
+      /reply await and the judge gate above PASSED/.test(src),
+      "🔴 OPE-1722 — the verdict names the two hard gates that DID run and pass, so it is not read as a leg that checked nothing",
+    );
   }
+}
+
+{
+  const { SKIP_KINDS, emptySkipCounts, renderSkipBreakdown } = await import("../packages/core/scripts/e2e/skip-summary.js");
+  ok(SKIP_KINDS.includes("fixture-missing"), "`fixture-missing` is in the closed skip taxonomy");
+  ok(emptySkipCounts()["fixture-missing"] === 0, "…so the empty tally carries its bucket");
+  ok(renderSkipBreakdown({ ...emptySkipCounts(), "fixture-missing": 2 }) === "2 fixture-missing", "…and the end-of-run breakdown renders it by name");
+  ok(
+    renderSkipBreakdown({ ...emptySkipCounts(), "fixture-missing": 1, "scenario-self-skip": 1 }) === "1 fixture-missing, 1 scenario-self-skip",
+    "…beside a self-skip rather than folded into it, which is the whole point of the split: one says the DEPLOYMENT cannot arm the rung, the other says the harness's own test data is gone",
+  );
+
+  const runnerSrc = readFileSync(new URL("../packages/core/scripts/e2e/runner.ts", import.meta.url), "utf8");
+  ok(/skipCounts\["fixture-missing"\]\+\+/.test(runnerSrc), "the runner really has a `fixture-missing` counting site — a member with no site is a bucket that can never be non-zero");
+  ok(
+    /err instanceof FixtureMissing/.test(runnerSrc) && runnerSrc.indexOf("err instanceof FixtureMissing") < runnerSrc.indexOf("err instanceof ScenarioSkip"),
+    "…reached BEFORE the ScenarioSkip branch, so the verdict cannot be swallowed as an ordinary self-skip",
+  );
+  ok(/FIXTURE MISSING/.test(runnerSrc), "…and printed on its own line, because the remedy is a command an operator runs");
+  const branch = runnerSrc.slice(runnerSrc.indexOf("err instanceof FixtureMissing"), runnerSrc.indexOf("err instanceof ScenarioSkip"));
+  ok(/skipped\+\+/.test(branch) && !/failed\+\+/.test(branch), "🔴 OPE-1722 — the branch counts a SKIP and never a failure: nothing about the deployment was measured, so the exit code must not move");
 }
 
 {
@@ -4038,6 +4095,56 @@ rmSync(dir, { recursive: true, force: true });
     ok(tick >= 2, "…so it really waited a tick rather than taking the first bot comment it saw");
     const unskipped = await driver.awaitBotReplyOnBlock("blk", "d1", "", { timeoutMs: 30_000 });
     ok(unskipped.id === "x1", "negative control: with NO skip the same poll returns the hand-off — the predicate is what changes the verdict");
+  }
+
+  {
+    const { pinNotionQueryPage } = await import("../packages/core/scripts/e2e/notion-driver.js");
+    const search = (results: unknown[]) => res(200, { body: { results } });
+    const key = { driverKey: "k", query: "team handbook" } as const;
+
+    {
+      const empty = await pinNotionQueryPage({ ...key, fetchFn: async () => search([]), sleepFn: async () => undefined });
+      ok(!empty.ok && empty.failure === "search-empty", "a search matching NOTHING reports `search-empty` — the fixture is absent, not the token and not the vendor");
+      ok(!empty.ok && empty.hits === 0, "…and carries the hit count the leg asserts is non-zero");
+      ok(!empty.ok && empty.reason.includes("team handbook"), "…and still names the query in prose, for the operator reading it");
+    }
+    {
+      const archived = await pinNotionQueryPage({ ...key, fetchFn: async () => search([{ object: "page", id: "p1", archived: true }]), sleepFn: async () => undefined });
+      ok(!archived.ok && archived.failure === "search-empty", "an ARCHIVED-only match is `search-empty` too — no usable page came back");
+      ok(!archived.ok && archived.hits === 1, "…and `hits` reports what the search really matched (1), so the reason can say 'matched, all archived'");
+    }
+    {
+      const failed = await pinNotionQueryPage({ ...key, fetchFn: async () => res(503), sleepFn: async () => undefined });
+      ok(!failed.ok && failed.failure === "search-failed", "NEGATIVE CONTROL: a 5xx on the search is `search-failed`, never `search-empty`");
+      let call = 0;
+      const readBad = await pinNotionQueryPage({
+        ...key,
+        fetchFn: async () => (++call === 1 ? search([{ object: "page", id: "p1" }]) : res(403)),
+        sleepFn: async () => undefined,
+      });
+      ok(!readBad.ok && readBad.failure === "read-failed", "NEGATIVE CONTROL: a page found but unreadable is `read-failed` — the fixture exists");
+      call = 0;
+      const imagesOnly = await pinNotionQueryPage({
+        ...key,
+        fetchFn: async () => (++call === 1 ? search([{ object: "page", id: "p1" }]) : res(200, { body: { results: [{ type: "image", image: {} }] } })),
+        sleepFn: async () => undefined,
+      });
+      ok(!imagesOnly.ok && imagesOnly.failure === "no-prose", "NEGATIVE CONTROL: a page of images is `no-prose` — it was FOUND, so seeding a second one would be the wrong advice");
+      ok(!imagesOnly.ok && imagesOnly.hits === 1, "…and it reports the hit, which is exactly what makes it not a missing fixture");
+    }
+    {
+      let call = 0;
+      const good = await pinNotionQueryPage({
+        ...key,
+        fetchFn: async () =>
+          ++call === 1
+            ? search([{ object: "page", id: "p1", properties: { Name: { type: "title", title: [{ plain_text: "team handbook (oe-e2e fixture)" }] } } }])
+            : res(200, { body: { results: [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "The fixture rota meets on the second Tuesday of each month in the Kestrel room." }] } }] } }),
+        sleepFn: async () => undefined,
+      });
+      ok(good.ok && good.hits === 1, "a resolved pin reports the search's hit count beside the page");
+      ok(good.ok && good.pin.title === "team handbook (oe-e2e fixture)" && good.pin.phrases.length > 0, "…and still carries the page's title and its quotable prose");
+    }
   }
 }
 console.log(

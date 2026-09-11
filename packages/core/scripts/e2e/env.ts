@@ -377,10 +377,12 @@ export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> 
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), secret: values[1], hookId } };
 }
 
+export const S24_DEFAULT_QUERY = "team handbook";
+
 export function resolveNotion(env: Env = process.env): Resolved<NotionConfig> {
   const { values, missing } = need(env, [ENV.notionChannel]);
   if (missing.length > 0) return { ok: false, missing };
-  const query = env[ENV.notionQuery]?.trim() || "team handbook";
+  const query = env[ENV.notionQuery]?.trim() || S24_DEFAULT_QUERY;
   return { ok: true, cfg: { channel: values[0], query } };
 }
 

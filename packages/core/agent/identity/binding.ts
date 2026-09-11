@@ -328,6 +328,10 @@ export function currentTurnIssue(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["issue_id", "issueId", "issue_identifier", "issueIdentifier"]);
 }
 
+export function currentTurnPage(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["page_id", "pageId"]);
+}
+
 export function currentTurnOrganization(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["organization_id", "organizationId"]);
 }

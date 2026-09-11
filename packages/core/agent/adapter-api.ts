@@ -203,6 +203,11 @@ export { registerIdentityMapper, registeredIdentityMapperPlatforms, deploymentOr
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
+export { noteAuthoredRecordRead } from "./channels/read-reach.js";
+export type { AuthoredRecordKind, AuthoredRecordRead } from "./channels/read-reach.js";
+export { connectorReadsThisTurn } from "./channels/reply-provenance.js";
+export type { ConnectorRead, ConnectorReadRecord } from "./channels/reply-provenance.js";
+
 export { surfaceKeySegment, trustGroupKeyFor } from "./identity/binding.js";
 
 export { registerSurfaces, defineSurface, _resetSurfacesForTest } from "./identity/trust.js";
@@ -325,6 +330,19 @@ export {
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
 } from "./channels/question-bridge.js";
 export type { OutstandingQuestion, InboundAnswerRouting, BridgedQuestionStore } from "./channels/question-bridge.js";
+export {
+  OE_INPUT_CLICK_PREFIX,
+  APPROVAL_BUTTON_LABELS,
+  approvalClickId,
+  parseApprovalClickId,
+  mintApprovalCardTicket,
+  approvalCardActions,
+  rememberApprovalCardTicket,
+  readApprovalCardTicket,
+  forgetApprovalCardTicket,
+  resolveApprovalCardClick,
+} from "./channels/approval-card.js";
+export type { ApprovalCardTicket, ApprovalClickRouting, ApprovalClickRefusal, ApprovalClickDeps } from "./channels/approval-card.js";
 export { bareTokenFromEveContext } from "./channels/window-key.js";
 
 export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
@@ -332,7 +350,7 @@ export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";
 
 export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
 export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
-export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./channels/unified-window.js";
+export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, unifiedThreadRef, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./channels/unified-window.js";
 export type { UnifiedWakeOrigin, UnifiedWindowWake, SingleWindowMentionPolicy } from "./channels/unified-window.js";
 
 export { windowGrainOf } from "./identity/binding.js";

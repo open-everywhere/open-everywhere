@@ -817,6 +817,132 @@ const NO_REQUESTER_BASELINE =
 
     __setCancelSettleGraceForTest();
   }
+
+  {
+    const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
+    const { __clearEndedTurnsForTest, __setCancelSettleGraceForTest, __flushIgnoredStopChecksForTest } = await import("../agent/hooks/turn-anchor.js");
+    __setCancelSettleGraceForTest(600_000);
+
+    const CHANNEL = "C-1724";
+    const ROOT = "m-1724-root";
+    const STOPPER = "U-1724";
+    const posts: { channelId: string; text: string }[] = [];
+    registerSurfaceMessageOps({
+      platform: "discord",
+      postText: async (channelId, text) => {
+        posts.push({ channelId, text });
+        return "posted-1724";
+      },
+      editMessage: async () => {},
+      postFiles: async () => {},
+      setReaction: async () => {},
+    });
+
+    const slotFor = (turnId: string, sessionId: string, org: string, windowKey: string): Record<string, unknown> => ({
+      turnId,
+      sessionId,
+      org,
+      windowKey,
+      workspace: "G1",
+      surfaceKey: "discord/G1/C-1724",
+      platform: "discord",
+      channelId: CHANNEL,
+      messageId: ROOT,
+      handPlaced: false,
+      ran: ["reply"],
+      steps: 1,
+    });
+    const cancelledRowsFor = async (org: string, turnId: string, sessionId: string): Promise<Record<string, unknown>[]> =>
+      (await readAudit({ org, action: TURN_CANCELLED_ACTION })).map((r) => ({ ...r.detail })).filter((d) => d["turnId"] === turnId && d["sessionId"] === sessionId);
+
+    const acceptingDoor: AttachSessionForCancel = () => ({ cancel: async () => ({ status: "accepted" }) });
+
+    posts.length = 0;
+    const ctxA = { channel: { continuationToken: "w-1724a" }, session: { id: "s-1724a" } };
+    const orgA = resolvePartition(ctxA as never).org;
+    const containerA = new SeededSession();
+    await storage.run(containerA, async () => {
+      containerA.set({ name: ANCHOR_KEY }, slotFor("t-1724a", "s-1724a", orgA, "w-1724a"));
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724a" } }, ctxA);
+      containerA.set({ name: ANCHOR_KEY }, slotFor("t-1724a", "s-1724a", orgA, "w-1724a"));
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724a" } }, ctxA);
+      ok(readPendingCancelNote() === null, "🔴 a cancel for an already-ended turn writes NO reconstruction — the model is never told a finished turn was interrupted");
+    });
+    await __flushIgnoredStopChecksForTest();
+    ok((await cancelledRowsFor(orgA, "t-1724a", "s-1724a")).length === 0, "🔴 …and NO turn.cancelled audit row — the row keeps meaning 'eve really cancelled this turn'");
+    ok(posts.length === 0, `🔴 …and the room is never told it stood down from work that finished — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    const ctxB = { channel: { continuationToken: "w-1724b" }, session: { id: "s-1724b" } };
+    const orgB = resolvePartition(ctxB as never).org;
+    await recordTurnAnchor(orgB, { windowKey: "w-1724b", sessionId: "s-1724b", turnId: "t-1724b", surfaceKey: "discord/G1/C-1724" }, new Date().toISOString());
+    const stopped = await cancelAnchoredTurn({ org: orgB, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "reaction", query: { windowKey: "w-1724b" }, attachSession: acceptingDoor });
+    ok(stopped.outcome === "requested", `(precondition) the ingress accepted the stop, so a request row really exists — got ${stopped.outcome}`);
+    const containerB = new SeededSession();
+    await storage.run(containerB, async () => {
+      containerB.set({ name: ANCHOR_KEY }, slotFor("t-1724b", "s-1724b", orgB, "w-1724b"));
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724b" } }, ctxB);
+      containerB.set({ name: ANCHOR_KEY }, slotFor("t-1724b", "s-1724b", orgB, "w-1724b"));
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724b" } }, ctxB);
+      ok(readPendingCancelNote()?.turnId === "t-1724b", "🔴 (positive control) a stop that was really asked for still writes the reconstruction");
+      ok(readPendingCancelNote()?.by === STOPPER, "…and still names the person who asked");
+    });
+    await __flushIgnoredStopChecksForTest();
+    ok((await cancelledRowsFor(orgB, "t-1724b", "s-1724b")).length === 1, "🔴 (positive control) …and the turn.cancelled row is still written");
+    ok(posts.length === 1 && posts[0]!.text.startsWith("Stood down"), `🔴 …and the room still gets the stood-down note — got ${JSON.stringify(posts.map((p) => p.text))}`);
+    ok((await readAudit({ org: orgB, action: TURN_STOP_IGNORED_ACTION })).filter((r) => r.detail?.["turnId"] === "t-1724b").length === 0, "…and no ignored-stop row, because the cancel did settle");
+
+    posts.length = 0;
+    const ctxC = { channel: { continuationToken: "w-1724c" }, session: { id: "s-1724c" } };
+    const orgC = resolvePartition(ctxC as never).org;
+    const containerC = new SeededSession();
+    await storage.run(containerC, async () => {
+      containerC.set({ name: ANCHOR_KEY }, slotFor("t-1724c", "s-1724c", orgC, "w-1724c"));
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724c" } }, ctxC);
+      __clearEndedTurnsForTest();
+      containerC.set({ name: ANCHOR_KEY }, slotFor("t-1724c", "s-1724c", orgC, "w-1724c"));
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724c" } }, ctxC);
+    });
+    await __flushIgnoredStopChecksForTest();
+    ok((await cancelledRowsFor(orgC, "t-1724c", "s-1724c")).length === 1, "🔴 with the ended-turn witness gone the row IS written — leg ① is that witness deciding, not a dead arm");
+    ok(posts.length === 1 && posts[0]!.text.startsWith("Stood down"), `🔴 …and the room IS told — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    const ctxD1 = { channel: { continuationToken: "w-1724d1" }, session: { id: "s-1724d1" } };
+    const ctxD2 = { channel: { continuationToken: "w-1724d2" }, session: { id: "s-1724d2" } };
+    const orgD = resolvePartition(ctxD1 as never).org;
+    const containerD1 = new SeededSession();
+    await storage.run(containerD1, async () => {
+      containerD1.set({ name: ANCHOR_KEY }, slotFor("turn_1", "s-1724d1", orgD, "w-1724d1"));
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "turn_1" } }, ctxD1);
+    });
+    const containerD2 = new SeededSession();
+    await storage.run(containerD2, async () => {
+      containerD2.set({ name: ANCHOR_KEY }, slotFor("turn_1", "s-1724d2", orgD, "w-1724d2"));
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "turn_1" } }, ctxD2);
+    });
+    await __flushIgnoredStopChecksForTest();
+    ok((await cancelledRowsFor(orgD, "turn_1", "s-1724d2")).length === 1, "🔴 another session's turn_1 is cancelled normally — the witness keys on BOTH ids");
+    ok((await cancelledRowsFor(orgD, "turn_1", "s-1724d1")).length === 0, "…and the ended session's own turn_1 still recorded nothing");
+    ok(posts.length === 1 && posts[0]!.text.startsWith("Stood down"), `…and the live session's room is told — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    const orgE = resolvePartition({ channel: { continuationToken: "w-1724e" }, session: { id: "s-1724e" } } as never).org;
+    const containerE = new SeededSession();
+    await storage.run(containerE, async () => {
+      containerE.set({ name: ANCHOR_KEY }, slotFor("t-1724e-other", "s-1724e", orgE, "w-1724e"));
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724e" } });
+      containerE.set({ name: ANCHOR_KEY }, slotFor("t-1724e", "s-1724e", orgE, "w-1724e"));
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724e" } });
+      ok(readPendingCancelNote()?.turnId === "t-1724e", "🔴 an UNKNOWN stop answer still writes the reconstruction — `undefined` is never read as `false`");
+    });
+    await __flushIgnoredStopChecksForTest();
+    ok((await cancelledRowsFor(orgE, "t-1724e", "s-1724e")).length === 1, "🔴 …and the turn.cancelled row is still written");
+    ok(posts.length === 1 && posts[0]!.text.startsWith("Stood down"), `🔴 …and the room is still told — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    __clearEndedTurnsForTest();
+    __setCancelSettleGraceForTest();
+  }
 }
 
 {
@@ -838,7 +964,7 @@ const NO_REQUESTER_BASELINE =
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {
-  const HITL_CLIENTS = ["core/agent/channels/unified.ts", "providers/notion/agent/channels/notion.ts"];
+  const HITL_CLIENTS = ["core/agent/channels/unified.ts", "providers/notion/agent/channels/notion.ts", "providers/slack/agent/channels/slack-front.ts"];
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
   const found: string[] = [];
   const walk = (dir: URL): void => {
@@ -865,6 +991,13 @@ const NO_REQUESTER_BASELINE =
   ok(/\.respond\(\[\{ requestId: /.test(client), "…and that client really builds an inputResponses entry keyed on the parent-visible requestId");
   const native = readFileSync(new URL("../../providers/notion/agent/channels/notion.ts", import.meta.url), "utf8");
   ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and so does the NATIVE client, so the allow-list cannot pass by a client quietly becoming inert");
+  const tap = readFileSync(new URL("../../providers/slack/agent/channels/slack-front.ts", import.meta.url), "utf8");
+  ok(/args\.from\(bareToken\)[\s\S]{0,240}?\.respond\(\[response\]/.test(tap), "…and so does the TAP client, which addresses eve at the ticket's own bareToken");
+  const tapGate = readFileSync(new URL("../../providers/slack/agent/channels/slack-approval-card.ts", import.meta.url), "utf8");
+  ok(
+    /stillOutstanding: async \(bareToken, requestId\)[\s\S]{0,400}?readBridgedQuestion\(store, org, bareToken\)/.test(tapGate),
+    "🔴 …and the TAP's own gate reads the BRIDGED row — the key hooks/turn-anchor.ts's cancel arm wipes — so a cancelled window refuses the tap instead of respond()ing into a wiped proxy map",
+  );
   const anchor = readFileSync(new URL("../agent/hooks/turn-anchor.ts", import.meta.url), "utf8");
   ok(
     /forgetBridgedQuestion\(/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),

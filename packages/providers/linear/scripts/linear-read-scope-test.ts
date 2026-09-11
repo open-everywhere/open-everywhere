@@ -1,12 +1,15 @@
 
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   assertLinearIssueAllowed,
   currentTurnIssueRefs,
   linearIssueScope,
   linearScopeRefusal,
 } from "../agent/channels/linear-scope.js";
-import { ChannelScopeError, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { ChannelScopeError, connectorReadsThisTurn, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerLinearProvider } from "../agent/register.js";
 import { commentAgeAtRead, readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
 
@@ -38,6 +41,7 @@ const keyFor = (org: string, surface: string): string => `linear/${org}/${surfac
 
 const ISSUE_OWN = "11111111-1111-4111-8111-111111111111";
 const ISSUE_OWN_IDENT = "PAY-1";
+const ISSUE_OWN_URL = "https://linear.app/acme/issue/SOAK-14/implement-throttle-retry-ladder";
 const ISSUE_SIBLING = "22222222-2222-4222-8222-222222222222";
 const ISSUE_ENG = "33333333-3333-4333-8333-333333333333";
 const ISSUE_LOOSE = "44444444-4444-4444-8444-444444444444";
@@ -101,10 +105,11 @@ const TEAM_OF: Record<string, string> = {
   ok(annex.callerDomain === "orgwide" && annex.targetDomain === "payments", "…and both sides resolved through the SAME core tiering");
 }
 
-const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org = ORG): BindableContext =>
+const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org = ORG, turnId?: string): BindableContext =>
   ({
     channel: { kind: "linear" },
     session: {
+      ...(turnId ? { turn: { id: turnId, sequence: 1 } } : {}),
       auth: {
         current: {
           attributes: {
@@ -278,6 +283,7 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
             id: ISSUE_OWN,
             identifier: "SOAK-14",
             title: "Implement throttle retry ladder",
+            url: ISSUE_OWN_URL,
             description: "the v1 ladder",
             state: { name: "Todo", type: "unstarted" },
             comments: {
@@ -292,15 +298,70 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   try {
     const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
     const entry = readLinearIssueEntry as unknown as {
-      execute: (i: unknown, c: unknown) => Promise<{ readAt?: string; text: string }>;
+      execute: (i: unknown, c: unknown) => Promise<{ readAt?: string; text: string; url?: string }>;
       toModelOutput: (o: unknown) => Promise<{ value: string }>;
     };
     const out = await entry.execute({ issue: ISSUE_OWN }, turn);
     ok(typeof out.readAt === "string" && Number.isFinite(Date.parse(out.readAt!)), "execute stamps the read with a parseable time");
+    ok(out.url === ISSUE_OWN_URL, `🔴 OPE-1714: execute returns the issue's own Linear URL, as Linear reports it (saw: ${JSON.stringify(out.url)})`);
     ok(out.text.includes("(27 minutes before this read)"), "execute ages every comment against that read time");
     const rendered = (await entry.toModelOutput(out)).value;
     ok(rendered.includes(`Read live at ${out.readAt}`), "…and the model sees the read time on the output it gets");
+    ok(rendered.includes(ISSUE_OWN_URL), "🔴 OPE-1714: …and the LINK on the header line too, so the model can hand a human something to click");
     ok(rendered.includes("[Todo]") && rendered.includes("(27 minutes before this read)"), "…beside the live state and the comment's age — the pair soak run 3 could not tell apart");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedToken === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
+    else process.env.LINEAR_AGENT_ACCESS_TOKEN = savedToken;
+  }
+}
+
+{
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const eveAbs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(eveAbs("dist/src/context/container.js"));
+  const { SessionKey } = await import(eveAbs("dist/src/context/keys.js"));
+  const savedFetch = globalThis.fetch;
+  const savedToken = process.env.LINEAR_AGENT_ACCESS_TOKEN;
+  process.env.LINEAR_AGENT_ACCESS_TOKEN = "read-scope-test-token";
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        data: {
+          issue: {
+            id: ISSUE_OWN,
+            identifier: "SOAK-14",
+            title: "Implement throttle retry ladder",
+            url: ISSUE_OWN_URL,
+            description: "the v1 ladder",
+            state: { name: "Todo", type: "unstarted" },
+            comments: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  try {
+    const TURN = "turn-provenance-door";
+    const container = new ContextContainer();
+    container.set(SessionKey, { sessionId: "linear-read-scope-test", auth: null, turn: 1, parent: undefined });
+    const reads = await contextStorage.run(container, async () => {
+      await (readLinearIssueEntry as unknown as { execute: (i: unknown, c: unknown) => Promise<unknown> }).execute(
+        { issue: ISSUE_OWN },
+        ctxFor(TEAM_PAY, ISSUE_OWN, undefined, ORG, TURN),
+      );
+      return connectorReadsThisTurn(TURN);
+    });
+    ok(reads.length === 1, `🔴 the tool writes exactly ONE reply-provenance entry for the read it made (saw ${reads.length})`);
+    ok(
+      reads[0]?.connection === "linear" && reads[0]?.op === "read_linear_issue",
+      `🔴 …under the connection and op CORE picks for this kind, never a label the provider chose (saw: ${JSON.stringify({ connection: reads[0]?.connection, op: reads[0]?.op })})`,
+    );
+    ok(
+      reads[0]?.record?.kind === "linear-issue" && reads[0]?.record?.id === "SOAK-14",
+      `🔴 …carrying the RECORD, because the turn was woken on this very issue — the door matched the wake's UUID stamp against the identifier the fetch resolved (saw: ${JSON.stringify(reads[0]?.record)})`,
+    );
   } finally {
     globalThis.fetch = savedFetch;
     if (savedToken === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;

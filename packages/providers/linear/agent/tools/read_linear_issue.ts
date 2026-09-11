@@ -11,6 +11,7 @@ import {
   auditOriginFenceRefusal,
   currentTurnIssue,
   currentTurnOrganization,
+  noteAuthoredRecordRead,
   workerChatArmMount,
   getConfig,
   preRegisterDynamicEntry,
@@ -63,6 +64,7 @@ export const readLinearIssueEntry = defineTool({
     issue: z.string(),
     identifier: z.string().optional(),
     title: z.string().optional(),
+    url: z.string().optional(),
     state: z.string().optional(),
     comments: z.number(),
     truncated: z.boolean(),
@@ -96,11 +98,18 @@ export const readLinearIssueEntry = defineTool({
     } catch {
       workspaceTrust = undefined;
     }
+    noteAuthoredRecordRead(bctx, {
+      kind: "linear-issue",
+      id: res.identifier ?? issue,
+      alsoKnownAs: [res.id, issue],
+      name: res.title,
+    });
     return {
       ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
       issue,
       identifier: res.identifier,
       title: res.title,
+      ...(res.url !== undefined ? { url: res.url } : {}),
       state: res.stateName,
       comments: res.comments.length,
       truncated: res.truncated,
@@ -114,6 +123,7 @@ export const readLinearIssueEntry = defineTool({
     const headParts = [`Linear issue ${ref}`];
     if (output.title) headParts.push(output.title);
     if (output.state) headParts.push(`[${output.state}]`);
+    if (output.url) headParts.push(output.url);
     const header = headParts.join(" — ");
     const asOf = output.readAt
       ? `\nRead live at ${output.readAt}: the fields above are the issue's state at that moment. The comments below are HISTORY — what a comment claimed about status, approval or progress is not the present state.`

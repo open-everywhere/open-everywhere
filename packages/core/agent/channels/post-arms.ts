@@ -70,6 +70,14 @@ export interface PostArm {
   readonly displayNameCapable?: boolean;
   splitText?(text: string): readonly string[];
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
+  dispatchUnifiedActions?(
+    origin: UnifiedWakeOrigin,
+    text: string,
+    actions: readonly DirectMessageAction[],
+    deps: UnifiedReplyDeps,
+    replier?: ReplierLabel,
+    intent?: PostIntent,
+  ): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps, answered?: boolean): Promise<void>;
   editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
   retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;
@@ -103,6 +111,16 @@ export function directMessageCapablePlatforms(): readonly string[] {
 
 export function canDeliverDirectMessage(platform: string | undefined): boolean {
   return typeof postArm(platform)?.deliverDirectMessage === "function";
+}
+
+export function canPostUnifiedActions(platform: string | undefined): boolean {
+  return typeof postArm(platform)?.dispatchUnifiedActions === "function";
+}
+
+export function unifiedActionCapablePlatforms(): readonly string[] {
+  return [...POST_ARMS.values()]
+    .filter((a) => typeof a.dispatchUnifiedActions === "function")
+    .map((a) => a.platform);
 }
 
 export async function dispatchDirectMessage(platform: string | undefined, input: DirectMessageRequest): Promise<DirectMessageDelivery> {

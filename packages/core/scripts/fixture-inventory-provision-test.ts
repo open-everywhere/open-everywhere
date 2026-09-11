@@ -1,4 +1,4 @@
-import { PROVISIONERS, provisionSlackMpim, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces, alreadyProvisioned, offersEnvWrite } from "./e2e/fixture-inventory.js";
+import { PROVISIONERS, provisionSlackMpim, writeEnvE2e, redactGuids, loadEnvFile, notionTitleOf, reachableSurfaces, alreadyProvisioned, offersEnvWrite, notionApi, withTimeout, PROBE_TIMEOUT_MS } from "./e2e/fixture-inventory.js";
 import { roomName, type PlannedRoom } from "./e2e/fixture-inventory-lib.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -82,6 +82,156 @@ for (const [on, label] of [
   ok(outcome.state === "created", "notion: an absent page IS created — the control for the two arms above");
   ok(rec.creates(/^POST .*\/pages$/) === 1, "notion: exactly one create request, never two");
   ok(outcome.id === "eeeeeeee-0000-4000-8000-000000000005", "notion: the created page's id is returned");
+}
+
+function notion429(opts: { readonly retryAfter?: string; readonly secondStatus?: number } = {}): { readonly fetchFn: typeof fetch; count(): number } {
+  let n = 0;
+  const fetchFn = (async () => {
+    n += 1;
+    if (n === 1) {
+      return new Response(JSON.stringify({ code: "rate_limited" }), {
+        status: 429,
+        headers: opts.retryAfter === undefined ? {} : { "retry-after": opts.retryAfter },
+      });
+    }
+    return new Response(JSON.stringify({ id: "page-after-retry" }), { status: opts.secondStatus ?? 200 });
+  }) as typeof fetch;
+  return { fetchFn, count: () => n };
+}
+
+{
+  const notion = notion429({ retryAfter: "2" });
+  const waits: number[] = [];
+  const res = await withPatchedFetch(notion.fetchFn, () =>
+    withTimeout(() => notionApi("k", "/pages/x", {}, { sleepFn: async (ms) => void waits.push(ms) }), "notion lookup"),
+  );
+  ok(notion.count() === 2, `notion 429: exactly ONE retry — two requests in total (got ${notion.count()})`);
+  ok(waits.length === 1 && waits[0] === 2_000, `notion 429: \`Retry-After: 2\` is honoured as one 2000ms wait (got ${JSON.stringify(waits)})`);
+  ok(res.status === 200, `notion 429: the retry's own answer is what the caller sees (got ${res.status})`);
+  ok(PROBE_TIMEOUT_MS === 15_000, "🔴 notion 429: the probe BUDGET CONSTANT is unchanged — the arm below is what proves the wait is bought by moving the deadline instead");
+}
+
+{
+  const notion = notion429({ retryAfter: "1" });
+  const started = Date.now();
+  const res = await withPatchedFetch(notion.fetchFn, () =>
+    withTimeout(() => notionApi("k", "/pages/x"), "notion lookup", 400).then(
+      (r) => ({ status: r.status, note: "" }),
+      (e: unknown) => ({ status: -1, note: String(e) }),
+    ),
+  );
+  const took = Date.now() - started;
+  ok(res.status === 200, `🔴 notion 429: a 400ms probe budget SURVIVES a 1000ms honoured Retry-After — the deadline moved by the wait (got ${res.status === -1 ? res.note : res.status})`);
+  ok(took >= 1_000, `notion 429: …and the wait was really served, not skipped (took ${took}ms)`);
+  ok(notion.count() === 2, `notion 429: …with exactly one retry (got ${notion.count()} requests)`);
+}
+
+{
+  const slow = (async () => {
+    await new Promise((r) => setTimeout(r, 400));
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  const err: unknown = await withPatchedFetch(slow, () =>
+    withTimeout(() => notionApi("k", "/pages/x"), "notion lookup", 80).then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  ok(
+    err instanceof Error && err.message.includes("timed out after 80ms"),
+    `🔴 NEGATIVE CONTROL: a slow call with NO 429 still times out on its budget (got ${String(err)})`,
+  );
+}
+
+{
+  let answer: ((res: Response) => void) | undefined;
+  const held = (async () =>
+    new Promise<Response>((r) => {
+      answer = r;
+    })) as typeof fetch;
+
+  const first: unknown = await withPatchedFetch(held, () =>
+    withTimeout(() => notionApi("k", "/pages/one", {}, { sleepFn: async () => {} }), "notion lookup one", 60).then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  ok(first instanceof Error && first.message.includes("timed out after 60ms"), `notion 429: probe one times out with its call still running (got ${String(first)})`);
+
+  const slowSecond = (async () => {
+    answer?.(new Response(JSON.stringify({ code: "rate_limited" }), { status: 429, headers: { "retry-after": "30" } }));
+    await new Promise((r) => setTimeout(r, 400));
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  const started = Date.now();
+  const second: unknown = await withPatchedFetch(slowSecond, () =>
+    withTimeout(() => notionApi("k", "/pages/two"), "notion lookup two", 150).then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  const took = Date.now() - started;
+  ok(
+    second instanceof Error && second.message.includes("timed out after 150ms"),
+    `🔴 notion 429: probe TWO still times out on its own 150ms — a 30s wait its predecessor honoured is not its budget (got ${String(second)})`,
+  );
+  ok(took < 2_000, `notion 429: …and it timed out promptly rather than inheriting the 30s (took ${took}ms)`);
+  ok(
+    second instanceof Error && !second.message.includes("honoured Retry-After"),
+    `🔴 notion 429: …and its own message claims NO honoured wait, because it honoured none (got ${String(second)})`,
+  );
+}
+
+{
+  const notion = notion429({ retryAfter: "600" });
+  const waits: number[] = [];
+  const res = await withPatchedFetch(notion.fetchFn, () => notionApi("k", "/pages/x", {}, { sleepFn: async (ms) => void waits.push(ms) }));
+  ok(waits.length === 1 && waits[0] === 30_000, `notion 429: a ten-minute Retry-After is CAPPED at 30000ms (got ${JSON.stringify(waits)})`);
+  ok(notion.count() === 2 && res.status === 200, "notion 429: …and the one retry still runs");
+}
+
+{
+  const notion = notion429({ retryAfter: "1", secondStatus: 429 });
+  const res = await withPatchedFetch(notion.fetchFn, () => notionApi("k", "/pages/x", {}, { sleepFn: async () => {} }));
+  ok(notion.count() === 2, `🔴 notion 429: a still-429 retry is NOT retried again — two requests, never three (got ${notion.count()})`);
+  ok(res.status === 429, "notion 429: …and that 429 reaches the caller, which keeps its own wording for it");
+}
+
+{
+  let requests = 0;
+  let slept = false;
+  const missing = (async () => {
+    requests += 1;
+    return new Response(JSON.stringify({ code: "object_not_found" }), { status: 404, headers: { "retry-after": "1" } });
+  }) as typeof fetch;
+  const res = await withPatchedFetch(missing, () => notionApi("k", "/pages/x", {}, { sleepFn: async () => void (slept = true) }));
+  ok(requests === 1 && res.status === 404 && !slept, `🔴 CONTROL: a non-429 answer is untouched — one request, no wait (got ${requests} requests, status ${res.status}, slept ${slept})`);
+}
+
+{
+  const notion = notion429();
+  let slept = false;
+  const res = await withPatchedFetch(notion.fetchFn, () => notionApi("k", "/pages/x", {}, { sleepFn: async () => void (slept = true) }));
+  ok(notion.count() === 1 && res.status === 429 && !slept, `notion 429: no readable Retry-After means NO retry (got ${notion.count()} requests, slept ${slept})`);
+}
+
+function rateLimitedOnce(inner: typeof fetch): typeof fetch {
+  let first = true;
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    if (first) {
+      first = false;
+      return new Response(JSON.stringify({ code: "rate_limited" }), { status: 429, headers: { "retry-after": "0" } });
+    }
+    return inner(input, init);
+  }) as typeof fetch;
+}
+
+{
+  const rec = recorder();
+  const outcome = await withPatchedFetch(rateLimitedOnce(notionScript(rec, 1)), () => PROVISIONERS.notion(NOTION_ENV, PLAN, NOTION_ROOM));
+  ok(outcome.state === "found", `🔴 notion 429: \`provision\`'s first call answers 429 and the page is still FOUND, not reported blocked (got ${outcome.state} — ${outcome.detail})`);
+  ok(rec.calls.length === 2, `notion 429: …and the retried request is the one the provisioner's script answered (got ${rec.calls.length} recorded calls)`);
+  ok(rec.creates(/^POST .*\/pages$/) === 0, "notion 429: …with no page created, because the retry found the existing one");
 }
 
 const DISCORD_ENV = { E2E_DISCORD_DRIVER_TOKEN: "t", E2E_DISCORD_CHANNEL: "111" };

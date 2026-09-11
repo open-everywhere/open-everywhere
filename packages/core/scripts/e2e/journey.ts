@@ -24,7 +24,7 @@ const EVE_DENY_LABEL = /^(reject|deny|cancel)$/i;
 const EVE_APPROVE_VALUES: ReadonlySet<string> = new Set(["approve"]);
 const EVE_DENY_VALUES: ReadonlySet<string> = new Set(["cancel", "reject"]);
 
-export function eveNativeApprovalButtons(
+export function eveRequestApprovalButtons(
   m: SlackMessage,
 ): { readonly approve: SlackMessageAction; readonly deny?: SlackMessageAction } | undefined {
   const buttons = (m.actions ?? []).filter((a) => !a.actionId.startsWith(APPROVAL_PREFIX));

@@ -39,7 +39,7 @@ import { PrApi } from "./pr-api.js";
 import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
-import { GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
+import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
 import { emptySkipCounts, renderSkipBreakdown } from "./skip-summary.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
@@ -350,6 +350,9 @@ async function main(): Promise<void> {
       skip(why: string): never {
         throw new ScenarioSkip(why);
       },
+      fixtureMissing(why: string): never {
+        throw new FixtureMissing(why);
+      },
       log(line: string): void {
         console.log(`  [${scenario.id}] ${line}`);
       },
@@ -371,7 +374,11 @@ async function main(): Promise<void> {
       const reportTag = reported > 0 ? `, ${reported} judged-reported (${reportedRed} red, non-gating)` : "";
       console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
-      if (err instanceof ScenarioSkip) {
+      if (err instanceof FixtureMissing) {
+        skipped++;
+        skipCounts["fixture-missing"]++;
+        console.log(`⚑ ${scenario.id} ${scenario.title}: FIXTURE MISSING — nothing was measured about the deployment (${err.message})`);
+      } else if (err instanceof ScenarioSkip) {
         skipped++;
         skipCounts["scenario-self-skip"]++;
         console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);

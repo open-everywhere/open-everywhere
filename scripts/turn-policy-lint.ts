@@ -93,7 +93,7 @@ for (const file of FILES) {
 if (pinned !== EXPECTED_PINNED && reds.length === 0) {
   reds.push(
     `expected ${EXPECTED_PINNED} pinned vendor channels, found ${pinned}. A dispatching channel factory was removed or ` +
-      `renamed — update FILES/EXPECTED_PINNED here so the gate keeps covering every surface.`,
+      `renamed — update FILES/EXPECTED_PINNED here so the gate keeps covering every vendor factory.`,
   );
 }
 
@@ -103,4 +103,7 @@ if (reds.length > 0) {
   process.exit(1);
 }
 
-console.log(`✓ turn-policy: all ${pinned} dispatching vendor channels pin turnPolicy: "queue" (eve's default "steer" cancels turns)`);
+console.log(
+  `✓ turn-policy: all ${pinned} vendor-factory channels pin turnPolicy: "queue" (eve's default "steer" cancels turns). ` +
+    `This scan does not reach a raw defineChannel — see the header for the channels it cannot see.`,
+);

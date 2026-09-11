@@ -74,6 +74,27 @@ function markCancelSettled(sessionId: string, turnId: string): void {
   dropPendingIgnoredStop(sessionId, turnId);
 }
 
+const ENDED_TURNS = new Map<string, { at: number; stopRequested?: boolean }>();
+
+export function __clearEndedTurnsForTest(): void {
+  ENDED_TURNS.clear();
+}
+
+function markTurnEnded(sessionId: string, turnId: string): void {
+  const cutoff = Date.now() - 10 * Math.max(cancelSettleGraceMs, CANCEL_SETTLE_GRACE_MS);
+  for (const [key, at] of ENDED_TURNS) if (at.at < cutoff) ENDED_TURNS.delete(key);
+  ENDED_TURNS.set(settledKey(sessionId, turnId), { at: Date.now() });
+}
+
+function recordEndedTurnStopAnswer(sessionId: string, turnId: string, stopRequested: boolean): void {
+  const entry = ENDED_TURNS.get(settledKey(sessionId, turnId));
+  if (entry) entry.stopRequested = stopRequested;
+}
+
+function endedWithNoStopRequested(sessionId: string, turnId: string): boolean {
+  return ENDED_TURNS.get(settledKey(sessionId, turnId))?.stopRequested === false;
+}
+
 const MAX_NAMED_ACTIONS = 3;
 
 interface TurnAnchorState {
@@ -258,6 +279,12 @@ async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void>
   }
   const addressing = live ?? reconstructCancelledTurn(turnId, ctx);
   if (!addressing) return;
+  if (endedWithNoStopRequested(addressing.sessionId, turnId)) {
+    closeTurnTally(addressing.sessionId, turnId);
+    const orphaned = bareTokenFromEveContext(addressing.windowKey);
+    if (orphaned !== undefined) await forgetBridgedQuestion(getOperationalStore(), addressing.org, orphaned);
+    return;
+  }
   const tally = readTurnTally(addressing.sessionId, turnId);
   const s: CancelledTurnFacts = tally
     ? { ...addressing, handPlaced: tally.handPlaced, ran: [...tally.ran], steps: tally.steps, accounted: true }
@@ -298,11 +325,11 @@ async function pairedRowExists(org: string, action: string, sessionId: string, t
   return rows.some((row) => row.detail?.["turnId"] === turnId && row.detail?.["sessionId"] === sessionId);
 }
 
-async function auditIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "completed" | "failed"): Promise<void> {
+async function auditIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "completed" | "failed"): Promise<boolean> {
   const request = await findCancelRequest({ org: s.org, turnId, sessionId: s.sessionId });
-  if (request?.outcome !== "requested") return;
+  if (request?.outcome !== "requested") return false;
   const key = settledKey(s.sessionId, turnId);
-  if (PENDING_IGNORED_STOPS.has(key)) return;
+  if (PENDING_IGNORED_STOPS.has(key)) return true;
   const endedAt = Date.now();
   const resolve = async (): Promise<void> => {
     PENDING_IGNORED_STOPS.delete(key);
@@ -316,6 +343,7 @@ async function auditIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "co
   };
   const timer = setTimeout(() => void resolve(), cancelSettleGraceMs);
   PENDING_IGNORED_STOPS.set(key, { timer, dueAt: endedAt + cancelSettleGraceMs, resolve });
+  return true;
 }
 
 async function writeIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "completed" | "failed", request: CancelRequestRecord, endedAt: number): Promise<void> {
@@ -345,6 +373,7 @@ async function writeIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "co
 async function onTurnEnded(turnId: string, ctx: HookContext | undefined, endedAs: "completed" | "failed"): Promise<void> {
   clearPendingCancelNoteAfter(turnId);
   const s = read();
+  for (const id of new Set([s?.sessionId, ctx?.session.id])) if (id !== undefined) markTurnEnded(id, turnId);
   const sessionId = s?.sessionId ?? ctx?.session.id;
   const tally = sessionId === undefined ? null : readTurnTally(sessionId, turnId);
   if (sessionId !== undefined) closeTurnTally(sessionId, turnId);
@@ -357,7 +386,8 @@ async function onTurnEnded(turnId: string, ctx: HookContext | undefined, endedAs
   const addressing = live ?? reconstructCancelledTurn(turnId, ctx);
   if (!addressing) return;
   try {
-    await auditIgnoredStop(addressing, turnId, endedAs);
+    const stopRequested = await auditIgnoredStop(addressing, turnId, endedAs);
+    for (const id of new Set([s?.sessionId, ctx?.session.id, addressing.sessionId])) if (id !== undefined) recordEndedTurnStopAnswer(id, turnId, stopRequested);
   } catch (err) {
     console.error(
       `[open-everywhere:turn-anchor] 🔴 the ignored-stop check FAILED for turn ${turnId}: ${String(err)} — if a stop was accepted for this turn, NO ${TURN_STOP_IGNORED_ACTION} row was written for it`,

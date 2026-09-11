@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionPage, resolveBlockOwningPage, resolveNotionCredential } from "../channels/notion-api.js";
+import { readNotionPage, readNotionPageIdentity, resolveBlockOwningPage, resolveNotionCredential } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
 import { assertNotionActingIdentity } from "../channels/notion-acting-identity.js";
 import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock, assertNotionWorkPageAllowed } from "../channels/notion-scope.js";
@@ -16,6 +16,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  noteAuthoredRecordRead,
   type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -40,6 +41,8 @@ export const readNotionPageEntry = defineTool({
         }),
         outputSchema: z.object({
           page: z.string(),
+          title: z.string().optional(),
+          url: z.string().optional(),
           blocks: z.number(),
           truncated: z.boolean(),
           text: z.string(),
@@ -103,10 +106,28 @@ export const readNotionPageEntry = defineTool({
               workspaceTrust = undefined;
             }
           }
-          return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text, readAt, ...(workspaceTrust !== undefined ? { workspaceTrust } : {}) };
+          const identity = await readNotionPageIdentity(page, { ...cred });
+          noteAuthoredRecordRead(ctx2 as BindableContext, {
+            kind: "notion-page",
+            id: page,
+            alsoKnownAs: [requestedPage],
+            name: identity.title,
+          });
+          return {
+            page,
+            ...(identity.title !== undefined ? { title: identity.title } : {}),
+            ...(identity.url !== undefined ? { url: identity.url } : {}),
+            blocks: res.blockCount,
+            truncated: res.truncated,
+            text: res.text,
+            readAt,
+            ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
+          };
         },
         toModelOutput(output) {
-          const header = output.text.length === 0 ? `Notion page ${output.page} has no readable text.` : `Notion page ${output.page}:`;
+          const ref = [output.title, output.url].filter((v) => typeof v === "string" && v.length > 0).join(" — ");
+          const named = ref.length > 0 ? `${output.page} (${ref})` : output.page;
+          const header = output.text.length === 0 ? `Notion page ${named} has no readable text.` : `Notion page ${named}:`;
           const suffix = output.truncated ? "\n\n[truncated — the page has more content than shown]" : "";
           const asOf =
             output.text.length > 0 && output.readAt ? `\n\nRead live at ${output.readAt}: the text above is the page's current content, as of that moment.` : "";

@@ -348,7 +348,7 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
   }
 }
 
-const INVENTORY_COMMANDS = new Set(["inventory", "provision", "provision-mpim"]);
+const INVENTORY_COMMANDS = new Set(["inventory", "provision", "provision-mpim", "provision-notion-query-page"]);
 
 async function main(): Promise<void> {
   if (args.length > 0 && INVENTORY_COMMANDS.has(args[0])) {

@@ -25,3 +25,4 @@ export default defineMcpClientConnection({
 
   approval: connectorApprovalPolicy(),
 });
+

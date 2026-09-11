@@ -1,11 +1,11 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, currentTurnId, currentWakeId, deploymentOrg, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
-import { noteConnectorRead, PROVENANCE_READ_TIER, type ConnectorReadProof } from "../channels/reply-provenance.js";
-import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
+import { noteConnectorRead, PROVENANCE_READ_TIER } from "../channels/reply-provenance.js";
+import { stampReadReach } from "../channels/read-reach.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -47,16 +47,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     if (!result.isError && status !== "error" && tiers.tier === PROVENANCE_READ_TIER) {
       const bind = ctx as unknown as BindableContext;
       const turnId = currentTurnId(bind);
-      const unified = isUnifiedWindowContext(bind);
-      const wakeId = unified ? (addressedWakeThisTurn(turnId) ?? currentWakeId(bind)) : undefined;
-      const proof: ConnectorReadProof = unified ? (wakeId !== undefined ? "wake" : "none") : surfaceKey !== undefined ? "surface" : "none";
-      noteConnectorRead(turnId, {
-        proof,
-        connection,
-        op,
-        ...(proof === "surface" && surfaceKey !== undefined ? { surfaceKey } : {}),
-        ...(proof === "wake" && wakeId !== undefined ? { wakeId } : {}),
-      });
+      noteConnectorRead(turnId, { ...stampReadReach(bind, turnId, surfaceKey), connection, op });
     }
 
     await appendAudit({

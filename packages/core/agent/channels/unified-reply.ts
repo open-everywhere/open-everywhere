@@ -12,7 +12,7 @@ import { recordContainerAnswered } from "./answered-container-ledger.js";
 import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { swallowRoomPost } from "./egress-spoof.js";
-import { postArm, type PostIntent } from "./post-arms.js";
+import { postArm, type DirectMessageAction, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import type { EditLocus } from "./reply-edit.js";
 
@@ -59,6 +59,7 @@ export async function postUnifiedReply(
   audit?: ReplyAudit,
   replier?: ReplierLabel,
   intent?: PostIntent,
+  actions: readonly DirectMessageAction[] = [],
 ): Promise<string> {
   const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
   const clean = provenance.body;
@@ -80,7 +81,7 @@ export async function postUnifiedReply(
     run: async () => {
       let realId: string;
       try {
-        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier, intent);
+        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier, intent, actions);
       } catch (err) {
         await notePostFailure(audit, err, origin.platform);
         throw err;
@@ -145,12 +146,16 @@ async function dispatchUnifiedReply(
   deps: UnifiedReplyDeps = {},
   replier?: ReplierLabel,
   intent?: PostIntent,
+  actions: readonly DirectMessageAction[] = [],
 ): Promise<string> {
   const swallowed = swallowRoomPost(`a unified ${origin.platform} reply (${text.length}c)`, `unified-${origin.platform}`);
   if (swallowed !== undefined) return swallowed;
   const arm = postArm(origin.platform);
   if (!arm?.dispatchUnified) {
     throw new Error(`unified reply couldn't post — no post arm registered for "${origin.platform}".`);
+  }
+  if (actions.length > 0 && arm.dispatchUnifiedActions) {
+    return arm.dispatchUnifiedActions(origin, text, actions, deps, replier, intent);
   }
   return arm.dispatchUnified(origin, text, deps, replier, intent);
 }

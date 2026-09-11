@@ -7,7 +7,7 @@ export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
 
 export const EMPTY_QUESTION_FALLBACK = "I asked a question but supplied no text — reply with anything and I'll carry on.";
 
-const APPROVAL_REQUEST_KIND = "tool-approval";
+export const APPROVAL_REQUEST_KIND = "tool-approval";
 
 export interface BridgeOption {
   readonly id: string;

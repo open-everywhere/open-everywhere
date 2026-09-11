@@ -8,6 +8,8 @@ import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
+import { canPostUnifiedActions } from "./post-arms.js";
+import { approvalCardActions, mintApprovalCardTicket, rememberApprovalCardTicket } from "./approval-card.js";
 import { containerAnsweredSince } from "./answered-container-ledger.js";
 import { isWakeEnvelopeShaped, triggerMessageBody } from "./wake-envelope.js";
 import {
@@ -609,16 +611,36 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const bind = { session: ctx?.session } as unknown as BindableContext;
         const wakeId = currentWakeId(bind);
         const sessionId = typeof ctx?.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
+        const bare = bareTokenFromEveContext(channel.continuation?.token);
+        const cardTicket = mintApprovalCardTicket();
+        let cardActionCount = 0;
         const outcome = await bridgeQuestionToSurface(
           { org, platform: "unified", workspace, surface, ...(sessionId ? { sessionId } : {}), ...(wakeId ? { wakeId } : {}) },
           question,
           {
             resolveOrigin: async () => (wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null),
-            post: async (origin, text) => postUnifiedReply(origin, text),
+            post: async (origin, text) => {
+              const actions = canPostUnifiedActions(origin.platform) ? approvalCardActions(question, cardTicket) : [];
+              if (actions.length === 0 || bare === undefined) return postUnifiedReply(origin, text);
+              let cardContainerKey: string | undefined;
+              try {
+                cardContainerKey = unifiedThreadRef(origin).channelKey;
+              } catch {
+                cardContainerKey = undefined;
+              }
+              const stored = await rememberApprovalCardTicket(getOperationalStore(), org, cardTicket, {
+                bareToken: bare,
+                ...(cardContainerKey ? { containerKey: cardContainerKey } : {}),
+                requestId: question.requestId,
+                optionIds: approvalOptionIds(question),
+              });
+              if (!stored) return postUnifiedReply(origin, text);
+              cardActionCount = actions.length;
+              return postUnifiedReply(origin, text, {}, undefined, undefined, undefined, actions);
+            },
           },
         );
         if (outcome.status === "bridged") {
-          const bare = bareTokenFromEveContext(channel.continuation?.token);
           let containerKey: string | undefined;
           try {
             containerKey = unifiedThreadRef(outcome.origin).channelKey;
@@ -636,6 +658,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
                 });
           ulog(
             `question bridge: posted ${question.toolName} (${question.kind}) to ${outcome.platform} for wake ${wakeId ?? "none"} — id ${outcome.id}` +
+              (cardActionCount > 0 ? ` (card: ${cardActionCount} button(s))` : " (text only)") +
               (remembered && containerKey
                 ? ` (answerable from ${containerKey}: ${question.requestId})`
                 : " (NOT answerable — no outstanding-question row, or no room to bind it to)"),

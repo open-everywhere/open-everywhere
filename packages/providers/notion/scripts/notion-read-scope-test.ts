@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   assertNotionBlockAllowed,
   assertNotionPageAllowed,
@@ -7,7 +10,18 @@ import {
   notionPageDomain,
   notionReadScope,
 } from "../agent/channels/notion-scope.js";
-import { ChannelScopeError, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  ChannelScopeError,
+  connectorReadsThisTurn,
+  defineDomain,
+  registerBroker,
+  registerConfig,
+  resetBrokers,
+  resetRegisteredConnectorCredentials,
+  setRegisteredConnectorCredentials,
+  type BindableContext,
+  type Domain,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionProvider } from "../agent/register.js";
 import { readNotionPageEntry } from "../agent/tools/read_notion_page.js";
 import { readNotionCommentsEntry } from "../agent/tools/read_notion_comments.js";
@@ -111,6 +125,11 @@ const ctxFor = (page: string, ws = WS): BindableContext =>
       },
     },
   }) as BindableContext;
+
+const ctxForTurn = (page: string, turnId: string, ws = WS): BindableContext => {
+  const base = ctxFor(page, ws) as unknown as { session: Record<string, unknown> };
+  return { ...(base as object), session: { ...base.session, turn: { id: turnId, sequence: 1 } } } as unknown as BindableContext;
+};
 
 {
   const quiet: unknown[] = [];
@@ -258,6 +277,72 @@ const ctxFor = (page: string, ws = WS): BindableContext =>
     }
     if (!(err instanceof ChannelScopeError)) console.error(`  [debug] ${name} threw:`, err);
     ok(err instanceof ChannelScopeError, `${name} refuses an out-of-domain page through the FENCE (not the missing-key error)`);
+  }
+}
+
+{
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const eveAbs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(eveAbs("dist/src/context/container.js"));
+  const { SessionKey } = await import(eveAbs("dist/src/context/keys.js"));
+
+  const PAGE_TITLE = "Payments rollout plan";
+  const PAGE_URL = `https://www.notion.so/${PAGE_A.replace(/-/g, "")}`;
+  resetBrokers();
+  registerBroker("test", {
+    async getSecret(ref) {
+      if (ref === "test:notion:chat") return "fake-chat-token";
+      throw new Error(`no secret for ${ref}`);
+    },
+  });
+  resetRegisteredConnectorCredentials();
+  setRegisteredConnectorCredentials([
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "channel-key", type: "api-key", secretRef: "test:notion:chat", broker: "test", intake: false }] },
+  ]);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (url.includes("/v1/pages/")) {
+      return new Response(JSON.stringify({ url: PAGE_URL, properties: { "Some Name": { type: "title", title: [{ plain_text: PAGE_TITLE }] } } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ results: [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "ship on Thursday" }] } }], has_more: false }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+  try {
+    const TURN = "turn-provenance-door";
+    const container = new ContextContainer();
+    container.set(SessionKey, { sessionId: "notion-read-scope-test", auth: null, turn: 1, parent: undefined });
+    const { out, reads } = await contextStorage.run(container, async () => {
+      const result = (await (readNotionPageEntry as unknown as { execute: (i: unknown, c: unknown) => Promise<Record<string, unknown>> }).execute(
+        { page: PAGE_A },
+        ctxForTurn(PAGE_A, TURN),
+      )) as { text: string; title?: string; url?: string };
+      return { out: result, reads: connectorReadsThisTurn(TURN) };
+    });
+    ok(out.text.includes("ship on Thursday"), "§7 precondition: the fake Notion served the page body");
+    ok(out.title === PAGE_TITLE, `🔴 OPE-1714: execute returns the page's TITLE, found by property type (saw: ${JSON.stringify(out.title)})`);
+    ok(out.url === PAGE_URL, `🔴 OPE-1714: …and Notion's own url for it, never one assembled here (saw: ${JSON.stringify(out.url)})`);
+    const rendered = (await (readNotionPageEntry as unknown as { toModelOutput: (o: unknown) => Promise<{ value: string }> }).toModelOutput(out)).value;
+    ok(rendered.includes(PAGE_TITLE) && rendered.includes(PAGE_URL), "🔴 OPE-1714: …and the model sees both on the header line");
+    ok(reads.length === 1, `🔴 the tool writes exactly ONE reply-provenance entry for the read it made (saw ${reads.length})`);
+    ok(
+      reads[0]?.connection === "notion" && reads[0]?.op === "read_notion_page",
+      `🔴 …under the connection and op CORE picks for this kind, never a label the provider chose (saw: ${JSON.stringify({ connection: reads[0]?.connection, op: reads[0]?.op })})`,
+    );
+    ok(
+      reads[0]?.record?.kind === "notion-page" && reads[0]?.record?.id === PAGE_A,
+      `🔴 …carrying the RECORD, because the turn was woken on this very page (saw: ${JSON.stringify(reads[0]?.record)})`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    resetRegisteredConnectorCredentials();
+    resetBrokers();
   }
 }
 

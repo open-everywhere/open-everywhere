@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
   PROVISION_PLAN,
@@ -12,6 +13,8 @@ import {
   createGuardRefusal,
   inventoryVars,
   namesLost,
+  notionQueryPageBody,
+  notionQueryPageTitle,
   parseInventoryDoc,
   planFor,
   renderInventoryDoc,
@@ -28,8 +31,9 @@ import {
   type Resolution,
   type SurfaceKind,
 } from "./fixture-inventory-lib.js";
-import { DEFAULT_TEAMS_REFRESH_SINK, ENV } from "./env.js";
+import { DEFAULT_TEAMS_REFRESH_SINK, ENV, S24_DEFAULT_QUERY } from "./env.js";
 import { TeamsDriver } from "./teams-driver.js";
+import { notionFetch, parseNotionRetryAfterMs } from "./notion-driver.js";
 import { loadDomains } from "../../../../agent/memory/config/domains.js";
 import { loadBindings } from "../../../../agent/access/bundles.js";
 
@@ -39,18 +43,61 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", 
 export const INVENTORY_DOC = join("docs", "dev", "e2e-fixtures.md");
 const ENV_E2E = join(REPO_ROOT, ".env.e2e");
 
-const TIMEOUT_MS = 15_000;
+export const PROBE_TIMEOUT_MS = 15_000;
 
-async function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
+const NOTION_SEED_TIMEOUT_MS = 120_000;
+
+const NOTION_PROBE_RETRY_CAP_MS = 30_000;
+
+interface ProbeDeadline {
+  extend(ms: number): boolean;
+}
+
+const PROBE_DEADLINE = new AsyncLocalStorage<ProbeDeadline>();
+
+function extendProbeDeadline(ms: number): boolean {
+  return PROBE_DEADLINE.getStore()?.extend(ms) ?? false;
+}
+
+export async function withTimeout<T>(run: () => Promise<T>, what: string, ms: number = PROBE_TIMEOUT_MS): Promise<T> {
+  let deadline = Date.now() + ms;
+  let extendedMs = 0;
+  let running = true;
+  const handle: ProbeDeadline = {
+    extend(extra: number): boolean {
+      if (!running) return false;
+      deadline += extra;
+      extendedMs += extra;
+      return true;
+    },
+  };
   return new Promise<T>((res, rej) => {
-    const timer = setTimeout(() => rej(new Error(`${what} timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS);
-    promise.then(
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function arm(inMs: number): void {
+      timer = setTimeout(fire, inMs);
+    }
+    function fire(): void {
+      const left = deadline - Date.now();
+      if (left > 0) {
+        arm(left);
+        return;
+      }
+      settle();
+      const honoured = extendedMs > 0 ? ` (plus ${extendedMs}ms of honoured Retry-After, which the budget does not pay for)` : "";
+      rej(new Error(`${what} timed out after ${ms}ms${honoured}`));
+    }
+    function settle(): void {
+      running = false;
+      clearTimeout(timer);
+    }
+    arm(ms);
+    PROBE_DEADLINE.run(handle, run).then(
       (v) => {
-        clearTimeout(timer);
+        settle();
         res(v);
       },
       (e: unknown) => {
-        clearTimeout(timer);
+        settle();
         rej(e instanceof Error ? e : new Error(String(e)));
       },
     );
@@ -155,20 +202,40 @@ async function linearGraphql(apiKey: string, query: string, variables: Record<st
   return json;
 }
 
-async function notionApi(
+export async function notionApi(
   key: string,
   path: string,
   init: { method?: string; body?: unknown } = {},
+  deps: { readonly sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`https://api.notion.com/v1${path}`, {
-    method: init.method ?? "GET",
-    headers: {
-      authorization: `Bearer ${key}`,
-      "notion-version": "2022-06-28",
-      ...(init.body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-  });
+  const sleepFn = deps.sleepFn ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)));
+  const send = async (): Promise<Response> =>
+    fetch(`https://api.notion.com/v1${path}`, {
+      method: init.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "notion-version": "2022-06-28",
+        ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+
+  let res = await send();
+  if (res.status === 429) {
+    const named = parseNotionRetryAfterMs(res.headers.get("retry-after"), Date.now());
+    if (named !== undefined) {
+      const wait = Math.max(0, Math.min(named, NOTION_PROBE_RETRY_CAP_MS));
+      const moved = extendProbeDeadline(wait);
+      console.log(
+        `  notion ${init.method ?? "GET"} 429 — honouring Retry-After: one retry in ${wait}ms ` +
+          (moved
+            ? `(the ${PROBE_TIMEOUT_MS}ms probe budget is unchanged; this probe's deadline moves by the same ${wait}ms)`
+            : `(no probe deadline is running, so none was moved)`),
+      );
+      await sleepFn(wait);
+      res = await send();
+    }
+  }
   return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
@@ -320,7 +387,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
 
   const ctx: ResolverContext = { env };
   if (reachable.has("slack")) {
-    const auth = await withTimeout(slackApi(env[ENV.slackUserToken]!, "auth.test"), "slack auth.test").catch(() => ({}) as Record<string, unknown>);
+    const auth = await withTimeout(() => slackApi(env[ENV.slackUserToken]!, "auth.test"), "slack auth.test").catch(() => ({}) as Record<string, unknown>);
     if (typeof auth.team_id === "string") ctx.slackTeamId = auth.team_id;
   }
   if (reachable.has("teams")) {
@@ -352,7 +419,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
   const resolutions = new Map<string, Resolution>();
   for (const [key, { surface, id }] of wanted) {
     if (!reachable.has(surface)) continue;
-    const answer = await withTimeout(RESOLVERS[surface](ctx, id), `${surface} lookup`).catch((err: unknown) => ({
+    const answer = await withTimeout(() => RESOLVERS[surface](ctx, id), `${surface} lookup`).catch((err: unknown) => ({
       ok: false as const,
       detail: reason(err),
     }));
@@ -774,7 +841,7 @@ async function runProvisionMpim(env: Env, dryRun: boolean): Promise<number> {
     console.log(`  DRY RUN — nothing is opened. Would call conversations.open over the ${ENV.slackUserToken} user, ${ENV.slackBotUserId} and ${MPIM_THIRD_MEMBER_VARS.join(" or ")}.`);
     return 0;
   }
-  const outcome: MpimOutcome = await withTimeout(provisionSlackMpim(env), "slack conversations.open").catch((err: unknown) => ({
+  const outcome: MpimOutcome = await withTimeout(() => provisionSlackMpim(env), "slack conversations.open").catch((err: unknown) => ({
     state: "blocked" as const,
     detail: reason(err),
   }));
@@ -794,6 +861,109 @@ async function runProvisionMpim(env: Env, dryRun: boolean): Promise<number> {
   console.log("  `packages/core/scripts/e2e/fixture-inventory-lib.ts`'s TRACKED_ROOM_IDS, then run");
   console.log(`  \`npm run e2e:fixtures -- inventory\` and \`npm run docs:generate\`:\n`);
   console.log(`    ${ENV.slackMpimChannel}: "${outcome.id}",`);
+  return 0;
+}
+
+async function notionApiRetrying(
+  key: string,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const res = await notionFetch(
+    `https://api.notion.com/v1${path}`,
+    {
+      method: init.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "notion-version": "2022-06-28",
+        ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    },
+    { what: `${init.method ?? "GET"} /v1${path}` },
+  );
+  return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+}
+
+export interface NotionQueryPageOutcome {
+  readonly state: "created" | "found" | "blocked";
+  readonly id?: string;
+  readonly title?: string;
+  readonly detail: string;
+  readonly grant?: string;
+}
+
+export async function provisionNotionQueryPage(env: Env, query: string): Promise<NotionQueryPageOutcome> {
+  const key = env[ENV.notionDriverKey]?.trim();
+  const anchor = env[ENV.notionAmbientPageId]?.trim();
+  if (!key || !anchor) {
+    return {
+      state: "blocked",
+      detail: `no ${ENV.notionDriverKey} / ${ENV.notionAmbientPageId}`,
+      grant: `Notion: export ${ENV.notionDriverKey} (the driver integration's secret) and ${ENV.notionAmbientPageId} (J-NOT's ambient page) and re-run.`,
+    };
+  }
+  const title = notionQueryPageTitle(query);
+  const anchorPage = await notionApiRetrying(key, `/pages/${encodeURIComponent(anchor)}`);
+  if (anchorPage.status !== 200) return { state: "blocked", detail: `pages.retrieve(${ENV.notionAmbientPageId}) → ${anchorPage.status}` };
+  const parent = anchorPage.json.parent as { type?: string; page_id?: string } | undefined;
+  const parentPageId = parent?.type === "page_id" ? parent.page_id : anchor;
+  if (!parentPageId) return { state: "blocked", detail: "the e2e page has no page parent to create under" };
+  let start: string | undefined;
+  do {
+    const children = await notionApiRetrying(key, `/blocks/${encodeURIComponent(parentPageId)}/children?page_size=100${start ? `&start_cursor=${start}` : ""}`);
+    if (children.status !== 200) return { state: "blocked", detail: `blocks.children → ${children.status}` };
+    const results = (children.json.results ?? []) as { id?: string; type?: string; child_page?: { title?: string } }[];
+    const found = results.find((b) => b.type === "child_page" && b.child_page?.title === title);
+    if (found?.id) return { state: "found", id: canonicalId("notion", found.id), title, detail: "already exists" };
+    start = children.json.has_more === true && typeof children.json.next_cursor === "string" ? children.json.next_cursor : undefined;
+  } while (start);
+  const created = await notionApiRetrying(key, "/pages", {
+    method: "POST",
+    body: {
+      parent: { page_id: parentPageId },
+      properties: { title: [{ type: "text", text: { content: title } }] },
+      children: notionQueryPageBody(query).map((line) => ({
+        object: "block",
+        type: "paragraph",
+        paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+      })),
+    },
+  });
+  if (created.status < 200 || created.status >= 300) {
+    return {
+      state: "blocked",
+      detail: `pages.create → ${created.status} ${String(created.json.code ?? "")}`.trim(),
+      grant: "Notion: connect the driver integration to the e2e page's PARENT page (⋯ → Connections), so a child page can be created under it.",
+    };
+  }
+  const id = created.json.id;
+  return { state: "created", id: typeof id === "string" ? canonicalId("notion", id) : undefined, title, detail: "created with its quotable body" };
+}
+
+async function runProvisionNotionQueryPage(env: Env, dryRun: boolean): Promise<number> {
+  const query = env[ENV.notionQuery]?.trim() || S24_DEFAULT_QUERY;
+  const title = notionQueryPageTitle(query);
+  console.log(`e2e:fixtures provision-notion-query-page (OPE-1722) — the page S24's own search for "${query}" must find`);
+  if (dryRun) {
+    console.log(`  DRY RUN — nothing is written. Would find-or-create the child page "${title}" under ${ENV.notionAmbientPageId}'s own parent,`);
+    console.log(`  with ${notionQueryPageBody(query).length} quotable paragraph(s).`);
+    return 0;
+  }
+  const outcome: NotionQueryPageOutcome = await withTimeout(() => provisionNotionQueryPage(env, query), "provision-notion-query-page (pages.retrieve + blocks.children + pages.create)", NOTION_SEED_TIMEOUT_MS).catch((err: unknown) => ({
+    state: "blocked" as const,
+    detail: reason(err),
+  }));
+  if (outcome.state === "blocked") {
+    console.error(`  ✗ "${title}" — ${outcome.detail}`);
+    if (outcome.grant) console.error(`      ONE-TIME GRANT → ${outcome.grant}`);
+    return 1;
+  }
+  console.log(`  ${outcome.state === "created" ? "+" : "="} "${outcome.title}" ${outcome.id ?? "(no id returned)"} — ${outcome.detail}`);
+  console.log(`\n~ e2e:fixtures provision-notion-query-page: the page exists. Nothing was written to any env var — S24 finds it by SEARCH.`);
+  console.log(`  Notion's search index lags a write by up to a few minutes. Confirm before you trust the leg:`);
+  console.log(`    npm run e2e:fixtures -- inventory --partial     # the page is reachable at all`);
+  console.log(`  then run S24 itself: E2E_INCLUDE_OPTIONAL=1 E2E_ONLY=S24 npm run e2e:driver`);
   return 0;
 }
 
@@ -853,7 +1023,7 @@ async function runProvision(env: Env, domain: string, dryRun: boolean): Promise<
       outcomes.push({ room, state: "skipped", detail: `would create "${roomName(plan.slug, room.surface)}" and set ${room.envVar}` });
       continue;
     }
-    const outcome = await withTimeout(PROVISIONERS[room.surface](env, plan, room), `${room.surface} provision`).catch((err: unknown) => ({
+    const outcome = await withTimeout(() => PROVISIONERS[room.surface](env, plan, room), `${room.surface} provision`).catch((err: unknown) => ({
       room,
       state: "blocked" as const,
       detail: reason(err),
@@ -925,6 +1095,11 @@ async function run(argv: readonly string[]): Promise<number> {
   if (command === "provision-mpim") {
     return runProvisionMpim(resolvedEnv(), rest.includes("--dry-run"));
   }
-  console.error(`✗ e2e:fixtures: unknown command "${String(command)}" — use \`inventory\`, \`provision <domain>\` or \`provision-mpim\`.`);
+  if (command === "provision-notion-query-page") {
+    return runProvisionNotionQueryPage(resolvedEnv(), rest.includes("--dry-run"));
+  }
+  console.error(
+    `✗ e2e:fixtures: unknown command "${String(command)}" — use \`inventory\`, \`provision <domain>\`, \`provision-mpim\` or \`provision-notion-query-page\`.`,
+  );
   return 2;
 }

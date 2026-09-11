@@ -146,7 +146,11 @@ export function buildDiscussionReplyBody(discussionId: string, text: string): Re
 
 const PIN_READ_TIMEOUT_MS = 20_000;
 
-export type NotionPagePinResult = { readonly ok: true; readonly pin: NotionPagePin } | { readonly ok: false; readonly reason: string };
+export type NotionPinFailure = "no-driver-key" | "search-failed" | "search-empty" | "read-failed" | "no-prose";
+
+export type NotionPagePinResult =
+  | { readonly ok: true; readonly pin: NotionPagePin; readonly hits: number }
+  | { readonly ok: false; readonly failure: NotionPinFailure; readonly reason: string; readonly hits: number };
 
 function pageTitle(page: Record<string, unknown>): string {
   const props = page.properties;
@@ -168,6 +172,7 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
   const headers = { authorization: `Bearer ${opts.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" };
   const retry = { fetchFn: opts.fetchFn, sleepFn: opts.sleepFn };
   let found: Record<string, unknown> | undefined;
+  let hits = 0;
   try {
     const res = await notionFetch(
       `${NOTION_API}/search`,
@@ -179,13 +184,15 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
       },
       { what: `POST /v1/search for "${opts.query}"`, ...retry },
     );
-    if (!res.ok) return { ok: false, reason: `the harness's own POST /v1/search for "${opts.query}" → ${res.status}` };
+    if (!res.ok) return { ok: false, failure: "search-failed", hits, reason: `the harness's own POST /v1/search for "${opts.query}" → ${res.status}` };
     const json = (await res.json()) as { results?: unknown };
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
+    hits = results.length;
     found = results.find((r) => r.object === "page" && typeof r.id === "string" && r.archived !== true);
-    if (!found) return { ok: false, reason: `the harness's own search for "${opts.query}" matched no page this token can see (${results.length} result(s))` };
+    if (!found)
+      return { ok: false, failure: "search-empty", hits, reason: `the harness's own search for "${opts.query}" matched no page this token can see (${hits} result(s))` };
   } catch (err) {
-    return { ok: false, reason: `the harness's own Notion search failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, failure: "search-failed", hits, reason: `the harness's own Notion search failed: ${err instanceof Error ? err.message : String(err)}` };
   }
   const pageId = found.id as string;
   const title = pageTitle(found);
@@ -198,13 +205,14 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
       },
       { what: `GET /v1/blocks/${pageId}/children`, ...retry },
     );
-    if (!res.ok) return { ok: false, reason: `the harness's own GET /v1/blocks/${pageId}/children → ${res.status}` };
+    if (!res.ok) return { ok: false, failure: "read-failed", hits, reason: `the harness's own GET /v1/blocks/${pageId}/children → ${res.status}` };
     const json = (await res.json()) as { results?: unknown };
     const phrases = notionBlockPhrases(Array.isArray(json.results) ? json.results : []);
-    if (phrases.length === 0) return { ok: false, reason: `the pinned page "${title}" (${pageId}) holds no quotable prose, so no phrase can be demanded of the answer` };
-    return { ok: true, pin: { pageId, title, phrases } };
+    if (phrases.length === 0)
+      return { ok: false, failure: "no-prose", hits, reason: `the pinned page "${title}" (${pageId}) holds no quotable prose, so no phrase can be demanded of the answer` };
+    return { ok: true, hits, pin: { pageId, title, phrases } };
   } catch (err) {
-    return { ok: false, reason: `the harness's own Notion page read failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, failure: "read-failed", hits, reason: `the harness's own Notion page read failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
