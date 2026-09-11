@@ -237,9 +237,14 @@ export function asGrantUndispatched(err: unknown): GrantUndispatchedError {
   return marked;
 }
 
-export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "ownerSlug" | "verb" | "resource">, reason: CredentialGrantRefusal): string {
+export function credentialGrantRefusalMessage(
+  row: Pick<CredentialGrantRow, "ownerSlug" | "resource" | "connector" | "mcpTool">,
+  reason: CredentialGrantRefusal,
+): string {
   const owner = grantOwnerPhrase(row.ownerSlug);
-  const what = `\`${row.verb}\` on \`${row.resource}\`, granted by ${owner}`;
+  const target = grantResourceTargetLabel(row);
+  const on = target === undefined || target.length === 0 ? "" : ` — "${target}"`;
+  const what = `the grant to ${grantActionPhrase(row.connector, row.mcpTool)}${on} as ${owner}`;
   switch (reason) {
     case "revoked":
       return `Refused: ${owner} revoked this grant. ${what} is no longer spendable. Do not retry — ask again if it is still needed.`;
@@ -250,7 +255,7 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
     case "out_of_scope":
       return `Refused: this grant was approved for a different conversation. ${what} is spendable only where its owner approved it.`;
     case "no_lent_tool":
-      return `Refused: this grant names no vendor tool to run, so ${what} can never be spent. Do not retry — ask again so a fresh grant is minted.`;
+      return `Refused: this grant names no vendor tool to run, so ${owner}'s grant can never be spent under any argument. Do not retry — ask again so a fresh grant is minted.`;
     case "no_transport":
       return `Refused: this deployment carries no transport for the granted connector, so the call cannot be sent. The grant itself is valid.`;
     case "connector_delisted":

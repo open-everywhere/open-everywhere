@@ -5,6 +5,14 @@ import { tmpdir } from "node:os";
 export function pinSuiteStore(label: string): string {
   const dir = join(tmpdir(), `open-everywhere-suite-${label}-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
-  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  pinnedPath = join(dir, "ops.sqlite3");
+  process.env.OE_SQLITE_PATH = pinnedPath;
   return dir;
+}
+
+let pinnedPath: string | null = null;
+
+export function pinnedSuiteStorePath(): string {
+  if (pinnedPath === null) throw new Error("pinnedSuiteStorePath(): this suite never called pinSuiteStore()");
+  return pinnedPath;
 }

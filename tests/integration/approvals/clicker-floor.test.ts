@@ -5,7 +5,7 @@ import { bootAgent, readAuditRows, slackInteractivityPost, waitFor, type AuditRo
 
 process.env.SLACK_BOT_TOKEN = "xoxb-integration-tier-placeholder-not-a-credential";
 
-const TEAM_ID = "T0IT578ABC";
+const TEAM_ID = "T0EXAMPLE";
 const CLICKER_ID = "U0IT578CLK";
 const BOT_USER_ID = "U0IT578BOT";
 const HUMAN_ID = "U0IT578HUM";

@@ -51,6 +51,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      calls              bigint NOT NULL DEFAULT 0,
      PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period, cost_source)
    )`,
+  `CREATE INDEX IF NOT EXISTS spend_ledger_org_period ON spend_ledger (org_id, period)`,
   `CREATE TABLE IF NOT EXISTS routine (
      org_id      text NOT NULL,
      id          text NOT NULL,

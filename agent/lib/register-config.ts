@@ -33,6 +33,7 @@ import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import "../identity/surfaces.js";
+import "../access/browser-hosts.js";
 import "../identity/authors.js";
 import "../routines/collectors.js";
 import "./register-docs.js";

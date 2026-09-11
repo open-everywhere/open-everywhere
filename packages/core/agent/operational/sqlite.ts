@@ -61,6 +61,16 @@ function getDb(): DatabaseSync {
       calls              INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period, cost_source)
     );
+    -- OPE-1677: the PERIOD index the primary key cannot be. The bounded spend reads are shaped
+    -- "WHERE org_id = ? AND period ..." (spendLedgerConjuncts in store.ts). period is the SIXTH
+    -- primary-key column, and a btree bounds its scan only up to the first column the query
+    -- leaves unconstrained -- so the automatic primary-key index bounds on org_id, and everything
+    -- after it is a per-row test over every row the org ever wrote. This index puts period
+    -- second, which makes the range a plan-level narrowing rather than a transfer saving. It
+    -- matters most on the "/oe budget raise" domain scan, which answers a Discord interaction
+    -- inside 3 seconds. This statement is also the MIGRATION: the CREATE block runs on every
+    -- database open, so an existing file builds the index in place, with no drop-and-recreate.
+    CREATE INDEX IF NOT EXISTS spend_ledger_org_period ON spend_ledger (org_id, period);
     CREATE TABLE IF NOT EXISTS routine (
       org_id      TEXT NOT NULL,
       id          TEXT NOT NULL,

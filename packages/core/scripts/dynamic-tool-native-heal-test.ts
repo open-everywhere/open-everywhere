@@ -333,7 +333,7 @@ console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-10
     "…and its replayed tool carries no projection — the raw output reaches eve's own default rendering",
   );
 
-  ok(!registeredProjectionNames().includes(NAME), "NEGATIVE CONTROL: no variant name enters the name-keyed projection registry, which could not disambiguate them");
+  ok(!registeredProjectionNames().includes(NAME), "NEGATIVE CONTROL: no variant name enters the projection registry — membership would vouch for every variant at once, and for a `__` name it would disable the connector fence");
 }
 
 console.log(`\ndynamic-tool-native-heal: ${n} assertions passed.`);

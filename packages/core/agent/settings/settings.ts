@@ -31,7 +31,6 @@ export interface AgentSettings {
   };
   readonly browser: {
     readonly enabled: boolean;
-    readonly domains: string;
   };
   readonly bash: {
     readonly timeoutMs: number;
@@ -234,15 +233,8 @@ export const SETTINGS = {
       path: "browser.enabled",
       shipped: false,
       summary:
-        "The Browser-QA master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires a valid `browser.domains` allowlist. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
+        "The in-sandbox browser master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires at least one row in the host declaration (`agent/access/browser-hosts.ts`), which is where the reach itself lives — each row names a host, the HTTP verbs the firewall admits there, an optional credential the firewall injects at the boundary, and whether `browser_evaluate` is armed for it. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
     } satisfies SettingSpec<boolean>,
-    domains: {
-      path: "browser.domains",
-      shipped: "",
-      summary:
-        "Comma-separated browse-target hostnames — the operator's containment decision, enforced on BOTH walls (agent-browser `--allowed-domains` and the sandbox egress firewall). Bare lowercase hostnames only; ANY invalid entry invalidates the whole list, and `browser.enabled` with an empty or invalid list does not arm.",
-      format: (v) => (v === "" ? "`` (unset — the capability cannot arm)" : v),
-    } satisfies SettingSpec<string>,
   },
   bash: {
     timeoutMs: {
@@ -824,7 +816,6 @@ export function getSettings(
     },
     browser: {
       enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled, env),
-      domains: resolve(SETTINGS.browser.domains, o.browser?.domains, env),
     },
     bash: {
       timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs, env),

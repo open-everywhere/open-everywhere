@@ -225,6 +225,174 @@ async function dropRows(ts: string) {
 }
 
 {
+  const formReq = (body: string): Request => {
+    const ts = String(Math.floor(NOW_MS / 1000));
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": `v0=${createHmac("sha256", SECRET).update(`v0:${ts}:${body}`).digest("hex")}`,
+      },
+      body,
+    });
+  };
+  const jsonReq = (body: string): Request => {
+    const ts = String(Math.floor(NOW_MS / 1000));
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": `v0=${createHmac("sha256", SECRET).update(`v0:${ts}:${body}`).digest("hex")}`,
+      },
+      body,
+    });
+  };
+
+  const clickBody = (
+    actionId: string,
+    teamId: string | undefined,
+    channelId: string | undefined,
+    enterpriseId?: string,
+  ): string => {
+    const payload: Record<string, unknown> = {
+      type: "block_actions",
+      user: { id: "U_CLICKER" },
+      actions: [{ action_id: actionId, value: "default" }],
+      ...(teamId === undefined ? {} : { team: { id: teamId } }),
+      ...(enterpriseId === undefined ? {} : { enterprise: { id: enterpriseId } }),
+      ...(channelId === undefined ? {} : { channel: { id: channelId }, message: { ts: "8000.1" } }),
+    };
+    return new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+  };
+
+  const submitBody = (teamId: string | undefined): string => {
+    const payload: Record<string, unknown> = {
+      type: "view_submission",
+      user: { id: "U_CLICKER" },
+      view: { callback_id: "oe_setkey_modal", state: { values: {} } },
+      ...(teamId === undefined ? {} : { team: { id: teamId } }),
+    };
+    return new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+  };
+
+  const reactionEnvelope = (eventId: string, teamId: string | undefined, channelId: string): string =>
+    JSON.stringify({
+      type: "event_callback",
+      event_id: eventId,
+      ...(teamId ? { team_id: teamId } : {}),
+      event: { type: "reaction_added", user: "U_REACTOR", reaction: "raised_hand", item: { type: "message", channel: channelId, ts: "8100.1" } },
+    });
+
+  const runClicks = async (req: Request) => {
+    const called: string[] = [];
+    const waits: Promise<unknown>[] = [];
+    const spy = (name: string) => async () => {
+      called.push(name);
+      return true;
+    };
+    const handler = buildFrontHandler(async () => new Response("inner"), {
+      signingSecret: SECRET,
+      now: () => NOW_MS,
+      markEventSeen: async () => true,
+      getBotIdentity: async () => {
+        called.push("reaction");
+        return { userId: "UBOT", botId: "B_OE_SELF" };
+      },
+      fifo: new ThreadFifo(() => {}),
+      handleApprovalPayload: spy("approval"),
+      handleSetKeyClick: spy("setkey"),
+      handleConnectClick: spy("connect"),
+      handleGrantCardClick: spy("grant"),
+      handleSetKeyViewSubmission: async () => {
+        called.push("setkey-submit");
+        return { handled: true };
+      },
+    } as never);
+    const res = await handler(req, {
+      from: () => ({ send: async () => ({}) }),
+      to: () => ({ send: async () => ({}) }),
+      waitUntil: (p: Promise<unknown>) => void waits.push(p),
+    } as never);
+    await Promise.allSettled(waits);
+    return { res, called, waits: waits.length };
+  };
+
+  const clickDropRows = async (door: string) => {
+    const store = getOperationalStore();
+    for (let i = 0; i < 20; i++) {
+      const rows = await store.readAudit({ org: "default", action: "surface.wake_dropped" });
+      const mine = rows.filter((r) => (r.detail as { door?: unknown } | undefined)?.door === door);
+      if (mine.length > 0) return mine;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return [];
+  };
+
+  const branches: { readonly door: string; readonly handler: string; readonly body: (team: string | undefined, channel: string | undefined) => string }[] = [
+    { door: "approval-click", handler: "approval", body: (t, c) => clickBody("oe_approval:approve:p1", t, c) },
+    { door: "setkey-click", handler: "setkey", body: (t, c) => clickBody("oe_setkey:intake1", t, c) },
+    { door: "connect-click", handler: "connect", body: (t, c) => clickBody("oe_connect:notion", t, c) },
+    { door: "grant-click", handler: "grant", body: (t, c) => clickBody("oe_grant:approve:a1", t, c) },
+    { door: "setkey-submit", handler: "setkey-submit", body: (t) => submitBody(t) },
+  ];
+
+  for (const b of branches) {
+    const foreign = await runClicks(formReq(b.body(FOREIGN_TEAM, FOREIGN_CHANNEL)));
+    ok(
+      !foreign.called.includes(b.handler),
+      `🔴 UNADMITTED WORKSPACE, ${b.door}: the handler NEVER runs — the foreign member id reaches no roster check, no CAS, no credential store and no vendor round trip`,
+    );
+    ok(foreign.res.status === 200, `…and Slack still gets its 200 for ${b.door}, so it does not retry a delivery we decided against`);
+    ok(foreign.waits >= 1, `…and ${b.door} REGISTERS its refusal write with the platform, so the drop row survives the freeze that follows the 200`);
+    ok(await foreign.res.text() === "", `…with an EMPTY body: nothing is posted or rendered back into the unadmitted workspace on ${b.door}`);
+
+    const rows = await clickDropRows(b.door);
+    ok(rows.length === 1, `…and the operator gets ONE surface.wake_dropped row for ${b.door} (the branch used to refuse nothing, so it dropped nothing)`);
+    const d = (rows[0]!.detail ?? {}) as Record<string, unknown>;
+    ok(d.reason === UNADMITTED_TENANT_DROP_REASON, `the ${b.door} row names WHY, via the SAME greppable reason every wake door writes — one control-API query still finds every tenant drop`);
+    ok(d.team === FOREIGN_TEAM, `…and WHICH workspace the ${b.door} decision turned on`);
+    ok(d.ts === null, `…and its \`ts\` is null rather than an invented stamp: a ${b.door} delivery is not a message`);
+
+    const control = await runClicks(formReq(b.body(HOME_TEAM, HOME_CHANNEL)));
+    ok(
+      control.called.includes(b.handler),
+      `🔴 CONTROL: the IDENTICAL ${b.door} from the DECLARED workspace REACHES its handler — the fence refuses a workspace, never the branch`,
+    );
+  }
+
+  {
+    const rows = await clickDropRows("setkey-submit");
+    ok((rows[0]!.detail as { channel?: unknown }).channel === "interactivity", "🔴 a view_submission names a VIEW and no channel, so its refusal row is keyed to the literal `interactivity` surface — never a blank a query cannot match");
+  }
+
+  {
+    const foreignGrid = await runClicks(formReq(clickBody("oe_approval:approve:p2", undefined, HOME_CHANNEL, FOREIGN_GRID)));
+    ok(!foreignGrid.called.includes("approval"), "🔴 ORG-WIDE GRID: a click naming a FOREIGN enterprise and no workspace is refused — judging the blank workspace alone would have read as `names no tenant` and admitted it");
+    const declared = domains;
+    domains = [defineDomain({ name: "org-wide", reach: [`slack/${HOME_GRID}/${HOME_CHANNEL}`], memory: "brain" })];
+    const homeGrid = await runClicks(formReq(clickBody("oe_approval:approve:p3", undefined, HOME_CHANNEL, HOME_GRID)));
+    domains = declared;
+    ok(homeGrid.called.includes("approval"), "CONTROL: the same workspace-less shape naming the DECLARED Grid still reaches the handler — the enterprise rung admits as well as refuses");
+    const noTenant = await runClicks(formReq(clickBody("oe_approval:approve:p4", undefined, HOME_CHANNEL)));
+    ok(noTenant.called.includes("approval"), "CONTROL: a click naming NEITHER id proceeds — a blank tenant is `nobody said`, not evidence of a foreign one, and the fence must not become a blanket refusal");
+  }
+
+  {
+    const foreign = await runClicks(jsonReq(reactionEnvelope("Ev_react_foreign", FOREIGN_TEAM, FOREIGN_CHANNEL)));
+    ok(!foreign.called.includes("reaction"), "🔴 UNADMITTED WORKSPACE, reaction: the branch never reaches the bot-identity read that precedes ingestion — so no ✋ stop from a foreign workspace reaches the cancel door of a turn running in the admitted one");
+    ok(foreign.waits >= 1, "…and the reaction refusal registers its write with the platform too");
+    const rows = await clickDropRows("reaction");
+    ok(rows.length === 1, "…and the reaction drop gets its own surface.wake_dropped row");
+    ok((rows[0]!.detail as { channel?: unknown }).channel === FOREIGN_CHANNEL, "…keyed to the channel the reaction happened in, which the fence can name because it sits BELOW the (pure) parse");
+
+    const control = await runClicks(jsonReq(reactionEnvelope("Ev_react_home", HOME_TEAM, HOME_CHANNEL)));
+    ok(control.called.includes("reaction"), "🔴 CONTROL: the IDENTICAL reaction from the DECLARED workspace runs on past the fence to the ingest road");
+  }
+}
+
+{
   const here = fileURLToPath(new URL(".", import.meta.url));
   const read = (rel: string) => readFileSync(`${here}../agent/channels/${rel}`, "utf8");
   const mentionDoor = read("slack.ts");
@@ -294,6 +462,41 @@ async function dropRows(ts: string) {
     ok(/import \{ slackTenantAdmission \} from "\.\/slack-tenant-fence\.js"/.test(read("slack-events.ts")), "the front route's fence call reaches the SHARED helper (slack-events.ts owns the one body, and slack-front.ts imports it) — never a forked copy of the rule at a third door");
     ok(!/classifyTenantAdmission/.test(frontDoor), "…and the front route holds no copy of the core DECISION either");
   }
+  {
+    const frontCode = stripComments(frontDoor);
+    const fencedElsewhere = new Set(["forward", "mention", "wake", "join", "dm-wake", "shortcut"]);
+    const armRe = /if \(decision\.kind === "([a-z-]+)"\) \{/g;
+    const arms: { name: string; at: number }[] = [];
+    for (let m = armRe.exec(frontCode); m; m = armRe.exec(frontCode)) arms.push({ name: m[1]!, at: m.index });
+    let fenced = 0;
+    for (let i = 0; i < arms.length; i++) {
+      const arm = arms[i]!;
+      if (fencedElsewhere.has(arm.name)) continue;
+      const body = frontCode.slice(arm.at, arms[i + 1]?.at ?? frontCode.length);
+      fenced++;
+      ok(
+        /slackInteractivityTenantFenceDeclined\(/.test(body),
+        `TOTALITY(click): the "${arm.name}" branch runs no model turn and still decides something, so it must consult the tenant fence`,
+      );
+    }
+    ok(fenced === 6, `…and the scan really found all six click branches (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    for (const [arm, handler] of [
+      ["approval-click", "handleApproval("],
+      ["setkey-click", "handleSetKeyClick("],
+      ["connect-click", "handleConnectClick("],
+      ["grant-click", "handleGrantCardClick("],
+      ["setkey-submit", "handleSetKeyViewSubmission("],
+    ] as const) {
+      const at = frontCode.indexOf(`if (decision.kind === "${arm}") {`);
+      const body = frontCode.slice(at, frontCode.indexOf("\n    if (decision.kind ===", at + 1));
+      ok(
+        body.indexOf("slackInteractivityTenantFenceDeclined(") < body.indexOf(handler),
+        `…and on ${arm} the fence runs ABOVE \`${handler}\`, so an unadmitted workspace never reaches the act`,
+      );
+    }
+    ok(!/classifyTenantAdmission/.test(frontDoor), "the click fence reaches the core DECISION through the shared helper too — the front route still holds no copy of the rule");
+  }
+
   ok(!/deps\.wake\(/.test(stripComments("/** talks about `deps.wake(...)` */\nconst x = 1;")), "the comment strip really removes a doc-comment mention (the scan reads code)");
   ok(/deps\.wake\(/.test(stripComments("await deps.wake(input);")), "…and really keeps a genuine call (it is not stripping everything)");
 }

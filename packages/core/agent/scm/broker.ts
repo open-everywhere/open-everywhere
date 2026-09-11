@@ -1,9 +1,9 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
-import type { EgressRule } from "../access/egress.js";
+import { GIT_BROKER_HOSTS, type EgressRule } from "../access/egress.js";
 import type { GitHubApp } from "./app.js";
 import { READ_PERMISSIONS } from "./mint.js";
 
-export const GIT_BROKER_HOSTS = ["github.com", "codeload.github.com"] as const;
+export { GIT_BROKER_HOSTS } from "../access/egress.js";
 
 const MAX_MINT_REPOS = 500;
 

@@ -26,7 +26,7 @@ for (const bundle of loadBundles()) {
 
 const credentialProblems = connectorGrantCredentialProblems(loadBundles(), loadConnectorCredentials());
 
-const withholdingProblems = ownAccountWithholdingProblems(credentialGrantConnectors(), loadConnectorCredentials());
+const withholdingProblems = ownAccountWithholdingProblems(credentialGrantConnectors(), loadConnectorCredentials(), loadBundles());
 
 const ungrantedMounts = mounted.filter((name) => !granted.has(name));
 const unmountedGrants = [...granted].filter((name) => !mounted.includes(name)).sort();

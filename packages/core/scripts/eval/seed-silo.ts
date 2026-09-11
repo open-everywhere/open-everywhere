@@ -93,7 +93,7 @@ function fillerNote(rng: () => number, n: number): string {
   return `# note-${n}\n\n- 20${29 + Math.floor(rng() * 5)}-01-${String((n % 27) + 1).padStart(2, "0")}: quick note about ${t}. Nothing load-bearing here.\n`;
 }
 
-interface SiloSpec {
+export interface SiloSpec {
   readonly name: string;
   readonly provider: string;
   readonly description: string;
@@ -152,11 +152,27 @@ export const DEFAULT_SILOS: readonly SiloSpec[] = [
 
 const SIZE_TARGETS: Record<string, number> = { tiny: 12, small: 100, medium: 500, large: 2000 };
 
+export interface PlantEntry {
+  readonly silo: string;
+  readonly path: string;
+  readonly topic: string;
+  readonly distractorSilo: string;
+}
+
+export const DEFAULT_PLANT_PLAN: readonly PlantEntry[] = [
+  { silo: "payments-brain", path: "refunds/chargebacks/decisions.md", topic: "chargeback", distractorSilo: "platform-notes" },
+  { silo: "payments-brain", path: "settlement/decisions.md", topic: "settlement", distractorSilo: "misc" },
+  { silo: "platform-notes", path: "services/gateway/decisions.md", topic: "gateway rollout", distractorSilo: "payments-brain" },
+  { silo: "misc", path: "decisions.md", topic: "office move", distractorSilo: "platform-notes" },
+  { silo: "payments-brain", path: "kyc/onboarding/decisions.md", topic: "KYC onboarding", distractorSilo: "misc" },
+];
+
 export interface BuildOpts {
   readonly seed?: number;
   readonly size?: string;
   readonly org?: string;
   readonly silos?: readonly SiloSpec[];
+  readonly plantPlan?: readonly PlantEntry[];
 }
 
 export function buildTopology(opts: BuildOpts = {}): Topology {
@@ -213,13 +229,7 @@ export function buildTopology(opts: BuildOpts = {}): Topology {
   }
 
   const writable = builds.filter((b) => !b.readOnly).map((b) => b.name);
-  const plantPlan: { silo: string; path: string; topic: string; distractorSilo: string }[] = [
-    { silo: "payments-brain", path: "refunds/chargebacks/decisions.md", topic: "chargeback", distractorSilo: "platform-notes" },
-    { silo: "payments-brain", path: "settlement/decisions.md", topic: "settlement", distractorSilo: "misc" },
-    { silo: "platform-notes", path: "services/gateway/decisions.md", topic: "gateway rollout", distractorSilo: "payments-brain" },
-    { silo: "misc", path: "decisions.md", topic: "office move", distractorSilo: "platform-notes" },
-    { silo: "payments-brain", path: "kyc/onboarding/decisions.md", topic: "KYC onboarding", distractorSilo: "misc" },
-  ].filter((p) => writable.includes(p.silo));
+  const plantPlan = (opts.plantPlan ?? DEFAULT_PLANT_PLAN).filter((p) => writable.includes(p.silo));
 
   plantPlan.forEach((p, i) => {
     const code = codename(rng);

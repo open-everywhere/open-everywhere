@@ -2,6 +2,7 @@ import { describeFilter, storedFilter } from "./event-model.js";
 import { ROUTINE_PERMISSION_PREFIX } from "./permission-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
 import type { RoutineFollowUp } from "./follow-ups.js";
+import type { ModelRole } from "../memory/domain.js";
 
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
@@ -57,6 +58,7 @@ export interface Routine {
   readonly policy?: readonly RoutinePolicyRule[];
   readonly collectors?: readonly string[];
   readonly gate?: string;
+  readonly modelRole?: ModelRole;
 
   status: RoutineStatus;
   disabledReason?: string;
@@ -151,6 +153,7 @@ export const ROUTINE_MARKER = {
   manual: "open_everywhere_routine_manual",
   permissionKey: "open_everywhere_routine_grant_key",
   fire: "open_everywhere_routine_fire_id",
+  modelRole: "open_everywhere_routine_model_role",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -169,6 +172,27 @@ export function routineMarker(attributes: Attrs): { id: string; surfaceKey: stri
 
 export function routineSilentStamped(attributes: Attrs): boolean {
   return oneAttrValue(attributes?.[ROUTINE_MARKER.silent]) === "true";
+}
+
+export const ROUTINE_MODEL_ROLES: readonly ModelRole[] = ["primary", "utility", "supervisor"] as const;
+
+export function isRoutineModelRole(value: unknown): value is ModelRole {
+  return typeof value === "string" && (ROUTINE_MODEL_ROLES as readonly string[]).includes(value);
+}
+
+export function routineModelRoleStamped(attributes: Attrs): ModelRole | undefined {
+  const role = oneAttrValue(attributes?.[ROUTINE_MARKER.modelRole]);
+  return isRoutineModelRole(role) ? role : undefined;
+}
+
+export function assertKnownModelRole(r: Pick<Routine, "modelRole">): void {
+  if (r.modelRole === undefined) return;
+  if (isRoutineModelRole(r.modelRole)) return;
+  throw new Error(
+    `This routine names the model role ${JSON.stringify(r.modelRole)}, which nothing can route. ` +
+      `A routine names one of: ${ROUTINE_MODEL_ROLES.join(", ")} — or names none, which inherits the deployment's model stack ` +
+      "(routines/routine.ts Routine.modelRole).",
+  );
 }
 
 export function routinePermissionKeyStamped(attributes: Attrs): string | undefined {

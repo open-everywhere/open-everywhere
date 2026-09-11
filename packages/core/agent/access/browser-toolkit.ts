@@ -1,9 +1,10 @@
 import { defineTool, type ToolDefinition } from "eve/tools";
 import type { WindowGrain } from "../identity/binding.js";
 import { preRegisterDynamicEntry, grainBackstopAtExecute, fullKit } from "./window-gated.js";
-import type { BindableContext } from "../identity/binding.js";
+import { currentSessionId, type BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
+import { browserEvaluateHosts } from "./browser-hosts.js";
 
 export interface BrowserToolEntry {
   readonly description: string;
@@ -70,12 +71,81 @@ export function browserContentModelOutput(name: string, output: unknown): Promis
   });
 }
 
+const lastBrowseHost = new Map<string, string>();
+
+const HOST_TRACK_CAP = 256;
+
+const URL_TAKING_OPS: ReadonlySet<string> = new Set(["browser_navigate", "browser_tabs"]);
+
+function navigationTargetHost(name: string, input: unknown): string | undefined {
+  if (!URL_TAKING_OPS.has(name) || input === null || typeof input !== "object") return undefined;
+  const url = (input as { url?: unknown }).url;
+  return typeof url === "string" ? hostOf(url) : undefined;
+}
+
+function hostOf(u: string): string | undefined {
+  try {
+    return new URL(u).hostname.toLowerCase() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resultReportedHost(output: unknown): string | undefined {
+  if (output === null || typeof output !== "object") return undefined;
+  const o = output as { url?: unknown; href?: unknown };
+  const url = typeof o.url === "string" ? o.url : typeof o.href === "string" ? o.href : undefined;
+  return url === undefined ? undefined : hostOf(url);
+}
+
+function noteBrowseHost(ctx: unknown, host: string | undefined): void {
+  if (host === undefined) return;
+  const bare = host.startsWith("[") ? (host.match(/^\[[^\]]*\]/)?.[0] ?? host) : host.replace(/:\d+$/, "");
+  if (bare.length === 0) return;
+  const session = currentSessionId(ctx as BindableContext);
+  if (session === undefined) return;
+  if (!lastBrowseHost.has(session) && lastBrowseHost.size >= HOST_TRACK_CAP) {
+    const oldest = lastBrowseHost.keys().next();
+    if (!oldest.done) lastBrowseHost.delete(oldest.value);
+  }
+  lastBrowseHost.set(session, bare.toLowerCase());
+}
+
+export function currentBrowseHost(ctx: unknown): string | undefined {
+  const session = currentSessionId(ctx as BindableContext);
+  return session === undefined ? undefined : lastBrowseHost.get(session);
+}
+
+export function assertEvaluateArmedFor(ctx: unknown): void {
+  const armed = browserEvaluateHosts();
+  const host = currentBrowseHost(ctx);
+  if (host === undefined) {
+    throw new Error(
+      "browser_evaluate: no page host is known for this session — navigate to a declared host first. " +
+        "Page scripting is armed per host in the operator's browser host declaration (agent/access/browser-hosts.ts).",
+    );
+  }
+  if (!armed.has(host)) {
+    throw new Error(
+      `browser_evaluate: "${host}" does not declare \`evaluate: true\` — page scripting is off for it. ` +
+        "Drive the page from browser_snapshot plus browser_find/click/fill, or ask the operator to arm this host.",
+    );
+  }
+}
+
+export function resetBrowseHostsForTest(): void {
+  lastBrowseHost.clear();
+}
+
 let registered: Readonly<Record<string, BrowserToolEntry>> | undefined;
 
 function browserBackstoppedExecute(name: string, entry: BrowserToolEntry, auditAction: string): (input: unknown, ctx: unknown) => Promise<unknown> {
   return async (input: unknown, ctx: unknown) => {
     await grainBackstopAtExecute(name, fullKit(), ctx as BindableContext);
+    if (name === "browser_evaluate") assertEvaluateArmedFor(ctx);
+    noteBrowseHost(ctx, navigationTargetHost(name, input));
     const result = await entry.execute(input, ctx);
+    noteBrowseHost(ctx, resultReportedHost(result));
     await auditToolAction(ctx as BindableContext, auditAction);
     return result;
   };
@@ -83,7 +153,15 @@ function browserBackstoppedExecute(name: string, entry: BrowserToolEntry, auditA
 
 export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserToolEntry>>): void {
   const armed: Record<string, BrowserToolEntry> = {};
+  const evaluateArmedHosts = browserEvaluateHosts();
   for (const [name, entry] of Object.entries(entries)) {
+    if (name === "browser_evaluate" && evaluateArmedHosts.size === 0) {
+      console.log(
+        "[open-everywhere:agent-browser] browser_evaluate NOT mounted — no declared host carries `evaluate: true` " +
+          "(the kit is snapshot-driven by default; arm a host in agent/access/browser-hosts.ts to re-add page scripting)",
+      );
+      continue;
+    }
     if (!(BROWSER_TOOL_NAMES as readonly string[]).includes(name)) {
       console.error(
         `[open-everywhere:agent-browser] skipping unknown tool "${name}" — not in core's BROWSER_TOOL_NAMES canonical list (a vendor upgrade that adds a tool must extend the list in access/browser-toolkit.ts)`,

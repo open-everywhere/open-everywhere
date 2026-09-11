@@ -82,11 +82,18 @@ export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Doma
     ] as const) {
       const tenants = [...ids].sort();
       if (tenants.length <= 1) continue;
+      const exposure =
+        rung === "enterprises"
+          ? `Each \`E…\` entry admits EVERY workspace under that organisation, and a person id is issued PER WORKSPACE — so two organisations' ` +
+            `members share one \`${platform}/<id>\` principal key, across a population no entry here names.`
+          : `On ${platform} a person id is issued PER TENANT, but a principal key is only \`${platform}/<id>\` — so two workspaces' members ` +
+            `share one key.`;
+      const remedy = rung === "enterprises" ? `Keep one ${platform} Enterprise Grid organisation per deployment` : `Keep one ${platform} tenant per deployment`;
       bad.push(
-        `  "${platform}" declares ${tenants.length} ${rung} (${tenants.map((t) => JSON.stringify(t)).join(", ")}). ` +
-          `On ${platform} a person id is issued PER TENANT, but a principal key is only \`${platform}/<id>\` — so two workspaces' members ` +
-          `share one key, and every matcher over it (admin rosters, wake trust, approval clickers, a DM's personal credentials) can hand one ` +
-          `person another's standing on a chance id collision. Keep one ${platform} tenant per deployment, or set ${MULTI_TENANT_ENV}=1 to accept ` +
+        `  "${platform}" declares ${tenants.length} ${rung === "enterprises" ? "Enterprise Grid organisations" : "tenants"} ` +
+          `(${tenants.map((t) => JSON.stringify(t)).join(", ")}). ` +
+          `${exposure} Every matcher over that key (admin rosters, wake trust, approval clickers, a DM's personal credentials) can hand one ` +
+          `person another's standing on a chance id collision. ${remedy}, or set ${MULTI_TENANT_ENV}=1 to accept ` +
           `that exposure deliberately until the tenant rung lands in the principal grammar (OPE-309 phase 1).`,
       );
     }

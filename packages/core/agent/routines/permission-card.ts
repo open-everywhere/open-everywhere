@@ -109,6 +109,7 @@ export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): 
       grantKind: declarable.grantKind,
       declaration: declarable.declaration,
       prompt: routine.prompt,
+      ...(routine.modelRole === undefined ? {} : { modelRole: routine.modelRole }),
     };
     return {
       state: read.state,

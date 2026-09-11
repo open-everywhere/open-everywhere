@@ -93,7 +93,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
   const nowIso = new Date(ctx.nowMs).toISOString();
   const grant = await store.getCredentialGrant(ctx.org, grantId);
   if (grant === null) {
-    const shape = { ownerSlug: "the owner", resource: "that resource", verb: "that tool" };
+    const shape = { connector: "", mcpTool: undefined, ownerSlug: "the owner", resource: "", verb: "that tool" };
     await auditGrant(ctx, "grant.refused", ctx.requesterPrincipalId, { gate: "revoked", grantId });
     return { message: credentialGrantRefusalMessage(shape, "revoked"), ok: false, refused: "revoked" };
   }

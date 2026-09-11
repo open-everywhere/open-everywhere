@@ -2524,7 +2524,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       if (process.env.E2E_BROWSER_QA !== "1") {
-        ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm browser.enabled + browser.domains=…,localhost) to run the expensive sandbox-only agent-browser loop");
+        ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm browser.enabled + a browser host declaration) to run the expensive sandbox-only agent-browser loop");
       } else {
         const browserStart = new Date(Date.now() - 60_000).toISOString();
         const { ts: qaTs } = await slack.post(
@@ -2540,7 +2540,11 @@ export const SCENARIOS: readonly Scenario[] = [
               "CRITICAL: obtain the heading text ONLY by vision-reading the screenshot via describe_image — do NOT read the page text or DOM " +
               "with browser_get, browser_evaluate, browser_snapshot, or any HTML/text extraction; the whole point is to vision-verify the " +
               "rendered screenshot, so describe_image on the screenshot file is mandatory. " +
-              "Then reply with the exact heading text that describe_image read from the screenshot.",
+              "(5) THEN, as a separate step, use browser_navigate to open https://example.com/ and browser_snapshot to read its " +
+              "main heading from the accessibility snapshot. Use browser_snapshot for this step — the ban above applies only to " +
+              "the localhost screenshot in steps 1-4. " +
+              "Then reply with BOTH: the exact heading text describe_image read from the localhost screenshot, and the heading " +
+              "browser_snapshot read from example.com.",
           ),
         );
         const qaDeadline = Date.now() + BROWSER_QA_WAIT;
@@ -2568,10 +2572,15 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: remaining(), skip: (m) => isFillerAck(m.text) });
         if (ctx.auditRead) {
-          const rows = await ctx.auditRead({ sinceIso: browserStart, actions: ["browser.navigate", "browser.screenshot", "describe_image"] });
+          const rows = await ctx.auditRead({
+            sinceIso: browserStart,
+            actions: ["browser.navigate", "browser.screenshot", "browser.snapshot", "browser.evaluate", "describe_image"],
+          });
           const has = (action: string) => rows.some((r) => r.action === action);
           ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
           ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
+          ctx.gate(has("browser.snapshot"), "snapshot-first kit: a browser.snapshot audit row landed (host-less by contract — the example.com heading is judged from the reply)");
+          ctx.gate(!has("browser.evaluate"), "snapshot-first kit: NO browser.evaluate row — page scripting is off unless a host declares it");
           ctx.gate(
             rows.some((r) => r.action === "describe_image" && (r.detail as { ok?: unknown } | undefined)?.ok === true),
             "browser-QA loop: a describe_image audit row with ok:true landed (the { path } vision read of the screenshot succeeded)",
@@ -2580,12 +2589,16 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — asserting the judged reply only for the browser-QA leg");
         }
         await ctx.judgePass(
-          closedQA("Does the reply report the distinctive OPE43 page-heading token it read from the screenshot, with no browser/vision error? (reporting the OPE43 token is enough — the model may paraphrase the exact heading text.)", {
-            mustMatch: [/OPE43/i],
-            mustNotMatch: [/could ?n.?t (?:navigate|screenshot|read|open)/i, /no vision model/i, /not armed|capability is not|not available/i],
-          }),
+          closedQA(
+            "Does the reply report the distinctive OPE43 page-heading token it read from the screenshot AND a heading it read from example.com, with no browser/vision error? " +
+              "(reporting the OPE43 token is enough for the first — the model may paraphrase the exact heading text.)",
+            {
+              mustMatch: [/OPE43/i],
+              mustNotMatch: [/could ?n.?t (?:navigate|screenshot|read|open)/i, /no vision model/i, /not armed|capability is not|not available/i],
+            },
+          ),
           qaReply.text,
-          "browser-QA loop: navigate → screenshot → describe_image({ kind: \"path\", ref }) reports the page heading (OPE43)",
+          'browser-QA loop: navigate → screenshot → describe_image({ kind: "path", ref }) reports the page heading (OPE43), then a declared third-party page reports its own',
         );
       }
     },

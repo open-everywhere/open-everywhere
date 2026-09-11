@@ -45,8 +45,15 @@ export default defineHook({
       resetTurnClock(event.data.turnId, Date.now(), (ctx as HookContext | undefined)?.session?.id ?? "");
       maybeHeartbeat();
     },
-    "step.completed": async (event) => {
+    "step.completed": async (event, ctx: HookContext) => {
       bumpTurn(event.data?.usage);
+      const turn = readTurnClock();
+      if (turn?.steps !== 1) return;
+      emitTelemetry("oe.turn.first_output", {
+        "oe.surface": surfaceType(ctx),
+        "oe.kind": turnKindForTelemetry(ctx),
+        "oe.latency.bucket": latencyBucket(Date.now() - turn.startedAt),
+      });
     },
     "turn.completed": async (_event, ctx: HookContext) => {
       const turn = readTurnClock();

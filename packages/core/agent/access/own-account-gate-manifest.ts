@@ -80,11 +80,15 @@ export function checkOwnAccountGateSites(
   const admitted = new Set(connectors);
   const userPrincipal = new Set(humanActingConnectors);
 
-  for (const connector of connectors) {
+  for (const connector of [...new Set([...connectors, ...humanActingConnectors])].sort()) {
     if (gated.has(connector)) continue;
+    const via = admitted.has(connector)
+      ? "is in CREDENTIAL_GRANT_ROLES (access/credential-grant.ts)"
+      : "declares a `human-acting` credential family (access/connector-credentials.ts)";
     problems.push(
-      `\`${connector}\` is in CREDENTIAL_GRANT_ROLES (access/credential-grant.ts) but no call site consults the ` +
-        `acting-identity gate for it. The own-account grammar recognises the vendor the moment it joins that list, so a ` +
+      `\`${connector}\` ${via} but no call site consults the ` +
+        `acting-identity gate for it. The own-account grammar recognises the vendor the moment it reaches EITHER half of ` +
+        `\`ownAccountAskVendors()\` (connections/own-account-vendors.ts), so a ` +
         `requester asking to act with their own ${connector} account is stamped — and every read then runs on the ` +
         `deployment's own integration, which is the OPE-1525 defect. Add a \`${OWN_ACCOUNT_GATE_CALL}\` call at the line ` +
         `that resolves the ${connector} credential, and mark it \`${OWN_ACCOUNT_GATE_MARKER} ${connector}\`.`,

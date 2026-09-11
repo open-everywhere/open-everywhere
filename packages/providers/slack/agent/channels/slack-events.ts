@@ -603,17 +603,26 @@ export interface RouteOutcome extends ReplyDecision {
 }
 
 export function bindableFor(ev: ParsedMessageEvent): BindableContext {
+  return bindableForSlackIds({ teamId: ev.teamId, channelId: ev.channelId, channelType: ev.channelType, userId: ev.userId });
+}
+
+function bindableForSlackIds(ids: {
+  readonly teamId?: string | undefined;
+  readonly channelId: string;
+  readonly channelType?: string | undefined;
+  readonly userId?: string | undefined;
+}): BindableContext {
   return {
     channel: { kind: "slack" },
     session: {
       auth: {
         current: {
           attributes: {
-            team_id: ev.teamId ?? "",
-            channel_id: ev.channelId,
-            channel_type: ev.channelType ?? "",
+            team_id: ids.teamId ?? "",
+            channel_id: ids.channelId,
+            channel_type: ids.channelType ?? "",
           },
-          principalId: ev.userId ?? "",
+          principalId: ids.userId ?? "",
           principalType: "slack-user",
         },
       },
@@ -753,8 +762,18 @@ async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, deta
 }
 
 async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: string, detail: Record<string, unknown>): Promise<void> {
+  await appendWakeRowForIds({ teamId: ev.teamId, channelId: ev.channelId, channelType: ev.channelType, userId: ev.userId }, ev.ts, action, reason, detail);
+}
+
+async function appendWakeRowForIds(
+  ids: { readonly teamId?: string | undefined; readonly channelId: string; readonly channelType?: string | undefined; readonly userId?: string | undefined },
+  ts: string | null,
+  action: string,
+  reason: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
   try {
-    const p = resolvePartition(bindableFor(ev));
+    const p = resolvePartition(bindableForSlackIds(ids));
     await getOperationalStore().appendAudit({
       ts: new Date().toISOString(),
       org: p.org,
@@ -762,7 +781,7 @@ async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: str
       workspace: p.workspace,
       surface: p.surface,
       action,
-      detail: { reason, channel: ev.channelId, ts: ev.ts, ...detail },
+      detail: { reason, channel: ids.channelId, ts, ...detail },
     });
   } catch {
   }
@@ -774,6 +793,27 @@ function tenantFenceDeclined(ev: ParsedMessageEvent, route: string): boolean {
 
 export function slackFrontTenantFenceDeclined(ev: ParsedMessageEvent, door: string, route: string): boolean {
   return fenceDeclined(ev, door, route);
+}
+
+const SLACK_INTERACTIVITY_SURFACE = "interactivity";
+
+export function slackInteractivityTenantFenceDeclined(
+  ids: { readonly teamId?: string | undefined; readonly enterpriseId?: string | undefined; readonly channelId?: string | undefined; readonly userId?: string | undefined },
+  door: string,
+  route: string,
+): boolean {
+  if (slackTenantAdmission(ids.teamId, ids.enterpriseId) !== "unadmitted") return false;
+  console.log(unadmittedTenantLog("slack", ids.teamId, admittedTenantsFromConfig("slack"), ids.enterpriseId));
+  void holdRouteWork(
+    appendWakeRowForIds(
+      { teamId: ids.teamId, channelId: ids.channelId ?? SLACK_INTERACTIVITY_SURFACE, userId: ids.userId },
+      null,
+      "surface.wake_dropped",
+      UNADMITTED_TENANT_DROP_REASON,
+      { door, route, team: ids.teamId ?? null, enterprise: ids.enterpriseId ?? null },
+    ),
+  );
+  return true;
 }
 
 function fenceDeclined(ev: ParsedMessageEvent, door: string, route: string): boolean {
@@ -2307,22 +2347,7 @@ export function parseSlackReactionEvent(envelope: SlackEventEnvelope): ParsedSla
 }
 
 export function bindableForReaction(ev: ParsedSlackReaction): BindableContext {
-  return {
-    channel: { kind: "slack" },
-    session: {
-      auth: {
-        current: {
-          attributes: {
-            team_id: ev.teamId ?? "",
-            channel_id: ev.channelId,
-            channel_type: "",
-          },
-          principalId: ev.reactorId,
-          principalType: "slack-user",
-        },
-      },
-    },
-  } as BindableContext;
+  return bindableForSlackIds({ teamId: ev.teamId, channelId: ev.channelId, userId: ev.reactorId });
 }
 
 export interface SlackReactionRouteDeps {

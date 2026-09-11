@@ -2,7 +2,10 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import type { EffectiveAccess, ReachableHost } from "./resolver.js";
 import type { Connection } from "./bundle.js";
 import { extraEgressHosts } from "./extra-hosts.js";
+import { browserEgressHosts, type BrowserHostDeclaration } from "./browser-hosts.js";
 import { DEFAULT_NETWORK_ACCESS_LEVEL, TRUSTED_ACCESS_HOSTS, type NetworkAccessLevel } from "./network-access.js";
+
+export const GIT_BROKER_HOSTS = ["github.com", "codeload.github.com"] as const;
 
 export type EgressPlane = "sandbox" | "host";
 
@@ -100,6 +103,28 @@ function ruleForHost(
   return [rule];
 }
 
+async function browserHostRules(
+  byId: ReadonlyMap<string, Connection>,
+  grantedIds: ReadonlySet<string> | null,
+  resolveHeaders: ResolveHeaders,
+): Promise<Record<string, EgressRule[]>> {
+  const out: Record<string, EgressRule[]> = {};
+  for (const row of browserEgressHosts()) {
+    const method = [...row.methods];
+    if (row.credential === undefined) {
+      out[row.host] = [{ match: { method }, transform: [] }];
+      continue;
+    }
+    if (grantedIds === null || !grantedIds.has(row.credential)) continue;
+    const conn = byId.get(row.credential);
+    if (conn === undefined) continue;
+    const headers = await resolveHeaders(conn);
+    if (Object.keys(headers).length === 0) continue;
+    out[row.host] = [{ match: { method }, transform: [{ headers }] }];
+  }
+  return out;
+}
+
 export async function compileNetworkPolicy(
   access: EffectiveAccess,
   resolveHeaders: ResolveHeaders,
@@ -123,6 +148,10 @@ export async function compileNetworkPolicy(
       headers = conn ? await resolveHeaders(conn) : null;
     }
     allow[host.host] = ruleForHost(host, headers);
+  }
+
+  for (const [host, rules] of Object.entries(await browserHostRules(byId, grantedIds, resolveHeaders))) {
+    if (!(host in allow)) allow[host] = rules;
   }
 
   for (const host of extraEgressHosts()) {
@@ -171,13 +200,15 @@ export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): Rec
 export function openWriteHosts(
   policy: SandboxNetworkPolicy,
   reachableHosts: readonly ReachableHost[] = [],
+  browserHosts: readonly BrowserHostDeclaration[] = [],
 ): readonly OpenWriteHost[] {
   if (typeof policy === "string") {
     return policy === "allow-all" ? [{ host: "*", credential: null, credentialed: false, verb: "any" }] : [];
   }
   const allow = (policy as { allow?: readonly string[] | Record<string, EgressRule[]> }).allow;
   if (!allow) return [];
-  const viaByHost = new Map(reachableHosts.map((h) => [h.host, h.viaConnection]));
+  const viaByHost = new Map<string, string | null>(browserHosts.map((h) => [h.host, h.credential ?? null]));
+  for (const h of reachableHosts) viaByHost.set(h.host, h.viaConnection);
   const byHost = (a: { host: string }, b: { host: string }): number => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0);
   if (Array.isArray(allow)) {
     return allow.map((host) => ({ host, credential: null, credentialed: false, verb: "any" as const })).sort(byHost);

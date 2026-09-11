@@ -8,7 +8,7 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   connectors: { dmOnly: false, userPrincipal: true, opTiering: true },
 
-  browser: { enabled: true, domains: "localhost,127.0.0.1,example.com,my-agent.vercel.app" },
+  browser: { enabled: true },
 
   rotation: { quietGapHours: 12 },
 

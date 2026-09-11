@@ -11,6 +11,8 @@ import {
 } from "@open-everywhere/core/agent/spend/pricing.js";
 import { stackModelRateBand } from "@open-everywhere/core/agent/spend/stack-pricing.js";
 import { SHIPPED_STACK, STACKS, STACK_ALIASES, isStackAlias } from "../agent/model/stacks.js";
+import { MODELS } from "../agent/model/models.js";
+import { ROUTINE_MODEL_ROLES } from "@open-everywhere/core/agent/routines/routine.js";
 import { loadModelPricing } from "../agent/spend/model-pricing.js";
 import { loadModelPolicy } from "../agent/model/policy.js";
 import { loadRoles } from "../agent/roles/roles.js";
@@ -176,6 +178,41 @@ for (const id of [...new Set([...builtInModelIds(), ...deployerPricedModelIds()]
           `stack-pricing.ts's measured band. The live number must be the band MAXIMUM — the only direction a cap ` +
           `may err is the one that cannot understate spend. Re-probe once and update BOTH tables in one diff ` +
           `(${PRICE_TABLE} / ${PRICING} and packages/core/agent/spend/stack-pricing.ts).`,
+      );
+    }
+  }
+}
+
+{
+  const NON_ROUTABLE: Readonly<Record<string, string>> = {
+    vision: "models.ts documents this role's allow-list entry as NON-SELECTABLE — it is describe_image's out-of-band describer, never a turn's model",
+    judge: "the approval judge's role — it decides approvals, and a routine's own turn never runs it",
+  };
+  const resolvedRoles = Object.keys(MODELS);
+  const routableResolved = resolvedRoles.filter((r) => !(r in NON_ROUTABLE)).sort();
+  const declared: string[] = [...ROUTINE_MODEL_ROLES];
+  declared.sort();
+  for (const role of declared) {
+    if (!resolvedRoles.includes(role)) {
+      reds.push(
+        `ROUTINE ROLE DRIFT: ROUTINE_MODEL_ROLES names "${role}", which ${RESOLVER} does not resolve — a routine ` +
+          `could name a role that can never take effect. Add the role to the stack, or drop it from the list ` +
+          "(packages/core/agent/routines/routine.ts).",
+      );
+    }
+    if (role in NON_ROUTABLE) {
+      reds.push(
+        `ROUTINE ROLE DRIFT: ROUTINE_MODEL_ROLES names "${role}", which is not routable — ${NON_ROUTABLE[role]}. ` +
+          "Drop it from the list (packages/core/agent/routines/routine.ts).",
+      );
+    }
+  }
+  for (const role of routableResolved) {
+    if (!declared.includes(role)) {
+      reds.push(
+        `ROUTINE ROLE DRIFT: ${RESOLVER} resolves the routable role "${role}" and ROUTINE_MODEL_ROLES omits it, so ` +
+          "no routine can name it. Add it to the list (packages/core/agent/routines/routine.ts), or name it in this " +
+          "rule's NON_ROUTABLE table with the reason it is not a role a turn may run.",
       );
     }
   }

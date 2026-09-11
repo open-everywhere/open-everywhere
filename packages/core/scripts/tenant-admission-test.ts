@@ -173,6 +173,24 @@ const ok = (cond: boolean, label: string) => {
   );
   n++;
 
+  const refusalFor = (reach: readonly string[]): string => {
+    try {
+      assertSingleTenantPerTenantScopedPlatform([defineDomain({ name: "r", reach: [...reach], memory: "brain" })]);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    return "";
+  };
+  const gridRefusal = refusalFor(["slack/E_OURS/C_ORG", "slack/E_THEIRS/C_ORG2"]);
+  const workspaceRefusal = refusalFor(["slack/T_ONE/C_A", "slack/T_TWO/C_B"]);
+  ok(gridRefusal.includes("2 Enterprise Grid organisations"), "🔴 the GRID arm counts organisations, not workspaces — the object the operator actually declared");
+  ok(gridRefusal.includes("Keep one slack Enterprise Grid organisation per deployment"), "🔴 …and its remedy names that object too, so it can be acted on");
+  ok(!gridRefusal.includes("two workspaces' members"), "🔴 NEGATIVE CONTROL: the Grid arm no longer borrows the workspace arm's sentence — this is the assertion that reds if the bodies are shared again");
+  ok(workspaceRefusal.includes("2 tenants"), "the WORKSPACE arm is unchanged — it still counts tenants");
+  ok(workspaceRefusal.includes("two workspaces' members"), "…and still says what two workspaces share");
+  ok(!workspaceRefusal.includes("Enterprise Grid"), "NEGATIVE CONTROL: the workspace arm never speaks about a Grid");
+  n++;
+
   ok(
     soleAdmittedTenant("slack", gridPlusWorkspace) === undefined,
     "🔴 a declared Grid makes the sole admitted tenant `undefined`, even beside one declared workspace — the `E…` entry admits every workspace under the organisation, so answering `T_ONE` would stamp that workspace onto people who are in a sibling one",

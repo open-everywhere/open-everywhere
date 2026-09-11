@@ -113,6 +113,9 @@ export { isSubagentChildContext, subagentParentSessionId } from "./identity/bind
 export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
 export type { BrowserToolEntry } from "./access/browser-toolkit.js";
 
+export { browserHostDeclarations, isLoopbackBrowseHost, _setBrowserHostsForTest, resetBrowserHostsForTest } from "./access/browser-hosts.js";
+export type { BrowserHostDeclaration } from "./access/browser-hosts.js";
+
 export { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTest } from "./access/extra-hosts.js";
 
 export { registerAttachmentResolver, resolveAttachment, resolveGuardedAttachment, AttachmentOversizeError } from "./channels/attachments.js";

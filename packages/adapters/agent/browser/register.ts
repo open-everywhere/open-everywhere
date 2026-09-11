@@ -1,7 +1,7 @@
 import browserExtension from "@agent-browser/eve";
 import * as vendorTools from "@agent-browser/eve/tools";
-import { registerBrowserToolkit, registerExtraEgressHosts, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
-import { isLoopbackBrowseHost, type AgentBrowserConfig } from "./config.js";
+import { registerBrowserToolkit, registerExtraEgressHosts, isLoopbackBrowseHost, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
+import { type AgentBrowserConfig } from "./config.js";
 
 interface BoundBrowserConfig {
   readonly allowedDomains?: readonly string[];
@@ -40,11 +40,16 @@ export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
   }
   registerBrowserToolkit(entries);
 
-  registerExtraEgressHosts("agent-browser", cfg.domains.filter((d) => !isLoopbackBrowseHost(d)));
+  registerExtraEgressHosts(
+    "agent-browser",
+    cfg.hosts.filter((h) => h.credential === undefined && !isLoopbackBrowseHost(h.host)).map((h) => h.host),
+  );
 
+  const credentialed = cfg.hosts.filter((h) => h.credential !== undefined).length;
   console.log(
     `[open-everywhere:agent-browser] armed: ${Object.keys(entries).length} browser tools, ` +
-      `domains [${cfg.domains.join(", ")}] (containment: agent-browser allowed-domains + egress firewall)`,
+      `hosts [${cfg.domains.join(", ")}] (${credentialed} credentialed at the firewall) ` +
+      `(containment: agent-browser allowed-domains + egress firewall)`,
   );
   return true;
 }

@@ -7,11 +7,13 @@ import { installGrantBorrowTransports } from "../connections/grant-mcp-transport
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import {
   credentialGrantDisclosureLine,
+  grantResourceTargetLabel,
   grantToolSlug,
   isGrantToolName,
   quotedPurpose,
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
@@ -47,33 +49,37 @@ interface GrantToolOffer {
   readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
-function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer | undefined {
+function borrowOffer(grant: CredentialGrantRow, mcpTool: string, nowMs: number): GrantToolOffer | undefined {
   if (grant.inputSchema === undefined) return undefined;
+  const owner = grantOwnerPhrase(grant.ownerSlug);
+  const vendor = connectorDisplayName(grant.connector);
   const frozenKeys = Object.keys(grant.frozenArgs ?? {}).sort();
   const frozen =
     frozenKeys.length === 0
-      ? `This grant fixes no arguments — ${grant.ownerSlug} lent the tool itself, so you choose every argument.`
+      ? `This grant fixes no arguments — ${owner} lent the tool itself, so you choose every argument.`
       : `${String(frozenKeys.length)} argument(s) are FIXED by the grant — ${frozenKeys.join(", ")}. Each one's schema shows the single ` +
         "value it may carry: SEND EXACTLY THAT. A call that sends any other value for a fixed argument, or omits one, is " +
-        `refused before the call reaches ${grant.connector}` +
+        `refused before the call reaches ${vendor}` +
         `${
           grant.mode === "once"
-            ? `, and this is a ONE-SHOT grant: a refusal that never reached ${grant.connector} gives the grant back, but only for the first ${String(GRANT_REFUND_CAP_PER_TURN)} refusals of this grant in one turn — after that it stays spent and this tool is finished. Each attempt also opens a session under ${grant.ownerSlug}'s account, so send the exact value rather than guessing`
+            ? `, and this is a ONE-SHOT grant: a refusal that never reached ${vendor} gives the grant back, but only for the first ${String(GRANT_REFUND_CAP_PER_TURN)} refusals of this grant in one turn — after that it stays spent and this tool is finished. Each attempt also opens a session under ${owner}'s account, so send the exact value rather than guessing`
             : ""
         }.`;
+  const target = grantResourceTargetLabel(grant);
+  const on = target === undefined || target.length === 0 ? "" : ` — "${target}"`;
+  const vague = grantActionIsReviewed(grant.connector, mcpTool) ? "" : ` (this deployment has no reviewed description for the exact ${vendor} tool, so the reach may be wider than that phrase suggests)`;
   return {
     description:
-      `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` on "${grant.resource}" as ${grant.ownerSlug}, with ` +
-      `${grant.ownerSlug}'s own ${grant.connector} account. ${frozen} The grant expires ${grant.expiresAt}. An error from ` +
-      `${grant.connector} is the vendor's own answer, not a refusal by this grant.`,
+      `Uses ${owner}'s own ${vendor} account to ${grantActionPhrase(grant.connector, mcpTool)}${on}${vague}. ${frozen} ` +
+      `The grant runs ${grantExpiryPhrase(grant.expiresAt, nowMs)}. An error from ${vendor} is the vendor's own answer, not a refusal by this grant.`,
     inputSchema: grant.inputSchema,
   };
 }
 
-export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
+export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.now()): ReplayableToolEntry | undefined {
   const mcpTool = grant.mcpTool;
   if (mcpTool === undefined) return undefined;
-  const offer = borrowOffer(grant, mcpTool);
+  const offer = borrowOffer(grant, mcpTool, nowMs);
   if (offer === undefined) return undefined;
   return defineTool({
     description: offer.description,
@@ -114,10 +120,11 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
 const GRANT_ENTRIES = new Map<string, { readonly fingerprint: string; readonly entry: ReplayableToolEntry }>();
 
 function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
-  const fingerprint = JSON.stringify(grant);
+  const nowMs = Date.now();
+  const fingerprint = `${JSON.stringify(grant)}|${grantExpiryPhrase(grant.expiresAt, nowMs)}`;
   const held = GRANT_ENTRIES.get(grant.id);
   if (held !== undefined && held.fingerprint === fingerprint) return held.entry;
-  const entry = grantToolEntry(grant);
+  const entry = grantToolEntry(grant, nowMs);
   if (entry === undefined) return undefined;
   GRANT_ENTRIES.set(grant.id, { entry, fingerprint });
   return entry;

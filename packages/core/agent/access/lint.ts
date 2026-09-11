@@ -1,4 +1,5 @@
 import { connectorGrantCredential, connectorGrantName, egressHostsOverlap, normaliseEgressHost, type Binding, type Bundle, type Scope } from "./bundle.js";
+import { GIT_BROKER_HOSTS } from "./egress.js";
 import { isLinkSetRef } from "../identity/link-set-ref.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
 import { domainContainers, type Domain } from "../memory/domain.js";
@@ -275,23 +276,62 @@ export function lintEgressHostCollisions(bundles: readonly Bundle[], bindings: r
   return problems;
 }
 
+export function lintReservedBrokerHosts(bundles: readonly Bundle[]): string[] {
+  const reserved = GIT_BROKER_HOSTS.map((h) => normaliseEgressHost(h));
+  const problems: string[] = [];
+  for (const bundle of bundles) {
+    for (const claim of hostClaimsOf(bundle)) {
+      const hit = reserved.find((r) => egressHostsOverlap(claim.host, r));
+      if (hit === undefined) continue;
+      problems.push(
+        `  bundle "${bundle.name}" connection "${claim.via}" claims host ${claim.host === hit ? claim.host : `${claim.host} (which overlaps ${hit})`} — ` +
+          `that host is RESERVED by the git read-broker (scm/broker.ts), which replaces its egress rules mid-turn with an ` +
+          `installation token, so this connection's credential would be silently displaced the moment \`checkout_repo\` runs. ` +
+          `The reservation is unconditional — it does not depend on whether the broker is configured. ` +
+          `One credential per host per session: give this connection a host the broker does not replace (\`api.github.com\` is not reserved).`,
+      );
+    }
+  }
+  return problems;
+}
+
 export function ownAccountWithholdingProblems(
   connectors: readonly string[],
   catalogues: readonly ConnectorCredentials[],
+  bundles: readonly Bundle[] = [],
 ): string[] {
   const byConnector = new Map(catalogues.map((c) => [c.connector, c]));
   const problems: string[] = [];
   for (const connector of [...new Set(connectors)].sort()) {
     const catalogue = byConnector.get(connector);
-    const hosts = (catalogue?.credentials ?? []).flatMap((c) => c.endpoints?.hosts ?? []);
-    if (hosts.length > 0) continue;
-    problems.push(
-      `  connector "${connector}" admits a credential grant (CREDENTIAL_GRANT_ROLES, access/credential-grant.ts) but ` +
-        `${catalogue === undefined ? "has NO credential catalogue" : "no credential in its catalogue declares `endpoints.hosts`"}` +
-        ` — so the resolver cannot tell which hosts carry this vendor's key, and an "act with my own account" ask on the` +
-        ` egress route withholds nothing and is answered on the TEAM credential (OPE-1549). Declare the vendor's hosts on` +
-        ` at least one of its credentials in agent/access/connector-credentials.ts.`,
-    );
+    const hosts = (catalogue?.credentials ?? []).flatMap((c) => c.endpoints?.hosts ?? []).map((h) => normaliseEgressHost(h));
+    if (hosts.length === 0) {
+      problems.push(
+        `  connector "${connector}" admits a credential grant (CREDENTIAL_GRANT_ROLES, access/credential-grant.ts) but ` +
+          `${catalogue === undefined ? "has NO credential catalogue" : "no credential in its catalogue declares `endpoints.hosts`"}` +
+          ` — so the resolver cannot tell which hosts carry this vendor's key, and an "act with my own account" ask on the` +
+          ` egress route withholds nothing and is answered on the TEAM credential (OPE-1549). Declare the vendor's hosts on` +
+          ` at least one of its credentials in agent/access/connector-credentials.ts.`,
+      );
+      continue;
+    }
+    const secrets = new Set((catalogue?.credentials ?? []).map((c) => c.secretRef));
+    for (const bundle of bundles) {
+      for (const c of bundle.connections ?? []) {
+        const stamped = [c.secretRef, ...(c.customHeaders ?? []).map((h) => h.secretRef)];
+        if (!stamped.some((ref) => secrets.has(ref))) continue;
+        const claims = c.allowedWebsites.map((h) => normaliseEgressHost(h));
+        if (claims.some((h) => hosts.some((v) => egressHostsOverlap(h, v)))) continue;
+        problems.push(
+          `  bundle "${bundle.name}" connection "${c.id}" stamps a secret that connector "${connector}"'s catalogue also ` +
+            `names, but it reaches none of that catalogue's declared hosts (it reaches ${claims.join(", ")}; the catalogue ` +
+            `declares ${hosts.join(", ")}). The own-account withholding identifies a vendor's connections BY REACH, so it ` +
+            `cannot see this one — an "act with my own account" ask leaves every host it reaches on the TEAM credential ` +
+            `(OPE-1684). Add one of those hosts to \`endpoints.hosts\` in agent/access/connector-credentials.ts, or give ` +
+            `this connection its own secret.`,
+        );
+      }
+    }
   }
   return problems;
 }
@@ -312,6 +352,7 @@ export function lintAccessConfig(
     ...lintMethodNarrowing(bundles),
     ...lintCredentialCollisions(bundles, bindings),
     ...lintEgressHostCollisions(bundles, bindings),
+    ...lintReservedBrokerHosts(bundles),
   ];
 }
 

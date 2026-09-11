@@ -26,10 +26,12 @@ import {
   slackSingleWindowMentionPolicy,
   slackDomainUsesUnifiedWindow,
   slackFrontTenantFenceDeclined,
+  slackInteractivityTenantFenceDeclined,
   type SlackEventEnvelope,
   type ParsedMessageEvent,
   type RouteOutcome,
 } from "./slack-events.js";
+import { slackInteractivityTenantIds } from "./slack-tenant-fence.js";
 import {
   EventDedupe,
   ThreadFifo,
@@ -190,6 +192,24 @@ function parseOeSetKeyViewSubmission(rawBody: string): unknown | undefined {
   if (!p || p.type !== "view_submission") return undefined;
   const view = p.view as Record<string, unknown> | undefined;
   return view?.callback_id === OE_SETKEY_MODAL_CALLBACK ? p : undefined;
+}
+
+function interactivityFenceIds(payload: unknown): {
+  readonly teamId?: string;
+  readonly enterpriseId?: string;
+  readonly channelId?: string;
+  readonly userId?: string;
+} {
+  const p = payload as Record<string, unknown> | null | undefined;
+  const obj = (v: unknown): Record<string, unknown> | undefined => (typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined);
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  const channelId = str(obj(p?.channel)?.id);
+  const userId = str(obj(p?.user)?.id);
+  return {
+    ...slackInteractivityTenantIds(payload),
+    ...(channelId === undefined ? {} : { channelId }),
+    ...(userId === undefined ? {} : { userId }),
+  };
 }
 
 export function classifyEnvelope(rawBody: string, contentType: string): FrontDecision {
@@ -710,6 +730,11 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       }
     };
 
+    const fencedAck = (res: Response): Response => {
+      args.waitUntil(Promise.resolve());
+      return res;
+    };
+
     if (decision.kind === "forward") {
       return forwardNative();
     }
@@ -720,7 +745,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.log(`[open-everywhere:slack-front] ${decision.dmKind} wake dropped — the envelope parsed to no channel/ts`);
         return OK();
       }
-      if (slackFrontTenantFenceDeclined(dev, `dm-${decision.dmKind}`, "front-dm-branch")) return OK();
+      if (slackFrontTenantFenceDeclined(dev, `dm-${decision.dmKind}`, "front-dm-branch")) return fencedAck(OK());
       const driverAdmitted = Boolean(dev.botId) && dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
       if (driverAdmitted) {
         args.waitUntil(
@@ -798,7 +823,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
       }
       const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now(), { admitAttachments: shortcutFacts.appCanRead });
-      if (slackFrontTenantFenceDeclined(sev, `${sc.kind}-shortcut`, "front-shortcut-branch")) return new Response(null, { status: 200 });
+      if (slackFrontTenantFenceDeclined(sev, `${sc.kind}-shortcut`, "front-shortcut-branch")) return fencedAck(new Response(null, { status: 200 }));
       if (!(await notYetSeenKey(shortcutWakeKey(sc), sev))) return new Response(null, { status: 200 });
       const seedAttachments = (): void => {
         registerAttachments(sev);
@@ -885,6 +910,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "approval-click") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "approval-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
       if (await handleApproval(decision.payload)) {
         return new Response(null, { status: 200 });
       }
@@ -892,6 +920,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "setkey-click") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "setkey-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
       if (await handleSetKeyClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
@@ -899,6 +930,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "connect-click") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "connect-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
       if (await handleConnectClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
@@ -906,6 +940,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "grant-click") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "grant-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
       if (await handleGrantCardClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
@@ -913,6 +950,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "setkey-submit") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "setkey-submit", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
       const result = await handleSetKeyViewSubmission(decision.payload);
       if (result.handled) {
         return result.response
@@ -947,6 +987,22 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (decision.kind === "reaction") {
       const rev = parseSlackReactionEvent(decision.env);
       if (!rev) return OK();
+
+      const reactionEnterpriseId = slackEnterpriseIdFromEnvelope(decision.env);
+      if (
+        slackInteractivityTenantFenceDeclined(
+          {
+            ...(rev.teamId === undefined ? {} : { teamId: rev.teamId }),
+            ...(reactionEnterpriseId === undefined ? {} : { enterpriseId: reactionEnterpriseId }),
+            channelId: rev.channelId,
+            userId: rev.reactorId,
+          },
+          "reaction",
+          "front-reaction-branch",
+        )
+      ) {
+        return fencedAck(OK());
+      }
 
       const rkey = wakeKey(decision.env, rev.channelId, rev.messageTs);
       if (dedupe.seen(rkey, now())) return OK();

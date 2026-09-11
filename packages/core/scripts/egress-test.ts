@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { compileNetworkPolicy } from "../agent/access/egress.js";
+import { compileNetworkPolicy, openWriteHosts } from "../agent/access/egress.js";
 import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
@@ -42,6 +42,8 @@ const noOverride = async (ids: readonly string[]) => ids;
 type TestRule = { match?: { method?: string[]; path?: { startsWith?: string } }; transform?: unknown[] };
 const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: string): TestRule[] =>
   typeof p === "string" ? [] : (((p as { allow?: Record<string, unknown[]> }).allow?.[host] ?? []) as TestRule[]);
+const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Record<string, unknown> =>
+  typeof p === "string" ? {} : ((p as { allow?: Record<string, unknown> }).allow ?? {});
 
 {
   const headers = async () => ({ authorization: "Bearer x" });
@@ -159,6 +161,91 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   resetExtraEgressHostsForTest();
   ok(extraEgressHosts().length === 0, "reset empties the registry");
   ok((await compileNetworkPolicy(access([]), headers, noOverride)) === "deny-all", "after reset the empty-access policy is deny-all again");
+}
+
+{
+  const { _setBrowserHostsForTest, resetBrowserHostsForTest } = await import("../agent/access/browser-hosts.js");
+  const { resetExtraEgressHostsForTest } = await import("../agent/access/extra-hosts.js");
+  const { resetSettingsForTest } = await import("../agent/settings/settings.js");
+  resetExtraEgressHostsForTest();
+  overrideSettingsForTest({ browser: { enabled: true } });
+
+  const CANARY = "canary-browser-secret-0xdeadbeef";
+  const headers = async (c: Connection) => ({ authorization: `Bearer ${CANARY}-${c.id}` });
+
+  _setBrowserHostsForTest([
+    { host: "localhost", methods: ["GET", "POST"], why: "t" },
+    { host: "readonly.example.com", methods: ["GET", "HEAD"], why: "t" },
+    { host: "vendor.example.com", methods: ["GET", "HEAD", "POST"], credential: "vendor-login", why: "t" },
+  ]);
+
+  const compiled = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, noOverride);
+  const vendorRules = rulesFor(compiled, "vendor.example.com");
+  ok(vendorRules.length === 1, "a credentialed browser host compiles to exactly one rule");
+  ok(
+    (vendorRules[0].match?.method ?? []).join(",") === "GET,HEAD,POST",
+    "…narrowed to the verbs the DECLARATION admits — the host+method row is the control, not a per-call card",
+  );
+  ok(
+    JSON.stringify(vendorRules[0].transform ?? []).includes(CANARY),
+    "🔴 THE CREDENTIAL IS INJECTED AT THE FIREWALL: the compiled rule's `transform` carries it, so the sandbox never holds it",
+  );
+
+  const roRules = rulesFor(compiled, "readonly.example.com");
+  ok(
+    roRules.length === 1 && (roRules[0].match?.method ?? []).join(",") === "GET,HEAD" && (roRules[0].transform ?? []).length === 0,
+    "an UNCREDENTIALED row is narrowed too and stamps nothing — the negative control for the transform above",
+  );
+  ok(!("localhost" in allowOfPolicy(compiled)), "a LOOPBACK row never reaches the firewall at all — it does not leave the sandbox VM");
+
+  const rows = openWriteHosts(compiled, [], [...(await import("../agent/access/browser-hosts.js")).browserEgressHosts()]);
+  const vendorRow = rows.find((r) => r.host === "vendor.example.com");
+  ok(vendorRow?.credentialed === true && vendorRow.credential === "vendor-login", "the audit row names the credential's IDENTITY — the declaration's connection id");
+  ok(!JSON.stringify(rows).includes(CANARY), "…and no rendered row carries a byte of the secret");
+  ok(
+    rows.find((r) => r.host === "readonly.example.com") === undefined,
+    "a read-only browser host is absent from the write-host rows — GET/HEAD opens nothing mutating",
+  );
+
+  const unbound = await compileNetworkPolicy(access([], []), headers, noOverride);
+  ok(
+    !("vendor.example.com" in allowOfPolicy(unbound)),
+    "🔴 a declared credential this session does NOT grant OMITS the host — never opens it logged out (the silent-wrong-thing this closes)",
+  );
+  ok("readonly.example.com" in allowOfPolicy(unbound), "…while the uncredentialed rows are untouched — the narrow is per row");
+
+  const revoked = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, async () => []);
+  ok(!("vendor.example.com" in allowOfPolicy(revoked)), "a break-glass revoke of the connection removes the browser host from the policy");
+
+  const unreadable = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, async () => null);
+  ok(!("vendor.example.com" in allowOfPolicy(unreadable)), "an unreadable override store denies the credentialed browser host, exactly as it denies a bundle host");
+
+  const noHeader = await compileNetworkPolicy(access([], [conn("vendor-login")]), async () => ({}), noOverride);
+  ok(!("vendor.example.com" in allowOfPolicy(noHeader)), "a credential that resolves to NO header omits the host rather than opening it bare");
+
+  const bundleWins = await compileNetworkPolicy(
+    access([{ host: "vendor.example.com", viaConnection: "bundle-conn", methods: ["GET"] }], [conn("bundle-conn"), conn("vendor-login")]),
+    headers,
+    noOverride,
+  );
+  const wonRules = rulesFor(bundleWins, "vendor.example.com");
+  ok(
+    wonRules.length === 1 && (wonRules[0].match?.method ?? []).join(",") === "GET",
+    "a host the BUNDLE already reaches keeps its bundle rules — the browser section adds hosts, it never widens one",
+  );
+
+  overrideSettingsForTest({ browser: { enabled: false } });
+  const disarmed = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, noOverride);
+  ok(disarmed === "deny-all", "🔴 FLAG OFF: the SAME declaration opens NOTHING — the policy is deny-all, not a bare allow list");
+  ok(!("vendor.example.com" in allowOfPolicy(disarmed)), "…and in particular the credentialed third-party host is absent, so no secret is stamped for bash to use");
+  ok(!("readonly.example.com" in allowOfPolicy(disarmed)), "…nor is the uncredentialed one");
+  resetSettingsForTest();
+
+  resetBrowserHostsForTest();
+  ok(
+    (await compileNetworkPolicy(access([]), headers, noOverride)) === "deny-all",
+    "with the declaration reset the empty-access policy is deny-all again (byte-identical unarmed default)",
+  );
 }
 
 {
@@ -447,4 +534,6 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   }
 }
 
-console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge + OPE-300 per-turn re-apply + OPE-311 connector-override reaches egress)\n`);
+console.log(
+  `\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge + OPE-1614 browser credential boundary + OPE-300 per-turn re-apply + OPE-311 connector-override reaches egress)\n`,
+);

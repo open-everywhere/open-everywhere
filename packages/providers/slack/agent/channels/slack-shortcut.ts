@@ -5,6 +5,7 @@ import {
   type WakeAttachment,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseSlackFiles, type ParsedMessageEvent } from "./slack-events.js";
+import { slackInteractivityTenantIds } from "./slack-tenant-fence.js";
 
 export interface ParsedSlackShortcut {
   readonly kind: "message" | "global";
@@ -40,8 +41,7 @@ export function parseSlackShortcutPayload(raw: unknown): ParsedSlackShortcut | n
   const triggerId = str(p.trigger_id);
   const userId = str(obj(p.user)?.id);
   if (!callbackId || !triggerId || !userId) return null;
-  const teamId = str(obj(p.team)?.id);
-  const enterpriseId = str(obj(p.enterprise)?.id) ?? str(p.enterprise_id) ?? str(obj(p.team)?.enterprise_id);
+  const { teamId, enterpriseId } = slackInteractivityTenantIds(p);
   if (type === "shortcut") {
     return { kind: "global", callbackId, triggerId, userId, ...(teamId ? { teamId } : {}), ...(enterpriseId ? { enterpriseId } : {}) };
   }

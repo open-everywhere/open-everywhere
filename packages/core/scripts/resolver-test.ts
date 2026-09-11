@@ -243,6 +243,35 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   assert.throws(() => resolveAccessT(chan("T1", "C1"), split, twoScopes), EgressHostCollisionError, "a clash across two bundles refuses too");
 
+  {
+    const brokerHost: Bundle[] = [{ name: "gh", connections: [
+      { id: "github-pat", credentialType: "bearer", secretRef: "GH", allowedWebsites: ["github.com"] },
+    ] }];
+    const bound: Binding[] = [{ bundle: "gh", scope: { level: "surface", surface: "slack/T1/C1" } }];
+    let brokerThrown: unknown;
+    try {
+      resolveAccessT(chan("T1", "C1"), brokerHost, bound);
+    } catch (err) {
+      brokerThrown = err;
+    }
+    ok(brokerThrown instanceof EgressHostCollisionError, "🔴 ONE connection claiming a git-broker host REFUSES the resolve — the broker is the second credential, and no second connection is needed");
+    ok(
+      String(brokerThrown).includes("github.com") && String(brokerThrown).includes("github-pat") && String(brokerThrown).includes("git read-broker"),
+      `…and the message names the host, the connection AND the broker, so the audit row is a complete statement (got ${String(brokerThrown)})`,
+    );
+
+    assert.throws(
+      () => resolveAccessT(chan("T1", "C1"), [{ name: "gh", connections: [{ id: "w", credentialType: "bearer", secretRef: "GH", allowedWebsites: ["*.github.com"] }] }], bound),
+      EgressHostCollisionError,
+      "a wildcard covering a broker host refuses too",
+    );
+
+    const apiHost = resolveAccessT(chan("T1", "C1"), [{ name: "gh", connections: [{ id: "api", credentialType: "bearer", secretRef: "GH", allowedWebsites: ["api.github.com"] }] }], bound);
+    ok(apiHost.reachableHosts.some((h) => h.host === "api.github.com"), "api.github.com is NOT reserved — the broker replaces two hosts and nothing else");
+    const asDomain = resolveAccessT(chan("T1", "C1"), [{ name: "gh", domains: ["github.com"] }], bound);
+    ok(asDomain.warnings.every((w) => !w.includes("read-broker")), "a credential-LESS `domains` entry on a broker host is not a party to this — it stamps nothing, so there is no second credential");
+  }
+
   const onePrefixed: Bundle[] = [{ name: "one", connections: [
     { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"], pathPrefixes: ["/v1/", "/v2/"] },
   ] }];
@@ -791,6 +820,22 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     'pattern "*.com" is overly broad',
     'a single-label wildcard ("*.<tld>") egress domain throws',
   );
+  for (const [pattern, where, bundle] of [
+    ["api.*.vendor.com", "an INFIX wildcard", { name: "b", connections: [{ id: "v", credentialType: "bearer" as const, secretRef: "V", allowedWebsites: ["api.*.vendor.com"] }] }],
+    ["*vendor.com", "a bare leading star with no dot", { name: "b", domains: ["*vendor.com"] }],
+    ["api.vendor.*", "a TRAILING wildcard", { name: "b", domains: ["api.vendor.*"] }],
+    ["*.a.*.com", "a SECOND star after a legal leading one", { name: "b", domains: ["*.a.*.com"] }],
+  ] as const) {
+    throwsWith(() => assertBundlesValid([bundle as Bundle]), `pattern "${pattern}" spells a wildcard`, `${where} ("${pattern}") throws — the only wildcard form is a leading "*."`);
+  }
+  assertBundlesValid([{ name: "b", domains: ["*.vendor.com", "api.vendor.com", "vendor.com", "a-b.c.vendor.com"] }]);
+  ok(true, "a leading `*.` wildcard, an exact host, an apex and a hyphenated subdomain all still validate — the rule reads the STAR, never the shape of a hostname");
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", domains: ["*.com"] }]),
+    "is overly broad",
+    "…and a bare-TLD wildcard still reports as OVERLY BROAD rather than as an unexpandable spelling — one verdict per pattern, and the broader one is the useful message",
+  );
+
   throwsWith(
     () => assertBundlesValid([{ name: "b", connectors: ["notion", "notion"] }]),
     'grants connector "notion" more than once',

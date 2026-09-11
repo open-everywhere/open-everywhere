@@ -388,6 +388,29 @@ registerIdentityMapper(PLATFORM, (c) => {
   for (const rel of ["packages/core/agent/tools/check_pr_status.ts", "packages/core/agent/tools/walk_pr.ts", "packages/core/agent/scm/github-search.ts", "packages/providers/github/agent/channels/github-read.ts"]) {
     ok(resolvers.includes(rel), `§9 the scan reaches ${rel}`);
   }
+
+  const MINTER = "packages/providers/github/agent/channels/github-post-arm.ts";
+  const SCAN_BLIND_SPOTS: Readonly<Record<string, string>> = {
+    "packages/providers/github/agent/channels/github-reaction-feedback.ts":
+      "INGRESS — the reaction-feedback poll reads the reactions on a comment the agent itself posted, with no requester turn behind it, so there is no own-account ask to honour",
+  };
+  const derivedBlindSpots = tsUnder("packages/providers/github/agent")
+    .filter((rel) => rel !== MINTER && /\binstallationTokenFor\b/u.test(codeOnly(readFileSync(join(repoRoot, rel), "utf8"))))
+    .sort();
+  ok(
+    JSON.stringify(derivedBlindSpots) === JSON.stringify(Object.keys(SCAN_BLIND_SPOTS).sort()),
+    `🔴 §9 the DERIVED blind-spot set (${derivedBlindSpots.join(", ") || "none"}) matches what SCAN_BLIND_SPOTS declares — a NEW bundle module that mints through installationTokenFor lands here, with its reason, or this reds`,
+  );
+  ok(codeOnly(readFileSync(join(repoRoot, MINTER), "utf8")).includes("installationTokenFor"), `§9 the minter ${MINTER} is really the module that exports the mint — the subtraction above is not silently removing the wrong file`);
+  for (const [rel, reason] of Object.entries(SCAN_BLIND_SPOTS)) {
+    const source = codeOnly(readFileSync(join(repoRoot, rel), "utf8"));
+    ok(/\binstallationTokenFor\b/u.test(source), `🔴 §9 ${rel} still mints through the bundle's own installationTokenFor — ${reason}`);
+    ok(!resolvers.includes(rel), `🔴 §9 the tree scan CANNOT see ${rel}, which is why the doc names it by hand`);
+  }
+  const gatedReads = resolvers.filter((rel) => /assertGithubActingIdentity\(/u.test(readFileSync(join(repoRoot, rel), "utf8")));
+  const blindReads = derivedBlindSpots.length;
+  ok(gatedReads.length === 7, `🔴 §9 SEVEN reads call the seam (found ${gatedReads.length}) — connectors-and-providers.md states that number`);
+  ok(gatedReads.length + blindReads === 8, `🔴 §9 the tree holds EIGHT GitHub reads (${gatedReads.length} gated + ${blindReads} the scan cannot see) — connectors-and-providers.md states that number`);
   assert.ok(true);
 }
 

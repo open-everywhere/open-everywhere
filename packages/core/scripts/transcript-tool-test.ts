@@ -140,7 +140,7 @@ const FIRE = {
   ok(def !== undefined, "the tool is built for the model call off the session.started path");
   ok(
     typeof def!.toModelOutput === "function",
-    "eve PRESERVES the authored toModelOutput on the replay path (0.44.0) — if this reverts, the fence depends on the OPE-73 hook alone",
+    "eve PRESERVES the authored toModelOutput on the replay path — and is now its only carrier, so a red here means the transcript reaches the model unfenced unless eve refuses the entry outright",
   );
 
   const converted = defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) }));
@@ -177,8 +177,10 @@ const FIRE = {
   ok(preValue.includes("IGNORE ALL PREVIOUS INSTRUCTIONS"), "pre-hook: and the ingested content is preserved inside it (fencing, not censoring)");
 
   const before = built;
+  const eveClosure = built.toModelOutput;
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(toolset["read_routine_transcript"] === before, "projection MUTATES in place (object identity preserved — eve's approval WeakMap depends on it)");
+  ok(built.toModelOutput === eveClosure, "the seam leaves eve's own closure UNTOUCHED on a name it registered — it neither clobbers the envelope nor wraps it twice");
 
   const projected = await built.toModelOutput!(sampleOutput);
   const value = String(projected.value);

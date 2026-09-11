@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
-import { lintBroadGrants, lintEgressHostCollisions, lintMethodNarrowing, lintAccessConfig, ownAccountWithholdingProblems } from "../agent/access/lint.js";
+import { lintBroadGrants, lintEgressHostCollisions, lintMethodNarrowing, lintAccessConfig, lintReservedBrokerHosts, ownAccountWithholdingProblems } from "../agent/access/lint.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import type { Group } from "../agent/identity/groups.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
@@ -268,6 +268,62 @@ ok(lintMethodNarrowing([credentialless]).length === 0, "a bundle with no connect
   ok(
     ownAccountWithholdingProblems([], noEndpoints).length === 0,
     "a connector that admits NO credential grant is not checked — `endpoints` stays an operator narrowing everywhere else",
+  );
+
+  const reachesOutside = defineBundle({
+    name: "notion-wide",
+    connections: [conn({ id: "notion-files", secretRef: "N", allowedWebsites: ["files.notion.so"] })],
+  });
+  const gap = ownAccountWithholdingProblems(["notion"], withHosts, [reachesOutside]);
+  ok(gap.length === 1, `a connection stamping the vendor's secret while reaching NO catalogue host is one problem (got ${gap.length}: ${JSON.stringify(gap)})`);
+  ok(gap[0]!.includes("files.notion.so") && gap[0]!.includes("notion-files"), "…naming the connection and what it actually reaches");
+  ok(gap[0]!.includes("api.notion.com"), "…and what the catalogue declares, so an operator sees both sides of the join they must close");
+
+  const seen = defineBundle({
+    name: "notion-narrow",
+    connections: [conn({ id: "notion", secretRef: "N", allowedWebsites: ["api.notion.com", "files.notion.so"] })],
+  });
+  ok(ownAccountWithholdingProblems(["notion"], withHosts, [seen]).length === 0, "🔴 a connection reaching one catalogue host is clean — identification covers its WHOLE reach");
+
+  const wildConnection = defineBundle({ name: "w", connections: [conn({ id: "n", secretRef: "N", allowedWebsites: ["*.notion.com"] })] });
+  ok(ownAccountWithholdingProblems(["notion"], withHosts, [wildConnection]).length === 0, "a connection WILDCARD covering the catalogue's exact host is identified — overlap, not equality");
+
+  const otherVendor = defineBundle({ name: "other", connections: [conn({ id: "stripe", secretRef: "STRIPE_KEY", allowedWebsites: ["api.stripe.com"] })] });
+  ok(ownAccountWithholdingProblems(["notion"], withHosts, [otherVendor]).length === 0, "🔴 a connection stamping a DIFFERENT secret is not notion's key — the join reads the secretRef, never the host string or the bundle");
+
+  const viaHeader = defineBundle({
+    name: "hdr",
+    connections: [conn({ id: "notion-hdr", secretRef: "UNRELATED", customHeaders: [{ name: "X-Notion", secretRef: "N" }], allowedWebsites: ["files.notion.so"] })],
+  });
+  ok(ownAccountWithholdingProblems(["notion"], withHosts, [viaHeader]).length === 1, "a connection stamping the vendor's secret through a customHeader is the same key, and reds the same way");
+
+  ok(ownAccountWithholdingProblems(["notion"], withHosts).length === 0, "…and a caller passing NO bundles gets exactly the old one-sided verdict, never a silently weakened one");
+}
+
+{
+  const claimsBroker = defineBundle({
+    name: "gh-key",
+    connections: [conn({ id: "github-pat", allowedWebsites: ["github.com"] })],
+  });
+  const reserved = lintReservedBrokerHosts([claimsBroker]);
+  ok(reserved.length === 1, `a connection claiming a broker host is one problem (got ${reserved.length}: ${JSON.stringify(reserved)})`);
+  ok(reserved[0]!.includes("github-pat") && reserved[0]!.includes("github.com"), "…naming the connection id and the reserved host");
+  ok(reserved[0]!.includes("checkout_repo"), "…and the mechanism that displaces the key, so the message is actionable rather than a verdict");
+
+  const wildBroker = defineBundle({ name: "gh-wild", connections: [conn({ id: "gh", allowedWebsites: ["*.github.com"] })] });
+  const wild = lintReservedBrokerHosts([wildBroker]);
+  ok(wild.length === 1 && wild[0]!.includes("codeload.github.com"), "a wildcard covering a broker host is reserved too, and the message names the host it overlaps");
+
+  ok(lintReservedBrokerHosts([defineBundle({ name: "ok", connections: [conn({ id: "n", allowedWebsites: ["api.notion.com"] })] })]).length === 0, "a connection on an unrelated host is clean");
+  ok(
+    lintReservedBrokerHosts([defineBundle({ name: "gh-api", connections: [conn({ id: "gh", allowedWebsites: ["api.github.com"] })] })]).length === 0,
+    "🔴 `api.github.com` is NOT reserved — the broker replaces github.com and codeload.github.com and nothing else, so reserving the vendor's whole namespace would break a real connection for no reason",
+  );
+  ok(lintReservedBrokerHosts([]).length === 0, "no bundles is clean (the scan is not vacuously reporting)");
+
+  ok(
+    lintAccessConfig([claimsBroker], [at("gh-key", "org")]).some((p) => p.includes("RESERVED by the git read-broker")),
+    "lint 7 reaches the CI gate through lintAccessConfig — a lint nothing runs is not a lint",
   );
 }
 

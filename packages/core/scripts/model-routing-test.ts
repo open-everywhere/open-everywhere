@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineDomain, domainMatchFor, modelRouteFor, statusVerbsFor, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { ROUTINE_MARKER, routineModelRoleStamped } from "../agent/routines/routine.js";
 import {
   applyRoute,
   isSupervisorSession,
@@ -413,6 +414,90 @@ const supDomains: Domain[] = [
   ok(rFallback.id === "anthropic/claude-sonnet-5", "resolveRoute: an unset `supervisor` role with fallbackRole='primary' resolves the primary route");
   const rNoFallback = await resolveRoute("supervisor", C_TXN, undefined, DEFAULT_ID, deps);
   ok(rNoFallback.id === undefined && rNoFallback.reasoning === undefined, "resolveRoute: an unset `supervisor` role with NO fallbackRole stays unrouted (id undefined → caller's default applies)");
+}
+
+{
+  const fireCtx = (routineStamp?: string, continuationToken?: string): BindableContext =>
+    ({
+      channel: { kind: "slack", ...(continuationToken === undefined ? {} : { continuationToken }) },
+      session: {
+        auth: {
+          current: {
+            attributes: {
+              team_id: "T1",
+              channel_id: "C_TXN",
+              channel_type: "channel",
+              is_private: "false",
+              trust_checked: "true",
+              [ROUTINE_MARKER.id]: "r-abc123",
+              [ROUTINE_MARKER.surface]: C_TXN,
+              [ROUTINE_MARKER.org]: "acme",
+              ...(routineStamp === undefined ? {} : { [ROUTINE_MARKER.modelRole]: routineStamp }),
+            },
+            principalId: "U1",
+            principalType: "user",
+          },
+        },
+      },
+    }) as BindableContext;
+
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx("supervisor"), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
+    ok(m !== null, "routine model role: a fire naming a role returns a wrapped model");
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === UTILITY_ID, "🔴 routine model role: a fire that named `supervisor` resolves the SUPERVISOR route, not the channel's primary");
+    ok(calls[0].options.reasoning === "low", "routine model role: …and carries that route's own reasoning");
+  }
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx(undefined), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === DEFAULT_ID, "🔴 routine model role: a fire that named NO role inherits — it resolves `primary`, byte-for-byte the pre-OPE-1627 behaviour");
+    ok(calls[0].options.reasoning === "high", "routine model role: …including the channel primary's own reasoning");
+  }
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx("judge"), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === DEFAULT_ID, "🔴 routine model role: an UNKNOWN role stamp reads as inherit — `primary`, not a refusal and not a guess");
+    ok(calls[0].options.reasoning === "high", "routine model role: …and it really resolved the primary ROUTE (reasoning high), not the fail-soft bare default");
+  }
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx("primary", "C_TXN:oe-sup:g3"), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === DEFAULT_ID, "🔴 routine model role: a routine declaring `primary` resolves primary even on a SUPERVISOR-SHAPED token — the declared role wins on both delivery paths");
+    ok(calls[0].options.reasoning === "high", "routine model role: …and it is the primary ROUTE (reasoning high), not the fail-soft bare default");
+  }
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx(undefined, "C_TXN:oe-sup:g3"), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === UTILITY_ID, "routine model role: NEGATIVE CONTROL — the same supervisor-shaped token with no declared role still resolves `supervisor`");
+  }
+  {
+    const calls: FakeCall[] = [];
+    const m = await resolvePrimaryModel(fireCtx("utility"), PRIMARY_DEFAULTS, fakeDeps(() => domains2, calls));
+    await m!.doGenerate(turnCall);
+    ok(calls[0].id === "anthropic/claude-sonnet-5", "🔴 routine model role: a role the deployment routes NOWHERE falls back to `primary` — inert, never a failure");
+  }
+  {
+    const workerToken = formatWindowToken({ domain: "txn", windowId: taskWindowId(C_TXN, "C_TXN", "n1"), generation: 0 });
+    ok(isSupervisorSession({ channel: { kind: "unified", continuationToken: workerToken } } as BindableContext), "routine model role: the worker token really IS supervisor-shaped — the control this arm depends on");
+    const withStamp: FakeCall[] = [];
+    const m1 = await resolvePrimaryModel(fireCtx("primary", workerToken), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, withStamp));
+    await m1!.doGenerate(turnCall);
+    ok(withStamp[0].id === DEFAULT_ID && withStamp[0].options.reasoning === "high", "🔴 routine model role: a DELEGATED WORKER of a routine declaring `primary` runs the primary route — the declared role reaches the work the routine delegates");
+    const withoutStamp: FakeCall[] = [];
+    const m2 = await resolvePrimaryModel(fireCtx(undefined, workerToken), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, withoutStamp));
+    await m2!.doGenerate(turnCall);
+    ok(withoutStamp[0].id === UTILITY_ID, "🔴 routine model role: NEGATIVE CONTROL — the same worker with no declared role still resolves `supervisor`, exactly as before this field existed");
+  }
+  ok(routineModelRoleStamped({ [ROUTINE_MARKER.modelRole]: "utility" }) === "utility", "routineModelRoleStamped: a routable role reads back");
+  ok(routineModelRoleStamped({ [ROUTINE_MARKER.modelRole]: "vision" }) === undefined, "routineModelRoleStamped: a NON-routable role reads as inherit");
+  ok(routineModelRoleStamped({}) === undefined, "routineModelRoleStamped: an unstamped bag reads as inherit");
+  ok(routineModelRoleStamped(undefined) === undefined, "routineModelRoleStamped: no bag at all reads as inherit");
 }
 
 {

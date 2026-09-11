@@ -26,21 +26,19 @@ interface ToolModelOutputShape {
   value: unknown;
 }
 
-type AuthoredProjection = (output: unknown) => ToolModelOutputShape | Promise<ToolModelOutputShape>;
-
 interface AiSdkToolLike {
   execute?: (...args: unknown[]) => unknown;
   toModelOutput?: (args: { output: unknown; toolCallId: string }) => ToolModelOutputShape | Promise<ToolModelOutputShape>;
 }
 
-const authoredProjections = new Map<string, AuthoredProjection>();
+const authoredProjectionNames = new Set<string>();
 
-export function registerReplayModelProjection(name: string, projection: AuthoredProjection): void {
-  authoredProjections.set(name, projection);
+export function registerAuthoredProjectionName(name: string): void {
+  authoredProjectionNames.add(name);
 }
 
 export function registeredProjectionNames(): readonly string[] {
-  return [...authoredProjections.keys()];
+  return [...authoredProjectionNames];
 }
 
 const variantProjectedNames = new Set<string>();
@@ -55,7 +53,7 @@ export function variantProjectedNameList(): readonly string[] {
 }
 
 function isConnectorExternalName(name: string): boolean {
-  return (name.includes("__") || name === "connection_search") && !authoredProjections.has(name);
+  return (name.includes("__") || name === "connection_search") && !authoredProjectionNames.has(name);
 }
 
 function isStatusOnlyConnectionSearch(output: unknown): boolean {
@@ -114,17 +112,6 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   for (const [name, raw] of Object.entries(toolset)) {
     if (raw === null || typeof raw !== "object") continue;
     const tool = raw as AiSdkToolLike;
-
-    const authored = authoredProjections.get(name);
-    if (authored !== undefined) {
-      if (typeof tool.execute !== "function") continue;
-      const prev = tool.toModelOutput?.bind(tool);
-      tool.toModelOutput = async (args) => {
-        if (isAuthPendingOutput(args?.output) && prev !== undefined) return prev(args);
-        return await authored(args?.output);
-      };
-      continue;
-    }
 
     if (isConnectorExternalName(name) && typeof tool.execute === "function") {
       const prev = tool.toModelOutput?.bind(tool);

@@ -1,5 +1,6 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
 import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, egressHostsOverlap, normaliseEgressHost, repoGrantName, repoGrantCapabilities } from "./bundle.js";
+import { GIT_BROKER_HOSTS } from "./egress.js";
 import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
 import { unionResourceCapabilities, type ResourceCapability } from "./resource-capabilities.js";
 import { resourceGrantCapabilities } from "./resource-grant.js";
@@ -261,6 +262,17 @@ export function resolveAccess(
       reported.add(key);
       const where = a.host === b.host ? hosts[0]! : `${hosts[0]} overlaps ${hosts[1]}`;
       collisions.push(`${where} (connections ${ids.join(", ")})`);
+    }
+  }
+  for (const claim of claims) {
+    for (const reserved of GIT_BROKER_HOSTS) {
+      const host = normHost(reserved);
+      if (!egressHostsOverlap(claim.host, host)) continue;
+      const where = claim.host === host ? host : `${claim.host} overlaps ${host}`;
+      const key = `broker ${claim.via} ${where}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      collisions.push(`${where} (connection ${claim.via}, and the git read-broker, which replaces that host's rules mid-turn)`);
     }
   }
   if (collisions.length > 0) throw new EgressHostCollisionError(collisions);

@@ -14,7 +14,7 @@ export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any)
 import { bindFrom, windowGrainOf, currentWakeId, currentWindowToken, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
-import { registerReplayModelProjection, setVariantProjectedName } from "./untrusted-projection.js";
+import { registerAuthoredProjectionName, setVariantProjectedName } from "./untrusted-projection.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, fullKit } from "./window-gate-manifest.js";
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
@@ -309,6 +309,20 @@ export function mountedEntryCollisions(): MountedEntryCollision[] {
   return out;
 }
 
+export function authoredModelProjectionFor(mountedName: string): ((output: unknown) => unknown) | undefined {
+  const held = MOUNTED_ENTRIES.get(mountedName);
+  if (held === undefined) return undefined;
+  if (held.entries.size !== 1) {
+    throw new Error(
+      `authoredModelProjectionFor("${mountedName}"): ${held.entries.size} entries mount under this name — a variant family has no single projection to return.`,
+    );
+  }
+  const [entry] = held.entries;
+  const project = entry?.toModelOutput;
+  if (typeof project !== "function") return undefined;
+  return (output: unknown) => project(output);
+}
+
 export function preRegisterDynamicVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>): void {
   const entryKeys = Object.keys(variants);
   if (entryKeys.length < 2) {
@@ -410,7 +424,7 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
     reg.set(names.approvalResponse, callbacks.approvalResponse);
   }
   if (typeof entry.toModelOutput === "function") {
-    registerReplayModelProjection(mountedNameOf(slug, entryKey), entry.toModelOutput.bind(entry));
+    registerAuthoredProjectionName(mountedNameOf(slug, entryKey));
     callbacks.toModelOutput = ((_cv: unknown, out: unknown) => (entry.toModelOutput as (o: unknown) => unknown)(out)) as ReplayCallback;
     reg.set(names.toModelOutput, callbacks.toModelOutput);
   }

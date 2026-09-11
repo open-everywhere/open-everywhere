@@ -1,10 +1,11 @@
 
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
+import { PROMOTER_LIST_MAX, spendLedgerConjuncts, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
-import { pinSuiteStore } from "./_suite-store.js";
+import { pinSuiteStore, pinnedSuiteStorePath } from "./_suite-store.js";
 import {
   deploymentOrg,
   registeredDeploymentIdentity,
@@ -135,6 +136,117 @@ const store = makeOperationalPostgresStore(client);
   const summed = await store.spendTotals(ORG, { periodFrom: "2026-05", periodTo: "2026-06" });
   const summedSq = await sqliteOperationalStore.spendTotals(ORG, { periodFrom: "2026-05", periodTo: "2026-06" });
   ok(summed.inputTokens === 18 && summedSq.inputTokens === 18, "OPE-1653: the SUM read takes the same period range, identically on both adapters (5 + 6 + 7, April's 4 excluded)");
+}
+
+{
+  const sqliteMod = await import("../agent/operational/sqlite.js");
+  const ORG = "plan-1677";
+
+  const bound: SpendLedgerFilter = { periodFrom: "2026-05", periodTo: "2026-06" };
+  const { conjuncts, params } = spendLedgerConjuncts(bound);
+  const where = ["org_id = ?", ...conjuncts];
+  const listSql = `SELECT * FROM spend_ledger WHERE ${where.join(" AND ")}`;
+  let placeholder = 0;
+  const pgListSql = `SELECT * FROM spend_ledger WHERE ${where.map((c) => c.replace(/\?/g, () => `$${++placeholder}`)).join(" AND ")}`;
+
+  const OUT_OF_WINDOW = 900;
+  const IN_WINDOW = 12;
+  const seed = async (write: (org: string, w: { surfaceKey: string; period: string; inputTokens: number }) => Promise<void>) => {
+    for (let i = 0; i < OUT_OF_WINDOW; i++) await write(ORG, { surfaceKey: `slack/T7/C${i}`, period: `2025-${String((i % 12) + 1).padStart(2, "0")}`, inputTokens: 1 });
+    for (let i = 0; i < IN_WINDOW; i++) await write(ORG, { surfaceKey: `slack/T7/W${i}`, period: "2026-05", inputTokens: 1 });
+  };
+  const SEEDED = OUT_OF_WINDOW + IN_WINDOW;
+
+  await seed((org, w) => sqliteMod.sqliteOperationalStore.recordSpend(org, w));
+  const sqlitePath = pinnedSuiteStorePath();
+  const sqliteSchema = (h: DatabaseSync) => JSON.stringify(h.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name").all());
+  const sqliteIndexes = (h: DatabaseSync) => (h.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'spend_ledger'").all() as { name: string }[]).map((r) => r.name);
+  const sqlitePlan = (h: DatabaseSync) => (h.prepare(`EXPLAIN QUERY PLAN ${listSql}`).all(ORG, ...params) as { detail: string }[]).map((r) => r.detail).join(" | ");
+
+  {
+    const h = new DatabaseSync(sqlitePath, { readOnly: true });
+    ok(sqliteIndexes(h).includes("spend_ledger_org_period"), "🔴 OPE-1677 (sqlite): the boot path CREATES spend_ledger_org_period — the index is reached, not just declared");
+    const withIndex = sqlitePlan(h);
+    ok(withIndex.includes("spend_ledger_org_period"), `🔴 OPE-1677 (sqlite): the bounded read is planned on the new index — got "${withIndex}"`);
+    ok(/org_id=\?.*period>\?.*period<\?/.test(withIndex), `🔴 OPE-1677 (sqlite): the plan constrains org_id AND BOTH period bounds — got "${withIndex}"`);
+    h.close();
+  }
+
+  const beforeSchema = (() => {
+    const h = new DatabaseSync(sqlitePath, { readOnly: true });
+    const s = sqliteSchema(h);
+    h.close();
+    return s;
+  })();
+  const rowsBefore = (await sqliteMod.sqliteOperationalStore.listSpendLedger(ORG)).length;
+  ok(rowsBefore === SEEDED, `fixture control (sqlite): the ledger really holds all ${SEEDED} seeded rows`);
+
+  {
+    const h = new DatabaseSync(sqlitePath);
+    h.exec("DROP INDEX spend_ledger_org_period");
+    const withoutIndex = sqlitePlan(h);
+    ok(!withoutIndex.includes("spend_ledger_org_period"), "negative control (sqlite): with the index dropped the plan cannot name it");
+    ok(withoutIndex.includes("sqlite_autoindex_spend_ledger_1 (org_id=?)") && !withoutIndex.includes("period>"), `🔴 OPE-1677 (sqlite): WITHOUT the index the engine falls back to the primary key and constrains org_id ONLY — got "${withoutIndex}"`);
+    h.close();
+  }
+
+  sqliteMod._resetOperationalDbForTest();
+  ok((await sqliteMod.sqliteOperationalStore.listSpendLedger(ORG)).length === rowsBefore, "🔴 OPE-1677 (sqlite): the migration keeps every row — the index is added in place, never by drop-and-recreate");
+  {
+    const h = new DatabaseSync(sqlitePath, { readOnly: true });
+    ok(sqliteIndexes(h).includes("spend_ledger_org_period"), "🔴 OPE-1677 (sqlite): reopening an EXISTING database rebuilds the missing index — a deployed instance gets it on boot");
+    ok(sqliteSchema(h) === beforeSchema, "🔴 OPE-1677 (sqlite): the migration is IDEMPOTENT — a re-boot leaves the whole schema byte-identical");
+    h.close();
+  }
+  sqliteMod._resetOperationalDbForTest();
+  ok((await sqliteMod.sqliteOperationalStore.listSpendLedger(ORG)).length === rowsBefore, "OPE-1677 (sqlite): the third boot runs, and still keeps every row");
+  {
+    const h = new DatabaseSync(sqlitePath, { readOnly: true });
+    ok(sqliteSchema(h) === beforeSchema, "🔴 OPE-1677 (sqlite): a THIRD boot is still a no-op — CREATE INDEX IF NOT EXISTS never throws and never duplicates");
+    h.close();
+  }
+
+  const planPg = await openTestPg();
+  const planClient: PgClient = planPg.client;
+  await initOperationalSchema(planClient);
+  const planStore = makeOperationalPostgresStore(planClient);
+  await seed((org, w) => planStore.recordSpend(org, w));
+  await planClient.query("ANALYZE spend_ledger");
+
+  const pgSchema = async () =>
+    JSON.stringify([
+      (await planClient.query("SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname")).rows,
+      (await planClient.query("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, column_name")).rows,
+    ]);
+  const pgPlan = async () =>
+    (await planClient.query(`EXPLAIN ${pgListSql}`, [ORG, ...params])).rows
+      .map((r) => Object.values(r as Record<string, unknown>)[0])
+      .join(" | ");
+
+  const pgIndexNames = async () =>
+    ((await planClient.query("SELECT indexname FROM pg_indexes WHERE tablename = 'spend_ledger'")).rows as { indexname: string }[]).map((r) => r.indexname);
+  ok((await pgIndexNames()).includes("spend_ledger_org_period"), "🔴 OPE-1677 (pg): initOperationalSchema CREATES spend_ledger_org_period — the index is reached, not just declared");
+
+  const pgWithIndex = await pgPlan();
+  ok(pgWithIndex.includes("spend_ledger_org_period"), `🔴 OPE-1677 (pg): the bounded read is planned on the new index — got "${pgWithIndex}"`);
+  ok(/Index Cond: .*org_id = .*period >= .*period <= /.test(pgWithIndex), `🔴 OPE-1677 (pg): org_id AND both period bounds are INDEX CONDITIONS, not a post-scan filter — got "${pgWithIndex}"`);
+
+  const pgSchemaBefore = await pgSchema();
+  const pgRowsBefore = (await planStore.listSpendLedger(ORG)).length;
+  ok(pgRowsBefore === SEEDED, `fixture control (pg): the ledger really holds all ${SEEDED} seeded rows`);
+
+  await planClient.query("DROP INDEX spend_ledger_org_period");
+  await planClient.query("ANALYZE spend_ledger");
+  const pgWithoutIndex = await pgPlan();
+  ok(!pgWithoutIndex.includes("spend_ledger_org_period"), "negative control (pg): with the index dropped the plan cannot name it");
+  ok(pgWithoutIndex.includes("Seq Scan on spend_ledger"), `🔴 OPE-1677 (pg): WITHOUT the index the engine reads the WHOLE TABLE — it declines the primary key, so the scan is not even org-bounded — got "${pgWithoutIndex}"`);
+
+  await initOperationalSchema(planClient);
+  ok((await pgIndexNames()).includes("spend_ledger_org_period"), "🔴 OPE-1677 (pg): an owner-mode boot rebuilds the missing index — a deployed instance gets it on boot");
+  ok((await planStore.listSpendLedger(ORG)).length === pgRowsBefore, "🔴 OPE-1677 (pg): the migration keeps every row — the index is added in place, never by drop-and-recreate");
+
+  await initOperationalSchema(planClient);
+  ok((await pgSchema()) === pgSchemaBefore, "🔴 OPE-1677 (pg): the migration is IDEMPOTENT — a re-boot leaves every index and column byte-identical");
 }
 
 {

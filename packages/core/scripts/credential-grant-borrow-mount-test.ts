@@ -112,6 +112,9 @@ const borrowRow = (over: Partial<CredentialGrantRow> = {}): CredentialGrantRow =
 
 const descriptionOf = (entry: ReplayableToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
 
+const pinnedPageId = (entry: ReplayableToolEntry | undefined): unknown =>
+  (entry as unknown as { inputSchema?: { properties?: { page_id?: { const?: unknown } } } } | undefined)?.inputSchema?.properties?.page_id?.const;
+
 console.log("1. the mount reads the row, not a registry:");
 {
   const row = borrowRow();
@@ -120,11 +123,17 @@ console.log("1. the mount reads the row, not a registry:");
   ok(entry !== undefined, "the row alone is enough to build the entry — no verb is registered in this process");
   eq((entry as unknown as { inputSchema: unknown }).inputSchema, row.inputSchema, "the offered schema is the row's APPROVE-TIME SNAPSHOT, not a live vendor read");
   const description = descriptionOf(entry);
-  ok(description.includes("notion-fetch"), "the description names the vendor tool");
+  ok(description.includes("read a Notion page"), "the description names what the tool DOES, in the reviewed phrase rather than the vendor's tool id");
   ok(description.includes("rowan"), "…and the owner whose account pays");
-  ok(description.includes("OWNER-PAGE"), "…and what the grant froze, so the model knows which argument it cannot move");
-  ok(description.includes(row.expiresAt), "…and the expiry");
+  ok(description.includes("page_id"), "…and NAMES the argument the grant fixed, so the model knows which one it cannot move");
+  ok(description.includes("SEND EXACTLY THAT"), "…and states the rule, which the schema's `const` does not");
+  ok((row.inputSchema as { properties: { page_id?: { const?: unknown } } }).properties.page_id?.const === "OWNER-PAGE", "…while the VALUE is pinned on the schema, which is where the fence compares it");
+  ok(/runs for the next \d+ (?:minute|hour|day)s?|runs until it expires/u.test(description), "…and how long is left, as a span a reader can act on");
   ok(description.includes("vendor's own answer"), "…and it states that a vendor error is the vendor's, not a grant refusal — the honesty gap the design recorded");
+  ok(
+    !description.includes(row.expiresAt) && !description.includes("notion-fetch("),
+    "🔴 NEGATIVE CONTROL: the ISO instant and the code-shaped `resource` column are both gone — the two shapes a relaying model used to put in a room",
+  );
 
   eq(grantToolEntry(borrowRow({ inputSchema: undefined })), undefined, "a row with NO schema snapshot is skipped: there is no honest schema to offer");
   eq(mountedGrantName(borrowRow({ toolName: "grant__a__b__c" })), undefined, "a pinned FOUR-segment name is skipped rather than mounted — S0 reads it as no verb at all");
@@ -159,8 +168,8 @@ console.log("1. the mount reads the row, not a registry:");
 
 console.log("2. two rows in one chat pinned to one name:");
 {
-  const first = borrowRow({ createdAt: "2026-08-25T10:00:00.000Z", frozenArgs: { page_id: "FIRST-PAGE" }, id: "grant-first", resource: "notion-fetch page_id=FIRST-PAGE" });
-  const second = borrowRow({ createdAt: "2026-08-25T11:00:00.000Z", frozenArgs: { page_id: "SECOND-PAGE" }, id: "grant-second", resource: "notion-fetch page_id=SECOND-PAGE" });
+  const first = borrowRow({ createdAt: "2026-08-25T10:00:00.000Z", frozenArgs: { page_id: "FIRST-PAGE" }, id: "grant-first", resource: `First brief — notion-fetch(${JSON.stringify({ page_id: "FIRST-PAGE" })})` });
+  const second = borrowRow({ createdAt: "2026-08-25T11:00:00.000Z", frozenArgs: { page_id: "SECOND-PAGE" }, id: "grant-second", resource: `Second brief — notion-fetch(${JSON.stringify({ page_id: "SECOND-PAGE" })})` });
   await getOperationalStore().addCredentialGrant(ORG, first);
   await getOperationalStore().addCredentialGrant(ORG, second);
 
@@ -171,8 +180,9 @@ console.log("2. two rows in one chat pinned to one name:");
     _resetDynamicVariantsForTest();
     const mounted = mountGrantEntries(rows);
     eq(Object.keys(mounted), [NAME], `[${label}] exactly ONE tool mounts — the collision does not double-mount`);
-    ok(descriptionOf(mounted[NAME]).includes("FIRST-PAGE"), `[${label}] the FIRST-MINTED grant holds the name`);
-    ok(!descriptionOf(mounted[NAME]).includes("SECOND-PAGE"), `[${label}] …and the later grant's narrowing is nowhere in what the model reads`);
+    eq(pinnedPageId(mounted[NAME]), "FIRST-PAGE", `[${label}] the FIRST-MINTED grant holds the name — read off the schema constant, which is the value the fence compares`);
+    ok(descriptionOf(mounted[NAME]).includes("First brief"), `[${label}] …and the description shows the FIRST grant's own target label`);
+    ok(!descriptionOf(mounted[NAME]).includes("Second brief"), `[${label}] …and the later grant's narrowing is nowhere in what the model reads`);
     lifecycle.validateDurableDynamicToolCallbacks(NAME, mounted[NAME]);
     assert.throws(
       () => boundExecute(NAME)({ entryKey: "grant-second" }, {}, seatCtx(SCOPE)),
@@ -182,7 +192,7 @@ console.log("2. two rows in one chat pinned to one name:");
     n++;
     const winner = (await boundExecute(NAME)({ entryKey: "grant-first" }, {}, seatCtx("wrun_example8"))) as { refused?: string; message?: string };
     eq(winner.refused, "out_of_scope", `[${label}] …while the winner IS registered and its replay reaches the broker`);
-    ok(winner.message?.includes("FIRST-PAGE") === true, `[${label}] …and the row it read is the FIRST-MINTED one`);
+    ok(winner.message?.includes("First brief") === true, `[${label}] …and the row it read is the FIRST-MINTED one`);
   }
 
   const tieA = borrowRow({ createdAt: "2026-01-20T16:07:00.000Z", frozenArgs: { page_id: "AAA-PAGE" }, id: "grant-aaa" });
@@ -192,7 +202,7 @@ console.log("2. two rows in one chat pinned to one name:");
     [tieB, tieA],
   ]) {
     _resetDynamicVariantsForTest();
-    ok(descriptionOf(mountGrantEntries(rows)[NAME]).includes("AAA-PAGE"), "a createdAt tie breaks on the grant id, so the answer never depends on store order");
+    eq(pinnedPageId(mountGrantEntries(rows)[NAME]), "AAA-PAGE", "a createdAt tie breaks on the grant id, so the answer never depends on store order");
   }
 
   _resetDynamicVariantsForTest();
@@ -201,7 +211,7 @@ console.log("2. two rows in one chat pinned to one name:");
   const early = borrowRow({ createdAt: "2026-08-25T09:00:00.000Z", frozenArgs: { page_id: "EARLY-PAGE" }, id: "grant-early" });
   const three = mountGrantEntries([late, mid, early]);
   eq(Object.keys(three), [NAME], "three rows on one name still mount exactly one tool");
-  ok(descriptionOf(three[NAME]).includes("EARLY-PAGE"), "…and the EARLIEST-MINTED holds it, even when the store returns it last");
+  eq(pinnedPageId(three[NAME]), "EARLY-PAGE", "…and the EARLIEST-MINTED holds it, even when the store returns it last");
 }
 
 console.log("3. the broker sends a borrow row through the borrow transport:");
@@ -265,8 +275,8 @@ console.log("6. two chats, one pinned name, the installed eve:");
 {
   _resetDynamicVariantsForTest();
   const store = getOperationalStore();
-  const chatA = borrowRow({ id: "grant-chat-a", resource: "notion-fetch page_id=CHAT-A", scopeKey: "wrun_a" });
-  const chatB = borrowRow({ id: "grant-chat-b", resource: "notion-fetch page_id=CHAT-B", scopeKey: "wrun_b" });
+  const chatA = borrowRow({ id: "grant-chat-a", resource: `Chat A brief — notion-fetch(${JSON.stringify({ page_id: "CHAT-A" })})`, scopeKey: "wrun_a" });
+  const chatB = borrowRow({ id: "grant-chat-b", resource: `Chat B brief — notion-fetch(${JSON.stringify({ page_id: "CHAT-B" })})`, scopeKey: "wrun_b" });
   await store.addCredentialGrant(ORG, chatA);
   await store.addCredentialGrant(ORG, chatB);
 
@@ -280,10 +290,10 @@ console.log("6. two chats, one pinned name, the installed eve:");
   const elsewhere = seatCtx("wrun_example8");
   const fromA = (await bound(aClosure, {}, elsewhere)) as { ok: boolean; refused?: string; message?: string };
   eq(fromA.refused, "out_of_scope", "the replayed entry reaches the broker, which refuses a call from a chat the owner did not approve");
-  ok(fromA.message?.includes("CHAT-A") === true, "a replay driven from chat A's closure read chat A's GRANT ROW, though chat B registered LAST");
+  ok(fromA.message?.includes("Chat A brief") === true, "a replay driven from chat A's closure read chat A's GRANT ROW, though chat B registered LAST");
   const fromB = (await bound({ entryKey: "grant-chat-b" }, {}, elsewhere)) as { message?: string };
-  ok(fromB.message?.includes("CHAT-B") === true, "…and chat B's closure still reads chat B's row");
-  ok(!fromB.message?.includes("CHAT-A"), "…with no trace of the other chat's grant in it");
+  ok(fromB.message?.includes("Chat B brief") === true, "…and chat B's closure still reads chat B's row");
+  ok(!fromB.message?.includes("Chat A brief"), "…with no trace of the other chat's grant in it");
   assert.throws(() => bound({}, {}, elsewhere), /no variant key in its durable closure/u, "a closure with no grant id FAILS CLOSED — guessing whose credential to spend is the defect this exists for");
   n++;
 }

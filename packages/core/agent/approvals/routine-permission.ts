@@ -4,7 +4,8 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import { getRoutine } from "../routines/store.js";
 import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
-import { routinePermissionGeneration, routinePermissionKey } from "../routines/routine.js";
+import { routinePermissionGeneration, routinePermissionKey, type Routine } from "../routines/routine.js";
+import type { ModelRole } from "../memory/domain.js";
 import { routineCardWaitSeconds } from "../routines/permission-card-wait.js";
 import { routinePermissionDeclinedMemo } from "./session-grant.js";
 import type { ActionKind } from "./types.js";
@@ -20,6 +21,7 @@ export interface RoutinePermissionArgs {
   readonly grantKind: string;
   readonly declaration: string;
   readonly prompt: string;
+  readonly modelRole?: ModelRole;
 }
 
 const CARD_PROMPT_CHARS = 600;
@@ -40,6 +42,9 @@ export function routinePermissionCardLines(args: RoutinePermissionArgs): string[
     "⛔ declining is remembered: this routine stops asking for this permission until its instruction is edited.",
     `Routine says:\n> ${clip(args.prompt)}`,
     `Target: ${args.routineSurfaceKey}`,
+    args.modelRole === undefined
+      ? "Model: inherits this deployment's model stack."
+      : `Model: this routine — and the work it delegates — runs the \`${args.modelRole}\` role of this deployment's model stack, not the default \`primary\` one.`,
   ];
 }
 

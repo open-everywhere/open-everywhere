@@ -421,7 +421,7 @@ registerConfig({
   const unrelated = await runGrantedCall("g-halt", {}, ctx);
   ok(unrelated.ok === false && unrelated.refused !== "halted", "🔴 §7a NEGATIVE CONTROL: a halt on an UNRELATED domain does not refuse it");
   await store.clearHalt(ORG, otherDomainRow, { clearedBy: "U-alice" });
-  ok(credentialGrantRefusalMessage({ ownerSlug: "x", verb: "v", resource: "r" }, "halted") !== credentialGrantRefusalMessage({ ownerSlug: "x", verb: "v", resource: "r" }, "expired"), "§7 the halted copy is its own sentence, not a reused one");
+  ok(credentialGrantRefusalMessage({ connector: "notion", mcpTool: "notion-fetch", ownerSlug: "x", resource: "r" }, "halted") !== credentialGrantRefusalMessage({ connector: "notion", mcpTool: "notion-fetch", ownerSlug: "x", resource: "r" }, "expired"), "§7 the halted copy is its own sentence, not a reused one");
 
   const { surface: _resolvedSurface, ...roomlessCtx } = ctx;
   const unresolvedCtx = { ...roomlessCtx, platform: "unknown", workspace: "unknown" };

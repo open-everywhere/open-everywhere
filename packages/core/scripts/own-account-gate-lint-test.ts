@@ -104,6 +104,29 @@ const gated = (connector: string): string =>
 }
 
 {
+  const files: OwnAccountGateFile[] = [{ file: "a/notion-acting-identity.ts", source: gated("notion") }];
+
+  const ungatedHumanActing = checkOwnAccountGateSites(files, ["notion"], ["gitlab"]);
+  eq(ungatedHumanActing.length, 1, "🔴 a connector declaring a human-acting credential family with NO gated call site is ONE problem");
+  ok(ungatedHumanActing[0]?.includes("gitlab"), "…naming the vendor the producer would stamp and nothing would gate");
+  ok(
+    ungatedHumanActing[0]?.includes("human-acting") && !ungatedHumanActing[0]?.includes("CREDENTIAL_GRANT_ROLES"),
+    "…and saying it arrived through the human-acting half, because that is the list the author has to edit",
+  );
+  ok(ungatedHumanActing[0]?.includes("ownAccountAskVendors"), "…and naming the producer whose union rule 1 now reads");
+
+  eq(
+    checkOwnAccountGateSites([...files, { file: "b/gitlab-acting-identity.ts", source: gated("gitlab") }], ["notion"], ["gitlab"]),
+    [],
+    "🔴 CONTROL: the same vendor WITH a gated call site is clean — rule 1 requires a gate, it does not refuse the vendor",
+  );
+
+  const onBoth = checkOwnAccountGateSites(files, ["notion", "gitlab"], ["gitlab"]);
+  eq(onBoth.length, 1, "a connector on BOTH halves with no gated site reds exactly once — the union is deduplicated");
+  ok(onBoth[0]?.includes("CREDENTIAL_GRANT_ROLES"), "…and names the borrow list, the stricter half it also belongs to");
+}
+
+{
   const source = [
     `// ${OWN_ACCOUNT_GATE_MARKER} notion`,
     "const somethingElse = 1;",

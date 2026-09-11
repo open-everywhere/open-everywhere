@@ -1,13 +1,7 @@
 import browserExtension from "@agent-browser/eve";
 
 import assert from "node:assert/strict";
-import {
-  agentBrowserEnabled,
-  loadAgentBrowserConfig,
-  parseAgentBrowserDomains,
-  isLoopbackBrowseHost,
-  resetAgentBrowserConfigForTest,
-} from "../agent/browser/config.js";
+import { agentBrowserEnabled, loadAgentBrowserConfig, resetAgentBrowserConfigForTest } from "../agent/browser/config.js";
 import { registerAgentBrowser } from "../agent/browser/register.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "../agent/browser/sandbox.js";
 import { installAgentBrowser } from "@agent-browser/eve/sandbox";
@@ -19,7 +13,18 @@ import {
   resetExtraEgressHostsForTest,
   overrideSettingsForTest,
   resetSettingsForTest,
+  _setBrowserHostsForTest,
+  resetBrowserHostsForTest,
+  isLoopbackBrowseHost,
+  type BrowserHostDeclaration,
 } from "@open-everywhere/core/agent/adapter-api.js";
+
+const ro = (host: string, extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaration => ({
+  host,
+  methods: ["GET", "HEAD"],
+  why: "test fixture",
+  ...extra,
+});
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -28,8 +33,10 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const saved = process.env.OE_PLATFORM;
-function setEnv(values: { enabled?: boolean; domains?: string; platform?: string }): void {
-  overrideSettingsForTest({ browser: { enabled: values.enabled ?? false, domains: values.domains ?? "" } });
+function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; platform?: string }): void {
+  overrideSettingsForTest({ browser: { enabled: values.enabled ?? false } });
+  if (values.hosts === undefined) resetBrowserHostsForTest();
+  else _setBrowserHostsForTest(values.hosts);
   if (values.platform === undefined) delete process.env.OE_PLATFORM;
   else process.env.OE_PLATFORM = values.platform;
   resetAgentBrowserConfigForTest();
@@ -40,42 +47,23 @@ function setEnv(values: { enabled?: boolean; domains?: string; platform?: string
   ok(!agentBrowserEnabled(), "flag unset ⇒ disabled");
   ok(loadAgentBrowserConfig() === undefined, "flag unset ⇒ no config");
 
-  setEnv({ domains: "qa.example.com" });
-  ok(loadAgentBrowserConfig() === undefined, "domains without the flag ⇒ still no config (the flag is the master switch)");
+  setEnv({ hosts: [ro("qa.example.com")] });
+  ok(loadAgentBrowserConfig() === undefined, "a declaration without the flag ⇒ still no config (the flag is the master switch)");
 
   setEnv({ enabled: true });
   ok(agentBrowserEnabled(), "`browser.enabled: true` ⇒ enabled");
-  ok(loadAgentBrowserConfig() === undefined, "flag on with NO domain allowlist ⇒ no config (fail closed)");
+  ok(loadAgentBrowserConfig() === undefined, "flag on with NO declared host ⇒ no config (fail closed)");
 
-  setEnv({ enabled: true, domains: "  , ," });
-  ok(loadAgentBrowserConfig() === undefined, "flag on with an empty allowlist ⇒ no config (fail closed)");
+  setEnv({ enabled: true, hosts: [] });
+  ok(loadAgentBrowserConfig() === undefined, "flag on with an EMPTY declaration ⇒ no config (fail closed)");
 
-  setEnv({ enabled: true, domains: "qa.example.com,*.example.com" });
-  ok(loadAgentBrowserConfig() === undefined, "ANY invalid entry (wildcard) invalidates the whole config — no partial allowlist");
-
-  setEnv({ enabled: true, domains: "localhost, QA.Example.com ,qa.example.com" });
+  setEnv({ enabled: true, hosts: [ro("localhost"), ro("qa.example.com")] });
   const cfg = loadAgentBrowserConfig();
-  ok(cfg !== undefined && cfg.domains.join("|") === "localhost|qa.example.com", "valid list parses: trimmed, lowercased, deduped, order-preserving");
+  ok(cfg !== undefined && cfg.domains.join("|") === "localhost|qa.example.com", "an armed declaration yields the hostnames in declaration order");
   ok(loadAgentBrowserConfig() === cfg, "config is memoized per process");
 }
 
 {
-  const good = parseAgentBrowserDomains("localhost,127.0.0.1,preview.vercel.app,my-app.example.co");
-  ok(good.problems.length === 0 && good.domains.length === 4, "loopback + dotted DNS names all accepted");
-
-  for (const [raw, why] of [
-    ["*.example.com", "wildcard"],
-    ["https://example.com", "scheme"],
-    ["example.com/path", "path"],
-    ["example.com:8080", "port"],
-    ["169.254.169.254", "metadata IP"],
-    ["10.0.0.5", "private-range IP"],
-    ["intranet", "single dotless label"],
-    ["example.c0m", "non-alphabetic TLD"],
-  ] as const) {
-    ok(parseAgentBrowserDomains(raw).problems.length > 0, `rejects ${why}: "${raw}"`);
-  }
-
   ok(isLoopbackBrowseHost("localhost") && isLoopbackBrowseHost("127.0.0.1") && isLoopbackBrowseHost("::1"), "loopback classifier: localhost/127.0.0.1/::1");
   ok(!isLoopbackBrowseHost("qa.example.com"), "loopback classifier: a DNS name is not loopback");
 }
@@ -83,7 +71,14 @@ function setEnv(values: { enabled?: boolean; domains?: string; platform?: string
 {
   resetBrowserToolkitForTest();
   resetExtraEgressHostsForTest();
-  setEnv({ enabled: true, domains: "localhost,qa.example.com,preview.vercel.app" });
+  setEnv({
+    enabled: true,
+    hosts: [
+      ro("localhost"),
+      ro("qa.example.com"),
+      ro("preview.vercel.app", { methods: ["GET", "HEAD", "POST"], credential: "vendor-login" }),
+    ],
+  });
   const cfg = loadAgentBrowserConfig();
   ok(cfg !== undefined, "arming config parses");
   ok(registerAgentBrowser(cfg!) === true, "registerAgentBrowser arms (extension config binding took)");
@@ -111,9 +106,31 @@ function setEnv(values: { enabled?: boolean; domains?: string; platform?: string
   ok(typeof nav.description === "string" && nav.description.length > 0 && typeof nav.execute === "function", "entries keep the vendor description + an execute (backstop-wrapped)");
   ok(names.every((t) => (kit![t] as { approval?: unknown }).approval === undefined), "no entry carries an approval policy (replay constraint)");
 
+  ok(!names.includes("browser_evaluate"), "OPE-1624: no host declares `evaluate: true` ⇒ browser_evaluate does NOT mount (structural absence, wall 1)");
+
   const hosts = extraEgressHosts();
-  ok(hosts.includes("qa.example.com") && hosts.includes("preview.vercel.app"), "non-loopback domains ride the extra-egress seam (outer containment wall armed)");
+  ok(hosts.includes("qa.example.com"), "an UNCREDENTIALED non-loopback host rides the extra-egress seam (outer containment wall armed)");
   ok(!hosts.includes("localhost"), "loopback stays OFF the egress allowlist (it never leaves the sandbox VM)");
+  ok(
+    !hosts.includes("preview.vercel.app"),
+    "a CREDENTIALED host stays OFF the bare seam — access/egress.ts compiles its narrowed, credential-stamped rule instead",
+  );
+}
+
+{
+  resetBrowserToolkitForTest();
+  resetExtraEgressHostsForTest();
+  setEnv({ enabled: true, hosts: [ro("qa.example.com", { evaluate: true })] });
+  ok(registerAgentBrowser(loadAgentBrowserConfig()!) === true, "re-arms with an evaluate-armed host");
+  ok(Object.keys(registeredBrowserToolkit() ?? {}).includes("browser_evaluate"), "a host declaring `evaluate: true` re-adds browser_evaluate to the kit");
+
+  resetBrowserToolkitForTest();
+  resetExtraEgressHostsForTest();
+  setEnv({
+    enabled: true,
+    hosts: [ro("localhost"), ro("qa.example.com"), ro("preview.vercel.app", { methods: ["GET", "HEAD", "POST"], credential: "vendor-login" })],
+  });
+  ok(registerAgentBrowser(loadAgentBrowserConfig()!) === true, "restored the section-4 arming");
 }
 
 {
@@ -163,12 +180,12 @@ function setEnv(values: { enabled?: boolean; domains?: string; platform?: string
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag off ⇒ hooks are {} (defineSandbox carries NO bootstrap/revalidationKey property)");
 
   setEnv({ enabled: true, platform: "vercel" });
-  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag on but no allowlist ⇒ no bake (fail closed)");
+  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag on but no declared host ⇒ no bake (fail closed)");
 
-  setEnv({ enabled: true, domains: "localhost", platform: "self-host" });
-  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the Browser-QA MVP posture)");
+  setEnv({ enabled: true, hosts: [ro("localhost")], platform: "self-host" });
+  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the MVP posture)");
 
-  setEnv({ enabled: true, domains: "localhost", platform: "vercel" });
+  setEnv({ enabled: true, hosts: [ro("localhost")], platform: "vercel" });
   const installed: string[] = [];
   const hooks = agentBrowserSandboxHooks(async (sb) => {
     installed.push(sb.id);
@@ -202,5 +219,8 @@ resetSettingsForTest();
 resetAgentBrowserConfigForTest();
 resetBrowserToolkitForTest();
 resetExtraEgressHostsForTest();
+resetBrowserHostsForTest();
 
-console.log(`\n✓ agent-browser: ${n} assertions passed (flag gating fail-closed + domain parse + config binding tripwire + toolkit/egress registration + grain policy + pre-bake hooks)\n`);
+console.log(
+  `\n✓ agent-browser: ${n} assertions passed (flag gating fail-closed + host declaration + config binding tripwire + toolkit/egress registration + evaluate opt-in + grain policy + pre-bake hooks)\n`,
+);

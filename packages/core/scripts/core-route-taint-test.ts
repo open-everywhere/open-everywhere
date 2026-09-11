@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { projectToolSet, registeredProjectionNames } from "../agent/access/untrusted-projection.js";
+import { authoredModelProjectionFor } from "../agent/access/window-gated.js";
 import readWebhookHistory from "../agent/tools/read_webhook_history.js";
 import listRecentEvents from "../agent/tools/list_recent_events.js";
 import { renderAwsResultForModel } from "../agent/access/aws-output.js";
@@ -63,10 +64,19 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
   return harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: converted }) as Record<string, BuiltTool>;
 }
 async function throughSeam(name: string, output: unknown): Promise<string> {
-  const set = buildSet([{ name, description: name, inputSchema: { type: "object", properties: {} }, execute: async () => ({}) }]);
+  const project = authoredModelProjectionFor(name);
+  const set = buildSet([
+    {
+      name,
+      description: name,
+      execute: async () => ({}),
+      inputSchema: { type: "object", properties: {} },
+      ...(project === undefined ? {} : { toModelOutput: (o: unknown) => project(o) }),
+    },
+  ]);
   projectToolSet(set as Record<string, unknown>);
   const mo = set[name]?.toModelOutput;
-  assert.ok(typeof mo === "function", `${name}: the projection seam attached a toModelOutput`);
+  assert.ok(typeof mo === "function", `${name}: eve built a toModelOutput for the replayed def`);
   const out = await mo({ output, toolCallId: `${name}-1` });
   return String(out.value);
 }

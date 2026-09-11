@@ -281,10 +281,10 @@ console.log("4. eve replays THIS grant's projection from the persisted closure:"
   );
 }
 
-console.log("5. the name-keyed projection registry stays out of it:");
+console.log("5. the projection registry stays out of it:");
 ok(
   !registeredProjectionNames().includes(NAME),
-  "NEGATIVE CONTROL: no grant name enters the name-keyed projection registry — it holds one projection per name and could not tell two grants apart",
+  "🔴 NEGATIVE CONTROL: no grant name enters the projection registry — it is a NAME SET read by isConnectorExternalName, so this name entering it would DISABLE the connector fence on every grant behind it",
 );
 
 console.log(`\n✓ grant-content-origin: ${n} assertions passed (baseline connector wrap, authored envelope + origin mark, refusal no-taint, one envelope at the seam, two fail-closed controls, eve replay reachability)\n`);

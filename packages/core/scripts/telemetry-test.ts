@@ -192,6 +192,7 @@ function throwingFetch(): typeof fetch {
       "oe.telemetry.dropped",
     ],
     "oe.turn.completed": ["oe.surface", "oe.kind", "gen_ai.request.model", "oe.tokens.bucket", "oe.steps.bucket", "oe.latency.bucket"],
+    "oe.turn.first_output": ["oe.surface", "oe.kind", "oe.latency.bucket"],
     "oe.turn.failed": ["oe.surface", "oe.error.code"],
     "oe.error.uncaught": ["oe.component", "oe.error.name"],
     "oe.feature.used": ["oe.feature", "oe.outcome"],
@@ -585,6 +586,111 @@ function throwingFetch(): typeof fetch {
     else process.env.OE_GITHUB_APP_ID = savedGithubAppId;
     if (savedMicrosoftAppId === undefined) delete process.env.MICROSOFT_APP_ID;
     else process.env.MICROSOFT_APP_ID = savedMicrosoftAppId;
+    clearTelemetryEnv();
+    __resetTelemetryForTest();
+  }
+}
+
+{
+  const { AsyncLocalStorage } = await import("node:async_hooks");
+  class FakeSession {
+    private readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  function eveContextStorage(): InstanceType<typeof AsyncLocalStorage<unknown>> {
+    const g = globalThis as Record<PropertyKey, unknown>;
+    const key = Symbol.for("eve.context-storage");
+    g[key] ??= new AsyncLocalStorage();
+    return g[key] as InstanceType<typeof AsyncLocalStorage<unknown>>;
+  }
+  const inSession = async <T>(fn: () => T | Promise<T>): Promise<T> => eveContextStorage().run(new FakeSession(), fn);
+
+  const hookModule = (await import("../agent/hooks/telemetry.js")) as {
+    default: { events: Record<string, (event: unknown, ctx: unknown) => Promise<void>> };
+  };
+  const events = hookModule.default.events;
+  const stepCompleted = events["step.completed"];
+  const turnStarted = events["turn.started"];
+  ok(typeof stepCompleted === "function" && typeof turnStarted === "function", "first-output: the shipped hook really registers turn.started and step.completed");
+
+  const ctx = { session: { id: "s-first-output", auth: { current: { attributes: {} } } } };
+
+  function firstOutputRows(captured: readonly { body: Record<string, unknown> }[]): { keys: string[]; latency: string | undefined }[] {
+    const rows: { keys: string[]; latency: string | undefined }[] = [];
+    for (const call of captured) {
+      const body = call.body as {
+        resourceLogs?: { scopeLogs: { logRecords: { eventName: string; attributes?: { key: string; value: { stringValue?: string } }[] }[] }[] }[];
+      };
+      for (const rl of body.resourceLogs ?? []) {
+        for (const sl of rl.scopeLogs) {
+          for (const record of sl.logRecords) {
+            if (record.eventName !== "oe.turn.first_output") continue;
+            const attrs = record.attributes ?? [];
+            rows.push({
+              keys: attrs.map((a) => a.key),
+              latency: attrs.find((a) => a.key === "oe.latency.bucket")?.value?.stringValue,
+            });
+          }
+        }
+      }
+    }
+    return rows;
+  }
+
+  clearTelemetryEnv();
+  const { calls, impl } = fakeFetch();
+  __resetTelemetryForTest({ fetchImpl: impl });
+  __setInstanceForTest({ id: "instance-first-output", ephemeral: false });
+  try {
+    await inSession(async () => {
+      await turnStarted({ data: { turnId: "turn_0" } }, ctx);
+      await flushTelemetry();
+      ok(firstOutputRows(calls).length === 0, "🔴 first-output: a started turn with NO completed step has emitted nothing yet");
+
+      await stepCompleted({ data: { usage: { inputTokens: 10, outputTokens: 3 } } }, ctx);
+      await flushTelemetry();
+      const afterOne = firstOutputRows(calls);
+      ok(afterOne.length === 1, "🔴 first-output: the turn's FIRST completed step emits exactly one oe.turn.first_output row");
+      ok(
+        JSON.stringify([...(afterOne[0]?.keys ?? [])].sort()) === JSON.stringify(["oe.kind", "oe.latency.bucket", "oe.surface"]),
+        "first-output: the row carries exactly its three declared attributes and nothing else",
+      );
+      ok(
+        (EVENT_SCHEMA["oe.turn.first_output"] ?? []).includes("oe.latency.bucket") && afterOne[0]?.latency === latencyBucket(0),
+        "first-output: the latency is a declared BUCKET, not a raw millisecond count — a fresh turn buckets at the floor",
+      );
+
+      await stepCompleted({ data: { usage: { outputTokens: 40 } } }, ctx);
+      await stepCompleted({ data: { usage: { outputTokens: 5 } } }, ctx);
+      await flushTelemetry();
+      ok(firstOutputRows(calls).length === 1, "🔴 first-output: later steps of the SAME turn emit nothing more — one row per turn");
+
+      await turnStarted({ data: { turnId: "turn_1" } }, ctx);
+      await stepCompleted({ data: { usage: { outputTokens: 7 } } }, ctx);
+      await flushTelemetry();
+      ok(firstOutputRows(calls).length === 2, "🔴 first-output: the NEXT turn on the same session reports its own first output");
+    });
+  } finally {
     clearTelemetryEnv();
     __resetTelemetryForTest();
   }

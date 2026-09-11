@@ -9,6 +9,7 @@ import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
+import { routineModelRoleStamped } from "../routines/routine.js";
 import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
 import {
   abBucketKey,
@@ -269,18 +270,27 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   }
 
   const supervisor = isSupervisorSession(ctx);
+  let routineRole: ModelRole | undefined;
+  try {
+    const auth = ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? undefined;
+    routineRole = routineModelRoleStamped(auth?.attributes as Parameters<typeof routineModelRoleStamped>[0]);
+  } catch (err) {
+    logOnce("warn", `primary: routine model-role stamp unreadable (${String(err)}) — inherit`);
+  }
+  const effectiveRole: ModelRole = routineRole ?? (supervisor ? "supervisor" : "primary");
   let ab: ModelAbInput | undefined;
   try {
     const test = deps.modelAbTest?.();
-    if (!supervisor && modelAbTestArmed(test)) ab = { test, bucketKey: abBucketKey(surfaceKey, abThreadKey(ctx)) };
+    if (effectiveRole === "primary" && modelAbTestArmed(test)) ab = { test, bucketKey: abBucketKey(surfaceKey, abThreadKey(ctx)) };
   } catch (err) {
     logOnce("warn", `primary: model A/B test read failed (${String(err)}) — no arm`);
   }
   let route: ModelRoute;
   try {
-    route = supervisor
-      ? await resolveRoute("supervisor", surfaceKey, surfaceMatch, defaults.primary.id, deps, "primary")
-      : await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps, undefined, ab);
+    route =
+      effectiveRole === "primary"
+        ? await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps, undefined, ab)
+        : await resolveRoute(effectiveRole, surfaceKey, surfaceMatch, defaults.primary.id, deps, "primary");
   } catch (err) {
     logOnce("warn", `primary: route resolution failed (${String(err)}) — default model`);
     stampModelCall(defaults.primary.id);

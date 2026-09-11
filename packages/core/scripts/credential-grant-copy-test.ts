@@ -23,8 +23,12 @@ import { credentialGrantRefusalNote } from "../agent/access/credential-grant-ask
 import { credentialGrantMintVerdict, grantMintRefusalMessage, type GrantMintInput, type GrantMintRefusal } from "../agent/access/credential-grant.js";
 import { grantOwnerNoticeText, grantRoomNoticeText } from "../agent/access/credential-grant-notice.js";
 import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
-import { credentialGrantDisclosureLine, grantBorrowResourceLabel, grantJsonColumn, grantJsonFromColumn, grantResourceTargetLabel } from "../agent/operational/credential-grant-rows.js";
-import type { CredentialGrantAskRow, CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
+import { credentialGrantDisclosureLine, credentialGrantRefusalMessage, grantBorrowResourceLabel, grantJsonColumn, grantJsonFromColumn, grantResourceTargetLabel } from "../agent/operational/credential-grant-rows.js";
+import type { CredentialGrantAskRow, CredentialGrantRefusal, CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
+import { grantToolEntry } from "../agent/tools/grant_tools.js";
+import type { ReplayableToolEntry } from "../agent/access/window-gated.js";
+
+const descriptionOf = (entry: ReplayableToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -483,6 +487,25 @@ const leakyRow: CredentialGrantRow = {
 function brokerLine(row: CredentialGrantRow): string {
   return credentialGrantDisclosureLine(row, NOW);
 }
+const GRANT_REFUSAL_REASONS = [
+  "revoked",
+  "expired",
+  "burned",
+  "out_of_scope",
+  "no_lent_tool",
+  "no_transport",
+  "owner_unresolvable",
+  "unverified_requester",
+  "unattended_wake",
+  "halted",
+  "connector_delisted",
+] as const satisfies readonly CredentialGrantRefusal[];
+type MissingRefusal = Exclude<CredentialGrantRefusal, (typeof GRANT_REFUSAL_REASONS)[number]>;
+const noRefusalMissing: MissingRefusal extends never ? true : MissingRefusal = true;
+ok(noRefusalMissing === true, "🔴 the leak lint drives EVERY spend-time refusal arm — checked by the compiler, not by this line");
+
+const leakyMountRow: CredentialGrantRow = { ...leakyRow, inputSchema: { properties: { id: { const: "quarterly-report", type: "string" } }, type: "object" } };
+
 const REFUSALS: readonly GrantMintRefusal[] = [
   "no_domain_grant",
   "unverified_requester",
@@ -556,6 +579,26 @@ const rendered: readonly { readonly what: string; readonly text: string }[] = [
     what: "the room's disclosure notice (id-shaped requester label)",
   },
   { text: brokerLine(leakyRow), what: "the broker's disclosure line" },
+  ...GRANT_REFUSAL_REASONS.map((reason) => ({
+    text: credentialGrantRefusalMessage(leakyRow, reason),
+    what: `the broker's spend-time refusal "${reason}"`,
+  })),
+  ...GRANT_REFUSAL_REASONS.map((reason) => ({
+    text: credentialGrantRefusalMessage({ ...leakyRow, mcpTool: undefined }, reason),
+    what: `the broker's spend-time refusal "${reason}" (legacy row, no mcpTool)`,
+  })),
+  {
+    text: descriptionOf(grantToolEntry(leakyMountRow, NOW)),
+    what: "the mounted tool description",
+  },
+  {
+    text: descriptionOf(grantToolEntry({ ...leakyMountRow, frozenArgs: undefined, mode: "once" }, NOW)),
+    what: "the mounted tool description (one-shot, no frozen arguments)",
+  },
+  {
+    text: descriptionOf(grantToolEntry({ ...leakyMountRow, mcpTool: "notion-search" }, NOW)),
+    what: "the mounted tool description (unreviewed vendor tool)",
+  },
 ];
 
 ok(rendered.length >= 30, `the lint drives ${String(rendered.length)} rendered strings — the enumeration is the claim`);
@@ -613,6 +656,31 @@ console.log("5. the negative controls:");
   ok(unreviewed.includes("read one thing in Notion"), "an unreviewed (connector, tool) pair falls to the generic floor rather than printing the vendor's id");
   ok(unreviewed.includes("not one this deployment has a reviewed description for"), "…and the line SAYS the description is generic, so the room does not read the floor as a narrow act");
   ok(!line.includes("not one this deployment has a reviewed description for"), "NEGATIVE CONTROL: the reviewed pair carries no such caution — the marker is a function of the pair, not boilerplate");
+
+  {
+    const revoked = credentialGrantRefusalMessage(leakyRow, "revoked");
+    ok(revoked.startsWith("Refused:"), "the spend-time refusal still leads with the verdict, so the model cannot read it as output");
+    ok(revoked.includes("read a Notion page"), "…and says WHAT the grant was for, in the reviewed phrase rather than the `verb` column");
+    ok(revoked.includes('— "Quarterly report"'), "…and WHICH thing, recovered from the requester's own label and quoted as their data");
+    ok(revoked.includes("Do not retry"), "…and still tells the model not to re-plan around a mystery, which is the whole reason this copy exists");
+    ok(
+      !revoked.includes("notion_fetch") && !revoked.includes("notion-fetch("),
+      "🔴 NEGATIVE CONTROL: neither the `verb` column nor the CALL half of `resource` survives — the two shapes a relaying model used to put in a room",
+    );
+    const sentences = GRANT_REFUSAL_REASONS.map((r) => credentialGrantRefusalMessage(leakyRow, r));
+    ok(new Set(sentences).size === GRANT_REFUSAL_REASONS.length, "…and no two refusal names share a sentence after the rewrite");
+
+    const mounted = descriptionOf(grantToolEntry(leakyMountRow, NOW));
+    ok(mounted.includes("Notion account"), "the mounted description still names WHOSE account the call spends, by the vendor's own name");
+    ok(mounted.includes("read a Notion page"), "…and what the tool does");
+    ok(mounted.includes('— "Quarterly report"'), "…and which thing, so a tool list of several grants is still tellable apart");
+    ok(mounted.includes("for the next 12 hours (until 04:19 UTC)"), "…and how long is left, as a span and a clock rather than the ISO column");
+    ok(mounted.includes("FIXED by the grant"), "…and that the frozen arguments are fixed, which is the instruction the schema alone does not give");
+    ok(
+      !mounted.includes(SENTINELS.instant) && !mounted.includes("notion-fetch("),
+      "🔴 NEGATIVE CONTROL: the ISO instant and the code-shaped column are both gone from the string that sits in the model's own tool list",
+    );
+  }
 
   const OFFERS_REVOCATION = /(?:you|they)\s+(?:can|may|could|should)\s+(?:revoke|end)\b|unless you revoke|revoke it first|send me a direct message and ask/iu;
 

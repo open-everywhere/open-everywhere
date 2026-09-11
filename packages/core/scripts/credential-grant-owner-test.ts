@@ -58,7 +58,7 @@ console.log("2. an owner nobody can resolve derives NOTHING:");
   eq(await grantOwnerSubject(ORG, "notion", ""), undefined, "…nor is an empty string");
   eq(await grantOwnerSubject(ORG, "notion", "slack/dev/U-owner"), undefined, "…nor is the \"nobody said\" tenant sentinel, which is not a workspace id");
   ok(
-    credentialGrantRefusalMessage({ ownerSlug: "rowan", resource: "Launch page", verb: "notion_fetch" }, "owner_unresolvable").includes("rowan"),
+    credentialGrantRefusalMessage({ connector: "notion", mcpTool: "notion-fetch", ownerSlug: "rowan", resource: "Launch page" }, "owner_unresolvable").includes("rowan"),
     "the refusal copy names the owner it could not resolve",
   );
 }

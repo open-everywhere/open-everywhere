@@ -2,6 +2,7 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import type { BindableContext } from "../identity/binding.js";
 import type { EffectiveAccess, ReachableHost } from "../access/resolver.js";
 import { openWriteHosts, writeHostsAuditFields } from "../access/egress.js";
+import { browserEgressHosts } from "../access/browser-hosts.js";
 import { egressPolicyFingerprint } from "../hooks/egress.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { GIT_BROKER_HOSTS } from "./broker.js";
@@ -20,7 +21,7 @@ export async function auditBrokeredEgressPolicy(
 ): Promise<void> {
   try {
     const hostCount = typeof policy === "string" ? 0 : Object.keys(policy.allow ?? {}).length;
-    const writeHosts = openWriteHosts(policy, brokerAttributionHosts(access.reachableHosts));
+    const writeHosts = openWriteHosts(policy, brokerAttributionHosts(access.reachableHosts), browserEgressHosts());
     await auditToolAction(ctx, "egress.policy", {
       hosts: hostCount,
       enforced: true,

@@ -19,7 +19,7 @@ import { classifyIngestion } from "../agent/access/taint-tiers.js";
 import { decideIngestion } from "../agent/access/taint-enforcement.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { authoredModelProjectionFor } from "../agent/access/window-gated.js";
 import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import "../agent/tools/read_channel.js";
@@ -332,11 +332,9 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 }
 
 async function replayedProjection(name: string, output: unknown): Promise<{ type: string; value: unknown }> {
-  const toolset: Record<string, unknown> = { [name]: { execute: () => undefined } };
-  projectToolSet(toolset);
-  const tool = toolset[name] as { toModelOutput?: (a: { output: unknown; toolCallId: string }) => Promise<{ type: string; value: unknown }> };
-  assert.ok(typeof tool.toModelOutput === "function", `${name} has a registered replay projection`);
-  return await tool.toModelOutput!({ output, toolCallId: "call-1" });
+  const project = authoredModelProjectionFor(name);
+  assert.ok(typeof project === "function", `${name} authors a replayable toModelOutput`);
+  return (await project(output)) as { type: string; value: unknown };
 }
 
 for (const [verb, build] of [

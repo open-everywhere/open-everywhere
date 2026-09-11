@@ -5,7 +5,8 @@ import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
-import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { assertReportConsistent, describeTrigger, ROUTINE_MODEL_ROLES, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import type { ModelRole } from "../memory/domain.js";
 import { describeBoundPolicy } from "../routines/bound.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { SCOPE_KINDS, eventNormalizer } from "../routines/event-model.js";
@@ -175,6 +176,19 @@ export default defineTool({
           "A one-shot routine is NOT retired by a gate saying no — it stays due and fires as soon as the condition " +
           "holds. Omit for a routine that should run every time it is due.",
       ),
+    modelRole: z
+      .enum(ROUTINE_MODEL_ROLES as readonly [ModelRole, ...ModelRole[]])
+      .optional()
+      .describe(
+        "MODEL ROLE. Which role of this deployment's model stack this routine's fires run on. OMIT IT unless " +
+          "you have a reason: omitting means the routine INHERITS the deployment's stack, which is what every " +
+          "routine did before this field existed and what almost every routine should keep doing. `utility` is " +
+          "the cheap summarising role and `supervisor` the cheap ambient one — pick one only for a routine whose " +
+          "work is genuinely mechanical, because a cheaper role degrades the run's judgement and nothing will " +
+          "tell you that it did. It names a ROLE and never a model id, so the routine follows the stack when the " +
+          "stack changes. Where this deployment routes no such role the routine simply runs the default one: " +
+          "naming a role is never an error and never a failure, it can just have no effect.",
+      ),
   }),
   outputSchema: z.object({
     created: z.boolean(),
@@ -313,7 +327,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,

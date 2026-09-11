@@ -25,6 +25,7 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
     "oe.steps.bucket",
     "oe.latency.bucket",
   ]),
+  "oe.turn.first_output": Object.freeze(["oe.surface", "oe.kind", "oe.latency.bucket"]),
   "oe.turn.failed": Object.freeze(["oe.surface", "oe.error.code"]),
   "oe.error.uncaught": Object.freeze(["oe.component", "oe.error.name"]),
   "oe.feature.used": Object.freeze(["oe.feature", "oe.outcome"]),

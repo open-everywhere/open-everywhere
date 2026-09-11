@@ -4,6 +4,7 @@ import { defineState } from "eve/context";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { resolveAccessFor } from "../access/request.js";
 import { compileNetworkPolicy, openWriteHosts, writeHostsAuditFields } from "../access/egress.js";
+import { browserEgressHosts } from "../access/browser-hosts.js";
 import type { EffectiveAccess, ReachableHost } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { getConfig } from "../access/config.js";
@@ -172,7 +173,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
   }
 
   const hostCount = typeof policy === "string" ? 0 : Object.keys(policy.allow ?? {}).length;
-  const writeHosts = openWriteHosts(policy, reachableHosts);
+  const writeHosts = openWriteHosts(policy, reachableHosts, browserEgressHosts());
   const summary = compileError
     ? `deny-all (compile error)`
     : halted

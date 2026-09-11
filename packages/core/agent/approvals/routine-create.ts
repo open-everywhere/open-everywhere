@@ -15,6 +15,7 @@ import { resolveRoutineGate } from "../routines/gate.js";
 import { describeDeclaredPermissionKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
+import type { ModelRole } from "../memory/domain.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -33,6 +34,7 @@ export interface RoutineCreateArgs {
   readonly permissions?: readonly string[];
   readonly collectors?: readonly string[];
   readonly gate?: string;
+  readonly modelRole?: ModelRole;
 }
 
 export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "tainted">): string[] {
@@ -64,6 +66,14 @@ export function gateLines(args: Pick<RoutineCreateArgs, "gate">): string[] {
   ];
 }
 
+export function modelRoleLines(args: Pick<RoutineCreateArgs, "modelRole">): string[] {
+  if (args.modelRole === undefined) return [];
+  return [
+    `🧠 this routine — and the work it delegates — runs the \`${args.modelRole}\` role of this deployment's model stack ` +
+      "instead of the default `primary` one; a cheaper role can degrade its judgement, and nothing will report that it did",
+  ];
+}
+
 const routineCreate: ActionKind<RoutineCreateArgs> = {
   kind: "routine.create",
   policy: "member",
@@ -80,6 +90,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...permissionLines(args),
       ...collectorLines(args),
       ...gateLines(args),
+      ...modelRoleLines(args),
       `> ${args.prompt}`,
       `Target: ${args.surfaceKey}`,
     ];
@@ -105,6 +116,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.sessionMode === "job" ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
       ...(args.collectors && args.collectors.length > 0 ? { collectors: [...args.collectors] } : {}),
       ...(args.gate ? { gate: args.gate } : {}),
+      ...(args.modelRole === undefined ? {} : { modelRole: args.modelRole }),
     };
     await addRoutine(args.partition, routine);
     const armed = await armDeclaredRoutinePermissions({

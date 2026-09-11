@@ -182,13 +182,30 @@ function isOverlyBroadHost(pattern: string): boolean {
   return pattern === "*" || /^\*\.[^.]+$/u.test(pattern);
 }
 
+function isUnexpandableWildcardHost(pattern: string): boolean {
+  if (!pattern.includes("*")) return false;
+  return !(pattern.startsWith("*.") && !pattern.slice(2).includes("*"));
+}
+
 function broadHostProblems(bundleName: string, field: string, hosts: readonly string[]): string[] {
-  return hosts
-    .filter(isOverlyBroadHost)
-    .map(
-      (h) =>
+  const problems: string[] = [];
+  for (const h of hosts) {
+    if (isOverlyBroadHost(h)) {
+      problems.push(
         `  bundle "${bundleName}" ${field} pattern "${h}" is overly broad (matches ${h === "*" ? "every host" : "an entire TLD"}) — name real hosts, wildcard only one org's subdomains (e.g. "*.googleapis.com")`,
-    );
+      );
+      continue;
+    }
+    if (isUnexpandableWildcardHost(h)) {
+      problems.push(
+        `  bundle "${bundleName}" ${field} pattern "${h}" spells a wildcard this deployment cannot expand — the ONLY wildcard form is a ` +
+          `single LEADING "*." (e.g. "*.vendor.com"). Every other spelling is compared as a literal, so the one-credential-per-host ` +
+          `rungs read it as a destination of its own and never pair it with the hosts you meant (OPE-1685). Name the real hosts, or ` +
+          `use a leading "*." over the suffix they share.`,
+      );
+    }
+  }
+  return problems;
 }
 
 function isMachineWrittenBundleName(name: string): boolean {
