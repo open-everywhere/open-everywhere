@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
-import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
+import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
@@ -539,6 +539,7 @@ function getDb(): DatabaseSync {
       used_at                TEXT,
       revoked_at             TEXT,
       refund_turn            TEXT,            -- OPE-1264: the turn key the refund count below belongs to
+      refund_turn_seq        INTEGER,         -- OPE-1281: that key's eve turn ordinal; only a LATER one rolls the count
       refund_count           INTEGER NOT NULL DEFAULT 0, -- OPE-1264: refunds already claimed on that turn
       PRIMARY KEY (org_id, id)
     );
@@ -703,6 +704,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE credential_grant ADD COLUMN input_schema TEXT",
     "ALTER TABLE credential_grant ADD COLUMN refund_turn TEXT",
     "ALTER TABLE credential_grant ADD COLUMN refund_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE credential_grant ADD COLUMN refund_turn_seq INTEGER",
   ]) {
     try {
       handle.exec(ddl);
@@ -3165,15 +3167,18 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async claimCredentialGrantRefund(org, id, turnKey, cap) {
     const key = turnKey ?? null;
+    const seq = grantRefundTurnOrdinal(turnKey) ?? null;
+    const rolls = "(? IS NOT NULL AND ((refund_turn IS NULL AND refund_turn_seq IS NULL) OR ? > refund_turn_seq))";
     const changes = getDb()
       .prepare(
         `UPDATE credential_grant
-            SET refund_turn = COALESCE(?, refund_turn),
-                refund_count = CASE WHEN ? IS NOT NULL AND refund_turn IS NOT ? THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
+            SET refund_turn = CASE WHEN ${rolls} THEN ? ELSE refund_turn END,
+                refund_turn_seq = CASE WHEN ${rolls} THEN ? ELSE refund_turn_seq END,
+                refund_count = CASE WHEN ${rolls} THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
           WHERE org_id = ? AND id = ?
-            AND ((? IS NOT NULL AND refund_turn IS NOT ?) OR COALESCE(refund_count, 0) < ?)`,
+            AND (${rolls} OR COALESCE(refund_count, 0) < ?)`,
       )
-      .run(key, key, key, org, id, key, key, cap).changes;
+      .run(seq, seq, key, seq, seq, seq, seq, seq, org, id, seq, seq, cap).changes;
     return Number(changes) > 0;
   },
 

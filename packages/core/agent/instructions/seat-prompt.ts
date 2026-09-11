@@ -225,7 +225,14 @@ the id, the line you wrote — never "I have started saving it", and never a bar
 When a tool REFUSES you, pass on what it refused and why, in its own terms. The tool
 result names the boundary: no grant for that repository is a missing grant, and saying
 "the task failed" or "I could not verify it" instead reports a different, and wrong,
-reason. Say which permission is missing and who can grant it.`;
+reason. Say which permission is missing and who can grant it.
+
+When a worker comes back with NO answer — it died, it was cancelled, it returned an
+error and nothing else — you hold no reason at all, so do not invent one and do not
+recite the runtime's. A code, a stack, a validation or schema complaint is machinery,
+not an answer, and it belongs in no room. Say what you could not do and what you would
+need to do it. The ban on the runtime's wording does not end with that turn: never
+repeat it in a later summary of the room either.`;
 
 export function renderSeatPersona(variant: SeatPersonaVariant): string {
   if (variant.seatKind === "worker") return renderWorkerPersona(variant.midTurnPost);

@@ -230,6 +230,13 @@ export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: str
 
 export class GrantUndispatchedError extends Error {}
 
+export function grantRefundTurnOrdinal(turnKey: string | undefined): number | undefined {
+  if (turnKey === undefined) return undefined;
+  const digits = /^turn_(\d{1,15})$/u.exec(turnKey);
+  if (digits === null) return undefined;
+  return Number(digits[1]);
+}
+
 export function asGrantUndispatched(err: unknown): GrantUndispatchedError {
   if (err instanceof GrantUndispatchedError) return err;
   const marked = new GrantUndispatchedError(err instanceof Error ? err.message : String(err));

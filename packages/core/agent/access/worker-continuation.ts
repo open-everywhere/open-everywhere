@@ -7,6 +7,8 @@ const DELEGATION_TOOL_NAME = "agent";
 
 const CONTINUATION_FIELD = "agentId";
 
+const CALLER_OUTPUT_SCHEMA_FIELD = "outputSchema";
+
 export const CONTINUATION_REFUSAL_MESSAGE =
   "Worker continuation is disabled on this deployment: `agentId` is not accepted. Start a fresh delegation and pass the context it needs in the brief.";
 
@@ -130,10 +132,10 @@ export function refuseAgentContinuation(toolset: Record<string, unknown>): boole
   const properties = source?.properties;
   if (source === undefined || properties === undefined || !(CONTINUATION_FIELD in properties)) return false;
 
-  const { [CONTINUATION_FIELD]: _dropped, ...keptProperties } = properties;
+  const { [CONTINUATION_FIELD]: _dropped, [CALLER_OUTPUT_SCHEMA_FIELD]: _shape, ...keptProperties } = properties;
   const stripped: JsonSchemaObject = { ...source, properties: keptProperties };
   if (Array.isArray(source.required)) {
-    stripped.required = source.required.filter((name) => name !== CONTINUATION_FIELD);
+    stripped.required = source.required.filter((name) => name !== CONTINUATION_FIELD && name !== CALLER_OUTPUT_SCHEMA_FIELD);
   }
 
   const replacement = jsonSchema(stripped as never, {
@@ -145,6 +147,10 @@ export function refuseAgentContinuation(toolset: Record<string, unknown>): boole
           return { success: false as const, error: new Error(CONTINUATION_REFUSAL_MESSAGE) };
         }
         const { [CONTINUATION_FIELD]: _blank, ...rest } = candidate as Record<string, unknown>;
+        candidate = rest;
+      }
+      if (candidate !== null && typeof candidate === "object" && CALLER_OUTPUT_SCHEMA_FIELD in candidate) {
+        const { [CALLER_OUTPUT_SCHEMA_FIELD]: _shape, ...rest } = candidate as Record<string, unknown>;
         candidate = rest;
       }
       candidate = carryAttachmentsIntoBrief(candidate);

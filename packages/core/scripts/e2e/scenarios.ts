@@ -1535,21 +1535,18 @@ export const SCENARIOS: readonly Scenario[] = [
           }),
           'J-MPIM: a surface.wake_admitted row (door "dm", dmKind "mpim") proves the GROUP-DM door admitted it — the mpim window seat owns the turn, not the native mention path',
         );
-        const auditRead = ctx.auditRead;
-        const posts = await pollOptional(
-          async () => {
-            const rows = await auditRead({ sinceIso, platform: "slack", actions: ["reply.post"] });
-            const own = rows.filter((r) => (r.surface ?? "").endsWith(`/${mpim.channelId}`));
-            return own.length > 0 ? own : undefined;
-          },
-          { timeoutMs: AUDIT_ROW_WAIT, what: "J-MPIM: a slack `reply.post` audit row carrying the group DM's own surface key" },
-        );
+        const posts = await awaitReplyPostRows(ctx.auditRead, {
+          sinceIso,
+          platform: "slack",
+          surface: mpim.channelId,
+          budget: { timeoutMs: AUDIT_ROW_WAIT, what: `J-MPIM: a slack \`reply.post\` audit row whose surface segment is the group DM's own channel id (${mpim.channelId})` },
+        });
         ctx.gate(
           posts !== undefined,
-          "J-MPIM: a slack `reply.post` row carries the GROUP DM's own surface key — the reply is filed under the mpim, which is what keeps its seat fenced off every other room",
+          `J-MPIM: a slack \`reply.post\` row carries the GROUP DM's own surface SEGMENT — the bare channel id ${mpim.channelId}, never a qualified \`platform/workspace/surface\` key, which is not what this column holds. The reply is filed under the mpim, which is what keeps its seat fenced off every other room`,
         );
       } else {
-        ctx.log("J-MPIM: no control-read creds (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the door and surface-key gates did not run; the reply itself is this leg's evidence");
+        ctx.log("J-MPIM: no control-read creds (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the door and surface-segment gates did not run; the reply itself is this leg's evidence");
       }
 
       await ctx.judgePass(

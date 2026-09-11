@@ -3716,6 +3716,60 @@ rmSync(dir, { recursive: true, force: true });
       (gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length === 1,
       `OPE-1711: exactly ONE single-read reply.post gate remains IN THE ENGAGED HELPERS — the audited-SILENCE gate, which must not poll (found ${(gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length}; this counts the REPLY_POST_ACTION spelling those helpers use, not every "reply.post" read in the file)`,
     );
+
+    {
+      const liveMpimRow = {
+        ts: "2026-05-14T17:41:16.130Z",
+        org: "default",
+        platform: "slack",
+        workspace: "T0EXAMPLE",
+        surface: "C0EXCHAN010",
+        principalId: "U0EXOWNER",
+        action: REPLY_POST_ACTION,
+        detail: { id: "1778780476.101000", platform: "slack", chars: 2, route: "tool" },
+      };
+
+      const found = await awaitReplyPostRows(async () => [liveMpimRow], {
+        sinceIso: "2026-05-14T17:40:00.000Z",
+        platform: "slack",
+        surface: "C0EXCHAN010",
+        budget: fast(2_000, "the live J-MPIM reply.post row"),
+      });
+      ok(
+        found !== undefined && found.length === 1,
+        "🔴 OPE-1682: the LIVE J-MPIM row satisfies the gate when scoped by the BARE channel id — the shape the audit column holds, and the shape a live run proved was there while the leg red",
+      );
+
+      const byQualifiedKey = await awaitReplyPostRows(async () => [liveMpimRow], {
+        sinceIso: "2026-05-14T17:40:00.000Z",
+        platform: "slack",
+        surface: "slack/T0EXAMPLE/C0EXCHAN010",
+        budget: fast(30, "the qualified key the old gate demanded"),
+      });
+      ok(
+        byQualifiedKey === undefined,
+        "🔴 NEGATIVE CONTROL: the SAME live row matches nothing under the fully-qualified key — the shape J-MPIM's old `endsWith(\"/\" + channelId)` filter required, and the reason that gate red against a correct deployment",
+      );
+
+      const otherRoom = await awaitReplyPostRows(async () => [{ ...liveMpimRow, surface: "C0OTHERROOM" }], {
+        sinceIso: "2026-05-14T17:40:00.000Z",
+        platform: "slack",
+        surface: "C0EXCHAN010",
+        budget: fast(30, "a row on another room"),
+      });
+      ok(otherRoom === undefined, "NEGATIVE: a reply.post row on a DIFFERENT Slack room does not satisfy J-MPIM's gate — the bare-id scope is exact equality, not a suffix match");
+
+      const mpimBody = SCENARIOS.find((s) => s.id === "J-MPIM")!.run.toString().replace(/\s+/g, "");
+      ok(
+        mpimBody.includes("awaitReplyPostRows("),
+        "🔴 OPE-1682: J-MPIM takes the shared waiter, which owns the bare-segment comparison — not a hand-rolled poll of its own",
+      );
+      ok(
+        !mpimBody.includes('endsWith(`/${mpim.channelId}`)') && !mpimBody.includes('endsWith("/"+mpim.channelId)'),
+        "🔴 OPE-1682: J-MPIM no longer filters `reply.post` rows by a SLASH-PREFIXED key — that shape the column never holds is what red this gate on every ship that REACHED it since it was written " +
+          "(the gate needs control-read creds to run at all, and the leg skipped on several live runs for a missing room id)",
+      );
+    }
   }
 }
 
@@ -3798,11 +3852,19 @@ rmSync(dir, { recursive: true, force: true });
   ok(start > 0, "the J-MPIM scenario is still in scenarios.ts (if it is gone, delete this section rather than letting it pass vacuously)");
   const nextId = scenariosSrc.indexOf('    id: "', start + 20);
   const body = scenariosSrc.slice(start, nextId > start ? nextId : scenariosSrc.length);
-  ok(body.includes('actions: ["reply.post"]'), "…and it still reads the reply.post row — the gate this section guards has not been renamed out from under it");
   ok(
-    body.includes("pollOptional("),
-    "🔴 J-MPIM's reply.post audit read is POLLED, not read once (OPE-1682). A single read races the deployment's own audit write and reds a correct " +
-      "deploy — measured on ship #192. Wrap it in pollOptional bounded by AUDIT_ROW_WAIT, never a bare ctx.auditRead",
+    body.includes("awaitReplyPostRows("),
+    "🔴 J-MPIM's reply.post audit read goes through `awaitReplyPostRows` (OPE-1682) — the shared waiter in engaged-rows.ts that owns BOTH the bounded poll and the " +
+      "bare-segment surface comparison. A single read races the deployment's own audit write and reds a correct deploy; a hand-rolled filter gets the surface shape wrong",
+  );
+  ok(
+    body.includes("surface: mpim.channelId"),
+    "🔴 …scoped by the BARE channel id, which is the shape the `reply.post` audit column holds (OPE-1682). The post choke point stamps `resolvePartition(ctx).surface`, " +
+      "so the row reads `C0EXCHAN010` and never `slack/T0EXAMPLE/C0EXCHAN010` — the qualified key this gate used to demand, which kept it red against a healthy deployment",
+  );
+  ok(
+    !body.includes("endsWith(`/${mpim.channelId}`)"),
+    "🔴 NEGATIVE: the slash-prefixed filter is GONE (OPE-1682). Restoring it makes the leg unpassable again, and the two pins above would not catch it on their own",
   );
 }
 

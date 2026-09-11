@@ -10,8 +10,6 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   browser: { enabled: true },
 
-  rotation: { quietGapHours: 12 },
-
   identity: { name: "Open Everywhere" },
 
   wake: { slackDmDriver: "T0EXAMPLE:B0EXBOT0001" },

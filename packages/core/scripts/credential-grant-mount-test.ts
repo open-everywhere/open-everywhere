@@ -475,24 +475,24 @@ console.log("9. the refund is capped per grant row per turn (OPE-1240):");
 
   await inSession(session, async () => {
     for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
-      eq(await tripFence(capped, CAPPED_SCOPE, "turn-cap-A"), "active", `refund ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} still lands — the cap is an allowance, not a repeal of the refund`);
+      eq(await tripFence(capped, CAPPED_SCOPE, "turn_41"), "active", `refund ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} still lands — the cap is an allowance, not a repeal of the refund`);
     }
 
-    eq(await tripFence(capped, CAPPED_SCOPE, "turn-cap-A"), "used", `🔴 refund ${GRANT_REFUND_CAP_PER_TURN + 1} is REFUSED — the row stays spent, so one owner approval cannot open an unbounded number of vendor sessions in one turn`);
+    eq(await tripFence(capped, CAPPED_SCOPE, "turn_41"), "used", `🔴 refund ${GRANT_REFUND_CAP_PER_TURN + 1} is REFUSED — the row stays spent, so one owner approval cannot open an unbounded number of vendor sessions in one turn`);
 
-    const afterCap = await runGrantedCall(capped, { id: "abc123" }, callCtx(CAPPED_SCOPE, NOW + 1000, "turn-cap-A"));
+    const afterCap = await runGrantedCall(capped, { id: "abc123" }, callCtx(CAPPED_SCOPE, NOW + 1000, "turn_41"));
     eq(afterCap.ok ? "OK" : afterCap.refused, "burned", "…and the model's NEXT call on that row refuses `burned` by name, through the state check that already runs before any burn");
     ok(!afterCap.ok && afterCap.message.length > 0 && !afterCap.message.includes("some-other-page"), "…with host-authored copy that carries no argument value");
 
-    eq(await tripFence(sibling, SIBLING_SCOPE, "turn-cap-A"), "active", "🔴 a DIFFERENT grant row in the SAME turn still refunds — the counters are keyed per row, so one row's exhaustion never spends another's");
+    eq(await tripFence(sibling, SIBLING_SCOPE, "turn_41"), "active", "🔴 a DIFFERENT grant row in the SAME turn still refunds — the counters are keyed per row, so one row's exhaustion never spends another's");
 
     for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
-      eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-A"), "active", `the third row spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} in this turn`);
+      eq(await tripFence(across, ACROSS_SCOPE, "turn_41"), "active", `the third row spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} in this turn`);
     }
   });
 
   await inSession(session, async () => {
-    eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-B"), "active", "🔴 the SAME row refunds again on a NEW turn — the allowance is per turn, and a count nothing rolled would have said `used` here");
+    eq(await tripFence(across, ACROSS_SCOPE, "turn_42"), "active", "🔴 the SAME row refunds again on a NEW turn — the allowance is per turn, and a count nothing rolled would have said `used` here");
   });
 
   {
@@ -502,13 +502,13 @@ console.log("9. the refund is capped per grant row per turn (OPE-1240):");
     const crashed = new FakeSession();
     await inSession(crashed, async () => {
       for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
-        eq(await tripFence(redelivered, REDELIVERED_SCOPE, "turn-cap-R"), "active", `the first container spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN}`);
+        eq(await tripFence(redelivered, REDELIVERED_SCOPE, "turn_43"), "active", `the first container spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN}`);
       }
     });
     const replayed = new FakeSession();
     await inSession(replayed, async () => {
       eq(
-        await tripFence(redelivered, REDELIVERED_SCOPE, "turn-cap-R"),
+        await tripFence(redelivered, REDELIVERED_SCOPE, "turn_43"),
         "used",
         "🔴 a FRESH eve container on the same turn is still refused — the count is stored beside the burn, so no per-session state can hand a replayed turn its allowance back",
       );
@@ -525,7 +525,7 @@ console.log("9. the refund is capped per grant row per turn (OPE-1240):");
       throw new Error('column "refund_count" does not exist');
     };
     try {
-      eq(await tripFence(unclaimable, UNCLAIMABLE_SCOPE, "turn-cap-U"), "used", "🔴 a claim the store could not answer refunds NOTHING — the owner's approval stays spent rather than being handed back uncounted");
+      eq(await tripFence(unclaimable, UNCLAIMABLE_SCOPE, "turn_44"), "used", "🔴 a claim the store could not answer refunds NOTHING — the owner's approval stays spent rather than being handed back uncounted");
     } finally {
       patchable.claimCredentialGrantRefund = realClaim;
     }

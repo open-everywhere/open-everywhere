@@ -122,6 +122,35 @@ const turnDispatch = flat(read("execution/turn-dispatch.d.ts"));
   }
 }
 
+{
+  const emission = read("harness/emission.js");
+  const mint = /turn_\$\{[A-Za-z_$][\w$]*\.sequence\}/u;
+  const mintNearMiss = /turn_\$\{[A-Za-z_$][\w$]*\.sequenceId\}/u;
+  ok(
+    mint.test(emission),
+    "🔴 5: eve mints `turn.id` as `turn_${sequence}` — the shape operational/credential-grant-rows.ts grantRefundTurnOrdinal parses",
+  );
+  ok(
+    !mintNearMiss.test(emission),
+    "5: …and the near miss `turn_${x.sequenceId}` is absent, so the search above discriminates rather than matching any `turn_` interpolation",
+  );
+
+  const advances = emission.match(/sequence:\s*[A-Za-z_$][\w$]*\.sequence\+1/gu) ?? [];
+  ok(
+    advances.length > 0,
+    `🔴 5: the emission state ADVANCES its sequence (${advances.length} site(s) returning \`sequence + 1\` — the turn epilogue and the recoverable-failure arm) — a later turn therefore carries a larger ordinal than an earlier one`,
+  );
+  ok(
+    !/sequence:\s*[A-Za-z_$][\w$]*\.sequence-1/u.test(emission),
+    "🔴 5: …and NOTHING decrements it, so the ordinal is monotonic within one session and `strictly later` is a sound reading of `numerically greater`",
+  );
+
+  ok(
+    dispatchTurn.includes("for the current driver session"),
+    "5: a turn is dispatched FOR ONE driver session — the ordinal this section pins counts turns within that session, never across sessions",
+  );
+}
+
 console.log(
-  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.52.2 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and turn-dispatch contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate child runs)`,
+  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.52.2 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and turn-dispatch contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate child runs; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
 );

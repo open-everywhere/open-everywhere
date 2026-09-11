@@ -1821,8 +1821,8 @@ registerConfig({
 {
   const base = { createdAt: "2026-07-08T12:00:00Z", lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: 1_000 };
   ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, young generation, low turn count, low token count → no rotate");
-  ok(shouldRotate(base, "2026-07-09T20:45:00Z"), "quiet gap over the default 1h → rotate (OPE-794 cut it from 24h)");
-  ok(!shouldRotate(base, "2026-07-09T20:05:00Z"), "quiet gap just under 1h → no rotate");
+  ok(shouldRotate(base, "2026-07-09T01:00:00Z"), "quiet gap over the default 12h → rotate (OPE-1694 shipped the 12h gap; OPE-794 had cut it to 1h from 24h)");
+  ok(!shouldRotate(base, "2026-07-08T23:00:00Z"), "quiet gap just under 12h → no rotate");
 
   ok(
     shouldRotate({ createdAt: "2026-07-01T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-11T12:00:00Z"),
@@ -1863,7 +1863,7 @@ registerConfig({
   ok(shouldRotate(base, "2026-07-08T12:00:01Z", { tokenBudget: 500 }), "a custom tokenBudget below the current token count → rotate");
   ok(shouldRotate(base, "2026-07-08T13:00:00Z", { quietGapMs: 1000 }), "a custom quietGapMs smaller than the elapsed gap → rotate");
   ok(shouldRotate(base, "2026-07-08T12:00:02Z", { expiryMs: 1000 }), "a custom expiryMs smaller than the generation's age → rotate");
-  ok(supervisorRotateQuietGapMs() === 1 * 3_600_000, "default quiet-gap threshold is 1h (OPE-794; it ships with the tight recorded tail that makes an hourly rotation affordable)");
+  ok(supervisorRotateQuietGapMs() === 12 * 3_600_000, "default quiet-gap threshold is 12h (OPE-1694 folded the test bed's experiment into the shipped default; the tight recorded tail is what keeps a rotation affordable at any gap)");
   ok(supervisorRotateTokenBudget() === 4_000_000, "default token BACKSTOP is 4M (OPE-345 demoted it from primary; the number did not move)");
   ok(supervisorRotateTurnBudget() === 60, "default turn BACKSTOP is 60 (OPE-345: down from 150, which sat ABOVE the ~85-turn workflow event wall it was meant to guard)");
 }
@@ -1906,7 +1906,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   ok(s.generation === 2 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 2)), "turn backstop exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:00Z");
-  ok(s.generation === 3 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 3)), "quiet gap over 24h → rotates again to generation 3");
+  ok(s.generation === 3 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 3)), "quiet gap over the 12h default → rotates again to generation 3");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:01Z");
   ok(s.generation === 3 && s.freshGeneration === true, "resuming the just-rotated generation before its first delivered wake → freshGeneration true (H7c)");

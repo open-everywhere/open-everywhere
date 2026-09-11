@@ -1538,6 +1538,46 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.claimCredentialGrantRefund("default", "pg-claim-noturn", undefined, CAP)) === false, "🔴 credential grant: a claim with NO turn key is refused against a spent allowance — it never rolls the stored key");
   ok(await store.claimCredentialGrantRefund("default", "pg-claim-noturn", "turn_9", CAP), "credential grant: …while a NAMED new turn does roll it, so the keyless refusal is the key's doing and not a dead statement");
 
+  await store.addCredentialGrant("default", grant("pg-claim-alternating"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    ok(await store.claimCredentialGrantRefund("default", "pg-claim-alternating", "turn_7", CAP), `credential grant: the live turn spends allowance ${attempt} of ${CAP}`);
+  }
+  ok(
+    (await store.claimCredentialGrantRefund("default", "pg-claim-alternating", "turn_4", CAP)) === false,
+    "🔴 credential grant: an EARLIER turn landing after a later one claims NOTHING — the ordinal comparison, not the key distinctness this statement used to carry",
+  );
+  ok(
+    (await store.claimCredentialGrantRefund("default", "pg-claim-alternating", "turn_7", CAP)) === false,
+    "🔴 credential grant: …and the earlier turn left the stored turn alone, so the alternation buys nothing in either direction",
+  );
+  ok(
+    await store.claimCredentialGrantRefund("default", "pg-claim-alternating", "turn_12", CAP),
+    "🔴 credential grant: a STRICTLY LATER turn still rolls — and turn_12 beats turn_7 only under numeric comparison, which a text column would have ordered the other way",
+  );
+
+  await store.addCredentialGrant("default", grant("pg-claim-migrated"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    ok(await store.claimCredentialGrantRefund("default", "pg-claim-migrated", "turn_7", CAP), `credential grant: the pre-upgrade turn spends allowance ${attempt} of ${CAP}`);
+  }
+  await client.query("UPDATE credential_grant SET refund_turn_seq = NULL WHERE org_id = 'default' AND id = 'pg-claim-migrated'");
+  ok(
+    (await store.claimCredentialGrantRefund("default", "pg-claim-migrated", "turn_7", CAP)) === false,
+    "🔴 credential grant: a MIGRATED row (turn key, spent count, no ordinal) does not roll for the very turn it already counted — a bare `refund_turn_seq IS NULL` roll would have handed that turn a whole fresh allowance",
+  );
+  ok(
+    (await store.claimCredentialGrantRefund("default", "pg-claim-migrated", "turn_4", CAP)) === false,
+    "🔴 credential grant: …nor for an EARLIER one, so the alternation buys nothing across the upgrade either",
+  );
+  ok(
+    (await store.claimCredentialGrantRefund("default", "pg-claim-migrated", "turn_99", CAP)) === false,
+    "🔴 credential grant: …nor for a LATER one — a migrated row keeps the allowance it had for the rest of its life, bounded by the grant TTL, which is the narrowing direction",
+  );
+  await store.addCredentialGrant("default", grant("pg-claim-fresh"));
+  ok(
+    await store.claimCredentialGrantRefund("default", "pg-claim-fresh", "turn_3", CAP),
+    "🔴 credential grant: a row with BOTH columns empty still rolls — the migrated-row legs above are the stored turn's doing and not a statement that stopped claiming",
+  );
+
   await store.addCredentialGrant("default", grant("pg-claim-race"));
   const claims = await Promise.all([
     store.claimCredentialGrantRefund("default", "pg-claim-race", "turn_1", 1),

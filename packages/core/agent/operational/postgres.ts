@@ -1,7 +1,7 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
-import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
+import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
@@ -441,6 +441,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      used_at                text,
      revoked_at             text,
      refund_turn            text,            -- OPE-1264: the turn key the refund count below belongs to
+     refund_turn_seq        bigint,          -- OPE-1281: that key's eve turn ordinal; only a LATER one rolls the count
      refund_count           integer NOT NULL DEFAULT 0, -- OPE-1264: refunds already claimed on that turn
      PRIMARY KEY (org_id, id)
    )`,
@@ -574,6 +575,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS input_schema text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS refund_turn text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS refund_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS refund_turn_seq bigint`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -3689,13 +3691,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async claimCredentialGrantRefund(org, id, turnKey, cap) {
+      const rolls = "($5::bigint IS NOT NULL AND ((refund_turn IS NULL AND refund_turn_seq IS NULL) OR $5::bigint > refund_turn_seq))";
       const { rows } = await client.query(
         `UPDATE credential_grant
-            SET refund_turn = COALESCE($3::text, refund_turn),
-                refund_count = CASE WHEN $3::text IS NOT NULL AND refund_turn IS DISTINCT FROM $3::text THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
+            SET refund_turn = CASE WHEN ${rolls} THEN $3::text ELSE refund_turn END,
+                refund_turn_seq = CASE WHEN ${rolls} THEN $5::bigint ELSE refund_turn_seq END,
+                refund_count = CASE WHEN ${rolls} THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
           WHERE org_id = $1 AND id = $2
-            AND (($3::text IS NOT NULL AND refund_turn IS DISTINCT FROM $3::text) OR COALESCE(refund_count, 0) < $4) RETURNING id`,
-        [org, id, turnKey ?? null, cap],
+            AND (${rolls} OR COALESCE(refund_count, 0) < $4) RETURNING id`,
+        [org, id, turnKey ?? null, cap, grantRefundTurnOrdinal(turnKey) ?? null],
       );
       return (rows as unknown[]).length > 0;
     },

@@ -2,10 +2,14 @@ import { defineState } from "eve/context";
 import { appendAudit } from "../audit/audit.js";
 import type { ReplyAudit } from "./reply-post.js";
 
+export type ConnectorReadProof = "surface" | "wake" | "none";
+
 export interface ConnectorRead {
+  readonly proof: ConnectorReadProof;
   readonly connection: string;
   readonly op: string;
   readonly surfaceKey?: string;
+  readonly wakeId?: string;
 }
 
 interface ReplyProvenanceState {
@@ -30,14 +34,16 @@ function readState(v: unknown): ReplyProvenanceState {
   const reads = Array.isArray(s.reads)
     ? s.reads.flatMap((r): ConnectorRead[] => {
         if (typeof r !== "object" || r === null) return [];
-        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown };
+        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown; wakeId?: unknown; proof?: unknown };
         if (typeof raw.connection !== "string" || raw.connection.length === 0) return [];
         if (typeof raw.op !== "string" || raw.op.length === 0) return [];
         return [
           {
+            proof: raw.proof === "surface" || raw.proof === "wake" ? raw.proof : "none",
             connection: raw.connection,
             op: raw.op,
             ...(typeof raw.surfaceKey === "string" && raw.surfaceKey.length > 0 ? { surfaceKey: raw.surfaceKey } : {}),
+            ...(typeof raw.wakeId === "string" && raw.wakeId.length > 0 ? { wakeId: raw.wakeId } : {}),
           },
         ];
       })
@@ -49,11 +55,14 @@ export function noteConnectorRead(turnId: string | undefined, read: ConnectorRea
   if (turnId === undefined || turnId.length === 0) return;
   if (read.connection.length === 0 || read.op.length === 0) return;
   const entry: ConnectorRead = {
+    proof: read.proof,
     connection: read.connection,
     op: read.op,
     ...(read.surfaceKey !== undefined && read.surfaceKey.length > 0 ? { surfaceKey: read.surfaceKey } : {}),
+    ...(read.wakeId !== undefined && read.wakeId.length > 0 ? { wakeId: read.wakeId } : {}),
   };
-  const same = (a: ConnectorRead, b: ConnectorRead): boolean => a.connection === b.connection && a.op === b.op && a.surfaceKey === b.surfaceKey;
+  const same = (a: ConnectorRead, b: ConnectorRead): boolean =>
+    a.connection === b.connection && a.op === b.op && a.proof === b.proof && a.surfaceKey === b.surfaceKey && a.wakeId === b.wakeId;
   try {
     slot.update((cur) => {
       const state = readState(cur);
@@ -85,9 +94,10 @@ export interface ReplyProvenance {
 
 function provenanceForReply(
   reads: readonly ConnectorRead[],
-  audit: Pick<ReplyAudit, "platform" | "workspace" | "surface"> | undefined,
+  audit: Pick<ReplyAudit, "platform" | "workspace" | "surface" | "wakeId"> | undefined,
 ): ReplyProvenance | undefined {
   if (reads.length === 0) return undefined;
+  const wakeKey = audit?.wakeId !== undefined && audit.wakeId.length > 0 ? audit.wakeId : undefined;
   const roomKey =
     audit === undefined || audit.platform === "unified" || audit.surface === undefined || audit.surface.length === 0
       ? undefined
@@ -95,7 +105,12 @@ function provenanceForReply(
   const named: string[] = [];
   const other = new Set<string>();
   for (const r of reads) {
-    const visible = roomKey !== undefined && r.surfaceKey === roomKey;
+    const visible =
+      r.proof === "wake"
+        ? wakeKey !== undefined && r.wakeId === wakeKey
+        : r.proof === "surface"
+          ? roomKey !== undefined && r.surfaceKey === roomKey
+          : false;
     if (visible) {
       if (!named.includes(r.connection)) named.push(r.connection);
     } else if (!named.includes(r.connection)) {

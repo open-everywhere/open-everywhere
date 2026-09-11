@@ -759,7 +759,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   }
 
   {
-    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokC1", hoursAgo(2));
+    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokC1", hoursAgo(14));
     await routineStore.addRoutine(
       {} as never,
       routine({ id: "r-chain-c", sessionMode: "job", surfaceKey: ROTA_SURFACE, target: { channelId: ROTA_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),

@@ -113,7 +113,7 @@ eq(refuseAgentContinuation(armed as Record<string, unknown>), true, "🔴 §2 th
 ok(armed.agent.inputSchema !== beforeAgentSchema, "…and the tool now carries a DIFFERENT schema object");
 ok(!("agentId" in advertised(armed.agent.inputSchema)), "🔴 §2 `agentId` is GONE from the advertised schema — the model is not offered the field");
 ok("message" in advertised(armed.agent.inputSchema), "…while every other field eve advertises survives (a wholesale replacement would break delegation)");
-ok("outputSchema" in advertised(armed.agent.inputSchema), "…including the structured-output field");
+ok(!("outputSchema" in advertised(armed.agent.inputSchema)), "🔴 §6 `outputSchema` is GONE too (OPE-1688) — a caller schema is what destroyed a worker's refusal on deploy #195");
 
 const validate = asSchema(armed.agent.inputSchema as never).validate;
 ok(typeof validate === "function", "§3 the replacement carries a validate — without one there is no refusal, only absence");
@@ -292,4 +292,24 @@ const noSession = await asSchema(toolsetNoSession.agent.inputSchema as never).va
 eq(noSession.success, true, "§5 no eve session context ⇒ the delegation still validates");
 eq((noSession as { value?: unknown }).value, { message: "go" }, "…and carries nothing — losing the block costs one capability, losing the call costs the seat its answer");
 
+ok("outputSchema" in advertised(persistentSchema()), "§6 eve's shipped subagent schema really does advertise `outputSchema` — the premise this subtraction exists for");
+
+for (const shape of [
+  { type: "object", additionalProperties: true },
+  { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+  {},
+]) {
+  const r = await validate!({ message: "open the PR", outputSchema: shape });
+  eq(r.success, true, `🔴 §6 a delegation carrying \`outputSchema: ${JSON.stringify(shape)}\` still DISPATCHES — dropping must not cost the seat its worker`);
+  eq(
+    (r as { value?: unknown }).value,
+    { message: "open the PR" },
+    "🔴 §6 …and the field is GONE from the value eve validates, so the child runs with no output sink and its prose answer survives",
+  );
+}
+
+const bothFields = await validate!({ message: "keep the brief", outputSchema: { type: "object" }, agentId: null });
+eq((bothFields as { value?: unknown }).value, { message: "keep the brief" }, "§6 NEGATIVE CONTROL: `message` is carried through verbatim while the two dropped keys go");
+const noMessage = await validate!({ outputSchema: { type: "object" } });
+eq(noMessage.success, false, "🔴 §6 NEGATIVE CONTROL: eve's own `message` requirement still fails a call that carries ONLY the dropped field");
 console.log(`worker-continuation: ${n} assertions passed`);

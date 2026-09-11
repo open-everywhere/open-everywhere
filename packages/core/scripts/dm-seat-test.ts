@@ -268,7 +268,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   eq(dmSeatThresholds().expiryMs, DM_SEAT_ROTATE_EXPIRY_MS, "dmSeatThresholds() reports the DM expiry clock (this is the object getOrCreateDmSeat actually passes to shouldRotate — an omission here would silently give every DM the unified window's 7d clock)");
   eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "…and the DM turn backstop");
   eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token backstop");
-  ok(dmSeatThresholds().quietGapMs !== supervisorRotateQuietGapMs(), "🔴 the DM quiet-gap is NOT the channel supervisor's 24h — the mechanism unified, the policy did not");
+  ok(dmSeatThresholds().quietGapMs !== supervisorRotateQuietGapMs(), "🔴 the DM quiet-gap is NOT the channel supervisor's 12h — the mechanism unified, the policy did not");
   ok(DM_SEAT_ROTATE_EXPIRY_MS !== supervisorRotateExpiryMs(), "🔴 the DM expiry clock is NOT the unified window's");
   ok(DM_SEAT_ROTATE_TURN_BUDGET !== supervisorRotateTurnBudget(), "🔴 the DM turn backstop is NOT the supervisor's");
   ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== supervisorRotateTokenBudget(), "🔴 the DM token backstop is NOT the supervisor's");

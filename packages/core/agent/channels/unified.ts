@@ -500,6 +500,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
               ...(creatorId ? { creatorId } : {}),
               ...(sessionId ? { sessionId } : {}),
               ...(wakeId ? { wakeId } : {}),
+              ...(turnId ? { turnId } : {}),
               route: "bridge",
             },
             replier,

@@ -26,6 +26,7 @@ import {
   grantBorrowToolName,
   grantFrozenArgsDigest,
   grantOwnerSlug,
+  grantRefundTurnOrdinal,
   isGrantNameSegment,
   quotedPurpose,
   type CredentialGrantAskRow,
@@ -315,9 +316,40 @@ console.log("3. the compare-and-set statements:");
   }
   eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_2", CAP), false, "…bounded at the same K, so a roll hands over one allowance and not an unbounded one");
 
-  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), true, "a claim under an EARLIER turn key rolls the count too — the row holds one key, not a set");
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), false, "🔴 a claim under an EARLIER turn does NOT roll the count — it counts against the allowance already on the row, so an out-of-order turn cannot mint a fresh one");
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_2", CAP), false, "…and it left the stored turn alone, so the later turn is still capped — an earlier turn cannot even clear the way for the one it interrupted");
+
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-alternating"));
+  const LIVE = "turn_7";
+  const REDELIVERED = "turn_4";
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", LIVE, CAP), true, `the live turn spends allowance ${attempt} of ${CAP}`);
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", LIVE, CAP), false, "…and is then capped");
+  for (let swap = 1; swap <= 4; swap++) {
+    const turn = swap % 2 === 1 ? REDELIVERED : LIVE;
+    eq(
+      await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", turn, CAP),
+      false,
+      `🔴 swap ${swap} (${turn}) claims nothing — no number of alternations between two turns buys a second allowance, which is the whole of the OPE-1281 fix`,
+    );
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", "turn_8", CAP), true, "🔴 a turn STRICTLY LATER than the counted one still rolls — the allowance is per turn, and a statement that refused everything would have failed here");
+
+  for (let attempt = 2; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", "turn_8", CAP), true, `…and that later turn gets the WHOLE allowance: claim ${attempt} of ${CAP}`);
+  }
+
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-alternating", "session-42-turn-8", CAP), false, "🔴 a turn key eve's shape does not mint carries NO ordinal, so it never rolls — it counts against the spent allowance, which is the fail-closed direction");
 
   eq(await store.claimCredentialGrantRefund(ORG, "grant-missing", "turn_1", CAP), false, "a row that does not exist claims nothing — the fail-closed direction");
+
+  eq(grantRefundTurnOrdinal("turn_0"), 0, "turn_0 carries ordinal 0 — a session's FIRST turn, and a falsy number the parser must not confuse with absence");
+  eq(grantRefundTurnOrdinal("turn_10"), 10, "the ordinal is numeric, so turn_10 sorts after turn_9 — a string comparison would have put it before");
+  eq(grantRefundTurnOrdinal(undefined), undefined, "no turn id, no ordinal");
+  for (const shape of ["turn_", "turn_-1", "turn_1.0", "turn_ 1", "turn_1x", "Turn_1", "sess:turn_1", "turn_1234567890123456"]) {
+    eq(grantRefundTurnOrdinal(shape), undefined, `"${shape}" carries no ordinal — guessing one from a shape eve does not mint is how a wrong comparison would enter silently`);
+  }
 
   await store.addCredentialGrant(ORG, grantRow("grant-claim-one"));
   eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-one", "turn_1", 1), true, "a cap of one allows the first claim");
@@ -445,7 +477,7 @@ console.log("6. the owner's card:");
   );
   ok(
     /in one turn/iu.test(onceLine ?? ""),
-    "🔴 …and it SCOPES that ceiling to one turn — the broker's allowance rolls at the turn boundary (both stores reset `refund_count` when `refund_turn` changes), so a bullet stating the number as an absolute ceiling would promise the owner a bound the code does not enforce",
+    "🔴 …and it SCOPES that ceiling to one turn — the broker's allowance rolls at the turn boundary (both stores reset `refund_count` when a STRICTLY LATER turn claims, OPE-1281), so a bullet stating the number as an absolute ceiling would promise the owner a bound the code does not enforce",
   );
   ok(
     (onceLine ?? "").includes("Notion"),

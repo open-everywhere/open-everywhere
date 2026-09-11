@@ -443,6 +443,24 @@ function ok(cond: boolean, label: string): void {
     seat.includes('saying\n"the task failed" or "I could not verify it" instead reports a different, and wrong,\nreason'),
     "🔴 §13: …and it names the two wrong reasons verbatim, so the model can match its own draft against them",
   );
+  for (const [i, text] of arms.entries()) {
+    ok(
+      text.includes("When a worker comes back with NO answer"),
+      `🔴 §13: arm ${i} carries the dead-worker paragraph — a worker can die under any delivery arm`,
+    );
+  }
+  ok(
+    seat.includes("you hold no reason at all, so do not invent one and do not\nrecite the runtime's"),
+    "🔴 §13: it forbids BOTH wrong moves — inventing a reason, and repeating the runtime's error class as if it were one",
+  );
+  ok(
+    seat.includes("validation or schema complaint is machinery") && seat.includes("it belongs in no room"),
+    "🔴 §13: …and it names the class by what it looked like in a live run (a schema complaint), which is the wording the seat actually posted",
+  );
+  ok(
+    seat.includes("The ban on the runtime's wording does not end with that turn: never\nrepeat it in a later summary of the room either"),
+    "🔴 §13: …and it reaches FORWARD into a later summary, naming its own referent — J-WORKFLOW red because the runtime's wording rode into the catch-up a minute later",
+  );
   for (const verb of ["`remember`", "`agent`", "`reply`", "`no_reply`"]) {
     ok(!seat.split("### Say what happened")[1]!.split("###")[0]!.includes(verb), `🔴 §13/CONTROL: the block names no ${verb} — a rule about a sentence must render on an arm that holds no tool at all`);
   }

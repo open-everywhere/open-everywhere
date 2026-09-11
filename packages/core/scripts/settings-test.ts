@@ -252,6 +252,7 @@ console.log("5 — a bad override fails the boot, not a turn:");
     resetSettingsForTest();
   }
   eq(at({}).rotation.turnBudget, 60, "[5] the shipped turn backstop is 60 — DERIVED from the ~85-turn workflow event wall, not nudged (see the spec's summary before changing it)");
+  eq(at({}).rotation.quietGapHours, 12, "[5] the shipped idleness trigger is 12 h — a standing seat holds for a working day (OPE-1694 folded the deployment override in)");
   ok(
     settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 6,
     "[5] all six rotation rows reach the generated operator table (OPE-794 added contextSizeTokens + tailTokenCap)",

@@ -123,7 +123,7 @@ const OFF = {
 {
   eq(supervisorRotateTurnBudget(), 60, "the unified turn BACKSTOP is 60 (OPE-345; was 150)");
   eq(supervisorRotateTokenBudget(), 4_000_000, "the token BACKSTOP is unchanged at 4M — OPE-345 demoted it, it did not re-value it");
-  eq(supervisorRotateQuietGapMs(), 1 * 3_600_000, "🔴 the quiet gap is 1h since OPE-794, down from 24h — affordable only because a rotation now rebuilds from a ~5k-token recorded tail instead of a re-fetched ~16k backscroll bundle");
+  eq(supervisorRotateQuietGapMs(), 12 * 3_600_000, "🔴 the quiet gap is 12h since OPE-1694 (24h → 1h at OPE-794, then back up) — a standing seat holds for a working day, and a long gap stays affordable because a rotation rebuilds from a ~5k-token recorded tail instead of a re-fetched ~16k backscroll bundle");
   eq(supervisorRotateContextSize(), 120_000, "the context-size backstop is 120k last-request input tokens (OPE-794)");
 
   eq(rotationTrigger({ ...quiet, turnCount: supervisorRotateTurnBudget() + 1 }, NOW), "turn-backstop" satisfies RotationTrigger, "one turn over the backstop rotates");

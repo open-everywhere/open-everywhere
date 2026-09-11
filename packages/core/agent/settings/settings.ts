@@ -432,10 +432,10 @@ export const SETTINGS = {
   rotation: {
     quietGapHours: {
       path: "rotation.quietGapHours",
-      shipped: 1,
+      shipped: 12,
       validate: positiveNumber,
       summary:
-        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. 1 hour is affordable because a rotation now rebuilds from a recorded tail capped by `rotation.tailTokenCap`, not from a re-fetched multi-cluster backscroll bundle.",
+        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. 12 hours holds a standing seat for a working day, so a morning question and an afternoon follow-up reach the same session. 🔴 What BOUNDS the longer gap is the rest of the chain, not this row: `rotation.expiryDays` still retires a generation on age, and the token, turn and context-size backstops still bound one generation's growth. `rotation.tailTokenCap` is NOT that bound — it caps what a rotation carries forward, so it makes each rotation cheap rather than making a long gap safe. Re-derive against the backstops before raising this.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     expiryDays: {

@@ -31,6 +31,7 @@ const { postUnifiedReply } = await import("../agent/channels/unified-reply.js");
 const { recordOwnPost } = await import("../agent/channels/own-post-ledger.js");
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION, connectorReadsThisTurn } = await import("../agent/channels/reply-provenance.js");
 const connectorAudit = await import("../agent/hooks/connector-audit.js");
+const { claimTasksForAddressedWake } = await import("../agent/access/dispatch-origin-signal.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
@@ -73,8 +74,51 @@ function auditFor(turnId: string, channelId: string = CHAN): ReplyAudit {
   return replyAuditFor(ctxFor(turnId, channelId), "tool", `wake-${turnId}`);
 }
 
-function unifiedAuditFor(turnId: string): ReplyAudit {
-  return { ...auditFor(turnId), platform: "unified" };
+const WAKE_A = "wake-unified-a";
+const WAKE_B = "wake-unified-b";
+
+function unifiedCtx(turnId: string, deliveryWake: string, channelId: string = CHAN): BindableContext {
+  return {
+    channel: { kind: "channel:unified" },
+    session: {
+      id: "reply-provenance-test",
+      turn: { id: turnId, sequence: 1 },
+      auth: {
+        current: {
+          attributes: { oe_platform: "slack", oe_wake_id: deliveryWake, channel_id: channelId, team_id: TEAM, channel_type: "channel", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+    },
+    agent: { name: "oe", nodeId: "__root__" },
+  } as unknown as BindableContext;
+}
+
+function unplaceableUnifiedCtx(turnId: string): BindableContext {
+  return {
+    channel: { kind: "channel:unified" },
+    session: {
+      id: "reply-provenance-test",
+      turn: { id: turnId, sequence: 1 },
+      auth: {
+        current: {
+          attributes: { oe_platform: "slack", channel_id: CHAN, team_id: TEAM, channel_type: "channel", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+    },
+    agent: { name: "oe", nodeId: "__root__" },
+  } as unknown as BindableContext;
+}
+
+function unifiedAuditFor(turnId: string, answeredWake: string, deliveryWake: string = answeredWake): ReplyAudit {
+  return replyAuditFor(unifiedCtx(turnId, deliveryWake), "tool", answeredWake);
+}
+
+function bridgeAuditFor(turnId: string, answeredWake: string): ReplyAudit {
+  return { org: ORG, platform: "unified", workspace: "eng", surface: "win:eng:slack", sessionId: "reply-provenance-test", wakeId: answeredWake, turnId, route: "bridge" };
 }
 
 function ctxFor(turnId: string, channelId: string): BindableContext {
@@ -166,24 +210,76 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
 
   const inTurn2 = newSession();
   await inTurn2(async () => {
-    await hook(opResult("notion__get_page"), ctxFor("turn_3b", CHAN));
-    await hook(opResult("linear__list_issues"), ctxFor("turn_3b", CHAN));
-    await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, unifiedAuditFor("turn_3b"));
+    await hook(opResult("notion__get_page"), unifiedCtx("turn_3bi", WAKE_A));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, unifiedAuditFor("turn_3bi", WAKE_A));
+  });
+  ok(
+    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
+    `🔴 §3b(i): a UNIFIED reply answering the wake its read was made under NAMES the connector — the primary posture renders the same footer a solo seat does (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+  ok(!lastPosted().includes("another domain"), "🔴 §3b(i): …and nothing is counted as another domain, because nothing was withheld");
+
+  const inTurn3 = newSession();
+  await inTurn3(async () => {
+    await hook(opResult("notion__get_page"), unifiedCtx("turn_3bii", WAKE_A));
+    await hook(opResult("linear__list_issues"), unifiedCtx("turn_3bii", WAKE_A));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, unifiedAuditFor("turn_3bii", WAKE_B, WAKE_A));
   });
   ok(
     !lastPosted().includes("notion") && !lastPosted().includes("linear"),
-    `🔴 §3b: a UNIFIED reply names NO connector, however many the turn read — the surface cannot tell that turn's conversations apart, so every name would be a guess (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    `🔴 §3b(ii): a read recorded under a SIBLING wake is never named, even though it shares this reply's partition surface — the disclosure belongs to the conversation the read was made for (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
   );
   ok(
     lastPosted().includes("2 in another domain"),
-    "🔴 §3b: …and the count still reaches the room, so a unified reader learns the turn consulted two systems without learning which",
+    "🔴 §3b(ii): …and the count still reaches the room, so the reader learns the turn consulted two systems without learning which",
+  );
+
+  const inTurn4 = newSession();
+  await inTurn4(async () => {
+    await hook(opResult("github__get_pull_request"), unifiedCtx("turn_3biii", WAKE_A));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, bridgeAuditFor("turn_3biii", WAKE_A));
+  });
+  ok(
+    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} github`),
+    `🔴 §3b(iii): the addressed-mention BRIDGE names the connector too — a route whose audit carries no room label still proves its room with the wake (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+
+  const inTurn5 = newSession();
+  await inTurn5(async () => {
+    claimTasksForAddressedWake("turn_3biv", WAKE_A);
+    await hook(opResult("linear__list_issues"), unifiedCtx("turn_3biv", WAKE_B));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (b)`, {}, unifiedAuditFor("turn_3biv", WAKE_B, WAKE_B));
+  });
+  ok(
+    !lastPosted().includes("linear") && lastPosted().includes("1 in another domain"),
+    `🔴 §3b(iv): a reply answering the read's own DELIVERY wake names nothing, because the turn had already addressed a different wake and the read is recorded under THAT one (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+  const inTurn6 = newSession();
+  await inTurn6(async () => {
+    claimTasksForAddressedWake("turn_3bv", WAKE_A);
+    await hook(opResult("linear__list_issues"), unifiedCtx("turn_3bv", WAKE_B));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (c)`, {}, unifiedAuditFor("turn_3bv", WAKE_A, WAKE_B));
+  });
+  ok(
+    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`),
+    `🔴 §3b(v) THE RESIDUAL, MEASURED: the read is named into the wake the turn ADDRESSED, not the one its delivery stamp named. The module header states this as the cost of preferring the addressed wake; this leg is what makes the claim checkable (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+
+  const inTurn7 = newSession();
+  await inTurn7(async () => {
+    await hook(opResult("notion__get_page"), unplaceableUnifiedCtx("turn_3bvi"));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (d)`, {}, unifiedAuditFor("turn_3bvi", WAKE_A));
+  });
+  ok(
+    !lastPosted().includes("notion") && lastPosted().includes("1 in another domain"),
+    `🔴 §3b(vi): a read the host could place under NEITHER proof is counted by kind and never named, even on a reply whose own partition surface matches it (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
   );
 }
 
 {
   const rows = await readAudit({ org: ORG, action: REPLY_PROVENANCE_ACTION });
   const unified = rows.find((r) => (r.detail as { sessionId?: string; withheld?: number })?.withheld === 2);
-  ok(unified !== undefined, "§4 precondition: §3b's unified reply wrote a provenance row");
+  ok(unified !== undefined, "§4 precondition: §3b(ii)'s unified reply — the one that answered a sibling wake — wrote a provenance row");
   const detail = unified!.detail as { connections?: string[]; ops?: string[]; named?: number; withheld?: number; reads?: number };
   ok(
     Array.isArray(detail.connections) && detail.connections.includes("notion") && detail.connections.includes("linear"),
