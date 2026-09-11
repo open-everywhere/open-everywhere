@@ -65,6 +65,20 @@ function engagementSeamPlatforms(): ReadonlySet<string> {
 const ENGAGEMENT_IMPORT =
   /import\s*(?:type\s*)?\{[^}]*\b(?:markThreadEngaged|shouldDeliverReply)\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
 
+function ownedThreadIngressPlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (sourcesReference(dir, OWNED_THREAD_INGRESS_IMPORT) && sourcesReference(dir, OWNED_THREAD_INGRESS_CALL)) wired.add(platform);
+  }
+  return wired;
+}
+
+const OWNED_THREAD_INGRESS_IMPORT =
+  /import\s*(?:type\s*)?\{[^}]*\bdivertInboundToUnifiedWindow\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
+
+const OWNED_THREAD_INGRESS_CALL = /\bawait\s+divertInboundToUnifiedWindow\s*\(/su;
+
 function sourcesReference(dir: string, pattern: RegExp): boolean {
   let entries: string[];
   try {
@@ -90,6 +104,8 @@ function setOf(platforms: Iterable<string>): ReadonlySet<string> {
   return new Set([...platforms].filter((p) => (PLATFORMS as readonly string[]).includes(p)));
 }
 
+const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress"] as const;
+
 const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["identity-mapper", setOf(registeredIdentityMapperPlatforms())],
   ["capability-manifest", setOf(registeredCapabilityManifestPlatforms())],
@@ -99,6 +115,7 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["reaction-feedback-ingest", setOf(registeredReactionSurfaces())],
   ["ancillary-ops", setOf(PLATFORMS.filter((p) => surfaceMessageOps(p) !== undefined))],
   ["ambient-engagement-seam", engagementSeamPlatforms()],
+  ["owned-thread-ingress", ownedThreadIngressPlatforms()],
   ["search", setOf(registeredSearchConnectors())],
 ]);
 
@@ -205,8 +222,9 @@ if (check) {
   }
   console.log(
     `✓ surface-parity: ${PLATFORMS.length} surfaces, every capability declared with a reason, ` +
-      `${PROBES.size - 1} row(s) cross-checked against the live registries + 1 (ambient-engagement-seam) ` +
-      `against the bundle sources, ${CONTRACT} in sync`,
+      `${PROBES.size - SOURCE_SCAN_PROBES.length} row(s) cross-checked against the live registries + ` +
+      `${SOURCE_SCAN_PROBES.length} (${SOURCE_SCAN_PROBES.join(", ")}) against the bundle sources, ` +
+      `${CONTRACT} in sync`,
   );
 } else {
   const wrote = writeFileIfChanged(contractPath, updated);

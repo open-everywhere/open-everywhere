@@ -34,6 +34,7 @@ import {
   EventDedupe,
   ThreadFifo,
   divertToUnifiedWindow,
+  divertInboundToUnifiedWindow,
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
@@ -301,7 +302,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
   }
 }
 
-function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]): TeamsSupervisorDeps {
+export function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]): TeamsSupervisorDeps {
   const org = plan.partition.org;
   const store = getOperationalStore();
   const grain = plan.grain;
@@ -325,7 +326,7 @@ function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerArgs["to"
     recordWake: (entry, token) => recordWakeTail(org, grain.registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
-      await divertToUnifiedWindow(to, {
+      await divertInboundToUnifiedWindow(to, {
         message,
         ...(context.length > 0 ? { context } : {}),
         token,

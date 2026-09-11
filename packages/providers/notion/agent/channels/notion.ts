@@ -22,7 +22,7 @@ import {
   mintRotationToken,
   claimRuntimeRotation,
   grainUsesUnifiedWindow,
-  divertToUnifiedWindow,
+  divertInboundToUnifiedWindow,
   healPrunedDeploymentStrand,
   captureHandshakeSecret,
   admitTrigger,
@@ -184,7 +184,7 @@ export function liveNotionSupervisorDeps(
     async wake({ token, auth, message, context, state, window }) {
       if (window) {
         if (!to) throw new Error("notion single-window wake has no cross-channel dispatch — refusing (would post an unregistered wake-id)");
-        await divertToUnifiedWindow(to, {
+        await divertInboundToUnifiedWindow(to, {
           message,
           context: [...context],
           token,

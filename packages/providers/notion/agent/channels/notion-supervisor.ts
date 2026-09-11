@@ -108,6 +108,7 @@ export interface NotionSupervisorWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly wakeId?: string;
   readonly directMention?: boolean;
+  readonly threadEngaged?: boolean;
 }
 
 function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
@@ -133,6 +134,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : input.addressing,
     containerNoun: "doc",
     engagementTier: judged ? input.engagementTier : undefined,
+    followUp: judged && input.threadEngaged === true ? "thread-engaged" : undefined,
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.pageId },
@@ -279,6 +281,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
         engagementTier: d.engagementTier,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
+        threadEngaged: d.engagedFollowUp,
         tail,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),

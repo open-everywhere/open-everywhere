@@ -24,6 +24,7 @@ export const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = [
   { id: "reaction-feedback-ingest", label: "Reaction **feedback** ingest", section: "§4.9", group: "seam" },
   { id: "ancillary-ops", label: "Ancillary ops (`SurfaceMessageOps`)", section: "§4.9", group: "seam" },
   { id: "ambient-engagement-seam", label: "**Ambient engagement seam**", section: "§2.5", group: "seam" },
+  { id: "owned-thread-ingress", label: "**Owned-thread ingress divert**", section: "§2.6", group: "seam" },
 
   { id: "addressed-leg", label: "Addressed (@mention) leg", section: "§2.2", group: "shape" },
   { id: "ambient-leg", label: "Ambient (non-mention) leg", section: "§2.5", group: "shape" },

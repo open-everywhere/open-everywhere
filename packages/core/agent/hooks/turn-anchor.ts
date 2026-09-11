@@ -194,7 +194,7 @@ async function removeStopHand(s: TurnAnchorState): Promise<void> {
 }
 
 export function renderCancelNote(steps: number, ran: readonly string[], accounted = true): string {
-  if (!accounted) return "Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone.";
+  if (!accounted) return CANCEL_NOTE_UNACCOUNTED;
   const where = steps === 1 ? "one step in" : `${steps} steps in`;
   if (ran.length === 0) return `Stood down — ${where}, nothing had run yet.`;
   const named = ran.slice(-MAX_NAMED_ACTIONS);
@@ -202,6 +202,17 @@ export function renderCancelNote(steps: number, ran: readonly string[], accounte
   const list = named.map((n) => `\`${n}\``).join(", ");
   const tail = more > 0 ? ` (and ${more} earlier)` : "";
   return `Stood down — ${where}. Already done, and NOT undone: ${list}${tail}.`;
+}
+
+const CANCEL_NOTE_UNACCOUNTED =
+  "Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone.";
+
+const CANCEL_NOTE_ACCOUNTED =
+  /^Stood down — (?:one step in|\d+ steps in)(?:, nothing had run yet\.|\. Already done, and NOT undone: `[^`]+`(?:, `[^`]+`)*(?: \(and \d+ earlier\))?\.)$/;
+
+export function isTurnCancelNote(text: string): boolean {
+  const t = text.trim();
+  return t === CANCEL_NOTE_UNACCOUNTED || CANCEL_NOTE_ACCOUNTED.test(t);
 }
 
 interface CancelledTurnFacts extends TurnAnchorState {

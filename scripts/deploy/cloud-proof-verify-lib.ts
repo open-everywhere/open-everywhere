@@ -61,3 +61,60 @@ export function parseEvidence(text: string): ProofVerdict {
   }
   return { verdict: "pass", sha, suites };
 }
+
+const SHARD_SUITE_RE = /^(.+)--shard=(\d+)\/(\d+)$/;
+
+export type ShardSeries = { readonly tier: string; readonly shards: number };
+
+export type ProofCoverage = {
+  readonly names: ReadonlySet<string>;
+  readonly series: readonly ShardSeries[];
+  readonly summary: string;
+};
+
+export function collapseShardSeries(suites: readonly SuiteResult[]): ProofCoverage {
+  const names = new Set<string>();
+  const shards = new Map<string, { readonly suite: SuiteResult; readonly index: number; readonly total: number }[]>();
+  for (const suite of suites) {
+    const match = SHARD_SUITE_RE.exec(suite.name);
+    if (match === null) {
+      names.add(suite.name);
+      continue;
+    }
+    const tier = match[1]!;
+    const parts = shards.get(tier) ?? [];
+    parts.push({ suite, index: Number(match[2]), total: Number(match[3]) });
+    shards.set(tier, parts);
+  }
+
+  const series: ShardSeries[] = [];
+  for (const [tier, parts] of shards) {
+    const total = parts[0]!.total;
+    const complete =
+      !names.has(tier) &&
+      total >= 1 &&
+      parts.every((p) => p.total === total && p.suite.exit === 0 && p.index >= 1 && p.index <= total) &&
+      new Set(parts.map((p) => p.index)).size === total;
+    if (complete) {
+      names.add(tier);
+      series.push({ tier, shards: total });
+      continue;
+    }
+    for (const part of parts) names.add(part.suite.name);
+  }
+
+  const collapsed = new Map(series.map((s) => [s.tier, s.shards]));
+  const written = new Set<string>();
+  const rendered: string[] = [];
+  for (const suite of suites) {
+    const tier = SHARD_SUITE_RE.exec(suite.name)?.[1];
+    if (tier !== undefined && collapsed.has(tier)) {
+      if (written.has(tier)) continue;
+      written.add(tier);
+      rendered.push(`${tier}=0 (${collapsed.get(tier)!} shards)`);
+      continue;
+    }
+    rendered.push(`${suite.name}=${suite.exit}`);
+  }
+  return { names, series, summary: rendered.join(", ") };
+}

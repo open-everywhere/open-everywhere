@@ -1,20 +1,22 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
-import { deployedBuildCarries } from "./deployed-build.js";
+import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
+import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { tsAfter } from "./slack-driver.js";
-import type { DiscordDriver } from "./discord-driver.js";
+import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
+import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import { isMissingChatScopeError } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
-import { pinNotionQueryPage } from "./notion-driver.js";
+import { notionMinuteFloor, pinNotionQueryPage, type NotionComment } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
@@ -1196,12 +1198,11 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.log(`mint: parsed link code (${code!.length} symbols) from the DM reply; ${issuedRows.length} challenge_issued row(s) in the window`);
 
-      if (!deployedBuildCarries(OPE617_V2_SHA)) {
+      const v2Verdict = deployedBuildVerdict(OPE617_V2_SHA);
+      if (v2Verdict !== "carries") {
         ctx.skip(
-          `the last recorded deploy does not carry OPE-617 v2 (${OPE617_V2_SHA.slice(0, 8)}) — or no deploy record exists in this checkout ` +
-            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On a pre-v2 build a channel-addressed " +
-            "claim is the correct behaviour, so the venue-refusal / own-DM-claim / code-back legs below do not apply. Deploy a build carrying " +
-            "the v2 fix and record it; the legs arm themselves from the record.",
+          `${pinSkipCause(v2Verdict, OPE617_V2_SHA)} — ${OPE617_V2_SHA.slice(0, 8)} is OPE-617 v2. On a pre-v2 build a channel-addressed ` +
+            "claim is the correct behaviour, so the venue-refusal / own-DM-claim / code-back legs below do not apply.",
         );
       }
 
@@ -2258,6 +2259,8 @@ export const SCENARIOS: readonly Scenario[] = [
       if (blocks.length >= 2) {
         const [b1, b2] = blocks;
         const rStart = new Date().toISOString();
+        const preExisting = new Set((await Promise.all([not.blockComments(b1), not.blockComments(b2)])).flat().map((c) => c.id));
+        const rFloor = notionMinuteFloor(rStart);
         const ask = "Which of the Notion access methods described on this page is the recommended default, and why? Please reply.";
         const d1 = await not.createBlockDiscussion(b1, ask);
         const d2 = await not.createBlockDiscussion(b2, ask);
@@ -2267,8 +2270,9 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         await sleep(SILENCE_WINDOW);
         const [c1, c2] = await Promise.all([not.blockComments(b1), not.blockComments(b2)]);
-        const r1 = c1.find((c) => not.isBotComment(c) && c.discussionId === d1.discussionId && c.createdTime > rStart);
-        const r2 = c2.find((c) => not.isBotComment(c) && c.discussionId === d2.discussionId && c.createdTime > rStart);
+        const fresh = (c: NotionComment): boolean => not.isBotComment(c) && c.createdTime >= rFloor && !preExisting.has(c.id);
+        const r1 = c1.find(fresh);
+        const r2 = c2.find(fresh);
         if (r1 || r2) {
           if (r1) ctx.gate(r1.discussionId === d1.discussionId, "reply-targeting: block-1's reply lands in discussion 1");
           if (r2) ctx.gate(r2.discussionId === d2.discussionId, "reply-targeting: block-2's reply lands in discussion 2");
@@ -3575,7 +3579,6 @@ export const SCENARIOS: readonly Scenario[] = [
         },
         { timeoutMs: FILE_REPLY_WAIT, what: "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask" },
       );
-      ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
       await assertDmDoorAdmitted(ctx, sinceIso, "S-DM-NOTION");
       await arming.recheck();
       await ctx.judgePass(
@@ -3585,6 +3588,164 @@ export const SCENARIOS: readonly Scenario[] = [
         ),
         answer.text,
         "DM personal-Notion: a real answer about the user's Notion pages",
+      );
+    },
+  },
+  {
+    id: "S-PROVENANCE-DM",
+    title:
+      "Reply provenance, live (OPE-1717): a DM turn that READS through the Notion connector posts a reply whose footer names that connection and NOTHING else, joined to the deployment's own reply.provenance row — plus a next-turn negative control that reads nothing and carries no footer",
+    requires: ["slack", "syntheticDm"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic;
+      const auditRead = ctx.auditRead;
+      if (!auditRead) {
+        ctx.skip(
+          "needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — this leg's whole subject is the JOIN between the deployment's reply.provenance row and the footer bytes, and half a join asserts nothing",
+        );
+        return;
+      }
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      const { userId, teamId } = await ctx.slack!.identity();
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const ask = async (text: string, what: string): Promise<SlackMessage> => {
+        const { ts: anchorTs } = await dm.post(text);
+        const clicked = new Set<string>();
+        return pollUntil(
+          async () => {
+            const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+            let pending: SlackMessage | undefined;
+            for (const m of msgs) {
+              const buttons = eveNativeApprovalButtons(m);
+              if (buttons) {
+                if (synthetic === undefined) {
+                  ctx.log("an eve-native approval card appeared and the synthetic forge is not configured — it cannot be clicked, so this wait will run out");
+                } else if (!clicked.has(m.ts)) {
+                  clicked.add(m.ts);
+                  const res = await synthetic.clickBlockAction({
+                    actionId: buttons.approve.actionId,
+                    blockId: buttons.approve.blockId,
+                    value: buttons.approve.value,
+                    buttonText: buttons.approve.text,
+                    userId,
+                    teamId,
+                    channelId: dm.channelId,
+                    messageTs: m.ts,
+                    threadTs: m.threadTs ?? anchorTs,
+                  });
+                  ctx.log(`approval card Allow → synthetic click ${res.status}`);
+                }
+                continue;
+              }
+              if (m.text.trim().length > 0 && !isFillerAck(m.text)) pending = pending ?? m;
+            }
+            return pending;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what },
+        );
+      };
+
+      const readToken = factToken("prov");
+      const answer = await ask(
+        `can you list the pages in my Notion workspace? (ref ${readToken})`,
+        "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask",
+      );
+      await arming.recheck();
+
+      const opRows = await pollOptional(
+        async () => {
+          const rows = await auditRead({ sinceIso: runStart, actions: ["connector.op"] });
+          const reads = rows.filter((r) => r.detail?.connection === NOTION_CONNECTOR && r.detail?.opTier === PROVENANCE_READ_TIER);
+          return reads.length > 0 ? reads : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: `a connector.op row at the "${PROVENANCE_READ_TIER}" tier for the "${NOTION_CONNECTOR}" connection in this leg's window` },
+      );
+      if (opRows === undefined) {
+        ctx.skip(
+          `no ${PROVENANCE_READ_TIER}-tier connector.op row names "${NOTION_CONNECTOR}" in this leg's window. The turn answered without reading the connector through the connector plane — ` +
+            "from backscroll, from memory, by declining, or through a credential GRANT (`grant__<owner>_<connector>__<tool>`), which hooks/connector-audit.ts returns on before either write and which records " +
+            "`grant.*` rows instead (residual 1). A footer claims what a turn READ, so there is nothing here to assert. Re-run against a deployment whose personal Notion grant is consented and whose worker actually performs the read.",
+        );
+        return;
+      }
+      ctx.log(`connector.op: ${opRows.length} row(s) naming ${NOTION_CONNECTOR} in the window`);
+
+      const provRow = await pollOptional(
+        async () => {
+          const rows = await auditRead({ sinceIso: runStart, actions: [REPLY_PROVENANCE_ACTION] });
+          return rows.find((r) => r.detail?.id === answer.ts);
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for the DM answer ${answer.ts}` },
+      );
+      if (provRow === undefined) {
+        ctx.skip(
+          `a ${PROVENANCE_READ_TIER}-tier connector.op row exists and NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}. That is all this leg measured: the session that POSTED the answer ` +
+            "held an EMPTY ledger. Four things do that and nothing here separates them — the ledger seam itself being unwired (check `noteConnectorRead`'s call in hooks/connector-audit.ts, and check it FIRST: " +
+            "that is a regression, not a fixture fact); residual (2), the read happening in a worker session while the seat answered by itself; residual (3), a later turn's edit re-rendering the answer; " +
+            "and residual (4), a terminal reply whose channel state names no conversation (channels/reply-provenance.ts lists all four). Nothing is asserted about the footer either way.",
+        );
+        return;
+      }
+
+      const connections = Array.isArray(provRow.detail?.connections) ? (provRow.detail!.connections as unknown[]).filter((c): c is string => typeof c === "string") : [];
+      const named = typeof provRow.detail?.named === "number" ? provRow.detail.named : -1;
+      const withheld = typeof provRow.detail?.withheld === "number" ? provRow.detail.withheld : -1;
+      ctx.gate(
+        connections.length === 1 && connections[0] === NOTION_CONNECTOR,
+        `provenance row: the reply drew on exactly one connection, "${NOTION_CONNECTOR}" — got [${connections.join(", ")}] (this deployment configures one connection, agent/connections/notion.ts)`,
+      );
+      ctx.gate(
+        withheld === 0,
+        `provenance row: NOTHING was withheld from this room — the read and the reply are the same DM partition, so the reach rule names it (withheld=${withheld})`,
+      );
+      ctx.gate(
+        named === connections.length,
+        `provenance row: every connection the turn read is named to this room (named=${named}, connections=${connections.length})`,
+      );
+
+      const lines = answer.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+      const footer = lines.find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX));
+      ctx.gate(
+        footer !== undefined,
+        `footer: the reply the room received carries a "${PROVENANCE_FOOTER_PREFIX}" line — the row says this turn read ${connections.length} connection(s), so a missing line is the render unwired from the ledger (OPE-1713's defect class). ` +
+          `Reply tail: "${lines.slice(-3).join(" / ").slice(0, 240)}"`,
+      );
+      ctx.gate(
+        footer === `${PROVENANCE_FOOTER_PREFIX} ${connections.join(", ")}`,
+        `footer: it names the connection and NOTHING else — no ", N in another domain" and no ", N more" — expected "${PROVENANCE_FOOTER_PREFIX} ${connections.join(", ")}", got "${footer ?? "(absent)"}"`,
+      );
+
+      const controlToken = factToken("provneg");
+      const control = await ask(
+        `thanks — separate question, no lookups needed: what is 17 + 25? (ref ${controlToken})`,
+        "a substantive bot reply to the arithmetic control ask",
+      );
+      const controlFooter = control.text
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX));
+      ctx.gate(
+        controlFooter === undefined,
+        `control: a turn that read no connector carries NO "${PROVENANCE_FOOTER_PREFIX}" line — got "${controlFooter ?? ""}"`,
+      );
+      await pollOptional(
+        async () => {
+          const rows = await auditRead({ sinceIso: runStart, actions: [REPLY_POST_ACTION] });
+          return rows.find((r) => r.detail?.id === control.ts);
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_POST_ACTION} row for the control reply ${control.ts} — the fence for the absence gate below` },
+      );
+      const controlRow = (await auditRead({ sinceIso: runStart, actions: [REPLY_PROVENANCE_ACTION] })).find((r) => r.detail?.id === control.ts);
+      ctx.gate(
+        controlRow === undefined,
+        `control: and the deployment wrote NO ${REPLY_PROVENANCE_ACTION} row for it — a row on a read-nothing turn would mean the ledger outlived its turn`,
       );
     },
   },
@@ -5042,20 +5203,29 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(first.content.trim().length > 0, "mention: the agent replied in the auto-thread");
       await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "discord", leg: "mention", expect: "addressed" });
 
+      const notCancelNote = (m: DiscordMessage): boolean => !isTurnCancelNote(m.content);
       const followFrom = new Date().toISOString();
       const followUp = await discord.post("expand that into two or three sentences", threadId);
-      const second = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
-      ctx.gate(second.id !== first.id, "engaged: the plain follow-up drew a FRESH reply with no re-mention");
+      const second = await discord.awaitReplyMatching(threadId, followUp.id, notCancelNote, {
+        timeoutMs: REPLY_WAIT,
+        what: `a bot reply to the plain follow-up in thread ${threadId} that is not a turn-cancel note`,
+      });
+      ctx.gate(second.content.trim().length > 0, "engaged: the plain follow-up drew a FRESH reply with substance and no re-mention");
       await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "discord", leg: "engaged follow-up", expect: "thread-follow" });
 
       const stopFrom = new Date().toISOString();
       const stopMsg = await discord.post(ENGAGED_STOP_ASK, threadId);
-      await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
+      await discord.awaitReplyMatching(threadId, stopMsg.id, notCancelNote, {
+        timeoutMs: REPLY_WAIT,
+        what: `the stand-down acknowledgement in thread ${threadId} (a turn-cancel note is not one)`,
+      });
       await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "discord", anchor: threadId });
 
       const silenceFrom = new Date().toISOString();
       const afterStop = await discord.post("and who else works on it?", threadId);
-      const silent = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
+      const raw = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
+      const silent = raw.filter(notCancelNote);
+      if (raw.length !== silent.length) ctx.log(`stop window: skipped ${raw.length - silent.length} turn-cancel note(s) — not replies, and not explained (OPE-1724)`);
       await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", observedSilent: silent.length === 0 });
       ctx.log(`(engaged thread ${threadId}; stand-down driven at ${stopMsg.id})`);
     },
@@ -5180,36 +5350,41 @@ export const SCENARIOS: readonly Scenario[] = [
       try {
         const mentionFrom = new Date().toISOString();
         const opened = await notion.createBlockDiscussion(blockId, `${ENGAGED_NAME} — what's 12*12? reply with just the number`);
-        const first = await notion.awaitBotReplyOnBlock(blockId, opened.discussionId, mentionFrom, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        const seen = new Set<string>();
+        const first = await notion.awaitBotReplyOnBlock(blockId, opened.discussionId, mentionFrom, { timeoutMs: REPLY_WAIT, seen }).catch(() => undefined);
         ctx.gate(
           first !== undefined && first.text.trim().length > 0,
           "name-drop: the agent replied in the block discussion — the ambient gate reads the addressing, so an addressed-only page can be addressed",
         );
+        if (first) seen.add(first.id);
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "notion", leg: "name-drop", expect: "addressed" });
 
         const followFrom = new Date().toISOString();
         await notion.replyToDiscussion(opened.discussionId, "and what's that plus 6?");
         const second = await notion
-          .awaitBotReplyIn(opened.discussionId, followFrom, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) })
+          .awaitBotReplyIn(opened.discussionId, followFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
           .catch(() => undefined);
         ctx.gate(
           second !== undefined && second.id !== first?.id,
           "engaged: a plain comment in the engaged discussion woke the agent without re-naming it — `notion-engagement.ts` admits it on the PAGE row the name-drop wrote",
         );
+        if (second) seen.add(second.id);
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up", expect: "thread-follow" });
 
         const stopFrom = new Date().toISOString();
         await notion.replyToDiscussion(opened.discussionId, ENGAGED_STOP_ASK);
         await notion
-          .awaitBotReplyIn(opened.discussionId, stopFrom, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) })
+          .awaitBotReplyIn(opened.discussionId, stopFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
           .catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "notion" });
 
+        const beforeStop = new Set((await notion.blockComments(blockId).catch(() => [])).map((c) => c.id));
         const silenceFrom = new Date().toISOString();
         await notion.replyToDiscussion(opened.discussionId, "and what's 5 plus 5?");
         await sleep(SILENCE_WINDOW);
         const after = await notion.blockComments(blockId);
-        const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime > silenceFrom).length === 0;
+        const silenceFloor = notionMinuteFloor(silenceFrom);
+        const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", observedSilent });
       } finally {
         await notion.archiveBlock(blockId).catch(() => undefined);

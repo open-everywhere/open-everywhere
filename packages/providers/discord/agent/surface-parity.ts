@@ -9,6 +9,7 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": "supported",
   "ancillary-ops": "supported",
   "ambient-engagement-seam": { supported: "enrols and honours `stopped`; gates delivery in its own gateway rule" },
+  "owned-thread-ingress": { supported: "the guild leg only — a Discord DM carries no threads, so its divert never consults ownership" },
 
   "addressed-leg": "supported",
   "ambient-leg": "supported",

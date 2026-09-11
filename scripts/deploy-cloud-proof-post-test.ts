@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { ExecResult } from "./deploy/lib.js";
-import { buildPostDecision, CLOUD_PROOF_CONTEXT, formatInvocation, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
+import { buildPostDecision, CLOUD_PROOF_CONTEXT, DESCRIPTION_MAX_LENGTH, formatInvocation, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
 import type { ProofVerdict } from "./deploy/cloud-proof-verify-lib.js";
 
 let checks = 0;
@@ -73,6 +73,85 @@ check("buildPostDecision: a very long suite summary truncates the description, n
   const decision = buildPostDecision({ verdict: bigVerdict, expectedSha: SHA, sessionId: "session_9f2c" });
   assert.equal(decision.kind, "post");
   if (decision.kind === "post") assert.ok(decision.description.length <= 140);
+});
+
+const SHARDED_SESSION = "session_01EXAMPLE00000000000003";
+
+const FOUR_TIERS_SHARDED: ProofVerdict = {
+  verdict: "pass",
+  sha: SHA,
+  suites: [
+    { name: "typecheck:all", exit: 0 },
+    { name: "test", exit: 0 },
+    { name: "build", exit: 0 },
+    { name: "test:integration--shard=1/4", exit: 0 },
+    { name: "test:integration--shard=2/4", exit: 0 },
+    { name: "test:integration--shard=3/4", exit: 0 },
+    { name: "test:integration--shard=4/4", exit: 0 },
+  ],
+};
+
+check("buildPostDecision: a complete four-shard series renders as its tier, not as four shard names", () => {
+  const decision = buildPostDecision({ verdict: FOUR_TIERS_SHARDED, expectedSha: SHA, sessionId: SHARDED_SESSION });
+  assert.equal(decision.kind, "post");
+  if (decision.kind === "post") {
+    assert.ok(decision.description.includes("test:integration=0 (4 shards)"), decision.description);
+    assert.ok(!decision.description.includes("--shard="), decision.description);
+  }
+});
+
+check("buildPostDecision: four tiers with a sharded integration tier fit the 140-char cap UNTRUNCATED", () => {
+  const decision = buildPostDecision({ verdict: FOUR_TIERS_SHARDED, expectedSha: SHA, sessionId: SHARDED_SESSION });
+  assert.equal(decision.kind, "post");
+  if (decision.kind === "post") {
+    assert.ok(decision.description.length <= DESCRIPTION_MAX_LENGTH, `${decision.description.length} chars: ${decision.description}`);
+    assert.ok(!decision.description.includes("…"), decision.description);
+    for (const tier of ["typecheck:all=0", "test=0", "build=0", "test:integration=0"]) {
+      assert.ok(decision.description.includes(tier), `${tier} missing from: ${decision.description}`);
+    }
+  }
+});
+
+check("buildPostDecision: an INCOMPLETE shard series keeps its literal shard names — it proves no tier", () => {
+  const missingShard: ProofVerdict = {
+    verdict: "pass",
+    sha: SHA,
+    suites: [
+      { name: "test:integration--shard=1/4", exit: 0 },
+      { name: "test:integration--shard=2/4", exit: 0 },
+      { name: "test:integration--shard=4/4", exit: 0 },
+    ],
+  };
+  const decision = buildPostDecision({ verdict: missingShard, expectedSha: SHA, sessionId: "session_9f2c" });
+  assert.equal(decision.kind, "post");
+  if (decision.kind === "post") {
+    assert.ok(!decision.description.includes("test:integration=0 (3 shards)"), decision.description);
+    assert.ok(decision.description.includes("test:integration--shard=1/4=0"), decision.description);
+  }
+});
+
+check("buildPostDecision: a RED shard posts 'failure' and keeps every literal shard name", () => {
+  const redShard: ProofVerdict = {
+    verdict: "fail",
+    sha: SHA,
+    suites: [
+      { name: "test:integration--shard=1/4", exit: 0 },
+      { name: "test:integration--shard=2/4", exit: 1 },
+      { name: "test:integration--shard=3/4", exit: 0 },
+      { name: "test:integration--shard=4/4", exit: 0 },
+    ],
+    failing: ["test:integration--shard=2/4"],
+  };
+  const decision = buildPostDecision({ verdict: redShard, expectedSha: SHA, sessionId: "session_9f2c" });
+  assert.equal(decision.kind, "post");
+  if (decision.kind === "post") {
+    assert.equal(decision.state, "failure");
+    assert.ok(decision.invocation.args.some((a) => a === "state=failure"));
+    assert.ok(!decision.description.includes("(4 shards)"), decision.description);
+    assert.ok(!/(^|[\s,])test:integration=/.test(decision.description), decision.description);
+    assert.ok(decision.description.includes("test:integration--shard=1/4=0"), decision.description);
+    assert.ok(decision.description.includes("test:integration--shard=2/4=1"), decision.description);
+  }
 });
 
 check("formatInvocation: quotes an argument containing spaces", () => {

@@ -91,6 +91,28 @@ export interface NotionComment {
   readonly createdTime: string;
 }
 
+export interface NotionReplyFilter {
+  readonly seen?: ReadonlySet<string>;
+  readonly skip?: (c: NotionComment) => boolean;
+}
+
+export interface NotionReplyWaitOpts extends NotionReplyFilter {
+  readonly timeoutMs: number;
+}
+
+export function notionMinuteFloor(sinceIso: string): string {
+  const t = Date.parse(sinceIso);
+  if (Number.isNaN(t)) return sinceIso;
+  return new Date(Math.floor(t / 60_000) * 60_000).toISOString();
+}
+
+function waitQualifier(opts: NotionReplyFilter): string {
+  const clauses: string[] = [];
+  if (opts.seen !== undefined) clauses.push(`outside the ${opts.seen.size} comment(s) already seen`);
+  if (opts.skip !== undefined) clauses.push("that is not skipped as an interim post");
+  return clauses.length === 0 ? "" : `, ${clauses.join(" and ")}`;
+}
+
 export function signNotionBody(secret: string, rawBody: string): string {
   return "sha256=" + createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
 }
@@ -290,6 +312,13 @@ export class NotionDriver {
     return c.authorId === this.cfg.botUserId;
   }
 
+  isFreshBotComment(c: NotionComment, discussionId: string, sinceTime: string, opts: NotionReplyFilter = {}): boolean {
+    if (!this.isBotComment(c) || c.discussionId !== discussionId) return false;
+    if (c.createdTime < notionMinuteFloor(sinceTime)) return false;
+    if (opts.seen?.has(c.id) === true) return false;
+    return !(opts.skip?.(c) ?? false);
+  }
+
   async appendParagraphBlock(text: string): Promise<string> {
     const res = await notionFetch(
       `${NOTION_API}/blocks/${encodeURIComponent(this.cfg.pageId)}/children`,
@@ -376,29 +405,23 @@ export class NotionDriver {
     blockId: string,
     discussionId: string,
     sinceTime: string,
-    opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean },
+    opts: NotionReplyWaitOpts,
   ): Promise<NotionComment> {
     return pollUntil(
-      async () =>
-        (await this.blockComments(blockId)).find(
-          (c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime && !(opts.skip?.(c) ?? false),
-        ),
+      async () => (await this.blockComments(blockId)).find((c) => this.isFreshBotComment(c, discussionId, sinceTime, opts)),
       {
         timeoutMs: opts.timeoutMs,
-        what: `a bot reply in discussion ${discussionId} on block ${blockId} after ${sinceTime}${opts.skip !== undefined ? " that is not skipped as an interim post" : ""}`,
+        what: `a bot reply in discussion ${discussionId} on block ${blockId} in or after the minute of ${sinceTime}${waitQualifier(opts)}`,
       },
     );
   }
 
-  async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean }): Promise<NotionComment> {
+  async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: NotionReplyWaitOpts): Promise<NotionComment> {
     return pollUntil(
-      async () =>
-        (await this.allComments()).find(
-          (c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime && !(opts.skip?.(c) ?? false),
-        ),
+      async () => (await this.allComments()).find((c) => this.isFreshBotComment(c, discussionId, sinceTime, opts)),
       {
         timeoutMs: opts.timeoutMs,
-        what: `a bot reply in discussion ${discussionId} after ${sinceTime}${opts.skip !== undefined ? " that is not skipped as an interim post" : ""}`,
+        what: `a bot reply in discussion ${discussionId} in or after the minute of ${sinceTime}${waitQualifier(opts)}`,
       },
     );
   }

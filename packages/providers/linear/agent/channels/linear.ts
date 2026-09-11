@@ -35,7 +35,7 @@ import {
   claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
-  divertToUnifiedWindow,
+  divertInboundToUnifiedWindow,
   finalMessageActionForTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
@@ -467,7 +467,7 @@ export function liveLinearSupervisorDeps(
       const surfaceKey = `linear/${organizationId}/${teamId}`;
       if (window && to) {
         try {
-          await divertToUnifiedWindow(to, {
+          await divertInboundToUnifiedWindow(to, {
             message,
             context: [...context],
             token,
@@ -588,6 +588,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
         trust: wakeTrust,
       },
       engagementTier: linearEngagementTier(surfaceKey),
+      threadEngaged: seam.kind === "deliver",
       unified: linearGrainFor(surfaceKey).unified,
       window: ambientWindow,
     },

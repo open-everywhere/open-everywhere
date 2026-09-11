@@ -9,6 +9,7 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": "supported",
   "ancillary-ops": { supported: "inline — rides Eve's own Slack client path, not the ops registry" },
   "ambient-engagement-seam": "supported",
+  "owned-thread-ingress": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": "supported",

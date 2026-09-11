@@ -1,6 +1,6 @@
 import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
-import { deployedBuildCarries } from "./deployed-build.js";
+import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
 import { GENERIC_READ_VERBS_SHA, REPLY_POST_ACTION, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply } from "./read-channel-lib.js";
 
@@ -164,15 +164,15 @@ async function main(): Promise<void> {
     for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
     return summary();
   }
-  if (!deployedBuildCarries(GENERIC_READ_VERBS_SHA)) {
+  const verdict = deployedBuildVerdict(GENERIC_READ_VERBS_SHA);
+  if (verdict !== "carries") {
     for (const id of ["G1", "G2"]) {
       if (want(id)) {
         record(
           id,
           "SKIP",
-          `no recorded deploy carries ${GENERIC_READ_VERBS_SHA.slice(0, 8)} (the first build that mounted the generic read verbs for this app, OPE-434) — or no deploy record exists in this checkout ` +
-            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On an older build the per-surface Slack reader is the live one, so there is nothing for read_channel to exercise. " +
-            "Deploy a newer build and record it; the legs arm themselves from the record.",
+          `${pinSkipCause(verdict, GENERIC_READ_VERBS_SHA)} — ${GENERIC_READ_VERBS_SHA.slice(0, 8)} is the first build that mounted the generic read verbs for this app (OPE-434). ` +
+            "On an older build the per-surface Slack reader is the live one, so there is nothing for read_channel to exercise.",
         );
       }
     }

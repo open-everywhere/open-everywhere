@@ -443,7 +443,7 @@ async function dropRows(ts: string) {
   {
     const frontCode = stripComments(frontDoor);
     const dispatchers: { readonly name: string; readonly dispatch: RegExp }[] = [
-      { name: "scheduleDmWake", dispatch: /await divertToUnifiedWindow\(/ },
+      { name: "scheduleDmWake", dispatch: /await divertInboundToUnifiedWindow\(/ },
       { name: "scheduleUnownedWake", dispatch: /routeSupervisorEvent\(|routeNameDropEvent\(/ },
     ];
     for (const d of dispatchers) {
@@ -453,7 +453,7 @@ async function dropRows(ts: string) {
       ok(d.dispatch.test(body), `TOTALITY(front): ${d.name} really does dispatch a turn (the premise the fence requirement below rests on)`);
     }
     const dmAt = frontCode.indexOf("const scheduleDmWake = ");
-    const dmBody = frontCode.slice(dmAt, frontCode.indexOf("await divertToUnifiedWindow(", dmAt));
+    const dmBody = frontCode.slice(dmAt, frontCode.indexOf("await divertInboundToUnifiedWindow(", dmAt));
     ok(/slackFrontTenantFenceDeclined\(/.test(dmBody), "🔴 TOTALITY(front): scheduleDmWake dispatches a turn onto the DM SEAT, so it must consult the tenant fence — the assertion that was missing when the door had none");
     ok(
       dmBody.indexOf("slackFrontTenantFenceDeclined(") < dmBody.indexOf("resolveDmSeat("),

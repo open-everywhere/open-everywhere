@@ -38,6 +38,7 @@ export type UnifiedWakeOrigin =
       readonly guildId: string;
       readonly messageId?: string;
       readonly autoThreadName?: string;
+      readonly thread?: true;
     }
   | {
       readonly platform: "discord";

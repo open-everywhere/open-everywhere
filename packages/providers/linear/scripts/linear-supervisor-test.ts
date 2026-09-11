@@ -83,6 +83,17 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(member.message.includes("can we ship the migration tomorrow?"), "the member's comment still renders verbatim");
   ok(!member.message.includes(UNTRUSTED_OPEN), "a PEER-authored comment body is NOT untrusted-wrapped (OPE-577 — the fence keys on the author)");
   ok(member.context![0]!.includes(UNTRUSTED_OPEN), "…and the issue TITLE stays fenced regardless of who commented — it is payload text, not an authored message");
+
+  const wakeOf = (extra: Partial<Parameters<typeof buildLinearSupervisorWake>[0]>): string =>
+    renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger, engagementTier: "reserved", ...extra }), NOW).message;
+  ok(wakeOf({ threadEngaged: true }).includes('follow-up="thread-engaged"'), "🔴 an ENGAGED plain comment tells the seat it is already in this conversation");
+  ok(wakeOf({ threadEngaged: true }).includes('addressing="channel-watch"'), "🔴 …and does NOT touch the addressing — the silence bar of a standing session is a different fact from enrolment");
+  ok(!wakeOf({}).includes("follow-up="), "an UNSET enrolment states no contract (byte-identical to before OPE-1711)");
+  ok(!wakeOf({ threadEngaged: false }).includes("follow-up="), "an explicit NOT-engaged states no contract either");
+  ok(
+    !wakeOf({ threadEngaged: true, directMention: true }).includes("follow-up="),
+    "🔴 an ADDRESSED @mention states no enrolment — it is owed an answer whatever the registry says, so the clause would decide nothing (the exclusion slack-events.ts makes)",
+  );
 }
 {
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger });
@@ -187,6 +198,11 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(wakes.length === 1 && wakes[0]!.token === linearSupervisorToken(TEAM, 1), "dispatch wakes once under the supervisor token");
   ok(wakes[0]!.message.includes('container="team"') && wakes[0]!.message.includes('addressing="channel-watch"'), "the delivered message is the team-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake");
+
+  await handleLinearSupervisorDispatch(dispatch({ threadEngaged: true }), deps);
+  ok(wakes[1]!.message.includes('follow-up="thread-engaged"'), "🔴 dispatch: an ENGAGED issue's wake reaches deps.wake carrying the enrolment contract");
+  await handleLinearSupervisorDispatch(dispatch({ threadEngaged: false }), deps);
+  ok(!wakes[2]!.message.includes("follow-up="), "dispatch: NEGATIVE CONTROL — a NOT-engaged issue's wake carries no contract");
 }
 
 {

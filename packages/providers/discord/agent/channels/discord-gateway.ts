@@ -20,6 +20,7 @@ import {
   mintWakeId,
   singleWindowMentionPolicy,
   divertToUnifiedWindow,
+  divertInboundToUnifiedWindow,
   verifyWebhookSignature,
   cancelAnchoredTurn,
   turnAnchorKey,
@@ -1017,7 +1018,7 @@ async function divertDiscordDmToWindow(input: {
   });
 }
 
-async function divertDiscordWakeToUnifiedWindow(input: {
+export async function divertDiscordWakeToUnifiedWindow(input: {
   readonly msg: DiscordRelayMessage;
   readonly auth: OpenEverywhereDiscordAuth;
   readonly partition: Partition;
@@ -1065,6 +1066,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
       ...(msg.id && input.addressing === "direct-mention" && shouldAutoThread(msg.channelType, autoThreadEnabled())
         ? { autoThreadName: deriveThreadName(msg.content) }
         : {}),
+      ...(isThreadChannelType(msg.channelType) ? { thread: true as const } : {}),
     };
     const rendered = renderWake(
       buildDiscordUnifiedWake({
@@ -1089,7 +1091,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
     );
     const domainSurfaceKey = domainKeyOf(input.partition);
     try {
-      await divertToUnifiedWindow(input.receive, {
+      await divertInboundToUnifiedWindow(input.receive, {
         message: rendered.message,
         context: [...(rendered.context ?? []), ...input.context],
         token,

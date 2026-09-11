@@ -1,4 +1,4 @@
-import type { ProofVerdict } from "./cloud-proof-verify-lib.js";
+import { collapseShardSeries, type ProofVerdict } from "./cloud-proof-verify-lib.js";
 import { type Exec, realExec } from "./lib.js";
 
 export const CLOUD_PROOF_CONTEXT = "oe/cloud-proof";
@@ -55,7 +55,7 @@ export function buildPostDecision(input: { verdict: ProofVerdict; expectedSha: s
   }
 
   const state: "success" | "failure" = verdict.verdict === "pass" ? "success" : "failure";
-  const suiteSummary = verdict.suites.map((s) => `${s.name}=${s.exit}`).join(", ") || "no suites";
+  const suiteSummary = collapseShardSeries(verdict.suites).summary || "no suites";
   const description = truncateDescription(`cloud-proof session ${sessionId}: ${state} — ${suiteSummary}`);
 
   const invocation = buildStatusInvocation({ sha: verdict.sha, state, context: CLOUD_PROOF_CONTEXT, description, ...(targetUrl ? { targetUrl } : {}) });

@@ -31,7 +31,7 @@ import {
   mintWakeId,
   singleWindowMentionPolicy,
   isVouchedInternal,
-  divertToUnifiedWindow,
+  divertInboundToUnifiedWindow,
   finalMessageActionForTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
@@ -247,7 +247,7 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
       const surfaceKey = `github/${ev.owner}/${ev.repo}`;
       if (window && to) {
         try {
-          await divertToUnifiedWindow(to, {
+          await divertInboundToUnifiedWindow(to, {
             message,
             context: [...context],
             token,

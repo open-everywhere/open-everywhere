@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { registerOperationalStore } from "../agent/operational/provider.js";
-import { renderCancelNote, TURN_CANCELLED_ACTION } from "../agent/hooks/turn-anchor.js";
+import { isTurnCancelNote, renderCancelNote, TURN_CANCELLED_ACTION } from "../agent/hooks/turn-anchor.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import {
   clearPendingCancelNoteAfter,
@@ -201,6 +201,33 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
   ok(!note.includes("nothing had run yet"), "🔴 …and NEVER claims nothing ran — that is the invented fact this arm exists to prevent");
   ok(!note.includes("0 steps in"), "…nor invents a step count it does not have");
   ok(renderCancelNote(0, []) !== note, "the accounted and unaccounted notes are different sentences (the flag is load-bearing)");
+}
+
+{
+  const everyBranch = [
+    renderCancelNote(0, []),
+    renderCancelNote(1, []),
+    renderCancelNote(1, ["reply"]),
+    renderCancelNote(6, ["read_thread", "reply", "create_ticket"]),
+    renderCancelNote(9, ["a", "b", "c", "d", "e"]),
+    renderCancelNote(0, [], false),
+  ];
+  for (const note of everyBranch) ok(isTurnCancelNote(note), `isTurnCancelNote recognises the renderer's own output: ${note.slice(0, 48)}…`);
+  ok(isTurnCancelNote("Stood down — one step in. Already done, and NOT undone: `reply`."), "the live 64-char cancel note (ship #197)");
+  ok(
+    isTurnCancelNote("Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone."),
+    "the live unaccounted cancel note (a live run)",
+  );
+  ok(!isTurnCancelNote("Standing down."), "🔴 the stand-down acknowledgement is NOT a cancel note (a live run's 14-char post)");
+  ok(!isTurnCancelNote("Stood down, as you asked — ping me if you need anything."), "🔴 model prose that merely opens with the same words is NOT a cancel note");
+  ok(
+    !isTurnCancelNote("Stood down — 2 steps in. Already done, and NOT undone: the report."),
+    "🔴 …nor prose that reaches the ACTION LIST: the renderer backticks every name, so an unquoted list is not its output (a `.+` list matched this)",
+  );
+  ok(isTurnCancelNote("Stood down — 2 steps in. Already done, and NOT undone: `reply`, `create_ticket` (and 3 earlier)."), "…while a real multi-action list with the earlier-count tail still matches");
+  ok(!isTurnCancelNote("Stood down — one step in"), "an incomplete sentence is not a cancel note (the shapes are matched whole)");
+  ok(!isTurnCancelNote(""), "an empty message is not a cancel note");
+  ok(!isTurnCancelNote("144"), "an ordinary answer is not a cancel note");
 }
 
 {

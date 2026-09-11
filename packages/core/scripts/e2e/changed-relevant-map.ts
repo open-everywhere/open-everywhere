@@ -178,6 +178,15 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, as are the GitHub, Linear and Notion three since OPE-1501 — so all six turn a regression in these two files RED. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
   },
   {
+    area: "reply-provenance",
+    globs: [
+      "packages/core/agent/channels/reply-provenance.ts",
+      "packages/core/agent/hooks/connector-audit.ts",
+    ],
+    scenarios: ["S-PROVENANCE-DM"],
+    why: "S-PROVENANCE-DM (OPE-1717) is the ONLY live leg that joins a deployment's own `reply.provenance` row to the bytes the room received, so it is the only scenario that reds when the two halves disagree. `reply-provenance.ts` holds the ledger and the footer text; `hooks/connector-audit.ts` holds the sole `noteConnectorRead` call that fills the ledger, and an unwired call there leaves the row empty while every offline assertion stays green — the defect class OPE-1713 found on the bridge route. The WITHHELD arm of the same rule needs one turn holding two conversations, which no connector on this deployment can reach, so it is proven offline in `packages/core/scripts/reply-provenance-test.ts` and by no live leg.",
+  },
+  {
     area: "core-agent-loop",
     globs: ["agent/agent.ts", "packages/core/agent/control/**"],
     scenarios: ["J1", "J2", "J3", "J4", "J-DISC", "J-GH", "J-LIN", "J-NOT"],

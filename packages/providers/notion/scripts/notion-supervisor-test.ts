@@ -137,6 +137,19 @@ const siblings: NotionWakeMessage[] = [
 }
 
 {
+  const wakeOf = (extra: Partial<Parameters<typeof buildNotionSupervisorWake>[0]>): string =>
+    renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, ...extra }), NOW).message;
+  ok(wakeOf({ threadEngaged: true }).includes('follow-up="thread-engaged"'), "🔴 an ENGAGED page's plain comment tells the seat it is already in this conversation");
+  ok(wakeOf({ threadEngaged: true }).includes('addressing="channel-watch"'), "🔴 …and does NOT touch the addressing — the doc supervisor's silence bar is a different fact from enrolment");
+  ok(!wakeOf({}).includes("follow-up="), "an UNSET enrolment states no contract (byte-identical to before OPE-1711)");
+  ok(!wakeOf({ threadEngaged: false }).includes("follow-up="), "an explicit NOT-engaged states no contract either");
+  ok(
+    !wakeOf({ addressing: "direct", threadEngaged: true, trigger: { ...trigger, text: "@OE summarise this page" } }).includes("follow-up="),
+    "🔴 an ADDRESSED wake states no enrolment — it is the verbatim body with no envelope to carry an attribute, and it is owed an answer regardless",
+  );
+}
+
+{
   const plain = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW);
   ok(plain.message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "the channel carries its opaque key — that is what the host routes on");
   ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "the wake carries no platform attr and no disclosure sentence");
@@ -255,6 +268,10 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(wakes[2].window === win, "a single-window dispatch threads the window through to the wake dep (the wiring's divert key)");
   ok(wakes[2].message.includes(`wake-id="${win.wakeId}"`), "the delivered direct-mention wake carries the window's wake-id in its envelope");
   ok(wakes[2].message.includes('addressing="direct-mention"'), "the delivered wake is the ADDRESSED direct-mention render");
+  await handleNotionSupervisorDispatch(dispatch({ engagedFollowUp: true }), deps);
+  ok(wakes.at(-1)!.message.includes('follow-up="thread-engaged"'), "🔴 dispatch: an ENGAGED page's judged wake reaches deps.wake carrying the enrolment contract");
+  await handleNotionSupervisorDispatch(dispatch({ engagedFollowUp: false }), deps);
+  ok(!wakes.at(-1)!.message.includes("follow-up="), "dispatch: NEGATIVE CONTROL — a NOT-engaged page's wake carries no contract");
 }
 
 {

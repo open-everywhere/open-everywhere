@@ -159,7 +159,10 @@ ok(green.code === 0, `the real gate passes on the tracked tree (exit ${green.cod
 ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on a green run");
 ok(/\d+ capabilities × 6 surfaces/.test(green.out), "…with the cell count");
 ok(/8 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
-ok(/1 \(ambient-engagement-seam\) against the bundle sources/.test(green.out), "…and names the one that is a source scan, not a registry");
+ok(
+  /2 \(ambient-engagement-seam, owned-thread-ingress\) against the bundle sources/.test(green.out),
+  "…and names the two that are source scans, not registries",
+);
 
 {
   const scratch = mkdtempSync(join(tmpdir(), "oe-surface-parity-"));

@@ -84,7 +84,12 @@ export default windowGated("spawn_thread_session", defineTool({
       throw new Error("spawn_thread_session: couldn't resolve the thread that woke you — a seat must own a live thread. Try again on a message-driven turn.");
     }
     if (origin.platform === "discord") {
-      throw new Error("spawn_thread_session: Discord thread seats aren't supported — inbound Discord messages aren't routed to thread owners, so the seat would never wake again. Delegate the work with `agent` instead.");
+      if (input.thread !== undefined) {
+        throw new Error("spawn_thread_session: `thread` isn't accepted on Discord — a Discord thread IS its own channel, so the seat's thread is the message's own channel. Spawn from inside the thread with no `thread` argument.");
+      }
+      if (!isThreadScopedWakeOrigin(origin)) {
+        throw new Error("spawn_thread_session: this Discord message isn't inside a thread — a seat opened here would own the whole channel and never be woken as a thread. Open a thread on the message and spawn from inside it.");
+      }
     }
     if (!input.thread && !isThreadScopedWakeOrigin(origin)) {
       throw new Error("spawn_thread_session: this message isn't inside a thread — a seat opened here would never be woken again (only thread-scoped messages route to owners). Reply inside the thread and spawn from there, or pass `thread` with the thread's root id.");

@@ -42,7 +42,6 @@ import {
   domainKeyOf,
   isThreadEngaged,
   divertInboundToUnifiedWindow,
-  divertToUnifiedWindow,
   isPrunedDeploymentWakeError,
   markUndeliveredAfterHeal,
   isUndeliveredAfterHeal,
@@ -684,7 +683,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       });
 
       const origin = { platform: "slack" as const, channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) };
-      await divertToUnifiedWindow(args.to, {
+      await divertInboundToUnifiedWindow(args.to, {
         message,
         token: seat.token,
         window: { wakeId, origin, addressing: "direct-mention" },

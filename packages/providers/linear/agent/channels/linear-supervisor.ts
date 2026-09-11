@@ -107,6 +107,7 @@ export interface LinearSupervisorWakeInput {
   readonly tail?: readonly WakeMessageInput[];
   readonly wakeId?: string;
   readonly directMention?: boolean;
+  readonly threadEngaged?: boolean;
 }
 
 export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): NormalizedWake {
@@ -122,6 +123,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "team",
     engagementTier: directMention ? undefined : input.engagementTier,
+    followUp: !directMention && input.threadEngaged === true ? "thread-engaged" : undefined,
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.teamId },
@@ -229,6 +231,7 @@ export interface LinearSupervisorDispatch {
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
   readonly directMention?: boolean;
+  readonly threadEngaged?: boolean;
 }
 
 export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch, deps: LinearSupervisorDeps): Promise<void> {
@@ -255,6 +258,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         engagementTier: d.engagementTier,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
+        threadEngaged: d.threadEngaged,
         tail,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),

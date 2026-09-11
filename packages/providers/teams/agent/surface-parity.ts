@@ -11,6 +11,7 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "ambient-engagement-seam": {
     supported: "the seam is wired; plain follow-ups reach it only where the tenant consented to `ChannelMessage.Read.Group` / `ChatMessage.Read.Chat`, which no API can probe",
   },
+  "owned-thread-ingress": { supported: "the channel leg only — a reply chain is the thread; the DM leg mints no `replyToActivityId`, so it can own none" },
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },
