@@ -52,6 +52,8 @@ import {
 import {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
+  awaitReplyPostRows,
+  awaitStandDownVerdict,
   dispatchAddressings,
   isAmbientLegAddressing,
   dispatchedAction,
@@ -211,7 +213,7 @@ export const isFillerAck = (text: string): boolean => {
   const trimmed = text.trim();
   if (/\b(could not say|cannot say|no verified asker|access denied)\b/i.test(trimmed)) return false;
   return (
-    /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|(?:will|i'?ll) (?:look|check|report|update|retrieve|return|fetch|get|run)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
+    /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|(?:will|i['’]?ll) (?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
       trimmed,
     ) ||
     /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(trimmed)
@@ -316,11 +318,15 @@ async function gateEngagedWake(
     readonly expect: "addressed" | "thread-follow" | "name-drop";
   },
 ): Promise<void> {
-  const scope = opts.surface ? { surface: opts.surface } : {};
-  const posts = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
+  const posts = await awaitReplyPostRows(ctx.auditRead!, {
+    sinceIso: opts.sinceIso,
+    platform: opts.platform,
+    ...(opts.surface === undefined ? {} : { surface: opts.surface }),
+    budget: { timeoutMs: AUDIT_ROW_WAIT, what: `${opts.leg}: a ${opts.platform} ${REPLY_POST_ACTION} audit row` },
+  });
   ctx.gate(
-    replyPostCount(posts, opts.surface ? { surface: opts.surface } : {}) > 0,
-    `${opts.leg}: a ${REPLY_POST_ACTION} audit row proves the deployment dispatched a turn and posted (found ${posts.length}) — not merely that a message appeared`,
+    posts !== undefined,
+    `${opts.leg}: a ${REPLY_POST_ACTION} audit row proves the deployment dispatched a turn and posted (waited up to ${AUDIT_ROW_WAIT / 1000}s) — not merely that a message appeared`,
   );
   const dispatched = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [dispatchedAction(opts.platform)] });
   const seen = dispatchAddressings(dispatched, opts.platform);
@@ -344,7 +350,13 @@ async function gateStandDownMarked(
   ctx: ScenarioContext,
   opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly anchor?: string },
 ): Promise<void> {
-  const rows = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [STOOD_DOWN_ACTION] });
+  const rows = await awaitStandDownVerdict(ctx.auditRead!, {
+    sinceIso: opts.sinceIso,
+    platform: opts.platform,
+    ...(opts.anchor === undefined ? {} : { anchor: opts.anchor }),
+    ...(opts.surface === undefined ? {} : { surface: opts.surface }),
+    budget: { timeoutMs: AUDIT_ROW_WAIT, what: `stop: a ${STOOD_DOWN_ACTION} audit row for this ${opts.platform} conversation` },
+  });
   const join = {
     ...(opts.anchor === undefined ? {} : { anchor: opts.anchor }),
     ...(opts.surface === undefined ? {} : { surface: opts.surface }),
@@ -1171,8 +1183,9 @@ export const SCENARIOS: readonly Scenario[] = [
       if (!code) {
         if (issuedRows.length === 0) {
           ctx.skip(
-            "no link code in the DM reply and NO identity.link.challenge_issued audit row — this deployment does not have a reachable " +
-              `link_identity tool. Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+            "no link code in the DM reply and NO identity.link.challenge_issued audit row — this DM turn never called " +
+              `link_identity (it may have declined, delegated, or answered in prose; the tool's own mount is NOT measured here). ` +
+              `Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
           );
         }
         ctx.gate(
@@ -1914,9 +1927,16 @@ export const SCENARIOS: readonly Scenario[] = [
       const stopAsk = await teams.postMentionReply(root.id, "thanks, you can stop following this thread now");
       const stopAck = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: stopAsk.createdDateTime ?? undefined });
       await ctx.judgePass(closedQA(STAND_DOWN_ACK_CRITERIA, {}), stopAck.text, "stand down: the reply accepts the ask to stop");
-      const stoodRows = (await auditRead({ sinceIso: standDownFrom, platform: "teams", actions: [STOOD_DOWN_ACTION] })).filter((r) =>
-        String((r.detail as { anchor?: unknown } | undefined)?.anchor ?? "").includes(root.id),
-      );
+      const stoodRows =
+        (await pollOptional(
+          async () => {
+            const rows = (await auditRead({ sinceIso: standDownFrom, platform: "teams", actions: [STOOD_DOWN_ACTION] })).filter((r) =>
+              String((r.detail as { anchor?: unknown } | undefined)?.anchor ?? "").includes(root.id),
+            );
+            return rows.length > 0 ? rows : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: `J-ENGAGED-teams: an ${STOOD_DOWN_ACTION} row whose anchor names chain ${root.id}` },
+        )) ?? [];
       ctx.gate(
         stoodRows.length > 0,
         `stand down: an ${STOOD_DOWN_ACTION} row exists whose ANCHOR names this reply chain (found ${stoodRows.length}) — the ` +
@@ -2291,12 +2311,12 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const c1 = await not.createBlockDiscussion(anchorBlocks[0], `OE — quick check (${runTag}-a): what is this page for? A one-line answer right here is perfect.`);
       ctx.gate(c1.commentId.length > 0 && c1.discussionId.length > 0, "on-topic: the fresh addressed comment minted its own discussion");
-      const reply1 = await not.awaitBotReplyIn(c1.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+      const reply1 = await not.awaitBotReplyOnBlock(anchorBlocks[0], c1.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the fresh comment's OWN discussion (discussion 1)");
 
       const c2 = await not.createBlockDiscussion(anchorBlocks[1], `Open Everywhere — different question (${runTag}-b): name one thing that could improve this page. Answer in this thread please.`);
       ctx.gate(c2.discussionId !== c1.discussionId, "reply-targeting: the second comment minted a DIFFERENT discussion (the probe needs two)");
-      const reply2 = await not.awaitBotReplyIn(c2.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+      const reply2 = await not.awaitBotReplyOnBlock(anchorBlocks[1], c2.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(reply2.discussionId === c2.discussionId, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
 
       const cOff = await not.createBlockDiscussion(anchorBlocks[2], `Reminder (${runTag}-c): the plant-watering rota moved to the kitchen noticeboard.`);
@@ -2397,7 +2417,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const sinceOrdinary = new Date(Date.now() - 15_000).toISOString();
         const cOrdinary = await not.createBlockDiscussion(anchors[0], `OE — ${runTag}-ordinary: ${bodyAsk}`);
         ctx.gate(cOrdinary.discussionId.length > 0, "negative control: the ordinary ask minted its own discussion");
-        const replyOrdinary = await not.awaitBotReplyIn(cOrdinary.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+        const replyOrdinary = await not.awaitBotReplyOnBlock(anchors[0], cOrdinary.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
         const ordinaryRead = await pollOptional(
           async () => {
             const read = await readWindow(sinceOrdinary);
@@ -2432,7 +2452,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         ctx.gate(cOwn.discussionId !== cOrdinary.discussionId, "the own-account ask minted a DIFFERENT discussion from the negative control");
         const replyOwn = await pollOptional(
-          async () => (await not.allComments()).find((c) => not.isBotComment(c) && c.discussionId === cOwn.discussionId && !isPendingWorkHandoff(c.text)),
+          async () => (await not.blockComments(anchors[1])).find((c) => not.isBotComment(c) && c.discussionId === cOwn.discussionId && !isPendingWorkHandoff(c.text)),
           { timeoutMs: REPLY_WAIT, what: "a bot reply to the own-account ask (REPORTED — the leg gates on the audit row)" },
         );
         const ownRead =
@@ -2828,7 +2848,15 @@ export const SCENARIOS: readonly Scenario[] = [
         "one-mind: cross-container recall quality",
       );
       if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso: runStart, platform: "slack", actions: ["reply.post"] });
+        const auditReadB = ctx.auditRead;
+        const rows =
+          (await pollOptional(
+            async () => {
+              const seen = await auditReadB({ sinceIso: runStart, platform: "slack", actions: ["reply.post"] });
+              return seen.some((r) => r.detail?.id === replyB.ts) ? seen : undefined;
+            },
+            { timeoutMs: AUDIT_ROW_WAIT, what: `reply-targeting: the slack reply.post row for B's answer ${replyB.ts}` },
+          )) ?? (await auditReadB({ sinceIso: runStart, platform: "slack", actions: ["reply.post"] }));
         const bWakeRow = rows.find((r) => r.detail?.id === replyB.ts);
         const bWakeId = bWakeRow?.detail?.wakeId;
         if (typeof bWakeId === "string") {

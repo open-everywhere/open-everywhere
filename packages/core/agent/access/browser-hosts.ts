@@ -1,6 +1,7 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
 import { getSettings } from "../settings/settings.js";
-import type { HttpMethod } from "./bundle.js";
+import { egressHostsOverlap, normaliseEgressHost, type HttpMethod } from "./bundle.js";
+import { GIT_BROKER_HOSTS, RESERVED_BROKER_HOST_REASON } from "./reserved-hosts.js";
 
 const HTTP_METHODS: ReadonlySet<string> = new Set<HttpMethod>(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 
@@ -48,6 +49,12 @@ export function browserHostProblems(rows: readonly BrowserHostDeclaration[]): re
       problems.push(`${at}: declared twice — one row per host, so the verbs and the credential a host is reached with are unambiguous`);
     }
     seen.add(host);
+
+    const claimed = normaliseEgressHost(host);
+    const reserved = GIT_BROKER_HOSTS.find((r) => egressHostsOverlap(claimed, r));
+    if (reserved !== undefined) {
+      problems.push(`${at}: ${claimed === reserved ? "" : `overlaps ${reserved}, and `}${RESERVED_BROKER_HOST_REASON}`);
+    }
 
     if (!Array.isArray(row.methods)) {
       problems.push(`${at}: declare the HTTP verbs the firewall admits, as an array`);

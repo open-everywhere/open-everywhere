@@ -414,4 +414,30 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   _resetGitHubInstallationTokenCache();
 }
 
+{
+  const { splitGitHubComment, GITHUB_COMMENT_BODY_MAX } = await import("../agent/channels/github-post-arm.js");
+  ok(GITHUB_COMMENT_BODY_MAX === 65_536, "the cap is GitHub's own comment-body limit");
+  assert.deepStrictEqual(splitGitHubComment("short"), ["short"], "a body inside the cap is ONE part, byte-identical — never re-wrapped");
+  assert.deepStrictEqual(splitGitHubComment(""), [""], "VACUITY: an empty body is one empty part, not zero parts (the poster's own empty-chunk skip owns that case)");
+  {
+    const parts = splitGitHubComment(`${"a".repeat(7)}\n${"b".repeat(6)}`, 10);
+    assert.deepStrictEqual(parts, ["aaaaaaa", "bbbbbb"], "the cut prefers a line break inside the window");
+  }
+  {
+    const parts = splitGitHubComment(`a\n${"b".repeat(20)}`, 10);
+    ok(parts.length === 3 && parts[0] === "a\nbbbbbbbb", `an early newline is NOT a split point — the window is filled instead (saw ${JSON.stringify(parts)})`);
+  }
+  {
+    const body = "c".repeat(25);
+    const parts = splitGitHubComment(body, 10);
+    ok(parts.length === 3 && parts.join("") === body, `a boundary-free body cuts hard at the cap and loses no character (saw ${parts.map((p) => p.length).join("+")})`);
+  }
+  ok(
+    splitGitHubComment("x".repeat(GITHUB_COMMENT_BODY_MAX + 1)).length === 2,
+    "🔴 one character past GitHub's real cap is TWO comments — the off-by-one the 422 lived in",
+  );
+  ok(githubPostArm.splitText !== undefined, "🔴 OPE-1681: the arm DECLARES splitText, so postTerminalProse actually splits — without this the assertions above test dead code. (postReply, the mid-turn `reply` tool, reads no arm splitter on ANY surface and still posts whole.)");
+  assert.deepStrictEqual(githubPostArm.splitText!("plain"), ["plain"], "…and the declared splitter is this one");
+}
+
 console.log(`✓ github-post-arm: ${passed} assertions passed`);

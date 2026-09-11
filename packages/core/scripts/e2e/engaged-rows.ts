@@ -1,4 +1,5 @@
-import type { AuditWireEntry } from "./audit-read.js";
+import { pollOptional, type PollOpts } from "./poll.js";
+import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 
 export const STOOD_DOWN_ACTION = "engagement.stood_down";
 
@@ -72,4 +73,41 @@ export function reportedNameDrop(rows: readonly AuditWireEntry[], platform: stri
 
 export function replyPostCount(rows: readonly AuditWireEntry[], opts: { readonly surface?: string } = {}): number {
   return rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface)).length;
+}
+
+export type EngagedAuditRead = (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+
+export type EngagedWaitBudget = Pick<PollOpts, "timeoutMs" | "what" | "initialDelayMs" | "maxDelayMs">;
+
+export async function awaitReplyPostRows(
+  read: EngagedAuditRead,
+  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly budget: EngagedWaitBudget },
+): Promise<readonly AuditWireEntry[] | undefined> {
+  const scope = opts.surface === undefined ? {} : { surface: opts.surface };
+  return pollOptional(async () => {
+    const rows = await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
+    return replyPostCount(rows, scope) > 0 ? rows : undefined;
+  }, opts.budget);
+}
+
+export async function awaitStandDownVerdict(
+  read: EngagedAuditRead,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface?: string;
+    readonly anchor?: string;
+    readonly budget: EngagedWaitBudget;
+  },
+): Promise<readonly AuditWireEntry[]> {
+  const join = {
+    ...(opts.anchor === undefined ? {} : { anchor: opts.anchor }),
+    ...(opts.surface === undefined ? {} : { surface: opts.surface }),
+  };
+  let last: readonly AuditWireEntry[] = [];
+  const found = await pollOptional(async () => {
+    last = await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [STOOD_DOWN_ACTION] });
+    return standDownMarked(last, join) || standDownAttemptedButUnmarked(last, join) ? last : undefined;
+  }, opts.budget);
+  return found ?? last;
 }

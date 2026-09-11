@@ -39,6 +39,7 @@ export interface NormalizedWake {
   readonly containerNoun?: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly wakeId?: string;
+  readonly followUp?: WakeFollowUp;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
   readonly backscroll?: readonly WakeMessageInput[];
@@ -76,7 +77,7 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             wakeId: nw.wakeId,
             addressing: nw.addressing,
             engagement: nw.engagementTier,
-            followUp: nw.nameDrop?.followUp,
+            followUp: nw.nameDrop?.followUp ?? nw.followUp,
             sourcePlatform: nw.platform,
             channel: {
               ...nw.locus.channel,

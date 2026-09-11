@@ -783,6 +783,7 @@ export interface HandleApprovalDeps {
   readonly post?: PostFn;
   readonly decisionWake?: DecisionWakeDeps;
   readonly clickerIsGuest?: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
+  readonly waitUntil?: (p: Promise<unknown>) => void;
 }
 
 async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<void> {
@@ -884,6 +885,7 @@ export interface ResolveApprovalClickInput {
   readonly clickerTenant?: string;
   readonly clickerIsGuest?: boolean;
   readonly halt?: HaltDeps;
+  readonly waitUntil?: (p: Promise<unknown>) => void;
 }
 
 async function auditClickerDenial(
@@ -910,6 +912,8 @@ function taintedFrozenProposal(argsJson: string): boolean {
   }
 }
 
+export const MAX_SESSION_GRANT_RELEASES = 32;
+
 async function releaseSessionGrantedPendings(input: {
   readonly sessionId: string;
   readonly memoKind: string;
@@ -920,13 +924,19 @@ async function releaseSessionGrantedPendings(input: {
   const released: string[] = [];
   try {
     const store = getOperationalStore();
-    const candidates = (await store.listPendingActions(org)).filter(
+    const matched = (await store.listPendingActions(org)).filter(
       (r) =>
         r.id !== input.grantedOn.id &&
         sessionIdFromFrozenArgs(r.argsJson) === input.sessionId &&
         sessionGrantKind(r) === input.memoKind &&
         !taintedFrozenProposal(r.argsJson),
     );
+    const candidates = matched.slice(0, MAX_SESSION_GRANT_RELEASES);
+    if (matched.length > candidates.length) {
+      console.warn(
+        `[open-everywhere:approvals] session-grant release capped at ${String(candidates.length)} of ${String(matched.length)} candidate cards (org=${org}); the rest stay pending and clickable`,
+      );
+    }
     for (const candidate of candidates) {
       const halt = await resolveHalt(
         haltScopeFor({
@@ -952,12 +962,18 @@ async function releaseSessionGrantedPendings(input: {
         input.click.releaseFeedback ?? {},
       ).catch(() => undefined);
     }
-    if (released.length > 0) {
+    const truncated = matched.length > candidates.length;
+    if (released.length > 0 || truncated) {
       await appendAudit({
         ...whereFromScope(org, input.grantedOn.scopeKey),
         principalId: input.click.clickerId,
         action: SESSION_GRANT_RELEASED_ACTION,
-        detail: { id: input.grantedOn.id, memoKind: input.memoKind, released },
+        detail: {
+          id: input.grantedOn.id,
+          memoKind: input.memoKind,
+          released,
+          ...(truncated ? { candidates: matched.length, cap: MAX_SESSION_GRANT_RELEASES } : {}),
+        },
       }).catch(() => undefined);
     }
   } catch (err) {
@@ -967,6 +983,24 @@ async function releaseSessionGrantedPendings(input: {
 }
 
 export const SESSION_GRANT_RELEASED_ACTION = "approval.session_grant_released";
+
+async function runSessionGrantRelease(tail: () => Promise<unknown>, waitUntil: ((p: Promise<unknown>) => void) | undefined): Promise<void> {
+  const logFailure = (err: unknown): undefined => {
+    console.warn(`[open-everywhere:approvals] session-grant release tail failed: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  };
+  if (waitUntil === undefined) {
+    await tail().catch(logFailure);
+    return;
+  }
+  const deferred = tail().catch(logFailure);
+  try {
+    waitUntil(deferred);
+  } catch (err) {
+    logFailure(err);
+    await deferred;
+  }
+}
 
 export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
   const store = getOperationalStore();
@@ -1068,6 +1102,8 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine, executed: "none" };
   }
 
+  let releaseTail: (() => Promise<unknown>) | undefined;
+
   if (input.decision === "approve_session") {
     const memoKind = sessionGrantKind(row);
     const sessionId = sessionIdFromFrozenArgs(row.argsJson);
@@ -1075,7 +1111,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
       const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
       await store.setSessionApproval({ org: input.org, sessionId, kind: memoKind, grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
       await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind, ...venue } }).catch(() => undefined);
-      await releaseSessionGrantedPendings({ sessionId, memoKind, grantedOn: row, click: input });
+      releaseTail = () => releaseSessionGrantedPendings({ sessionId, memoKind, grantedOn: row, click: input });
     }
   }
 
@@ -1090,6 +1126,8 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, error: message } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}`, executed: "failed" };
+  } finally {
+    if (releaseTail) await runSessionGrantRelease(releaseTail, input.waitUntil);
   }
 }
 
@@ -1330,6 +1368,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       clickerPlatform: "slack",
       ...(teamId ? { clickContext: { surfaceKey: `slack/${teamId}/${channelId}` } } : {}),
       ...(clickerIsGuest === undefined ? {} : { clickerIsGuest }),
+      ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}),
     });
     switch (res.outcome) {
       case "unknown":

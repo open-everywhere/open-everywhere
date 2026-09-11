@@ -1,11 +1,13 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import type { EffectiveAccess, ReachableHost } from "./resolver.js";
-import type { Connection } from "./bundle.js";
+import { EgressHostCollisionError } from "./resolver.js";
+import { egressHostsOverlap, normaliseEgressHost, type Connection } from "./bundle.js";
 import { extraEgressHosts } from "./extra-hosts.js";
 import { browserEgressHosts, type BrowserHostDeclaration } from "./browser-hosts.js";
+import { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 import { DEFAULT_NETWORK_ACCESS_LEVEL, TRUSTED_ACCESS_HOSTS, type NetworkAccessLevel } from "./network-access.js";
 
-export const GIT_BROKER_HOSTS = ["github.com", "codeload.github.com"] as const;
+export { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 
 export type EgressPlane = "sandbox" | "host";
 
@@ -108,8 +110,21 @@ async function browserHostRules(
   grantedIds: ReadonlySet<string> | null,
   resolveHeaders: ResolveHeaders,
 ): Promise<Record<string, EgressRule[]>> {
+  const armed = browserEgressHosts();
+
+  const collisions: string[] = [];
+  for (const row of armed) {
+    const claimed = normaliseEgressHost(row.host);
+    for (const host of GIT_BROKER_HOSTS) {
+      if (!egressHostsOverlap(claimed, host)) continue;
+      const where = claimed === host ? host : `${claimed} overlaps ${host}`;
+      collisions.push(`${where} (declared browser host, and the git read-broker, which replaces that host's rules mid-turn)`);
+    }
+  }
+  if (collisions.length > 0) throw new EgressHostCollisionError(collisions);
+
   const out: Record<string, EgressRule[]> = {};
-  for (const row of browserEgressHosts()) {
+  for (const row of armed) {
     const method = [...row.methods];
     if (row.credential === undefined) {
       out[row.host] = [{ match: { method }, transform: [] }];

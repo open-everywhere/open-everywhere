@@ -331,7 +331,7 @@ export interface FrontOptions {
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
   readonly ambientEnabledFor?: (surfaceKey: string) => boolean;
-  readonly handleApprovalPayload?: (payload: unknown) => Promise<boolean>;
+  readonly handleApprovalPayload?: (payload: unknown, deps?: { waitUntil?: (p: Promise<unknown>) => void }) => Promise<boolean>;
   readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
@@ -523,7 +523,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
   const handleApproval =
-    opts.handleApprovalPayload ?? ((payload: unknown) => liveHandleApprovalPayload(payload, { clickerIsGuest: slackClickerIsGuest }));
+    opts.handleApprovalPayload ??
+    ((payload: unknown, deps?: { waitUntil?: (p: Promise<unknown>) => void }) =>
+      liveHandleApprovalPayload(payload, { clickerIsGuest: slackClickerIsGuest, ...(deps?.waitUntil ? { waitUntil: deps.waitUntil } : {}) }));
   const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
@@ -913,7 +915,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "approval-click", "front-interactivity-branch")) {
         return fencedAck(new Response(null, { status: 200 }));
       }
-      if (await handleApproval(decision.payload)) {
+      if (await handleApproval(decision.payload, { waitUntil: args.waitUntil })) {
         return new Response(null, { status: 200 });
       }
       return forwardNative();

@@ -179,6 +179,7 @@ export async function handleDiscordApprovalInteraction(raw: unknown, deps: Disco
       decision: parsed.decision,
       clickerId,
       clickerPlatform: "discord",
+      ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}),
       platformAdmin: async (row) => {
         if (click.guildId) return isGuildAdministrator(click.memberPermissions) && scopeWithinGuild(row.scopeKey, click.guildId);
         const rowGuild = guildIdFromScopeKey(row.scopeKey);

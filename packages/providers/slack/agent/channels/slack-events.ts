@@ -520,6 +520,7 @@ export interface SlackWakeOpts {
   readonly participants?: readonly WakeParticipant[];
   readonly mode?: "supervisor";
   readonly engagementTier?: WakeEngagementTier;
+  readonly threadEngaged?: boolean;
   readonly wakeId?: string;
   readonly directMention?: boolean;
   readonly dm?: boolean;
@@ -548,6 +549,7 @@ function slackJudgedWake(
     },
     participants: opts.participants,
     engagementTier: directMention ? undefined : opts.engagementTier,
+    followUp: !directMention && opts.threadEngaged === true ? "thread-engaged" : undefined,
     wakeId: opts.wakeId,
     backscroll: opts.backscroll,
     trigger: mkMessageTrigger(
@@ -1894,6 +1896,7 @@ export async function routeSupervisorEvent(
         engagementTier,
         wakeId: window?.wakeId,
         directMention: mentionPolicy.addressing === "direct-mention",
+        threadEngaged: engRow?.participating === true && engRow.stopped !== true,
         memberCount,
         backscroll: applyResolvedNames(bs, names.participants),
         triggerAuthorName: trigger.authorName,

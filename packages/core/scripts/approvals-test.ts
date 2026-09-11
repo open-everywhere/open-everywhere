@@ -20,7 +20,7 @@ const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { SESSION_GRANT_RELEASED_ACTION } = await import("../agent/approvals/flow.js");
-const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
+const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings, MAX_SESSION_GRANT_RELEASES } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
@@ -1886,4 +1886,212 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   );
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out)\n`);
+{
+  const store = getOperationalStore();
+
+  const GATE_DEADLINE_MS = 5_000;
+  let openGate: () => void = () => {};
+  let gate: Promise<void> = Promise.resolve();
+  const shutGate = (): void => {
+    gate = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, GATE_DEADLINE_MS);
+      openGate = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  };
+  shutGate();
+
+  let entered: string[] = [];
+  let completed: string[] = [];
+
+  registerActionKind({
+    kind: "pr.open",
+    policy: "member",
+    summarize: () => ["open a pull request"],
+    async execute(args: unknown) {
+      const what = String((args as { what?: unknown }).what);
+      entered.push(what);
+      if (what === "boom") throw new Error("the clicked act failed");
+      if (what !== "clicked") await gate;
+      completed.push(what);
+      return "published";
+    },
+  });
+
+  const propose = (sessionId: string, what: string): Promise<{ id: string }> =>
+    inSession(() =>
+      requestApproval(
+        { org: "default", kind: "pr.open", args: { sessionId, what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, postedTo: "slack/T1/C1", chain: { unattended: false } },
+        { post: async () => ({ ok: true, ts: "999.000" }) as never },
+      ),
+    );
+  const releaseFeedback = { post: async () => ({ ok: true }) as Record<string, unknown> };
+
+  const fan = ["clicked", "sib-1", "sib-2", "sib-3", "sib-4", "sib-5"];
+  const posted: { id: string }[] = [];
+  for (const what of fan) posted.push(await propose("sess-1709-ack", what));
+
+  const deferred: Promise<unknown>[] = [];
+  const startedAt = Date.now();
+  const acked = await resolveApprovalClick({
+    org: "default",
+    id: posted[0]!.id,
+    decision: "approve_session",
+    clickerId: "U_RANDOM_MEMBER",
+    releaseFeedback,
+    waitUntil: (p: Promise<unknown>) => {
+      deferred.push(p);
+    },
+  });
+  const ackMs = Date.now() - startedAt;
+
+  ok(acked.outcome === "decided", "OPE-1709 PREMISE: the clicked card is decided — so the assertions below are not vacuous");
+  ok(
+    entered.includes("clicked") && completed.includes("clicked"),
+    "🔴 OPE-1709: the human's OWN act runs ON the ack path — moving the release off it must not move the clicked act off it too",
+  );
+  ok(
+    entered[0] === "clicked",
+    `🔴 OPE-1709: …and it runs FIRST, before the release loop starts — the clicked row's CAS→execute window no longer spans N sibling approve-and-execute cycles (saw: ${JSON.stringify(entered)})`,
+  );
+  ok(
+    completed.length === 1,
+    `🔴 OPE-1709: the ack path returns BEFORE any sibling has executed — the release is off the response path, not inside the interactivity budget (saw completed: ${JSON.stringify(completed)})`,
+  );
+  ok(deferred.length === 1, "🔴 OPE-1709: …because the release was handed to the ROUTE'S `waitUntil`, which is the only thing that keeps it alive past the response");
+  ok(ackMs < 3_000, `🔴 OPE-1709: the click acks inside a chat vendor's three-second budget while five siblings are provably still unfinished (saw ${String(ackMs)} ms)`);
+
+  openGate();
+  await Promise.all(deferred);
+  ok(
+    completed.length === fan.length && new Set(completed).size === fan.length,
+    `🔴 OPE-1709: every sibling still executes — off the response path, not instead of it (saw: ${JSON.stringify(completed)})`,
+  );
+  const siblingStatuses = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
+  ok(siblingStatuses.every((s) => s === "approved"), "🔴 OPE-1709: …and all five sibling cards end DECIDED, exactly as OPE-251 requires");
+
+  entered = [];
+  completed = [];
+  openGate();
+  const inlineFan = ["clicked", "sib-x", "sib-y"];
+  const inlinePosted: { id: string }[] = [];
+  for (const what of inlineFan) inlinePosted.push(await propose("sess-1709-inline", what));
+  await resolveApprovalClick({ org: "default", id: inlinePosted[0]!.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER", releaseFeedback });
+  ok(
+    completed.length === inlineFan.length,
+    `🔴 OPE-1709 NEGATIVE CONTROL: with NO \`waitUntil\` the release is AWAITED — every sibling has executed by the time the call returns, the pre-OPE-1709 shape (saw: ${JSON.stringify(completed)})`,
+  );
+
+  entered = [];
+  completed = [];
+  const capped: { id: string }[] = [];
+  capped.push(await propose("sess-1709-cap", "clicked"));
+  for (let i = 0; i < MAX_SESSION_GRANT_RELEASES + 1; i++) capped.push(await propose("sess-1709-cap", `cap-${String(i)}`));
+  await resolveApprovalClick({ org: "default", id: capped[0]!.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER", releaseFeedback });
+
+  const capStatuses = await Promise.all(capped.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
+  ok(
+    capStatuses.filter((s) => s === "approved").length === MAX_SESSION_GRANT_RELEASES,
+    `🔴 OPE-1709: ONE click releases at most MAX_SESSION_GRANT_RELEASES (${String(MAX_SESSION_GRANT_RELEASES)}) sibling cards (saw ${String(capStatuses.filter((s) => s === "approved").length)})`,
+  );
+  ok(
+    capStatuses.filter((s) => s === "pending").length === 1,
+    `🔴 OPE-1709: …and the card past the cap is left PENDING and clickable, never silently decided (saw ${String(capStatuses.filter((s) => s === "pending").length)} pending)`,
+  );
+  ok(
+    completed.length === MAX_SESSION_GRANT_RELEASES + 1,
+    `🔴 OPE-1709: …and exactly the released rows plus the clicked one ran an execute — the cap bounds WORK, not just the row statuses (saw ${String(completed.length)})`,
+  );
+
+  const capRow = (await readAudit({ org: "default", action: SESSION_GRANT_RELEASED_ACTION })).find((e) => e.detail?.id === capped[0]!.id);
+  ok(
+    capRow?.detail?.candidates === MAX_SESSION_GRANT_RELEASES + 1 && capRow?.detail?.cap === MAX_SESSION_GRANT_RELEASES,
+    `🔴 OPE-1709: the release's audit row records that the candidate set was CUT — how many were eligible and what the cap was (saw: ${JSON.stringify(capRow?.detail ?? null)})`,
+  );
+  const uncutRow = (await readAudit({ org: "default", action: SESSION_GRANT_RELEASED_ACTION })).find((e) => e.detail?.id === posted[0]!.id);
+  ok(
+    uncutRow !== undefined && uncutRow.detail?.candidates === undefined && uncutRow.detail?.cap === undefined,
+    "🔴 OPE-1709 NEGATIVE CONTROL: a release that hit no cap carries NO truncation fields — the row says a set was cut only when one was",
+  );
+
+  entered = [];
+  completed = [];
+  const boomClicked = await propose("sess-1709-boom", "boom");
+  const boomSibling = await propose("sess-1709-boom", "boom-sib");
+  const boomRes = await resolveApprovalClick({ org: "default", id: boomClicked.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER", releaseFeedback });
+  ok(boomRes.outcome === "decided" && boomRes.executed === "failed", "OPE-1709 PREMISE: the clicked act really threw, and the resolution says so");
+  ok(
+    entered[0] === "boom",
+    `🔴 OPE-1709: …and it was still ENTERED FIRST — the ordering holds on the failure path too, not only the happy one (saw: ${JSON.stringify(entered)})`,
+  );
+  ok(
+    completed.includes("boom-sib") && (await store.getPendingAction("default", boomSibling.id))?.status === "approved",
+    "🔴 OPE-1709: a clicked act that FAILS still releases the cards the grant covers — the release runs in a `finally`, because the grant is a decision about the SESSION, not about this one call",
+  );
+
+  shutGate();
+  entered = [];
+  completed = [];
+  const quietClicked = await propose("sess-1709-quiet", "clicked");
+  const quietSibling = await propose("sess-1709-quiet", "sib-quiet");
+  const quietDeferred: Promise<unknown>[] = [];
+  await resolveApprovalClick({
+    org: "default",
+    id: quietClicked.id,
+    decision: "approve_session",
+    clickerId: "U_RANDOM_MEMBER",
+    releaseFeedback: {
+      post: async () => {
+        throw new Error("chat.postMessage refused");
+      },
+    },
+    waitUntil: (p: Promise<unknown>) => {
+      quietDeferred.push(p);
+    },
+  });
+  openGate();
+  let rejected = false;
+  await Promise.all(quietDeferred).catch(() => {
+    rejected = true;
+  });
+  ok(!rejected, "🔴 OPE-1709: a notice poster that REFUSES does not reject the promise the route is handed — the release tail swallows its own failures, so the host sees a settled promise");
+  ok(
+    (await store.getPendingAction("default", quietSibling.id))?.status === "approved" && completed.includes("sib-quiet"),
+    "🔴 OPE-1709 …AND THE DECISION STILL LANDS: a failed notice costs the room its message, never the release — the same fail-soft posture the sweep's own feedback takes",
+  );
+
+  openGate();
+  entered = [];
+  completed = [];
+  const refusedClicked = await propose("sess-1709-refused", "clicked");
+  const refusedSibling = await propose("sess-1709-refused", "sib-refused");
+  let refusals = 0;
+  let threw = false;
+  const refusedRes = await resolveApprovalClick({
+    org: "default",
+    id: refusedClicked.id,
+    decision: "approve_session",
+    clickerId: "U_RANDOM_MEMBER",
+    releaseFeedback,
+    waitUntil: () => {
+      refusals += 1;
+      throw new Error("invocation already closing");
+    },
+  }).catch(() => {
+    threw = true;
+    return undefined;
+  });
+  ok(refusals === 1, `OPE-1709 PREMISE: the route's hook really was called and really refused — so this arm drives the fallback and is not vacuous (saw ${String(refusals)} call(s))`);
+  ok(
+    threw === false && refusedRes?.outcome === "decided",
+    "🔴 OPE-1709: a `waitUntil` that THROWS never reaches the caller — the click still resolves, because a refused registration is the host's problem, not the clicker's",
+  );
+  ok(
+    (await store.getPendingAction("default", refusedSibling.id))?.status === "approved" && completed.includes("sib-refused"),
+    `🔴 OPE-1709: …and the release is AWAITED rather than dropped — the sibling is already decided and executed by the time the call returns, the no-hook shape (saw completed: ${JSON.stringify(completed)})`,
+  );
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out, OPE-1709 the release is off the ack path and capped)\n`);

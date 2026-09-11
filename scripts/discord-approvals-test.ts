@@ -20,7 +20,7 @@ const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { requestApproval, resolveApprovalClick } = await import("@open-everywhere/core/agent/approvals/flow.js");
-const { registerActionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
+const { registerActionKind, actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { effectiveCaps } = await import("@open-everywhere/core/agent/spend/caps.js");
 const {
   OE_DISCORD_APPROVAL_PREFIX,
@@ -691,6 +691,72 @@ const store = getOperationalStore();
       ok(!rejected, "🔴 OPE-1407: a failing deferred feedback resolves rather than rejecting — an unhandled rejection off the response path helps nobody");
       ok((await store.getPendingAction("default", "dw-defer-throws"))?.status === "approved", "OPE-1407: …and the decide is durable regardless");
       await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+    }
+
+    {
+      const priorPrOpen = actionKind("pr.open");
+      let releaseGate = (): void => {};
+      const siblingGate = new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2_000);
+        releaseGate = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      const executed: string[] = [];
+      registerActionKind({
+        kind: "pr.open",
+        policy: "member",
+        summarize: () => ["open a pull request"],
+        async execute(args: unknown) {
+          const what = String((args as { what?: unknown }).what);
+          if (what !== "clicked") await siblingGate;
+          executed.push(what);
+          return "published";
+        },
+      });
+      try {
+        const grantRow = (id: string, what: string) =>
+          row({
+            id,
+            kind: "pr.open",
+            scopeKey: "discord/G1/C_WIN",
+            channelId: "C_WIN",
+            argsJson: JSON.stringify({ sessionId: "sess-1709-discord", what }),
+          });
+        await store.addPendingAction(grantRow("dw-grant-clicked", "clicked"));
+        await store.addPendingAction(grantRow("dw-grant-sib", "sib"));
+
+        const background: Promise<unknown>[] = [];
+        const grantRes = (await handleDiscordApprovalInteraction(
+          clickPayload("oe-approval:dw-grant-clicked:approve_session:default", { user: "U_GUILD_ADMIN", permissions: "8" }),
+          { ...deps, waitUntil: (p: Promise<unknown>) => background.push(p) },
+        )) as Resp;
+
+        ok(grantRes.type === 7, "🔴 OPE-1709: an approve_session click still answers the type-7 decided card — only the release moved, never the answer");
+        ok(
+          (await store.getPendingAction("default", "dw-grant-clicked"))?.status === "approved",
+          "OPE-1709 PREMISE: the clicked card really was decided — so the sibling assertions below are not vacuous",
+        );
+        ok(
+          background.length === 2,
+          `🔴 OPE-1709: the route's \`waitUntil\` carries TWO registrations — the OPE-1407 feedback AND the OPE-251 release. Delete discord-flow.ts's \`waitUntil\` pass-through and this is 1 (saw ${String(background.length)})`,
+        );
+        ok(
+          (await store.getPendingAction("default", "dw-grant-sib"))?.status === "pending" && executed.length === 1,
+          `🔴 OPE-1709: the sibling is STILL PENDING at the moment the interaction is answered — the release is off the interaction budget, not inside it (saw executed: ${JSON.stringify(executed)})`,
+        );
+
+        releaseGate();
+        await Promise.all(background);
+        ok(
+          (await store.getPendingAction("default", "dw-grant-sib"))?.status === "approved" && executed.includes("sib"),
+          `🔴 OPE-1709: …and the sibling really is decided and executed afterwards — deferred, never dropped (saw executed: ${JSON.stringify(executed)})`,
+        );
+      } finally {
+        releaseGate();
+        if (priorPrOpen) registerActionKind(priorPrOpen);
+      }
     }
   } finally {
     overrideSettingsForTest({ window: { topology: false } });

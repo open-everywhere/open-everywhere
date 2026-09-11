@@ -11,6 +11,7 @@ import {
   resetBrowserHostsForTest,
   type BrowserHostDeclaration,
 } from "../agent/access/browser-hosts.js";
+import { GIT_BROKER_HOSTS } from "../agent/access/reserved-hosts.js";
 import { assertEvaluateArmedFor, currentBrowseHost, registerBrowserToolkit, registeredBrowserToolkit, resetBrowseHostsForTest, resetBrowserToolkitForTest } from "../agent/access/browser-toolkit.js";
 
 let n = 0;
@@ -61,6 +62,34 @@ const row = (extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaratio
     "a CREDENTIAL on a LOOPBACK row is refused — loopback never crosses the firewall, so there is no boundary at which to inject one",
   );
   ok(browserHostProblems([row({ host: "localhost" })]).length === 0, "CONTROL: the same loopback row without a credential is fine");
+
+  for (const host of GIT_BROKER_HOSTS) {
+    ok(
+      browserHostProblems([row({ host, methods: ["GET"], credential: "acme-gh" })]).length > 0,
+      `a credentialed row on the reserved broker host "${host}" is a problem`,
+    );
+    ok(
+      browserHostProblems([row({ host })]).length > 0,
+      `…and an UNCREDENTIALED row on "${host}" is too — the broker also displaces the verb narrowing, which is a control of its own`,
+    );
+  }
+  const reservedProblems = browserHostProblems([row({ host: "github.com", credential: "acme-gh" })]);
+  ok(
+    reservedProblems.some((p) => p.includes("RESERVED by the git read-broker") && p.includes("checkout_repo")),
+    "…and it names the reservation and the call that displaces the row, in the same words the bundle-side lint uses",
+  );
+  ok(
+    browserHostProblems([row({ host: "*.github.com" })]).some((p) => p.includes("overlaps codeload.github.com")),
+    "a wildcard covering a reserved host is reserved too, and the message names the host it overlaps",
+  );
+  ok(
+    browserHostProblems([row({ host: "api.github.com", credential: "acme-gh" })]).length === 0,
+    "🔴 CONTROL: `api.github.com` is NOT reserved — the broker never touches it, so a credentialed row there is fine",
+  );
+  ok(browserHostProblems([row({ host: "github.com.example.com" })]).length === 0, "CONTROL: a host that merely CONTAINS a reserved name is not reserved");
+
+  assert.throws(() => defineBrowserHosts([row({ host: "github.com" })]), /RESERVED by the git read-broker/, "a reserved row fails the BOOT, like every other bad row");
+  n++;
 
   ok(isLoopbackBrowseHost("localhost") && isLoopbackBrowseHost("127.0.0.9") && isLoopbackBrowseHost("::1"), "loopback classifier");
   ok(!isLoopbackBrowseHost("qa.example.com") && !isLoopbackBrowseHost("128.0.0.1"), "loopback classifier: negative control");

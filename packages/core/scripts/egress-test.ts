@@ -1,7 +1,8 @@
+
 import assert from "node:assert/strict";
 import { compileNetworkPolicy, openWriteHosts } from "../agent/access/egress.js";
 import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";
-import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
+import { EgressHostCollisionError, type EffectiveAccess, type ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
@@ -246,6 +247,52 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
     (await compileNetworkPolicy(access([]), headers, noOverride)) === "deny-all",
     "with the declaration reset the empty-access policy is deny-all again (byte-identical unarmed default)",
   );
+
+  {
+    overrideSettingsForTest({ browser: { enabled: true } });
+    _setBrowserHostsForTest([{ host: "github.com", methods: ["GET"], credential: "vendor-login", why: "t" }]);
+    const thrown = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, noOverride).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    ok(thrown instanceof EgressHostCollisionError, "🔴 a declared browser host on a RESERVED broker host REFUSES the compile — the same error family as a two-connection clash");
+    ok(
+      (thrown as EgressHostCollisionError).message.includes("github.com") && (thrown as EgressHostCollisionError).message.includes("git read-broker"),
+      "…and the message names the host and the broker, so the deny-all audit row is a complete statement of the clash",
+    );
+    ok(
+      (thrown as EgressHostCollisionError).message.includes("declared browser host") &&
+        (thrown as EgressHostCollisionError).message.includes("agent/access/browser-hosts.ts") &&
+        !(thrown as EgressHostCollisionError).message.includes("two connections claim"),
+      "…and it names the DECLARATION and its config file as a route, never 'two connections' — the reader must reach the file that actually holds the row",
+    );
+
+    _setBrowserHostsForTest([{ host: "*.github.com", methods: ["GET"], why: "t" }]);
+    const wild = await compileNetworkPolicy(access([], []), headers, noOverride).then(() => null, (e: unknown) => e);
+    ok(
+      wild instanceof EgressHostCollisionError && wild.message.includes("codeload.github.com"),
+      "a WILDCARD row covering a reserved host is refused too, and the message names the host it overlaps",
+    );
+    _setBrowserHostsForTest([{ host: "GitHub.com", methods: ["GET"], why: "t" }]);
+    ok(
+      (await compileNetworkPolicy(access([], []), headers, noOverride).then(() => null, (e: unknown) => e)) instanceof EgressHostCollisionError,
+      "…and an upper-case spelling is normalised before the comparison, so it cannot slip past",
+    );
+
+    _setBrowserHostsForTest([{ host: "api.github.com", methods: ["GET"], credential: "vendor-login", why: "t" }]);
+    const unreserved = await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, noOverride);
+    ok("api.github.com" in allowOfPolicy(unreserved), "CONTROL: `api.github.com` is not reserved — the identical row compiles and opens the host");
+
+    _setBrowserHostsForTest([{ host: "github.com", methods: ["GET"], credential: "vendor-login", why: "t" }]);
+    overrideSettingsForTest({ browser: { enabled: false } });
+    ok(
+      (await compileNetworkPolicy(access([], [conn("vendor-login")]), headers, noOverride)) === "deny-all",
+      "FLAG OFF: the same reserved row is not armed, so the compile does not refuse — it simply opens nothing",
+    );
+
+    resetSettingsForTest();
+    resetBrowserHostsForTest();
+  }
 }
 
 {

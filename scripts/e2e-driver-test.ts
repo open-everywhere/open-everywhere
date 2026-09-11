@@ -123,6 +123,8 @@ const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../pa
 const {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
+  awaitReplyPostRows,
+  awaitStandDownVerdict,
   dispatchAddressings,
   isAmbientLegAddressing,
   dispatchedAction,
@@ -1381,6 +1383,23 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     !isFillerAck("A worker finished the admin listing. Domains: e2e-unified, e2e-secondary. Silos: 4 total."),
     "isFillerAck: OPE-834 negative control — text that mentions a worker but reports an OUTCOME stays substantive",
   );
+
+  ok(
+    isFillerAck("Got it — I’m saving that deploy-day detail to channel memory and will confirm once the write is complete."),
+    "isFillerAck: OPE-1692 — the live-run J2 hand-off (\"will confirm once the write is complete\") classifies as filler",
+  );
+  ok(
+    isFillerAck("I’m reading the page body itself now and will post exactly one full sentence from it."),
+    "isFillerAck: OPE-1692 — \"will post\" is the same promise shape, on the Notion legs",
+  );
+  ok(
+    !isFillerAck("Saved: Rowan Hale’s 2026-09-11 note that service `svc-42081` deploys on Thursday is recorded in `notes.md` and indexed in `MEMORY.md`."),
+    "isFillerAck: OPE-1692 negative control — the SETTLED save-claim that replaced it stays substantive",
+  );
+  ok(!isFillerAck("I'll assume Thursday unless you say otherwise."), "isFillerAck: OPE-1692 negative control — a promise verb outside the listed set stays substantive");
+  ok(!isFillerAck("I'll send you the numbers: 4 silos, 2 domains."), "isFillerAck: OPE-1692 negative control — \"I'll send\" was NOT widened, so a delivering sentence stays substantive");
+  ok(isFillerAck("I’ll confirm once the write is complete."), "isFillerAck: OPE-1692 — the CURLY apostrophe (U+2019) the seat emits matches too");
+  ok(isFillerAck("I'll confirm once the write is complete."), "isFillerAck: …and so does the straight one — the branch takes a character class, not one spelling");
 }
 
 {
@@ -3614,6 +3633,90 @@ rmSync(dir, { recursive: true, force: true });
   );
   ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
   ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
+
+  {
+    const fast = (timeoutMs: number, what: string) => ({ timeoutMs, what, initialDelayMs: 1, maxDelayMs: 1 });
+    const postRow = (surface?: string) => row(REPLY_POST_ACTION, { chars: 12 }, surface);
+
+    {
+      let calls = 0;
+      const read = async () => {
+        calls += 1;
+        return calls >= 3 ? [postRow("C1")] : [];
+      };
+      const found = await awaitReplyPostRows(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", surface: "C1", budget: fast(2_000, "a slack reply.post row") });
+      ok(found !== undefined && found.length === 1, "🔴 OPE-1711: awaitReplyPostRows WAITS for a row that lands after the first read — the single read this replaces reported the healthy deployment as silent");
+      ok(calls === 3, `…and it read again rather than once (${calls} reads)`);
+    }
+
+    {
+      let calls = 0;
+      const read = async () => {
+        calls += 1;
+        return [];
+      };
+      const found = await awaitReplyPostRows(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", budget: fast(30, "a row that never lands") });
+      ok(found === undefined, "🔴 NEGATIVE CONTROL: a row that NEVER lands answers undefined — the poll bounds the wait, it does not turn a missing row into a pass");
+      ok(calls > 1, `…after polling rather than giving up on the first read (${calls} reads)`);
+    }
+
+    {
+      const read = async () => [postRow("CZ")];
+      const found = await awaitReplyPostRows(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", surface: "C1", budget: fast(30, "a row on C1") });
+      ok(found === undefined, "🔴 NEGATIVE: a reply.post row on a DIFFERENT surface does not satisfy the wait — the scope is applied in-process too, not only at the route");
+    }
+
+    {
+      let calls = 0;
+      const read = async () => {
+        calls += 1;
+        if (calls === 1) return [];
+        throw new Error("control read 500");
+      };
+      let threw: unknown = null;
+      try {
+        await awaitReplyPostRows(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", budget: fast(2_000, "a row behind a broken read") });
+      } catch (err) {
+        threw = err;
+      }
+      ok(threw instanceof Error && String((threw as Error).message).includes("500"), "🔴 OPE-353: two consecutive read failures PROPAGATE — a failed observation is not an observation of absence");
+    }
+
+    {
+      let calls = 0;
+      const read = async () => {
+        calls += 1;
+        return calls >= 2 ? [row(STOOD_DOWN_ACTION, { anchor: "1700.0001", marked: true })] : [];
+      };
+      const rows = await awaitStandDownVerdict(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", anchor: "1700.0001", budget: fast(2_000, "a stood_down row") });
+      ok(standDownMarked(rows, { anchor: "1700.0001" }), "OPE-1711: awaitStandDownVerdict waits for the marked row, then hands the caller the rows it read");
+      ok(calls === 2, `…having read again rather than once (${calls} reads)`);
+    }
+
+    {
+      let calls = 0;
+      const read = async () => {
+        calls += 1;
+        return [row(STOOD_DOWN_ACTION, { anchor: "1700.0001", marked: false })];
+      };
+      const rows = await awaitStandDownVerdict(read, { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", anchor: "1700.0001", budget: fast(2_000, "a stood_down verdict") });
+      ok(calls === 1, `🔴 OPE-1711: a marked:false row ENDS the wait immediately (${calls} read) — the negative control fires as fast as it did before the poll`);
+      ok(standDownAttemptedButUnmarked(rows, { anchor: "1700.0001" }), "…and the rows it returns still carry the unmarked row, so the caller's control gate can read it");
+    }
+
+    {
+      const rows = await awaitStandDownVerdict(async () => [], { sinceIso: "2026-05-14T16:35:00Z", platform: "slack", budget: fast(30, "a verdict that never comes") });
+      ok(rows.length === 0, "OPE-1711: an elapsed budget answers the last rows read (empty) — never a throw, so the caller's gates report the absence themselves");
+    }
+
+    const gatesSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+    ok(gatesSrc.includes("awaitReplyPostRows(ctx.auditRead!"), "🔴 OPE-1711: gateEngagedWake — the reply gate every J-ENGAGED leg calls — takes the waiter, not a single read");
+    ok(gatesSrc.includes("awaitStandDownVerdict(ctx.auditRead!"), "🔴 OPE-1711: gateStandDownMarked takes the waiter too");
+    ok(
+      (gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length === 1,
+      `OPE-1711: exactly ONE single-read reply.post gate remains IN THE ENGAGED HELPERS — the audited-SILENCE gate, which must not poll (found ${(gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length}; this counts the REPLY_POST_ACTION spelling those helpers use, not every "reply.post" read in the file)`,
+    );
+  }
 }
 
 {
@@ -3802,6 +3905,40 @@ rmSync(dir, { recursive: true, force: true });
     const made = await driver.createBlockDiscussion("block-1", "hello");
     ok(made.commentId === "c1" && made.discussionId === "d1", "a driver method that hits a 429 retries and returns the real answer — the call site really goes through the helper");
     ok(call === 2, "…and it was the retry that produced it");
+  }
+
+  {
+    const urls: string[] = [];
+    const page = (ids: string[], next?: string) => ({ results: ids.map((id) => ({ id })), has_more: next !== undefined, next_cursor: next ?? null });
+    const driver = new NotionDriver({ driverKey: "k", pageId: "p", workspaceId: "w", botUserId: "b" } as never, {
+      fetchFn: async (url: string) => {
+        urls.push(url);
+        return res(200, { body: urls.length === 1 ? page(["b1", "b2"], "cur-2") : page(["b3-appended-this-run"]) });
+      },
+      sleepFn: async () => undefined,
+    });
+    const ids = await driver.pageBlocks();
+    ok(ids.length === 3 && ids[2] === "b3-appended-this-run", "pageBlocks FOLLOWS next_cursor — a block appended past the first page is still returned");
+    ok(urls.length === 2 && urls[1].includes("start_cursor=cur-2"), "…by passing the cursor the first page handed back, not by re-reading page one");
+    ok(
+      urls.every((u) => u.includes("page_size=100")) && !urls.some((u) => u.includes("page_size=50")),
+      "…and the old single-page `page_size=50` read is gone",
+    );
+  }
+
+  {
+    let tick = 0;
+    const handoff = { id: "x1", discussion_id: "d1", created_time: "2026-05-14T17:44:00.000Z", created_by: { id: "b" }, rich_text: [{ plain_text: "I'm checking the page content now and will post a one-line answer." }] };
+    const answer = { id: "x2", discussion_id: "d1", created_time: "2026-05-14T17:45:00.000Z", created_by: { id: "b" }, rich_text: [{ plain_text: "This page is for the billing REST-to-GraphQL migration." }] };
+    const driver = new NotionDriver({ driverKey: "k", pageId: "p", workspaceId: "w", botUserId: "b" } as never, {
+      fetchFn: async () => res(200, { body: { results: ++tick === 1 ? [handoff] : [handoff, answer], has_more: false, next_cursor: null } }),
+      sleepFn: async () => undefined,
+    });
+    const got = await driver.awaitBotReplyOnBlock("blk", "d1", "", { timeoutMs: 30_000, skip: (c) => c.text.startsWith("I'm checking") });
+    ok(got.id === "x2", "awaitBotReplyOnBlock skips the interim hand-off and returns the settled answer");
+    ok(tick >= 2, "…so it really waited a tick rather than taking the first bot comment it saw");
+    const unskipped = await driver.awaitBotReplyOnBlock("blk", "d1", "", { timeoutMs: 30_000 });
+    ok(unskipped.id === "x1", "negative control: with NO skip the same poll returns the hand-off — the predicate is what changes the verdict");
   }
 }
 console.log(

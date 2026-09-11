@@ -1,6 +1,6 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
 import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, egressHostsOverlap, normaliseEgressHost, repoGrantName, repoGrantCapabilities } from "./bundle.js";
-import { GIT_BROKER_HOSTS } from "./egress.js";
+import { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
 import { unionResourceCapabilities, type ResourceCapability } from "./resource-capabilities.js";
 import { resourceGrantCapabilities } from "./resource-grant.js";
@@ -119,9 +119,10 @@ export class EgressHostCollisionError extends Error {
   readonly collisions: readonly string[];
   constructor(collisions: readonly string[]) {
     super(
-      `two connections claim one host in this session's reach — one credential per host per session: ${collisions.join("; ")}. ` +
+      `two grants claim one host in this session's reach — one credential per host per session: ${collisions.join("; ")}. ` +
         `The egress policy stamps ONE bearer per host, so the second grant is dead config and the room would authenticate with whichever the config lists last. ` +
-        `Give each connection its own host, or bind the two bundles at scopes that never resolve together.`,
+        `Give each grant its own host: a bundle connection declares its reach in agent/access/bundles.ts, a browse target in agent/access/browser-hosts.ts. ` +
+        `Two bundles may instead be bound at scopes that never resolve together.`,
     );
     this.name = "EgressHostCollisionError";
     this.collisions = collisions;

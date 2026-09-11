@@ -419,20 +419,110 @@ for (const [label, err] of [
     }
 
     {
-      const state = nonSupervisor();
+      const { readAudit: readPosts } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const { _resetGitHubInstallationTokenCache } = await import("../agent/channels/github-post-arm.js");
+      const { generateKeyPairSync } = await import("node:crypto");
+      const replyPostRows = async () => (await readPosts({ action: "reply.post" })).filter((r) => r.platform === "github");
+
+      const state = { ...nonSupervisor(), triggeringUserLogin: "octo-reviewer" };
       const posts: unknown[] = [];
       const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
       const before = (await nativeSilenceRows()).length;
+      const beforePosts = (await replyPostRows()).length;
+      const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+      const savedFetch = globalThis.fetch;
+      const wrote: string[] = [];
       let threw: unknown = null;
-      await inSession(async () => {
-        try {
-          await completed("The backfill finished at 04:10 UTC.", { state, github });
-        } catch (err) {
-          threw = err;
-        }
-      }, { owner: OWNER, repo: REPO, issue_number: "42" });
-      ok(posts.length > 0 || threw !== null, "OPE-883 negative control: real answer text still REACHES eve's default poster (the arm is not dropping everything)");
-      ok((await nativeSilenceRows()).length === before, "OPE-883 negative control: a turn that answered writes NO silence row");
+      _resetGitHubInstallationTokenCache();
+      try {
+        const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
+        process.env.GITHUB_APP_ID = "12345";
+        process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
+        globalThis.fetch = (async (url: string) => {
+          const u = String(url);
+          if (u.includes("access_tokens")) {
+            return new Response(
+              JSON.stringify({ token: "ghs_terminal", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: `${OWNER}/${REPO}` }] }),
+              { status: 201 },
+            );
+          }
+          wrote.push(u);
+          return new Response(JSON.stringify({ id: 987654 }), { status: 201 });
+        }) as unknown as typeof fetch;
+        await inSession(async () => {
+          try {
+            await completed("The backfill finished at 04:10 UTC.", { state, github });
+          } catch (err) {
+            threw = err;
+          }
+        }, { owner: OWNER, repo: REPO, issue_number: "42" });
+      } finally {
+        globalThis.fetch = savedFetch;
+        if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+        if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
+        _resetGitHubInstallationTokenCache();
+      }
+      const rows = await replyPostRows();
+      ok(rows.length === beforePosts + 1, `OPE-1681: the post leaves exactly ONE canonical reply.post row (had ${beforePosts}, now ${rows.length}) — it left none before`);
+      ok(
+        wrote.length === 1 && wrote[0] === `https://api.github.com/repos/${OWNER}/${REPO}/issues/42/comments`,
+        `OPE-1681: the answer still reaches the issue — exactly one issue-comment POST on the anchor the state names (saw ${JSON.stringify(wrote)})`,
+      );
+      ok(threw === null, `OPE-1681: the audited terminal post completes without throwing (saw ${String(threw)})`);
+      ok(posts.length === 0, "OPE-1681: eve's default reply-poster is NOT used — the answer goes through the reply choke point, which is the only path that audits");
+      const row = rows[0]!;
+      ok(row.detail?.route === "terminal", "OPE-1681: the row names the TERMINAL route, so an operator can tell closing prose from a `reply` tool call");
+      ok(
+        row.workspace === OWNER && row.surface === REPO,
+        `OPE-1681: the row lands on the partition the reply TOOL's own rows use — workspace=owner, surface=the BARE repo segment (saw ${row.workspace}/${row.surface})`,
+      );
+      ok(row.detail?.id === "987654", "OPE-1681: the row carries the comment id GitHub returned — audited where the bytes left, not before");
+      ok(
+        row.principalId === "octo-reviewer",
+        `🔴 OPE-1681: the row NAMES who the agent answered (saw ${String(row.principalId)}) — an absent principalId MEANS "the delivery authenticated nobody", so a blank one would make every GitHub native row say something false`,
+      );
+      ok((await nativeSilenceRows()).length === before, "OPE-1681 negative control: a turn that ANSWERED writes no silence row (the two outcomes stay distinguishable)");
+    }
+
+    {
+      const { _resetGitHubInstallationTokenCache } = await import("../agent/channels/github-post-arm.js");
+      const { readAudit: readPosts2 } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const { generateKeyPairSync } = await import("node:crypto");
+      const replyPostRows2 = async () => (await readPosts2({ action: "reply.post" })).filter((r) => r.platform === "github");
+      const state = { ...nonSupervisor(), conversationKind: "review_thread", issueNumber: null, pullRequestNumber: 7, reviewCommentId: 11, triggeringUserLogin: "octo-reviewer" };
+      const posts: unknown[] = [];
+      const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+      const beforePosts2 = (await replyPostRows2()).length;
+      const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+      const savedFetch = globalThis.fetch;
+      const wrote: string[] = [];
+      _resetGitHubInstallationTokenCache();
+      try {
+        const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
+        process.env.GITHUB_APP_ID = "12345";
+        process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
+        globalThis.fetch = (async (url: string) => {
+          const u = String(url);
+          if (u.includes("access_tokens")) {
+            return new Response(
+              JSON.stringify({ token: "ghs_review", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: `${OWNER}/${REPO}` }] }),
+              { status: 201 },
+            );
+          }
+          wrote.push(u);
+          return new Response(JSON.stringify({ id: 111 }), { status: 201 });
+        }) as unknown as typeof fetch;
+        await inSession(async () => {
+          await completed("Line 12 looks right to me.", { state, github }).catch(() => undefined);
+        }, { owner: OWNER, repo: REPO, pull_request_number: "7" });
+      } finally {
+        globalThis.fetch = savedFetch;
+        if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+        if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
+        _resetGitHubInstallationTokenCache();
+      }
+      ok(wrote.length === 0, `🔴 OPE-1681: a review-thread turn issues NO comment POST from this arm (saw ${JSON.stringify(wrote)}) — its answer belongs in the review thread, and eve's poster is the only path that puts it there`);
+      ok((await replyPostRows2()).length === beforePosts2, "OPE-1681: …and writes no reply.post row, because no byte left through the choke point — unchanged behaviour, honestly unaudited");
     }
   }
 

@@ -186,7 +186,19 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(nd("channel-not-following").includes(`follow-up="channel-not-following"`), "name-drop: channel-not-following renders as the follow-up attribute");
   ok(nd("follows-on-reply").startsWith(`<wake reason="channel-activity" addressing="name-drop" follow-up=`), "name-drop: the envelope leads, and follow-up sits on it — no preamble names the bot");
   const watch = renderWake({ platform: "x", reason: "channel-activity", addressing: "channel-watch", locus: { channel: { id: "C1" } }, trigger: trig("hi") }, NOW).message;
-  ok(!watch.includes("follow-up="), "a channel-watch wake carries no follow-up attribute (the contract is name-drop-only)");
+  ok(!watch.includes("follow-up="), "a channel-watch wake that states no contract carries no follow-up attribute");
+
+  const engaged = renderWake(
+    { platform: "x", reason: "message-edited", addressing: "channel-watch", locus: { channel: { id: "C1" }, thread: { ts: "1.1" } }, followUp: "thread-engaged", trigger: trig("hi") },
+    NOW,
+  ).message;
+  ok(engaged.includes(`follow-up="thread-engaged"`), "a channel-watch wake CAN state a follow-up contract of its own (thread-engaged)");
+  ok(engaged.startsWith(`<wake reason="message-edited" addressing="channel-watch" follow-up="thread-engaged" `), "…rendered in the same attribute slot, so one reader rule covers both sources");
+  const both = renderWake(
+    { platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { followUp: "follows-on-reply" }, followUp: "thread-engaged", trigger: trig("hi") },
+    NOW,
+  ).message;
+  ok(both === nd("follows-on-reply"), "the name-drop contract wins over a builder-stated one — the name-drop render is byte-identical");
 }
 
 {

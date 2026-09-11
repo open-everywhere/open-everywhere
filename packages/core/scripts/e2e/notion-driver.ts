@@ -321,8 +321,7 @@ export class NotionDriver {
   }
 
   async pageBlocks(): Promise<readonly string[]> {
-    const json = await this.api(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children?page_size=50`);
-    const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
+    const results = await this.apiAllPages(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children`);
     return results.map((b) => (typeof b.id === "string" ? b.id : "")).filter((id) => id.length > 0);
   }
 
@@ -373,13 +372,20 @@ export class NotionDriver {
     return { commentId: typeof json.id === "string" ? json.id : "" };
   }
 
-  async awaitBotReplyOnBlock(blockId: string, discussionId: string, sinceTime: string, opts: { timeoutMs: number }): Promise<NotionComment> {
+  async awaitBotReplyOnBlock(
+    blockId: string,
+    discussionId: string,
+    sinceTime: string,
+    opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean },
+  ): Promise<NotionComment> {
     return pollUntil(
       async () =>
-        (await this.blockComments(blockId)).find((c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime),
+        (await this.blockComments(blockId)).find(
+          (c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime && !(opts.skip?.(c) ?? false),
+        ),
       {
         timeoutMs: opts.timeoutMs,
-        what: `a bot reply in discussion ${discussionId} on block ${blockId} after ${sinceTime}`,
+        what: `a bot reply in discussion ${discussionId} on block ${blockId} after ${sinceTime}${opts.skip !== undefined ? " that is not skipped as an interim post" : ""}`,
       },
     );
   }

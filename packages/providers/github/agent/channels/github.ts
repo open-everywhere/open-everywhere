@@ -35,6 +35,9 @@ import {
   finalMessageActionForTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
+  postTerminalProse,
+  resolvePartition,
+  type ChatAuditPartition,
   auditSupervisorFailure,
   healPrunedDeploymentStrand,
   capabilitiesForPlatform,
@@ -423,6 +426,28 @@ async function auditNativeGitHubSilence(state: GitHubChannelState, reason: strin
   }).catch(() => undefined);
 }
 
+function nativeGitHubAuditPartition(state: GitHubChannelState): ChatAuditPartition | null {
+  if (!state.owner || !state.repo) return null;
+  try {
+    return resolvePartition({
+      channel: { kind: "github" },
+      session: {
+        auth: {
+          current: buildGitHubAuth({
+            owner: state.owner,
+            repo: state.repo,
+            actorLogin: "",
+            repositoryId: state.repositoryId,
+            conversationKind: state.conversationKind,
+          }),
+        },
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
     const isMention = githubBotMentioned(comment.body, BOT_NAME, comment.author);
     const seamFacts: GitHubSeamFacts = {
@@ -522,10 +547,41 @@ const native: GitHubChannel = githubChannel({
           await defaultEvent("message.completed")?.(data, channel);
           return;
         }
-        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+        const nativeTurnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, nativeTurnId);
         const nativeReplied = consumeSupervisorReplyMark(ctx);
         if (nativeAction.kind === "silent") {
           await auditNativeGitHubSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);
+          return;
+        }
+        const nativePartition = nativeGitHubAuditPartition(channel.state);
+        const nativeAnchor = channel.state.issueNumber ?? channel.state.pullRequestNumber;
+        if (
+          nativeAction.kind === "post" &&
+          channel.state.conversationKind !== "review_thread" &&
+          nativePartition !== null &&
+          nativeAnchor !== null
+        ) {
+          await postTerminalProse(
+            {
+              platform: "github",
+              owner: channel.state.owner,
+              repo: channel.state.repo,
+              issueNumber: nativeAnchor,
+              ...(channel.state.installationId !== null ? { installationId: channel.state.installationId } : {}),
+            },
+            nativeAction.text,
+            {
+              org: nativePartition.org,
+              platform: nativePartition.platform,
+              workspace: nativePartition.workspace,
+              surface: nativePartition.surface,
+              ...(channel.state.triggeringUserLogin ? { principalId: channel.state.triggeringUserLogin } : {}),
+              ...(ctx?.session?.id ? { sessionId: ctx.session.id } : {}),
+              ...(nativeTurnId ? { turnId: nativeTurnId } : {}),
+              route: "terminal",
+            },
+          );
           return;
         }
         await defaultEvent("message.completed")?.(data, channel);

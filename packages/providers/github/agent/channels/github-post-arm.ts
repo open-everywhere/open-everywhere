@@ -198,8 +198,26 @@ async function liveGitHubReact(origin: GitHubOrigin, emoji: string): Promise<voi
   }
 }
 
+export const GITHUB_COMMENT_BODY_MAX = 65_536;
+
+export function splitGitHubComment(text: string, max: number = GITHUB_COMMENT_BODY_MAX): readonly string[] {
+  if (text.length <= max) return [text];
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    const nl = rest.lastIndexOf("\n", max);
+    const sp = rest.lastIndexOf(" ", max);
+    const cut = nl > max * 0.5 ? nl : sp > max * 0.5 ? sp : max;
+    parts.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest.length > 0) parts.push(rest);
+  return parts;
+}
+
 export const githubPostArm: PostArm = {
   platform: "github",
+  splitText: (text) => splitGitHubComment(text),
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
     const owner = bag.str("owner");
     const repo = bag.str("repo");

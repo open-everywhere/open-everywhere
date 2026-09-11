@@ -852,6 +852,9 @@ registerConfig({
 
   let innerCalled = false;
   let handledPayload: unknown;
+  let handledDeps: { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+  const handedToHost: Promise<unknown>[] = [];
+  const recordingArgs = { ...fakeArgs, waitUntil: (p: Promise<unknown>) => void handedToHost.push(p) };
   const handler = buildFrontHandler(
     async () => {
       innerCalled = true;
@@ -860,19 +863,27 @@ registerConfig({
     {
       signingSecret: secret,
       now: () => nowMs,
-      handleApprovalPayload: async (p) => {
+      handleApprovalPayload: async (p, d) => {
         handledPayload = p;
+        handledDeps = d;
         return true;
       },
     },
   );
-  let res = await handler(mkReq(oeClick("7")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  let res = await handler(mkReq(oeClick("7")), recordingArgs as unknown as Parameters<typeof handler>[1]);
   const bodyText = await res.text();
   ok(res.status === 200 && bodyText === "", "approval-click → fast 200 with an empty body (our own chat.update follows async)");
   ok(!innerCalled, "approval-click is handled locally — slackChannel's own (Eve) handler is never invoked");
   ok(
     (handledPayload as { actions: Array<{ action_id: string }> })?.actions[0]?.action_id === `${OE_APPROVAL_PREFIX}approve:7`,
     "the injected handler receives the parsed block_actions payload, not a re-strung id",
+  );
+  ok(typeof handledDeps?.waitUntil === "function", "🔴 OPE-1709: the approval-click branch hands the handler the route's own `waitUntil`");
+  const probe = Promise.resolve("probe");
+  handledDeps?.waitUntil?.(probe);
+  ok(
+    handedToHost.length === 1,
+    `🔴 OPE-1709: …and it is the ROUTE'S hook — work registered through it reaches the host, so a deferred session-grant release survives the response (saw ${String(handedToHost.length)} registrations)`,
   );
 
   innerCalled = false;
@@ -1641,6 +1652,63 @@ registerConfig({
     wakes.length = 0;
     out = await routeSupervisorEvent(followUpEv, neverEngagedDeps);
     ok(out.woke, "NEVER-engaged thread + follow-up → keeps today's ambient path (wakes/judges — NOT suppressed)");
+    const neverEngagedWake = wakes[0].message;
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(followUpEv, engagedRowDeps);
+    ok(out.woke && wakes[0].message.includes('follow-up="thread-engaged"'), "🔴 engaged-thread follow-up wake STATES the enrolment: follow-up=\"thread-engaged\"");
+    ok(!neverEngagedWake.includes("follow-up="), "negative control: the SAME follow-up in a NEVER-engaged thread renders NO follow-up attribute");
+    wakes.length = 0;
+    out = await routeSupervisorEvent(
+      followUpEv,
+      supDeps(true, 12, { getEngagement: async () => ({ participating: false, stopped: false } as unknown as Awaited<ReturnType<NonNullable<SupervisorRouteDeps["getEngagement"]>>>) }),
+    );
+    ok(out.woke && !wakes[0].message.includes("follow-up="), "negative control: a WATCHER row (participating:false) states NO enrolment — a name-drop latch must not lower the bar it raised");
+    ok(
+      wakes[0].message.includes('addressing="channel-watch"') && !wakes[0].message.includes('addressing="thread-follow"'),
+      "…and the addressing tier is UNCHANGED (channel-watch): enrolment and the silence bar are different facts",
+    );
+
+    const engagedEditEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C_SUP",
+        channel_type: "channel",
+        ts: "84.0",
+        hidden: true,
+        message: { type: "message", user: "U1", text: "actually the headcount is 50 (edited)", ts: "82.0", thread_ts: "77.7" },
+        previous_message: { type: "message", user: "U1", text: "actually the headcount is 35", ts: "82.0", thread_ts: "77.7" },
+      },
+    })!;
+    wakes.length = 0;
+    out = await routeSupervisorEvent(engagedEditEv, engagedRowDeps);
+    ok(
+      out.woke && wakes[0].message.includes('reason="message-edited"') && wakes[0].message.includes('follow-up="thread-engaged"'),
+      "🔴 F-EDIT: an EDIT in an engaged thread wakes with BOTH the edit reason and the enrolment fact",
+    );
+    ok(wakes[0].message.includes("<previous-body>"), "…and still carries the <previous-body> the edit probe reads");
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(supEv(), supDeps(true, 12, { getEngagement: async () => row({ stopped: false }) }));
+    ok(out.woke && !wakes[0].message.includes("follow-up="), "a TOP-LEVEL ambient wake renders no follow-up, engagement row or not (nothing to be enrolled in)");
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(
+      parseMessageEvent({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event: { type: "app_mention", channel: "C_SUP", ts: "85.0", thread_ts: "77.7", user: "U1", text: "<@UBOT> and now?" },
+      })!,
+      supDeps(true, 12, { unifiedMeta: () => ({ unified: true, singleWindow: true }), getEngagement: async () => row({ stopped: false }), markEngaged: async () => undefined }),
+      { directMention: true },
+    );
+    ok(
+      out.woke && wakes[0].message.includes('addressing="direct-mention"') && !wakes[0].message.includes("follow-up="),
+      "an ADDRESSED direct-mention renders no follow-up: it is owed an answer whatever the enrolment says",
+    );
 
     const reinviteEngaged: string[] = [];
     const mentionEv = parseMessageEvent({

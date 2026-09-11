@@ -112,7 +112,7 @@ export function dbProviderId(): string {
   if (onVercel() && process.env.OE_ALLOW_EPHEMERAL_MEMORY !== "1") {
     throw new Error(
       "DM/personal memory has no durable backing on Vercel — sqlite is per-instance and ephemeral " +
-        "(a `remember` would report success but be lost on the next cold start). Set " +
+        "(a memory write would report success but be lost on the next cold start). Set " +
         "OE_MEMORY_PROVIDER=postgres and register a client (docs/deploy/setup-runbook.md), or " +
         "OE_ALLOW_EPHEMERAL_MEMORY=1 to accept ephemeral personal memory on a single-instance host.",
     );
