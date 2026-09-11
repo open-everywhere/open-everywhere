@@ -218,6 +218,21 @@ export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/tr
 
 export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 
+export {
+  declareSurfaceCommandScope,
+  registerSurfaceCommandReconciler,
+  surfaceCommandScopeFor,
+  reconcileSurfaceCommands,
+  resetSurfaceCommandRegistryForTest,
+} from "./channels/command-registration.js";
+export type {
+  SurfaceCommandScope,
+  SurfaceCommandReconciler,
+  SurfaceCommandOutcome,
+  SurfaceCommandStatus,
+  SurfaceCommandReport,
+} from "./channels/command-registration.js";
+
 export { registerBotDisplayName, botDisplayNameFor, _resetBotDisplayNamesForTest } from "./identity/bot-display-name.js";
 export type { BotDisplayNameArm } from "./identity/bot-display-name.js";
 

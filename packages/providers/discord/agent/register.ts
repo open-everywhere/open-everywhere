@@ -17,6 +17,7 @@ import {
   registerBotDisplayName,
   registerAccountDirectory,
   registerProviderDocs,
+  registerSurfaceCommandReconciler,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { DISCORD_SURFACE_PARITY } from "./surface-parity.js";
@@ -33,6 +34,7 @@ import { fetchGuildDirectory } from "./channels/discord-directory.js";
 import { postDiscordApprovalCard, postDiscordJudgeLiftNotice } from "./approvals/discord-flow.js";
 import { discordScopeLabelResolver } from "./approvals/discord-scope-label.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "./approvals/discord-admin.js";
+import { reconcileDiscordCommands } from "./commands/discord-command-sync.js";
 
 export function registerDiscordProvider(): void {
   registerIdentityMapper("discord", bindDiscord);
@@ -59,5 +61,6 @@ export function registerDiscordProvider(): void {
   registerBotDisplayName("discord", discordBotDisplayName);
   registerAccountDirectory("discord", (query) => fetchGuildDirectory(query));
   registerProviderDocs("discord", PROVIDER_DOCS);
+  registerSurfaceCommandReconciler("discord", (scope) => reconcileDiscordCommands(scope));
   registerDiscordOps();
 }

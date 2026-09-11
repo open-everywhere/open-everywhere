@@ -36,6 +36,7 @@ import "../identity/surfaces.js";
 import "../access/browser-hosts.js";
 import "../identity/authors.js";
 import "../routines/collectors.js";
+import "../commands/discord-commands.js";
 import "./register-docs.js";
 
 registerSettings(SETTINGS_OVERRIDES);

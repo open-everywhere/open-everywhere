@@ -972,7 +972,12 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     } else {
       ok(catFalse === undefined, `${s.id}: non-optional scenario with satisfied capabilities does not skip at the roster level`);
     }
-    ok(skipCategory(s, satisfied, true) === undefined, `${s.id}: runs once its capabilities are satisfied and includeOptional=true, optional or not`);
+    if (s.expensive) {
+      ok(skipCategory(s, satisfied, true) === "expensive-not-included", `${s.id}: expensive — includeOptional=true alone still skips it, naming the cost`);
+      ok(skipCategory(s, satisfied, true, false, true) === undefined, `${s.id}: expensive — runs once includeOptional AND includeExpensive are both on`);
+    } else {
+      ok(skipCategory(s, satisfied, true) === undefined, `${s.id}: runs once its capabilities are satisfied and includeOptional=true, optional or not`);
+    }
     ok(skipCategory(s, new Set(), false) === "missing-capability", `${s.id}: skips as missing-capability with zero capabilities available`);
   }
 }
@@ -1085,6 +1090,44 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(
     skipCategory(fakeCheap, satisfied, false) === undefined,
     "a non-expensive scenario is unaffected by the expensive gate (negative control)",
+  );
+
+  const expensiveIds = SCENARIOS.filter((s) => s.expensive === true).map((s) => s.id);
+  ok(
+    expensiveIds.join(",") === "S-TAINT-ROUTE-LIVE",
+    `the roster's expensive set is exactly S-TAINT-ROUTE-LIVE — the one leg measured green past the ~10-minute bar (1246.8 s, 2026-09-10 full pack). Got: ${expensiveIds.join(",") || "(none)"}`,
+  );
+  for (const id of ["J-GH", "F-EDIT", "F-SEC", "J-UNI-X"]) {
+    const s = SCENARIOS.find((x) => x.id === id);
+    ok(s !== undefined, `${id} is still in the roster (the not-flagged assertion below needs a subject)`);
+    ok(s?.expensive !== true, `${id} is NOT flagged expensive — a leg that REDS on its reply timeout is broken, not expensive`);
+  }
+  const routeLive = SCENARIOS.find((s) => s.id === "S-TAINT-ROUTE-LIVE")!;
+  ok(routeLive.costReason?.includes("1246.8 s") === true, "S-TAINT-ROUTE-LIVE's costReason carries the measured duration, not an estimate");
+  ok(
+    skipCategory(routeLive, satisfied, true, false, false) === "expensive-not-included",
+    "on a full pack (includeOptional, no expensive opt-in) S-TAINT-ROUTE-LIVE skips as expensive-not-included",
+  );
+  const fullPackReason = skipReason(routeLive, satisfied, missingNone, true, false, false);
+  ok(
+    fullPackReason?.includes(routeLive.costReason!) === true,
+    "…and the printed skip line names its costReason verbatim — the cost is visible, never a silent absence",
+  );
+  ok(
+    skipCategory(routeLive, satisfied, true, false, true) === undefined,
+    "includeExpensive=true runs S-TAINT-ROUTE-LIVE on a full pack (negative control — the flag gates, it does not retire the leg)",
+  );
+  ok(
+    skipCategory(routeLive, satisfied, true, true, false) === undefined,
+    "naming the id directly runs it with no expensive opt-in, once includeOptional is ALREADY on (negative control)",
+  );
+  ok(
+    skipCategory(routeLive, satisfied, false, true, false) === "optional-not-included",
+    "naming the id alone is NOT enough — the optional gate outranks the expensive one and still holds",
+  );
+  ok(
+    skipCategory(routeLive, satisfied, false, false, false) === "optional-not-included",
+    "on a CORE pack the optional gate wins — the expensive skip line belongs to the full pack",
   );
 }
 

@@ -4103,6 +4103,8 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "extended",
     optional: true,
+    expensive: true,
+    costReason: "1246.8 s green on the 2026-09-10 full pack — ~20% of the pack's wall clock, five live arms with their own reply waits (OPE-1705)",
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {

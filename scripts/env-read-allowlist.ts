@@ -111,6 +111,7 @@ allow("identity", [
   ["OE_AGENT_NAME", "this agent's full display name."],
   ["OE_AGENT_SHORT_NAME", "this agent's short display name."],
   ["OE_LOG_SERVICE", "the service name this deployment ships its logs under."],
+  ["DISCORD_APPLICATION_ID", "which Discord application this deployment is — the id every application-command route is addressed to, and the public half of the DISCORD_BOT_TOKEN pair. The GUILDS it registers into are NOT here: they are tracked literals in agent/commands/discord-commands.ts (OPE-1687)."],
   ["OE_GITHUB_APP_ID", "the GitHub App id the surface credential probe checks for presence."],
   ["GITHUB_APP_ID", "which GitHub App this deployment is."],
   ["GITHUB_APP_SLUG", "that App's slug, which the agent's own posts are recognised by."],

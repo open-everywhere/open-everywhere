@@ -3,8 +3,11 @@ import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { loadDomains, domainsForSurface } from "../agent/memory/config/domains.js";
+import { loadSpendBudgets } from "../agent/spend/budgets.js";
 import { loadGroups } from "../agent/identity/groups.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
+import { resolveCaps, domainNameForScope } from "@open-everywhere/core/agent/spend/caps.js";
+import type { Caps } from "@open-everywhere/core/agent/spend/spend.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { boundScopes } from "./config-snapshot-build.js";
@@ -65,6 +68,40 @@ for (const scope of boundScopes()) {
   const policy = await compileNetworkPolicy(unbound, async () => ({ authorization: "<redacted>" }), async (ids) => ids);
   if (unbound.reachableHosts.length === 0 && policy !== "deny-all") fail("unbound probe with no hosts did not compile to deny-all");
   else checked++;
+}
+
+{
+  const budgets = loadSpendBudgets();
+  const domainNames = new Set(domains.map((d) => d.name));
+  for (const key of Object.keys(budgets.perDomain ?? {})) {
+    if (!domainNames.has(key)) {
+      fail(`spend budget perDomain["${key}"] names no declared domain — it caps nothing (declared: ${[...domainNames].sort().join(", ")})`);
+    } else checked++;
+  }
+  for (const key of Object.keys(budgets.perSurface ?? {})) {
+    if (resolveDomainForChannel(key, domains).domain === undefined) {
+      console.log(`  ⚠️  spend budget perSurface["${key}"] is in no domain roster — it still caps that exact surface key, but check the id`);
+    } else checked++;
+  }
+  const pinCaps = (room: string, what: string, expected: Caps): void => {
+    const caps = resolveCaps(room.split("/").slice(0, 2).join("/"), room, domainNameForScope(room));
+    for (const [field, want] of Object.entries(expected) as [keyof Caps, number][]) {
+      if (caps[field] !== want) {
+        fail(`${room} (${what}) resolves to ${JSON.stringify(caps)} — expected ${field}=${want} (OPE-1705)`);
+        return;
+      }
+    }
+    checked++;
+  };
+  pinCaps("slack/T0EXAMPLE/C0EXGENRL", "#general, the e2e-connector fixture room", { surfaceMonthlyUsd: 50 });
+  const guild = "discord/1300000000000000100";
+  const guildBreaker = budgets.perWorkspace?.[guild]?.workspaceMonthlyUsd;
+  if (guildBreaker === undefined) {
+    fail(`spend budget perWorkspace["${guild}"] carries no workspaceMonthlyUsd — the driver bot's circuit breaker is gone (OPE-1705)`);
+  } else {
+    pinCaps(`${guild}/1300000000000000101`, "the Discord driver-bot guild's #general", { surfaceMonthlyUsd: 50, workspaceMonthlyUsd: guildBreaker });
+  }
+  pinCaps("slack/T0EXAMPLE/C0EXCHAN007", "#oe-e2e-cap, S10's cap-refusal fixture", { surfaceMonthlyUsd: 0.01, surfaceMonthlyTokens: 10_000 });
 }
 
 if (problems.length > 0) {

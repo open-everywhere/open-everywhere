@@ -133,7 +133,7 @@ function main(): void {
       "settings-lever": 0,
       secret: 33,
       connection: 37,
-      identity: 20,
+      identity: 21,
       platform: 13,
       "pending-migration": 45,
     };
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 148, `the allowlist holds 148 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 149, `the allowlist holds 149 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {

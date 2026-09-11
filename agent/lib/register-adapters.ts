@@ -20,6 +20,7 @@ import {
   declareProviderSelection,
   assertConnectorMemoryGrants,
   applySubtreeSurfaceClaims,
+  reconcileSurfaceCommands,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.generated.js";
 import { loadDomains, loadSilos } from "../memory/config/domains.js";
@@ -94,3 +95,5 @@ async function runBootStoreChecks(): Promise<void> {
 }
 
 if (!pgliteFloorArmed) await runBootStoreChecks();
+
+await reconcileSurfaceCommands();
