@@ -17,10 +17,14 @@ import {
   rememberBridgedQuestion,
   resolveInboundAnswerRouting,
   taskIdOfBridgedRequestId,
+  approvalOptionIds,
+  resolveApprovalOptionId,
+  APPROVAL_ANSWER_HINT,
   type BridgeableQuestion,
   type BridgedQuestionStore,
 } from "../agent/channels/question-bridge.js";
 import { detectSessionLimitPark, isSessionLimitContinuationRequest, SESSION_LIMIT_CONTINUATION_TOOL_NAME } from "../agent/channels/session-park.js";
+import { isWakeEnvelopeShaped, triggerMessageBody } from "../agent/channels/wake-envelope.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -59,8 +63,12 @@ const questionRequest = {
 const approvalRequest = {
   requestId: "approval-7",
   kind: "tool-approval",
-  prompt: "Allow bash?",
-  action: { callId: "call_z", input: {}, kind: "tool-call", toolName: "bash" },
+  prompt: "Approve tool call: notion__notion-create-pages",
+  options: [
+    { id: "approve", label: "Approve" },
+    { id: "cancel", label: "Cancel" },
+  ],
+  action: { callId: "call_z", input: {}, kind: "tool-call", toolName: "notion__notion-create-pages" },
 };
 
 const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY", threadTs: "1700.1" };
@@ -96,7 +104,9 @@ const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY", 
 
 {
   const q = detectBridgeableInputRequest([questionRequest])!;
-  ok(q.options.length === 2 && q.options[0] === LABEL_YES && q.options[1] === LABEL_NO, "2: option LABELS are extracted (ids/styles are not)");
+  ok(q.options.length === 2 && q.options[0]!.label === LABEL_YES && q.options[1]!.label === LABEL_NO, "2: option LABELS are extracted, in order");
+  ok(q.options[0]!.id === "yes" && q.options[1]!.id === "no", "2: …and their IDS ride along (OPE-1056 — an approval cannot be settled without one); styles are still dropped");
+  ok(Object.keys(q.options[1]!).sort().join(",") === "id,label", "2: …so an option carries the two fields the bridge needs and nothing else (the fixture's `style` is dropped)");
   const text = renderQuestionForSurface(q);
   ok(text.startsWith(QUESTION_TEXT), "2: the question leads the post");
   ok(text.includes(`• ${LABEL_YES}`) && text.includes(`• ${LABEL_NO}`), "2: options render as a plain surface-agnostic list");
@@ -423,6 +433,111 @@ for (const [label, resolveOrigin] of [
   ok(unknownOutcome.status === "bridged", "7: an undecodable origin still BRIDGES — the container is a field, never a gate");
   ok(sUnknown.rows.length === 1, "7: …and still writes exactly one row");
   ok((sUnknown.rows[0]!.detail as Record<string, unknown>).containerKey === undefined, "7: …with the container ABSENT rather than a guessed or empty value");
+}
+
+{
+  console.log("\n8. a bridged approval can be answered (OPE-1056):");
+  const approval = detectBridgeableInputRequest([approvalRequest])!;
+
+  ok(approvalOptionIds(approval).join(",") === "approve,cancel", "8a: an approval's eve-minted option ids are the ones the row will store");
+  ok(approvalOptionIds(detectBridgeableInputRequest([questionRequest])!).length === 0, "8a: 🔴 an ask_question contributes NO ids — its options are model-authored and the row stays ids-only");
+
+  const approvalText = renderQuestionForSurface(approval, { answerByOption: true });
+  ok(approvalText.includes("• Approve") && approvalText.includes("• Cancel"), "8b: the approval's options still render as the plain surface-agnostic list");
+  ok(approvalText.includes(APPROVAL_ANSWER_HINT), "8b: 🔴 …and an APPROVAL carries the host-authored line saying a reply must name one — without it the room cannot know a bare answer parks");
+  ok(!renderQuestionForSurface(detectBridgeableInputRequest([questionRequest])!, { answerByOption: true }).includes(APPROVAL_ANSWER_HINT), "8b: 🔴 NEGATIVE CONTROL: an ask_question gets NO hint even where the caller opts in — every reply answers one, so the line would be false there");
+  ok(!renderQuestionForSurface(approval).includes(APPROVAL_ANSWER_HINT), "8b: 🔴 NEGATIVE CONTROL: and a caller that does NOT opt in gets no hint for an APPROVAL either — the Notion surface shares this renderer and its return leg cannot honour the line, so following it there would DENY the write");
+
+  const OPTS = ["approve", "cancel"] as const;
+  ok(resolveApprovalOptionId("Approve", [...OPTS]) === "approve", "8c: the option LABEL answers, because eve's labels lowercase to its ids");
+  ok(resolveApprovalOptionId("  approve.  ", [...OPTS]) === "approve", "8c: …after trimming and stripping surrounding punctuation");
+  ok(resolveApprovalOptionId("yes", [...OPTS]) === "approve", "8c: a small authored synonym vocabulary answers too");
+  ok(resolveApprovalOptionId("Cancel", [...OPTS]) === "cancel", "8c: and the deny half");
+  ok(resolveApprovalOptionId("no", [...OPTS]) === "cancel", "8c: …by synonym as well");
+  ok(resolveApprovalOptionId("deny", ["approve", "deny"]) === "deny", "8c: the id the request ACTUALLY offered is the one returned — `deny` here, not a hardcoded `cancel`");
+  ok(resolveApprovalOptionId("no", ["approve"]) === undefined, "8c: 🔴 a word can only select an id the request OFFERED — a request with no deny option cannot be denied");
+  ok(
+    resolveApprovalOptionId("no, that is the wrong page — use the other one", [...OPTS]) === undefined,
+    "8c: 🔴 THE WHOLE MESSAGE MUST BE THE ANSWER — a correction that merely CONTAINS 'no' settles nothing, or prose steering the approval would decide it",
+  );
+  ok(resolveApprovalOptionId("approve the other one instead", [...OPTS]) === undefined, "8c: 🔴 …and the same on the approve side, which is the dangerous direction");
+  ok(resolveApprovalOptionId("", [...OPTS]) === undefined, "8c: an empty reply names nothing");
+  ok(resolveApprovalOptionId("maybe", [...OPTS]) === undefined, "8c: an unrelated word names nothing");
+
+  const TOKEN8 = "oe-dom:payments:oe-sup:g1";
+  const ROOM8 = unifiedThreadRef(slackOrigin).channelKey;
+  const rows = new Map<string, string>();
+  const store8: BridgedQuestionStore = {
+    putTaskResult: async (_o, k, v) => void rows.set(k, v),
+    getTaskResult: async (_o, k) => rows.get(k) ?? null,
+    deleteTaskResult: async (_o, k) => rows.delete(k),
+  };
+  const allow8 = async (): Promise<{ ok: true; floor: string }> => ({ ok: true, floor: "member" });
+  await rememberBridgedQuestion(store8, "o8", TOKEN8, {
+    requestId: approval.requestId,
+    containerKey: ROOM8,
+    wakeId: "w-8",
+    optionIds: approvalOptionIds(approval),
+  });
+  const stored = await readBridgedQuestion(store8, "o8", TOKEN8);
+  ok(stored?.optionIds?.join(",") === "approve,cancel", "8d: 🔴 the option ids survive the JSON round trip — the answering turn cannot re-read the parked request, so this row is the only join");
+  const rawRow = rows.get(bridgedQuestionKey(TOKEN8))!;
+  ok(rawRow.includes("approve"), "8d: the raw stored row really is the row under test (else the redaction line below would assert nothing)");
+  ok(!rawRow.includes("Approve tool call"), "8d: 🔴 …and the prompt never reaches the STORE (the redaction rule §4 states is untouched)");
+
+  const approved = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "Approve" }, { read: async () => stored, admit: allow8 });
+  ok(approved.kind === "answer" && approved.optionId === "approve", "8d: 🔴 a reply naming the option answers WITH THAT OPTION ID — the field eve's resolveApprovalOutcome reads");
+  const denied = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "cancel" }, { read: async () => stored, admit: allow8 });
+  ok(denied.kind === "answer" && denied.optionId === "cancel", "8d: …and the deny half carries its own id, so a REJECT is a real reject rather than an `invalid`");
+
+  let admits8 = 0;
+  const unmatched = await resolveInboundAnswerRouting(
+    { internalDispatch: false, containerKey: ROOM8, text: "what page is this about?" },
+    {
+      read: async () => stored,
+      admit: async () => {
+        admits8++;
+        return { ok: true, floor: "member" };
+      },
+    },
+  );
+  ok(unmatched.kind === "wake" && unmatched.reason === "unmatched-option", "8d: 🔴 a reply naming no option is an ordinary WAKE — the approval stays parked instead of being denied by accident");
+  ok(admits8 === 0, "8d: …and spends no admission call, because that person was not answering the approval");
+  ok((await readBridgedQuestion(store8, "o8", TOKEN8))?.requestId === approval.requestId, "8d: …and the row is LEFT IN PLACE, so the room can still answer");
+
+  const qRow = { requestId: "call_abc123", containerKey: ROOM8, at: "2026-05-14T11:35:00.000Z" };
+  const qRouted = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "what page is this about?" }, { read: async () => qRow, admit: allow8 });
+  ok(qRouted.kind === "answer" && qRouted.optionId === undefined, "8d: 🔴 NEGATIVE CONTROL: an ask_question row still answers on ANY text, and carries no optionId");
+
+  rows.set(bridgedQuestionKey(TOKEN8), JSON.stringify({ requestId: approval.requestId, containerKey: ROOM8, at: "2026-05-05T23:30:00.000Z" }));
+  const legacy = await readBridgedQuestion(store8, "o8", TOKEN8);
+  ok(legacy?.optionIds === undefined, "8d: a PRE-FIX row on disk reads back with no option ids…");
+  const legacyRouted = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "anything" }, { read: async () => legacy, admit: allow8 });
+  ok(legacyRouted.kind === "answer" && legacyRouted.optionId === undefined, "8d: …and routes exactly as it did then, rather than becoming unanswerable");
+
+  const envelopeWith = (body: string): string =>
+    `<wake reason="dm" addressing="direct-mention" current-time="2026-07-10T10:00:00.000Z" wake-id="wk_dm_1">\n` +
+    `  <channel id="ch_c2xhY2s6RF9BTElDRQ" type="im" container="channel">\n` +
+    `  <message trigger="true" from="human" trust="principal" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="400.0" sent-at="1970-01-01T00:06:40.000Z">\n` +
+    `    ${body}\n` +
+    `  </message>\n  </channel>\n</wake>`;
+  const dmEnvelope = envelopeWith("Approve");
+  ok(isWakeEnvelopeShaped(dmEnvelope) && triggerMessageBody(dmEnvelope) === "Approve", "8dd: the fixture really is an envelope whose trigger body is the answer (else the two arms below assert nothing)");
+  ok(resolveApprovalOptionId(dmEnvelope, [...OPTS]) === undefined, "8dd: 🔴 the RAW delivery matches NOTHING — this is the arm that makes reading the envelope load-bearing rather than tidy");
+  ok(resolveApprovalOptionId(triggerMessageBody(dmEnvelope)!, [...OPTS]) === "approve", "8dd: 🔴 …and the trigger BODY taken out of that same delivery answers `approve`");
+  ok(triggerMessageBody(`${envelopeWith("Approve")}\n${envelopeWith("hello")}`) === undefined, "8dd: 🔴 a COALESCED delivery names no single author, so it yields no body and can settle no approval");
+
+  {
+    const { readFileSync } = await import("node:fs");
+    const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    ok(
+      /\.respond\(\[\{ requestId: t\.answer\.requestId, text: answerText, \.\.\.\(t\.answer\.optionId \? \{ optionId: t\.answer\.optionId \} : \{\}\) \}\]/.test(unifiedSrc),
+      "8e: 🔴 the channel really sends the optionId to eve — a resolution that never reaches `respond` settles nothing",
+    );
+    ok(/optionIds: approvalOptionIds\(question\)/.test(unifiedSrc), "8e: …and the input.requested handler really records the ids the answer is matched against");
+    ok(/isWakeEnvelopeShaped\(input\.message\) \? triggerMessageBody\(input\.message\)/.test(unifiedSrc), "8e: 🔴 …and it matches the trigger BODY of the rendered wake, never the raw delivery");
+    ok(/\.\.\.\(roomText !== undefined \? \{ text: roomText \} : \{\}\)/.test(unifiedSrc), "8e: …and that derived body is what reaches the routing decision, which is what selects the option");
+  }
 }
 
 console.log(`question-bridge: ${n} assertions passed`);

@@ -128,6 +128,13 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "F-ART is the only scenario driving post_file + describe_image + the attachment trusted-fetch path together.",
   },
   {
+    area: "input-request-bridge",
+    globs: ["packages/core/agent/channels/question-bridge.ts", "packages/core/agent/channels/unified.ts"],
+    scenarios: ["S-EVE-CARD", "S-DM-NOTION", "J-UNI-X", "J-SUP"],
+    why:
+      "S-EVE-CARD is the only leg that drives an eve `tool-approval` through this bridge, and the approval half is where the bridge can silently DENY a governed connector write: eve settles on `optionId` alone, so an answer delivered without one resolves `invalid` (OPE-1056). S-DM-NOTION and J-SUP/J-UNI-X pay a delegated round trip through the same handler, because a WORKER's request is proxied up to the parent seat's adapter and bridged from there — which is the only path a worker's question or approval can reach a room at all. A change here that drops the post, the durable row or the option ids leaves a turn parked with nobody able to answer it, and the failure is SILENCE, so no other leg would notice.",
+  },
+  {
     area: "wake-envelope",
     globs: ["packages/core/agent/channels/wake-envelope.ts", "packages/core/agent/channels/normalized-wake.ts"],
     scenarios: ["F-EDIT", "J1"],

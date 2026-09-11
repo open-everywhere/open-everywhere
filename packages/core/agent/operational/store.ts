@@ -679,7 +679,6 @@ export interface DmAudienceRow {
   readonly firstDmAt?: string;
   readonly stoppedAt?: string;
 }
-
 export interface ProactiveAddress {
   readonly platform: string;
   readonly kind: string;

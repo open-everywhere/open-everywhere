@@ -66,7 +66,7 @@ import {
   supervisorRotateTokenBudget,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { EXTERNAL_MENTION_ACK, owesSuppressedMentionAck, suppressionRendering, silentRoomNotice } from "@open-everywhere/core/agent/adapter-api.js";
-import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
+import { nameDropWakeEnabled, ambientSupervisorEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, mentionSiblingSuppressed, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "@open-everywhere/core/agent/adapter-api.js";
@@ -1157,16 +1157,6 @@ registerConfig({
   const composedNoTier = defineDomain({ name: "pay2", reach: ["slack/T9/C_PAY2", "github/acme/pay2"], ambientSupervisor: true });
   ok(engagementTierFor("github/acme/pay2", [composedNoTier]) === "reserved", "composed domain w/o tier: the GitHub member platform-defaults reserved");
   ok(engagementTierFor("slack/T9/C_PAY2", [composedNoTier]) === "neutral", "composed domain w/o tier: the Slack member stays neutral");
-
-  const awarenessDomains = [
-    defineDomain({ name: "aware-on", reach: ["slack/T3/C_ON"], awarenessWake: true }),
-    defineDomain({ name: "aware-off", reach: ["slack/T3/C_OFF"] }),
-    defineDomain({ name: "org-aware", match: "org", awarenessWake: true }),
-  ];
-  ok(awarenessWakeEnabled("slack/T3/C_ON", awarenessDomains), "explicit domain with the flag → on");
-  ok(!awarenessWakeEnabled("slack/T3/C_OFF", awarenessDomains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
-  ok(awarenessWakeEnabled("slack/T3/C_UNASSIGNED", awarenessDomains), "unassigned channel → org pseudo-domain's flag");
-  ok(!awarenessWakeEnabled("slack/T3/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
 
   const topLevel = (over: Record<string, unknown> = {}) =>
     parseMessageEvent({

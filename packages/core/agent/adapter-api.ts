@@ -636,7 +636,7 @@ export { resolveWakeTrust, backscrollTrustResolver } from "./identity/wake-trust
 
 export { ingestUntrusted } from "./access/untrusted.js";
 
-export { awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "./memory/domain.js";
+export { statusVerbsFor, DEFAULT_STATUS_VERBS } from "./memory/domain.js";
 
 export type { EngagementRow, ChannelSessionRow, SlackAttachmentRow } from "./operational/store.js";
 

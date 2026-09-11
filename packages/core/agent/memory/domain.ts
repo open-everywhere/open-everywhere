@@ -74,7 +74,6 @@ export interface Domain {
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly externalPolicy?: ExternalPolicyOverride;
-  readonly awarenessWake?: boolean;
   readonly mode?: WindowMode;
   readonly windows?: readonly WindowGroup[];
   readonly engagementTier?: EngagementTier;
@@ -275,12 +274,6 @@ export function ambientSkipFor(
   }
   if (criteriaDomain("org", domains)?.ambientSupervisor === true) return undefined;
   return { reason: "no-domain", via: routing.via };
-}
-
-export function awarenessWakeEnabled(channelKey: string, domains: readonly Domain[]): boolean {
-  const explicit = domainForChannel(channelKey, domains);
-  if (explicit) return explicit.awarenessWake === true;
-  return criteriaDomain("org", domains)?.awarenessWake === true;
 }
 
 export function windowedSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {

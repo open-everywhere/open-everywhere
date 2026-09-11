@@ -3591,7 +3591,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-EVE-CARD",
     title:
-      "eve-native approval card, live (OPE-1056): a DM connector WRITE parks on the card EVE mints — not OE's governance card — the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click",
+      "eve-native approval card, live (OPE-1056): a DM connector WRITE parks on the card EVE mints — not OE's governance card — the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click. 🔴 KNOWN RED: the unified window posts eve's request as TEXT and has no arm that can post an interactive card, so the card poll below always times out — see the head comment for the two ways to close it",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "extended",
