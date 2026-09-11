@@ -28,7 +28,10 @@ const { unifiedSupervisorToken } = await import("../agent/channels/unified-super
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { seedTailWindow, tailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
-const { secondMessageValve, FORCED_OVERRIDE_TURN_LIMIT, noteForcedOverrideThisTurn } = await import("../agent/channels/reply-signal.js");
+const { secondMessageValve, FORCED_OVERRIDE_TURN_LIMIT, noteForcedOverrideThisTurn, REPLY_FORCED_LOOP_REASON } = await import(
+  "../agent/channels/reply-signal.js"
+);
+const { turnCloseoutFor } = await import("../agent/model/turn-closeout.js");
 const { notePendingDelegation, noteDelegationSettled } = await import("../agent/access/pending-delegation-signal.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -627,6 +630,58 @@ const forcedRows = async (): Promise<Record<string, unknown>[]> =>
     );
     ok(noteForcedOverrideThisTurn("turn_86", R, "wake-39") === 1, "§8f/CONTROL: a different turn starts its own record");
   });
+}
+
+{
+  const inTurn = newSession();
+  const w = await wake("C_FOLD_LOOP");
+  const before = posted.length;
+  const seat = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+  ok(seat !== null, "§8g/CONTROL: the fixture's token is a STANDING seat, so the fold gate is live");
+
+  const out = await inTurn(async () => {
+    seedTailWindow(seat);
+    const first = await callReply(w, "turn_87", w, "Part one of the answer.", false);
+    ok(first.posted === true, "§8g/CONTROL: the first `done:false` part posts");
+    const refused = await callReply(w, "turn_87", w, "Part two, stacked under part one.", false);
+    ok(typeof refused.error === "string" && /edit_reply/.test(refused.error), "§8g/CONTROL: the second part draws the FOLD refusal, which spends it for this room");
+    const forced1 = await callReplyForced(w, "turn_87", w, "Part two, forced.", false);
+    const armedAfterOne = turnCloseoutFor("reply-done-teeth-test", "turn_87");
+    const forced2 = await callReplyForced(w, "turn_87", w, "Part three, forced.", false);
+    const forced3 = await callReplyForced(w, "turn_87", w, "Part four, forced.", false);
+    return { forced1, forced2, forced3, armedAfterOne };
+  });
+
+  ok(out.forced1.posted === true && out.forced2.posted === true && out.forced3.posted === true, "§8g: every forced call POSTS — the fix counts more, it never blocks more");
+  ok(posted.length === before + 4, "§8g/ROOM: the room holds the first part and the three forced ones; the refused call reached nobody");
+
+  const rows = (await forcedRows()).filter((d) => d["wakeId"] === w).map((d) => String(d["reason"]));
+  ok(
+    rows.filter((r) => r === "should-be-edit-forced").length === 1,
+    `§8g/AUDIT: 🔴 the spent refusal no longer swallows the override — ONE \`should-be-edit-forced\` row, where the old code wrote none (saw ${rows.join(", ") || "no rows"})`,
+  );
+  ok(
+    rows.filter((r) => r === "answered-this-turn-forced").length === 0,
+    "§8g/CONTROL: 🔴 and NO `answered-this-turn-forced` row — every call is `done:false`, so this leg is the fold gate alone and no sibling gate can carry its pass",
+  );
+
+  ok(
+    out.armedAfterOne === undefined,
+    "§8g/CONTROL: 🔴 the FIRST override arms nothing — one override is a judgement the rule keeps possible",
+  );
+  ok(
+    !out.forced1.note!.includes("this turn ENDS after your next step"),
+    "§8g/CONTROL: …and its note says no such thing either",
+  );
+  ok(
+    out.forced2.note!.includes("this turn ENDS after your next step"),
+    `§8g: 🔴 the SECOND override reaches ${FORCED_OVERRIDE_TURN_LIMIT} and the note announces the turn's end — the old code counted 0 here and said nothing`,
+  );
+  const latch = turnCloseoutFor("reply-done-teeth-test", "turn_87");
+  ok(
+    latch?.reason === REPLY_FORCED_LOOP_REASON,
+    `§8g: 🔴 …and the closeout latch is ARMED under the forced-loop reason, so the next model round-trip ends the turn (saw ${latch?.reason ?? "nothing"})`,
+  );
 }
 
 console.log(`✓ reply-done-teeth: ${passed} assertions passed`);

@@ -13,6 +13,7 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
   "name-drop-mention": { unsupported: "not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake" },
+  "message-edit-wake": { unsupported: "every wake leg admits `action: \"created\"` only — eve's route, the ambient extractor and the stop leg each refuse an edited comment" },
   threads: "supported",
   rooms: { unsupported: "no standing container — every GitHub container is one issue or pull request" },
   dm: { unsupported: "no DM plane — GitHub carries no person-to-person message channel" },

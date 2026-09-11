@@ -19,8 +19,8 @@ export function readOnlyBanner(silo: MemorySilo): string {
   }
   return (
     "<!-- READ-ONLY baseline — editing these files is BLOCKED and will NOT save. " +
-    "To record something for THIS channel, use the `remember` tool (it writes to this " +
-    "channel's own writable memory), not these files. -->\n\n"
+    "To record something for THIS channel, edit a file in this channel's OWN writable silo " +
+    "(the memory index names it), not these files. -->\n\n"
   );
 }
 

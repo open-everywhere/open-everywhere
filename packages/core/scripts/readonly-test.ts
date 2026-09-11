@@ -26,10 +26,11 @@ ok(!isAppendOnlyBacking(baseline), "sqlite baseline → NOT append-only");
 const nb = readOnlyBanner(notion);
 ok(nb.includes("READ-ONLY") && nb.includes("Notion tools"), "notion banner → redirects to the Notion tools");
 ok(nb.includes("NOT save") && nb.includes("BLOCKED"), "notion banner → states edits are blocked + not saved");
-ok(!nb.includes("`remember`"), "notion banner → does NOT point at `remember` (wrong route for a Notion cache)");
+ok(!nb.includes("remember"), "notion banner → does NOT point at a `remember` verb (there is none, and it would be the wrong route for a Notion cache anyway)");
 
 const bb = readOnlyBanner(baseline);
-ok(bb.includes("READ-ONLY") && bb.includes("`remember`"), "baseline banner → redirects to `remember`");
+ok(bb.includes("READ-ONLY") && bb.includes("writable silo"), "baseline banner → redirects to this channel's own writable silo");
+ok(!bb.includes("remember"), "🔴 baseline banner → names NO `remember` tool — OPE-389 deleted the verb, and a redirect to a tool that does not exist redirects nowhere");
 ok(!bb.includes("Notion tools"), "baseline banner → does NOT mention Notion tools");
 
 ok(hasReadOnlyBanner(nb) && hasReadOnlyBanner(bb), "hasReadOnlyBanner detects both variants");

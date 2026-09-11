@@ -28,6 +28,7 @@ export const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = [
   { id: "addressed-leg", label: "Addressed (@mention) leg", section: "§2.2", group: "shape" },
   { id: "ambient-leg", label: "Ambient (non-mention) leg", section: "§2.5", group: "shape" },
   { id: "name-drop-mention", label: "Name-drop / structured mention", section: "§2.5", group: "shape" },
+  { id: "message-edit-wake", label: "Message-EDIT wake", section: "§2.5", group: "shape" },
   { id: "threads", label: "Threads", section: "§4.6", group: "shape" },
   { id: "rooms", label: "Standing rooms *(not §4.5's `read_channel` container)*", section: "§4.7.1", group: "shape" },
   { id: "dm", label: "DM (`dm`)", section: "§4.7.2", group: "shape" },

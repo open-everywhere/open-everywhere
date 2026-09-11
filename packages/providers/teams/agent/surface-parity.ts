@@ -15,6 +15,7 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },
   "name-drop-mention": { unsupported: "not built yet — Leg A wakes on an @mention or room chatter, never on a name-drop match" },
+  "message-edit-wake": { unsupported: "an edit arrives as a `messageUpdate` activity, and the inbound parser admits `message`, `invoke` and `conversationUpdate` only" },
   threads: "supported",
   rooms: "supported",
   dm: "supported",

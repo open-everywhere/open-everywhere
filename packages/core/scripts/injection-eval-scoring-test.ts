@@ -1,7 +1,7 @@
 import { eveFrameworkToolDefinition, registerSyntheticConfig, unifiedCtx } from "./eval/_offline-seat.js";
 import { buildWorkerSeatToolset, workerSeatCtx, workerSeatRoster } from "./eval/_worker-seat.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
-import { WORKER_WITHHELD_TOOLS } from "../agent/access/worker-seat.js";
+import { WORKER_UNMOUNTED_TOOLS } from "../agent/access/worker-seat.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { windowGrainOf } from "../agent/identity/binding.js";
 import addRoutineRuleTool from "../agent/tools/add_routine_rule.js";
@@ -867,18 +867,18 @@ async function checkWorkerSeat(): Promise<void> {
   const surface = [...new Set([...Object.keys(WINDOW_GATED_TOOLS), ...WINDOW_UNGATED_TOOLS])];
   const expected = surface
     .filter((n) => (WINDOW_GATED_TOOLS[n] ? WINDOW_GATED_TOOLS[n].includes("task") : WINDOW_UNGATED_TOOLS.has(n)))
-    .filter((n) => !WORKER_WITHHELD_TOOLS.has(n))
+    .filter((n) => !WORKER_UNMOUNTED_TOOLS.has(n))
     .sort();
   ok(
     roster.length === expected.length && roster.every((n, i) => n === expected[i]),
-    "workerSeatRoster: equals (WINDOW_UNGATED_TOOLS ∪ task-gated) \\ WORKER_WITHHELD_TOOLS, re-derived independently",
+    "workerSeatRoster: equals (WINDOW_UNGATED_TOOLS ∪ task-gated) \\ WORKER_UNMOUNTED_TOOLS, re-derived independently — the union of the broken set and the seat-reserved one (OPE-1660)",
   );
-  ok(roster.length > 0 && !roster.some((n) => WORKER_WITHHELD_TOOLS.has(n)), "workerSeatRoster: holds no withheld name");
+  ok(roster.length > 0 && !roster.some((n) => WORKER_UNMOUNTED_TOOLS.has(n)), "workerSeatRoster: holds no withheld name");
   ok(!roster.includes("agent"), "workerSeatRoster: holds NO `agent` — the manifest puts that row on standing+thread, so a worker cannot delegate");
   const workerOnly = workerOnlyTools("standing");
   ok(workerOnly.length > 0 && workerOnly.every((n) => roster.includes(n)), "workerSeatRoster: contains every name `workerOnlyTools(\"standing\")` calls worker-only");
   ok(workerOnly.includes("bash"), "workerOnlyTools: `bash` is worker-only on a standing seat with the shipped withheld set");
-  const withBashWithheld = workerOnlyTools("standing", WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, new Set([...WORKER_WITHHELD_TOOLS, "bash"]));
+  const withBashWithheld = workerOnlyTools("standing", WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, new Set([...WORKER_UNMOUNTED_TOOLS, "bash"]));
   ok(!withBashWithheld.includes("bash"), "workerOnlyTools: withholding `bash` removes it — the withheld filter is live, not decorative");
   ok(workerSeatRoster().includes("bash"), "workerSeatRoster: the injected withheld set did not leak into the live roster");
 
@@ -908,8 +908,8 @@ async function checkWorkerSeat(): Promise<void> {
   const set = await buildWorkerSeatToolset({ ctx, calls: [], resultFor: () => ({ ok: true }), onRemoved: (n) => removed.push(...n) });
   const mounted = Object.keys(set);
   ok(mounted.length > 0 && mounted.every((n) => roster.includes(n)), "buildWorkerSeatToolset: every mounted name is on the worker roster");
-  ok(!mounted.some((n) => WORKER_WITHHELD_TOOLS.has(n)), "buildWorkerSeatToolset: no withheld name survives the subtraction");
-  ok(removed.length > 0 && removed.every((n) => WORKER_WITHHELD_TOOLS.has(n)), "buildWorkerSeatToolset: the subtraction RAN and removed only withheld names");
+  ok(!mounted.some((n) => WORKER_UNMOUNTED_TOOLS.has(n)), "buildWorkerSeatToolset: no withheld name survives the subtraction");
+  ok(removed.length > 0 && removed.every((n) => WORKER_UNMOUNTED_TOOLS.has(n)), "buildWorkerSeatToolset: the subtraction RAN and removed only withheld names");
   ok(!mounted.includes("agent"), "buildWorkerSeatToolset: mounts no `agent` — leg 5's `delegate` sink has nowhere to land on this seat");
   ok(mounted.includes("reply") && mounted.includes("add_routine_rule"), "buildWorkerSeatToolset: mounts the corpus's other two sinks, so leg 5's worker arm can score them");
   ok(mounted.includes("bash") && mounted.includes("web_fetch"), "buildWorkerSeatToolset: the `sandbox_tools` kit resolver mounted the wide hands under their own names");

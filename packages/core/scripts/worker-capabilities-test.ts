@@ -7,9 +7,12 @@ import {
   WORKER_INDEX_MACHINERY,
   WORKER_INDEX_SEAT_VERBS,
   checkWorkerCapabilityGroups,
+  checkWorkerSeatReservedTools,
   renderWorkerCapabilityIndex,
   workerOnlyTools,
 } from "../agent/access/worker-capabilities.js";
+import { DM_SEAT_CARVE_IN } from "../agent/access/lean-seat.js";
+import { allowedOnWorkerSeat, restrictToolsetForWorkerSeat } from "../agent/access/worker-seat.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../agent/access/worker-capability-index.generated.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
 
@@ -186,6 +189,41 @@ for (const route of ["none", "file-tools"] as const) {
 
 for (const verb of WORKER_INDEX_SEAT_VERBS) {
   ok(!WORKER_ONLY_TOOLS_STANDING.includes(verb), `"${verb}" is the seat's own verb and is never listed as worker-only`);
+}
+
+{
+  const carveIn = [...DM_SEAT_CARVE_IN];
+  ok(carveIn.length > 0, "§7 precondition: the carve-in names at least one verb, so the loop below asserts something");
+
+  for (const verb of carveIn) {
+    ok(
+      WINDOW_UNGATED_TOOLS.has(verb),
+      `🔴 §7 PREMISE: "${verb}" is an UNGATED row — which is why a worker mounted it, and why absence had to be added rather than assumed`,
+    );
+    eq(allowedOnWorkerSeat(verb), false, `🔴 §7 "${verb}" is NOT allowed on a delegated worker — containment, not routing`);
+  }
+
+  const toolset: Record<string, unknown> = { post_message: {}, bash: {} };
+  for (const verb of carveIn) toolset[verb] = {};
+  const removed = restrictToolsetForWorkerSeat(toolset);
+  for (const verb of carveIn) {
+    ok(!(verb in toolset), `🔴 §7 the worker's assembled toolset no longer HOLDS "${verb}" — absence, so there is no refusal for an injected instruction to argue with`);
+    ok(removed.includes(verb), `…and the removal is REPORTED, so audit/worker-toolset.ts records it`);
+  }
+  ok("post_message" in toolset, "🔴 §7 NEGATIVE CONTROL: an ungated verb that is NOT a carve-in survives on a worker");
+  ok("bash" in toolset, "…and so does the worker's own wide-hands kit");
+
+  eq(checkWorkerSeatReservedTools(), [], "🔴 §7 the reserved set and the DM carve-in name the SAME verbs today");
+  eq(
+    checkWorkerSeatReservedTools(new Set([...DM_SEAT_CARVE_IN, "future_dm_verb"])).length,
+    1,
+    "🔴 §7 …and a carve-in verb with no reserved entry REDS — the drift this join exists to catch",
+  );
+  eq(
+    checkWorkerSeatReservedTools(new Set(["link_identity"]), new Set(["link_identity", "stray_verb"])).length,
+    1,
+    "🔴 §7 …and so does a reserved entry that is not a carve-in verb, so the set cannot grow into a second withheld list",
+  );
 }
 
 eq(

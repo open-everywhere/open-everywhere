@@ -182,6 +182,7 @@ export interface Scenario {
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const EDIT_SETTLE_WAIT = 45_000;
+const AUDIT_ROW_WAIT = 60_000;
 const NOTION_CONNECTOR = "notion";
 function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
   return {
@@ -491,7 +492,11 @@ export const SCENARIOS: readonly Scenario[] = [
       if (ctx.auditRead) {
         const claimsSaved = /remember|stored|noted|got it|saved/i.test(ack1.text);
         const claimsAlready = /already (?:stored|saved|noted|in (?:our |the )?memory|remembered|know)/i.test(ack1.text);
-        const writes = await ctx.auditRead({ sinceIso: teach1Start, platform: "slack", actions: ["memory.write"] });
+        let writes = await ctx.auditRead({ sinceIso: teach1Start, platform: "slack", actions: ["memory.write"] });
+        for (let i = 0; i < 12 && writes.length === 0 && claimsSaved && !claimsAlready; i++) {
+          await sleep(5_000);
+          writes = await ctx.auditRead({ sinceIso: teach1Start, platform: "slack", actions: ["memory.write"] });
+        }
         ctx.gate(
           !claimsSaved || claimsAlready || writes.length > 0,
           `grounding: the ack claims the fact was stored ⇒ a real memory.write audit row exists (found ${writes.length}) — no false save-claim`,
@@ -1517,9 +1522,17 @@ export const SCENARIOS: readonly Scenario[] = [
           }),
           'J-MPIM: a surface.wake_admitted row (door "dm", dmKind "mpim") proves the GROUP-DM door admitted it — the mpim window seat owns the turn, not the native mention path',
         );
-        const posts = await ctx.auditRead({ sinceIso, platform: "slack", actions: ["reply.post"] });
+        const auditRead = ctx.auditRead;
+        const posts = await pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso, platform: "slack", actions: ["reply.post"] });
+            const own = rows.filter((r) => (r.surface ?? "").endsWith(`/${mpim.channelId}`));
+            return own.length > 0 ? own : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: "J-MPIM: a slack `reply.post` audit row carrying the group DM's own surface key" },
+        );
         ctx.gate(
-          posts.some((r) => (r.surface ?? "").endsWith(`/${mpim.channelId}`)),
+          posts !== undefined,
           "J-MPIM: a slack `reply.post` row carries the GROUP DM's own surface key — the reply is filed under the mpim, which is what keeps its seat fenced off every other room",
         );
       } else {

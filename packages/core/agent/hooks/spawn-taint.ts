@@ -16,7 +16,7 @@ import {
   markSubagentTainted,
   claimSubagentCallClean,
   markSubagentCallTainted,
-  subagentCallTaintStatus,
+  subagentCallTaintRecord,
   rememberTaskCall,
   rememberTaskAgent,
   taskCallLink,
@@ -42,6 +42,7 @@ import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
+import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
@@ -186,13 +187,33 @@ registerTaintFlipObserver(() => {
   }
   if (who === null) return;
   void markSubagentTainted(who.org, who.sessionId);
-  if (who.parent !== null) {
-    void markSubagentCallTainted(who.org, who.parent.sessionId, who.parent.callId);
-  }
+  writeCallTaintMarker();
 });
+
+let callTaintMarkerQueue: Promise<unknown> = Promise.resolve();
+
+function writeCallTaintMarker(): void {
+  let who: { org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null = null;
+  try {
+    who = subagentIdentity.get();
+  } catch {
+    who = null;
+  }
+  if (who === null || who.parent === null) return;
+  let kinds: readonly string[] = [];
+  try {
+    kinds = taintKindsThisTurn();
+  } catch {
+    kinds = [];
+  }
+  const link = who.parent;
+  const org = who.org;
+  callTaintMarkerQueue = callTaintMarkerQueue.then(() => markSubagentCallTainted(org, link.sessionId, link.callId, kinds)).catch(() => undefined);
+}
 
 registerTaintKindObserver(() => {
   recordTurnTaintForChildren();
+  writeCallTaintMarker();
 });
 
 const TAINT_FORWARD_ACTION = "taint.forward";
@@ -364,6 +385,11 @@ export function adoptedParentTurnTaintThisTurn(ctx: HookContext): boolean {
   }
 }
 
+function adoptKinds(kinds: readonly IngestionKind[]): void {
+  if (kinds.length === 0) markUntrustedIngestedThisTurn();
+  else for (const kind of kinds) markUntrustedIngestedThisTurn(kind);
+}
+
 export function adoptParentTurnTaint(ctx: HookContext): boolean {
   if (!taintEnabled()) return false;
   try {
@@ -380,8 +406,7 @@ export function adoptParentTurnTaint(ctx: HookContext): boolean {
       const key = memoKey(stamp.raw, ownTurnId);
       return cur.includes(key) ? cur : [...cur, key].slice(-MAX_REMEMBERED_STAMPS);
     });
-    if (stamp.kinds.length === 0) markUntrustedIngestedThisTurn();
-    else for (const kind of stamp.kinds) markUntrustedIngestedThisTurn(kind);
+    adoptKinds(stamp.kinds);
     const sessionId = (ctx as { session?: { id?: string } }).session?.id;
     void appendAudit({
       org: deploymentOrg(),
@@ -405,9 +430,9 @@ export function adoptParentTurnTaint(ctx: HookContext): boolean {
 export async function adoptSubagentTaint(callId: string, ownSessionId: string): Promise<boolean> {
   if (!taintEnabled()) return false;
   try {
-    const status = await subagentCallTaintStatus(deploymentOrg(), ownSessionId, callId);
-    if (status === false) return false;
-    markUntrustedIngestedThisTurn();
+    const record = await subagentCallTaintRecord(deploymentOrg(), ownSessionId, callId);
+    if (record?.tainted === false) return false;
+    adoptKinds(record?.kinds ?? []);
     return true;
   } catch {
     markUntrustedIngestedThisTurn();
@@ -493,6 +518,7 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
   const org = deploymentOrg();
   let marker: "clean" | "tainted" | "lost" | "off" = "off";
   let adopted = false;
+  let kinds: readonly IngestionKind[] = [];
   try {
     if (taintEnabled()) {
       const link = await taskCallLink(org, view.taskId);
@@ -500,16 +526,18 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
         marker = "lost";
       } else {
         const parentSession = parentSessionOfChildToken(link.childToken) ?? ownSessionId;
-        const status = await subagentCallTaintStatus(org, parentSession, link.callId);
-        marker = status === false ? "clean" : status === true ? "tainted" : "lost";
+        const record = await subagentCallTaintRecord(org, parentSession, link.callId);
+        marker = record === undefined ? "lost" : record.tainted ? "tainted" : "clean";
+        if (record?.tainted === true) kinds = record.kinds;
       }
       if (marker !== "clean") {
-        markUntrustedIngestedThisTurn();
+        adoptKinds(kinds);
         adopted = true;
       }
     }
   } catch {
     marker = "lost";
+    kinds = [];
     markUntrustedIngestedThisTurn();
     adopted = true;
   }
@@ -525,6 +553,7 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
       agent: view.agentId ?? "",
       marker,
       adopted,
+      kinds: [...kinds],
     },
   }).catch(() => undefined);
   return adopted;
@@ -536,6 +565,7 @@ export async function applyTaskSettlement(views: readonly TaskSummary[], ownSess
   const inheritedWakeId = inheritedWakeStampOf(bind);
   const wakeTurnId = currentTurnId(bind);
   for (const view of views) noteDelegationSettled(wakeTurnId, view.taskId);
+  for (const view of views) await clearGenerationDelegation(deploymentOrg(), view.taskId);
   for (const view of views) {
     const install = await installTaskWake({
       org: deploymentOrg(),
@@ -607,12 +637,14 @@ export default defineHook({
           const bind = ctx as unknown as BindableContext;
           const dispatchTurnId = currentTurnId(bind);
           const dispatchWakeId = addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind);
+          const ownWindowToken = resolveOwnWindowToken(bind);
           const minted = await openTaskWake({
             org: deploymentOrg(),
             taskId: receipt.taskId,
             parentWakeId: dispatchWakeId,
-            windowToken: resolveOwnWindowToken(bind),
+            windowToken: ownWindowToken,
           });
+          await noteGenerationDelegation(deploymentOrg(), ownWindowToken, receipt.taskId);
           if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
           notePendingDelegation(dispatchTurnId, receipt.taskId, dispatchWakeId);
           noteTaskDispatched(receipt.taskId);

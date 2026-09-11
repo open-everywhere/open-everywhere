@@ -485,6 +485,16 @@ export function _resetDmTrustCache(): void {
   _resetAuthorMemberCache();
 }
 
+export function mentionSiblingSuppressed(input: {
+  readonly authoredText: string;
+  readonly subtype?: string;
+  readonly botUserId?: string;
+}): boolean {
+  if (input.botUserId === undefined || input.botUserId.length === 0) return false;
+  if (input.subtype === "message_changed") return false;
+  return input.authoredText.includes(`<@${input.botUserId}>`);
+}
+
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo(recordWakeFailure);
@@ -736,7 +746,15 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       }
       if (decision.dmKind === "mpim") {
         const { userId: dmBotUserId } = await getBotIdentity();
-        if (dmBotUserId && dev.authoredText.includes(`<@${dmBotUserId}>`)) return OK();
+        if (
+          mentionSiblingSuppressed({
+            authoredText: dev.authoredText,
+            ...(dev.subtype === undefined ? {} : { subtype: dev.subtype }),
+            ...(dmBotUserId === undefined ? {} : { botUserId: dmBotUserId }),
+          })
+        ) {
+          return OK();
+        }
       }
       persistAttachments(dev);
       if (!(await notYetSeen(decision.env, dev))) return OK();
@@ -953,7 +971,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     persistAttachments(ev);
 
     const { userId: botUserId } = await getBotIdentity();
-    if (botUserId && ev.authoredText.includes(`<@${botUserId}>`)) return OK();
+    if (mentionSiblingSuppressed({ authoredText: ev.authoredText, ...(ev.subtype === undefined ? {} : { subtype: ev.subtype }), ...(botUserId === undefined ? {} : { botUserId }) })) {
+      return OK();
+    }
 
     if (!(await notYetSeen(decision.env, ev))) return OK();
 

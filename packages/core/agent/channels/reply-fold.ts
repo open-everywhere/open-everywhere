@@ -104,7 +104,7 @@ export async function refuseIfShouldFold(input: {
   readonly force?: boolean | undefined;
 }): Promise<number> {
   const room = input.window?.container;
-  if (wasFoldRefusedThisTurn(input.turnId, room)) return 0;
+  const refusedThisTurn = wasFoldRefusedThisTurn(input.turnId, room);
   const target = await replyFoldTarget({
     store: input.store,
     window: input.window,
@@ -118,6 +118,7 @@ export async function refuseIfShouldFold(input: {
     if (overrides === 1) await auditReplyForced(input.audit, REPLY_FOLD_FORCED_AUDIT_REASON);
     return overrides;
   }
+  if (refusedThisTurn) return 0;
   markFoldRefusedThisTurn(input.turnId, room);
   await auditReplyRefused(input.audit, REPLY_FOLD_REFUSAL_REASON);
   throw new Error(foldIntoEditRefusalMessage(target, input.force !== undefined, input.answeringWake));

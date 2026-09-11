@@ -13,6 +13,7 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": { supported: "the `direct` wake — a name-drop or structured mention, not a platform @mention" },
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
   "name-drop-mention": "supported",
+  "message-edit-wake": { unsupported: "the webhook admits `comment.created` only — `comment.updated` answers `ignored` at step 4" },
   threads: { supported: "thread-first — every wake arrives scoped to one discussion" },
   rooms: { unsupported: "no standing container — a discussion is minted by its first comment and anchored to one block" },
   dm: { unsupported: "no DM plane — Notion carries no person-to-person message channel" },

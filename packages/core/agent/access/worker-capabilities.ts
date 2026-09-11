@@ -1,6 +1,6 @@
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, type MemoryRecallRoute } from "./window-gate-manifest.js";
 import { DM_SEAT_CARVE_IN, allowedOnLeanSeat } from "./lean-seat.js";
-import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat } from "./worker-seat.js";
+import { WORKER_SEAT_RESERVED_TOOLS, WORKER_UNMOUNTED_TOOLS, allowedOnWorkerSeat } from "./worker-seat.js";
 import type { WindowGrain } from "../identity/binding.js";
 
 export interface WorkerCapabilityGroup {
@@ -166,7 +166,7 @@ export function workerOnlyTools(
   grain: WindowGrain,
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
-  withheldFromWorker: ReadonlySet<string> = WORKER_WITHHELD_TOOLS,
+  withheldFromWorker: ReadonlySet<string> = WORKER_UNMOUNTED_TOOLS,
 ): readonly string[] {
   const surface = [...new Set([...Object.keys(gated), ...ungated])];
   return surface
@@ -201,6 +201,26 @@ export function checkWorkerCapabilityGroups(
     if (seen.has(name) || WORKER_INDEX_MACHINERY.has(name) || WORKER_INDEX_LIFECYCLE.has(name) || WORKER_INDEX_SEAT_VERBS.has(name)) continue;
     problems.push(
       `tool "${name}" has NO worker-capability group — add it to a group in agent/access/worker-capabilities.ts (or, if it is kit machinery, grain lifecycle, or one of the seat's own conversational verbs, to the matching exclusion set). There is deliberately no default: a tool with no group is a capability a delegating seat can never be told about.`,
+    );
+  }
+  return problems;
+}
+
+export function checkWorkerSeatReservedTools(
+  carveIn: ReadonlySet<string> = DM_SEAT_CARVE_IN,
+  reserved: ReadonlySet<string> = WORKER_SEAT_RESERVED_TOOLS,
+): string[] {
+  const problems: string[] = [];
+  for (const name of carveIn) {
+    if (reserved.has(name)) continue;
+    problems.push(
+      `DM carve-in verb "${name}" is NOT in WORKER_SEAT_RESERVED_TOOLS (agent/access/worker-seat.ts) — a delegated worker would MOUNT it, and the carve-in would be routing rather than containment. Add the name there.`,
+    );
+  }
+  for (const name of reserved) {
+    if (carveIn.has(name)) continue;
+    problems.push(
+      `"${name}" is in WORKER_SEAT_RESERVED_TOOLS (agent/access/worker-seat.ts) but is not a DM carve-in verb — that set holds the carve-in and nothing else. A verb that is broken on a worker belongs in WORKER_WITHHELD_TOOLS under its own criterion.`,
     );
   }
   return problems;

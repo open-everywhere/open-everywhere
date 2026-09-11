@@ -1,5 +1,6 @@
 import { prApiHeaders } from "../scm/pr.js";
 import { parseConfigFacts, type ConfigFacts } from "./config-facts.js";
+import { fetchCloudStatusFacts, type CloudStatusFacts } from "./facts-cloud-status.js";
 import { readZipTextEntry, ZipReadError } from "./zip.js";
 
 export type ArtifactFetchFn = (
@@ -56,6 +57,7 @@ export interface FactsProvenance {
 }
 
 export type FactsSource =
+  | Extract<CloudStatusFacts, { kind: "cloud-status" }>
   | {
       readonly kind: "artifact";
       readonly facts: ConfigFacts;
@@ -89,10 +91,6 @@ export interface FetchConfigFactsOpts {
 }
 
 export async function fetchConfigFacts(opts: FetchConfigFactsOpts): Promise<FactsSource> {
-  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as ArtifactFetchFn);
-  const apiBase = opts.apiBase ?? "https://api.github.com";
-  const headers = prApiHeaders(opts.token);
-
   if (opts.changedPaths !== undefined && !triggersConfigDiff(opts.changedPaths)) {
     return {
       kind: "not-triggered",
@@ -102,6 +100,31 @@ export async function fetchConfigFacts(opts: FetchConfigFactsOpts): Promise<Fact
         `this PR. It says nothing about the CODE the PR changes — code is reviewed as code (CODEOWNERS), and no config diff can see it.`,
     };
   }
+
+  const viaArtifact = await fetchWorkflowArtifactFacts(opts);
+  if (viaArtifact.kind === "artifact") return viaArtifact;
+
+  const viaStatus = await fetchCloudStatusFacts({
+    repo: opts.repo,
+    headSha: opts.headSha,
+    token: opts.token,
+    ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
+    ...(opts.apiBase ? { apiBase: opts.apiBase } : {}),
+  });
+  if (viaStatus.kind === "cloud-status") return viaStatus;
+
+  return {
+    kind: "unavailable",
+    reason: `NEITHER facts provenance produced a document. Actions artifact: ${viaArtifact.reason} — Commit status: ${viaStatus.reason}`,
+  };
+}
+
+async function fetchWorkflowArtifactFacts(
+  opts: FetchConfigFactsOpts,
+): Promise<Extract<FactsSource, { kind: "artifact" }> | { kind: "unavailable"; reason: string }> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as ArtifactFetchFn);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const headers = prApiHeaders(opts.token);
 
   let runs: readonly WorkflowRun[];
   try {

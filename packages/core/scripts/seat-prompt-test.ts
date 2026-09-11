@@ -401,4 +401,61 @@ function ok(cond: boolean, label: string): void {
   ok(!closingText.includes(refusal), "🔴 §12: nor `closing-text`, which reads none of the paragraph at all");
 }
 
+{
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
+  const arms = [
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "wake-addressed", pinned: false } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "reply-only" } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "closing-text" } }),
+    seat,
+    worker,
+    renderSeatPersona({ seatKind: "worker", midTurnPost: false }),
+  ];
+  for (const [i, text] of arms.entries()) {
+    ok(text.includes("Say what happened, not what you meant to do"), `🔴 §13: arm ${i} carries the honest-ack block — the defect is in the sentence, so no arm is exempt`);
+  }
+  ok(
+    seat.includes("claims an execution YOU never made"),
+    "🔴 §13: it says WHY a started-not-finished claim is false — nothing is running behind it (S-AWS-BOUNDARY)",
+  );
+  ok(
+    seat.includes("Handing the work to a worker is the one case that differs") && seat.includes("its result comes back here"),
+    "🔴 §13: a delegated hand-off is carved out — the seat is still told to say the work is running",
+  );
+  ok(
+    seat.includes("does not discharge that reply: say in one line what you are doing"),
+    "🔴 §13/CONTROL: …and the instruction it must not contradict is really in the same prompt, so this is a real conflict and not a hypothetical",
+  );
+  ok(
+    seat.includes("never true either way is naming an outcome you\nhave not got"),
+    "🔴 §13: the invariant that survives BOTH cases is stated last — the carve-out narrows the rule, it does not create an exemption",
+  );
+  ok(
+    seat.includes("A fact is stored when the file edit happened") && seat.includes("A\nroutine exists when the tool returned its row"),
+    "🔴 §13: …and it names the two measured effects by what actually lands — the file edit (J2) and the returned row (S23)",
+  );
+  ok(
+    seat.includes("Say which permission is missing and who can grant it"),
+    "🔴 §13: the refusal half tells the seat to pass on the BOUNDARY, which is what S-PR-BOUNDARY's reply replaced with a failed-task story",
+  );
+  ok(
+    seat.includes('saying\n"the task failed" or "I could not verify it" instead reports a different, and wrong,\nreason'),
+    "🔴 §13: …and it names the two wrong reasons verbatim, so the model can match its own draft against them",
+  );
+  for (const verb of ["`remember`", "`agent`", "`reply`", "`no_reply`"]) {
+    ok(!seat.split("### Say what happened")[1]!.split("###")[0]!.includes(verb), `🔴 §13/CONTROL: the block names no ${verb} — a rule about a sentence must render on an arm that holds no tool at all`);
+  }
+
+  ok(!seat.includes("remember"), "🔴 §13: the standing persona names NO `remember` tool — the verb was deleted by OPE-389");
+  ok(
+    seat.includes("save it to this channel's memory the way the memory index says this") && seat.includes("Saving is a FILE"),
+    "🔴 §13: …it points at the memory index for the route and says the save is a file EDIT",
+  );
+  ok(
+    seat.includes("never say a fact is stored unless the edit happened"),
+    "🔴 §13: …and forbids the save-claim without the edit, which is exactly what J2's grounding gate measures",
+  );
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

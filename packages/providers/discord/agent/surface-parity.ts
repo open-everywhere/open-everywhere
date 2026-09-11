@@ -13,6 +13,7 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": "supported",
   "ambient-leg": "supported",
   "name-drop-mention": "supported",
+  "message-edit-wake": { unsupported: "the gateway relay subscribes to MessageCreate only — an edit raises MessageUpdate, which nothing forwards" },
   threads: { supported: "a thread is itself a channel" },
   rooms: "supported",
   dm: "supported",

@@ -11,9 +11,14 @@ import {
   GENERATION_RETIREMENT_PRINCIPAL,
   GENERATION_RETIREMENT_REASON,
   GENERATION_RETIRE_SKIPPED_AUDIT_ACTION,
+  GENERATION_DELEGATION_TTL_MS,
+  MAX_GENERATION_DELEGATIONS,
   MAX_PENDING,
   RESET_STATUS_RETIRED,
+  clearGenerationDelegation,
   drainGenerationRetirements,
+  generationOwedDelegation,
+  noteGenerationDelegation,
   noteGenerationForRetirement,
   retirementVerdict,
   takeGenerationsForRetirement,
@@ -23,6 +28,7 @@ import {
 } from "../agent/channels/generation-retirement.js";
 import { getOrCreateDmSeat, dmSeatThresholds } from "../agent/channels/dm-seat.js";
 import { dmWindowRegistryKey, unifiedSupervisorToken } from "../agent/channels/unified-supervisor.js";
+import { WAKE_TARGET_TTL_MS } from "../agent/channels/unified-window.js";
 
 const REPO_ROOT = join(import.meta.dirname, "../../..");
 
@@ -66,8 +72,9 @@ const throwingFrom: RetirementFrom = () => ({
 function storeStub(input: {
   readonly row?: { readonly token: string } | null;
   readonly anchor?: unknown;
-  readonly throwOn?: "registry" | "turn";
-}): Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow"> {
+  readonly owed?: readonly string[];
+  readonly throwOn?: "registry" | "turn" | "delegation";
+}): Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow" | "getTaskResult"> {
   return {
     async getChannelSession() {
       if (input.throwOn === "registry") throw new Error("store blip");
@@ -77,7 +84,11 @@ function storeStub(input: {
       if (input.throwOn === "turn") throw new Error("store blip");
       return (input.anchor ?? null) as never;
     },
-  } as Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow">;
+    async getTaskResult() {
+      if (input.throwOn === "delegation") throw new Error("store blip");
+      return input.owed === undefined ? null : JSON.stringify({ tasks: input.owed });
+    },
+  } as Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow" | "getTaskResult">;
 }
 
 async function rowsFor(action: string): Promise<readonly { detail?: Record<string, unknown>; principalId?: string; platform?: string; workspace?: string; surface?: string }[]> {
@@ -115,17 +126,24 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
 }
 
 {
-  const base = { token: OUTGOING, incomingToken: INCOMING, registry: "rotated" as const, turn: "none" as const };
-  eq(retirementVerdict(base), "retire", "a rotated generation with no live turn is RETIRED");
+  const base = { token: OUTGOING, incomingToken: INCOMING, registry: "rotated" as const, turn: "none" as const, delegation: "none" as const };
+  eq(retirementVerdict(base), "retire", "a rotated generation with no live turn and no owed worker is RETIRED");
   eq(retirementVerdict({ ...base, incomingToken: OUTGOING }), "skip-incoming", "🔴 the token this wake is being delivered to is never retired");
   eq(retirementVerdict({ ...base, registry: "still-live" }), "skip-still-live", "🔴 a registry row still pointing at the token means the rotation did not complete");
   eq(retirementVerdict({ ...base, turn: "live" }), "skip-live-turn", "🔴 a live turn is not cancelled to reap a worker");
+  eq(retirementVerdict({ ...base, delegation: "owed" }), "skip-owed-delegation", "🔴 OPE-1620: a generation that still owes a worker its answer is not retired — eve's reaper does not spare a `working` task");
   eq(retirementVerdict({ ...base, registry: "unreadable" }), "skip-unreadable", "an unreadable registry refuses — a read that proves nothing is not permission");
   eq(retirementVerdict({ ...base, turn: "unreadable" }), "skip-unreadable", "…and so does an unreadable anchor");
+  eq(retirementVerdict({ ...base, delegation: "unreadable" }), "skip-unreadable", "🔴 …and so does an unreadable owed-delegation row — the third read fails in the same direction as the other two");
   eq(
-    retirementVerdict({ token: OUTGOING, incomingToken: OUTGOING, registry: "unreadable", turn: "live" }),
+    retirementVerdict({ token: OUTGOING, incomingToken: OUTGOING, registry: "unreadable", turn: "live", delegation: "owed" }),
     "skip-incoming",
     "the incoming guard is decided first, so it names the real reason even when every read also refuses",
+  );
+  eq(
+    retirementVerdict({ ...base, turn: "live", delegation: "owed" }),
+    "skip-live-turn",
+    "a generation with BOTH a live turn and an owed worker is audited as the live turn — the fact that would cost a human's turn a \"Stood down\" note",
   );
 }
 
@@ -295,4 +313,113 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
   );
 }
 
-console.log(`✓ generation-retirement: ${String(n)} assertions passed (OPE-627: rotation retires the outgoing generation, so eve's child reaper takes its parked workers)`);
+async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token: string): Promise<readonly string[]> {
+  const raw = await store.getTaskResult(ORG, `oe-gen-owes:${token}`);
+  return raw === null ? [] : ((JSON.parse(raw) as { tasks: string[] }).tasks ?? []);
+}
+
+{
+  const store = getOperationalStore();
+  const GEN_A = unifiedSupervisorToken("payments", 900);
+  const GEN_B = unifiedSupervisorToken("payments", 901);
+
+  eq(GENERATION_DELEGATION_TTL_MS, WAKE_TARGET_TTL_MS, "🔴 the ledger TTL IS the wake-target TTL — past it the task's own wake row has expired, so its report could not be delivered anyway");
+
+  await noteGenerationDelegation(ORG, GEN_A, "task-1", store);
+  eq(await generationOwedDelegation(ORG, GEN_A, store), "owed", "🔴 §12a: a dispatch under generation A is recorded as owed BY GENERATION A");
+  eq(await generationOwedDelegation(ORG, GEN_B, store), "none", "🔴 §12a NEGATIVE CONTROL: …and generation B owes nothing — the row is keyed on the token, not on the deployment");
+
+  await noteGenerationDelegation(ORG, GEN_A, "task-1", store);
+  eq((await rawOwedRow(store, GEN_A)).length, 1, "§12b: re-recording one task id does not double it");
+  await noteGenerationDelegation(ORG, GEN_A, "task-2", store);
+  eq((await rawOwedRow(store, GEN_A)).length, 2, "§12b: …and a second dispatch is a second owed task");
+
+  await clearGenerationDelegation(ORG, "task-1", store);
+  eq(await rawOwedRow(store, GEN_A), ["task-2"], "🔴 §12c: a settlement clears the task from the generation that DISPATCHED it, not from the seat's current one — and leaves its other owed task alone");
+  eq(await generationOwedDelegation(ORG, GEN_A, store), "owed", "§12c: …so the generation still owes, and is still not retirable");
+  await clearGenerationDelegation(ORG, "task-2", store);
+  eq(await store.getTaskResult(ORG, `oe-gen-owes:${GEN_A}`), null, "🔴 §12c: the LAST settlement DELETES the row — an absent row and a row owing nothing are the same answer, and the keyspace does not grow per generation ever rotated");
+
+  await clearGenerationDelegation(ORG, "task-never-dispatched", store);
+  n++;
+
+  await noteGenerationDelegation(ORG, PER_CONTAINER, "task-per-container", store);
+  eq(await store.getTaskResult(ORG, `oe-gen-owes:${PER_CONTAINER}`), null, "🔴 §12e: a PER-CONTAINER token records nothing — the same refusal the note side makes");
+  await noteGenerationDelegation(ORG, undefined, "task-no-token", store);
+  n++;
+
+  const CAPPED = unifiedSupervisorToken("payments", 902);
+  for (let i = 0; i < MAX_GENERATION_DELEGATIONS + 5; i++) await noteGenerationDelegation(ORG, CAPPED, `cap-task-${String(i)}`, store);
+  eq((await rawOwedRow(store, CAPPED)).length, MAX_GENERATION_DELEGATIONS, `§12f: the owed list is capped at ${String(MAX_GENERATION_DELEGATIONS)}`);
+
+  const JUNK = unifiedSupervisorToken("payments", 903);
+  for (const junk of ["not json at all", "null", '{"tasks":"nope"}', '{"tasks":[1,2,{}]}', "{}"]) {
+    await store.putTaskResult(ORG, `oe-gen-owes:${JUNK}`, junk, new Date().toISOString(), GENERATION_DELEGATION_TTL_MS);
+    eq(await generationOwedDelegation(ORG, JUNK, store), "none", `🔴 §12g: a stored value of ${JSON.stringify(junk)} reads as "owes nothing" rather than holding the generation un-reapable forever`);
+  }
+
+  const throwingStore = {
+    async getTaskResult() {
+      throw new Error("store blip");
+    },
+    async putTaskResult() {
+      throw new Error("store blip");
+    },
+    async deleteTaskResult() {
+      throw new Error("store blip");
+    },
+  } as unknown as Pick<OperationalStore, "getTaskResult" | "putTaskResult" | "deleteTaskResult">;
+  await noteGenerationDelegation(ORG, GEN_A, "task-blip", throwingStore);
+  await clearGenerationDelegation(ORG, "task-blip", throwingStore);
+  n += 2;
+  eq(await generationOwedDelegation(ORG, GEN_A, throwingStore), "unreadable", "🔴 §12h: …but a THROWN read answers `unreadable`, which the verdict turns into a refusal — the write fails soft and the read fails closed");
+}
+
+{
+  __resetGenerationRetirementsForTest();
+  noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
+  const { from, reset } = recordingFrom();
+  await drainGenerationRetirements(
+    from,
+    { org: ORG, incomingToken: INCOMING },
+    { store: storeStub({ row: { token: INCOMING }, owed: ["task-still-working"] }), labelsFor },
+  );
+  eq(reset.length, 0, "🔴 §13: NO reset is issued while the outgoing generation still owes a worker its answer");
+  const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-owed-delegation");
+  eq(rows.length, 1, "🔴 §13: …and the skip is AUDITED, never silent — a generation whose workers were not reaped stays visible");
+  eq(rows[0]?.detail?.token, OUTGOING, "§13: …naming the generation that was left alone");
+  eq(
+    __pendingGenerationRetirementsForTest().length,
+    0,
+    "🔴 §13: the entry is NOT re-queued, and the skip is therefore FINAL — this generation is never retired by this module, whatever the worker does next (the cost §THE OWED-DELEGATION GUARD'S ONE COST states)",
+  );
+
+  __resetGenerationRetirementsForTest();
+  noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
+  const clear = recordingFrom();
+  await drainGenerationRetirements(clear.from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING }, owed: [] }), labelsFor });
+  eq(clear.reset.length, 1, "🔴 §13 NEGATIVE CONTROL: a generation whose ledger row is EMPTY is retired normally");
+
+  __resetGenerationRetirementsForTest();
+  noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
+  const blind = recordingFrom();
+  await drainGenerationRetirements(blind.from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING }, throwOn: "delegation" }), labelsFor });
+  eq(blind.reset.length, 0, "🔴 §13: a THROWN owed-delegation read refuses the retirement — a read that proves nothing is not permission");
+
+  const taint = readFileSync(join(REPO_ROOT, "packages/core/agent/hooks/spawn-taint.ts"), "utf8");
+  ok(
+    /await noteGenerationDelegation\(deploymentOrg\(\), ownWindowToken, receipt\.taskId\);/.test(taint),
+    "🔴 §13: the DISPATCH edge (BRANCH 1) records the owed delegation against the seat's own window token",
+  );
+  ok(
+    /await clearGenerationDelegation\(deploymentOrg\(\), view\.taskId\);/.test(taint),
+    "🔴 §13: …and the SETTLEMENT edge clears it, so a settled task stops blocking its generation's reap",
+  );
+  ok(
+    taint.indexOf("await noteGenerationDelegation(") < taint.indexOf("noteTaskDispatched(receipt.taskId);"),
+    "§13: the record is written on the dispatch branch, beside the session-local one it makes durable",
+  );
+}
+
+
+console.log(`✓ generation-retirement: ${String(n)} assertions passed (OPE-627: rotation retires the outgoing generation, so eve's child reaper takes its parked workers; OPE-1620: and never while that generation still owes a live delegation)`);

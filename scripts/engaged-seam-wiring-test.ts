@@ -12,10 +12,12 @@ delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
-const { resolvePartition, getOperationalStore } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { resolvePartition, getOperationalStore, defineDomain, ambientSkipFor } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { registerGithubProvider } = await import("@open-everywhere/provider-github/agent/register.js");
 const { registerLinearProvider } = await import("@open-everywhere/provider-linear/agent/register.js");
 const { registerNotionProvider } = await import("@open-everywhere/provider-notion/agent/register.js");
+const { registerDiscordProvider } = await import("@open-everywhere/provider-discord/agent/register.js");
+registerDiscordProvider();
 registerGithubProvider();
 registerLinearProvider();
 registerNotionProvider();
@@ -23,6 +25,7 @@ const { githubOnComment } = await import("@open-everywhere/provider-github/agent
 const { buildGitHubAuth } = await import("@open-everywhere/provider-github/agent/channels/github-identity.js");
 const { linearOnAgentSession, _resetLinearGuestCache } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
 const { handleNotionDelivery } = await import("@open-everywhere/provider-notion/agent/channels/notion-webhook.js");
+const { dispatchTurn, authForRelayMessage, engagementCoordsFor } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { handleNotionSupervisorDispatch } = await import("@open-everywhere/provider-notion/agent/channels/notion-supervisor.js");
 const { buildNotionAuth } = await import("@open-everywhere/provider-notion/agent/channels/notion-identity.js");
@@ -565,6 +568,224 @@ const NOW = "2026-05-12T11:30:00.000Z";
   _resetAuthorTrustForTest();
 }
 
+{
+  const GH_OWNER = "addressed-org";
+  const GH_REPO = "addressed-repo";
+  const LIN_ORG = "addressed-linear-org";
+  const LIN_TEAM = "addressed-team";
+  const LIN_ISSUE = "addressed-issue-1";
+  const GH_SURFACE = `github/${GH_OWNER}/${GH_REPO}`;
+  const LIN_SURFACE = `linear/${LIN_ORG}/${LIN_TEAM}`;
+
+  const addressedOnly = defineDomain({ name: "addressed-only", reach: [GH_SURFACE, LIN_SURFACE] });
+  const domains = [addressedOnly];
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: ({ surface }: { readonly surface: string }) => (surface === GH_REPO || surface === LIN_TEAM ? ["addressed-only"] : []),
+  } as never);
+
+  ok(ambientSkipFor(GH_SURFACE, domains)?.reason === "domain-refused", "addressed-only: precondition — the fixture domain ROUTES the repo and refuses the ambient supervisor on it, which is the declared state and not the absent one");
+  ok(ambientSkipFor(LIN_SURFACE, domains)?.reason === "domain-refused", "addressed-only: precondition — …and routes the team and refuses it there too");
+
+  const ghCtx = (issueNumber = 11): unknown => ({
+    repository: { owner: GH_OWNER, name: GH_REPO, fullName: `${GH_OWNER}/${GH_REPO}`, id: 2, private: true },
+    conversation: { kind: "issue", issueNumber, pullRequestNumber: null },
+    github: { installationId: 456 },
+    sender: { login: "dev", id: 7, type: "User" },
+    thread: { kind: "issue", post: async () => ({ id: 1 }), react: async () => {} },
+  });
+  const ghComment = (id: number, body: string): unknown => ({ id, body, author: { login: "dev", id: 7, type: "User" }, raw: { author_association: "MEMBER" } });
+
+  const ghMention = await githubOnComment(ghCtx() as never, ghComment(401, "@eve-bot what's 12*12?") as never);
+  ok(
+    ghMention !== null && (ghMention as { auth?: unknown }).auth !== undefined,
+    "🔴 OPE-1681 github: an @mention on an ADDRESSED-ONLY domain DISPATCHES — `ambientSupervisor` gates the ambient supervisor and has never gated the addressed door",
+  );
+
+  ok(
+    (await githubOnComment(ghCtx(12) as never, ghComment(402, "and what's that plus 6?") as never)) === null,
+    "🔴 OPE-1681 github: NEGATIVE CONTROL — a PLAIN comment in an issue nobody addressed returns null on the same domain, so the mention above passed a door and not an open gate",
+  );
+
+  const resp = (status: number, body: unknown): Response =>
+    ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
+  const fakeLinear = (async (url: unknown, init: { body?: unknown }) => {
+    const u = String(url);
+    const body = String(init?.body ?? "");
+    if (!u.includes("api.linear.app")) return resp(500, { error: "unexpected host" });
+    if (body.includes("OeUserGuest")) return resp(200, { data: { user: { guest: false } } });
+    if (body.includes("OeIssueTeam")) return resp(200, { data: { issue: { team: { id: LIN_TEAM, private: true } } } });
+    return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
+  }) as typeof fetch;
+
+  await withPatchedFetch(fakeLinear, async () => {
+    const event = (sessionId: string): unknown => ({
+      action: "created",
+      kind: "agent_session",
+      organizationId: LIN_ORG,
+      previousComments: [],
+      delivery: { id: `d-${sessionId}` },
+      agentSession: { id: sessionId, creator: { id: "creator-9" }, issueId: LIN_ISSUE, issue: { id: LIN_ISSUE, identifier: "ADR-1" } },
+      raw: { agentSession: { issue: { team: { id: LIN_TEAM } } } },
+    });
+    _resetLinearGuestCache();
+    const linMention = await linearOnAgentSession({} as never, event("addressed-sess-1") as never);
+    ok(
+      linMention !== null && (linMention as { auth?: unknown }).auth !== undefined,
+      "🔴 OPE-1681 linear: an Agent Session opened by an @mention on an ADDRESSED-ONLY domain DISPATCHES — the addressed leg never consults the ambient opt-in",
+    );
+
+    const part = resolvePartition({
+      channel: { kind: "linear" as const },
+      session: { auth: { current: { attributes: { organization_id: LIN_ORG, team_id: LIN_TEAM }, principalId: "creator-9", principalType: "linear-user" } } },
+    } as never);
+    ok(await store.markStopped(part.org, part.surfaceKey, LIN_ISSUE), "addressed-only linear: precondition — the issue is stood down");
+    _resetLinearGuestCache();
+    ok(
+      (await linearOnAgentSession({} as never, { ...(event("addressed-sess-2") as Record<string, unknown>), action: "prompted" } as never)) === null,
+      "🔴 OPE-1681 linear: NEGATIVE CONTROL — a `prompted` follow-up on a STOOD-DOWN issue is still suppressed on the same domain, so the dispatch above is a door and not an open gate",
+    );
+  });
+}
+
+{
+  const GUILD = "wiring-guild";
+  const BASE = "wiring-base-channel";
+  const THREAD = "wiring-auto-thread";
+  const STRANGER = "wiring-other-thread";
+
+  const prevDiscordToken = process.env.DISCORD_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+
+  const domains = [defineDomain({ name: "addressed-guild", reach: [`discord/${GUILD}/${BASE}`] })];
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: ({ surface }: { readonly surface: string }) => (surface === BASE ? ["addressed-guild"] : []),
+  } as never);
+  ok(ambientSkipFor(`discord/${GUILD}/${BASE}`, domains)?.reason === "domain-refused", "discord: precondition — the fixture domain ROUTES the channel and refuses the ambient supervisor on it (see the addressed-only block for why `no-domain` must not pass here)");
+
+  const relay = (over: Record<string, unknown>): unknown => ({
+    id: "m1",
+    content: "hello",
+    channelId: BASE,
+    channelType: "0",
+    guildId: GUILD,
+    author: { id: "U-human", username: "human", bot: false },
+    mentionsBot: false,
+    botName: "Aria",
+    botId: "BOT",
+    ...over,
+  });
+  const sends: unknown[] = [];
+  const send = (async (message: unknown) => {
+    sends.push(message);
+    return {};
+  }) as never;
+  const opensThread = async () => THREAD;
+  const neverThreads = async () => null;
+  const parentIsBase = async () => BASE;
+
+  const drive = async (msg: unknown, createThread: () => Promise<string | null>, resolveParent: () => Promise<string | undefined>) => {
+    sends.length = 0;
+    const auth = authForRelayMessage(msg as never);
+    ok(auth !== null, "discord: precondition — a human relay message resolves an auth");
+    await dispatchTurn(msg as never, auth as never, send, createThread as never, resolveParent as never);
+    return sends.length;
+  };
+
+  ok(
+    (await drive(relay({ id: "m-mention", mentionsBot: true, content: "<@BOT> summarise the topic" }), opensThread, parentIsBase)) === 1,
+    "🔴 OPE-1670 discord: an @mention on an ADDRESSED-ONLY domain dispatches exactly one turn",
+  );
+  const threadCoords = engagementCoordsFor({ channelId: THREAD, guildId: GUILD })!;
+  const threadRow = await store.getEngagement(threadCoords.p.org, threadCoords.p.surfaceKey, threadCoords.key);
+  ok(
+    threadRow !== null && threadRow.participating === true,
+    "🔴 OPE-1670 discord: …and the row it wrote sits on the AUTO-THREAD as a participating one — the re-key moves the enrolment with the conversation",
+  );
+  const baseCoords = engagementCoordsFor({ channelId: BASE, guildId: GUILD })!;
+  ok(
+    (await store.getEngagement(baseCoords.p.org, baseCoords.p.surfaceKey, baseCoords.key)) === null,
+    "🔴 OPE-1670 discord: NEGATIVE CONTROL — the BASE channel is left UN-engaged, so a later message there still needs its own mention",
+  );
+
+  const followUp = relay({ id: "m-follow", channelId: THREAD, channelType: "11", content: "expand that into three sentences" });
+  ok(
+    (await drive(followUp, neverThreads, parentIsBase)) === 1,
+    "🔴 OPE-1670 discord: a PLAIN follow-up in the auto-thread dispatches exactly one turn — the read addresses the row the re-keyed mention wrote",
+  );
+
+  ok(
+    (await drive(relay({ id: "m-stranger", channelId: STRANGER, channelType: "11", content: "expand that into three sentences" }), neverThreads, parentIsBase)) === 0,
+    "🔴 OPE-1670 discord: NEGATIVE CONTROL — the SAME message in an UN-ENGAGED thread dispatches nothing, so the leg above rode the registry and not a gate that stopped gating",
+  );
+
+  ok(await store.markStopped(threadCoords.p.org, threadCoords.p.surfaceKey, threadCoords.key), "discord: precondition — the thread is stood down");
+  ok(
+    (await drive(relay({ id: "m-after-stop", channelId: THREAD, channelType: "11", content: "and who else works on it?" }), neverThreads, parentIsBase)) === 0,
+    "🔴 OPE-1670 discord: a follow-up in a STOOD-DOWN thread dispatches nothing — the flag is read on every plain message, not only at mark time",
+  );
+  ok(
+    (await drive(relay({ id: "m-back", channelId: THREAD, channelType: "11", mentionsBot: true, content: "<@BOT> back please" }), neverThreads, parentIsBase)) === 1,
+    "🔴 OPE-1670 discord: a fresh @mention in the same thread dispatches — an address is the documented way back in",
+  );
+  const revived = await store.getEngagement(threadCoords.p.org, threadCoords.p.surfaceKey, threadCoords.key);
+  ok(revived !== null && revived.stopped === false, "🔴 OPE-1670 discord: …and it CLEARS the stop, so plain follow-ups are admitted again");
+  ok(
+    (await drive(relay({ id: "m-follow-2", channelId: THREAD, channelType: "11", content: "one more sentence please" }), neverThreads, parentIsBase)) === 1,
+    "OPE-1670 discord: …demonstrated — the plain follow-up that was silenced above dispatches again",
+  );
+
+  if (prevDiscordToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+  else process.env.DISCORD_BOT_TOKEN = prevDiscordToken;
+}
+
+{
+  const { extractLinearCommentSignal } = await import("@open-everywhere/provider-linear/agent/channels/linear-supervisor.js");
+  const comment = (action: string): unknown => ({ kind: "data", type: "Comment", action, organizationId: "org-9", raw: { data: { id: "cmt-9", issueId: "iss-9" } } });
+
+  ok(extractLinearCommentSignal(comment("create") as never) !== null, "linear edit filter: precondition — a CREATED comment is a conversational trigger");
+  ok(
+    extractLinearCommentSignal(comment("update") as never) === null,
+    "🔴 OPE-1673 linear: an UPDATED comment yields no signal — the ambient leg returns above the classifier, which is why §7.1.1 declares the edit wake unsupported here",
+  );
+  ok(extractLinearCommentSignal(comment("remove") as never) === null, "linear edit filter: a REMOVED comment yields none either");
+
+  const SECRET = "edit-filter-secret";
+  const notionBody = (type: string): string =>
+    JSON.stringify({
+      type,
+      workspace_id: "edit-ws",
+      entity: { id: "cmt-e", type: "comment" },
+      data: { page_id: "edit-page", parent: { id: "edit-page", type: "page" } },
+      authors: [{ id: "edit-author", type: "person" }],
+    });
+  const driveNotion = async (type: string) => {
+    const raw = notionBody(type);
+    return handleNotionDelivery(raw, "sha256=" + createHmac("sha256", SECRET).update(raw, "utf8").digest("hex"), {
+      signingKeys: [{ credentialId: "channel-key", secret: SECRET }],
+      allowUnverified: false,
+      credentialFor: async () => ({ apiKey: "ntn_key" }),
+      credentialForPage: () => undefined,
+      domains: [],
+      resolveBotUserId: async () => "edit-bot",
+      ambientEnabled: () => true,
+      fetch: (async () => new Response("unexpected", { status: 500 })) as never,
+      dispatch: async () => {},
+      attachSession: () => ({ cancel: async () => ({ status: "accepted" as const }) }),
+    } as unknown as Parameters<typeof handleNotionDelivery>[2]);
+  };
+  const updated = await driveNotion("comment.updated");
+  ok(
+    updated.action === "ignored" && updated.detail === "comment.updated",
+    "🔴 OPE-1673 notion: a `comment.updated` delivery answers `ignored` at step 4 — the edit never reaches the classifier, which is why §7.1.1 declares the edit wake unsupported here",
+  );
+  ok((await driveNotion("comment.created")).action !== "ignored", "🔴 OPE-1673 notion: NEGATIVE CONTROL — `comment.created` passes step 4, so the refusal above is the event type and not the fixture");
+}
 
 {
   const { linearWakeAddressing } = await import("@open-everywhere/provider-linear/agent/channels/linear-engagement.js");
@@ -589,4 +810,6 @@ const NOW = "2026-05-12T11:30:00.000Z";
   );
 }
 
-console.log(`✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control; plus Linear's dispatch-row promotion and its call site)`);
+console.log(
+  `✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery / dispatchTurn ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control; the addressed-only domain admits a mention on GitHub and Linear with the ambient supervisor OFF; Discord's auto-thread carries its own follow-up; the two edit filters this repository owns refuse an edit; plus Linear's dispatch-row promotion and its call site)`,
+);

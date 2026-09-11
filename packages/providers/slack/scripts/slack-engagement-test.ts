@@ -68,7 +68,7 @@ import {
 import { EXTERNAL_MENTION_ACK, owesSuppressedMentionAck, suppressionRendering, silentRoomNotice } from "@open-everywhere/core/agent/adapter-api.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
-import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
+import { classifyEnvelope, verifySlackSignature, buildFrontHandler, mentionSiblingSuppressed, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolvePartition } from "@open-everywhere/core/agent/adapter-api.js";
 import { OE_APPROVAL_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
@@ -1990,8 +1990,42 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   r = await runFront(true, topEnv("EvFWD2", { text: "<@UBOT> can you handle this?" }));
   ok(r.fifo.keys.length === 0, "a TYPED bot mention IS still suppressed as a mention sibling");
 
+  r = await runFront(true, topEnv("EvEDIT1", { subtype: "message_changed", message: { type: "message", user: "U1", ts: "90.0", text: "<@UBOT> can you handle this?" } }));
+  ok(
+    r.fifo.keys.length === 1,
+    "🔴 OPE-1673: an EDIT whose post-edit text @mentions the bot is NOT suppressed — no `app_mention` accompanies an edit, so dropping it answered with nothing at all",
+  );
+
+  r = await runFront(true, topEnv("EvEDIT2", { text: "<@UBOT> can you handle this?" }));
+  ok(r.fifo.keys.length === 0, "🔴 OPE-1673: NEGATIVE CONTROL — the same text WITHOUT the edit subtype is still suppressed, so the exemption is the edit and not the mention");
+
+  r = await runFront(true, topEnv("EvEDIT3", { channel_type: "mpim", subtype: "message_changed", message: { type: "message", user: "U1", ts: "90.0", text: "<@UBOT> can you handle this?" } }));
+  ok(
+    r.fifo.keys.length === 1 && r.fifo.keys[0] !== supervisorFifoKey("C_TXN"),
+    "🔴 OPE-1673: an EDIT in a GROUP DM whose post-edit text @mentions the bot is NOT suppressed either — the mpim leg asks the same rule as the channel leg",
+  );
+
+  r = await runFront(true, topEnv("EvEDIT4", { channel_type: "mpim", text: "<@UBOT> can you handle this?" }));
+  ok(r.fifo.keys.length === 0, "🔴 OPE-1673: NEGATIVE CONTROL — a plain group-DM message with the same mention is still suppressed, so the mpim exemption is the edit and not the room");
+
   if (prevTok === undefined) delete process.env.SLACK_BOT_TOKEN;
   else process.env.SLACK_BOT_TOKEN = prevTok;
+}
+
+{
+  const MENTION = "<@UBOT> what did we decide?";
+  ok(mentionSiblingSuppressed({ authoredText: MENTION, botUserId: "UBOT" }), "sibling: a typed bot mention on a plain message is suppressed — its `app_mention` owns the turn");
+  ok(
+    !mentionSiblingSuppressed({ authoredText: MENTION, botUserId: "UBOT", subtype: "message_changed" }),
+    "🔴 OPE-1673 sibling: the SAME text on a `message_changed` EDIT is NOT suppressed — Slack raises no `app_mention` for an edit, so there is no second event to prefer",
+  );
+  ok(!mentionSiblingSuppressed({ authoredText: "how's the deploy looking", botUserId: "UBOT" }), "sibling: a message that names nobody is not suppressed");
+  ok(!mentionSiblingSuppressed({ authoredText: MENTION }), "sibling: an UNRESOLVED bot user id suppresses nothing — there is no needle, and inventing one would drop every message");
+  ok(!mentionSiblingSuppressed({ authoredText: MENTION, botUserId: "" }), "sibling: an EMPTY bot user id suppresses nothing either — `<@>` would match a substring of every mention");
+  ok(
+    mentionSiblingSuppressed({ authoredText: MENTION, botUserId: "UBOT", subtype: "file_share" }),
+    "🔴 sibling: NEGATIVE CONTROL — a DIFFERENT subtype is still suppressed, so the exemption names `message_changed` and not `any subtype`",
+  );
 }
 
 {

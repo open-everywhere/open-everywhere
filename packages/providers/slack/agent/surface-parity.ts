@@ -13,6 +13,7 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": "supported",
   "ambient-leg": "supported",
   "name-drop-mention": "supported",
+  "message-edit-wake": "supported",
   threads: "supported",
   rooms: "supported",
   dm: "supported",

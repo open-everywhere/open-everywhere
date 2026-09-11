@@ -26,7 +26,7 @@ import {
 } from "../channels/reply-freshness.js";
 import { refuseIfShouldFold } from "../channels/reply-fold.js";
 import { tailWindow } from "../channels/session-tail-record.js";
-import { replierLabelFor, PENDING_WORK_INSTRUCTION, PER_SURFACE_PENDING_WORK_PROBE } from "../channels/turn-delivery.js";
+import { replierLabelFor, PENDING_WORK_INSTRUCTION } from "../channels/turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
@@ -61,6 +61,7 @@ import {
   dischargeSettlementReport,
   notePromisedReport,
   pendingDelegationOwing,
+  pendingDelegationThisTurn,
   pendingDelegationsOwing,
   settlementReportOwedOn,
 } from "../access/pending-delegation-signal.js";
@@ -358,7 +359,7 @@ export const baseReplyEntry = defineTool({
             await auditReplyRefused(replyAuditFor(bindBase, "tool"), REPLY_STOPPED_REFUSAL_REASON);
             throw new Error(stoppedRefusalText());
           }
-          const owingTask = pendingDelegationOwing(baseTurnId, PER_SURFACE_PENDING_WORK_PROBE, addressedWakeThisTurn(baseTurnId));
+          const owingTask = pendingDelegationThisTurn(baseTurnId);
           const foldWindow = tailWindow();
           if (foldWindow) {
             await refuseIfShouldFold({

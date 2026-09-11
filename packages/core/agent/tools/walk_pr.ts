@@ -20,15 +20,20 @@ const inputSchema = z.object({
 
 export const walkPrEntry = defineTool({
   description:
-    "Gather everything needed to walk a human through a pull request before they merge it: the PR's state, its diff, and the resolved-config FACTS computed by CI (effective access per scope, domain rosters, declared webhooks, standing instructions) read from the config-diff workflow's own artifact. Returns a `narratorBrief` — pass it verbatim as `message` to fresh_eyes_review, then call post_pr_walkthrough with that verdict. Read-only, no approval needed. It deliberately takes no free-text input: you cannot add your own framing to what the independent reviewer sees.",
+    "Gather everything needed to walk a human through a pull request before they merge it: the PR's state, its diff, and the resolved-config FACTS (effective access per scope, domain rosters, declared webhooks, standing instructions) read either from the config-diff workflow's own artifact or from the `oe/config-diff` commit status that vouches for a cloud run's output by sha256. Returns a `narratorBrief` — pass it verbatim as `message` to fresh_eyes_review, then call post_pr_walkthrough with that verdict. Read-only, no approval needed. It deliberately takes no free-text input: you cannot add your own framing to what the independent reviewer sees.",
   inputSchema,
   outputSchema: z.object({
     repo: z.string(),
     number: z.number(),
     headSha: z.string(),
     prSummary: z.string(),
-    factsState: z.enum(["artifact", "not-triggered", "unavailable"]).describe("artifact = real config facts; not-triggered = this PR changes no config (a computed absence); unavailable = UNKNOWN."),
-    factsRunId: z.number().optional().describe("The config-diff workflow run the facts came from. Pass to post_pr_walkthrough so a staleness check is possible."),
+    factsState: z
+      .enum(["artifact", "cloud-status", "not-triggered", "unavailable"])
+      .describe(
+        "artifact = real config facts from a CODEOWNED Actions workflow run; cloud-status = real config facts from a cloud run, vouched for by an " +
+          "`oe/config-diff` commit status and verified against the sha256 it names; not-triggered = this PR changes no config (a computed absence); unavailable = UNKNOWN.",
+      ),
+    factsRunId: z.number().optional().describe("The config-diff workflow run the facts came from. Actions provenance only — a cloud-status walkthrough has no run id. Pass to post_pr_walkthrough so a staleness check is possible."),
     factsNote: z.string().describe("One line: where the facts came from, or why there are none."),
     diffChars: z.number(),
     diffClipped: z.boolean(),
@@ -79,7 +84,11 @@ export const walkPrEntry = defineTool({
       factsNote:
         facts.kind === "artifact"
           ? `config-diff run ${facts.provenance.runId} (${facts.provenance.runUrl}), artifact "${facts.provenance.artifactName}", conclusion ${facts.provenance.runConclusion ?? "pending"}`
-          : facts.reason,
+          : facts.kind === "cloud-status"
+            ? `the "${facts.provenance.statusContext}" commit status on ${facts.provenance.headSha.slice(0, 12)}` +
+              `${facts.provenance.postedBy ? ` (posted by ${facts.provenance.postedBy})` : ""}, vouching for ${facts.provenance.documentUrl} ` +
+              `by sha256:${facts.provenance.digest} — verified before the facts were read`
+            : facts.reason,
       diffChars: diff.diffChars,
       diffClipped: diff.diffClipped,
       filesTouched: diff.files.length,
@@ -87,7 +96,13 @@ export const walkPrEntry = defineTool({
       factsOnlyWalkthrough: renderWalkthrough({ pr, diff, facts }),
       nextStep:
         `Call fresh_eyes_review with message = narratorBrief (verbatim), then post_pr_walkthrough with repo, number, ` +
-        `narration = that verdict, and factsRunId = ${facts.kind === "artifact" ? facts.provenance.runId : "(omit — there are no facts)"}. ` +
+        `narration = that verdict, and factsRunId = ${
+          facts.kind === "artifact"
+            ? facts.provenance.runId
+            : facts.kind === "cloud-status"
+              ? "(omit — these facts come from a commit status, which has no workflow run id)"
+              : "(omit — there are no facts)"
+        }. ` +
         `Do not write the walkthrough yourself: post_pr_walkthrough renders it from the facts it fetches itself, and your prose would not be labelled as a model opinion.`,
     };
   },

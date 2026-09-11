@@ -33,7 +33,7 @@ const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(ev
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
 const tasks = await import("../agent/access/background-tasks.js");
 const store = await import("../agent/access/subagent-taint.js");
-const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn, taintKindsThisTurn } = await import("../agent/access/taint-signal.js");
 const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 
@@ -98,10 +98,12 @@ async function onParentTurn<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
-async function runChild(callId: string, sessionId: string, taint: boolean): Promise<void> {
+async function runChild(callId: string, sessionId: string, taint: boolean, kinds: readonly string[] = []): Promise<void> {
   contextStorage.run(new ContextContainer(), () => {
     spawnTaint.openTaintTurn(childCtx(callId, sessionId) as never);
-    if (taint) markUntrustedIngestedThisTurn();
+    if (!taint) return;
+    if (kinds.length === 0) markUntrustedIngestedThisTurn();
+    else for (const kind of kinds) markUntrustedIngestedThisTurn(kind as never);
   });
   await new Promise((r) => setTimeout(r, 50));
 }
@@ -487,6 +489,55 @@ await new Promise((r) => setTimeout(r, 50));
 {
   const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
   eq(settled.filter((r) => r.detail?.task === "task_a1b2c3d4e5f60002").length, 0, "🔴 OPE-904 N2: …and writes NO settled row, so the census still counts parked workers rather than notifications");
+}
+
+await runChild("call_kinds", "sess-child-kinds", true, ["web", "github"]);
+{
+  const record = await store.subagentCallTaintRecord(ORG, PARENT, "call_kinds");
+  eq(record?.tainted, true, "precondition: the two-source child's marker is TAINTED");
+  eq(
+    [...(record?.kinds ?? [])].sort(),
+    ["github", "web"],
+    "🔴 OPE-1251 CHILD SIDE: BOTH classes are stored beside the marker. The flip observer fires on the first mark only, so a row holding just `web` here would be the two-source defect OPE-1215 measured on the forward leg, one leg along",
+  );
+}
+
+await onParentTurn(async () => {
+  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds", callId: "call_kinds", agentId: "ag_agent:kkkk" }, PARENT);
+  const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_kinds", status: "completed", agentId: "ag_agent:kkkk" }, PARENT);
+  eq(adopted, true, "OPE-1251: the settlement still marks the parent — the kinds ride the existing adoption, they do not replace it");
+  eq(
+    [...taintKindsThisTurn()].sort(),
+    ["github", "web"],
+    "🔴 OPE-1251 PARENT SIDE: the parent's OWN turn now names what the child read, so its next memory bullet and its next approval card name `web` and `github` rather than 'external content'",
+  );
+});
+
+await runChild("call_bare", "sess-child-bare", true);
+await onParentTurn(async () => {
+  await spawnTaint.noteTaskReceipt({ taskId: "task_bare", callId: "call_bare", agentId: "ag_agent:bbbb" }, PARENT);
+  eq(await spawnTaint.adoptTaskTaint({ taskId: "task_bare", status: "completed", agentId: "ag_agent:bbbb" }, PARENT), true, "OPE-1251 NEGATIVE CONTROL: a child that knew it was tainted but not by what still marks the parent");
+  eq(untrustedIngestedThisTurn(), true, "…the bit is set");
+  eq([...taintKindsThisTurn()], [], "🔴 …and the parent names NO class — asserted empty, so the leg cannot be passing by inventing one");
+});
+
+await onParentTurn(async () => {
+  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds_lost", callId: "call_kinds_never", agentId: "ag_agent:llll" }, PARENT);
+  eq(await store.subagentCallTaintRecord(ORG, PARENT, "call_kinds_never"), undefined, "precondition: no marker was ever written for this call");
+  eq(await spawnTaint.adoptTaskTaint({ taskId: "task_kinds_lost", status: "completed", agentId: "ag_agent:llll" }, PARENT), true, "OPE-1251: a lost marker still fails CLOSED");
+  eq([...taintKindsThisTurn()], [], "🔴 …and names no class, because none could be established — the fail-closed direction is about the BIT, never about inventing a source");
+});
+
+{
+  const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
+  const row = settled.find((r) => r.detail?.task === "task_kinds");
+  eq(
+    [...((row?.detail?.kinds as string[] | undefined) ?? [])].sort(),
+    ["github", "web"],
+    "🔴 OPE-1251: the `delegation.task_settled` row names the adopted classes, so an auditor can join a parent's later act to the sources its child read",
+  );
+  const bare = settled.find((r) => r.detail?.task === "task_bare");
+  eq((bare?.detail?.kinds as string[] | undefined) ?? [], [], "…and a class-less adoption writes an EMPTY list, never a guess");
 }
 
 console.log(`background-task-taint-test: ${n} assertions passed`);

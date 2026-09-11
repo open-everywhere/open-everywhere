@@ -4,6 +4,7 @@ import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { computeBlastRadius, factsEstablishNothing, type BlastRadius } from "./blast-radius.js";
 import { sectionHasDelta, type ConfigFacts } from "./config-facts.js";
 import { CONFIG_DIFF_WORKFLOW_PATH, type FactsSource } from "./facts-artifact.js";
+import { CONFIG_DIFF_STATUS_CONTEXT } from "./facts-cloud-status.js";
 import type { PrDiffSnapshot } from "../scm/pr-diff.js";
 import type { NarrationAttestation } from "../spend/subagent-runs.js";
 
@@ -124,6 +125,12 @@ export function buildNarratorBrief(input: { readonly pr: WalkthroughPr; readonly
   return out.join("\n");
 }
 
+type FactsPresent = Extract<FactsSource, { kind: "artifact" } | { kind: "cloud-status" }>;
+
+function factsPresent(facts: FactsSource): facts is FactsPresent {
+  return facts.kind === "artifact" || facts.kind === "cloud-status";
+}
+
 function renderFactsForBrief(facts: FactsSource): string {
   if (facts.kind === "not-triggered") return `(no resolved-config facts: ${facts.reason})`;
   if (facts.kind === "unavailable") return `(NOT COMPUTABLE: ${facts.reason})`;
@@ -152,7 +159,7 @@ function narrated(text: string): string {
 
 function factSubjects(facts: FactsSource): Set<string> {
   const out = new Set<string>();
-  if (facts.kind !== "artifact") return out;
+  if (!factsPresent(facts)) return out;
   for (const s of facts.facts.sections) {
     if (s.kind !== "computed") continue;
     for (const r of [...s.added, ...s.removed]) out.add(r.key);
@@ -257,8 +264,12 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
     facts.kind === "artifact"
       ? `Facts by \`scripts/config-diff.ts\` via the \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact (never a PR comment — anyone who can comment ` +
         `could forge one).`
-      : `This walkthrough carries NO resolved-config facts. The only accepted source is a \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact ` +
-        `at this exact head sha — never a PR comment, because anyone who can comment could forge one — and no such run supplied one here.`;
+      : facts.kind === "cloud-status"
+        ? `Facts by \`scripts/config-diff.ts\` from a cloud run, vouched for by the \`${CONFIG_DIFF_STATUS_CONTEXT}\` commit status on this ` +
+          `head sha and verified against the sha256 that status names (never a PR comment — anyone who can comment could forge one).`
+        : `This walkthrough carries NO resolved-config facts. The two accepted sources are a \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact and ` +
+          `an \`${CONFIG_DIFF_STATUS_CONTEXT}\` commit status, both at this exact head sha — never a PR comment, because anyone who can ` +
+          `comment could forge one — and neither supplied one here.`;
   out.push(
     "---",
     `<sub>${factsProvenanceLine} Narration is model output relayed by the session that asked for this walkthrough; §2 states what the spend ledger records ` +
@@ -296,6 +307,25 @@ function renderProvenance(input: RenderWalkthroughInput): string[] {
   if (facts.kind === "unavailable") {
     return [`${NOT_COMPUTABLE_PREFIX} ${facts.reason}`, ""];
   }
+  if (facts.kind === "cloud-status") {
+    const c = facts.provenance;
+    const lines = [
+      `_Source: the \`${c.statusContext}\` commit status on head \`${c.headSha.slice(0, 12)}\`` +
+        `${c.postedBy ? ` posted by \`${c.postedBy}\`` : ""}${c.postedAtIso ? ` at ${c.postedAtIso}` : ""}, vouching for ` +
+        `[this document](${c.documentUrl}) by \`sha256:${c.digest}\` — verified here before a single line below was read` +
+        `${c.sessionId ? `. Cloud run \`${c.sessionId}\`` : ""}._`,
+      "",
+    ];
+    if (expectedFactsRunId !== undefined) {
+      lines.push(
+        `${NOT_COMPUTABLE_PREFIX} the narration was produced against config-diff run ${expectedFactsRunId}, but these facts come from a commit ` +
+          `status, which carries no run id. The staleness check is UNPERFORMED, not passed — the head sha above is the only binding to a revision. ` +
+          `Re-run the walkthrough before relying on §2 or §4.`,
+        "",
+      );
+    }
+    return lines;
+  }
   const p = facts.provenance;
   const lines = [
     `_Source: run [${p.runId}](${p.runUrl}) attempt ${p.runAttempt} of \`${p.workflowPath}\` at head \`${p.headSha.slice(0, 12)}\` ` +
@@ -320,7 +350,7 @@ function renderProvenance(input: RenderWalkthroughInput): string[] {
 }
 
 function renderFactSections(facts: FactsSource): string[] {
-  if (facts.kind !== "artifact") {
+  if (!factsPresent(facts)) {
     return [
       facts.kind === "not-triggered"
         ? "_No resolved-config facts exist for this PR (see the source line above). Nothing in this section is a statement about the CODE the PR changes._"
@@ -380,9 +410,9 @@ function renderFactSections(facts: FactsSource): string[] {
 }
 
 function renderBlastRadius(facts: FactsSource): string[] {
-  if (facts.kind !== "artifact") {
+  if (!factsPresent(facts)) {
     return [
-      `${NOT_COMPUTABLE_PREFIX} without the facts artifact there is no blast radius to compute. ` +
+      `${NOT_COMPUTABLE_PREFIX} without a facts document there is no blast radius to compute. ` +
         (facts.kind === "not-triggered"
           ? "This PR changes no deployer config, so it grants nothing new by configuration — it may still change what existing grants DO, which is a code question (§5.3)."
           : "Treat the widening question as UNANSWERED."),
@@ -448,10 +478,16 @@ function renderBlastRadius(facts: FactsSource): string[] {
     out.push("");
   }
 
-  if (facts.overlayGateReport !== undefined) {
-    out.push("<details><summary>The overlay single-scope gate's own report (the one CI step that can fail this job)</summary>", "", "```", facts.overlayGateReport.trim(), "```", "", "</details>", "");
+  const overlayGateReport = facts.kind === "artifact" ? facts.overlayGateReport : undefined;
+  if (overlayGateReport !== undefined) {
+    out.push("<details><summary>The overlay single-scope gate's own report (the one step that can fail this job)</summary>", "", "```", overlayGateReport.trim(), "```", "", "</details>", "");
   } else {
-    out.push(`${NOT_COMPUTABLE_PREFIX} the artifact carried no overlay-gate report, so whether the single-scope invariant held is UNKNOWN here — read the run log.`, "");
+    out.push(
+      facts.kind === "cloud-status"
+        ? `${NOT_COMPUTABLE_PREFIX} the commit-status provenance vouches for the config-diff document only, and the overlay single-scope gate's report is a separate file. Whether that invariant held is UNKNOWN here — read the cloud run.`
+        : `${NOT_COMPUTABLE_PREFIX} the artifact carried no overlay-gate report, so whether the single-scope invariant held is UNKNOWN here — read the run log.`,
+      "",
+    );
   }
 
   if (br.truncated.length > 0) {
@@ -473,12 +509,16 @@ function renderBlindSpots(input: RenderWalkthroughInput): string[] {
 
   const extra: string[] = [];
   if (facts.kind === "unavailable") extra.push(`The config facts themselves are MISSING for this PR: ${facts.reason}`);
-  if (facts.kind === "artifact") {
+  if (factsPresent(facts)) {
     const blind = facts.facts.sections.filter((s) => s.kind === "not-computable");
     for (const s of blind) extra.push(`The \`${s.section}\` section could not be compared — ${(s as { reason: string }).reason}`);
     extra.push(
-      "A GitHub Actions artifact is NOT SIGNED. What is established is that these facts came from a named run of a CODEOWNED workflow at this head sha — " +
-        "strictly stronger than a PR comment, strictly weaker than a signature. Anyone with `actions: write` on this repository could produce a run that says otherwise.",
+      facts.kind === "artifact"
+        ? "A GitHub Actions artifact is NOT SIGNED. What is established is that these facts came from a named run of a CODEOWNED workflow at this head sha — " +
+            "strictly stronger than a PR comment, strictly weaker than a signature. Anyone with `actions: write` on this repository could produce a run that says otherwise."
+        : `A COMMIT STATUS IS NOT SIGNED EITHER. What is established is that a principal who can write commit statuses on this repository vouched for exactly ` +
+            `these bytes at this head sha, and that the bytes hash to the sha256 that status named — strictly stronger than a PR comment, strictly weaker than ` +
+            `a signature. Anyone with \`statuses: write\` here could post a \`${CONFIG_DIFF_STATUS_CONTEXT}\` status vouching for a different document.`,
     );
   }
   if (diff.diffClipped) extra.push(`The diff was CLIPPED at ${diff.diff.length} of ${diff.diffChars} chars, so neither the reviewer nor this render saw all of it.`);

@@ -1,6 +1,9 @@
 import { connectorGrantCredential, connectorGrantName, type Bundle } from "../access/bundle.js";
 import type { ConnectorCredential, ConnectorCredentials } from "../access/connector-credentials.js";
 import type { CredentialBoundDomain } from "../access/domain-credentials.js";
+import { CONTROL_OAUTH_ISSUER } from "../control/oauth-clients.js";
+import { controlOAuthIssuer } from "../control/oauth-resource.js";
+import { OAUTH_SIGNING_SECRET_ENV, oauthSigningSecret } from "../control/oauth-tokens.js";
 import type { WebhookHook } from "../webhooks/config.js";
 
 export interface CensusCredential {
@@ -157,13 +160,37 @@ export interface EndpointPlan {
 
 const WEBHOOK_ROUTE = "/webhooks/:id";
 
+export interface ChannelArming {
+  readonly channel: string;
+  readonly armed: (env: NodeJS.ProcessEnv) => boolean;
+  readonly darkReason: string;
+}
+
+export const ROUTE_ARMING: readonly ChannelArming[] = [
+  {
+    channel: "control-mcp.ts",
+    armed: (env) => oauthSigningSecret(env) !== null && controlOAuthIssuer(CONTROL_OAUTH_ISSUER) !== null,
+    darkReason:
+      `dark by declaration: the control OAuth plane answers 404 on every route until ${OAUTH_SIGNING_SECRET_ENV} is set ` +
+      `(at least 32 characters) AND a valid issuer is declared in agent/control/oauth-clients.ts. One of the two is absent ` +
+      `here, so this route's 404 is the shipped design, not a missing mount. Arm both and the census requires it again.`,
+  },
+];
+
 export function planRequiredEndpoints(input: {
   readonly routes: readonly MountedRoute[];
   readonly hooks: readonly WebhookHook[];
   readonly controlHookId: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly arming?: readonly ChannelArming[];
 }): EndpointPlan {
   const endpoints: CensusEndpoint[] = [];
   const skipped: SkippedRoute[] = [];
+  const env = input.env ?? process.env;
+  const darkChannels = new Set(
+    (input.arming ?? ROUTE_ARMING).filter((entry) => !entry.armed(env)).map((entry) => entry.channel),
+  );
+  const darkReason = new Map((input.arming ?? ROUTE_ARMING).map((entry) => [entry.channel, entry.darkReason]));
   let controlHookId = input.controlHookId;
   while (input.hooks.some((h) => h.id === controlHookId)) controlHookId = `${controlHookId}-x`;
   const pageRoute = (route: MountedRoute): boolean =>
@@ -171,6 +198,16 @@ export function planRequiredEndpoints(input: {
 
   for (const route of input.routes) {
     if (route.method.toUpperCase() !== "POST") continue;
+
+    if (darkChannels.has(route.channel)) {
+      skipped.push({
+        method: route.method,
+        path: route.path,
+        channel: route.channel,
+        reason: darkReason.get(route.channel) ?? "dark by declaration",
+      });
+      continue;
+    }
 
     if (route.path === WEBHOOK_ROUTE) {
       for (const hook of input.hooks) {

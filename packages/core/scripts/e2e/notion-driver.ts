@@ -1,11 +1,87 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { NotionAmbientConfig } from "./env.js";
 import { type NotionPagePin, notionBlockPhrases } from "./egress-evidence.js";
-import { pollUntil } from "./poll.js";
+import { pollUntil, sleep } from "./poll.js";
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 const NOTION_COMMENT_VERSION = "2026-03-11";
+
+const RATE_LIMITED_STATUS = 429;
+
+export const NOTION_RATE_LIMIT_CODE = "public_api_request_rate_limit";
+
+export const NOTION_MAX_ATTEMPTS = 4;
+
+export const NOTION_RETRY_CAP_MS = 10_000;
+
+const NOTION_RETRY_BUDGET_MS = 20_000;
+
+const NOTION_FALLBACK_WAIT_MS = 1_000;
+
+export interface NotionFetchResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly headers: { get(name: string): string | null };
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+}
+
+export type NotionFetchFn = (url: string, init?: RequestInit) => Promise<NotionFetchResponse>;
+
+export interface NotionDriverDeps {
+  readonly fetchFn?: NotionFetchFn;
+  readonly sleepFn?: (ms: number) => Promise<void>;
+}
+
+export class NotionRateLimitedError extends Error {
+  readonly status = RATE_LIMITED_STATUS;
+  readonly attempts: number;
+  readonly waitedMs: number;
+
+  constructor(what: string, attempts: number, waitedMs: number) {
+    super(
+      `notion ${what} stayed rate limited (HTTP ${RATE_LIMITED_STATUS} "${NOTION_RATE_LIMIT_CODE}") after ${attempts} attempts ` +
+        `and ${waitedMs} ms of honoured Retry-After waits. THIS IS A HARNESS LIMIT, NOT A PRODUCT RED: the e2e driver's own ` +
+        `Notion token is over the public API's per-token request budget, which one workspace shared by every Notion leg ` +
+        `exhausts. Re-run the leg alone, or space the Notion legs out.`,
+    );
+    this.name = "NotionRateLimitedError";
+    this.attempts = attempts;
+    this.waitedMs = waitedMs;
+  }
+}
+
+export function parseNotionRetryAfterMs(value: string | null | undefined, nowMs: number): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const raw = value.trim();
+  if (raw.length === 0) return undefined;
+  if (/^\d+(\.\d+)?$/.test(raw)) return Math.round(Number(raw) * 1_000);
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) return undefined;
+  return Math.max(0, at - nowMs);
+}
+
+export async function notionFetch(
+  url: string,
+  init: RequestInit,
+  opts: { readonly what: string; readonly fetchFn?: NotionFetchFn; readonly sleepFn?: (ms: number) => Promise<void> },
+): Promise<NotionFetchResponse> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as NotionFetchFn);
+  const sleepFn = opts.sleepFn ?? sleep;
+  let waitedMs = 0;
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetchFn(url, init);
+    if (res.status !== RATE_LIMITED_STATUS) return res;
+    if (attempt >= NOTION_MAX_ATTEMPTS) throw new NotionRateLimitedError(opts.what, attempt, waitedMs);
+    const remaining = NOTION_RETRY_BUDGET_MS - waitedMs;
+    if (remaining <= 0) throw new NotionRateLimitedError(opts.what, attempt, waitedMs);
+    const named = parseNotionRetryAfterMs(res.headers.get("retry-after"), Date.now()) ?? NOTION_FALLBACK_WAIT_MS;
+    const wait = Math.max(0, Math.min(named, NOTION_RETRY_CAP_MS, remaining));
+    await sleepFn(wait);
+    waitedMs += wait;
+  }
+}
 
 export interface NotionComment {
   readonly id: string;
@@ -66,16 +142,21 @@ function pageTitle(page: Record<string, unknown>): string {
   return "(untitled page)";
 }
 
-export async function pinNotionQueryPage(opts: { readonly driverKey: string; readonly query: string }): Promise<NotionPagePinResult> {
+export async function pinNotionQueryPage(opts: { readonly driverKey: string; readonly query: string } & NotionDriverDeps): Promise<NotionPagePinResult> {
   const headers = { authorization: `Bearer ${opts.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" };
+  const retry = { fetchFn: opts.fetchFn, sleepFn: opts.sleepFn };
   let found: Record<string, unknown> | undefined;
   try {
-    const res = await fetch(`${NOTION_API}/search`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ query: opts.query, filter: { value: "page", property: "object" }, page_size: 5 }),
-      signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
-    });
+    const res = await notionFetch(
+      `${NOTION_API}/search`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ query: opts.query, filter: { value: "page", property: "object" }, page_size: 5 }),
+        signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+      },
+      { what: `POST /v1/search for "${opts.query}"`, ...retry },
+    );
     if (!res.ok) return { ok: false, reason: `the harness's own POST /v1/search for "${opts.query}" → ${res.status}` };
     const json = (await res.json()) as { results?: unknown };
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
@@ -87,10 +168,14 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
   const pageId = found.id as string;
   const title = pageTitle(found);
   try {
-    const res = await fetch(`${NOTION_API}/blocks/${encodeURIComponent(pageId)}/children?page_size=100`, {
-      headers: { authorization: headers.authorization, "notion-version": NOTION_VERSION },
-      signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
-    });
+    const res = await notionFetch(
+      `${NOTION_API}/blocks/${encodeURIComponent(pageId)}/children?page_size=100`,
+      {
+        headers: { authorization: headers.authorization, "notion-version": NOTION_VERSION },
+        signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+      },
+      { what: `GET /v1/blocks/${pageId}/children`, ...retry },
+    );
     if (!res.ok) return { ok: false, reason: `the harness's own GET /v1/blocks/${pageId}/children → ${res.status}` };
     const json = (await res.json()) as { results?: unknown };
     const phrases = notionBlockPhrases(Array.isArray(json.results) ? json.results : []);
@@ -102,7 +187,14 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
 }
 
 export class NotionDriver {
-  constructor(private readonly cfg: NotionAmbientConfig) {}
+  private readonly retry: { readonly fetchFn?: NotionFetchFn; readonly sleepFn?: (ms: number) => Promise<void> };
+
+  constructor(
+    private readonly cfg: NotionAmbientConfig,
+    deps: NotionDriverDeps = {},
+  ) {
+    this.retry = { fetchFn: deps.fetchFn, sleepFn: deps.sleepFn };
+  }
 
   get botUserId(): string {
     return this.cfg.botUserId;
@@ -127,9 +219,11 @@ export class NotionDriver {
   }
 
   private async api(path: string): Promise<Record<string, unknown>> {
-    const res = await fetch(`${NOTION_API}${path}`, {
-      headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION },
-    });
+    const res = await notionFetch(
+      `${NOTION_API}${path}`,
+      { headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION } },
+      { what: `GET ${path}`, ...this.retry },
+    );
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 200);
       throw new Error(`notion GET ${path} → ${res.status}${detail ? ` (${detail})` : ""}`);
@@ -197,11 +291,15 @@ export class NotionDriver {
   }
 
   async appendParagraphBlock(text: string): Promise<string> {
-    const res = await fetch(`${NOTION_API}/blocks/${encodeURIComponent(this.cfg.pageId)}/children`, {
-      method: "PATCH",
-      headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
-      body: JSON.stringify({ children: [{ object: "block", type: "paragraph", paragraph: { rich_text: [{ text: { content: text } }] } }] }),
-    });
+    const res = await notionFetch(
+      `${NOTION_API}/blocks/${encodeURIComponent(this.cfg.pageId)}/children`,
+      {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
+        body: JSON.stringify({ children: [{ object: "block", type: "paragraph", paragraph: { rich_text: [{ text: { content: text } }] } }] }),
+      },
+      { what: "PATCH /v1/blocks/:page/children", ...this.retry },
+    );
     if (!res.ok) throw new Error(`notion PATCH /blocks/:page/children → ${res.status}`);
     const json = (await res.json()) as { results?: { id?: unknown }[] };
     const id = typeof json.results?.[0]?.id === "string" ? json.results[0].id : "";
@@ -211,11 +309,15 @@ export class NotionDriver {
   }
 
   async archiveBlock(blockId: string): Promise<void> {
-    await fetch(`${NOTION_API}/blocks/${encodeURIComponent(blockId)}`, {
-      method: "PATCH",
-      headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
-      body: JSON.stringify({ archived: true }),
-    }).catch(() => undefined);
+    await notionFetch(
+      `${NOTION_API}/blocks/${encodeURIComponent(blockId)}`,
+      {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      },
+      { what: `PATCH /v1/blocks/${blockId} (archive)`, ...this.retry },
+    ).catch(() => undefined);
   }
 
   async pageBlocks(): Promise<readonly string[]> {
@@ -225,15 +327,19 @@ export class NotionDriver {
   }
 
   async createBlockDiscussion(blockId: string, text: string): Promise<{ commentId: string; discussionId: string }> {
-    const res = await fetch(`${NOTION_API}/comments`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.cfg.driverKey}`,
-        "notion-version": NOTION_COMMENT_VERSION,
-        "content-type": "application/json",
+    const res = await notionFetch(
+      `${NOTION_API}/comments`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.cfg.driverKey}`,
+          "notion-version": NOTION_COMMENT_VERSION,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(buildBlockCommentBody(blockId, text)),
       },
-      body: JSON.stringify(buildBlockCommentBody(blockId, text)),
-    });
+      { what: `POST /v1/comments (block ${blockId})`, ...this.retry },
+    );
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 200);
       throw new Error(`notion POST /comments (block ${blockId}) → ${res.status}${detail ? ` (${detail})` : ""}`);
@@ -246,15 +352,19 @@ export class NotionDriver {
   }
 
   async replyToDiscussion(discussionId: string, text: string): Promise<{ commentId: string }> {
-    const res = await fetch(`${NOTION_API}/comments`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.cfg.driverKey}`,
-        "notion-version": NOTION_COMMENT_VERSION,
-        "content-type": "application/json",
+    const res = await notionFetch(
+      `${NOTION_API}/comments`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.cfg.driverKey}`,
+          "notion-version": NOTION_COMMENT_VERSION,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(buildDiscussionReplyBody(discussionId, text)),
       },
-      body: JSON.stringify(buildDiscussionReplyBody(discussionId, text)),
-    });
+      { what: `POST /v1/comments (discussion ${discussionId})`, ...this.retry },
+    );
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 200);
       throw new Error(`notion POST /comments (discussion ${discussionId}) → ${res.status}${detail ? ` (${detail})` : ""}`);

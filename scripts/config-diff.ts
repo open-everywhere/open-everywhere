@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ function flag(name: string): string | undefined {
 const baseRef = flag("base-ref");
 const baseDirFlag = flag("base-dir");
 if (!baseRef && !baseDirFlag) {
-  console.error("usage: config-diff.ts --base-ref <ref> | --base-dir <dir>  [--out <md>] [--json <json>]");
+  console.error("usage: config-diff.ts --base-ref <ref> | --base-dir <dir>  [--out <md>] [--json <json>] [--publish]");
   process.exit(2);
 }
 
@@ -125,7 +126,18 @@ const out = flag("out");
 if (out) writeFileSync(out, markdown + "\n");
 const jsonOut = flag("json");
 if (jsonOut) {
-  writeFileSync(jsonOut, JSON.stringify({ base: base ?? null, baseFailure: baseFailure ?? null, head: head.snapshot, diff, changedFiles: changedFiles ?? null }, null, 2) + "\n");
+  const document = JSON.stringify({ base: base ?? null, baseFailure: baseFailure ?? null, head: head.snapshot, diff, changedFiles: changedFiles ?? null }, null, 2) + "\n";
+  writeFileSync(jsonOut, document);
+  if (process.argv.includes("--publish")) {
+    const bytes = readFileSync(jsonOut);
+    const headSha = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" });
+    const sha = headSha.status === 0 ? headSha.stdout.trim() : "";
+    if (sha.length === 0) {
+      console.error("✗ config-diff --publish: `git rev-parse HEAD` printed nothing, so the head sha this document describes is unknown. Refusing to print an evidence line.");
+      process.exit(1);
+    }
+    console.log(`OE_CONFIG_DIFF head=${sha} sha256=${createHash("sha256").update(bytes).digest("hex")} bytes=${bytes.length} file=${jsonOut}`);
+  }
 }
 console.log(markdown);
 

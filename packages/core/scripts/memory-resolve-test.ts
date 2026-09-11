@@ -201,7 +201,36 @@ throws(
 
 const multiIndex = renderMemoryIndex(multi.reads);
 ok(multiIndex.includes("# Memory index") && multiIndex.includes("not** in your context"), "index: header + not-in-context note");
-ok(multiIndex.includes("memory/txn/") && multiIndex.includes("`remember`"), "index: writable silo listed with its dir + remember hint");
+ok(multiIndex.includes("memory/txn/") && multiIndex.includes("EDITING"), "index: writable silo listed with its dir + the edit-is-the-save hint");
+
+for (const route of ["file-tools", "agent", "none"] as const) {
+  const idx = renderMemoryIndex(multi.reads, [], route);
+  ok(!idx.includes("remember"), `🔴 index/${route}: names NO \`remember\` tool — the verb was deleted, and a dead verb is how a save becomes prose`);
+}
+const writeFileToolsIndex = renderMemoryIndex(multi.reads, [], "file-tools");
+ok(
+  writeFileToolsIndex.includes("EDITING") && writeFileToolsIndex.includes("the host persists it when the turn ends"),
+  "🔴 index/file-tools: the write path is the FILE EDIT, and the index says who persists it",
+);
+ok(writeFileToolsIndex.includes("Nothing is saved by saying it is"), "🔴 index/file-tools: …and says outright that prose saves nothing — the J2 false-save-claim in one sentence");
+const writeAgentIndex = renderMemoryIndex(multi.reads, [], "agent");
+ok(
+  writeAgentIndex.includes("Open memory/txn/MEMORY.md with your file tools") && writeAgentIndex.includes("Reply with the exact line you wrote"),
+  "🔴 index/agent: the delegation BRIEF names the file edit and the path, and asks the worker back for the line it wrote",
+);
+ok(
+  writeAgentIndex.includes("Only after the worker reports the line it WROTE"),
+  "🔴 index/agent: …and the seat's own ack waits on that report, not on the dispatch",
+);
+const writeNoneIndex = renderMemoryIndex(multi.reads, [], "none");
+ok(
+  writeNoneIndex.includes("CANNOT write these files") && writeNoneIndex.includes("never that you saved it"),
+  "🔴 index/none: a seat with no file tools and no delegation is told to say it cannot save — it used to read the file-tools wording",
+);
+ok(!writeNoneIndex.includes("Start with"), "🔴 index/none: the entry line does NOT say 'Start with' — that instructs an open this seat cannot perform");
+ok(writeNoneIndex.includes("The index entry is `memory/txn/MEMORY.md`"), "🔴 index/none: …but the path is still NAMED, so the seat can say which file it cannot reach");
+ok(writeFileToolsIndex.includes("Start with `memory/txn/MEMORY.md`"), "🔴 index/file-tools/CONTROL: a seat that CAN open the file still reads 'Start with' — the fix is narrowed to the route that cannot");
+ok(writeAgentIndex.includes("Start with `memory/txn/MEMORY.md`"), "🔴 index/agent/CONTROL: so does a delegating seat — it names the path in the brief");
 ok(renderMemoryIndex([]).includes("No memory is configured"), "index: empty plan → 'no memory' note");
 const nkb = resolveMemoryPlan(binding("channel", "internal"), partition("C_NKB"), cfg);
 const nkbIndex = renderMemoryIndex(nkb.reads);

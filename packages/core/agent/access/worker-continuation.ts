@@ -1,4 +1,7 @@
 import { asSchema, jsonSchema } from "ai";
+import { defineState } from "eve/context";
+import { parseWakeAttachments, withDelegatedAttachments, type BriefAttachment } from "../channels/attachments.js";
+import { isWakeEnvelopeShaped } from "../channels/wake-envelope.js";
 
 const DELEGATION_TOOL_NAME = "agent";
 
@@ -30,9 +33,65 @@ export function suppressAgentsListing(messages: unknown): number {
       messages.splice(i, 1);
       removed++;
     }
+    noteWakeAttachments(messages);
     return removed;
   } catch {
     return 0;
+  }
+}
+
+const wakeAttachmentSlot = defineState<readonly BriefAttachment[]>("open-everywhere.wake-attachments", () => []);
+
+const DELEGATION_BRIEF_FIELD = "message";
+
+function lastUserText(messages: readonly unknown[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m === null || typeof m !== "object") continue;
+    const like = m as MessageLike;
+    if (like.role !== "user") continue;
+    if (typeof like.content === "string") return like.content;
+    if (!Array.isArray(like.content)) return undefined;
+    const text = like.content
+      .map((part) => (part !== null && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : ""))
+      .join("\n");
+    return text.length > 0 ? text : undefined;
+  }
+  return undefined;
+}
+
+function noteWakeAttachments(messages: readonly unknown[]): void {
+  let found: readonly BriefAttachment[] = [];
+  try {
+    const text = lastUserText(messages);
+    if (text !== undefined && isWakeEnvelopeShaped(text)) found = parseWakeAttachments(text);
+  } catch {
+    found = [];
+  }
+  try {
+    wakeAttachmentSlot.update(() => found);
+  } catch {
+  }
+}
+
+function currentWakeAttachments(): readonly BriefAttachment[] {
+  try {
+    return wakeAttachmentSlot.get();
+  } catch {
+    return [];
+  }
+}
+
+function carryAttachmentsIntoBrief(candidate: unknown): unknown {
+  try {
+    const attachments = currentWakeAttachments();
+    if (attachments.length === 0) return candidate;
+    if (candidate === null || typeof candidate !== "object") return candidate;
+    const message = (candidate as Record<string, unknown>)[DELEGATION_BRIEF_FIELD];
+    if (typeof message !== "string" || message.length === 0) return candidate;
+    return { ...(candidate as Record<string, unknown>), [DELEGATION_BRIEF_FIELD]: withDelegatedAttachments(message, attachments) };
+  } catch {
+    return candidate;
   }
 }
 
@@ -88,6 +147,7 @@ export function refuseAgentContinuation(toolset: Record<string, unknown>): boole
         const { [CONTINUATION_FIELD]: _blank, ...rest } = candidate as Record<string, unknown>;
         candidate = rest;
       }
+      candidate = carryAttachmentsIntoBrief(candidate);
       if (typeof original.validate !== "function") return { success: true as const, value: candidate };
       return await original.validate(candidate);
     },

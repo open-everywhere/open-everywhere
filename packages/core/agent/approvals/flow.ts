@@ -879,6 +879,7 @@ export interface ResolveApprovalClickInput {
   readonly clickerId: string;
   readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
   readonly clickContext?: { readonly surfaceKey: string };
+  readonly releaseFeedback?: SweepFeedbackDeps;
   readonly clickerPlatform?: string;
   readonly clickerTenant?: string;
   readonly clickerIsGuest?: boolean;
@@ -900,6 +901,72 @@ async function auditClickerDenial(
     detail: { id: row.id, kind: row.kind, ...venueDetail(row, clickSurfaceKey), reason, ...extraDetail },
   }).catch(() => undefined);
 }
+
+function taintedFrozenProposal(argsJson: string): boolean {
+  try {
+    return (JSON.parse(argsJson) as { tainted?: unknown }).tainted === true;
+  } catch {
+    return true;
+  }
+}
+
+async function releaseSessionGrantedPendings(input: {
+  readonly sessionId: string;
+  readonly memoKind: string;
+  readonly grantedOn: PendingActionRow;
+  readonly click: ResolveApprovalClickInput;
+}): Promise<readonly string[]> {
+  const org = input.click.org;
+  const released: string[] = [];
+  try {
+    const store = getOperationalStore();
+    const candidates = (await store.listPendingActions(org)).filter(
+      (r) =>
+        r.id !== input.grantedOn.id &&
+        sessionIdFromFrozenArgs(r.argsJson) === input.sessionId &&
+        sessionGrantKind(r) === input.memoKind &&
+        !taintedFrozenProposal(r.argsJson),
+    );
+    for (const candidate of candidates) {
+      const halt = await resolveHalt(
+        haltScopeFor({
+          org,
+          scopeKey: candidate.scopeKey,
+          domain: candidate.domain,
+          principalId: candidate.requestedBy,
+        }),
+      ).catch(() => ({ halted: true }) as { readonly halted: boolean });
+      if (halt.halted) continue;
+      const outcome = await resolveApprovalClick({ ...input.click, id: candidate.id, decision: "approve" });
+      if (outcome.outcome !== "decided") continue;
+      released.push(candidate.id);
+      await rowDecisionFeedback(
+        outcome.row ?? candidate,
+        {
+          summaryLines: outcome.summaryLines ?? summaryLinesFor(candidate),
+          outcome: "approved",
+          outcomeLine: outcome.outcomeLine ?? "approved",
+          executed: outcome.executed ?? "none",
+          clickerId: input.click.clickerId,
+        },
+        input.click.releaseFeedback ?? {},
+      ).catch(() => undefined);
+    }
+    if (released.length > 0) {
+      await appendAudit({
+        ...whereFromScope(org, input.grantedOn.scopeKey),
+        principalId: input.click.clickerId,
+        action: SESSION_GRANT_RELEASED_ACTION,
+        detail: { id: input.grantedOn.id, memoKind: input.memoKind, released },
+      }).catch(() => undefined);
+    }
+  } catch (err) {
+    console.warn(`[open-everywhere:approvals] session-grant release failed (org=${org}): ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return released;
+}
+
+export const SESSION_GRANT_RELEASED_ACTION = "approval.session_grant_released";
 
 export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
   const store = getOperationalStore();
@@ -1008,6 +1075,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
       const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
       await store.setSessionApproval({ org: input.org, sessionId, kind: memoKind, grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
       await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind, ...venue } }).catch(() => undefined);
+      await releaseSessionGrantedPendings({ sessionId, memoKind, grantedOn: row, click: input });
     }
   }
 
@@ -1032,6 +1100,14 @@ export interface SweepFeedbackDeps {
 }
 
 async function sweepExpiryFeedback(row: PendingActionRow, deps: SweepFeedbackDeps): Promise<void> {
+  await rowDecisionFeedback(row, { summaryLines: summaryLinesFor(row), outcome: "expired", outcomeLine: "expired", executed: "none" }, deps);
+}
+
+async function rowDecisionFeedback(
+  row: PendingActionRow,
+  what: Pick<DecisionFeedbackInput, "summaryLines" | "outcome" | "outcomeLine" | "executed"> & { readonly clickerId?: string },
+  deps: SweepFeedbackDeps = {},
+): Promise<void> {
   if (!row.postedTo) return;
   const [platform, workspace] = row.postedTo.split("/");
   if (!workspace) return;
@@ -1046,10 +1122,7 @@ async function sweepExpiryFeedback(row: PendingActionRow, deps: SweepFeedbackDep
   await deliverDecisionFeedback(
     {
       row,
-      summaryLines: summaryLinesFor(row),
-      outcome: "expired",
-      outcomeLine: "expired",
-      executed: "none",
+      ...what,
       target: platform === "slack" ? slackDecisionWakeTarget(row, workspace) : discordDecisionWakeTarget(row, workspace),
       postNotice,
     },

@@ -44,18 +44,104 @@ export function __resetGenerationRetirementsForTest(): void {
   pending = [];
 }
 
-export type RetirementVerdict = "retire" | "skip-incoming" | "skip-still-live" | "skip-live-turn" | "skip-unreadable";
+function generationOwesKey(token: string): string {
+  return `oe-gen-owes:${token}`;
+}
+
+function taskGenerationKey(taskId: string): string {
+  return `oe-task-gen:${taskId}`;
+}
+
+export const GENERATION_DELEGATION_TTL_MS = 6 * 60 * 60 * 1000;
+
+export const MAX_GENERATION_DELEGATIONS = 32;
+
+function readOwedTasks(raw: string | null): readonly string[] {
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as { tasks?: unknown } | null;
+    const tasks = parsed?.tasks;
+    if (!Array.isArray(tasks)) return [];
+    return tasks.filter((t): t is string => typeof t === "string" && t.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export type DelegationLedgerStore = Pick<OperationalStore, "getTaskResult" | "putTaskResult" | "deleteTaskResult">;
+
+export async function noteGenerationDelegation(
+  org: string,
+  windowToken: string | undefined,
+  taskId: string,
+  store?: DelegationLedgerStore,
+): Promise<void> {
+  try {
+    if (windowToken === undefined || taskId.length === 0) return;
+    const token = bareTokenFromEveContext(windowToken) ?? windowToken;
+    if (!isUnifiedSupervisorToken(token)) return;
+    const s = store ?? getOperationalStore();
+    const at = new Date().toISOString();
+    const owed = readOwedTasks(await s.getTaskResult(org, generationOwesKey(token)));
+    if (!owed.includes(taskId)) {
+      if (owed.length >= MAX_GENERATION_DELEGATIONS) return;
+      await s.putTaskResult(org, generationOwesKey(token), JSON.stringify({ tasks: [...owed, taskId] }), at, GENERATION_DELEGATION_TTL_MS);
+    }
+    await s.putTaskResult(org, taskGenerationKey(taskId), JSON.stringify({ token }), at, GENERATION_DELEGATION_TTL_MS);
+  } catch (err) {
+    console.warn(`[open-everywhere:generation-retirement] could not record the owed delegation ${taskId}: ${String(err)}`);
+  }
+}
+
+export async function clearGenerationDelegation(org: string, taskId: string, store?: DelegationLedgerStore): Promise<void> {
+  try {
+    if (taskId.length === 0) return;
+    const s = store ?? getOperationalStore();
+    const raw = await s.getTaskResult(org, taskGenerationKey(taskId));
+    if (raw === null) return;
+    const token = (JSON.parse(raw) as { token?: unknown } | null)?.token;
+    if (typeof token !== "string" || token.length === 0) return;
+    const owed = readOwedTasks(await s.getTaskResult(org, generationOwesKey(token)));
+    if (owed.includes(taskId)) {
+      const next = owed.filter((t) => t !== taskId);
+      const at = new Date().toISOString();
+      if (next.length === 0) await s.deleteTaskResult(org, generationOwesKey(token));
+      else await s.putTaskResult(org, generationOwesKey(token), JSON.stringify({ tasks: next }), at, GENERATION_DELEGATION_TTL_MS);
+    }
+    await s.deleteTaskResult(org, taskGenerationKey(taskId));
+  } catch (err) {
+    console.warn(`[open-everywhere:generation-retirement] could not clear the owed delegation ${taskId}: ${String(err)}`);
+  }
+}
+
+export async function generationOwedDelegation(
+  org: string,
+  token: string,
+  store?: Pick<OperationalStore, "getTaskResult">,
+): Promise<"owed" | "none" | "unreadable"> {
+  try {
+    const s = store ?? getOperationalStore();
+    return readOwedTasks(await s.getTaskResult(org, generationOwesKey(token))).length > 0 ? "owed" : "none";
+  } catch (err) {
+    console.warn(`[open-everywhere:generation-retirement] owed-delegation row unreadable for ${token}: ${String(err)} — not retiring`);
+    return "unreadable";
+  }
+}
+
+export type RetirementVerdict = "retire" | "skip-incoming" | "skip-still-live" | "skip-live-turn" | "skip-owed-delegation" | "skip-unreadable";
 
 export function retirementVerdict(input: {
   readonly token: string;
   readonly incomingToken: string;
   readonly registry: "rotated" | "still-live" | "unreadable";
   readonly turn: "live" | "none" | "unreadable";
+  readonly delegation: "owed" | "none" | "unreadable";
 }): RetirementVerdict {
   if (input.token === input.incomingToken) return "skip-incoming";
-  if (input.registry === "unreadable" || input.turn === "unreadable") return "skip-unreadable";
+  if (input.registry === "unreadable" || input.turn === "unreadable" || input.delegation === "unreadable") return "skip-unreadable";
   if (input.registry === "still-live") return "skip-still-live";
   if (input.turn === "live") return "skip-live-turn";
+  if (input.delegation === "owed") return "skip-owed-delegation";
   return "retire";
 }
 
@@ -68,7 +154,7 @@ export const RESET_STATUS_RETIRED = "reset";
 export type RetirementFrom = (address: string) => RetirementSource;
 
 export interface RetirementDeps {
-  readonly store?: Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow">;
+  readonly store?: Pick<OperationalStore, "getChannelSession" | "getTurnAnchorByWindow" | "getTaskResult">;
   readonly labelsFor: (token: string) => { readonly workspace: string; readonly surface: string | undefined };
   readonly confirmTimeoutMs?: number;
 }
@@ -139,7 +225,8 @@ export async function drainGenerationRetirements(
   for (const p of taken) {
     const registry = p.token === incoming ? "rotated" : await registryState(store, input.org, p.registryKey, p.token);
     const turn = p.token === incoming ? "none" : await turnState(store, input.org, p.token);
-    const verdict = retirementVerdict({ token: p.token, incomingToken: incoming, registry, turn });
+    const delegation = p.token === incoming ? "none" : await generationOwedDelegation(input.org, p.token, store);
+    const verdict = retirementVerdict({ token: p.token, incomingToken: incoming, registry, turn, delegation });
     if (verdict !== "retire") {
       await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: verdict });
       continue;

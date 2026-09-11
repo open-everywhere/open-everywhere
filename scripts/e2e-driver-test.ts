@@ -3645,6 +3645,122 @@ rmSync(dir, { recursive: true, force: true });
   ok(renderActingIdentityRead(actingIdentityRead([{ ...ordinary, action: "notion.dispatched" }], "notion")).includes("notion.dispatched"), "an empty read names the actions the window DID hold, so a red says what it saw");
   ok(renderActingIdentityRead(both).includes("refused=true") && renderActingIdentityRead(both).includes("read_notion_page"), "the read-out names each row's verdict and tool — printed on a pass too, so a green does not read as bare success");
 }
+
+{
+  const scenariosSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  const start = scenariosSrc.indexOf('id: "J-MPIM"');
+  ok(start > 0, "the J-MPIM scenario is still in scenarios.ts (if it is gone, delete this section rather than letting it pass vacuously)");
+  const nextId = scenariosSrc.indexOf('    id: "', start + 20);
+  const body = scenariosSrc.slice(start, nextId > start ? nextId : scenariosSrc.length);
+  ok(body.includes('actions: ["reply.post"]'), "…and it still reads the reply.post row — the gate this section guards has not been renamed out from under it");
+  ok(
+    body.includes("pollOptional("),
+    "🔴 J-MPIM's reply.post audit read is POLLED, not read once (OPE-1682). A single read races the deployment's own audit write and reds a correct " +
+      "deploy — measured on ship #192. Wrap it in pollOptional bounded by AUDIT_ROW_WAIT, never a bare ctx.auditRead",
+  );
+}
+
+{
+  const { NotionDriver, NotionRateLimitedError, NOTION_MAX_ATTEMPTS, NOTION_RATE_LIMIT_CODE, NOTION_RETRY_CAP_MS, notionFetch, parseNotionRetryAfterMs } = await import(
+    "../packages/core/scripts/e2e/notion-driver.js"
+  );
+
+  const res = (status: number, opts: { retryAfter?: string; body?: unknown } = {}) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (n: string) => (n.toLowerCase() === "retry-after" ? (opts.retryAfter ?? null) : null) },
+    text: async () => JSON.stringify(opts.body ?? {}),
+    json: async () => opts.body ?? {},
+  });
+
+  ok(parseNotionRetryAfterMs("2", 0) === 2_000, "a delta-seconds Retry-After reads as milliseconds");
+  ok(parseNotionRetryAfterMs("0.5", 0) === 500, "…including a fractional one");
+  ok(parseNotionRetryAfterMs(null, 0) === undefined, "an absent header reads as UNKNOWN, so the caller uses its own fallback rather than guessing");
+  ok(parseNotionRetryAfterMs("not-a-delay", 0) === undefined, "…as does a value in neither RFC 9110 form");
+  ok(parseNotionRetryAfterMs(new Date(5_000).toUTCString(), 0) === 5_000, "an HTTP-date reads as a delay relative to now");
+  ok(parseNotionRetryAfterMs(new Date(0).toUTCString(), 5_000) === 0, "a PAST date clamps to 0 — the vendor says the wait is already over");
+
+  {
+    const waits: number[] = [];
+    let call = 0;
+    const answer = await notionFetch(
+      "https://api.notion.com/v1/comments",
+      { method: "POST" },
+      {
+        what: "POST /v1/comments",
+        fetchFn: async () => (++call === 1 ? res(429, { retryAfter: "2" }) : res(200)),
+        sleepFn: async (ms) => void waits.push(ms),
+      },
+    );
+    ok(answer.status === 200, "a 429 followed by a 200 answers 200 — the caller never sees the refusal");
+    ok(call === 2, "…because the call was made again");
+    ok(waits.length === 1 && waits[0] === 2_000, "…after waiting exactly what Retry-After named");
+  }
+
+  {
+    const waits: number[] = [];
+    let call = 0;
+    await notionFetch(
+      "https://api.notion.com/v1/search",
+      { method: "POST" },
+      { what: "POST /v1/search", fetchFn: async () => (++call === 1 ? res(429, { retryAfter: "3600" }) : res(200)), sleepFn: async (ms) => void waits.push(ms) },
+    );
+    ok(waits[0] === NOTION_RETRY_CAP_MS, `a one-hour Retry-After is capped at ${NOTION_RETRY_CAP_MS}ms — a leg that blocks that long reds anyway`);
+  }
+
+  {
+    const waits: number[] = [];
+    let call = 0;
+    await notionFetch("https://api.notion.com/v1/search", {}, { what: "GET", fetchFn: async () => (++call === 1 ? res(429) : res(200)), sleepFn: async (ms) => void waits.push(ms) });
+    ok(waits.length === 1 && waits[0] > 0, "a 429 carrying no Retry-After still backs off, on the declared fallback");
+  }
+
+  {
+    const waits: number[] = [];
+    let call = 0;
+    const answer = await notionFetch(
+      "https://api.notion.com/v1/comments",
+      { method: "POST" },
+      { what: "POST /v1/comments", fetchFn: async () => (++call === 1 ? res(429, { retryAfter: "0" }) : res(200)), sleepFn: async (ms) => void waits.push(ms) },
+    );
+    ok(answer.status === 200 && call === 2, "a 429 naming `Retry-After: 0` RETRIES immediately — the vendor said try again now, and giving up there would red a leg for free");
+    ok(waits.length === 1 && waits[0] === 0, "…waiting the zero it named, rather than inventing a fallback the vendor did not ask for");
+  }
+
+  {
+    let call = 0;
+    let thrown: unknown;
+    try {
+      await notionFetch("https://api.notion.com/v1/comments", { method: "POST" }, { what: "POST /v1/comments", fetchFn: async () => (call++, res(429, { retryAfter: "1" })), sleepFn: async () => undefined });
+    } catch (err) {
+      thrown = err;
+    }
+    ok(thrown instanceof NotionRateLimitedError, "a Notion that never stops refusing throws the NAMED error, never a 429 response a caller would report as a product status");
+    ok(call === NOTION_MAX_ATTEMPTS, `…after exactly ${NOTION_MAX_ATTEMPTS} attempts, so the retry is bounded`);
+    ok(String(thrown).includes(NOTION_RATE_LIMIT_CODE), `…and the message names the limit (${NOTION_RATE_LIMIT_CODE}), so a run log says WHICH budget ran out`);
+    ok(/HARNESS LIMIT, NOT A PRODUCT RED/u.test(String(thrown)), "…and says plainly that this is a harness limit, which is what a live run could not tell");
+  }
+
+  {
+    let call = 0;
+    const answer = await notionFetch("https://api.notion.com/v1/comments", {}, { what: "GET", fetchFn: async () => (call++, res(403)), sleepFn: async () => undefined });
+    ok(answer.status === 403 && call === 1, "a 403 is returned as it stands, on ONE call — a permission refusal is not retried");
+  }
+
+  {
+    let call = 0;
+    const driver = new NotionDriver(
+      { driverKey: "k", pageId: "p", workspaceId: "w", botUserId: "b" } as never,
+      {
+        fetchFn: async () => (++call === 1 ? res(429, { retryAfter: "1" }) : res(200, { body: { id: "c1", discussion_id: "d1" } })),
+        sleepFn: async () => undefined,
+      },
+    );
+    const made = await driver.createBlockDiscussion("block-1", "hello");
+    ok(made.commentId === "c1" && made.discussionId === "d1", "a driver method that hits a 429 retries and returns the real answer — the call site really goes through the helper");
+    ok(call === 2, "…and it was the retry that produced it");
+  }
+}
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +
     `${passed - shapeChecks} are harness/driver logic — neither half is a product-behaviour coverage figure)`,

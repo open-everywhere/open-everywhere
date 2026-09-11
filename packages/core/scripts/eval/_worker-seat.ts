@@ -1,6 +1,6 @@
 import type { ToolSet } from "ai";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
-import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, restrictToolsetForWorkerSeat } from "../../agent/access/worker-seat.js";
+import { WORKER_UNMOUNTED_TOOLS, allowedOnWorkerSeat, restrictToolsetForWorkerSeat } from "../../agent/access/worker-seat.js";
 import { WORKER_INDEX_MACHINERY } from "../../agent/access/worker-capabilities.js";
 import { CONTRIBUTIONS } from "../../agent/contributions.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
@@ -123,7 +123,7 @@ export async function buildWorkerSeatToolset(opts: {
     if (onRoster.has(name)) opts.onSkip?.(name, why);
   };
 
-  const attempt = [...new Set([...roster, ...WORKER_WITHHELD_TOOLS])];
+  const attempt = [...new Set([...roster, ...WORKER_UNMOUNTED_TOOLS])];
 
   for (const name of attempt.filter((n) => WORKER_INDEX_MACHINERY.has(n))) {
     const provided = await mountCoreTool(name, opts.ctx, rec, set);
@@ -162,7 +162,7 @@ export async function buildWorkerSeatToolset(opts: {
 
   const removed = restrictToolsetForWorkerSeat(set);
   opts.onRemoved?.(removed);
-  const leakedWithheld = Object.keys(set).filter((n) => WORKER_WITHHELD_TOOLS.has(n));
+  const leakedWithheld = Object.keys(set).filter((n) => WORKER_UNMOUNTED_TOOLS.has(n));
   if (leakedWithheld.length > 0) {
     throw new Error(`buildWorkerSeatToolset: withheld name(s) survived the subtraction: ${leakedWithheld.join(", ")}`);
   }

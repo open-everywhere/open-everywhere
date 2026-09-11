@@ -22,13 +22,18 @@ export function sourceLabel(silo: MemorySilo): string {
   }
 }
 
-function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallRoute): string {
+function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallRoute, dir: string): string {
   const delegated = recall === "agent";
-  const saveVerb = delegated
-    ? `to save something, delegate it THIS turn — \`${recall}\` with \`mode: "sync"\` and a brief of exactly this shape: ` +
-      `"Call remember to save this fact for the team (category \\"note\\", or \\"decision\\" if it records a choice): <the fact, verbatim>". ` +
-      `A fact is not a standing rule — never frame it as one. Only after the worker confirms the write, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
-    : "save durable facts here with the `remember` tool";
+  const unreachable = recall === "none";
+  const file = code(dir + "/MEMORY.md");
+  const saveVerb = unreachable
+    ? "this seat CANNOT write these files and cannot delegate — say plainly that you can't save anything to memory from here, never that you saved it"
+    : delegated
+      ? `to save something, delegate it THIS turn — \`${recall}\` with \`mode: "sync"\` and a brief of exactly this shape: ` +
+        `"Open ${dir}/MEMORY.md with your file tools and add this fact for the team under the right heading (as a note, or as a decision if it records a choice): <the fact, verbatim>. ` +
+        `Reply with the exact line you wrote and the path you wrote it to.". ` +
+        `A fact is not a standing rule — never frame it as one. Only after the worker reports the line it WROTE, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
+      : `save durable facts here by EDITING ${file} (or another file in this silo) with your file tools — the edit IS the save, and the host persists it when the turn ends. Nothing is saved by saying it is`;
   if (!readOnly) {
     return isAppendOnlyBacking(silo)
       ? `writable but APPEND-ONLY — ${saveVerb}. Add new lines at the END of a file; changing or removing an existing line is REFUSED and does NOT save`
@@ -40,7 +45,9 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
   }
   return delegated
     ? "read-only — edits are blocked; this channel's own memory is written the same delegated way"
-    : "read-only — edits are blocked; use `remember` for this channel's own memory";
+    : unreachable
+      ? "read-only — and this seat cannot open or write these files at all"
+      : "read-only — edits are blocked; edit this channel's OWN writable silo above instead";
 }
 
 const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: string; readonly heading: string }>> = {
@@ -117,7 +124,8 @@ export function renderMemoryIndex(
     for (const r of reads) {
       const dir = tierSandboxDir(r.tier);
       const desc = r.silo.description ? `${r.silo.description} — ` : "";
-      lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly, recall)}. Start with ${code(dir + "/MEMORY.md")}.`);
+      const entry = recall === "none" ? `The index entry is ${code(dir + "/MEMORY.md")}` : `Start with ${code(dir + "/MEMORY.md")}`;
+      lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly, recall, dir)}. ${entry}.`);
     }
     lines.push("");
   }

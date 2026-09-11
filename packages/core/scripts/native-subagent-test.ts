@@ -483,6 +483,67 @@ function inSession<T>(fn: () => T): T {
 }
 
 {
+  const { subagentCallTaintRecord, subagentCallTaintStatus, markSubagentCallTainted } = await import("../agent/access/subagent-taint.js");
+  const { untrustedIngestedThisTurn, taintKindsThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+
+  await markSubagentCallTainted("default", "sess-parent", "call_kinds", ["web", "github"]);
+  eq((await subagentCallTaintRecord("default", "sess-parent", "call_kinds"))?.kinds, ["web", "github"], "🔴 OPE-1251: the kinds are stored beside the marker and read back in order");
+  eq(await subagentCallTaintStatus("default", "sess-parent", "call_kinds"), true, "…and the boolean reader still answers `true` over the widened row — the widening is additive, so a reader that only wants the bit reads one");
+
+  await markSubagentCallTainted("default", "sess-parent", "call_bogus", ["web", "not-a-real-kind"]);
+  eq((await subagentCallTaintRecord("default", "sess-parent", "call_bogus"))?.kinds, ["web"], "🔴 OPE-1251: an unknown class in the row is dropped on read, exactly as `parseForwardStamp` admits the forward leg's tail");
+
+  await markSubagentCallTainted("default", "sess-parent", "call_old");
+  eq((await subagentCallTaintRecord("default", "sess-parent", "call_old"))?.kinds, [], "🔴 OPE-1251: a row with no `kinds` field reads as tainted with an EMPTY class list, never as unreadable");
+
+  await (async () => {
+    const twoSourceChildCtx = {
+      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_two" },
+      session: {
+        id: "sess-two-source-child",
+        parent: { sessionId: "sess-parent", callId: "call_two", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
+        auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    };
+    inSession(() => {
+      spawnTaint.openTaintTurn(twoSourceChildCtx as never);
+      markUntrustedIngestedThisTurn("web");
+      markUntrustedIngestedThisTurn("github");
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    eq(
+      [...((await subagentCallTaintRecord("default", "sess-parent", "call_two"))?.kinds ?? [])].sort(),
+      ["github", "web"],
+      "🔴 OPE-1251 CHILD SIDE: a child that read a page AND a diff stores BOTH classes — a row holding only `web` would be the first-mark-only defect the forward leg already fixed",
+    );
+  })();
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
+    spawnTaint.openTaintTurn(parentHookCtx as never);
+    eq(await spawnTaint.adoptSubagentTaint("call_two", "sess-parent"), true, "OPE-1251: the sync return leg still adopts — the kinds ride the existing adoption");
+    eq([...taintKindsThisTurn()].sort(), ["github", "web"], "🔴 OPE-1251 PARENT SIDE: the PARENT's own turn now names `web` and `github`, which is what its next memory bullet and its next approval card print");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
+    spawnTaint.openTaintTurn(parentHookCtx as never);
+    eq(await spawnTaint.adoptSubagentTaint("call_old", "sess-parent"), true, "OPE-1251 NEGATIVE CONTROL: a class-less tainted child still marks the parent");
+    eq(untrustedIngestedThisTurn(), true, "…the bit is set");
+    eq([...taintKindsThisTurn()], [], "🔴 …and the parent names NO class — asserted empty, so nothing here is inventing one");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
+    spawnTaint.openTaintTurn(parentHookCtx as never);
+    eq(await spawnTaint.adoptSubagentTaint("call_lost_kinds", "sess-parent"), true, "OPE-1251: a lost record still fails CLOSED");
+    eq([...taintKindsThisTurn()], [], "🔴 …and names no class, because none could be read — failing closed is about the bit, never about naming a source that was never established");
+  });
+}
+
+{
   const { subagentTaintKey, subagentCallTaintKey } = await import("../agent/access/subagent-taint.js");
   const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
   const spawnTaint = await import("../agent/hooks/spawn-taint.js");

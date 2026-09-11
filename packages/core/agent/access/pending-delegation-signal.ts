@@ -111,6 +111,18 @@ export function pendingDelegationOwing(turnId: string | undefined, wakeId: strin
   return pendingDelegationsOwing(turnId, wakeId, addressedWake)[0];
 }
 
+export function pendingDelegationThisTurn(turnId: string | undefined): string | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  let state: PendingDelegationState;
+  try {
+    state = readState(slot.get());
+  } catch {
+    return undefined;
+  }
+  if (state.turn !== turnId) return undefined;
+  return (state.pending ?? [])[0]?.taskId;
+}
+
 export function pendingDelegationsOwing(turnId: string | undefined, wakeId: string, addressedWake: string | undefined): readonly string[] {
   if (turnId === undefined || turnId.length === 0) return [];
   if (wakeId.length === 0) return [];

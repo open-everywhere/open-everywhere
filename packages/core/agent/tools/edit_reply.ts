@@ -17,8 +17,8 @@ import { resolveEditableWakeTarget, replyRefusalMessage } from "../channels/unif
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { editPostTail } from "../channels/session-tail-record.js";
 import { markWakeRepliedThisTurn } from "../channels/reply-signal.js";
-import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
-import { PENDING_WORK_INSTRUCTION, PER_SURFACE_PENDING_WORK_PROBE } from "../channels/turn-delivery.js";
+import { pendingDelegationOwing, pendingDelegationThisTurn } from "../access/pending-delegation-signal.js";
+import { PENDING_WORK_INSTRUCTION } from "../channels/turn-delivery.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
@@ -124,7 +124,7 @@ const baseEditReplyEntry = defineTool({
       throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, target.platform));
     }
     const turnId = currentTurnId(bind);
-    const owingTask = pendingDelegationOwing(turnId, PER_SURFACE_PENDING_WORK_PROBE, addressedWakeThisTurn(turnId));
+    const owingTask = pendingDelegationThisTurn(turnId);
     const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"), bind);
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },

@@ -443,6 +443,33 @@ const approved = async () => true;
   const out = await runLastMile(wide, { config: ON, provider: capturing, approve: approved, repro: reproduced });
   eq(out.kind, "opened", "title bound: the oversized-label cluster still opens");
   ok(title.length <= 256, `🔴 title bound: the pull-request title stays within GitHub's 256-char limit (was ${title.length})`);
+
+  registerFailureFacetJudge({
+    async facet() {
+      return { label: "first line\n\n## Injected heading\n- and a bullet", fixSketch: "sketch line one\nsketch line two" };
+    },
+  });
+  const shaped = await signatureReport([
+    row("approval.failed", "2026-07-05T01:00:00Z", { kind: "pr.open", error: "github 502" }, { surface: "C1" }),
+    row("approval.failed", "2026-07-06T01:00:00Z", { kind: "pr.open", error: "github 503" }, { surface: "C1" }),
+  ]);
+  ok(shaped.clusters[0]!.label.includes("\n"), "🔴 newline label/CONTROL: the cluster really carries the newline — the clamp upstream does not strip it");
+  let shapedTitle = "";
+  let shapedBody = "";
+  const capturing3: ConfigPrProvider = {
+    ...provider,
+    async openOrReopenPr(a) {
+      shapedTitle = a.title;
+      shapedBody = a.body;
+      return provider.openOrReopenPr(a);
+    },
+  };
+  eq((await runLastMile(shaped, { config: ON, provider: capturing3, approve: approved, repro: reproduced })).kind, "opened", "newline label: the cluster still opens");
+  ok(!shapedTitle.includes("\n"), `🔴 newline label: the pull-request TITLE is one line — a title that splits is a title GitHub truncates at the break (was ${JSON.stringify(shapedTitle)})`);
+  ok(/\*\*Label:\*\* first line ## Injected heading - and a bullet/.test(shapedBody), "🔴 newline label: …and the body's Label line is flattened onto ONE line, so the judge's text cannot become markdown structure");
+  ok(/\*\*Fix sketch:\*\* sketch line one sketch line two/.test(shapedBody), "🔴 newline label: the fix sketch is flattened by the same helper");
+  ok(!/^## Injected heading$/m.test(shapedBody), "🔴 newline label: 🔴 and no line of the body is the injected heading — the assertion that says the flatten is real");
+
   registerFailureFacetJudge({ async facet() { return null; } });
 }
 
@@ -465,17 +492,32 @@ const approved = async () => true;
   const rows: AuditInput[] = [];
   const { provider } = fakeProvider();
   const out = await runLastMile(armReport, { config: ON, provider, approve: approved, repro: reproduced, audit: async (r) => (rows.push(r), undefined) });
+  const armHead = headBranchFor(armReport.clusters[0] as unknown as SignatureCluster);
   eq(out.kind, "opened", "self-audit: the happy path still opens");
-  eq(rows.length, 1, "🔴 self-audit: opening a pull request writes its OWN audit row — not left to the schedule's later digest row");
+  eq(rows.length, 2, "🔴 self-audit: a writing run leaves TWO rows — the branch it cut, then the outcome");
   eq(rows[0]!.action, "dream.mode3_last_mile", "self-audit: …under its own action");
-  eq((rows[0]!.detail as Record<string, unknown>)["number"], 7, "self-audit: …naming the pull request that now exists");
+  eq((rows[0]!.detail as Record<string, unknown>)["outcome"], "branch-cut", "🔴 self-audit: the FIRST row is the branch cut, recorded before anything else is written");
+  eq((rows[0]!.detail as Record<string, unknown>)["head"], armHead, "🔴 self-audit: …and it names the branch, which is the only thing a reader can act on");
+  eq((rows[1]!.detail as Record<string, unknown>)["number"], 7, "self-audit: the SECOND row is the outcome, naming the pull request that now exists");
+
+  const rowsOrder: AuditInput[] = [];
+  let seenAtPrCall = -1;
+  const watching: ConfigPrProvider = {
+    ...provider,
+    async openOrReopenPr(a) {
+      seenAtPrCall = rowsOrder.length;
+      return provider.openOrReopenPr(a);
+    },
+  };
+  await runLastMile(armReport, { config: ON, provider: watching, approve: approved, repro: reproduced, audit: async (r) => (rowsOrder.push(r), undefined) });
+  eq(seenAtPrCall, 1, "🔴 self-audit: the branch-cut row is ALREADY written when the pull-request call runs — record-before-write, not record-after");
 
   const failing: ConfigPrProvider = { ...provider, async openOrReopenPr() { throw new Error("github: 500"); } };
   const rows2: AuditInput[] = [];
   const bad = await runLastMile(armReport, { config: ON, provider: failing, approve: approved, repro: reproduced, audit: async (r) => (rows2.push(r), undefined) });
   eq(bad.kind, "failed-after-write", "self-audit: a post-write failure is still its own outcome");
-  eq(rows2.length, 1, "🔴 self-audit: …and it too leaves a durable row naming the branch that exists");
-  eq((rows2[0]!.detail as Record<string, unknown>)["head"], headBranchFor(armReport.clusters[0] as unknown as SignatureCluster), "self-audit: …with the branch name in it");
+  eq(rows2.length, 2, "🔴 self-audit: …and it too leaves the branch-cut row plus a durable outcome row");
+  eq((rows2[1]!.detail as Record<string, unknown>)["head"], armHead, "self-audit: …with the branch name in it");
 
   const rows3: AuditInput[] = [];
   await runLastMile(armReport, { config: ON, provider, approve: async () => false, repro: reproduced, audit: async (r) => (rows3.push(r), undefined) });

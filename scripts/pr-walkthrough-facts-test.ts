@@ -15,7 +15,14 @@ import {
   triggersConfigDiff,
   type ArtifactFetchFn,
 } from "@open-everywhere/core/agent/review/facts-artifact.js";
-import { SNAPSHOT_BLIND_SPOTS } from "@open-everywhere/core/agent/review/pr-walkthrough.js";
+import {
+  buildConfigDiffStatusDescription,
+  CONFIG_DIFF_STATUS_CONTEXT,
+  configFactsDigest,
+  isAllowedFactsDocumentUrl,
+  parseConfigDiffStatusDescription,
+} from "@open-everywhere/core/agent/review/facts-cloud-status.js";
+import { FACTS_LABEL, renderWalkthrough, SNAPSHOT_BLIND_SPOTS } from "@open-everywhere/core/agent/review/pr-walkthrough.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -148,6 +155,122 @@ ok(
   dormant.kind === "unavailable" && /NOT established/i.test(dormant.reason),
   "…and states the facts are not established, so the render cannot show the absence as an all-clear",
 );
+
+const CLOUD_HEAD = "a".repeat(40);
+const cloudDigest = configFactsDigest(wire);
+const cloudUrl = `https://raw.githubusercontent.com/example/repo/${CLOUD_HEAD}/config-diff.json`;
+
+function cloudFetch(statuses: unknown[], body: string): ArtifactFetchFn {
+  return async (url: string) => {
+    if (url.includes("/actions/runs")) {
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ workflow_runs: [] }), arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    if (url.includes("/statuses")) {
+      return { ok: true, status: 200, text: async () => "", json: async () => statuses, arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    return { ok: true, status: 200, text: async () => body, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+}
+
+const goodStatus = {
+  context: CONFIG_DIFF_STATUS_CONTEXT,
+  description: buildConfigDiffStatusDescription({ digest: cloudDigest, sessionId: "session_test" }),
+  target_url: cloudUrl,
+  updated_at: "2026-09-10T00:00:00Z",
+  creator: { login: "oe-orchestrator" },
+};
+
+ok(buildConfigDiffStatusDescription({ digest: cloudDigest, sessionId: "session_test" }).length <= 140, "the status description fits GitHub's 140-byte cap, so the digest is never the part that gets cut");
+eq(
+  parseConfigDiffStatusDescription(goodStatus.description),
+  { digest: cloudDigest, sessionId: "session_test" },
+  "the description the publisher writes round-trips through the parser the consumer reads it with",
+);
+
+const viaStatus = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: CLOUD_HEAD,
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: cloudFetch([goodStatus], wire),
+});
+
+eq(viaStatus.kind, "cloud-status", "🔴 with NO Actions run but a vouching `oe/config-diff` status, the facts are REAL — this is the half-dark state OPE-1683 closed");
+ok(viaStatus.kind === "cloud-status" && viaStatus.provenance.digest === cloudDigest, "…and the provenance carries the digest the status named, so a reader can re-hash the document themselves");
+ok(viaStatus.kind === "cloud-status" && viaStatus.provenance.documentUrl === cloudUrl, "…and the checkable link to the exact bytes");
+ok(viaStatus.kind === "cloud-status" && viaStatus.provenance.sessionId === "session_test", "…and the cloud run whose transcript produced them");
+ok(viaStatus.kind === "cloud-status" && computeBlastRadius(viaStatus.facts).widens, "…and the facts really are the facts: the same blast radius ② computed comes out of the status lane");
+
+const rendered = renderWalkthrough({
+  pr: { repo: "example/repo", number: 7, url: "https://github.com/example/repo/pull/7", title: "config change", stateLabel: "open", baseRef: "main", headSha: CLOUD_HEAD },
+  diff: { repo: "example/repo", number: 7, headSha: CLOUD_HEAD, baseRef: "main", diff: "diff --git a/agent/access/bundles.ts b/agent/access/bundles.ts", diffClipped: false, diffChars: 60, files: ["agent/access/bundles.ts"], filesCapped: false },
+  facts: viaStatus,
+});
+ok(rendered.includes(FACTS_LABEL), "the rendered walkthrough carries the 🧮 FACTS heading (it always does — the legs below are what prove the section is FILLED)");
+ok(
+  !rendered.includes("establishes NOTHING about what this PR changes"),
+  "🔴 the facts section is FILLED, not the empty-state sentence — the two-toned design's facts tone, which never appeared on this repo's own PRs before",
+);
+ok(rendered.includes(gainedHost), `…and it prints the row that actually moved (${gainedHost}), so the section is this document's facts and not a heading over nothing`);
+ok(/widens/u.test(rendered) && rendered.includes("`widens: YES`"), "…and the blast radius is COMPUTED from them rather than reported as not-computable");
+ok(rendered.includes(CONFIG_DIFF_STATUS_CONTEXT), "…and the source line names the commit status it came from, so the provenance is checkable rather than asserted");
+ok(rendered.includes(`sha256:${cloudDigest}`), "…and prints the digest the bytes were verified against");
+ok(rendered.includes("statuses: write"), "…and §5 states what a commit status does NOT establish — anyone who can write one could vouch for other bytes");
+
+const staleAsk = renderWalkthrough({
+  pr: { repo: "example/repo", number: 7, url: "https://github.com/example/repo/pull/7", title: "config change", stateLabel: "open", baseRef: "main", headSha: CLOUD_HEAD },
+  diff: { repo: "example/repo", number: 7, headSha: CLOUD_HEAD, baseRef: "main", diff: "diff --git a/agent/access/bundles.ts b/agent/access/bundles.ts", diffClipped: false, diffChars: 60, files: ["agent/access/bundles.ts"], filesCapped: false },
+  facts: viaStatus,
+  expectedFactsRunId: 4242,
+});
+ok(staleAsk.includes("UNPERFORMED, not passed"), "🔴 a staleness check that was ASKED FOR and could not run says so on the document — silence there is indistinguishable from a check that passed");
+ok(staleAsk.includes("4242"), "…naming the run the narration was produced against, so a reader can go and compare");
+ok(!rendered.includes("UNPERFORMED, not passed"), "NEGATIVE: a caller that asked for no staleness check gets no such line — the sentence marks a real unperformed check, not every status-lane render");
+
+const swapped = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: CLOUD_HEAD,
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: cloudFetch([goodStatus], `${wire} `),
+});
+eq(swapped.kind, "unavailable", "🔴 bytes that do not hash to the vouched digest are REFUSED — this is what makes the hosting location untrusted");
+ok(swapped.kind === "unavailable" && swapped.reason.includes(cloudDigest), "…and the reason names the digest that was vouched for, so a swap is diagnosable");
+
+const offRepo = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: CLOUD_HEAD,
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: cloudFetch([{ ...goodStatus, target_url: "https://evil.example.invalid/config-diff.json" }], wire),
+});
+eq(offRepo.kind, "unavailable", "a status pointing off-repo is refused before the host is dialled at all");
+
+const noDigest = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: CLOUD_HEAD,
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: cloudFetch([{ ...goodStatus, description: "config diff ran, all good" }], wire),
+});
+eq(noDigest.kind, "unavailable", "🔴 a status that names no digest vouches for no particular bytes — its EXISTENCE is never read as facts");
+
+const noStatus = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: CLOUD_HEAD,
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: cloudFetch([], wire),
+});
+eq(noStatus.kind, "unavailable", "with neither provenance the answer is still an UNKNOWN");
+ok(
+  noStatus.kind === "unavailable" && noStatus.reason.includes(CONFIG_DIFF_WORKFLOW_PATH) && noStatus.reason.includes(CONFIG_DIFF_STATUS_CONTEXT),
+  "…and it names BOTH lanes, so an operator on a repo with no workflow is not sent looking for a run that can never exist",
+);
+
+ok(!isAllowedFactsDocumentUrl("http://raw.githubusercontent.com/example/repo/x.json", "example/repo"), "the URL fence refuses plain http");
+ok(!isAllowedFactsDocumentUrl("https://raw.githubusercontent.com/other/repo/x.json", "example/repo"), "…and a GitHub host serving ANOTHER repository");
+ok(isAllowedFactsDocumentUrl("https://api.github.com/repos/example/repo/releases/assets/1", "example/repo"), "…and accepts the API host serving this one");
 
 ok(
   SNAPSHOT_BLIND_SPOTS.every((b) => b.gloss.trim().length > 40),

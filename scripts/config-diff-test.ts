@@ -1,4 +1,15 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { buildConfigSnapshot, SNAPSHOT_SECTIONS } from "./config-snapshot-build.js";
+import {
+  buildConfigDiffStatusDescription,
+  configFactsDigest,
+  parseConfigDiffStatusDescription,
+} from "@open-everywhere/core/agent/review/facts-cloud-status.js";
 import {
   accessSideEffectFindings,
   CONFIG_DIFF_MARKER,
@@ -19,6 +30,8 @@ import {
 } from "./config-snapshot-diff.js";
 import type { EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -274,4 +287,29 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
 const pin: SnapshotRow = { section: "access", key: "k", value: "v" };
 ok(pin.section === "access", "SnapshotRow keeps its three-field shape");
 
-console.log(`✓ config-diff: ${passed} assertions passed (three-state honesty, generic reflection, side-on finding, live determinism + no-secret)`);
+{
+  const dir = mkdtempSync(join(tmpdir(), "oe-config-diff-publish-"));
+  const jsonOut = join(dir, "config-diff.json");
+  const run = spawnSync("npx", ["tsx", join(here, "config-diff.ts"), "--base-dir", here, "--json", jsonOut, "--publish"], {
+    cwd: join(here, ".."),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, NODE_NO_WARNINGS: "1" },
+  });
+  const line = (run.stdout ?? "").split("\n").find((l) => l.startsWith("OE_CONFIG_DIFF "));
+  ok(line !== undefined, `\`config-diff.ts --publish\` prints an OE_CONFIG_DIFF evidence line (exit ${run.status}) — without it the orchestrator has no digest to post`);
+  const named = /sha256=([0-9a-f]{64})/u.exec(line ?? "");
+  ok(named !== null, "…naming a full 64-hex sha256, which is the shape parseConfigDiffStatusDescription demands of a status description");
+  ok(
+    named !== null && named[1] === configFactsDigest(readFileSync(jsonOut, "utf8")),
+    "🔴 the digest the PUBLISHER prints equals the digest the READER computes over the file it wrote — the one place these two halves can drift, pinned",
+  );
+  ok(/head=[0-9a-f]{40}/u.test(line ?? ""), "…and the line names the 40-hex head sha the status must be posted on, so a status can never be posted against a head nobody computed");
+  ok(
+    parseConfigDiffStatusDescription(buildConfigDiffStatusDescription({ digest: named?.[1] ?? "" })) !== undefined,
+    "…and a description built from it round-trips through the reader's own parser",
+  );
+  rmSync(dir, { recursive: true, force: true });
+}
+
+console.log(`✓ config-diff: ${passed} assertions passed (three-state honesty, generic reflection, side-on finding, live determinism + no-secret, publisher↔reader digest)`);

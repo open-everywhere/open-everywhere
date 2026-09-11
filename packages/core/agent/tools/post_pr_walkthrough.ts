@@ -62,13 +62,13 @@ function adminChannel(): string | undefined {
 
 export const postPrWalkthroughEntry = defineTool({
   description:
-    "Render the PR walkthrough and post it to the governance admin channel. Pass the fresh_eyes_review verdict as `narration`; the resolved-config FACTS are re-fetched here from CI's own artifact and are not something you can supply, alter or omit. The document labels every computed fact and every model opinion differently, states whether the spend ledger shows a delegated subagent run behind the narration, and always states what it cannot establish. It approves and merges nothing — the merge stays with the human. Call walk_pr first.",
+    "Render the PR walkthrough and post it to the governance admin channel. Pass the fresh_eyes_review verdict as `narration`; the resolved-config FACTS are re-fetched here — from the CODEOWNED workflow's own artifact, or from the document the `oe/config-diff` commit status vouches for by sha256 — and are not something you can supply, alter or omit. The document labels every computed fact and every model opinion differently, states whether the spend ledger shows a delegated subagent run behind the narration, and always states what it cannot establish. It approves and merges nothing — the merge stays with the human. Call walk_pr first.",
   inputSchema,
   outputSchema: z.object({
     walkthrough: z.string().describe("The rendered document, exactly as posted."),
-    factsState: z.enum(["artifact", "not-triggered", "unavailable"]),
+    factsState: z.enum(["artifact", "cloud-status", "not-triggered", "unavailable"]),
     factsRunId: z.number().optional(),
-    factsStale: z.boolean().describe("True when factsRunId was supplied and does not match the run now backing these facts."),
+    factsStale: z.boolean().describe("True when factsRunId was supplied and does not match the run now backing these facts. Always false for `cloud-status` facts, which carry no workflow run id — a staleness check there is UNPERFORMED, not passed."),
     narrationAttested: z
       .boolean()
       .describe("True when the spend ledger records a delegated subagent run under this session. It attests that a delegated session RAN — not which one, and not that the narration is its text."),
@@ -182,7 +182,7 @@ export const postPrWalkthroughEntry = defineTool({
       narrationAttestation: attestationNote,
       delivered,
       outcome:
-        `Walkthrough for ${input.repo}#${input.number} rendered from ${facts.kind === "artifact" ? `config-diff run ${runId}` : `NO config facts (${facts.kind})`} — ${deliveryNote}. ` +
+        `Walkthrough for ${input.repo}#${input.number} rendered from ${facts.kind === "artifact" ? `config-diff run ${runId}` : facts.kind === "cloud-status" ? `the ${facts.provenance.statusContext} commit status (sha256:${facts.provenance.digest.slice(0, 12)}…)` : `NO config facts (${facts.kind})`} — ${deliveryNote}. ` +
         `Narration provenance: ${attestationNote}. ` +
         `Nothing was approved or merged; the merge is still the reviewer's.`,
     };

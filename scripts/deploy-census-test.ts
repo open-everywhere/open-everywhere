@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   censusResult,
@@ -14,8 +17,11 @@ import {
   relayHeartbeatCeilingHours,
   renderCensusReport,
   runtimeSignalFinding,
+  ROUTE_ARMING,
+  type ChannelArming,
   type MountedRoute,
 } from "../packages/core/agent/ops/census.js";
+import { OAUTH_SIGNING_SECRET_ENV } from "../packages/core/agent/control/oauth-tokens.js";
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
 import type { ConnectorCredentials } from "../packages/core/agent/access/connector-credentials.js";
 import type { WebhookHook } from "../packages/core/agent/webhooks/config.js";
@@ -217,6 +223,68 @@ check("the negative control MOVES when a real hook already declares that id — 
   assert.deepEqual(paths.filter((p) => p.startsWith("/webhooks/")).sort(), ["/webhooks/taken", "/webhooks/taken-x"]);
   assert.equal(plan.endpoints.find((e) => e.path === "/webhooks/taken")?.expect, "mounted", "the declared hook must refuse");
   assert.equal(plan.endpoints.find((e) => e.path === "/webhooks/taken-x")?.expect, "absent", "…and the control moved aside");
+});
+
+const DARK_ROUTES: readonly MountedRoute[] = [
+  { channel: "control-mcp.ts", method: "POST", path: "/control/v1/oauth/token" },
+  { channel: "control-mcp.ts", method: "GET", path: "/control/v1/oauth/authorize" },
+  { channel: "acme.ts", method: "POST", path: "/eve/v1/acme" },
+];
+const ARMING_UNDER_TEST: readonly ChannelArming[] = [
+  {
+    channel: "control-mcp.ts",
+    armed: (env: NodeJS.ProcessEnv) => (env.TEST_ARMED ?? "") === "yes",
+    darkReason: "dark by declaration: TEST_ARMED unset",
+  },
+];
+
+check("a DARK channel's POST route is SKIPPED with its arming reason, never required (OPE-1674)", () => {
+  const plan = planRequiredEndpoints({ routes: DARK_ROUTES, hooks: [], controlHookId: "none", env: {}, arming: ARMING_UNDER_TEST });
+  assert.equal(
+    plan.endpoints.some((e) => e.path === "/control/v1/oauth/token"),
+    false,
+    "the dark route must not be probed — its 404 is the shipped design",
+  );
+  const skipped = plan.skipped.find((s) => s.path === "/control/v1/oauth/token");
+  assert.match(skipped?.reason ?? "", /dark by declaration/u, "and the skip must say WHY, so an operator can arm it");
+  assert.ok(
+    plan.endpoints.some((e) => e.path === "/eve/v1/acme"),
+    "…while an unrelated channel's ingress is required exactly as before",
+  );
+});
+
+check("the SAME route is REQUIRED once the arming condition holds — the skip narrows nothing permanently", () => {
+  const plan = planRequiredEndpoints({
+    routes: DARK_ROUTES,
+    hooks: [],
+    controlHookId: "none",
+    env: { TEST_ARMED: "yes" },
+    arming: ARMING_UNDER_TEST,
+  });
+  const required = plan.endpoints.find((e) => e.path === "/control/v1/oauth/token");
+  assert.equal(required?.expect, "mounted", "an armed plane must answer, so a 404 there is still a red");
+  assert.equal(
+    plan.skipped.some((s) => s.path === "/control/v1/oauth/token"),
+    false,
+    "and it is no longer skipped",
+  );
+});
+
+check("the SHIPPED arming table names control-mcp.ts and reads the signing secret the channel itself reads", () => {
+  const entry = ROUTE_ARMING.find((a) => a.channel === "control-mcp.ts");
+  assert.ok(entry, "the control plane's entry must exist — it is the channel that ships dark");
+  assert.equal(entry!.armed({}), false, "an empty environment cannot arm it");
+  assert.match(entry!.darkReason, new RegExp(OAUTH_SIGNING_SECRET_ENV, "u"), "the reason must name what to set");
+});
+
+check("every channel the arming table names is a real mounted channel file", () => {
+  for (const entry of ROUTE_ARMING) {
+    assert.ok(
+      existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "channels", entry.channel)),
+      `ROUTE_ARMING names agent/channels/${entry.channel}, and no such file exists — the entry can never match a route, so the census would ` +
+        `require that channel's dark routes again. Fix the key, or drop the entry if the channel is gone`,
+    );
+  }
 });
 
 check("a parameterised POST route that is not the webhook route is skipped, and GET routes are never probed", () => {

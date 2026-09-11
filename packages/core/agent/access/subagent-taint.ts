@@ -1,4 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
+import { INGESTION_KINDS, type IngestionKind } from "./taint-tiers.js";
 
 const MARKER_PREFIX = "oe-subagent-taint:";
 
@@ -54,13 +55,18 @@ export async function claimSubagentCallClean(org: string, parentSessionId: strin
   }
 }
 
-export async function markSubagentCallTainted(org: string, parentSessionId: string, callId: string): Promise<void> {
+export async function markSubagentCallTainted(
+  org: string,
+  parentSessionId: string,
+  callId: string,
+  kinds: readonly string[] = [],
+): Promise<void> {
   try {
     if (parentSessionId.length === 0 || callId.length === 0) return;
     await getOperationalStore().putTaskResult(
       org,
       subagentCallTaintKey(parentSessionId, callId),
-      JSON.stringify({ tainted: true }),
+      JSON.stringify(kinds.length === 0 ? { tainted: true } : { tainted: true, kinds: [...kinds] }),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
     );
@@ -144,13 +150,31 @@ export async function subagentCallTaintStatus(
   parentSessionId: string,
   callId: string,
 ): Promise<boolean | undefined> {
+  return (await subagentCallTaintRecord(org, parentSessionId, callId))?.tainted;
+}
+
+export interface SubagentCallTaint {
+  readonly tainted: boolean;
+  readonly kinds: readonly IngestionKind[];
+}
+
+export async function subagentCallTaintRecord(
+  org: string,
+  parentSessionId: string,
+  callId: string,
+): Promise<SubagentCallTaint | undefined> {
   try {
     if (parentSessionId.length === 0 || callId.length === 0) return undefined;
     const raw = await getOperationalStore().getTaskResult(org, subagentCallTaintKey(parentSessionId, callId));
     if (raw === null) return undefined;
     const parsed: unknown = JSON.parse(raw);
     const tainted = (parsed as { tainted?: unknown } | null)?.tainted;
-    return typeof tainted === "boolean" ? tainted : undefined;
+    if (typeof tainted !== "boolean") return undefined;
+    const rawKinds = (parsed as { kinds?: unknown } | null)?.kinds;
+    const kinds = Array.isArray(rawKinds)
+      ? rawKinds.filter((k): k is IngestionKind => typeof k === "string" && (INGESTION_KINDS as readonly string[]).includes(k))
+      : [];
+    return { tainted, kinds };
   } catch {
     return undefined;
   }

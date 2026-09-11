@@ -19,6 +19,7 @@ const { registerConfig, getConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { SESSION_GRANT_RELEASED_ACTION } = await import("../agent/approvals/flow.js");
 const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
@@ -1733,17 +1734,27 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 {
   const store = getOperationalStore();
 
+  const prExecuted: string[] = [];
+  registerActionKind({
+    kind: "pr.open",
+    policy: "member",
+    summarize: () => ["open a pull request"],
+    async execute(args: unknown, decidedBy: string) {
+      prExecuted.push(String((args as { what?: unknown }).what));
+      return `published by ${decidedBy}`;
+    },
+  });
+
   const fanOut = ["worker-a", "worker-b", "worker-c"].map((what) => ({
     what,
     args: { sessionId: "sess-fanout", what },
   }));
 
-  memberExecuted = [];
   const posted = await Promise.all(
     fanOut.map((w) =>
       inSession(() =>
         requestApproval(
-          { org: "default", kind: "test.member", args: w.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+          { org: "default", kind: "pr.open", args: w.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, postedTo: "slack/T1/C1", chain: { unattended: false } },
           { post: async () => ({ ok: true, ts: "999.000" }) as never },
         ),
       ),
@@ -1755,24 +1766,124 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const twin = await inSession(() =>
     requestApproval(
-      { org: "default", kind: "test.member", args: fanOut[0]!.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { org: "default", kind: "pr.open", args: fanOut[0]!.args, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
       { post: async () => ({ ok: true, ts: "999.000" }) as never },
     ),
   );
   ok(twin.deduped === true && twin.id === posted[0]!.id, "🔴 OPE-251 NEGATIVE CONTROL: an IDENTICAL re-proposal folds onto the live card — the dedup is on the frozen args, and it still works");
 
-  const first = await resolveApprovalClick({ org: "default", id: posted[0]!.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER" });
-  ok(first.outcome === "decided" && memberExecuted.length === 1, "OPE-251: approving the first card decides and executes exactly that one worker's action");
-  const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
+  const stranger = await inSession(() =>
+    requestApproval(
+      { org: "default", kind: "pr.open", args: { sessionId: "sess-OTHER", what: "not this session" }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { post: async () => ({ ok: true, ts: "999.000" }) as never },
+    ),
+  );
+  const tainted = await inSession(() =>
+    requestApproval(
+      { org: "default", kind: "pr.open", args: { sessionId: "sess-fanout", what: "read a hostile page first", tainted: true }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { post: async () => ({ ok: true, ts: "999.000" }) as never },
+    ),
+  );
+
+  const releaseNotices: string[] = [];
+  const first = await resolveApprovalClick({
+    org: "default",
+    id: posted[0]!.id,
+    decision: "approve_session",
+    clickerId: "U_RANDOM_MEMBER",
+    releaseFeedback: {
+      post: async (_method: string, body: string) => {
+        releaseNotices.push(body);
+        return { ok: true } as Record<string, unknown>;
+      },
+    },
+  });
+  ok(first.outcome === "decided", "OPE-251: the clicked card is decided");
   ok(
-    rest.every((s) => s === "pending"),
-    "🔴 OPE-251: the other workers' cards are STILL PENDING after the click — a session grant helps the NEXT worker, never the fan-out that is already carded",
+    prExecuted.length === fanOut.length && new Set(prExecuted).size === fanOut.length,
+    `🔴 OPE-251: ONE "approve for session" click executes EVERY worker of the concurrent fan-out — the grant reaches the workers already carded, not only the next one (saw: ${JSON.stringify(prExecuted)})`,
+  );
+  const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
+  ok(rest.every((s) => s === "approved"), "🔴 OPE-251: …and their cards are DECIDED, so nobody is left clicking a card for a session that was already granted");
+
+  ok(
+    releaseNotices.length === fanOut.length - 1,
+    `🔴 OPE-251: every released row posts its own decision notice into its own conversation (saw ${String(releaseNotices.length)} for ${String(fanOut.length - 1)} released rows)`,
+  );
+  ok(
+    releaseNotices.every((body) => body.includes("U_RANDOM_MEMBER")),
+    "🔴 OPE-251: …attributed to the member who actually clicked, so the room can see one person's grant decided several cards",
   );
 
   ok(
-    (await store.getSessionApproval("default", "sess-fanout", "test.member", new Date().toISOString())) === null,
-    "🔴 OPE-251: `approve_session` on a non-grantable kind writes NO memo — the fan-out gap is a grant-IDENTITY gap (one session per worker), not a missing memo",
+    (await store.getPendingAction("default", stranger.id))?.status === "pending",
+    "🔴 OPE-251 NEGATIVE CONTROL: a card of the SAME kind in a DIFFERENT session is UNTOUCHED — the release is keyed on the memo's own key",
+  );
+  ok(
+    (await store.getPendingAction("default", tainted.id))?.status === "pending",
+    "🔴 OPE-251 NEGATIVE CONTROL: a TAINTED proposal in the GRANTED session keeps its own human card — the same defence the propose-time memo bypass makes",
+  );
+
+  ok(
+    (await store.getSessionApproval("default", "sess-fanout", "pr.open", new Date().toISOString()))?.grantedBy === "U_RANDOM_MEMBER",
+    "OPE-251: the session memo is written too, so the NEXT worker skips its card as it always did",
+  );
+
+  const releaseRows = (await readAudit({ org: "default", action: SESSION_GRANT_RELEASED_ACTION })).filter((e) => e.detail?.id === posted[0]!.id);
+  ok(releaseRows.length === 1, "OPE-251: the release writes ONE audit row joining the click to the cards it decided");
+  ok(
+    Array.isArray(releaseRows[0]?.detail?.released) && (releaseRows[0]!.detail!.released as string[]).length === fanOut.length - 1,
+    "OPE-251: …naming every card it released, and only those",
+  );
+
+  const reachSession = "sess-reach";
+  const sameRoom = await inSession(() =>
+    requestApproval(
+      { org: "default", kind: "pr.open", args: { sessionId: reachSession, what: "the clicked one" }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { post: async () => ({ ok: true, ts: "999.000" }) as never },
+    ),
+  );
+  const otherRoom = await inSession(() =>
+    requestApproval(
+      { org: "default", kind: "pr.open", args: { sessionId: reachSession, what: "in another room" }, scopeKey: "slack/T1/C_ELSEWHERE", domain: null, requestedBy: "U_REQUESTER", channelId: "C_ELSEWHERE", threadTs: null, chain: { unattended: false } },
+      { post: async () => ({ ok: true, ts: "999.000" }) as never },
+    ),
+  );
+  const beforeReach = prExecuted.length;
+  await resolveApprovalClick({
+    org: "default",
+    id: sameRoom.id,
+    decision: "approve_session",
+    clickerId: "U_RANDOM_MEMBER",
+    clickContext: { surfaceKey: "slack/T1/C1" },
+  });
+  ok(prExecuted.length === beforeReach + 1, "OPE-251 PREMISE: the clicked card itself executes under a real click payload — so the assertion below is not vacuous");
+  ok(
+    (await store.getPendingAction("default", otherRoom.id))?.status === "pending",
+    "🔴 OPE-251: a sibling card of the SAME granted session in ANOTHER ROOM is NOT released — the release is decided under the human's own click payload, so `clickRoomMatches` refuses it exactly as a direct click there would be",
+  );
+
+  memberExecuted = [];
+  const members = await Promise.all(
+    ["m-a", "m-b"].map((what) =>
+      inSession(() =>
+        requestApproval(
+          { org: "default", kind: "test.member", args: { sessionId: "sess-nongrant", what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+          { post: async () => ({ ok: true, ts: "999.000" }) as never },
+        ),
+      ),
+    ),
+  );
+  await resolveApprovalClick({ org: "default", id: members[0]!.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER" });
+  ok(memberExecuted.length === 1, "🔴 OPE-251: approving a NON-GRANTABLE kind for the session executes exactly the clicked card…");
+  ok(
+    (await store.getPendingAction("default", members[1]!.id))?.status === "pending",
+    "🔴 OPE-251: …and its sibling is STILL PENDING — no grant was written, so there is nothing to release",
+  );
+  ok(
+    (await store.getSessionApproval("default", "sess-nongrant", "test.member", new Date().toISOString())) === null,
+    "🔴 OPE-251: `approve_session` on a non-grantable kind writes NO memo — the release fires exactly where a memo does",
   );
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 concurrent fan-out)\n`);
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out)\n`);
