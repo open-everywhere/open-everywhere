@@ -7,6 +7,7 @@ import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { WAKE_INGRESS_ACTION, wakeIngressDetail } from "./wake-timing.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { canPostUnifiedActions } from "./post-arms.js";
 import { approvalCardActions, mintApprovalCardTicket, rememberApprovalCardTicket } from "./approval-card.js";
@@ -94,10 +95,11 @@ function crossProcessDispatchAvailable(): boolean {
   return rememberedReceive !== undefined || selfDispatchConfigured();
 }
 
-function pickRedriveSurfaceKey(domain: string | undefined, platform: string): string | null {
+function pickRedriveSurfaceKey(domain: string | undefined, platform: string, windowId?: string): string | null {
   if (!domain) return null;
   const dmSurface = dmSurfaceKeyFromAnchorDomain(domain);
   if (dmSurface) return dmSurface;
+  if (windowId !== undefined && windowId.startsWith(`${platform}/`) && windowId.split("/").length >= 3) return windowId;
   try {
     const d = getConfig().loadDomains().find((dm) => dm.name === domain && domainRoster(dm).length > 0);
     const roster = d ? domainRoster(d) : [];
@@ -721,6 +723,7 @@ export async function divertToUnifiedWindow(
     readonly internalDispatch?: true;
   },
 ): Promise<void> {
+  const ingressMs = Date.now();
   if (!admitInboundSurface(input.window.origin.platform)) {
     ulog(`REFUSED inbound wake from unselected provider "${input.window.origin.platform}" (audited, not delivered)`);
     await appendAudit({
@@ -741,7 +744,28 @@ export async function divertToUnifiedWindow(
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
   const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
   const replyAnchor = input.window.origin.platform === "slack" ? input.window.origin.replyAnchorTs : undefined;
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor, mintWakeId());
+  const deliveryId = mintWakeId();
+  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor, deliveryId);
+  try {
+    if (input.internalDispatch !== true) {
+      await appendAudit({
+        org: deploymentOrg(),
+        platform: input.window.origin.platform,
+        workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
+        surface: input.surfaceKey,
+        action: WAKE_INGRESS_ACTION,
+        ts: new Date(ingressMs).toISOString(),
+        detail: wakeIngressDetail({
+          wakeId: input.window.wakeId,
+          deliveryId,
+          surfaceKey: input.surfaceKey,
+          ...(input.window.vendorTs ? { vendor: input.window.vendorTs } : {}),
+          ingressMs,
+        }),
+      });
+    }
+  } catch {
+  }
   const answer = await resolveInboundAnswer(input, bareToken);
   const target: UnifiedReceiveTarget = {
     token: input.token,
@@ -821,8 +845,9 @@ export async function divertInboundToUnifiedWindow(
 
 export function buildRedriveReinject(domain: string | undefined, rawToken: string, baseAttrs: Record<string, unknown>): RedriveReinject {
   if (!crossProcessDispatchAvailable()) return null;
+  const seatWindowId = parseWindowToken(rawToken)?.windowId;
   return async (origin, message, originalWakeId) => {
-    const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform);
+    const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform, seatWindowId);
     if (!surfaceKey) throw new Error(`unified redrive: no crossSurfaceWindow surface key for domain ${domain ?? "?"}`);
     await deliverUnifiedDispatch({
       message,
@@ -847,13 +872,14 @@ export async function dispatchTaskWindow(input: {
   readonly grain?: "task" | "thread";
   readonly taskLabel?: string;
   readonly turnId?: string;
+  readonly seatWindowId?: string;
 }): Promise<void> {
   if (!crossProcessDispatchAvailable()) {
     throw new Error(
       "dispatchTaskWindow: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured cross-channel dispatch) and the self-dispatch route is not configured (arm OE_CREDENTIAL_ENCRYPTION_KEY; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
     );
   }
-  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
+  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform, input.seatWindowId);
   if (!surfaceKey) {
     throw new Error(`dispatchTaskWindow: couldn't resolve a window-enabled surface for domain "${input.domain}" — the task cannot be dispatched.`);
   }
@@ -883,8 +909,19 @@ export async function dispatchApprovalDecisionWake(input: {
   readonly domain: string;
   readonly authAttributes?: Record<string, unknown>;
 }): Promise<boolean> {
+  return dispatchAmbientSeatWake(input);
+}
+
+async function dispatchAmbientSeatWake(input: {
+  readonly token: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly wakeId: string;
+  readonly message: string;
+  readonly domain: string;
+  readonly authAttributes?: Record<string, unknown>;
+}): Promise<boolean> {
   if (!crossProcessDispatchAvailable()) return false;
-  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
+  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform, parseWindowToken(input.token)?.windowId);
   if (!surfaceKey) return false;
   try {
     await deliverUnifiedDispatch({
@@ -898,4 +935,15 @@ export async function dispatchApprovalDecisionWake(input: {
   } catch {
     return false;
   }
+}
+
+export async function dispatchSeatMessage(input: {
+  readonly token: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly wakeId: string;
+  readonly message: string;
+  readonly domain: string;
+  readonly authAttributes?: Record<string, unknown>;
+}): Promise<boolean> {
+  return dispatchAmbientSeatWake(input);
 }

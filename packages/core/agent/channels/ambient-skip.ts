@@ -20,7 +20,7 @@ export interface AmbientSkipRecord {
 function fixFor(reason: AmbientSkip, surfaceKey: string, domain: string | undefined, via?: DomainVia): string {
   const tenant = surfaceKey.split("/").slice(0, 2).join("/");
   if (reason === "domain-refused") {
-    return `domain "${domain}" routes "${surfaceKey}" but has not opted in — set ambientSupervisor: true on it (agent/memory/config/domains/<name>.ts)`;
+    return `domain "${domain}" routes "${surfaceKey}" and is ADDRESSED-ONLY by declaration — the standing seat wakes on a mention or a name-drop, and ambient talk stays unjudged. That is a decision, not a gap. Its owner MAY opt in to judged ambient talk with ambientSupervisor: true (agent/memory/config/domains/<name>.ts); leave it as it is to keep the room addressed-only`;
   }
   if (via?.startsWith("excluded:")) {
     const [, excludingDomain, ...rest] = via.split(":");

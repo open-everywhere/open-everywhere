@@ -15,6 +15,8 @@ export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
   "spawn_thread_session",
   "complete_thread",
+  "read_thread_seat",
+  "message_thread_seat",
   "task_peek",
   "task_cancel",
   "task_sleep",

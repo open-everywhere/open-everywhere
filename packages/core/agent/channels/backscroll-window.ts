@@ -1,5 +1,6 @@
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { tailTokenCap } from "./session-tail.js";
+import { admitToSeat, type SeatAdmissionFn } from "./seat-admission.js";
 
 export interface NormalizedMessage {
   readonly id: string;
@@ -35,20 +36,32 @@ function toWakeMessage(m: NormalizedMessage, trustFor?: BackscrollTrustFor): Wak
   };
 }
 
+export function seatCatchUpSinceMs(lastWakeAt: string | null | undefined, nowMs: number, maxReachbackHours: number): number {
+  const floor = nowMs - maxReachbackHours * 3600_000;
+  if (typeof lastWakeAt !== "string" || lastWakeAt.length === 0) return floor;
+  const at = Date.parse(lastWakeAt);
+  if (!Number.isFinite(at)) return floor;
+  return Math.max(at, floor);
+}
+
 export function fetchedBackscroll(
   messages: readonly NormalizedMessage[],
   capTokens: number = tailTokenCap(),
   trustFor?: BackscrollTrustFor,
+  admit?: SeatAdmissionFn,
 ): WakeMessageInput[] {
   if (messages.length === 0) return [];
-  const sorted = [...messages].sort((a, b) => a.ms - b.ms);
-  const kept: NormalizedMessage[] = [];
+  const graded = [...messages]
+    .sort((a, b) => a.ms - b.ms)
+    .map((m) => ({ ...m, trust: trustFor ? trustFor(m) : m.sender === "human" ? ("unauth" as const) : ("relay" as const) }));
+  const admitted = admit ? admitToSeat(graded, admit) : graded;
+  const kept: Array<NormalizedMessage & { trust: WakeTrust }> = [];
   let tokens = 0;
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const cost = approxMessageTokens(sorted[i]);
+  for (let i = admitted.length - 1; i >= 0; i--) {
+    const cost = approxMessageTokens(admitted[i]);
     if (tokens + cost > capTokens && kept.length > 0) break;
     tokens += cost;
-    kept.unshift(sorted[i]);
+    kept.unshift(admitted[i]);
   }
-  return kept.map((m) => toWakeMessage(m, trustFor));
+  return kept.map((m) => toWakeMessage(m, () => m.trust));
 }

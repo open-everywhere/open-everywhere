@@ -352,6 +352,8 @@ export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin
 export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
 export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, unifiedThreadRef, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./channels/unified-window.js";
 export type { UnifiedWakeOrigin, UnifiedWindowWake, SingleWindowMentionPolicy } from "./channels/unified-window.js";
+export { slackVendorEventTime, discordVendorEventTime, vendorInstantEventTime, receiptEventTime, spreadVendorTs } from "./channels/wake-timing.js";
+export type { VendorEventTime, VendorEventSource } from "./channels/wake-timing.js";
 
 export { windowGrainOf } from "./identity/binding.js";
 export type { WindowGrain } from "./identity/binding.js";
@@ -462,7 +464,7 @@ export type {
 } from "./access/external-policy.js";
 export { externalPolicyOverrideFor } from "./memory/domain.js";
 
-export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainReachVerdict, domainRoster, domainContainers, ambientSkipFor, assertDomainsValid, partitionTenantProblems } from "./memory/domain.js";
+export { ambientSupervisorEnabled, admissionNameFor, standingSeatDomainFor, windowedSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainReachVerdict, domainRoster, domainContainers, ambientSkipFor, assertDomainsValid, partitionTenantProblems } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";
 export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
@@ -590,8 +592,11 @@ export type {
 } from "./channels/wake-arm.js";
 
 export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
-export { fetchedBackscroll, approxMessageTokens } from "./channels/backscroll-window.js";
+export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
+
+export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
+export type { SeatAdmissionFn, SeatAdmissionCandidate } from "./channels/seat-admission.js";
 
 export { buildTail, selectTail, tailEntryToWakeMessage, approxEntryTokens, tailTokenCap, SESSION_TAIL_MAX_ENTRIES } from "./channels/session-tail.js";
 export type { SessionTailEntry } from "./channels/session-tail.js";

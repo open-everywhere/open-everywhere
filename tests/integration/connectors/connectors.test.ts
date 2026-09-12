@@ -63,6 +63,12 @@ test("connection_search mounts on the delegated worker; the lean conversational 
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  const topologyBefore = settings.getSettings().window.topology;
+  afterThisTest(() => settings.overrideSettingsForTest({ window: { topology: topologyBefore } }));
+  settings.overrideSettingsForTest({ window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
+
   const nativeHandle = disposeLater(
     registerScript({
       parent: [

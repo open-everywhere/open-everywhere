@@ -29,6 +29,8 @@ import {
   claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
+  vendorInstantEventTime,
+  spreadVendorTs,
   singleWindowMentionPolicy,
   isVouchedInternal,
   divertInboundToUnifiedWindow,
@@ -127,6 +129,11 @@ function supervisorSeedState(ev: GitHubAmbientEvent, unified: boolean): GitHubSu
     triggeringUserLogin: null,
     oeSupervisor: true,
   };
+}
+
+export function githubAmbientLegKeeps(addressing: string, ambientEnabled: boolean): boolean {
+  if (addressing === "drop") return false;
+  return addressing === "direct" || ambientEnabled;
 }
 
 function githubAmbientEnabled(surfaceKey: string): boolean {
@@ -293,15 +300,15 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   if (await githubExternalSuppressed(surfaceKey, ev.owner, ev.comment.authorLogin, authorFacts)) {
     return;
   }
-  if (!githubAmbientEnabled(surfaceKey)) {
-    await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
-    return;
-  }
   const singleWindow = grainUsesUnifiedWindow(githubGrainFor(surfaceKey));
   const vouched = githubRepoVouched(ev.owner, ev.repo);
   const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME, { treatMentionAsDirect: singleWindow, vouched });
   if (cls.addressing === "drop") {
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: ${cls.reason} (private=${ev.repoPrivate === true}, vouched=${vouched})`);
+    return;
+  }
+  if (!githubAmbientLegKeeps(cls.addressing, githubAmbientEnabled(surfaceKey))) {
+    await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
     return;
   }
   const seamFacts: GitHubSeamFacts = {
@@ -375,6 +382,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
               ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
             },
             ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
+            ...spreadVendorTs(vendorInstantEventTime(ev.comment.createdAt)),
           } satisfies UnifiedWindowWake)
         : undefined,
     },

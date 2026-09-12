@@ -110,7 +110,11 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
 
 {
   const receipt = tasks.readTaskReceipt(receiptResult("call_a", "task_a", "ag_agent:aaaa"));
-  eq(receipt, { taskId: "task_a", callId: "call_a", agentId: "ag_agent:aaaa" }, "🔴 the receipt reader takes the three ids off eve's parked receipt and nothing else — no brief, no output prose");
+  eq(
+    receipt,
+    { taskId: "task_a", callId: "call_a", agentId: "ag_agent:aaaa", tool: "agent" },
+    "🔴 the receipt reader takes the three ids and eve's own tool name off the parked receipt and nothing else — no brief, no output prose. The tool name is what lets a settlement's failure row say WHICH delegated read died (OPE-1737)",
+  );
 
   const sync = { kind: "subagent-result", origin: "child", callId: "call_a", subagentName: "agent", output: "the child answered", outcome: { kind: "terminal" } };
   eq(tasks.readTaskReceipt(sync), null, "🔴 THE DISCRIMINATOR: a SYNC subagent-result — same kind, same callId — reads as `null`, because it carries no `backgroundTask`. This is the one field that separates a dispatch from a settlement");
@@ -119,7 +123,7 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
 
   eq(
     tasks.readTaskReceipt(receiptResultV2("t597-delegate", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
-    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2" },
+    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2", tool: "agent" },
     "🔴 ENVELOPE B: the receipt eve 0.43.0+ hands the model — a plain `tool-result` with no `backgroundTask` envelope — reads to the SAME three ids as envelope A. The reader is a version UNION, exactly like TASK_TOOL_NAMES",
   );
   eq(
@@ -136,7 +140,7 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
   eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "spawn_thread_session", output: { taskId: "task_6c7d596fcff2a3972c60cfa8", thread: "slack:C1:1.0", note: "spawned" } }), null, "🔴 ARM B NEGATIVE CONTROL: an OE spawn result carrying a `task_`-shaped id is still refused — `status` and `agentId` are what make a result a receipt, and it has neither");
   eq(
     tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "some_new_subagent", output: { agentId: "ag_some_new_subagent:6666", status: "working", taskId: "task_6c7d596fcff2a3972c60cfa8" } }),
-    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "c1", agentId: "ag_some_new_subagent:6666" },
+    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "c1", agentId: "ag_some_new_subagent:6666", tool: "some_new_subagent" },
     "🔴 ARM B IS NOT KEYED ON THE TOOL NAME: eve names a subagent tool after the SUBAGENT, so a receipt under a name OE never listed is still read. A name allow-list here would answer `null` and take the taint adoption fail-OPEN — the OPE-943 defect, one case along",
   );
 
@@ -208,7 +212,7 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
 
     eq(
       tasks.readTaskReceipt(receiptResultV2("t597-delegate", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
-      { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2" },
+      { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2", tool: "agent" },
       "🔴 PART 0B PRODUCER B END TO END: the shape eve's installed schema declares parses to the three ids",
     );
   }
@@ -217,11 +221,11 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
 }
 
 await onParentTurn(async () => {
-  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_1", callId: "call_1", agentId: "ag_agent:1111" }, PARENT);
+  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_1", callId: "call_1", agentId: "ag_agent:1111", tool: "agent" }, PARENT);
   eq(untrustedIngestedThisTurn(), false, "🔴 T1 THE MEASURED DEFECT, CLOSED: a parked task receipt marks the parent's turn NOT AT ALL — asserted `=== false`, not merely falsy. Before this branch existed the fail-closed read ran here and every clean delegation tainted its own seat");
   eq(
     link,
-    { callId: "call_1", childToken: `subagent:${PARENT}:call_1`, agentId: "ag_agent:1111" },
+    { callId: "call_1", childToken: `subagent:${PARENT}:call_1`, agentId: "ag_agent:1111", tool: "agent" },
     "…and it REMEMBERS the join instead: the callId the child writes its marker under, the continuation token eve minted for it, and the worker's agent handle for the census",
   );
   eq(await store.taskCallLink(ORG, "task_1"), link, "…persisted under the task id, which is the only id present on BOTH edges of a background delegation");
@@ -235,7 +239,7 @@ await runChild("call_2", "sess-child-dirty", true);
 eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_2"), true, "precondition: the child that read untrusted content wrote its call-keyed marker TAINTED");
 
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_2", callId: "call_2", agentId: "ag_agent:2222" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_2", callId: "call_2", agentId: "ag_agent:2222", tool: "agent" }, PARENT);
   eq(untrustedIngestedThisTurn(), false, "…and the receipt for that same tainted child STILL marks nothing at dispatch — the taint exists, but the parent has not read a byte of it yet");
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_2", status: "completed", agentId: "ag_agent:2222" }, PARENT);
   eq(adopted, true, "🔴 T2 THE DEFENCE IS RELOCATED, NOT WEAKENED: a child that genuinely read untrusted content marks its parent on the TERMINAL view — the edge where the child's output enters the parent's history");
@@ -246,7 +250,7 @@ await runChild("call_3", "sess-child-clean", false);
 eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_3"), false, "precondition: the clean child's eager claim left a POSITIVE known-clean row, not silence");
 
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_3", callId: "call_3", agentId: "ag_agent:3333" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_3", callId: "call_3", agentId: "ag_agent:3333", tool: "agent" }, PARENT);
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_3", status: "completed", agentId: "ag_agent:3333" }, PARENT);
   eq(adopted, false, "🔴 T2 NEGATIVE CONTROL: a terminal peek over a CLEAN child does NOT mark the parent — asserted `=== false`, not merely falsy");
   eq(untrustedIngestedThisTurn(), false, "…and the turn signal reads `=== false` too: a clean background delegation is clean end to end, which is the whole point of this ticket");
@@ -260,7 +264,7 @@ await onParentTurn(async () => {
 });
 
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_lost_marker", callId: "call_never_ran", agentId: "ag_agent:llll" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_lost_marker", callId: "call_never_ran", agentId: "ag_agent:llll", tool: "agent" }, PARENT);
   eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_never_ran"), undefined, "precondition: the child never reached its own turn.started, so it wrote no marker of either value");
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_lost_marker", status: "failed", agentId: "ag_agent:llll" }, PARENT);
   eq(adopted, true, "🔴 T3 FAIL CLOSED, LOST MARKER: a terminal view over a child whose taint record was lost marks the parent — the same direction OPE-437 fixed for the sync leg, on the new edge");
@@ -297,7 +301,7 @@ await contextStorage.run(new ContextContainer(), async () => {
     eq(untrustedIngestedThisTurn(), false, "🔴 PART 4B: the envelope-B receipt takes BRANCH 1 and marks nothing at dispatch — the child has not run");
     eq(
       await store.taskCallLink(ORG, TASK_V2_DIRTY),
-      { callId: "call_v2_dirty", childToken: `subagent:${PARENT}:call_v2_dirty`, agentId: "ag_agent:9f31ac7b21d0" },
+      { callId: "call_v2_dirty", childToken: `subagent:${PARENT}:call_v2_dirty`, agentId: "ag_agent:9f31ac7b21d0", tool: "agent" },
       "🔴 PART 4B THE DISPATCH ROW, WHICH IS THE WHOLE DEFECT: an eve 0.43.0+ receipt now MINTS the join row. Before the reader was widened this read `undefined`, and every settlement that followed resolved `no-row` — no reply address, no taint adoption, no memory flush",
     );
   });
@@ -335,9 +339,9 @@ await runChild("call_5", "sess-child-persistent", false);
 eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_5"), false, "precondition: the persistent child is clean, and its marker sits under its FIRST callId");
 
 await onParentTurn(async () => {
-  const first = await spawnTaint.noteTaskReceipt({ taskId: "task_5a", callId: "call_5", agentId: "ag_agent:5555" }, PARENT);
+  const first = await spawnTaint.noteTaskReceipt({ taskId: "task_5a", callId: "call_5", agentId: "ag_agent:5555", tool: "agent" }, PARENT);
   eq(first?.childToken, `subagent:${PARENT}:call_5`, "the first dispatch mints the token and pins it against the agent id");
-  const second = await spawnTaint.noteTaskReceipt({ taskId: "task_5b", callId: "call_5_continued", agentId: "ag_agent:5555" }, PARENT);
+  const second = await spawnTaint.noteTaskReceipt({ taskId: "task_5b", callId: "call_5_continued", agentId: "ag_agent:5555", tool: "agent" }, PARENT);
   eq(second, first, "🔴 T5: a continuation on the same agentId resolves the ORIGINAL join — the pinned row wins over the receipt's own newer callId, because the child never re-minted its token");
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_5b", status: "completed", agentId: "ag_agent:5555" }, PARENT);
   eq(adopted, false, "🔴 T5: so the CONTINUATION's terminal peek reads the clean child's real marker and does NOT mark — without the pinned token this reads `undefined` and fail-closes on a clean child");
@@ -346,7 +350,7 @@ await onParentTurn(async () => {
 
 eq(
   await store.taskAgentLink(ORG, PARENT, "ag_agent:5555"),
-  { callId: "call_5", childToken: `subagent:${PARENT}:call_5`, agentId: "ag_agent:5555" },
+  { callId: "call_5", childToken: `subagent:${PARENT}:call_5`, agentId: "ag_agent:5555", tool: "agent" },
   "🔴 T5: the agent-keyed row still holds the FIRST dispatch's callId after a continuation wrote through it",
 );
 
@@ -369,9 +373,9 @@ await contextStorage.run(new ContextContainer(), async () => {
 });
 
 await onParentTurn(async () => {
-  const receipt = { taskId: "task_replay", callId: "call_replay", agentId: "ag_agent:rrrr" };
+  const receipt = { taskId: "task_replay", callId: "call_replay", agentId: "ag_agent:rrrr", tool: "agent" };
   const first = await spawnTaint.noteTaskReceipt(receipt, PARENT);
-  eq(first, { callId: "call_replay", childToken: `subagent:${PARENT}:call_replay`, agentId: "ag_agent:rrrr" }, "the first pass mints the join exactly as T1 does");
+  eq(first, { callId: "call_replay", childToken: `subagent:${PARENT}:call_replay`, agentId: "ag_agent:rrrr", tool: "agent" }, "the first pass mints the join exactly as T1 does");
 
   const replayed = await spawnTaint.noteTaskReceipt(receipt, PARENT);
   eq(replayed, first, "🔴 OPE-586: the replayed pass resolves to the SAME recorded link, not a fresh one");
@@ -388,7 +392,7 @@ await onParentTurn(async () => {
   await store.rememberTaskAgent(ORG, PARENT, "ag_agent:crash", halfWritten);
   eq(await store.taskCallLink(ORG, "task_crash"), undefined, "precondition: the task-keyed row never landed — the simulated crash window");
 
-  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_crash", callId: "call_crash", agentId: "ag_agent:crash" }, PARENT);
+  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_crash", callId: "call_crash", agentId: "ag_agent:crash", tool: "agent" }, PARENT);
   eq(link?.callId, halfWritten.callId, "the redelivery resolves to the SAME link the crashed pass had already pinned");
   eq(link?.childToken, halfWritten.childToken, "…the same continuation token, which is the id the child's marker is readable under");
   eq(link?.agentId, "ag_agent:crash", "🔴 OPE-904: a join row written without the census field GAINS it from the receipt — a task in flight across the deploy stays countable");
@@ -404,7 +408,7 @@ registerSettings({ taint: { mode: "off" } });
 await runChild("call_8", "sess-child-off", true);
 await contextStorage.run(new ContextContainer(), async () => {
   spawnTaint.openTaintTurn(parentCtx as never);
-  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_8", callId: "call_8", agentId: "ag_agent:8888" }, PARENT);
+  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_8", callId: "call_8", agentId: "ag_agent:8888", tool: "agent" }, PARENT);
   eq(link, null, "🔴 taint OFF: the receipt branch writes NO join row — the rows exist only to serve the settlement read, and an opted-out deployment may not pay a store round trip for a fact nothing consumes");
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_8", status: "completed", agentId: "ag_agent:8888" }, PARENT);
   eq(adopted, false, "…and the settlement branch does not mark, even though the child really was tainted — the deployer's reviewed choice, same posture as adoptSubagentTaint");
@@ -503,7 +507,7 @@ await runChild("call_kinds", "sess-child-kinds", true, ["web", "github"]);
 }
 
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds", callId: "call_kinds", agentId: "ag_agent:kkkk" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds", callId: "call_kinds", agentId: "ag_agent:kkkk", tool: "agent" }, PARENT);
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "task_kinds", status: "completed", agentId: "ag_agent:kkkk" }, PARENT);
   eq(adopted, true, "OPE-1251: the settlement still marks the parent — the kinds ride the existing adoption, they do not replace it");
   eq(
@@ -515,14 +519,14 @@ await onParentTurn(async () => {
 
 await runChild("call_bare", "sess-child-bare", true);
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_bare", callId: "call_bare", agentId: "ag_agent:bbbb" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_bare", callId: "call_bare", agentId: "ag_agent:bbbb", tool: "agent" }, PARENT);
   eq(await spawnTaint.adoptTaskTaint({ taskId: "task_bare", status: "completed", agentId: "ag_agent:bbbb" }, PARENT), true, "OPE-1251 NEGATIVE CONTROL: a child that knew it was tainted but not by what still marks the parent");
   eq(untrustedIngestedThisTurn(), true, "…the bit is set");
   eq([...taintKindsThisTurn()], [], "🔴 …and the parent names NO class — asserted empty, so the leg cannot be passing by inventing one");
 });
 
 await onParentTurn(async () => {
-  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds_lost", callId: "call_kinds_never", agentId: "ag_agent:llll" }, PARENT);
+  await spawnTaint.noteTaskReceipt({ taskId: "task_kinds_lost", callId: "call_kinds_never", agentId: "ag_agent:llll", tool: "agent" }, PARENT);
   eq(await store.subagentCallTaintRecord(ORG, PARENT, "call_kinds_never"), undefined, "precondition: no marker was ever written for this call");
   eq(await spawnTaint.adoptTaskTaint({ taskId: "task_kinds_lost", status: "completed", agentId: "ag_agent:llll" }, PARENT), true, "OPE-1251: a lost marker still fails CLOSED");
   eq([...taintKindsThisTurn()], [], "🔴 …and names no class, because none could be established — the fail-closed direction is about the BIT, never about inventing a source");

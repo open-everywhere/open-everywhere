@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  afterThisTest,
   disposeLater,
   bootAgent,
   discordMentionWake,
@@ -93,6 +94,11 @@ test("the fired session binds as its routine's ATTESTED creator", async () => {
 
 test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — terminal route", async () => {
   await bootAgent({ sharedSqlite: true });
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  const topologyBefore = settings.getSettings().window.topology;
+  afterThisTest(() => settings.overrideSettingsForTest({ window: { topology: topologyBefore } }));
+  settings.overrideSettingsForTest({ window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
   const sayText = "oe-660 terminal route fire reply";
   disposeLater(registerScript({ parent: [{ say: sayText }] }));
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
@@ -143,8 +149,8 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   await bootAgent({ sharedSqlite: true });
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
-  const decoyCore = "oe-702 decoy (terminal route, fired first)";
-  const realCore = "oe-702 real reply (bridge route, fired second)";
+  const decoyCore = "oe-702 decoy (unlisted channel, fired first)";
+  const realCore = "oe-702 real reply (listed channel, fired second)";
   const padLen = Math.max(decoyCore.length, realCore.length) + 3;
   const decoyText = decoyCore.padEnd(padLen, ".");
   const realText = realCore.padEnd(padLen, ".");
@@ -155,9 +161,9 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
   const decoyRow = await waitFor(async () => {
     const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
-    return rows.find((r) => r.surface === CHANNEL && r.detail?.chars === decoyText.length);
-  }, "the decoy terminal-route reply.post row", 150_000);
-  expect(decoyRow.detail?.route).toBe("terminal");
+    return rows.find((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.chars === decoyText.length);
+  }, "the decoy fire's reply.post row on its own channel", 150_000);
+  expect(decoyRow.detail?.route).toBe("bridge");
   decoyHandle.dispose();
 
   disposeLater(registerScript({ parent: [{ say: realText }] }));
@@ -177,7 +183,7 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   const allRows = await readAuditRows({ actions: ["reply.post"], sinceIso });
   const chansOnlyMatches = allRows.filter((r) => r.detail?.chars === realText.length);
   expect(chansOnlyMatches.length).toBeGreaterThanOrEqual(2);
-  expect(chansOnlyMatches.some((r) => r.surface === CHANNEL && r.detail?.route === "terminal")).toBe(true);
+  expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.route === "bridge")).toBe(true);
   expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.route === "bridge")).toBe(true);
 
   const scoped = allRows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
@@ -186,6 +192,11 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
 
 test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the fence and cards, unattended:false", async () => {
   await bootAgent({ sharedSqlite: true });
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  const topologyBefore = settings.getSettings().window.topology;
+  afterThisTest(() => settings.overrideSettingsForTest({ window: { topology: topologyBefore } }));
+  settings.overrideSettingsForTest({ window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
   disposeLater(registerScript(proposeSpendLimit()));
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
@@ -237,11 +248,12 @@ test("the carriage probe records the SAME key set on both sides of the session h
 
   for (const stamp of FIRE_STAMPS) expect(keysOf(sent)).toContain(stamp);
 
-  const TURN_BOUNDARY_ATTRS = ["oe_dispatch_turn", "oe_parent_turn_tainted"];
-  const seenFromHop = keysOf(seen).filter((k) => !TURN_BOUNDARY_ATTRS.includes(k));
-  expect([...seenFromHop].sort()).toEqual([...keysOf(sent)].sort());
-
   for (const k of keysOf(sent)) expect(keysOf(seen)).toContain(k);
+
+  const TURN_BOUNDARY_ATTRS = ["oe_dispatch_turn", "oe_parent_turn_tainted"];
+  const DIVERT_ATTRS = ["oe_addressing", "oe_delivery_id", "oe_grain", "oe_platform", "oe_requester", "oe_sources", "oe_wake_id", "oe_window_token"];
+  const unexplained = keysOf(seen).filter((k) => !keysOf(sent).includes(k) && !TURN_BOUNDARY_ATTRS.includes(k) && !DIVERT_ATTRS.includes(k));
+  expect(unexplained, "the fired session's auth bag grew a key neither the fire nor the host boundary explains").toEqual([]);
 
   for (const row of [sent, seen]) {
     expect(keysOf(row)).not.toContain(CREATOR);

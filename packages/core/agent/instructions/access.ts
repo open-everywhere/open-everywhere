@@ -245,6 +245,10 @@ function wiredPlatforms(domain: Domain): string[] {
 function domainAnchor(domain: Domain): { binding: SurfaceBinding; partition: Partition; channel: string } | undefined {
   const key = domainRoster(domain)[0];
   if (!key) return undefined;
+  return surfaceKeyAnchor(key);
+}
+
+function surfaceKeyAnchor(key: string): { binding: SurfaceBinding; partition: Partition; channel: string } | undefined {
   const [platform, workspace, ...rest] = key.split("/");
   const surface = rest.join("/");
   if (!platform || !workspace || !surface) return undefined;
@@ -342,7 +346,9 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   const domainName = unifiedDomainFromToken(ctx.channel?.continuationToken);
   const cfg = getConfig();
   const domain = domainName ? cfg.loadDomains().find((d) => d.name === domainName) : undefined;
-  const anchor = domain ? domainAnchor(domain) : undefined;
+  const sidEarly = classifySessionId(ctx.channel?.continuationToken);
+  const soloWindowIdEarly = sidEarly.kind === "window" && sidEarly.key.windowId !== sidEarly.key.domain ? sidEarly.key.windowId : undefined;
+  const anchor = (domain ? domainAnchor(domain) : undefined) ?? (soloWindowIdEarly ? surfaceKeyAnchor(soloWindowIdEarly) : undefined);
 
   let accessMd = "";
   let memoryMd = "";
@@ -377,8 +383,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   }
 
   const platforms = domain ? wiredPlatforms(domain) : [];
-  const sid = classifySessionId(ctx.channel?.continuationToken);
-  const soloWindowId = sid.kind === "window" && sid.key.windowId !== sid.key.domain ? sid.key.windowId : undefined;
+  const soloWindowId = soloWindowIdEarly;
   const soloMode = soloWindowId !== undefined;
   const pinnedPlatform = windowTokenPlatform(ctx.channel?.continuationToken);
   const handleInfo = await unifiedSurfaceHandle(platforms, pinnedPlatform);

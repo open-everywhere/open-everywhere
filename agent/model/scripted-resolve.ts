@@ -9,12 +9,15 @@ import {
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
   clearIncompleteParentTurn,
+  fillWakePlaceholder,
   incompleteParentTurnFor,
   noteStaleHoldExpiry,
   scriptedModelArmed,
   scriptedRegistrationSeq,
   scriptedStore,
   staleTurnParkMs,
+  unresolvedWakePlaceholderFault,
+  wakeIdFromPrompt,
   type RecordedRequest,
   type ResolveObservation,
   type ScriptedEntry,
@@ -248,7 +251,13 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
           verdict = serveStep(target, observation, request.toolResults.length);
         }
       }
-      const { fault, served, step } = verdict;
+      const { fault: stepFault, served, step } = verdict;
+
+      const promptWakeId = wakeIdFromPrompt(request.messages);
+      const filled = (step.calls ?? []).map((c) => ({ call: c, ...fillWakePlaceholder(c.input, promptWakeId) }));
+      const unresolvedCall = filled.find((f) => f.unresolved);
+      const wakeFault = unresolvedCall ? unresolvedWakePlaceholderFault(unresolvedCall.call.tool) : undefined;
+      const fault = stepFault ?? wakeFault;
 
       observation.fault = fault;
 
@@ -268,10 +277,12 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
         if (target.holds.released) target.holds.cutShort += 1;
       }
 
+      if (wakeFault !== undefined) return { text: wakeFault };
+
       return {
         ...(step.say !== undefined ? { text: step.say } : {}),
         ...(step.calls !== undefined
-          ? { toolCalls: step.calls.map((c) => ({ name: c.tool, ...(c.input !== undefined ? { input: c.input } : {}), ...(c.id !== undefined ? { id: c.id } : {}) })) }
+          ? { toolCalls: filled.map((f) => ({ name: f.call.tool, ...(f.call.input !== undefined ? { input: f.value } : {}), ...(f.call.id !== undefined ? { id: f.call.id } : {}) })) }
           : {}),
         ...(step.usage !== undefined ? { usage: step.usage } : {}),
       };

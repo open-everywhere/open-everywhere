@@ -1,5 +1,7 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
+  receiptEventTime,
+  spreadVendorTs,
   appendAudit,
   ingressSpendGate,
   auditAmbientSkip,
@@ -298,6 +300,7 @@ async function deliverNotionAnswer(input: {
 
 export default defineChannel<NotionState, { state: NotionState }>({
   kindHint: "notion",
+  turnPolicy: "queue",
   state: { discussionId: null, pageId: null, workspaceId: null },
   context(state) {
     return { state };
@@ -348,6 +351,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
               pageId: d.pageId || undefined,
               workspaceId: d.workspaceId,
               credentialId: d.credentialId,
+              ...spreadVendorTs(receiptEventTime(Date.now())),
             })
           : undefined;
         const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };

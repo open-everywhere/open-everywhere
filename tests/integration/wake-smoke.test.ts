@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, discordMentionWake, DISCORD_GUILD_ID, rawDiscordRelayPost, readAuditRows, registerScript, waitFor } from "./harness";
+import { disposeLater, bootAgent, discordMentionWake, DISCORD_GUILD_ID, rawDiscordRelayPost, readAuditRows, registerScript, seatReply, waitFor } from "./harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -33,13 +33,13 @@ test("a mis-signed Discord relay POST is refused 401", async () => {
   expect(res.status).toBe(401);
 });
 
-test("a signed Discord relay mention wakes the agent on the NATIVE dispatch path and its reply reaches the audit trail", async () => {
+test("a signed Discord relay mention wakes the channel's STANDING SEAT and its reply reaches the audit trail", async () => {
   await bootAgent();
   const channelId = freshUnlistedChannelId();
   const nonce = randomBytes(4 + Math.floor(Math.random() * 9)).toString("hex");
   const replyText = `oe-wake-smoke-ok ${nonce}`;
 
-  const handle = disposeLater(registerScript({ parent: [{ say: replyText }] }));
+  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "wake-smoke-reply"), { say: "done" }] }));
 
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
@@ -56,10 +56,12 @@ test("a signed Discord relay mention wakes the agent on the NATIVE dispatch path
 
   const detail = (row.detail ?? {}) as Record<string, unknown>;
   expect(detail.platform).toBe("discord");
-  expect(detail.route).toBe("terminal");
+  expect(detail.route).toBe("tool");
   expect(typeof detail.id).toBe("string");
-  expect(detail.id as string).toMatch(/^spoof-discord-/);
+  expect(detail.id as string).toMatch(/^spoof-unified-discord-/);
   expect(typeof detail.sessionId).toBe("string");
   expect((detail.sessionId as string).length).toBeGreaterThan(0);
   expect(detail.chars).toBe(replyText.length);
+
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
 });

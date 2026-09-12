@@ -47,6 +47,8 @@ import {
   isUndeliveredAfterHeal,
   healPrunedDeploymentStrand,
   mintWakeId,
+  slackVendorEventTime,
+  spreadVendorTs,
   resolveWakeTrust,
   ambientSupervisorEnabled,
   getConfig,
@@ -354,6 +356,7 @@ export interface FrontOptions {
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
   readonly ambientEnabledFor?: (surfaceKey: string) => boolean;
+  readonly seatedSurfaceFor?: (surfaceKey: string) => boolean;
   readonly handleApprovalPayload?: (payload: unknown, deps?: { waitUntil?: (p: Promise<unknown>) => void }) => Promise<boolean>;
   readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
@@ -556,6 +559,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleGrantCardClick = opts.handleGrantCardClick ?? liveHandleGrantCardClick;
   const handleApprovalCardClick = opts.handleApprovalCardClick ?? liveHandleApprovalCardClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
+  const seatedSurface = opts.seatedSurfaceFor ?? slackDomainUsesUnifiedWindow;
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
   const openDirectMessageChannel = opts.openDirectMessageChannel ?? liveOpenDirectMessageChannel;
   const resolveDmSeat = opts.resolveDmSeat ?? ((org, dm, atIso) => liveGetOrCreateDmSeat(org, dm, atIso));
@@ -564,10 +568,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const channelFactsFor = opts.channelFactsFor ?? slackChannelFactsFor;
   const authorFactsFor = opts.authorFactsFor ?? ((internal: boolean, userId: string | undefined, teamId: string | undefined) => slackWakeAuthorFacts(internal, userId, teamId));
 
-  const singleWindowOwnsMention = async (channelId: string, surfaceKey: string): Promise<boolean> => {
-    if (!ambientEnabledFor(surfaceKey)) return false;
-    return (await mentionPolicyFor(channelId, surfaceKey)).suppressNative;
-  };
+  const singleWindowOwnsMention = async (channelId: string, surfaceKey: string): Promise<boolean> =>
+    (await mentionPolicyFor(channelId, surfaceKey)).suppressNative;
 
   return (req: Request, args: RouteHandlerArgs): Promise<Response> =>
     withSlackRouteHold(() => {
@@ -620,7 +622,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     const notYetSeen = (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> =>
       notYetSeenKey(wakeKey(env, ev.channelId, ev.ts), ev);
 
-    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false, onWake?: () => void): void => {
+    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false, onWake?: () => void, seatEngaged = false): void => {
       let ambient = false;
       let surfaceKey: string | undefined;
       try {
@@ -629,12 +631,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       } catch {
         ambient = false;
       }
-      if (directMention && !ambient) {
-        console.warn(`[open-everywhere:slack-front] ${label} ${ev.channelId}/${ev.ts}: ambient off after mention was kept — dropped (no road to the unified window)`);
+      const seated = surfaceKey !== undefined && seatedSurface(surfaceKey);
+      if (directMention && !ambient && !seated) {
+        console.warn(`[open-everywhere:slack-front] ${label} ${ev.channelId}/${ev.ts}: addressed wake with no standing seat and ambient off — dropped (no road to a seat)`);
         return;
       }
+      const addressedOrAmbient = directMention || ambient || seatEngaged;
       onWake?.();
-      if (ambient) {
+      if (addressedOrAmbient) {
         const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
           fifo.enqueue(supKey, () =>
@@ -712,7 +716,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       await divertInboundToUnifiedWindow(args.to, {
         message,
         token: seat.token,
-        window: { wakeId, origin, addressing: "direct-mention" },
+        window: { wakeId, origin, addressing: "direct-mention", ...spreadVendorTs(slackVendorEventTime(ev.ts)) },
         surfaceKey: p.surfaceKey,
         auth,
       });
@@ -1079,8 +1083,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     const p = resolvePartition(bindableFor(ev));
-    if (slackDomainUsesUnifiedWindow(p.surfaceKey)) {
-      scheduleUnownedWake(ev, "in-thread-window");
+    if (seatedSurface(p.surfaceKey)) {
+      const seatEngaged = await isThreadEngaged(p, ev.threadTs).catch(() => false);
+      scheduleUnownedWake(ev, "in-thread-window", false, undefined, seatEngaged);
       return OK();
     }
 

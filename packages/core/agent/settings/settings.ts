@@ -689,7 +689,7 @@ export const SETTINGS = {
       path: "window.topology",
       shipped: false,
       summary:
-        "The standing-WINDOW apparatus — the ONE gate governing every window shape: a named `windows` group, the per-channel `solo` window, and the cross-surface `unified` window. Off, every domain runs the native per-container path and both `mode` and `windows` are inert. **Arm deliberately: a window is a wider data blast radius.**",
+        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Arm deliberately: a `unified` window is a wider data blast radius.** ⚠️ The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — is wired on **Slack only** today; on every other surface a seat reads its bootstrap window and nothing between its own wakes (OPE-1726).",
     } satisfies SettingSpec<boolean>,
   },
 };

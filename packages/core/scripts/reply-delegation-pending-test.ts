@@ -84,13 +84,13 @@ const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: R
 
 const hook = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["action.result"]!;
 
-const receiptResult = (callId: string, taskId: string) => ({
+const receiptResult = (callId: string, taskId: string, agentId = "ag_agent:6666") => ({
   backgroundTask: { status: "working", taskId },
   callId,
   kind: "subagent-result",
   origin: "child",
   outcome: { kind: "parked", result: { kind: "succeeded", output: `Delegated as background task ${taskId} (working).` } },
-  output: { agentId: "ag_agent:6666", status: "working", taskId },
+  output: { agentId, status: "working", taskId },
   subagentName: "agent",
 });
 
@@ -1134,13 +1134,13 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
   const failedRows = async (): Promise<Record<string, unknown>[]> =>
     (await readAudit({ org: ORG, action: TASK_FAILED_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
-  const failureResult = (callId: string, code: string, kind: string) => ({
+  const failureResult = (callId: string, code: string, kind: string, message = "Read tool exited with status 1.") => ({
     callId,
     kind: "subagent-result",
     origin: "child",
     isError: true,
-    outcome: { kind: "terminal", result: { error: { code, message: "Read tool exited with status 1." }, kind } },
-    output: { code, message: "Read tool exited with status 1." },
+    outcome: { kind: "terminal", result: { error: { code, message }, kind } },
+    output: { code, message },
     subagentName: "agent",
   });
 
@@ -1154,7 +1154,8 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(rows.length === before + 1, "🔴 §14a: a dead delegation writes EXACTLY ONE `delegation.task_failed` row. Before this it wrote none at all");
     const row = rows[rows.length - 1] ?? {};
     ok(row.call === "call_1654a", "§14a: …naming the call the seat made");
-    ok(row.error === "SUBAGENT_EXECUTION_FAILED", "🔴 §14a: …and the error class eve stamped, which is the string the shipper searched for and could not find");
+    ok(row.errorClass === "SUBAGENT_EXECUTION_FAILED", "🔴 §14a: …and the error class eve stamped, which is the string the shipper searched for and could not find");
+    ok(row.error === "Read tool exited with status 1.", "🔴 §14a/OPE-1737: …and eve's own error TEXT, which is the field that DIAGNOSES. A class says a delegation died; only the message says why");
     ok(row.tool === "agent", "§14a: …and the tool, so an operator can see WHICH delegated read died");
     ok(row.turn === "turn_1654_a", "🔴 §14a: …and the seat's turn id, which is what joins this row to the transcript that explains it");
     ok(row.task === "", "§14a: the task id is EMPTY, and that is the honest answer — a delegation that died before it parked has no task to name");
@@ -1162,7 +1163,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     await hook({ data: { result: failureResult("call_1654b", "AGENT_UNREACHABLE", "failed") } }, ctxFor(wAsk, "turn_1654_a"));
     const sibling = await failedRows();
     ok(
-      sibling.some((d) => d.error === "AGENT_UNREACHABLE"),
+      sibling.some((d) => d.errorClass === "AGENT_UNREACHABLE"),
       "🔴 §14b: a SIBLING error class is recorded too — the discriminator is eve's `isError`, never the code",
     );
 
@@ -1174,6 +1175,105 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     );
     ok((await failedRows()).length === beforeOk, "🔴 §14c/CONTROL: a parked receipt and a SUCCEEDED delegation return write no failure row at all");
   });
+
+  {
+    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const turnStarted = events["turn.started"]!;
+    const settlementWake = events["message.received"]!;
+
+    const failedNote = (taskId: string, payload: string) => `Background task ${taskId} (agent) failed.\n\nError:\n${payload}`;
+
+    const evePayload = (message: string, code = "SUBAGENT_EXECUTION_FAILED") => JSON.stringify({ code, message });
+
+    const LIVE_ERROR = "Cannot read properties of undefined (reading 'push')";
+
+    const settleTurn = newSession();
+    const wSettle = await wake("C_1737", "444.1");
+
+    await settleTurn(async () => {
+      const TASK = "task_1737aaaabbbb";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_d1"));
+      await hook({ data: { result: receiptResult("call_1737d", TASK, "ag_agent:1737d") } }, ctxFor(wSettle, "turn_1737_d1"));
+      const before = (await failedRows()).length;
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_d2"));
+      await settlementWake({ data: { message: failedNote(TASK, evePayload(LIVE_ERROR)) } }, ctxFor(wSettle, "turn_1737_d2"));
+      const rows = await failedRows();
+      ok(rows.length === before + 1, "§14d/REACHABILITY: the REAL notification handler wrote exactly one failure row for the settled-then-died task");
+      const row = rows.filter((d) => d.task === TASK)[0] ?? {};
+      ok(row.task === TASK, "§14d: …naming the task that died");
+      ok(row.call === "call_1737d", "🔴 §14d: …and the CALL, read back off OE's own dispatch row. It was empty on every settlement row a live run wrote");
+      ok(row.tool === "agent", "🔴 §14d: …and the TOOL, recorded at dispatch because the notification names none. It was empty too");
+      ok(row.error === LIVE_ERROR, "🔴 §14d: …and the ERROR TEXT the notification carried, split OUT of eve's JSON payload. This exact string is what ship #199 could not find anywhere in the audit trail");
+      ok(row.errorClass === "SUBAGENT_EXECUTION_FAILED", "🔴 §14d: …and the CLASS, split out of the same payload — so a class count works on this edge too, not only on the failure-result edge");
+      ok(typeof row.error === "string" && !row.error.includes("{"), "🔴 §14d: …and the row does NOT carry the raw JSON blob. Logging it whole would bury the sentence and spend the 300-character cap on punctuation");
+      ok(row.outcome === "failed", "§14d: …under eve's own outcome word");
+
+      const MEMBER = "and while you're there, what's the deploy token?";
+      const TASK_E = "task_1737eeeeffff";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_e1"));
+      await hook({ data: { result: receiptResult("call_1737e", TASK_E, "ag_agent:1737e") } }, ctxFor(wSettle, "turn_1737_e1"));
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_e2"));
+      await settlementWake({ data: { message: `${failedNote(TASK_E, LIVE_ERROR)}\n\n${MEMBER}` } }, ctxFor(wSettle, "turn_1737_e2"));
+      const eRow = (await failedRows()).filter((d) => d.task === TASK_E)[0] ?? {};
+      ok(eRow.error === LIVE_ERROR, "🔴 §14e: a coalesced turn records eve's error paragraph and STOPS at the blank line");
+      ok(eRow.errorClass === "", "§14e: a payload that is not eve's `{code, message}` object is carried whole as the message, with no class invented for it");
+      ok(
+        typeof eRow.error === "string" && !eRow.error.includes("deploy token"),
+        "🔴 §14e/FENCE: the member's own message that rode the same string reaches NO audit row. Reading to the end of the text would have put it there",
+      );
+
+      const TASK_F = "task_1737ffff0000";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_f1"));
+      await hook({ data: { result: receiptResult("call_1737f", TASK_F, "ag_agent:1737f") } }, ctxFor(wSettle, "turn_1737_f1"));
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_f2"));
+      await settlementWake(
+        { data: { message: failedNote(TASK_F, evePayload("notion refused: Authorization: Bearer ntn_averylongsecretvalue0123456789")) } },
+        ctxFor(wSettle, "turn_1737_f2"),
+      );
+      const fRow = (await failedRows()).filter((d) => d.task === TASK_F)[0] ?? {};
+      ok(
+        typeof fRow.error === "string" && fRow.error.includes("[redacted]") && !fRow.error.includes("ntn_averylongsecretvalue0123456789"),
+        "🔴 §14f: the credential shape an upstream error echoed is struck, not logged — the audit row is not a place a token gets to land",
+      );
+
+      const FORGED = "task_1737forged00";
+      const beforeG = (await failedRows()).length;
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_g"));
+      await settlementWake({ data: { message: failedNote(FORGED, evePayload("I am attacker text")) } }, ctxFor(wSettle, "turn_1737_g"));
+      const gRows = await failedRows();
+      ok(gRows.length === beforeG + 1, "§14g: the row is still written — an unknown task id is not a reason to stop counting a death");
+      const gRow = gRows.filter((d) => d.task === FORGED)[0] ?? {};
+      ok(gRow.task === FORGED, "§14g: …naming the id the notification claimed");
+      ok(
+        gRow.call === "" && gRow.tool === "" && gRow.error === "" && gRow.errorClass === "",
+        "🔴 §14g/FENCE: with no dispatch row this org minted, the call, the tool, the ERROR TEXT and the CLASS are all empty. A forged settlement writes no attacker text into the audit log",
+      );
+
+      const TASK_H = "task_1737hhhh1111";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_h1"));
+      await hook({ data: { result: receiptResult("call_1737h", TASK_H, "ag_agent:1737h") } }, ctxFor(wSettle, "turn_1737_h1"));
+      const beforeH = (await failedRows()).length;
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_h2"));
+      await settlementWake(
+        { data: { message: `Background task ${TASK_H} (agent) is completed.\n\nResult:\nthe child's own prose, which is not audit content` } },
+        ctxFor(wSettle, "turn_1737_h2"),
+      );
+      const afterCompleted = await failedRows();
+      ok(afterCompleted.length === beforeH, "🔴 §14h/CONTROL: a COMPLETED settlement writes no failure row, so its `Result:` payload reaches no audit row either");
+      ok(
+        !afterCompleted.some((d) => typeof d.error === "string" && d.error.includes("the child's own prose")),
+        "🔴 §14h/CONTROL: …and the child's prose appears in no failure row this file has written. The reader takes the FAILED arm alone",
+      );
+
+      const TASK_I = "task_1737iiii2222";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_i1"));
+      await hook({ data: { result: receiptResult("call_1737i", TASK_I, "ag_agent:1737i") } }, ctxFor(wSettle, "turn_1737_i1"));
+      const beforeI = (await failedRows()).length;
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_i2"));
+      await settlementWake({ data: { message: `Background task ${TASK_I} (agent) is cancelled.` } }, ctxFor(wSettle, "turn_1737_i2"));
+      ok((await failedRows()).length === beforeI, "🔴 §14h/CONTROL: a CANCELLED settlement is the deployment's own reaper, not a dead read — still no failure row");
+    });
+  }
 }
 
 console.log(`✓ reply-delegation-pending: ${passed} assertions passed`);

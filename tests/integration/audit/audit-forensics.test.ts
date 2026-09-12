@@ -10,6 +10,7 @@ import {
   DISCORD_USER_ID,
   readAuditRows,
   registerScript,
+  seatReply,
   waitFor,
   type AuditRow,
 } from "../harness";
@@ -32,7 +33,7 @@ async function turnOnce(): Promise<DrivenTurn> {
   const channelId = freshUnlistedChannelId();
   const nonce = randomBytes(6).toString("hex");
   const replyText = `oe-audit-forensics-ok ${nonce}`;
-  const handle = disposeLater(registerScript({ parent: [{ say: replyText }] }));
+  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "forensics-reply"), { say: "done" }] }));
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
 
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
@@ -41,6 +42,7 @@ async function turnOnce(): Promise<DrivenTurn> {
     const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
     return rows.find((r) => r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
 
   expect(reply.detail?.chars).toBe(replyText.length);
   driven = { channelId, nonce, replyChars: replyText.length, sinceIso, reply };

@@ -5,8 +5,10 @@ import {
   installSlackWebApiStub,
   readAuditRows,
   registerScript,
+  seatReply,
   SLACK_NAME_DROP_CHANNEL_ID,
   SLACK_TEAM_ID,
+  WAKE_FROM_ENVELOPE,
   slackChannelJoinEventPost,
   slackMessageEventPost,
   slackTs,
@@ -30,10 +32,12 @@ const ENGAGED_TEXT = "ope717-engaged-thread-reply";
 const JOIN_TEXT = "ope717-join-intro";
 
 const cleanups: (() => void)[] = [];
+let topologyBefore: boolean | undefined;
+
 afterAll(async () => {
   for (const c of cleanups.splice(0)) c();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-  settings.resetSettingsForTest();
+  if (topologyBefore !== undefined) settings.overrideSettingsForTest({ window: { topology: topologyBefore } });
 });
 
 let stub: SlackWebApiStub | undefined;
@@ -46,6 +50,10 @@ function userInfo(id: string, name: string): Record<string, unknown> {
 
 async function armSeams(): Promise<void> {
   await bootAgent();
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  topologyBefore ??= settings.getSettings().window.topology;
+  settings.overrideSettingsForTest({ window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
   if (stub) return;
   const installed = installSlackWebApiStub((method, params) => {
     switch (method) {
@@ -197,6 +205,33 @@ test("③ CHANNEL-JOIN INTRO — the reply TOOL resolves the real Slack surface"
     expectBoundTo(row, JOIN_CHANNEL_ID, "channel-join intro");
     expect(row.surface, "the join intro must NOT bind the name-drop channel").not.toBe(SLACK_NAME_DROP_CHANNEL_ID);
     expect(JSON.stringify(row.detail), "the join row must not carry the refusal").not.toContain(REFUSAL);
+  } finally {
+    handle.dispose();
+  }
+}, 300_000);
+
+test("④ A SEAT-SHAPED REPLY ON A NATIVE SESSION — the scripted model faults and emits no call", async () => {
+  await armSeams();
+  const handle = registerScript({ parent: [seatReply("ope1695 seat-shaped reply on a native session", "ope1695-seat")] });
+  try {
+    const ts = slackTs(Date.now(), (tsCounter += 1));
+    const res = await slackMessageEventPost({
+      channelId: SLACK_NAME_DROP_CHANNEL_ID,
+      userId: TRIGGER_USER_ID,
+      text: `hey ${BOT_DISPLAY_NAME}, ope1695 seat-shaped probe`,
+      ts,
+      eventId: `EvSeat1695${ts.replace(".", "")}`,
+    });
+    expect(res.status, `the Slack front refused the message event: ${res.body.slice(0, 200)}`).toBe(200);
+
+    const faulted = await waitFor(
+      () => handle.requests.find((r) => r.fault !== undefined),
+      "the scripted model's unresolved-placeholder fault",
+      180_000,
+    );
+    expect(faulted.fault).toContain(WAKE_FROM_ENVELOPE);
+
+    expect(handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "reply")).toBeUndefined();
   } finally {
     handle.dispose();
   }

@@ -14,6 +14,47 @@ export interface ScriptedCall {
   readonly id?: string;
 }
 
+export const WAKE_FROM_ENVELOPE = "<wake-from-envelope>";
+
+export function wakeIdFromPrompt(messages: readonly { readonly text: string }[]): string | undefined {
+  let found: string | undefined;
+  for (const m of messages) {
+    for (const match of m.text.matchAll(/<wake\b[^>]*\bwake-id="([^"]+)"/g)) found = match[1];
+  }
+  return found;
+}
+
+export function fillWakePlaceholder(input: unknown, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
+  if (input === undefined || !JSON.stringify(input)?.includes(WAKE_FROM_ENVELOPE)) return { value: input, unresolved: false };
+  let unresolved = false;
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") {
+      if (!node.includes(WAKE_FROM_ENVELOPE)) return node;
+      if (wakeId === undefined) {
+        unresolved = true;
+        return node;
+      }
+      return node.split(WAKE_FROM_ENVELOPE).join(wakeId);
+    }
+    if (Array.isArray(node)) return node.map(walk);
+    if (node !== null && typeof node === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) out[k] = walk(v);
+      return out;
+    }
+    return node;
+  };
+  return { value: walk(input), unresolved };
+}
+
+export function unresolvedWakePlaceholderFault(tool: string): string {
+  return (
+    `scripted model: step called "${tool}" with ${WAKE_FROM_ENVELOPE}, but the served prompt carries no ` +
+    "`<wake wake-id=…>` envelope. A native per-container session mints no wake id — only a standing " +
+    "seat's rendered envelope does — so this script is scripting a seat shape the wake never had."
+  );
+}
+
 export interface ScriptedUsage {
   readonly inputTokens?: number;
   readonly outputTokens?: number;

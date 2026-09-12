@@ -92,14 +92,16 @@ withEnv(true, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON + ambient explicit domain ⇒ windowed");
   ok(windowedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "windowing applies to every channel in the domain");
   const noAmbient = defineDomain({ name: "x", reach: ["slack/T1/C_X"], mode: "unified" });
-  ok(windowedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === false, "mode without ambientSupervisor ⇒ not windowed");
-  ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === false, "unassigned channel never windows");
+  ok(windowedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === true, "a domain WITHOUT ambientSupervisor still seats its channels — the flag decides wakes, never the session's shape");
+  ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === true, "an UNDECLARED channel seats too, inheriting the org pseudo-domain");
+  ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments]) === false, "…and with NO org pseudo-domain declared, an undeclared channel has no seat at all");
 });
 withEnv(true, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON via a registered override"));
 
 withEnv(true, () => {
   ok(windowedDomainFor(CH, [payments, orgNoGate])?.name === "payments", "windowedDomainFor returns the domain when windowed");
-  ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when not windowed");
+  ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate])?.name === "org", "windowedDomainFor answers the ORG pseudo-domain for an undeclared channel (OPE-1695) …");
+  ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments]) === undefined, "… and undefined when there is no seat domain to resolve at all");
 });
 withEnv(undefined, () => ok(windowedDomainFor(CH, [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when the code gate is off"));
 
@@ -118,13 +120,13 @@ ok(windowModeFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === "solo", "an una
 noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: explicit mode:unified domain + ambientSupervisor");
 noThrow(() => assertUnifiedDomainTrust([paymentsSolo, orgNoGate]), "valid: explicit mode:solo domain + ambientSupervisor");
 noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", reach: ["slack/T/C"] })]), "valid: a domain with no mode is unaffected");
-throws(
+noThrow(
   () => assertUnifiedDomainTrust([defineDomain({ name: "u", reach: ["slack/T/C"], mode: "unified" })]),
-  "mode WITHOUT ambientSupervisor ⇒ fail loud (a window is a re-keyed ambient supervisor)",
+  "mode WITHOUT ambientSupervisor is VALID — topology and chattiness are independent",
 );
-throws(
+noThrow(
   () => assertUnifiedDomainTrust([defineDomain({ name: "s", reach: ["slack/T/C"], mode: "solo" })]),
-  "mode:solo WITHOUT ambientSupervisor ⇒ fail loud too",
+  "mode:solo WITHOUT ambientSupervisor is valid too",
 );
 throws(
   () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, mode: "unified" })]),
@@ -183,7 +185,12 @@ withEnv(true, () => {
   ok(g2.unified === true && g2.registryKey === "oe-domain::payments", "a DIFFERENT surface in the same domain resolves the SAME registry row (one team, one session)");
   ok(g.registryKey === g2.registryKey, "slack + github in one domain share the unified registry key");
   const g3 = supervisorGrainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]);
-  ok(g3.unified === false && g3.registryKey === "slack/T1/C_ORPHAN", "orphan channel stays per-container");
+  ok(g3.unified === true && g3.domainName === "org", "an undeclared channel seats on the org pseudo-domain");
+  ok(g3.windowId === "slack/T1/C_ORPHAN" && g3.singleWindow === undefined, "…SOLO: its window id is its own surface key, and it is not a cross-surface window");
+  const g4 = supervisorGrainFor("slack/T1/C_OTHER", [payments, orgNoGate]);
+  ok(g3.registryKey !== g4.registryKey, "…so two undeclared channels never share a registry row (the footgun the pseudo-domain refusals still guard)");
+  const g5 = supervisorGrainFor("slack/T1/C_ORPHAN", [payments]);
+  ok(g5.unified === false && g5.registryKey === "slack/T1/C_ORPHAN", "no org pseudo-domain ⇒ an undeclared channel stays per-container (fail-closed)");
 });
 
 withEnv(true, () => {
@@ -532,8 +539,13 @@ withEnv(true, () => {
     );
     eqJson(
       supervisorGrainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]),
+      `{"unified":true,"registryKey":"${unifiedDomainSessionKey("slack/T1/C_ORPHAN")}","domainName":"org","windowId":"slack/T1/C_ORPHAN"}`,
+      "GOLDEN: an undeclared channel's grain is its OWN solo seat on the org pseudo-domain",
+    );
+    eqJson(
+      supervisorGrainFor("slack/T1/C_ORPHAN", [payments]),
       `{"unified":false,"registryKey":"slack/T1/C_ORPHAN"}`,
-      "GOLDEN: the native per-container grain is untouched",
+      "GOLDEN: the native per-container grain is untouched where there is no seat domain to inherit",
     );
   });
   withEnv(undefined, () => {
@@ -546,9 +558,9 @@ withEnv(true, () => {
 
   noThrow(() => assertUnifiedDomainTrust([grouped, orgGate]), "valid: an explicit ambient domain may declare windows");
   noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: a domain with no windows is unaffected by the new rules");
-  throws(
+  noThrow(
     () => assertUnifiedDomainTrust([defineDomain({ name: "np", reach: [A], windows: [{ name: "w", reach: [A] }] })]),
-    "refused: windows without ambientSupervisor (a window is a re-keyed ambient supervisor)",
+    "valid: windows WITHOUT ambientSupervisor — topology and chattiness are independent",
   );
   throws(
     () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, windows: [{ name: "w", reach: [A] }] })]),

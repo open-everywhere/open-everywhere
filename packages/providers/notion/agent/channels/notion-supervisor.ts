@@ -1,4 +1,6 @@
 import {
+  spreadVendorTs,
+  type VendorEventTime,
   renderWake,
   mkMessageTrigger,
   shouldRotate,
@@ -62,6 +64,7 @@ export interface NotionSingleWindowTarget {
   readonly pageId?: string;
   readonly workspaceId?: string | null;
   readonly credentialId?: string;
+  readonly vendorTs?: VendorEventTime;
 }
 
 export function planNotionSingleWindow(
@@ -84,6 +87,7 @@ export function planNotionSingleWindow(
       ...(target.credentialId ? { credentialId: target.credentialId } : {}),
     },
     ...(policy.addressing !== undefined ? { addressing: policy.addressing } : {}),
+    ...spreadVendorTs(target.vendorTs),
   };
 }
 

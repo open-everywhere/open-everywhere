@@ -15,6 +15,8 @@ import {
   type WindowKey,
 } from "../channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-ownership.js";
+import { recordThreadSeatOpen } from "../channels/thread-seat-state.js";
+import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -118,6 +120,7 @@ export default windowGated("spawn_thread_session", defineTool({
         parentAuthAttributes: c.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
         tainted,
         grain: "thread",
+        ...(own.windowId !== undefined ? { seatWindowId: own.windowId } : {}),
         turnId: currentTurnId(c),
       });
     if (callId) {
@@ -130,7 +133,14 @@ export default windowGated("spawn_thread_session", defineTool({
       await doDispatch();
     }
 
-    await recordThreadOwner(store, org, ownRef, seatToken, new Date().toISOString()).catch(() => undefined);
+    const spawnedAt = new Date().toISOString();
+    await recordThreadOwner(store, org, ownRef, seatToken, spawnedAt).catch(() => undefined);
+    await recordThreadSeatOpen(store, org, ownRef, {
+      seatToken,
+      parentRegistryKey: unifiedDomainSessionKey(own.windowId ?? own.domain),
+      origin,
+      atIso: spawnedAt,
+    }).catch(() => undefined);
 
     await appendAudit({
       org,

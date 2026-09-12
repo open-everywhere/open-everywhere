@@ -18,6 +18,8 @@ import {
   mintRotationToken,
   claimRuntimeRotation,
   mintWakeId,
+  discordVendorEventTime,
+  spreadVendorTs,
   singleWindowMentionPolicy,
   divertToUnifiedWindow,
   divertInboundToUnifiedWindow,
@@ -991,7 +993,7 @@ async function divertDiscordDmToWindow(input: {
       message: rendered.message,
       ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
       token: seat.token,
-      window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
+      window: { wakeId, origin, addressing: "direct-mention", ...spreadVendorTs(discordVendorEventTime(msg.id)) } satisfies UnifiedWindowWake,
       surfaceKey,
       auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }], { dm: true }),
     });
@@ -1099,6 +1101,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
           wakeId,
           origin,
           ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
+          ...spreadVendorTs(discordVendorEventTime(msg.id)),
         } satisfies UnifiedWindowWake,
         surfaceKey: domainSurfaceKey,
         auth: stampNonMemberChatAuth(
@@ -1457,6 +1460,7 @@ export async function maybeShedWarmSurface(state: DiscordGatewayState): Promise<
 
 export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   kindHint: "discord",
+  turnPolicy: "queue",
   state: { channelId: "" },
   context: (state: DiscordGatewayState): DiscordGatewayContext => ({
     channelId: state.channelId,

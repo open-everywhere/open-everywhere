@@ -25,6 +25,8 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   agent: ["standing", "thread"],
   spawn_thread_session: ["standing"],
   complete_thread: ["thread"],
+  read_thread_seat: ["standing"],
+  message_thread_seat: ["standing"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -270,6 +272,10 @@ export function checkWindowGateManifest(
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {
         problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "read_thread_seat" || name === "message_thread_seat") {
+      if (grainKey(grains) !== "standing") {
+        problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (the coordinator verbs: the seat that OPENED a thread reads and steers it; never a thread seat's sibling reach, never a worker) — got [${grains.join(", ")}]`);
       }
     } else if (grainKey(grains) !== WIDE_HANDS_KEY) {
       problems.push(

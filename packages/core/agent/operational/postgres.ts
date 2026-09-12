@@ -186,6 +186,19 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at  text NOT NULL,
      PRIMARY KEY (org_id, channel_key, thread_key)
    )`,
+  `CREATE TABLE IF NOT EXISTS thread_seat_state (
+     org_id      text NOT NULL,
+     channel_key text NOT NULL,
+     thread_key  text NOT NULL,
+     seat_token  text NOT NULL,
+     parent_key  text NOT NULL,
+     state       text NOT NULL,
+     origin_json text NOT NULL,
+     report      text,
+     opened_at   text NOT NULL,
+     updated_at  text NOT NULL,
+     PRIMARY KEY (org_id, channel_key, thread_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS turn_anchor (
      org_id      text NOT NULL,
      window_key  text NOT NULL,
@@ -605,6 +618,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE webhook_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE thread_seat_state ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE turn_anchor ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
@@ -647,6 +661,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS webhook_capture_org_isolation ON webhook_capture`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
+  `DROP POLICY IF EXISTS thread_seat_state_org_isolation ON thread_seat_state`,
   `DROP POLICY IF EXISTS turn_anchor_org_isolation ON turn_anchor`,
   `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
   `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
@@ -710,6 +725,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY thread_ownership_org_isolation ON thread_ownership
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY thread_seat_state_org_isolation ON thread_seat_state
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY turn_anchor_org_isolation ON turn_anchor
@@ -1208,6 +1226,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   memory_proposal: ["SELECT", "INSERT"],
   dm_audience: ["SELECT", "INSERT", "UPDATE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  thread_seat_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   slack_attachment: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -2916,6 +2935,44 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org, channelKey, threadKey],
       );
       return rows.length > 0;
+    },
+
+    async putThreadSeatState(org, row, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM thread_seat_state WHERE updated_at < $1 AND org_id = $2", [cutoff, org]);
+      await client.query(
+        `INSERT INTO thread_seat_state (org_id, channel_key, thread_key, seat_token, parent_key, state, origin_json, report, opened_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET
+           seat_token = EXCLUDED.seat_token,
+           parent_key = EXCLUDED.parent_key,
+           state = EXCLUDED.state,
+           origin_json = EXCLUDED.origin_json,
+           report = EXCLUDED.report,
+           opened_at = EXCLUDED.opened_at,
+           updated_at = EXCLUDED.updated_at`,
+        [org, row.channelKey, row.threadKey, row.seatToken, row.parentRegistryKey, row.state, row.originJson, row.report ?? null, row.openedAt, at],
+      );
+    },
+
+    async getThreadSeatState(org, channelKey, threadKey) {
+      const { rows } = await client.query(
+        "SELECT seat_token, parent_key, state, origin_json, report, opened_at, updated_at FROM thread_seat_state WHERE org_id = $1 AND channel_key = $2 AND thread_key = $3",
+        [org, channelKey, threadKey],
+      );
+      const r = (rows as { seat_token: string; parent_key: string; state: string; origin_json: string; report: string | null; opened_at: string; updated_at: string }[])[0];
+      if (!r) return null;
+      return {
+        channelKey,
+        threadKey,
+        seatToken: r.seat_token,
+        parentRegistryKey: r.parent_key,
+        state: r.state === "open" ? "open" : "completed",
+        originJson: r.origin_json,
+        ...(r.report !== null ? { report: r.report } : {}),
+        openedAt: r.opened_at,
+        updatedAt: r.updated_at,
+      };
     },
 
     async putTurnAnchor(org, anchor, at, ttlMs) {

@@ -79,6 +79,8 @@ import {
   dmWindowRegistryKey,
   type AttachSessionForCancel,
   RateLimitExhaustedError,
+  receiptEventTime,
+  spreadVendorTs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -294,6 +296,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
       conversationId: a.conversation.id,
       replyToActivityId: teamsThreadRootActivityId(a) ?? undefined,
       tenantId,
+      ...spreadVendorTs(receiptEventTime(Date.now())),
     });
     if (!window) return null;
     return { window, surfaceKey, partition, grain, auth };
@@ -475,7 +478,7 @@ export async function liveTeamsDmDivert(
     message: rendered.message,
     ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
     token: seat.token,
-    window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
+    window: { wakeId, origin, addressing: "direct-mention", ...spreadVendorTs(receiptEventTime(Date.now())) } satisfies UnifiedWindowWake,
     surfaceKey,
     auth: stampNonMemberChatAuth(
       auth as unknown as { attributes?: Record<string, unknown> },

@@ -2,7 +2,9 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import { disposeLater, bootAgent, DISCORD_GUILD_ID, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, runRoutineDispatchTick, waitFor } from "../harness";
 
-const DISCORD_UNLISTED = "9000000000000000778";
+function freshUnlistedChannelId(): string {
+  return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
+}
 
 async function seedFire(input: { readonly id: string; readonly channelId: string; readonly withGuildEvidence: boolean }): Promise<void> {
   if (process.env.OE_OPERATIONAL_PROVIDER !== "sqlite") {
@@ -58,21 +60,22 @@ test("a fire missing guild evidence on a WINDOWING channel lands native-degraded
   expect(detail.grain).toBe("native");
 });
 
-test("NEGATIVE CONTROL — the identical fire shape on a channel NO domain lists never writes the row", async () => {
+test("NEGATIVE CONTROL — the same fire WITH guild evidence windows, and never writes the row", async () => {
   await bootAgent({ sharedSqlite: true });
   const id = `r-it-wr-${randomBytes(4).toString("hex")}`;
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   disposeLater(registerScript({ parent: [{ say: "nothing to report" }] }));
 
-  await seedFire({ id, channelId: DISCORD_UNLISTED, withGuildEvidence: false });
+  const channelId = freshUnlistedChannelId();
+  await seedFire({ id, channelId, withGuildEvidence: true });
   const sessionIds = await runRoutineDispatchTick();
   expect(sessionIds.length).toBeGreaterThan(0);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["egress.policy"], sinceIso })).find((r) => r.surface === DISCORD_UNLISTED),
-    "a session.started egress.policy row for the native-by-design fire — proof the turn actually ran",
+    async () => (await readAuditRows({ actions: ["egress.policy"], sinceIso })).find((r) => (r.surface ?? "").includes(channelId)),
+    "a session.started egress.policy row for the windowed fire — proof the turn actually ran",
   );
-  const unlistedDomainKey = `discord/${DISCORD_GUILD_ID}/${DISCORD_UNLISTED}`;
+  const domainKey = `discord/${DISCORD_GUILD_ID}/${channelId}`;
   const degraded = await readAuditRows({ actions: ["window.routing_degraded"], sinceIso });
-  expect(degraded.find((r) => (r.detail as { domainKey?: unknown } | undefined)?.domainKey === unlistedDomainKey)).toBeUndefined();
+  expect(degraded.find((r) => (r.detail as { domainKey?: unknown } | undefined)?.domainKey === domainKey)).toBeUndefined();
 });

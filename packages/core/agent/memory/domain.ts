@@ -11,6 +11,7 @@ import {
 } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "../access/tenant-admission.js";
 import { DM_ANCHOR_DOMAIN_PREFIX } from "../channels/window-key.js";
+import { DEFAULT_ADMISSION, admissionFunctionNames, isAdmissionFunctionName } from "../channels/seat-admission.js";
 import { credentialGrantDeclarationProblems } from "../access/credential-grant.js";
 import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
 import type { SessionMode } from "../access/resolver.js";
@@ -73,6 +74,7 @@ export interface Domain {
   readonly approvalMode?: ApprovalModeConfig;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
+  readonly admission?: string;
   readonly externalPolicy?: ExternalPolicyOverride;
   readonly mode?: WindowMode;
   readonly windows?: readonly WindowGroup[];
@@ -276,14 +278,24 @@ export function ambientSkipFor(
   return { reason: "no-domain", via: routing.via };
 }
 
+export function admissionNameFor(channelKey: string, domains: readonly Domain[]): string {
+  const explicit = domainForChannel(channelKey, domains);
+  if (explicit) return explicit.admission ?? DEFAULT_ADMISSION;
+  return criteriaDomain("org", domains)?.admission ?? DEFAULT_ADMISSION;
+}
+
 export function windowedSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
   if (!windowTopologyEnabled()) return false;
-  return domainForChannel(channelKey, domains)?.ambientSupervisor === true;
+  return standingSeatDomainFor(channelKey, domains) !== undefined;
+}
+
+export function standingSeatDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
+  return domainForChannel(channelKey, domains) ?? criteriaDomain("org", domains);
 }
 
 export function windowedDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
   if (!windowedSupervisorEnabled(channelKey, domains)) return undefined;
-  return domainForChannel(channelKey, domains);
+  return standingSeatDomainFor(channelKey, domains);
 }
 
 export function windowModeFor(channelKey: string, domains: readonly Domain[]): WindowMode {
@@ -316,9 +328,6 @@ function windowGroupShapeProblems(d: Domain): string[] {
     bad.push(
       `  "${d.name}" (match "${d.match}") must not set windows — a standing window is a TEAM-section feature, never a pseudo-domain (org=the "window everything" footgun; public/dm=external/personal surface)`,
     );
-  }
-  if (d.ambientSupervisor !== true) {
-    bad.push(`  "${d.name}" declares windows but not ambientSupervisor — a window is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
   }
   if (groups.length === 0) {
     bad.push(`  "${d.name}" declares an EMPTY windows list — that grants nothing and reads as if it did; name at least one group, or drop the field`);
@@ -396,9 +405,6 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
       bad.push(
         `  "${d.name}" (match "${d.match}") must not set mode — a standing window is a TEAM-section feature, never a pseudo-domain (org=the "window everything" footgun; public/dm=external/personal surface)`,
       );
-    }
-    if (d.ambientSupervisor !== true) {
-      bad.push(`  "${d.name}" sets mode "${d.mode}" but not ambientSupervisor — a window is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
     }
   }
   if (bad.length > 0) {
@@ -836,6 +842,11 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
     }
     bad.push(...domainCredentialProblems(d));
     bad.push(...credentialGrantDeclarationProblems(d));
+    if (d.admission !== undefined && !isAdmissionFunctionName(d.admission)) {
+      bad.push(
+        `  "${d.name}" sets admission "${d.admission}", which is not a registered admission function — use one of: ${admissionFunctionNames().join(", ")} (channels/seat-admission.ts SEAT_ADMISSION_FUNCTIONS; a new policy is deterministic code added there by PR, never a config string)`,
+      );
+    }
     const hasExplicit = d.reach !== undefined;
     const hasMatch = d.match !== undefined;
     if (hasExplicit === hasMatch) {

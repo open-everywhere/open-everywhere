@@ -3260,8 +3260,8 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     "mode on the public/dm pseudo-domains → load fails loud",
   );
   ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", reach: [A, B], mode: "unified" })])),
-    "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
+    !throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", reach: [A, B], mode: "unified" })])),
+    "mode WITHOUT ambientSupervisor → loads (topology and chattiness are independent since OPE-1695)",
   );
 
   const human = definePrincipal({ name: "E2E Human", handle: "e2e", ids: { slack: "U_E2E", github: "e2e-human" } });

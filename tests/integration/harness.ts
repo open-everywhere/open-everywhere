@@ -13,6 +13,7 @@ import { createStateDir } from "./state-dir";
 
 import {
   ANY_SESSION,
+  WAKE_FROM_ENVELOPE,
   beginScriptedEpoch,
   registerScript,
   scriptedStore,
@@ -20,9 +21,23 @@ import {
   __resetStaleHoldExpiriesForTest,
   type RecordedRequest,
   type ScriptedHandle,
+  type ScriptedStep,
   type SeatScript,
 } from "../../agent/model/scripted-model";
-export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
+export {
+  registerScript,
+  WAKE_FROM_ENVELOPE,
+  type RecordedRequest,
+  type ResolveObservation,
+  type ScriptedHandle,
+  type ScriptedStep,
+  type SeatScript,
+  type ToolDefinitionRecord,
+} from "../../agent/model/scripted-model";
+
+export function seatReply(text: string, id: string): ScriptedStep {
+  return { calls: [{ tool: "reply", input: { text, wake: WAKE_FROM_ENVELOPE }, id }] };
+}
 
 const oePerTestCleanups: (() => void)[] = [];
 afterEach(() => {

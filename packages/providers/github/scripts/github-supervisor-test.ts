@@ -15,6 +15,7 @@ import {
 } from "../agent/channels/github-supervisor.js";
 import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
+import { githubAmbientLegKeeps, shouldSuppressNativeMention } from "../agent/channels/github.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -34,6 +35,22 @@ const NOW = () => "2026-02-18T14:05:00.000Z";
 ok(githubSupervisorSentinel(3) === "oe-sup:g3", "sentinel is oe-sup:g<gen>");
 ok(githubSupervisorToken(OWNER, REPO, 1) === `github:${OWNER}/${REPO}:oe-sup:g1`, "token is github:<owner>/<repo>:oe-sup:g<gen>");
 ok(githubSupervisorToken(OWNER, REPO, 2).includes(":oe-sup:g"), "token carries the :oe-sup:g infix hooks/spend + the supervisor model role key on");
+
+for (const vouched of [true, false]) {
+  for (const ambient of [true, false]) {
+    const suppressed = shouldSuppressNativeMention(true, vouched);
+    const mentionAddressing = vouched ? "direct" : "drop";
+    const ambientKeeps = githubAmbientLegKeeps(mentionAddressing, ambient);
+    ok(
+      suppressed === ambientKeeps,
+      `seated repo, vouched=${vouched}, ambient=${ambient}: EXACTLY ONE leg owns the @mention — native stands down iff the ambient leg keeps it (suppressed=${suppressed}, kept=${ambientKeeps}); any disagreement is a gap (nobody answers) or a double turn`,
+    );
+  }
+}
+ok(githubAmbientLegKeeps("direct", false), "🔴 the regression case: an ADDRESSED comment is kept with the chattiness flag OFF");
+ok(!githubAmbientLegKeeps("channel-watch", false), "…while ordinary ambient talk with the flag off is still refused (and audited)");
+ok(githubAmbientLegKeeps("channel-watch", true), "…and is kept when the domain opted in");
+ok(!githubAmbientLegKeeps("drop", true), "the classifier's own DROP is final — the flag never re-opens it");
 
 const base: GitHubAmbientComment = { body: "looks good, shipping this after lunch", authorLogin: "human-dev", authorType: "User", repoPrivate: true };
 

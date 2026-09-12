@@ -26,16 +26,19 @@ import {
 import {
   readDelegationFailure,
   readTaskReceipt,
+  taskNotificationFailure,
   taskViewsOf,
   terminalTaskNotification,
   terminalTaskViewsOf,
   type DelegationFailure,
+  type TaskNotificationFailure,
   type TaskReceipt,
   type TaskSummary,
 } from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { currentTurnId, currentWakeId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
@@ -461,7 +464,8 @@ async function noteDelegationFailure(
       task: taskId,
       call: failure.callId ?? "",
       tool: failure.tool ?? "",
-      error: failure.errorClass ?? "",
+      error: auditErrorDetail(failure.errorText ?? "").error,
+      errorClass: failure.errorClass ?? "",
       outcome: failure.outcome,
       ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
       ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
@@ -488,9 +492,14 @@ export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string
       } else {
         const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
         continuation = pinned !== undefined && pinned.callId !== receipt.callId;
-        const fresh: TaskCallLink = { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
+        const fresh: TaskCallLink = {
+          callId: receipt.callId,
+          childToken: `subagent:${ownSessionId}:${receipt.callId}`,
+          ...(receipt.tool.length > 0 ? { tool: receipt.tool } : {}),
+        };
         link = pinned ?? fresh;
         if (link.agentId === undefined && receipt.agentId !== null) link = { ...link, agentId: receipt.agentId };
+        if (link.tool === undefined && receipt.tool.length > 0) link = { ...link, tool: receipt.tool };
         if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
         await rememberTaskCall(org, receipt.taskId, link);
       }
@@ -559,8 +568,19 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
   return adopted;
 }
 
-export async function applyTaskSettlement(views: readonly TaskSummary[], ownSessionId: string, ctx: HookContext): Promise<boolean> {
+export type SettlementFromNotification = {
+  readonly failure?: TaskNotificationFailure;
+  readonly link?: TaskCallLink;
+};
+
+export async function applyTaskSettlement(
+  views: readonly TaskSummary[],
+  ownSessionId: string,
+  ctx: HookContext,
+  settlement: SettlementFromNotification = {},
+): Promise<boolean> {
   if (views.length === 0) return false;
+  const failure = views.length === 1 ? settlement.failure : undefined;
   const bind = ctx as unknown as BindableContext;
   const inheritedWakeId = inheritedWakeStampOf(bind);
   const wakeTurnId = currentTurnId(bind);
@@ -578,7 +598,20 @@ export async function applyTaskSettlement(views: readonly TaskSummary[], ownSess
     if (install.outcome === "installed" && claimPromisedReport(view.taskId)) {
       noteSettlementReportOwed(wakeTurnId, view.taskId, install.wakeId ?? undefined);
     }
-    if (view.status === "failed") await noteDelegationFailure({ outcome: view.status }, view.taskId, ownSessionId, wakeTurnId);
+    if (view.status === "failed") {
+      const link = settlement.link !== undefined ? settlement.link : await taskCallLink(deploymentOrg(), view.taskId);
+      await noteDelegationFailure(
+        {
+          outcome: view.status,
+          ...(link !== undefined
+            ? { callId: link.callId, tool: link.tool ?? "", errorText: failure?.errorText ?? "", errorClass: failure?.errorClass ?? "" }
+            : {}),
+        },
+        view.taskId,
+        ownSessionId,
+        wakeTurnId,
+      );
+    }
   }
   let any = false;
   for (const view of views) any = (await adoptTaskTaint(view, ownSessionId)) || any;
@@ -590,13 +623,14 @@ export async function settleFromTaskNotification(message: unknown, ownSessionId:
   const view = terminalTaskNotification(message);
   if (view === null) return false;
   let settled = view;
+  let link: TaskCallLink | undefined;
   try {
-    const link = await taskCallLink(deploymentOrg(), view.taskId);
+    link = await taskCallLink(deploymentOrg(), view.taskId);
     if (link?.agentId !== undefined) settled = { ...view, agentId: link.agentId };
   } catch {
   }
   noteTaskSettled(settled);
-  return applyTaskSettlement([settled], ownSessionId, ctx);
+  return applyTaskSettlement([settled], ownSessionId, ctx, { failure: taskNotificationFailure(message), ...(link !== undefined ? { link } : {}) });
 }
 
 export default defineHook({

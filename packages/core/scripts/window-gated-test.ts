@@ -85,7 +85,9 @@ eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "spawn_thread_session 
 eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
 ok(WINDOW_GATED_TOOLS.return_result === undefined && WINDOW_GATED_TOOLS.stop_task === undefined, "🔴 OPE-1145 item 2: the roll-own regime's verbs carry NO manifest row at all — deleted, not disarmed");
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 3, "the gated table is EXACTLY the 11 wide-hands tools + the 3 delegation/lifecycle tools (agent/spawn_thread_session/complete_thread) — nothing else narrows. Three since OPE-1145 item 2 deleted stop_task and return_result with the roll-own regime.");
+eq(WINDOW_GATED_TOOLS.read_thread_seat, ["standing"], "read_thread_seat is standing-only (the seat that opened the thread reads it)");
+eq(WINDOW_GATED_TOOLS.message_thread_seat, ["standing"], "message_thread_seat is standing-only (no seat-to-seat mesh, no worker)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 5, "the gated table is EXACTLY the 11 wide-hands tools + the 5 delegation/lifecycle/coordinator tools (agent/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) — nothing else narrows.");
 eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 11 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
 
 {
@@ -119,15 +121,19 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"]
 }
 eq(
   [...withheldFromGrain("task")].sort(),
-  ["agent", "complete_thread", "spawn_thread_session"].sort(),
-  "task (the worker) withholds agent, the standing-only spawner and complete_thread (it has its own wide hands; a worker leaf must not delegate recursively)",
+  ["agent", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
+  "task (the worker) withholds agent, the standing-only spawner, complete_thread and the two coordinator verbs (it has its own wide hands; a worker leaf holds no threads and must not delegate recursively)",
 );
 eq(
   [...withheldFromGrain("native")].sort(),
-  [...WIDE_HANDS, "agent", "complete_thread", "spawn_thread_session"].sort(),
-  "native withholds agent and the rest of the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
+  [...WIDE_HANDS, "agent", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
+  "native withholds agent, the rest of the delegation/lifecycle/coordinator set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
 );
-eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + the spawner (it keeps the conversational kit and can delegate)");
+eq(
+  [...withheldFromGrain("thread")].sort(),
+  [...WIDE_HANDS, "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
+  "a thread seat withholds the wide hands, the spawner and the two coordinator verbs (it keeps the conversational kit and can delegate, but never reaches a sibling seat)",
+);
 
 console.log("1. presence/absence matrix (windowGated):");
 for (const [name, grains] of Object.entries(WINDOW_GATED_TOOLS)) {

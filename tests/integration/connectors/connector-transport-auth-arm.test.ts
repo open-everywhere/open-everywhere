@@ -94,14 +94,10 @@ async function driveConnectorTurn(input: {
 }): Promise<ScriptedHandle> {
   const search = { tool: "connection_search", input: { keywords: "handbook" }, id: `it1465-${input.label}-search` };
   const handle = disposeLater(
-    registerScript(
-      input.origin === "dm"
-        ? {
-            parent: [{ calls: [{ tool: "agent", input: { message: "look in notion" }, id: `it1465-${input.label}-delegate` }] }, { say: "handed off" }],
-            child: [{ calls: [search] }, { say: "reported" }],
-          }
-        : { parent: [{ calls: [search] }, { say: "read it myself" }] },
-    ),
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: "look in notion" }, id: `it1465-${input.label}-delegate` }] }, { say: "handed off" }],
+      child: [{ calls: [search] }, { say: "reported" }],
+    }),
   );
 
   const ts = slackTs(Date.now(), (tsCounter += 1));
@@ -118,11 +114,6 @@ async function driveConnectorTurn(input: {
   expect(res.status, `the Slack front refused the ${input.origin} wake: ${res.body.slice(0, 200)}`).toBe(200);
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${input.label}: the seat's terminal step`);
-  if (input.origin === "channel") {
-    expect(handle.requests.filter((r) => r.fault !== undefined), `${input.label}: the scripted model reported a fault`).toEqual([]);
-    return handle;
-  }
-
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `${input.label}: the worker's terminal step` });
   expect(handle.requests.filter((r) => r.fault !== undefined), `${input.label}: the scripted model reported a fault`).toEqual([]);
 

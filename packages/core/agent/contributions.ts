@@ -47,6 +47,7 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "list_webhooks", module: "agent/tools/list_webhooks.js", summary: "List the inbound webhooks declared for this deployment — which external systems can trigger work here, whether each one runs a fixed instruction or just emits events for routines to subscribe to, and…" },
     { kind: "tool", name: "memory_admin_list", module: "agent/tools/memory_admin_list.js", summary: "ADMIN ONLY: enumerate every memory silo you are allowed to inspect — org -> domains -> silos -> files, with sizes — from ANY channel or DM, not just the one you\\'re speaking in right now (unlike the…" },
     { kind: "tool", name: "memory_admin_read", module: "agent/tools/memory_admin_read.js", summary: "ADMIN ONLY: read one file's raw content out of one memory silo (memory_admin_list for silo names + file lists), from ANY channel or DM — the gate is YOUR role, not which channel you're speaking in." },
+    { kind: "tool", name: "message_thread_seat", module: "agent/tools/message_thread_seat.js", summary: "Send a message to a thread seat you opened — a steer, a correction, a fact it cannot see, or a question; `mirror` decides whether the people in the thread see it too." },
     { kind: "tool", name: "no_reply", module: "agent/tools/no_reply.js", summary: "End this turn without posting a reply." },
     { kind: "tool", name: "open_pull_request", module: "agent/tools/open_pull_request.js", summary: "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized)." },
     { kind: "tool", name: "permission_fit_report", module: "agent/tools/permission_fit_report.js", summary: "Report whether this domain's PERMISSION GRANTS still fit the work — in both directions, from the audit log." },
@@ -61,6 +62,7 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "read_file_upload", module: "agent/tools/read_file_upload.js", summary: "READ an uploaded TEXT file (CSV/TSV/JSON/markdown/log/plain text, up to 5 MB) that isn't visible as text." },
     { kind: "tool", name: "read_routine_transcript", module: "agent/tools/read_routine_transcript.js", summary: "Read the transcript of a past routine run in THIS channel — what it was woken with, what it did, which tools it called and what they returned." },
     { kind: "tool", name: "read_thread", module: "agent/tools/read_thread.js", summary: "Read all replies in THIS thread — the thread this turn arrived in. Takes no target." },
+    { kind: "tool", name: "read_thread_seat", module: "agent/tools/read_thread_seat.js", summary: "Read what you recorded about a thread you handed to a thread seat: which seat holds it, whether it is still open, and its closing report once it has handed back." },
     { kind: "tool", name: "read_webhook_history", module: "agent/tools/read_webhook_history.js", summary: "Diagnose an inbound webhook: whether the sender is actually reaching us, and what each delivery did or didn't trigger." },
     {
       kind: "tool",
@@ -149,6 +151,7 @@ export const CONTRIBUTIONS = {
     { kind: "hook", name: "telemetry", module: "agent/hooks/telemetry.js", summary: "Turn-level telemetry — accumulates one turn's step count + token total + start time, then emits `oe.turn.completed`/`oe.turn.failed` (surface TYPE only, never a surfaceKey/session/principal id — see…" },
     { kind: "hook", name: "turn-anchor", module: "agent/hooks/turn-anchor.js", summary: "THE TURN-ANCHOR HOOK (OPE-418) — the writer for the stop registry, and the whole ✋ lifecycle." },
     { kind: "hook", name: "wake-accounting-turn", module: "agent/hooks/wake-accounting-turn.js", summary: "THE TURN EDGE FOR PER-WAKE ACCOUNTING (OPE-1013) — the second call site for channels/unified.ts's `auditUnaccountedWakesForTurn`, wired to turn.completed/turn.cancelled/session.failed so a turn whose…" },
+    { kind: "hook", name: "wake-turn-start", module: "agent/hooks/wake-turn-start.js", summary: "THE TURN-START ANCHOR (OPE-1716) — one audit row at the instant a wake's turn begins, so the stretch BEFORE the turn can be told apart from the turn itself." },
     { kind: "hook", name: "window-routing", module: "agent/hooks/window-routing.js", summary: "Routing-invariant hook (OPE-121) — audit a wake that landed on a NATIVE seat even though its own domain windows." },
 
     { kind: "schedule", name: "directory-sync", module: "agent/schedules/directory-sync.js", summary: "The DIRECTORY-SYNC SCHEDULE — the clock half of IdP pre-population (P2.3)." },

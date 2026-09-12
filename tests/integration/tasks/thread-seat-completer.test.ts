@@ -162,6 +162,9 @@ test("a thread seat completes its own thread — the completer reads the host-st
   );
   expect(row.detail?.cleared, "🔴 the seat reported success but released no ownership row").toBe(true);
 
+  expect(row.detail?.reportStored, "🔴 the seat's closing report was not filed — `read_thread_seat` would find nothing after the hand-back").toBe(true);
+  expect(typeof row.detail?.reportDelivered, "the hand-back must record whether the parent seat was woken").toBe("boolean");
+
   expect(standing.requests.filter((r) => r.fault !== undefined), "the standing seat reported a scripted-model fault").toEqual([]);
   expect(seat.requests.filter((r) => r.fault !== undefined), "the thread seat reported a scripted-model fault").toEqual([]);
 }, 420_000);

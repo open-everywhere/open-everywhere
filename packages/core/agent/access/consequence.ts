@@ -377,7 +377,13 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "presence (§B1, Stage T2): mints a persistent CONVERSATIONAL thread seat (narrow hands) and dispatches to it, non-blocking. Widens PRESENCE, not consequence — the seat has no wide hands and re-gates every L2 consequence itself; delegation/presence IS the standing seat's job. Open, fully audited (thread_seat.spawned); taint forwarded onto the child, not gated here",
   ),
   complete_thread: open(
-    "a thread seat releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-opens), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (thread_seat.completed)",
+    "a thread seat releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-opens), touches no memory/spend/audience beyond the ownership index and its own hand-back report, which reaches only the seat that opened it; a conversational verb, audited (thread_seat.completed)",
+  ),
+  read_thread_seat: open(
+    "a READ of the deployment's own record of a thread this seat handed off (OPE-1696): which seat holds it, whether it is still open, and that seat's closing report. It reaches no surface, wakes nobody, spends nothing and reads no message content beyond the report a seat of this same deployment wrote for this same seat. Strictly narrower than `read_thread`, which fetches the room's own messages from the platform",
+  ),
+  message_thread_seat: open(
+    "presence, not consequence (OPE-1696): delivers one message from a standing seat to the THREAD SEAT it opened, and — only when the caller sets `mirror: true` — posts the same words into that thread through the ordinary reply arm. Both halves are things the calling seat can already do: it could post in that thread itself, and the seat it addresses is one it spawned. It grants the receiving seat nothing (no stamp, no identity, no hands), the receiver re-gates every consequence of its own, and the AUDIENCE is the narrower question the `mirror` flag answers explicitly on every call. Audited (thread_seat.messaged) with the flag and never the text",
   ),
   set_dm_delivery: open(
     "the RECIPIENT of the agent's direct messages turning them off, or back on, from their own DM (OPE-1064 tier P2). The stop REMOVES the agent's reach — one durable row that outranks every grant — and the resume restores only what that same person just gave up, in a room that holds nobody else. It touches no memory, no spend, no credential and no audience beyond the person setting it. Nothing here for an approver to weigh: a card in front of \"please stop messaging me\" would be the product asking permission to stop bothering somebody. Audited (dm.audience.stopped / dm.audience.resumed)",

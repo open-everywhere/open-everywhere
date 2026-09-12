@@ -310,8 +310,10 @@ const CHANNEL_LIMITS: Readonly<Record<string, string>> = {
     "/eve/v1/discord-gateway answers, but it only RECEIVES traffic while the always-on relay (deploy/discord-relay/) holds " +
     "the Discord WebSocket. Nothing here can see that process directly. `discord.dispatched` softens that a little: it dates " +
     "the last message the relay actually delivered, but stays REPORTED, never gated, because a quiet guild writes no rows " +
-    "either — absence alone proves nothing. `discord.heartbeat` (OPE-775) is the stronger signal: the relay's OWN timer-driven " +
-    "liveness write, independent of guild traffic. Since OPE-785 it GATES the census — its ceiling derives from " +
+    "either — absence alone proves nothing. `discord.heartbeat` (OPE-775) is the stronger signal: the relay POSTs it on its OWN " +
+    "timer, independent of guild traffic, and the deployment appends the row once its relay gate accepts that POST. A missing row " +
+    "therefore reads most often as a dead relay or as a refused ingress — but the append is fire-and-forget, so the deployment " +
+    "also answers 200 and drops the row when the append itself fails. Since OPE-785 it GATES the census — its ceiling derives from " +
     "OE_RELAY_HEARTBEAT_MS, the SAME env var the relay itself reads for its own interval (see docs/deploy/rollback.md).",
 };
 
@@ -338,7 +340,7 @@ export function channelGatedHeartbeats(files: readonly string[], discordRelayHea
     {
       action: "discord.heartbeat",
       reason:
-        "written by the always-on Discord relay (deploy/discord-relay/) itself, on a fixed timer, whether or not any guild is talking. A stale or missing row means the relay process is not writing — unlike discord.dispatched, this signal does not depend on guild traffic, so it CAN separate a dead relay from a quiet one. GATED since OPE-785: the ticket's own rollout order (land, redeploy, confirm live, THEN promote) ran its confirmation window and promoted this from reported to gated.",
+        "the always-on Discord relay (deploy/discord-relay/) POSTs this heartbeat on a fixed timer, whether or not any guild is talking. The DEPLOYMENT appends the row, and only after its relay gate accepts the POST — so a stale or missing row has two COMMON causes, and they take different remedies. (1) The relay is not posting. Redeploy the Railway relay; a bot-token rotation always needs that redeploy — docs/deploy/surfaces/discord.md, section \"Rotating the bot token\". (2) The relay is live, and the deployment refuses its POST. Rule this one out FIRST, because redeploying the relay does not fix it: an OE_RELAY_SECRET that is unset or disagrees between relay and deployment answers 401, and a route the deployment does not carry refuses every delivery. Those two are the common causes, not the whole list: the append is fire-and-forget, so a deployment that accepted the POST and answered 200 still holds no row when the append itself fails. Unlike discord.dispatched, this signal does not depend on guild traffic, so it CAN separate a dead relay from a quiet one. GATED since OPE-785: the ticket's own rollout order (land, redeploy, confirm live, THEN promote) ran its confirmation window and promoted this from reported to gated.",
       maxAgeHours: relayHeartbeatCeilingHours(discordRelayHeartbeatMs),
     },
   ];

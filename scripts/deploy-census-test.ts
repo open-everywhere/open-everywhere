@@ -671,6 +671,45 @@ check("OPE-785: discord.heartbeat now GATES — a stale or missing row fails the
   assert.equal(missingRow.find((f) => f.action === "discord.heartbeat")?.ok, false, "a MISSING discord.heartbeat row also gates red");
 });
 
+check("OPE-1731: the rendered discord.heartbeat red names the remedy AND the ingest-side cause, and does not credit the relay with the write", () => {
+  const gated = channelGatedHeartbeats(["discord-gateway.ts"], 300_000);
+  const findings = heartbeatFindings({ gated, reported: [], observations: [], now: NOW });
+  const result = clean({ heartbeats: findings });
+  assert.equal(result.ok, false, "a missing discord.heartbeat row reds the census — the precondition this red line exists for");
+
+  const lines = renderCensusReport(result);
+  const rowAt = lines.findIndex((l) => l.includes("✗ discord.heartbeat"));
+  assert.notEqual(rowAt, -1, "the report prints a failing discord.heartbeat row");
+  const gatedLine = lines[rowAt + 1] ?? "";
+
+  assert.match(gatedLine, /Redeploy the Railway relay/u, "the red must tell the operator what to DO, not only what the signal means");
+  assert.match(gatedLine, /bot-token rotation/u, "…and name the rotation that makes the redeploy necessary");
+  assert.match(gatedLine, /docs\/deploy\/surfaces\/discord\.md/u, "…pointing at the doc that carries the procedure");
+  assert.match(gatedLine, /Rotating the bot token/u, "…at its section by name");
+
+  assert.match(gatedLine, /OE_RELAY_SECRET/u, "the ingest-side cause names the secret that must agree on both sides");
+  assert.match(gatedLine, /401/u, "…and what a mismatch actually answers");
+  assert.match(gatedLine, /Rule this one out FIRST/u, "…and says to rule it out before redeploying, which is the ordering that saves the wasted redeploy");
+
+  assert.match(gatedLine, /not the whole list/u, "the red must not claim its two causes are exhaustive");
+  assert.match(gatedLine, /fire-and-forget/u, "…and must name the swallowed append as the reason it is not");
+
+  assert.doesNotMatch(gatedLine, /written by the always-on Discord relay/u, "the relay does not write the row — that claim sent readers to the wrong remedy");
+  assert.match(gatedLine, /relay \(deploy\/discord-relay\/\) POSTs this heartbeat/u, "the relay POSTs");
+  assert.match(gatedLine, /DEPLOYMENT appends the row/u, "the deployment appends");
+
+  const green = clean({
+    heartbeats: heartbeatFindings({
+      gated,
+      reported: [],
+      observations: [{ action: "discord.heartbeat", lastSeenIso: new Date(NOW.getTime() - 60_000).toISOString() }],
+      now: NOW,
+    }),
+  });
+  assert.equal(green.ok, true, "a fresh row is green — the positive control for this render");
+  assert.doesNotMatch(renderCensusReport(green).join("\n"), /Redeploy the Railway relay/u, "a green census never prints the remedy");
+});
+
 {
   const { initOperationalSchema } = await import("../packages/core/agent/operational/postgres.js");
   type PgClient = import("../packages/core/agent/operational/postgres.js").PgClient;

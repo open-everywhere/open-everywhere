@@ -47,7 +47,12 @@ registerConfig({
 console.log("1. classifyWindowRouting:");
 overrideSettingsForTest({ window: { topology: true } });
 eq(classifyWindowRouting("native", WINDOWED_KEY, domains), "native-degraded", "ARMED + a windowing domain + a native seat = the invariant violation");
-eq(classifyWindowRouting("native", PLAIN_KEY, domains), "native-by-design", "an explicit domain that is not an ambient supervisor cannot window — native is correct there");
+eq(
+  classifyWindowRouting("native", PLAIN_KEY, domains),
+  "native-degraded",
+  "OPE-1695: an addressed-only domain's channel HAS a seat, so a native wake there is degraded too — either a routing regression or the runtime privacy floor (see access/window-routing.ts)",
+);
+eq(classifyWindowRouting("native", "slack/T_ROUTE/C_NOWHERE", domains), "native-by-design", "a channel with no seat domain at all is legitimately native");
 eq(classifyWindowRouting("native", "slack/T_ROUTE/C_UNMAPPED", domains), "native-by-design", "a channel with NO domain has no window to divert into (the OPE-119 shape) — not a routing bug");
 for (const grain of ["standing", "task", "thread"] as const) {
   eq(classifyWindowRouting(grain, WINDOWED_KEY, domains), "windowed", `a ${grain} seat is on the intended path by construction`);
@@ -72,10 +77,10 @@ eq((await rowsFor()).length, 0, "gate OFF: a native wake on a windowing domain w
 
 overrideSettingsForTest({ window: { topology: true } });
 await turnStarted(null, nativeCtx("C_PLAIN"));
-eq((await rowsFor()).length, 0, "armed: a native wake on a NON-windowing domain writes no row");
+eq((await rowsFor()).length, 1, "armed: a native wake in an ADDRESSED-ONLY (but seated) room writes a row");
 
 await turnStarted(null, nativeCtx("C_WINDOWED"));
-const rows = await rowsFor();
+const rows = (await rowsFor()).filter((r) => ((r.detail ?? {}) as Record<string, unknown>).domainKey === WINDOWED_KEY);
 eq(rows.length, 1, "armed: a native wake on a WINDOWING domain writes exactly one row");
 const detail = (rows[0].detail ?? {}) as Record<string, unknown>;
 eq(detail.grain, "native", "row names the grain the wake actually landed on");
@@ -85,7 +90,10 @@ ok(typeof detail.recall === "string", "row states the practical consequence — 
 ok(!JSON.stringify(rows[0]).includes("cse_native_route_1"), "row carries names/ids only — never the session's token material");
 
 await turnStarted(null, nativeCtx("C_WINDOWED"));
-eq((await rowsFor()).length, 2, "a second degraded wake writes a SECOND row (the metric is how many wakes degraded)");
+eq((await rowsFor()).filter((r) => ((r.detail ?? {}) as Record<string, unknown>).domainKey === WINDOWED_KEY).length, 2, "a second degraded wake writes a SECOND row (the metric is how many wakes degraded)");
+
+await turnStarted(null, nativeCtx("C_NOWHERE"));
+eq((await rowsFor()).filter((r) => String(((r.detail ?? {}) as Record<string, unknown>).domainKey ?? "").includes("C_NOWHERE")).length, 0, "a wake in a room with NO seat domain writes no row");
 
 await turnStarted(null, {});
 ok(true, "an identity-less context is absorbed (observation must never fail a wake)");

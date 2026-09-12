@@ -225,6 +225,19 @@ function getDb(): DatabaseSync {
       created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
       PRIMARY KEY (org_id, channel_key, thread_key)
     );
+    CREATE TABLE IF NOT EXISTS thread_seat_state (
+      org_id       TEXT NOT NULL,
+      channel_key  TEXT NOT NULL,              -- the container (unifiedThreadRef.channelKey)
+      thread_key   TEXT NOT NULL,              -- the thread within it (unifiedThreadRef.threadKey)
+      seat_token   TEXT NOT NULL,              -- the thread seat's own window token
+      parent_key   TEXT NOT NULL,              -- the PARENT seat's channel_session registry key
+      state        TEXT NOT NULL,              -- 'open' | 'completed'
+      origin_json  TEXT NOT NULL,              -- the thread's own wake origin (UnifiedWakeOrigin JSON)
+      report       TEXT,                       -- the seat's closing report, in its own words
+      opened_at    TEXT NOT NULL,              -- ISO-8601 of the spawn
+      updated_at   TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, channel_key, thread_key)
+    );
     CREATE TABLE IF NOT EXISTS turn_anchor (
       org_id      TEXT NOT NULL,
       window_key  TEXT NOT NULL,              -- the continuation token / window this turn belongs to
@@ -2405,6 +2418,46 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async clearThreadOwner(org, channelKey, threadKey) {
     return getDb().prepare("DELETE FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(org, channelKey, threadKey).changes > 0;
+  },
+
+  async putThreadSeatState(org, row, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM thread_seat_state WHERE updated_at < ? AND org_id = ?").run(cutoff, org);
+    handle
+      .prepare(
+        `INSERT INTO thread_seat_state (org_id, channel_key, thread_key, seat_token, parent_key, state, origin_json, report, opened_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET
+           seat_token = excluded.seat_token,
+           parent_key = excluded.parent_key,
+           state = excluded.state,
+           origin_json = excluded.origin_json,
+           report = excluded.report,
+           opened_at = excluded.opened_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(org, row.channelKey, row.threadKey, row.seatToken, row.parentRegistryKey, row.state, row.originJson, row.report ?? null, row.openedAt, at);
+  },
+
+  async getThreadSeatState(org, channelKey, threadKey) {
+    const row = getDb()
+      .prepare("SELECT seat_token, parent_key, state, origin_json, report, opened_at, updated_at FROM thread_seat_state WHERE org_id = ? AND channel_key = ? AND thread_key = ?")
+      .get(org, channelKey, threadKey) as
+      | { seat_token: string; parent_key: string; state: string; origin_json: string; report: string | null; opened_at: string; updated_at: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      channelKey,
+      threadKey,
+      seatToken: row.seat_token,
+      parentRegistryKey: row.parent_key,
+      state: row.state === "open" ? "open" : "completed",
+      originJson: row.origin_json,
+      ...(row.report !== null ? { report: row.report } : {}),
+      openedAt: row.opened_at,
+      updatedAt: row.updated_at,
+    };
   },
 
   async putTurnAnchor(org, anchor, at, ttlMs) {

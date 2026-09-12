@@ -226,13 +226,17 @@ await withGate(true, () => {
   ok(windowedSupervisorEnabled(SLACK_KEY, [soloTwin, org]) && !crossSurfaceOn(SLACK_KEY, [soloTwin, org]), "mode:solo → windows per-channel, not cross-surface");
   ok(windowedSupervisorEnabled(SLACK_KEY, [ambientTwin, org]) && !crossSurfaceOn(SLACK_KEY, [ambientTwin, org]), "no mode ⇒ windows solo by default (gate ON)");
   const noAmbient = defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" });
-  ok(!windowedSupervisorEnabled(SLACK_KEY, [noAmbient, org]), "a domain without ambientSupervisor never windows (a window is a re-keyed ambient supervisor)");
+  ok(windowedSupervisorEnabled(SLACK_KEY, [noAmbient, org]), "a domain without ambientSupervisor still seats its channels (chattiness ⊥ session shape)");
+  ok(crossSurfaceOn(SLACK_KEY, [noAmbient, org]), "…and its declared cross-surface topology still holds");
 });
 
 ok((() => { assertUnifiedDomainTrust([winDomain, org]); return true; })(), "the documented single-window fixture passes assertUnifiedDomainTrust");
-throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" })]),
-  "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
+ok(
+  (() => {
+    assertUnifiedDomainTrust([defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" })]);
+    return true;
+  })(),
+  "mode WITHOUT ambientSupervisor LOADS — topology and chattiness are independent",
 );
 throws(
   () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, mode: "unified" })]),

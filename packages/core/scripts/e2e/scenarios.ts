@@ -85,6 +85,7 @@ import { pollOptional, pollUntil, sleep } from "./poll.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS } from "./read-channel-lib.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
+import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   approveButton,
   assertAuditedSilence,
@@ -417,6 +418,9 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
+      const legMarks: { readonly leg: string; readonly sinceIso: string }[] = [];
+      const markLeg = (leg: string) => legMarks.push({ leg, sinceIso: new Date(Date.now() - 1_000).toISOString() });
+      markLeg("leg 1 (wake + continuity)");
       const { ts: rootTs } = await slack.post(slack.mention("what's 17*23? reply with just the number"));
       const reply1 = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(reply1.threadTs === rootTs, "wake: turn-1 reply lands in the thread under the driven ts");
@@ -430,6 +434,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "continuity: turn-2",
       );
 
+      markLeg("leg 2 (reply tool)");
       const alpha = factToken("alpha");
       const { ts: replyAskTs } = await slack.post(
         slack.mention(`post a reply that says exactly ${alpha}. Do not post a second message.`),
@@ -441,6 +446,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(alphaMsg.text.includes(alpha), "reply: the driven token landed in a bot reply (mid-turn post path)");
 
+      markLeg("leg 3 (react tool)");
       const { ts: reactAskTs } = await slack.post(
         slack.mention('react to THIS message with the "raised_hands" emoji to confirm — a reaction alone is enough, no text reply needed.'),
       );
@@ -453,6 +459,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(names.includes("raised_hands"), 'react: the react tool added "raised_hands" (hard gate)');
 
+      markLeg("leg 4 (no_reply + revive)");
       const { ts: asideTs } = await slack.post("lol I can't believe he said that in standup \u{1F602}", rootTs);
       const during = await slack.collectRepliesDuring(rootTs, asideTs, SILENCE_WINDOW);
       ctx.gate(during.length === 0, `no_reply: no bot message during the ${SILENCE_WINDOW / 1000}s silence window (off-topic aside)`);
@@ -465,6 +472,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "no_reply: recovery reply quality (not an apology for the silence)",
       );
 
+      markLeg("leg 5 (stand down / revive)");
       const standDownFrom = new Date().toISOString();
       const { ts: stopTs } = await slack.post("thanks, you can stop following this thread now", rootTs);
       const ack = await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -485,6 +493,20 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: reviveTs } = await slack.post(slack.mention("ok, back — what's 5 plus 5?"), rootTs);
       const revived = await slack.awaitThreadReply(rootTs, { afterTs: reviveTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(revived.text.includes("10"), "stand down: a re-mention revives the thread and answers correctly (10)");
+
+      if (ctx.auditRead) {
+        let anchored = 0;
+        for (const [i, mark] of legMarks.entries()) {
+          const untilIso = legMarks[i + 1]?.sinceIso;
+          const readings = await readWakeSplits(ctx.auditRead, { sinceIso: mark.sinceIso, ...(untilIso ? { untilIso } : {}), platform: "slack", labelPrefix: mark.leg });
+          for (const r of readings) ctx.log(r.line);
+          ctx.log(`${mark.leg} — ${summariseWakeSplits(readings)}`);
+          anchored += readings.filter((r) => r.split.worst !== "unsplit").length;
+        }
+        ctx.gate(anchored > 0, `latency: at least one J1 wake joined ingress → turn-start → reply.post (found ${anchored}) — the split is measurable on this deployment`);
+      } else {
+        ctx.log("latency split skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so J1 can report vendor→ingress→turn-start→reply.post per leg");
+      }
     },
   },
   {

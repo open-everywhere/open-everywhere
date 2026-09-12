@@ -635,10 +635,17 @@ for (const [label, err] of [
     }
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain] });
     {
       const v = await computeMentionRouting(mkEvent("issue-plain"), undefined);
-      ok(v.routing === "native", "a resolved team with NO crossSurfaceWindow domain routes native (singleWindow false)");
+      ok(v.routing === "native", "a resolved team outside every domain, in a deployment with NO `org` pseudo-domain, routes native (nothing to inherit ⇒ no seat ⇒ singleWindow false)");
       ok(teamPrivacyCalls === 0, "non-single-window ⇒ the private signal is never fetched (not needed off the window path)");
+    }
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, org] });
+    {
+      const v = await computeMentionRouting(mkEvent("issue-plain"), undefined);
+      ok(v.routing !== "native", "negative control: with the `org` pseudo-domain declared, the same undeclared team INHERITS a seat and leaves the native path");
     }
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;

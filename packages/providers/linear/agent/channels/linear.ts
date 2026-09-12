@@ -35,6 +35,8 @@ import {
   claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
+  vendorInstantEventTime,
+  spreadVendorTs,
   divertInboundToUnifiedWindow,
   finalMessageActionForTurn,
   completeSupervisorTurn,
@@ -568,6 +570,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
           ...(c.parentId ? { parentId: c.parentId } : {}),
           ...(signal.organizationId ? { organizationId: signal.organizationId } : {}),
         },
+        ...spreadVendorTs(vendorInstantEventTime(c.createdAt)),
       }
     : undefined;
   await handleLinearSupervisorDispatch(
@@ -808,6 +811,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
           wakeId: mintWakeId(),
           origin: { platform: "linear", agentSessionId, issueId: c.issueId, parentId: c.parentId ?? c.id, ...(organizationId ? { organizationId } : {}) },
           addressing: "direct-mention",
+          ...spreadVendorTs(vendorInstantEventTime(c.createdAt)),
         } satisfies UnifiedWindowWake,
       },
       liveLinearSupervisorDeps(send, c.teamId, organizationId, to),

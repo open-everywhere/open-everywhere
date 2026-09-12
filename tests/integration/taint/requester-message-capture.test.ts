@@ -102,6 +102,12 @@ test("negative control: a proposal on the seat the human woke DOES carry the req
   await bootAgent();
   const { prompts } = await armJudge();
 
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  const topologyBefore = settings.getSettings().window.topology;
+  afterThisTest(() => settings.overrideSettingsForTest({ window: { topology: topologyBefore } }));
+  settings.overrideSettingsForTest({ window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
+
   const humanNonce = `human-${randomBytes(4).toString("hex")}`;
   const handle = disposeLater(
     registerScript({

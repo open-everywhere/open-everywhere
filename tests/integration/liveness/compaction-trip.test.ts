@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import { afterThisTest,
-  disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, wrapToolExecute, type ScriptedHandle } from "../harness";
+  disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, seatReply, waitFor, wrapToolExecute, type ScriptedHandle } from "../harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -9,17 +9,8 @@ function freshUnlistedChannelId(): string {
 
 const EVE_TRUNCATION_MARKER = "Truncated by eve: tool result reduced during context compaction";
 
-function sessionCostResult(note: string): Record<string, unknown> {
-  return {
-    sessionId: "oe-670-compaction-trip",
-    events: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    sandboxSeconds: 0,
-    note,
-  };
+function statusResult(note: string): Record<string, unknown> {
+  return { updated: true, state: note };
 }
 
 const OVERSIZED_NOTE = "x".repeat(2_600_000);
@@ -33,11 +24,15 @@ function toolResultTextAt(handle: ScriptedHandle, stepIndex: number): string {
 
 async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ handle: ScriptedHandle; channelId: string; sinceIso: string }> {
   await bootAgent();
-  afterThisTest(wrapToolExecute("session_cost", () => sessionCostResult(note)));
+  afterThisTest(wrapToolExecute("update_status", () => statusResult(note)));
 
   const handle = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "session_cost", input: {}, id: "oe670-cost" }] }, { say: replyText }],
+      parent: [
+        { calls: [{ tool: "update_status", input: { state: "working", summary: "oe-670 compaction probe" }, id: "oe670-cost" }] },
+        seatReply(replyText, "oe670-reply"),
+        { say: "done" },
+      ],
     }),
   );
 
@@ -45,7 +40,8 @@ async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ 
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
   await discordMentionWake({ channelId, text: `<@9000000000000000001> what has this conversation cost` });
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the terminal step, after the compaction trip");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the step after the compaction trip");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the turn's last step");
   return { handle, channelId, sinceIso };
 }
 
@@ -65,6 +61,7 @@ test("a turn whose prompt crosses the compaction threshold completes, and eve co
     return rows.find((r) => r.action === "reply.post" && r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
   expect(row.platform).toBe("discord");
+  expect(row.detail?.route).toBe("tool");
   expect(row.detail?.chars).toBe(replyText.length);
 });
 

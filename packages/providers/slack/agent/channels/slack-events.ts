@@ -22,7 +22,11 @@ import {
   taintMarkLands,
   nameDropWakeEnabled,
   engagementTierFor,
-  ambientSupervisorEnabled,
+  windowedSupervisorEnabled,
+  admissionFunction,
+  admissionNameFor,
+  seatCatchUpSinceMs,
+  type SeatAdmissionFn,
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
@@ -65,6 +69,8 @@ import {
   type Partition,
   type BindableContext,
   type SupervisorGrain,
+  slackVendorEventTime,
+  spreadVendorTs,
   type SingleWindowMentionPolicy,
   type UnifiedWindowWake,
   type ReplyDecision,
@@ -93,7 +99,7 @@ import {
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { holdRouteWork } from "./slack-route-hold.js";
-import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
+import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, RAW_FETCH_REACHBACK_HOURS, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
@@ -1484,7 +1490,7 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   let singleWindow = false;
   try {
     const domains = getConfig().loadDomains();
-    singleWindow = grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains)) && ambientSupervisorEnabled(surfaceKey, domains);
+    singleWindow = grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains));
   } catch {
     singleWindow = false;
   }
@@ -1516,7 +1522,7 @@ export async function slackChannelFactsFor(
 export function slackDomainUsesUnifiedWindow(surfaceKey: string): boolean {
   try {
     const domains = getConfig().loadDomains();
-    return grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains)) && ambientSupervisorEnabled(surfaceKey, domains);
+    return grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains));
   } catch {
     return false;
   }
@@ -1738,6 +1744,14 @@ export function supervisorFifoKey(channelId: string): string {
   return `${channelId}:oe-sup`;
 }
 
+function slackSeatAdmission(channelKey: string | undefined): SeatAdmissionFn {
+  try {
+    return admissionFunction(channelKey ? admissionNameFor(channelKey, getConfig().loadDomains()) : undefined);
+  } catch {
+    return admissionFunction(undefined);
+  }
+}
+
 export interface SupervisorWakeInput {
   readonly authorIsBot: boolean;
   readonly isAppMention: boolean;
@@ -1767,13 +1781,20 @@ export interface SupervisorRouteDeps {
     surfaceKey: string,
     channelId: string,
     atIso: string,
-  ) => Promise<{ token: string; generation: number; freshGeneration: boolean; tail: readonly WakeMessageInput[] }>;
+  ) => Promise<{
+    token: string;
+    generation: number;
+    freshGeneration: boolean;
+    tail: readonly WakeMessageInput[];
+    lastWakeAt?: string | null;
+  }>;
   readonly touchSession?: (org: string, surfaceKey: string, atIso: string) => Promise<void>;
   readonly fetchBackscroll?: (input: {
     channelId: string;
     ts: string;
     surfaceInternal: boolean;
     channelKey?: string;
+    sinceMs?: number;
   }) => Promise<readonly WakeMessageInput[]>;
   readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
@@ -1846,9 +1867,24 @@ export async function routeSupervisorEvent(
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
   const tail = session.freshGeneration ? session.tail : [];
+  let seatArmed = false;
+  try {
+    seatArmed = windowedSupervisorEnabled(domainKeyOf(p), getConfig().loadDomains());
+  } catch {
+    seatArmed = false;
+  }
+  const catchUpSinceMs = !seatArmed || session.freshGeneration ? undefined : seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), RAW_FETCH_REACHBACK_HOURS);
   const fetched =
-    session.freshGeneration && tail.length === 0 && deps.fetchBackscroll
-      ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
+    (session.freshGeneration ? tail.length === 0 : catchUpSinceMs !== undefined) && deps.fetchBackscroll
+      ? await deps
+          .fetchBackscroll({
+            channelId: ev.channelId,
+            ts: ev.ts,
+            surfaceInternal: internal,
+            channelKey: domainKeyOf(p),
+            ...(catchUpSinceMs !== undefined ? { sinceMs: catchUpSinceMs } : {}),
+          })
+          .catch(() => [] as readonly WakeMessageInput[])
       : [];
   const regraded = fetched.length > 0 ? await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched) : fetched;
   const priorContext: readonly WakeMessageInput[] = tail.length > 0 ? tail : regraded;
@@ -1881,6 +1917,7 @@ export async function routeSupervisorEvent(
             channelId: ev.channelId,
             ...(ev.threadTs ? { threadTs: ev.threadTs } : ev.ts ? { replyAnchorTs: ev.ts } : {}),
           },
+          ...spreadVendorTs(slackVendorEventTime(ev.ts)),
           ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
         }
       : undefined;
@@ -1958,7 +1995,13 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
         const { row, tail } = await rotateSeat(org, channelId, atIso, existing, grain);
         return { token: row.token, generation: row.generation, freshGeneration: true, tail };
       }
-      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, tail: [] as readonly WakeMessageInput[] };
+      return {
+        token: existing.token,
+        generation: existing.generation,
+        freshGeneration: existing.firstWakeAt == null,
+        tail: [] as readonly WakeMessageInput[],
+        lastWakeAt: existing.lastWakeAt ?? null,
+      };
     },
     touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, grainFor(surfaceKey).registryKey, atIso),
     fetchBackscroll: (input) =>
@@ -1966,6 +2009,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
         input,
         undefined,
         backscrollTrustResolver({ surfaceInternal: input.surfaceInternal, channelKey: input.channelKey }),
+        slackSeatAdmission(input.channelKey),
       ),
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),

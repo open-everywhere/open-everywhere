@@ -117,11 +117,11 @@ const ok = (cond: boolean, label: string): void => {
   const d = s.engaged!;
   ok(
     d.ambientSupervisor === null,
-    `ADDRESSED-ONLY: ambientSupervisor is UNSET (got ${JSON.stringify(d.ambientSupervisor)}) — this ONE absence does both jobs: no supervisor answers the plain follow-up, AND slackDomainUsesUnifiedWindow (grainUsesUnifiedWindow && ambientSupervisorEnabled) cannot short-circuit before the isThreadEngaged read. Set it and the engaged seam goes untested again, with or without a mode`,
+    `ADDRESSED-ONLY: ambientSupervisor is UNSET (got ${JSON.stringify(d.ambientSupervisor)}) — since OPE-1695 the absence buys exactly one thing: no UNADDRESSED message wakes this room. The room IS seated (slackDomainUsesUnifiedWindow reads the grain alone now), so the engaged seam runs on the SEAT path — slack-front.ts reaches isThreadEngaged through seatedSurface(). Set the flag and unowned chatter wakes the seat too, which is the posture this fixture exists to exclude`,
   );
   ok(
     d.mode === null,
-    `ADDRESSED-ONLY: mode is UNSET (got ${JSON.stringify(d.mode)}) — required anyway, since assertUnifiedDomainTrust refuses a mode without ambientSupervisor. Pinned beside the flag so neither can return alone`,
+    `ADDRESSED-ONLY: mode is UNSET (got ${JSON.stringify(d.mode)}) — so this room's seat stays SOLO, one window per channel with nothing shared across rooms. Since OPE-1695 assertUnifiedDomainTrust no longer couples mode to ambientSupervisor, so this is a topology declaration in its own right`,
   );
   ok(
     d.nameDropWake === true,

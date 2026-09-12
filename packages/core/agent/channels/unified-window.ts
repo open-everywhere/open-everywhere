@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { encodeSources } from "./window-sources.js";
 import { wakeOriginCodec } from "./wake-origin-codec.js";
 import { secondMessageValve } from "./reply-signal.js";
+import type { VendorEventTime } from "./wake-timing.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -349,5 +350,6 @@ export interface UnifiedWindowWake {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
+  readonly vendorTs?: VendorEventTime;
 }
 

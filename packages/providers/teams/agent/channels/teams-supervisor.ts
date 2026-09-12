@@ -1,4 +1,6 @@
 import {
+  spreadVendorTs,
+  type VendorEventTime,
   renderWake,
   mkMessageTrigger,
   mintWakeId,
@@ -44,6 +46,7 @@ export interface TeamsSingleWindowTarget {
   readonly conversationId: string;
   readonly replyToActivityId?: string;
   readonly tenantId?: string;
+  readonly vendorTs?: VendorEventTime;
 }
 
 export function planTeamsSingleWindow(
@@ -66,6 +69,7 @@ export function planTeamsSingleWindow(
       ...(target.tenantId ? { tenantId: target.tenantId } : {}),
     },
     ...(policy.addressing !== undefined ? { addressing: policy.addressing } : {}),
+    ...spreadVendorTs(target.vendorTs),
   };
 }
 

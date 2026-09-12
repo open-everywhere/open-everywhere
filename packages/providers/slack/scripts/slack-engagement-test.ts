@@ -5,6 +5,7 @@ import {
   registerConfig,
   getConfig,
   defineDomain,
+  markThreadEngaged,
   getOperationalStore,
   registerIdentityMapper,
   shouldDeliverReply,
@@ -1921,7 +1922,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       team_id: "T_ENG",
       event: { type: "message", channel: "C_SUP", ts: "77.7", user: "U1", channel_type: "channel", text: "deploy looks green", ...over },
     })!;
-  const backscrollCalls: Array<{ channelId: string; ts: string }> = [];
+  const backscrollCalls: Array<{ channelId: string; ts: string; sinceMs?: number }> = [];
   const fakeBackscrollEntries: WakeMessageInput[] = [
     { from: "human", author: "U_OLD", id: "10.0", sentAt: "2026-07-01T00:00:00.000Z", trust: "peer", body: "earlier chatter" },
   ];
@@ -1932,6 +1933,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       token: supervisorToken(channelId, fresh ? 2 : 1),
       generation: fresh ? 2 : 1,
       freshGeneration: fresh, tail: [],
+      ...(fresh ? {} : { lastWakeAt: "2026-07-09T11:00:00.000Z" }),
     }),
     touchSession: async () => {},
     fetchBackscroll: async (input) => {
@@ -1955,9 +1957,24 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
 
   backscrollCalls.length = 0;
   wakes2.length = 0;
+  const catchUpBaseConfig = getConfig();
+  registerConfig({ ...catchUpBaseConfig, loadDomains: () => [...catchUpBaseConfig.loadDomains(), defineDomain({ name: "org", match: "org" })] });
+  overrideSettingsForTest({ window: { topology: true } });
   out2 = await routeSupervisorEvent(supEv(), supDepsFresh(false));
-  ok(out2.woke && backscrollCalls.length === 0, "non-fresh (ongoing generation) wake → fetchBackscroll is NOT called");
-  ok(!wakes2[0].message.includes("earlier chatter"), "an ongoing-generation wake carries no backscroll");
+  ok(out2.woke && backscrollCalls.length === 1, "OPE-1695: an ONGOING generation's wake ALSO reads — the since-last-wake catch-up");
+  ok(
+    backscrollCalls[0]?.sinceMs === Date.parse("2026-07-09T11:00:00.000Z"),
+    "…bounded BELOW by the seat's own last wake, so it reads what it missed and not the whole reachback",
+  );
+  ok(wakes2[0]?.message.includes("earlier chatter"), "…and what it read renders into the wake as context");
+
+  backscrollCalls.length = 0;
+  wakes2.length = 0;
+  overrideSettingsForTest({ window: { topology: false } });
+  out2 = await routeSupervisorEvent(supEv(), supDepsFresh(false));
+  ok(out2.woke && backscrollCalls.length === 0, "capability OFF: an ongoing generation's wake reads NOTHING — flag-off is byte-identical, and pays no Slack calls");
+  resetSettingsForTest();
+  registerConfig(catchUpBaseConfig);
 
   backscrollCalls.length = 0;
   wakes2.length = 0;
@@ -2176,6 +2193,89 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const firstN = await runDedup(mentionEnv("EvSWDUP"));
     const secondN = await runDedup(mentionEnv("EvSWDUP"));
     ok(firstN === 1 && secondN === 0, "single-window: a retried app_mention (same event_id) does NOT double-divert (idempotent)");
+  }
+
+  {
+    const runAddressedOnly = async (body: string) => {
+      const fifo = new SpyFifo();
+      let innerCalled = false;
+      const waits: Array<Promise<unknown>> = [];
+      const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+      const handler = buildFrontHandler(
+        async () => {
+          innerCalled = true;
+          return new Response("inner");
+        },
+        {
+          signingSecret: secret,
+          now: () => nowMs,
+          markEventSeen: async () => true,
+          getBotIdentity: async () => ({ userId: "UBOT" }),
+          fifo,
+          ambientEnabledFor: () => false,
+          seatedSurfaceFor: () => true,
+          mentionPolicyFor: policy(true),
+        },
+      );
+      await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
+      await Promise.all(waits);
+      return { fifo, innerCalled };
+    };
+    const m = await runAddressedOnly(mentionEnv("EvAO1"));
+    ok(
+      !m.innerCalled && m.fifo.keys.length === 1 && m.fifo.keys[0] === supervisorFifoKey("C_TXN"),
+      "OPE-1695: ambient OFF + an app_mention ⇒ the mention is diverted to the channel's OWN standing seat (native suppressed, seat enqueued) — never dropped, never a native per-thread session",
+    );
+    const plainEnv = JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: "EvAO2",
+      event: { type: "message", channel: "C_TXN", ts: "95.2", channel_type: "channel", user: "U1", text: "how's the deploy looking" },
+    });
+    const t = await runAddressedOnly(plainEnv);
+    ok(t.fifo.keys.length === 0, "…and an UNADDRESSED top-level message in that same room still wakes no seat — the flag still decides chattiness");
+
+    const unseated = await (async () => {
+      const fifo = new SpyFifo();
+      const waits: Array<Promise<unknown>> = [];
+      const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+      const handler = buildFrontHandler(async () => new Response("inner"), {
+        signingSecret: secret,
+        now: () => nowMs,
+        markEventSeen: async () => true,
+        getBotIdentity: async () => ({ userId: "UBOT" }),
+        fifo,
+        ambientEnabledFor: () => false,
+        seatedSurfaceFor: () => false,
+        mentionPolicyFor: policy(true),
+      });
+      await handler(mkReq(mentionEnv("EvAO3")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+      await Promise.all(waits);
+      return fifo.keys.length;
+    })();
+    ok(unseated === 0, "capability OFF (no seat) + ambient off: an addressed wake is still DROPPED, not routed — flag-off is byte-identical");
+
+    const engagedPartition = resolvePartition({ channel: { kind: "slack" }, session: { auth: { current: { attributes: { team_id: "T_ENG", channel_id: "C_TXN" } } } } } as never);
+    await markThreadEngaged(engagedPartition, "96.0", new Date().toISOString(), { participating: true });
+    const followUpEnv = JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: "EvAO4",
+      event: { type: "message", channel: "C_TXN", ts: "96.5", thread_ts: "96.0", channel_type: "channel", user: "U1", text: "and the second one?" },
+    });
+    const followUp = await runAddressedOnly(followUpEnv);
+    ok(
+      followUp.fifo.keys.length === 1 && followUp.fifo.keys[0] === supervisorFifoKey("C_TXN"),
+      "OPE-1695: an ENGAGED thread's follow-up reaches the seat in an addressed-only room — the seat holds the conversation it opened",
+    );
+    const strangerEnv = JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: "EvAO5",
+      event: { type: "message", channel: "C_TXN", ts: "97.5", thread_ts: "97.0", channel_type: "channel", user: "U1", text: "unrelated thread" },
+    });
+    const stranger = await runAddressedOnly(strangerEnv);
+    ok(stranger.fifo.keys.length === 0, "…and a thread nobody engaged still wakes nothing in that room");
   }
 
   r = await run(false, mentionEnv("EvSW4"));

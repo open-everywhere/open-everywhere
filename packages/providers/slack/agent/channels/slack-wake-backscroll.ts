@@ -9,6 +9,7 @@ import {
   type ContextLine,
   type NormalizedMessage,
   type BackscrollTrustFor,
+  type SeatAdmissionFn,
   type WakeMessageInput,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -143,6 +144,7 @@ export interface WakeEnvelopeBackscrollInput {
   readonly channelId: string;
   readonly ts: string;
   readonly reachbackHours?: number;
+  readonly sinceMs?: number;
 }
 
 function extractCursor(res: Record<string, unknown> | undefined): string | undefined {
@@ -230,7 +232,9 @@ export async function fetchSlackBackscrollWindow(
     const latestSeconds = Number.parseFloat(input.ts);
     if (!Number.isFinite(latestSeconds)) return [];
     const reachbackHours = input.reachbackHours ?? RAW_FETCH_REACHBACK_HOURS;
-    const oldestSeconds = latestSeconds - reachbackHours * 3600;
+    const floorSeconds = latestSeconds - reachbackHours * 3600;
+    const sinceSeconds = typeof input.sinceMs === "number" && Number.isFinite(input.sinceMs) ? input.sinceMs / 1000 : undefined;
+    const oldestSeconds = sinceSeconds !== undefined ? Math.max(floorSeconds, sinceSeconds) : floorSeconds;
     const oldest = String(oldestSeconds);
 
     const channelMsgs = await fetchChannelWindow(deps.request, input.channelId, input.ts, oldest);
@@ -249,7 +253,7 @@ export async function fetchSlackBackscrollWindow(
     for (const g of threadGroups) {
       for (const m of g.msgs) {
         const ts = typeof m.ts === "string" ? m.ts : "";
-        if (ts === g.root) continue;
+        if (ts === g.root || ts === input.ts) continue;
         const secs = Number.parseFloat(ts);
         if (Number.isFinite(secs) && secs < oldestSeconds) continue;
         add(normalizeOne(m, ids, "thread", g.root));
@@ -265,11 +269,12 @@ export async function fetchWakeEnvelopeBackscroll(
   input: WakeEnvelopeBackscrollInput,
   deps: WakeBackscrollDeps = liveDeps,
   trustFor?: BackscrollTrustFor,
+  admit?: SeatAdmissionFn,
 ): Promise<WakeMessageInput[]> {
   try {
     const window = await fetchSlackBackscrollWindow(input, deps);
     if (window.length === 0) return [];
-    return fetchedBackscroll(window, undefined, trustFor);
+    return fetchedBackscroll(window, undefined, trustFor, admit);
   } catch {
     return [];
   }

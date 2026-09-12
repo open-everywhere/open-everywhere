@@ -20,6 +20,7 @@ export const OPERATIONAL_TABLES = [
   "event_dedupe",
   "unified_wake_target",
   "thread_ownership",
+  "thread_seat_state",
   "turn_anchor",
   "task_result",
   "slack_attachment",
@@ -503,6 +504,21 @@ export interface TurnAnchorRow extends TurnAnchorWrite {
   readonly createdAt: string;
 }
 
+export interface ThreadSeatStateWrite {
+  readonly channelKey: string;
+  readonly threadKey: string;
+  readonly seatToken: string;
+  readonly parentRegistryKey: string;
+  readonly state: "open" | "completed";
+  readonly originJson: string;
+  readonly report?: string;
+  readonly openedAt: string;
+}
+
+export interface ThreadSeatStateRow extends ThreadSeatStateWrite {
+  readonly updatedAt: string;
+}
+
 export interface ChannelSessionRow {
   readonly org: string;
   readonly surfaceKey: string;
@@ -831,6 +847,9 @@ export interface OperationalStore {
   putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
   clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
+
+  putThreadSeatState(org: string, row: ThreadSeatStateWrite, at: string, ttlMs: number): Promise<void>;
+  getThreadSeatState(org: string, channelKey: string, threadKey: string): Promise<ThreadSeatStateRow | null>;
 
   putTurnAnchor(org: string, anchor: TurnAnchorWrite, at: string, ttlMs: number): Promise<void>;
   getTurnAnchorByWindow(org: string, windowKey: string): Promise<TurnAnchorRow | null>;

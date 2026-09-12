@@ -239,8 +239,8 @@ ok(
   "a standing seat withholds the wide-hands set + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 14,
-  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/spawn_thread_session/complete_thread) AND the 11 wide-hands tools — 14 since OPE-1145 item 2 took stop_task and return_result out of the manifest entirely. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
+  withheldFromGrain("native").length === 16,
+  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle/coordinator set (agent/spawn_thread_session/complete_thread and, since OPE-1696, read_thread_seat/message_thread_seat) AND the 11 wide-hands tools — 16 of them. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
 );
 
 firesWith(
