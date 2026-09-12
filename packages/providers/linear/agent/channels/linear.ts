@@ -77,6 +77,8 @@ import {
   type WakeMessageInput,
   recordWakeTail,
   type AttachSessionForCancel,
+  seatCatchUp,
+  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
@@ -462,6 +464,7 @@ export function liveLinearSupervisorDeps(
       return { token: existing.token, generation: existing.generation, freshGeneration: fresh, tail: [] as readonly WakeMessageInput[], ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, linearGrainFor(surfaceKey).registryKey, atIso),
+    catchUp: (req) => seatCatchUp("linear", req, { admit: seatAdmissionFor(req.channelKey) }),
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, linearGrainFor(surfaceKey).registryKey, token, entry),
     memoryDelta: liveMemoryDeltaDep(org, `linear/${organizationId}/${teamId}`),
     now: () => new Date().toISOString(),

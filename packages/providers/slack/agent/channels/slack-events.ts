@@ -23,10 +23,11 @@ import {
   nameDropWakeEnabled,
   engagementTierFor,
   windowedSupervisorEnabled,
-  admissionFunction,
-  admissionNameFor,
   seatCatchUpSinceMs,
-  type SeatAdmissionFn,
+  seatCatchUp,
+  seatAdmissionFor,
+  type SeatCatchUpRequest,
+  type SeatCatchUpResult,
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
@@ -112,6 +113,7 @@ import {
   ingestReaction,
   liveReactionSink,
   isAllowedSlackDriver,
+  slackDmDriverPairs,
   getSettings,
   admittedTenantsFromConfig,
   unadmittedTenantLog,
@@ -531,11 +533,16 @@ export interface SlackWakeOpts {
   readonly directMention?: boolean;
   readonly dm?: boolean;
   readonly triggerRefuted?: boolean;
+  readonly nameDrop?: boolean;
+  readonly catchUpUnavailable?: string;
+  readonly contextLines?: readonly ContextLine[];
+  readonly contextSource?: string;
+  readonly readMoreHint?: string;
 }
 
 function slackJudgedWake(
   ev: ParsedMessageEvent,
-  addressing: "thread-follow" | "channel-watch" | "direct-mention",
+  addressing: "thread-follow" | "channel-watch" | "direct-mention" | "name-drop",
   opts: SlackWakeOpts,
   reasonOverride?: WakeReason,
 ): NormalizedWake {
@@ -554,10 +561,15 @@ function slackJudgedWake(
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts.participants,
-    engagementTier: directMention ? undefined : opts.engagementTier,
+    engagementTier: directMention || addressing === "name-drop" ? undefined : opts.engagementTier,
     followUp: !directMention && opts.threadEngaged === true ? "thread-engaged" : undefined,
     wakeId: opts.wakeId,
     backscroll: opts.backscroll,
+    ...(addressing === "name-drop" ? { nameDrop: { followUp: "follows-on-reply" as const } } : {}),
+    ...(opts.catchUpUnavailable !== undefined ? { catchUpUnavailable: opts.catchUpUnavailable } : {}),
+    ...(opts.contextLines !== undefined ? { contextLines: opts.contextLines } : {}),
+    ...(opts.contextSource !== undefined ? { contextSource: opts.contextSource } : {}),
+    ...(opts.readMoreHint !== undefined ? { readMoreHint: opts.readMoreHint } : {}),
     trigger: mkMessageTrigger(
       triggerMessage(ev, {
         trust: opts.trust,
@@ -576,7 +588,12 @@ export function slackThreadFollowWake(ev: ParsedMessageEvent, opts: SlackWakeOpt
 }
 
 export function slackChannelWatchWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
-  return slackJudgedWake(ev, opts.directMention === true ? "direct-mention" : "channel-watch", opts);
+  return slackJudgedWake(ev, seatWakeAddressing(opts), opts);
+}
+
+function seatWakeAddressing(opts: SlackWakeOpts): "direct-mention" | "name-drop" | "channel-watch" {
+  if (opts.directMention === true) return "direct-mention";
+  return opts.nameDrop === true ? "name-drop" : "channel-watch";
 }
 
 export function slackDmWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
@@ -890,13 +907,17 @@ export async function auditDmBotAuthorDrop(
   return true;
 }
 
-export function dmDoorAdmitsDriver(ev: ParsedMessageEvent, configured = getSettings().wake.slackDmDriver): boolean {
-  if (configured === "") return false;
+export function dmDoorAdmitsDriver(
+  ev: ParsedMessageEvent,
+  configured: readonly string[] | string = getSettings().wake.slackDmDriver,
+): boolean {
+  const pairs = slackDmDriverPairs(configured);
+  if (pairs.length === 0) return false;
   if (!ev.teamId || !ev.botId) return false;
-  return configured === `${ev.teamId}:${ev.botId}`;
+  return pairs.includes(`${ev.teamId}:${ev.botId}`);
 }
 
-export const DM_DRIVER_ADMIT_REASON = "e2e driver — the DM door admits the one named driver identity";
+export const DM_DRIVER_ADMIT_REASON = "e2e driver — the DM door admits a named driver identity";
 
 export async function auditDmDriverAdmitted(ev: ParsedMessageEvent, dmKind: "im" | "mpim"): Promise<void> {
   await appendWakeRow(ev, "surface.wake_admitted", DM_DRIVER_ADMIT_REASON, {
@@ -1055,6 +1076,8 @@ export function slackNameDropWake(
   };
 }
 
+export type NameDropContextHydrator = () => Promise<WakeBackscrollLines | null>;
+
 export interface NameDropRouteDeps {
   readonly enabledFor: (surfaceKey: string) => boolean;
   readonly confirmInternal: (channelId: string) => Promise<boolean>;
@@ -1065,6 +1088,7 @@ export interface NameDropRouteDeps {
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
+  readonly seatRoute?: (hydrateContext: NameDropContextHydrator) => Promise<RouteOutcome>;
 }
 
 export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropRouteDeps): Promise<RouteOutcome> {
@@ -1111,6 +1135,20 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     ? decision
     : { deliver: true, reason: "wake arm added a wake where the name-drop abstained" };
 
+  const hydrateContext: NameDropContextHydrator = async () => {
+    const fetched = deps.backscroll
+      ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => null)
+      : null;
+    if (!fetched) return null;
+    const lines = await regradeSlackContextLineTrust(fetched.lines, internal, domainKeyOf(p), ev.teamId).catch(() => fetched.lines);
+    return { ...fetched, lines };
+  };
+
+  if (deps.seatRoute) {
+    const seat = await deps.seatRoute(hydrateContext);
+    return seat.woke ? { ...outcome, woke: true } : seat;
+  }
+
   const rootTs = ev.threadTs ?? ev.ts;
 
   if (tenantFenceDeclined(ev, "routeNameDropEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
@@ -1124,13 +1162,8 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     await deps.markEngaged(p, rootTs, deps.now ? deps.now() : new Date().toISOString(), { participating: false });
   }
 
-  const bs = deps.backscroll
-    ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => null)
-    : null;
-
-  const gradedLines = bs
-    ? await regradeSlackContextLineTrust(bs.lines, internal, domainKeyOf(p), ev.teamId).catch(() => bs.lines)
-    : undefined;
+  const bs = await hydrateContext();
+  const gradedLines = bs?.lines;
 
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const triggerName = displayNameOpts(names.triggerAuthor);
@@ -1744,14 +1777,6 @@ export function supervisorFifoKey(channelId: string): string {
   return `${channelId}:oe-sup`;
 }
 
-function slackSeatAdmission(channelKey: string | undefined): SeatAdmissionFn {
-  try {
-    return admissionFunction(channelKey ? admissionNameFor(channelKey, getConfig().loadDomains()) : undefined);
-  } catch {
-    return admissionFunction(undefined);
-  }
-}
-
 export interface SupervisorWakeInput {
   readonly authorIsBot: boolean;
   readonly isAppMention: boolean;
@@ -1796,9 +1821,18 @@ export interface SupervisorRouteDeps {
     channelKey?: string;
     sinceMs?: number;
   }) => Promise<readonly WakeMessageInput[]>;
-  readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
+  readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
+  readonly authorIsMember?: SlackMemberProbe;
+  readonly wake: (input: {
+    token: string;
+    auth: unknown;
+    message: string;
+    context?: readonly string[];
+    state: unknown;
+    window?: UnifiedWindowWake;
+  }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
-  readonly markEngaged?: (p: Partition, threadTs: string, atIso: string) => Promise<void>;
+  readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
   readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
   readonly markStopped?: (p: Partition, threadTs: string) => Promise<boolean>;
   readonly now?: () => string;
@@ -1810,8 +1844,13 @@ export interface SupervisorRouteDeps {
 export async function routeSupervisorEvent(
   ev: ParsedMessageEvent,
   deps: SupervisorRouteDeps,
-  opts?: { readonly directMention?: boolean },
+  opts?: {
+    readonly directMention?: boolean;
+    readonly nameDrop?: boolean;
+    readonly nameDropContext?: NameDropContextHydrator;
+  },
 ): Promise<RouteOutcome> {
+  const nameDropTier = opts?.nameDrop === true;
   const directMention = opts?.directMention === true;
   const base = {
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
@@ -1851,6 +1890,9 @@ export async function routeSupervisorEvent(
   if (directMention && deps.markEngaged) {
     await deps.markEngaged(p, ev.threadTs ?? ev.ts, atIso);
   }
+  if (nameDropTier && !directMention && deps.markEngaged) {
+    await deps.markEngaged(p, ev.threadTs ?? ev.ts, atIso, { participating: false });
+  }
 
   const authorFacts = await slackWakeAuthorFacts(internal, ev.userId, ev.teamId);
   const wakeTrust = resolveWakeTrust({
@@ -1864,6 +1906,8 @@ export async function routeSupervisorEvent(
     const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeSupervisorEvent");
     if (verdict !== "proceed") return { deliver: false, reason: externalPolicyDropReason(verdict), woke: false };
   }
+  const nameDropContext = nameDropTier && opts?.nameDropContext ? await opts.nameDropContext().catch(() => null) : null;
+  const nameDropLines = nameDropContext?.lines;
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
   const tail = session.freshGeneration ? session.tail : [];
@@ -1874,25 +1918,38 @@ export async function routeSupervisorEvent(
     seatArmed = false;
   }
   const catchUpSinceMs = !seatArmed || session.freshGeneration ? undefined : seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), RAW_FETCH_REACHBACK_HOURS);
-  const fetched =
-    (session.freshGeneration ? tail.length === 0 : catchUpSinceMs !== undefined) && deps.fetchBackscroll
-      ? await deps
-          .fetchBackscroll({
-            channelId: ev.channelId,
-            ts: ev.ts,
-            surfaceInternal: internal,
-            channelKey: domainKeyOf(p),
-            ...(catchUpSinceMs !== undefined ? { sinceMs: catchUpSinceMs } : {}),
-          })
-          .catch(() => [] as readonly WakeMessageInput[])
-      : [];
+  let fetched: readonly WakeMessageInput[] = [];
+  let catchUpUnavailable: string | undefined;
+  if (session.freshGeneration) {
+    if (tail.length === 0 && deps.fetchBackscroll) {
+      fetched = await deps
+        .fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) })
+        .catch(() => [] as readonly WakeMessageInput[]);
+    }
+  } else if (catchUpSinceMs !== undefined && deps.catchUp) {
+    const res = await deps
+      .catchUp({
+        container: ev.channelId,
+        sinceMs: catchUpSinceMs,
+        ...(Number.isFinite(Number.parseFloat(ev.ts)) ? { untilMs: Number.parseFloat(ev.ts) * 1000 } : {}),
+        excludeId: ev.ts,
+        channelKey: domainKeyOf(p),
+        surfaceInternal: internal,
+      })
+      .catch(() => ({ messages: [] as readonly WakeMessageInput[] }) as SeatCatchUpResult);
+    fetched = res.messages;
+    catchUpUnavailable = res.unavailable;
+  }
   const regraded = fetched.length > 0 ? await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched) : fetched;
   const priorContext: readonly WakeMessageInput[] = tail.length > 0 ? tail : regraded;
   const backscroll = priorContext.map((m) => (withholdsBody(m, externalPolicy) ? withheldWakeMessage(m) : m));
 
   const auth = stampNonMemberChatAuth(
     authForEvent(ev, { isExternal: false, trustChecked: true }),
-    ingestedAfterWithholding([{ trust: wakeTrust, refuted: authorFacts.refuted }, ...priorContext], externalPolicy),
+    ingestedAfterWithholding(
+      [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...priorContext, ...(nameDropLines ?? []).map(contextLineIngestion)],
+      externalPolicy,
+    ),
     { surfaceKey: domainKeyOf(p) },
   );
   let engagementTier: WakeEngagementTier | undefined;
@@ -1924,22 +1981,33 @@ export async function routeSupervisorEvent(
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[]) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
     const trigger = displayNameOpts(names.triggerAuthor);
+    const wake = slackChannelWatchWake(ev, {
+      mode: "supervisor",
+      trust: wakeTrust,
+      engagementTier,
+      wakeId: window?.wakeId,
+      directMention: mentionPolicy.addressing === "direct-mention",
+      nameDrop: nameDropTier,
+      catchUpUnavailable,
+      threadEngaged: engRow?.participating === true && engRow.stopped !== true,
+      memberCount,
+      backscroll: applyResolvedNames(bs, names.participants),
+      triggerAuthorName: trigger.authorName,
+      triggerAuthorHandle: trigger.authorHandle,
+      participants: names.participants,
+      ...(nameDropLines && nameDropLines.length > 0
+        ? { contextLines: nameDropLines, contextSource: nameDropContext?.source, readMoreHint: nameDropContext?.readMoreHint }
+        : {}),
+    });
+    const rendered = renderWake(
+      nameDropTier ? await withholdNameDropContext(wake, externalPolicy, ev.teamId, deps.authorIsMember) : wake,
+      deps.now,
+    );
     return deps.wake({
       token,
       auth,
-      message: renderWakeMessage(ev, deps.now, {
-        mode: "supervisor",
-        trust: wakeTrust,
-        engagementTier,
-        wakeId: window?.wakeId,
-        directMention: mentionPolicy.addressing === "direct-mention",
-        threadEngaged: engRow?.participating === true && engRow.stopped !== true,
-        memberCount,
-        backscroll: applyResolvedNames(bs, names.participants),
-        triggerAuthorName: trigger.authorName,
-        triggerAuthorHandle: trigger.authorHandle,
-        participants: names.participants,
-      }),
+      message: rendered.message,
+      ...(rendered.context ? { context: rendered.context } : {}),
       state: wakeState(ev, supervisorSentinel(generation), { oeSupervisor: true, oeUninvited: true }),
       window,
     });
@@ -2009,15 +2077,20 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
         input,
         undefined,
         backscrollTrustResolver({ surfaceInternal: input.surfaceInternal, channelKey: input.channelKey }),
-        slackSeatAdmission(input.channelKey),
+        seatAdmissionFor(input.channelKey),
       ),
+    catchUp: (req) =>
+      seatCatchUp("slack", req, {
+        trustFor: backscrollTrustResolver({ surfaceInternal: req.surfaceInternal === true, channelKey: req.channelKey }),
+        admit: seatAdmissionFor(req.channelKey),
+      }),
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
     markStopped: (p, threadTs) => markThreadStopped(p, threadTs),
-    markEngaged: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso, { participating: true }),
+    markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, { participating: opts?.participating ?? true }),
     now: () => new Date().toISOString(),
-    async wake({ token, auth, message, state }) {
-      await send({ message }, { auth, continuationToken: token, state });
+    async wake({ token, auth, message, context, state }) {
+      await send({ message, context }, { auth, continuationToken: token, state });
     },
   };
 }

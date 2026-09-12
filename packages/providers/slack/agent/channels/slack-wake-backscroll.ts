@@ -10,6 +10,8 @@ import {
   type NormalizedMessage,
   type BackscrollTrustFor,
   type SeatAdmissionFn,
+  type SeatCatchUpFetch,
+  type SeatCatchUpRequest,
   type WakeMessageInput,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -264,6 +266,13 @@ export async function fetchSlackBackscrollWindow(
     return [];
   }
 }
+
+export async function fetchSlackSeatCatchUp(req: SeatCatchUpRequest, deps: WakeBackscrollDeps = liveDeps): Promise<readonly NormalizedMessage[]> {
+  const latestTs = req.excludeId ?? (req.untilMs !== undefined ? String(req.untilMs / 1000) : String(Date.now() / 1000));
+  return fetchSlackBackscrollWindow({ channelId: req.container, ts: latestTs, sinceMs: req.sinceMs }, deps);
+}
+
+export const slackSeatCatchUpFetch: SeatCatchUpFetch = (req) => fetchSlackSeatCatchUp(req);
 
 export async function fetchWakeEnvelopeBackscroll(
   input: WakeEnvelopeBackscrollInput,

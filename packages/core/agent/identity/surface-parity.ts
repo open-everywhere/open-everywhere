@@ -15,7 +15,7 @@ export interface SurfaceCapability {
   readonly group: CapabilityGroup;
 }
 
-export const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = [
+export const SURFACE_CAPABILITIES = [
   { id: "identity-mapper", label: "Identity mapper", section: "§2.1", group: "seam" },
   { id: "capability-manifest", label: "Capability manifest", section: "§2.4", group: "seam" },
   { id: "post-arm", label: "Post arm", section: "§4.1", group: "seam" },
@@ -25,6 +25,7 @@ export const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = [
   { id: "ancillary-ops", label: "Ancillary ops (`SurfaceMessageOps`)", section: "§4.9", group: "seam" },
   { id: "ambient-engagement-seam", label: "**Ambient engagement seam**", section: "§2.5", group: "seam" },
   { id: "owned-thread-ingress", label: "**Owned-thread ingress divert**", section: "§2.6", group: "seam" },
+  { id: "seat-catch-up", label: "**Seat catch-up read** (since last wake)", section: "§2.5", group: "seam" },
 
   { id: "addressed-leg", label: "Addressed (@mention) leg", section: "§2.2", group: "shape" },
   { id: "ambient-leg", label: "Ambient (non-mention) leg", section: "§2.5", group: "shape" },
@@ -50,7 +51,7 @@ export const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = [
   { id: "ack_cancel_note", label: "`ack`: cancel note", section: "§4.9", group: "verb" },
   { id: "stand_down", label: "`stand_down`", section: "§4.10", group: "verb" },
   { id: "post_file", label: "`post_file`", section: "§4.11", group: "verb" },
-] as const;
+] as const satisfies readonly SurfaceCapability[];
 
 export type SurfaceCapabilityId = (typeof SURFACE_CAPABILITIES)[number]["id"];
 

@@ -20,6 +20,9 @@ import {
   type WakeTrust,
   type UnifiedWindowWake,
   type SessionTailEntry,
+  seatCatchUpSinceMs,
+  type SeatCatchUpRequest,
+  type SeatCatchUpResult,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
@@ -27,6 +30,8 @@ import type { NotionDeliveryTrust } from "./notion-ancestry-trust.js";
 import type { NotionSessionState } from "./notion-webhook.js";
 import type { NotionVia } from "./notion-scope.js";
 import { markNotionEngaged, type NotionSeamFacts } from "./notion-engagement.js";
+
+const NOTION_CATCH_UP_REACHBACK_HOURS = 168;
 
 export function notionSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -109,6 +114,7 @@ export interface NotionSupervisorWakeInput {
   readonly trigger: NotionWakeMessage;
   readonly threadComments?: readonly NotionWakeMessage[];
   readonly tail?: readonly WakeMessageInput[];
+  readonly catchUpUnavailable?: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly wakeId?: string;
   readonly directMention?: boolean;
@@ -145,6 +151,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
       thread: { ts: input.discussionId },
     },
     backscroll,
+    ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: input.trigger.from,
       author: input.trigger.authorId ?? "unknown",
@@ -169,6 +176,7 @@ export interface NotionSupervisorSession {
 export interface NotionSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, pageId: string, atIso: string) => Promise<NotionSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
   readonly markEngaged?: (d: NotionSupervisorDispatch) => Promise<void>;
   readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
 
@@ -274,7 +282,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
     }
   }
 
-  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[], catchUpUnavailable?: string) => {
     const built: NormalizedWake = {
       ...buildNotionSupervisorWake({
         addressing: d.addressing,
@@ -287,6 +295,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
         directMention: d.directMention,
         threadEngaged: d.engagedFollowUp,
         tail,
+        catchUpUnavailable,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),
     };
@@ -296,7 +305,18 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
     await deps.wake({ token, auth, message, context: context ?? [], state, window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
+  const catchUp =
+    session.freshGeneration || !deps.catchUp
+      ? undefined
+      : await deps.catchUp({
+          container: d.pageId,
+          ...(d.discussionId ? { threadRoot: d.discussionId } : {}),
+          sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), NOTION_CATCH_UP_REACHBACK_HOURS),
+          untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
+          excludeId: d.trigger.id,
+          channelKey: d.surfaceKey,
+        });
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
   if (deps.recordWake) {
     await deps.recordWake(

@@ -32,6 +32,10 @@ import {
   domainKeyOf,
   resolvePartition,
   nameDropWakeEnabled,
+  seatCatchUp,
+  seatCatchUpSinceMs,
+  seatAdmissionFor,
+  backscrollTrustResolver,
   engagementTierFor,
   getConfig,
   deploymentOrg,
@@ -110,7 +114,7 @@ import {
   attestedFireCreatorId,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { fetchDiscordBackscrollLines, gradeDiscordContextLines } from "./discord-backscroll.js";
+import { fetchDiscordBackscrollLines, gradeDiscordContextLines, DISCORD_RAW_FETCH_REACHBACK_HOURS } from "./discord-backscroll.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -827,6 +831,7 @@ export interface DiscordUnifiedWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
   readonly botName?: string;
+  readonly catchUpUnavailable?: string;
   readonly trigger: {
     readonly id: string;
     readonly author: string;
@@ -857,6 +862,7 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
         }
       : {}),
     backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
+    ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.author,
@@ -1026,6 +1032,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
   readonly partition: Partition;
   readonly grain: SupervisorGrain;
   readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
+  readonly privacyOk: boolean;
   readonly receive: UnifiedReceive;
   readonly context: readonly string[];
   readonly contextIngestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>>;
@@ -1058,7 +1065,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
 
   const trust = resolveWakeTrustFromContext(ctxFromAuth(input.auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true });
 
-  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]): Promise<void> => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[], catchUpUnavailable?: string): Promise<void> => {
     const wakeId = mintWakeId();
     const origin: UnifiedWakeOrigin = {
       platform: "discord",
@@ -1081,6 +1088,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
         engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
         tail,
         botName: msg.botName,
+        catchUpUnavailable,
         trigger: {
           id: msg.id || "unknown",
           author: msg.author.username ?? msg.author.id,
@@ -1120,7 +1128,25 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
     }
   };
 
-  await doWake(session.token, session.generation, session.fresh ? session.tail : []);
+  const catchUp = session.fresh
+    ? undefined
+    : await seatCatchUp(
+        "discord",
+        {
+          container: (isThreadChannelType(msg.channelType) ? str(input.auth.attributes.parent_channel_id) : undefined) ?? msg.channelId,
+          ...(isThreadChannelType(msg.channelType) ? { threadRoot: msg.channelId } : {}),
+          sinceMs: seatCatchUpSinceMs(existing?.lastWakeAt, Date.parse(atIso) || Date.now(), DISCORD_RAW_FETCH_REACHBACK_HOURS),
+          untilMs: Date.parse(atIso) || Date.now(),
+          ...(msg.id ? { excludeId: msg.id } : {}),
+          channelKey: domainKeyOf(input.partition),
+          surfaceInternal: input.privacyOk,
+        },
+        {
+          trustFor: backscrollTrustResolver({ surfaceInternal: input.privacyOk, channelKey: domainKeyOf(input.partition) }),
+          admit: seatAdmissionFor(domainKeyOf(input.partition)),
+        },
+      );
+  await doWake(session.token, session.generation, session.fresh ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);
   await store.touchChannelSession(org, grain.registryKey, atIso).catch(() => undefined);
   await recordWakeTail(org, grain.registryKey, session.token, {
     kind: "wake",
@@ -1291,6 +1317,7 @@ export async function dispatchTurn(
         partition,
         grain: windowGrain,
         addressing,
+        privacyOk,
         receive,
         context: windowContext ? [windowContext] : [],
         contextIngestion: (gradedWindowLines ?? []).map(contextLineIngestion),

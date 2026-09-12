@@ -29,6 +29,7 @@ import {
   slackInteractivityTenantFenceDeclined,
   type SlackEventEnvelope,
   type ParsedMessageEvent,
+  type NameDropContextHydrator,
   type RouteOutcome,
 } from "./slack-events.js";
 import { slackInteractivityTenantIds } from "./slack-tenant-fence.js";
@@ -436,14 +437,14 @@ const logOutcome =
     );
   };
 
-export async function deliverWithStrandRetry(deliver: () => Promise<void>): Promise<void> {
+export async function deliverWithStrandRetry<T>(deliver: () => Promise<T>): Promise<T> {
   try {
-    await deliver();
+    return await deliver();
   } catch (err) {
     if (!isPrunedDeploymentWakeError(err)) throw err;
     console.warn(`[open-everywhere:slack-front] wake hit a pruned deployment — seat marked for rotation, re-delivering once: ${String(err)}`);
     try {
-      await deliver();
+      return await deliver();
     } catch (retryErr) {
       markUndeliveredAfterHeal(retryErr);
       throw retryErr;
@@ -514,6 +515,7 @@ export function withSingleWindowDiversion(
       }
       await divertInboundToUnifiedWindow(to, {
         message: input.message,
+        ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
         token: input.token,
         window: input.window,
         surfaceKey,
@@ -653,7 +655,25 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
         return;
       }
-      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
+      const seatRoute = seated
+        ? async (hydrateContext: NameDropContextHydrator): Promise<RouteOutcome> => {
+            let outcome: RouteOutcome = { deliver: false, reason: "seat wake delivery failed", woke: false };
+            await fifo.enqueue(supervisorFifoKey(ev.channelId), async () => {
+              outcome = await deliverWithStrandRetry(() =>
+                routeSupervisorEvent(ev, withSingleWindowDiversion(liveSupervisorDeps(send), args.to, surfaceKey!), {
+                  nameDrop: true,
+                  nameDropContext: hydrateContext,
+                }),
+              );
+            });
+            return outcome;
+          }
+        : undefined;
+      args.waitUntil(
+        routeNameDropEvent(ev, { ...liveNameDropDeps(send), ...(seatRoute ? { seatRoute } : {}) }).then(
+          logOutcome(seatRoute ? `${label}-name-drop-seat` : label, ev.channelId, ev.ts),
+        ),
+      );
     };
 
     const scheduleDmWake = async (

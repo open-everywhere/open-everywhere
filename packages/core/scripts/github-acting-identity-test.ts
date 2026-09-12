@@ -357,6 +357,8 @@ registerIdentityMapper(PLATFORM, (c) => {
     "packages/core/agent/scm/pr-status.ts": "the resolvers themselves, not a call site",
     "packages/core/agent/tools/open_pull_request.ts": "WRITE",
     "packages/core/agent/tools/post_pr_walkthrough.ts": "WRITE — it reads status and diff to compose the post it makes",
+    "packages/providers/github/agent/channels/github-catch-up.ts":
+      "INGRESS — the standing seat's since-last-wake catch-up reads the room under the deployment's installation before a turn exists; no requester turn is behind it, so there is no own-account ask to honour; its container is the one the wake itself already admitted, so there is no requester-named repository a personal credential could answer differently",
     "packages/providers/github/agent/memory/memory.ts": "the memory backing — an org-default subtree pull with no requester turn behind it",
   };
 

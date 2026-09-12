@@ -594,6 +594,8 @@ export type {
 export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
+export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp } from "./channels/seat-catch-up.js";
+export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatchUpOpts } from "./channels/seat-catch-up.js";
 
 export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
 export type { SeatAdmissionFn, SeatAdmissionCandidate } from "./channels/seat-admission.js";
@@ -684,7 +686,7 @@ export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";
 export { registeredReactionSurfaces } from "./channels/reaction-ingest.js";
 export type { IngestedReaction } from "./channels/reaction-ingest.js";
 
-export { isAllowedSlackDriver, parseDriverAllowlist } from "./testing/driver-allowlist.js";
+export { isAllowedSlackDriver, parseDriverAllowlist, slackDmDriverPairs } from "./testing/driver-allowlist.js";
 
 export { STATUS_REACTION, renderPinned, isPinnedStatusMessage, STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "./status/status.js";
 export type { ReactionState } from "./status/status.js";

@@ -41,6 +41,8 @@ import {
   renderQuestionForSurface,
   QUESTION_ANSWERED_AUDIT_ACTION,
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
+  seatCatchUp,
+  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   forgetNotionQuestion,
@@ -180,6 +182,7 @@ export function liveNotionSupervisorDeps(
       return { token: existing.token, generation: existing.generation, freshGeneration: fresh, tail: [] as readonly WakeMessageInput[], ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, notionGrainFor(surfaceKey).registryKey, atIso),
+    catchUp: (req) => seatCatchUp("notion", req, { admit: seatAdmissionFor(req.channelKey) }),
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, notionGrainFor(surfaceKey).registryKey, token, entry),
     memoryDelta: liveMemoryDeltaDep(org, surfaceKey),
     now: () => new Date().toISOString(),

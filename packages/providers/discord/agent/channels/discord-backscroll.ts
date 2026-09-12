@@ -7,6 +7,8 @@ import {
   type ContextLine,
   type NormalizedMessage,
   type BackscrollTrustFor,
+  type SeatCatchUpFetch,
+  type SeatCatchUpRequest,
   type WakeMessageInput,
   type BindableContext,
   type AuthorTrustQuery,
@@ -128,7 +130,7 @@ export async function fetchDiscordBackscrollLines(
   }
 }
 
-const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
+export const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
 
 const DISCORD_RAW_FETCH_PAGE_LIMIT = 100;
 
@@ -144,6 +146,12 @@ export function snowflakeToMs(id: string): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+function msToSnowflake(ms: number): string {
+  const delta = Math.max(0, Math.floor(ms) - DISCORD_EPOCH_MS);
+  const id = BigInt(delta) << 22n;
+  return (id > 0n ? id : 1n).toString();
 }
 
 function messageMs(m: Record<string, unknown>, id: string): number | undefined {
@@ -212,6 +220,7 @@ export interface DiscordBackscrollWindowInput {
   readonly isThread: boolean;
   readonly botId?: string;
   readonly reachbackHours?: number;
+  readonly sinceMs?: number;
 }
 
 export async function fetchDiscordBackscrollWindow(
@@ -222,7 +231,8 @@ export async function fetchDiscordBackscrollWindow(
     const triggerMs = snowflakeToMs(input.triggerMessageId);
     const reachbackHours = input.reachbackHours ?? DISCORD_RAW_FETCH_REACHBACK_HOURS;
     const originMs = triggerMs ?? Date.now();
-    const oldestMs = originMs - reachbackHours * 3_600_000;
+    const floorMs = originMs - reachbackHours * 3_600_000;
+    const oldestMs = typeof input.sinceMs === "number" && Number.isFinite(input.sinceMs) ? Math.max(floorMs, input.sinceMs) : floorMs;
 
     const raw = await fetchDiscordWindow(deps.request, input.channelId, input.triggerMessageId, oldestMs);
     if (raw.length === 0) return [];
@@ -258,3 +268,12 @@ export async function fetchDiscordWakeEnvelopeBackscroll(
     return [];
   }
 }
+
+export async function fetchDiscordSeatCatchUp(req: SeatCatchUpRequest, deps: DiscordBackscrollDeps = liveDeps): Promise<readonly NormalizedMessage[]> {
+  const isThread = req.threadRoot !== undefined;
+  const anchor = req.threadRoot ?? req.container;
+  const triggerMessageId = req.excludeId ?? msToSnowflake(req.untilMs ?? Date.now());
+  return fetchDiscordBackscrollWindow({ channelId: anchor, triggerMessageId, isThread, sinceMs: req.sinceMs }, deps);
+}
+
+export const discordSeatCatchUpFetch: SeatCatchUpFetch = (req) => fetchDiscordSeatCatchUp(req);

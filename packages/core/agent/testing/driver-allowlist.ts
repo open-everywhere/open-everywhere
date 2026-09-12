@@ -2,6 +2,11 @@ const DISCORD_PAIR = /^\d+:\d+$/;
 
 export const SLACK_DRIVER_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
 
+export function slackDmDriverPairs(configured: readonly string[] | string): readonly string[] {
+  const raw = typeof configured === "string" ? [configured] : configured;
+  return raw.filter((pair) => pair !== "");
+}
+
 export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<string> {
   const out = new Set<string>();
   if (!raw) return out;

@@ -12,8 +12,14 @@ import {
   type UnifiedWindowWake,
   type WakeMessageInput,
   type SessionTailEntry,
+  seatCatchUpSinceMs,
+  catchUpUnavailableReason,
+  type SeatCatchUpRequest,
+  type SeatCatchUpResult,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
+
+const TEAMS_CATCH_UP_REACHBACK_HOURS = 168;
 
 function teamsSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -88,6 +94,7 @@ export interface TeamsSupervisorWakeInput {
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
+  readonly catchUpUnavailable?: string;
 }
 
 export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): NormalizedWake {
@@ -103,6 +110,7 @@ export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): Norma
     },
     ...(input.trigger.authorName ? { participants: [{ id: input.trigger.authorId, name: input.trigger.authorName }] } : {}),
     backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
+    ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorName ?? input.trigger.authorId,
@@ -120,12 +128,14 @@ export interface TeamsSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
+  readonly lastWakeAt?: string | null;
   readonly tail: readonly WakeMessageInput[];
 }
 
 export interface TeamsSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, channelId: string, atIso: string) => Promise<TeamsSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
   readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
 
   readonly wake: (input: { token: string; auth: OpenEverywhereTeamsAuth; message: string; context: readonly string[]; window: UnifiedWindowWake }) => Promise<void>;
@@ -136,6 +146,7 @@ export interface TeamsSupervisorDispatch {
   readonly surfaceKey: string;
   readonly containerKey: string;
   readonly channelId: string;
+  readonly teamId?: string;
   readonly auth: OpenEverywhereTeamsAuth;
   readonly trigger: TeamsSupervisorWakeInput["trigger"];
   readonly threadRootId?: string;
@@ -147,7 +158,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.channelId, atIso);
 
-  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[], catchUpUnavailable?: string) => {
     const nw = buildTeamsSupervisorWake({
       channelId: d.channelId,
       trigger: d.trigger,
@@ -156,12 +167,26 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
       wakeId: d.window.wakeId,
       engagementTier: d.engagementTier,
       tail,
+      catchUpUnavailable,
     });
     const { message, context } = renderWake(nw, deps.now);
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
+  const catchUp =
+    session.freshGeneration || !deps.catchUp
+      ? undefined
+      : !d.teamId
+        ? { messages: [] as readonly WakeMessageInput[], unavailable: catchUpUnavailableReason("teams") }
+        : await deps.catchUp({
+            container: `${d.teamId}/${d.channelId}`,
+            ...(d.threadRootId ? { threadRoot: d.threadRootId } : {}),
+            sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), TEAMS_CATCH_UP_REACHBACK_HOURS),
+            untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
+            excludeId: d.trigger.id,
+            channelKey: d.surfaceKey,
+          });
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
   if (deps.recordWake) {
     await deps.recordWake(

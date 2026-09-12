@@ -11,8 +11,13 @@ import {
   type IngestedChatMessage,
   type WakeMessageInput,
   type SessionTailEntry,
+  seatCatchUpSinceMs,
+  type SeatCatchUpRequest,
+  type SeatCatchUpResult,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
+
+const LINEAR_CATCH_UP_REACHBACK_HOURS = 168;
 
 export function linearSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -105,6 +110,7 @@ export interface LinearSupervisorWakeInput {
   };
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
+  readonly catchUpUnavailable?: string;
   readonly wakeId?: string;
   readonly directMention?: boolean;
   readonly threadEngaged?: boolean;
@@ -132,6 +138,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     contextLines,
     contextSource: contextLines ? "the issue this comment is on" : undefined,
     backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
+    ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorName ?? input.trigger.authorId ?? "unknown",
@@ -206,6 +213,7 @@ export interface LinearSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, teamId: string, atIso: string) => Promise<LinearSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
   readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+  readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
 
   readonly wake: (input: {
     token: string;
@@ -247,7 +255,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
     }
   }
 
-  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[], catchUpUnavailable?: string) => {
     const nw: NormalizedWake = {
       ...buildLinearSupervisorWake({
         teamId: d.teamId,
@@ -260,6 +268,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         directMention: d.directMention,
         threadEngaged: d.threadEngaged,
         tail,
+        catchUpUnavailable,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),
     };
@@ -268,7 +277,17 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
     await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
+  const catchUp =
+    session.freshGeneration || !deps.catchUp
+      ? undefined
+      : await deps.catchUp({
+          container: d.issueIdentifier ?? d.issueId,
+          sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), LINEAR_CATCH_UP_REACHBACK_HOURS),
+          untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
+          excludeId: d.trigger.id,
+          channelKey: d.surfaceKey,
+        });
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
   if (deps.recordWake) {
     await deps.recordWake(

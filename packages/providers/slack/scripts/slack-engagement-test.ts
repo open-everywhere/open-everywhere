@@ -25,6 +25,7 @@ import {
   routeMessageEvent,
   STOOD_DOWN_DROP_REASON,
   renderWakeMessage,
+  slackChannelWatchWake,
   turnEffectsFor,
   buildWakeTriggers,
   matchWakeTriggers,
@@ -76,9 +77,11 @@ import { OE_APPROVAL_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError } from "../agent/channels/slack-read.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
-import type { WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake } from "@open-everywhere/core/agent/adapter-api.js";
+import type { SeatCatchUpRequest, WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
 import type { WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
+import type { ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { overrideSettingsForTest, WITHHELD_BODY_MARKER } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerIdentityMapper("slack", bindSlack);
@@ -1219,6 +1222,97 @@ registerConfig({
   calls.length = 0;
   infoCalls = 0;
 
+  {
+    calls.length = 0;
+    latched.length = 0;
+    const seatCalls: number[] = [];
+    const seated = { ...deps(true, true), seatRoute: async () => { seatCalls.push(1); return { deliver: true, reason: "seat wake", woke: true }; } };
+    const seatOut = await routeNameDropEvent(topLevel(), seated);
+    ok(seatOut.woke, "a judged name-drop on a seated channel still wakes");
+    ok(seatCalls.length === 1, "…and it wakes through the SEAT ROAD");
+    ok(calls.length === 0, "…so NO eve-native per-thread session is created for a name-drop");
+    ok(/name/u.test(seatOut.reason), "the outcome still reports the name-drop judge's own reason");
+    ok(latched.length === 0, "…and the JUDGE latches nothing: the seat road owns the watcher row, so the warm latch never runs twice");
+
+    calls.length = 0;
+    seatCalls.length = 0;
+    const unseated = await routeNameDropEvent(topLevel(), deps(true, true));
+    ok(unseated.woke && calls.length === 1 && seatCalls.length === 0, "negative control: with no seat road the native per-thread wake still fires");
+
+    calls.length = 0;
+    const refusedOut = await routeNameDropEvent(topLevel(), {
+      ...deps(true, true),
+      seatRoute: async () => ({ deliver: false, reason: "spend cap declined", woke: false }),
+    });
+    ok(!refusedOut.woke && refusedOut.reason === "spend cap declined", "a seat road that refuses reports ITS decision verbatim");
+    ok(calls.length === 0, "…and the native wake is never a fallback for a refused seat wake");
+    calls.length = 0;
+    latched.length = 0;
+    infoCalls = 0;
+
+    calls.length = 0;
+    let fetches = 0;
+    const hydratedLines = [{ senderType: "user" as const, senderId: "U_CTX", ts: "41.9", text: "earlier in the room" }];
+    let handed: WakeBackscrollLines | null | undefined;
+    const hydrateOut = await routeNameDropEvent(topLevel(), {
+      ...deps(true, true),
+      backscroll: async () => {
+        fetches++;
+        return { lines: hydratedLines, source: "slack#C_TXN", readMoreHint: "" };
+      },
+      seatRoute: async (hydrate) => {
+        ok(fetches === 0, "the judge hands over a HYDRATOR, not an already-fetched page");
+        handed = await hydrate();
+        return { deliver: true, reason: "seat wake", woke: true };
+      },
+    });
+    ok(hydrateOut.woke && calls.length === 0, "the hydrating name-drop still wakes through the seat road alone");
+    ok(fetches === 1, "…and the seat road's own call is what buys the history page, exactly once");
+    ok(handed?.lines.length === 1 && handed.lines[0].senderId === "U_CTX", "…and it receives the judge's OWN hydrated lines");
+    ok(handed?.source === "slack#C_TXN", "…with the provenance label renderContext needs to wrap them");
+
+    calls.length = 0;
+    let softHanded: WakeBackscrollLines | null | undefined = undefined;
+    const softOut = await routeNameDropEvent(topLevel(), {
+      ...deps(true, true),
+      backscroll: async () => {
+        throw new Error("slack said no");
+      },
+      seatRoute: async (hydrate) => {
+        softHanded = await hydrate();
+        return { deliver: true, reason: "seat wake", woke: true };
+      },
+    });
+    ok(softOut.woke, "a name-drop whose hydration FAILS still wakes the seat");
+    ok(softHanded === null, "…and the hydrator reports null rather than throwing out of the route");
+    calls.length = 0;
+    latched.length = 0;
+    infoCalls = 0;
+  }
+
+  {
+    const ev = topLevel();
+    const nd = slackChannelWatchWake(ev, { trust: "peer", nameDrop: true });
+    ok(nd.addressing === "name-drop", "a seat wake with the name-drop tier renders addressing=name-drop");
+    ok(nd.nameDrop?.followUp === "follows-on-reply", "…and states the name-drop follow-up contract");
+    ok(
+      slackChannelWatchWake(ev, { trust: "peer", nameDrop: true, engagementTier: "reserved" }).engagementTier === undefined,
+      "…and the AMBIENT calibration dial never stacks on top of it — a name-drop is addressing, not watching",
+    );
+    const watch = slackChannelWatchWake(ev, { trust: "peer" });
+    ok(
+      slackChannelWatchWake(ev, { trust: "peer", engagementTier: "reserved" }).engagementTier === "reserved",
+      "negative control: an ambient channel-watch wake DOES carry the tier",
+    );
+    ok(watch.addressing === "channel-watch", "negative control: without the tier the seat wake is the ambient channel-watch");
+    ok(watch.nameDrop === undefined, "…and states no name-drop contract");
+    const mention = slackChannelWatchWake(ev, { trust: "peer", nameDrop: true, directMention: true });
+    ok(mention.addressing === "direct-mention", "an @mention wins over the name-drop tier — it is the more addressed fact");
+    const rendered = renderWake(nd, () => "2027-03-01T09:00:00Z").message;
+    ok(rendered.includes('addressing="name-drop"'), "the rendered seat envelope carries the name-drop addressing");
+    ok(rendered.includes('follow-up="follows-on-reply"'), "…and the follow-up attribute the mechanic owes");
+  }
+
   out = await routeNameDropEvent(topLevel({ text: "no bots were harmed" }), deps(true, true));
   ok(!out.woke && infoCalls === 0, "no name in text → dropped before any API call");
 
@@ -1782,6 +1876,60 @@ registerConfig({
     ok(o.woke && seen.length === 1 && seen[0] === undefined, "a NON-single-window supervisor wake mints no window origin (flag-off is untouched)");
   }
 
+  {
+    const REFUTED = "U_GUEST";
+    const MEMBER = "U_CTX_MEMBER";
+    const REFUTED_BODY = "guest bytes that must not reach the model";
+    const MEMBER_BODY = "the deploy window moves to Thursday";
+    const hydrated: readonly ContextLine[] = [
+      { senderType: "user", senderId: REFUTED, ts: "70.1", text: REFUTED_BODY, trust: "unauth", refuted: true },
+      { senderType: "user", senderId: MEMBER, ts: "70.2", text: MEMBER_BODY, trust: "peer" },
+    ];
+    const hydrate = async (): Promise<WakeBackscrollLines> => ({ lines: hydrated, source: "slack#C_SUP", readMoreHint: "" });
+    const ctxWakes: Array<{ message: string; context?: readonly string[]; auth: unknown }> = [];
+    const ctxDeps = () =>
+      supDeps(true, 12, {
+        wake: async (input) => {
+          ctxWakes.push({ message: input.message, context: input.context, auth: input.auth });
+        },
+        authorIsMember: async (id) => id !== REFUTED,
+      });
+    const blockOf = (i: number): string => (ctxWakes[i].context ?? []).join("\n");
+    const nonMemberStamp = (auth: unknown): unknown => (auth as { attributes?: Record<string, unknown> }).attributes?.oe_chat_nonmember;
+    const lineFor = (block: string, id: string): string =>
+      block.split("\n").find((l) => l.startsWith("[sender_type=") && l.includes(`sender_id=${id}`)) ?? "";
+
+    resetSettingsForTest();
+    let co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true, nameDropContext: hydrate });
+    ok(co.woke && ctxWakes.length === 1, "a name-drop seat wake fires");
+    ok(ctxWakes[0].context !== undefined && ctxWakes[0].context.length === 1, "🔴 the seat wake CARRIES the name-drop's hydrated block as its context (the slot the seat road used to drop)");
+    ok(lineFor(blockOf(0), REFUTED).includes(REFUTED_BODY), "on the shipped `taint` grain the refuted author's body arrives verbatim");
+    ok(lineFor(blockOf(0), MEMBER).includes(MEMBER_BODY), "…and so does the member's");
+    ok(!blockOf(0).includes(WITHHELD_BODY_MARKER), "…and nothing is withheld on a grain that withholds nothing");
+
+    ctxWakes.length = 0;
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+    co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true, nameDropContext: hydrate });
+    ok(co.woke && ctxWakes.length === 1, "the withhold grain still wakes the seat (behaviour 3 swaps a body, it does not suppress the wake)");
+    ok(!blockOf(0).includes(REFUTED_BODY), "🔴 the refuted author's hydrated body reaches NO byte of the seat wake");
+    ok(lineFor(blockOf(0), REFUTED).includes(WITHHELD_BODY_MARKER), "…it arrives as the arrived-marker instead");
+    ok(lineFor(blockOf(0), REFUTED).includes(`sender_id=${REFUTED}`), "…with the identity metadata intact, so the marker reads as an arrival and not as a hole");
+    ok(lineFor(blockOf(0), MEMBER).includes(MEMBER_BODY), "NEGATIVE CONTROL: the member's line in the same block is untouched — the swap is per-author");
+    ok(nonMemberStamp(ctxWakes[0].auth) === undefined, "🔴 a WITHHELD hydrated line never keys taint — the seat wake's auth carries no chat-nonmember mark");
+    resetSettingsForTest();
+
+    ctxWakes.length = 0;
+    co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true, nameDropContext: hydrate });
+    ok(co.woke && nonMemberStamp(ctxWakes[0].auth) === "true", "NEGATIVE CONTROL: on the shipped `taint` grain the same hydrated line MARKS the turn");
+
+    ctxWakes.length = 0;
+    co = await routeSupervisorEvent(supEv(), ctxDeps());
+    ok(co.woke && ctxWakes[0].context === undefined, "an AMBIENT seat wake carries no context block (message-only, byte-identical)");
+    ctxWakes.length = 0;
+    co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true });
+    ok(co.woke && ctxWakes[0].context === undefined, "…and so does a name-drop seat wake whose road states no hydrator");
+  }
+
   wakes.length = 0;
   {
     const bs = [
@@ -1923,6 +2071,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       event: { type: "message", channel: "C_SUP", ts: "77.7", user: "U1", channel_type: "channel", text: "deploy looks green", ...over },
     })!;
   const backscrollCalls: Array<{ channelId: string; ts: string; sinceMs?: number }> = [];
+  const catchUpCalls: SeatCatchUpRequest[] = [];
   const fakeBackscrollEntries: WakeMessageInput[] = [
     { from: "human", author: "U_OLD", id: "10.0", sentAt: "2026-07-01T00:00:00.000Z", trust: "peer", body: "earlier chatter" },
   ];
@@ -1939,6 +2088,10 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     fetchBackscroll: async (input) => {
       backscrollCalls.push(input);
       return fakeBackscrollEntries;
+    },
+    catchUp: async (req) => {
+      catchUpCalls.push(req);
+      return { messages: fakeBackscrollEntries };
     },
     wake: async (input) => {
       wakes2.push(input);
@@ -1961,12 +2114,55 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   registerConfig({ ...catchUpBaseConfig, loadDomains: () => [...catchUpBaseConfig.loadDomains(), defineDomain({ name: "org", match: "org" })] });
   overrideSettingsForTest({ window: { topology: true } });
   out2 = await routeSupervisorEvent(supEv(), supDepsFresh(false));
-  ok(out2.woke && backscrollCalls.length === 1, "OPE-1695: an ONGOING generation's wake ALSO reads — the since-last-wake catch-up");
+  ok(out2.woke && catchUpCalls.length === 1, "OPE-1695: an ONGOING generation's wake ALSO reads — the since-last-wake catch-up");
+  ok(backscrollCalls.length === 0, "…through the SHARED catch-up path, not the bootstrap fetch (OPE-1726)");
   ok(
-    backscrollCalls[0]?.sinceMs === Date.parse("2026-07-09T11:00:00.000Z"),
+    catchUpCalls[0]?.sinceMs === Date.parse("2026-07-09T11:00:00.000Z"),
     "…bounded BELOW by the seat's own last wake, so it reads what it missed and not the whole reachback",
   );
+  ok(catchUpCalls[0]?.container === "C_SUP", "…addressed at the seat's own container");
+  ok(catchUpCalls[0]?.excludeId === "77.7", "…excluding the trigger, which rides the wake as the trigger message");
+  ok(catchUpCalls[0]?.untilMs === 77_700, "…and bounded ABOVE by the trigger's own send time");
   ok(wakes2[0]?.message.includes("earlier chatter"), "…and what it read renders into the wake as context");
+  ok(!wakes2[0]?.message.includes("<system-note>Catch"), "a surface that CAN catch up renders no unavailable note");
+
+  {
+    const latches: Array<{ threadTs: string; participating?: boolean }> = [];
+    const seatWakes: Array<{ token: string; message: string }> = [];
+    const withLatch = (nameDrop: boolean) => ({
+      ...supDepsFresh(false),
+      markEngaged: async (_p: unknown, threadTs: string, _at: string, o?: { participating?: boolean }) => {
+        latches.push({ threadTs, participating: o?.participating });
+      },
+      wake: async (input: { token: string; message: string }) => {
+        seatWakes.push(input);
+      },
+      ...(nameDrop ? {} : {}),
+    });
+    const ndOut = await routeSupervisorEvent(supEv(), withLatch(true) as unknown as SupervisorRouteDeps, { nameDrop: true });
+    ok(ndOut.woke && seatWakes.length === 1, "the name-drop tier wakes the STANDING SEAT (its own token), not a per-thread session");
+    ok(seatWakes[0].token.includes("oe-sup:g"), "…under the seat's own supervisor token");
+    ok(seatWakes[0].message.includes('addressing="name-drop"'), "…rendered as a name-drop wake");
+    ok(seatWakes[0].message.includes('follow-up="follows-on-reply"'), "…stating the name-drop follow-up contract");
+    ok(!seatWakes[0].message.includes('engagement="'), "…and carrying NO ambient calibration attribute (addressing, not watching)");
+    ok(latches.length === 1 && latches[0].threadTs === "77.7" && latches[0].participating === false, "…and latching the reply thread as a WATCHER, so a follow-up rolls into this seat even on a silent turn");
+
+    latches.length = 0;
+    seatWakes.length = 0;
+    const ambientOut = await routeSupervisorEvent(supEv(), withLatch(false) as unknown as SupervisorRouteDeps);
+    ok(ambientOut.woke && seatWakes[0].message.includes('addressing="channel-watch"'), "negative control: no tier ⇒ the ambient channel-watch wake");
+    ok(latches.length === 0, "negative control: an ambient wake latches no watcher row");
+  }
+
+  backscrollCalls.length = 0;
+  catchUpCalls.length = 0;
+  wakes2.length = 0;
+  out2 = await routeSupervisorEvent(supEv(), {
+    ...supDepsFresh(false),
+    catchUp: async () => ({ messages: [], unavailable: "teams: this surface cannot read its own history between wakes" }),
+  });
+  ok(out2.woke && wakes2[0]?.message.includes("cannot read its own history between wakes"), "an UNAVAILABLE catch-up renders its note into the wake");
+  ok(wakes2[0]?.message.includes("<system-note>"), "…as a trusted system-note, outside every message body");
 
   backscrollCalls.length = 0;
   wakes2.length = 0;

@@ -8,6 +8,7 @@ import {
   registerWakeOriginCodec,
   registerProviderDocs,
   registerReadAdapter,
+  registerSeatCatchUp,
   registerWebhookVerifier,
   registerSurfaceMessageOps,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -21,6 +22,7 @@ import { githubPostArm } from "./channels/github-post-arm.js";
 import { githubWakeOriginCodec } from "./channels/github-origin-codec.js";
 import { githubWebhookVerifier } from "./channels/github-webhook-verifier.js";
 import { githubReadAdapter } from "./channels/github-read.js";
+import { githubSeatCatchUpFetch } from "./channels/github-catch-up.js";
 import { githubMessageOps } from "./channels/github-message-ops.js";
 
 export function registerGithubProvider(): void {
@@ -31,6 +33,7 @@ export function registerGithubProvider(): void {
   registerPostArm(githubPostArm);
   registerWakeOriginCodec("github", githubWakeOriginCodec);
   registerReadAdapter(githubReadAdapter);
+  registerSeatCatchUp("github", githubSeatCatchUpFetch);
   registerSurfaceMessageOps(githubMessageOps);
   registerReactionSurface("github");
   registerWebhookVerifier(githubWebhookVerifier);

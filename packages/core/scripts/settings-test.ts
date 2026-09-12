@@ -238,8 +238,8 @@ console.log("5 — a bad override fails the boot, not a turn:");
   );
   refuses(
     () => defineSettings({ soak: { captureSurfacePrefix: ["slack/T1/", 7] } } as never),
-    "expected string",
-    "[5] …and a mixed-type array likewise — the validator rejects it, so the typeof problem stands",
+    "must be a string or an array of strings",
+    "[5] …and a mixed-type array is refused with the validator's GRAMMAR — a list is a supported spelling, so the bad ELEMENT is the mistake to report",
   );
 
   ok(defineSettings({ rotation: { turnBudget: 90 } }).rotation?.turnBudget === 90, "[5] 🔴 a rotation override is ACCEPTED (OPE-409 removed the by-name refusal)");
@@ -474,30 +474,55 @@ console.log("\n10 — wake.nameDrop.include / wake.nameDrop.exclude (OPE-571):")
   resetSettingsForTest();
 }
 
-console.log("\n11 — wake.slackDmDriver (OPE-1023):");
+console.log("\n11 — wake.slackDmDriver (OPE-1023, OPE-1739):");
 {
   resetSettingsForTest();
-  eq(at({}).wake.slackDmDriver, "", "[11] 🔴 the shipped value is EMPTY — an unconfigured deployment admits NO bot author at the DM door, which is the pre-OPE-1023 behaviour exactly");
+  eq(at({}).wake.slackDmDriver, [], "[11] 🔴 the shipped value is EMPTY — an unconfigured deployment admits NO bot author at the DM door, which is the pre-OPE-1023 behaviour exactly");
 
   registerSettings(defineSettings({ wake: { slackDmDriver: "T0123ABCD:B0456EFGH" } }));
-  eq(at({}).wake.slackDmDriver, "T0123ABCD:B0456EFGH", "[11] a well-formed `teamId:botId` pair resolves through");
+  eq(at({}).wake.slackDmDriver, "T0123ABCD:B0456EFGH", "[11] a well-formed `teamId:botId` pair resolves through as a bare STRING — the pre-list spelling still loads");
   resetSettingsForTest();
 
-  const refusesPair = (value: string, needle: string, label: string): void => {
-    let message = "";
+  registerSettings(defineSettings({ wake: { slackDmDriver: ["T0123ABCD:B0456EFGH", "T0123ABCD:B0999ZZZZ"] } }));
+  eq(at({}).wake.slackDmDriver, ["T0123ABCD:B0456EFGH", "T0123ABCD:B0999ZZZZ"], "[11] 🔴 a LIST of well-formed pairs resolves through with BOTH identities — the ship #199 gap was a second driver the one-pair lever could not name");
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { slackDmDriver: [] } }));
+  eq(at({}).wake.slackDmDriver, [], "[11] an EMPTY LIST loads and stays empty — the other spelling of 'admit nobody'");
+  resetSettingsForTest();
+
+  const refusalFor = (value: unknown): string => {
     try {
-      defineSettings({ wake: { slackDmDriver: value } });
+      defineSettings({ wake: { slackDmDriver: value as readonly string[] | string } });
+      return "";
     } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
+      return e instanceof Error ? e.message : String(e);
     }
-    ok(message.includes(needle), `${label} (got: ${message.slice(0, 160) || "NO THROW"})`);
   };
-  refusesPair("T0123ABCD:B0456EFGH,T0123ABCD:B0999ZZZZ", "exactly one", "[11] 🔴 a COMMA-SEPARATED list is refused — the DM door admits one named identity, and a list would let a reviewed diff widen silently");
-  refusesPair("B0456EFGH", "exactly one", "[11] a bare bot id with no workspace is refused — the pair is workspace-pinned or it is not a pin");
-  refusesPair("T0123ABCD", "exactly one", "[11] …and a bare workspace with no bot id is refused too");
-  refusesPair("T0123ABCD:b0456efgh", "exactly one", "[11] a lowercase bot id is refused — Slack ids are upper-case, and a case-insensitive match is a wider match");
-  refusesPair("123456789:987654321", "exactly one", "[11] a DISCORD `guildId:botUserId` pair is refused — this lever is the SLACK DM door's, and accepting the other surface's grammar would admit an identity nothing here can check");
-  refusesPair(" T0123ABCD:B0456EFGH ", "exactly one", "[11] a padded pair is refused rather than trimmed — the stored value is the value matched, with no normalisation step to disagree about");
+  const refusesPair = (value: unknown, label: string): void => {
+    const message = refusalFor(value);
+    ok(
+      message.includes("wake.slackDmDriver") && message.includes("teamId:botId"),
+      `${label} (got: ${message.slice(0, 160) || "NO THROW"})`,
+    );
+  };
+
+  refusesPair("T0123ABCD:B0456EFGH,T0123ABCD:B0999ZZZZ", "[11] 🔴 a COMMA-SEPARATED string is refused — two identities are written as an ARRAY, so there is exactly one way to spell a list");
+  refusesPair("B0456EFGH", "[11] a bare bot id with no workspace is refused — the pair is workspace-pinned or it is not a pin");
+  refusesPair("T0123ABCD", "[11] …and a bare workspace with no bot id is refused too");
+  refusesPair("T0123ABCD:b0456efgh", "[11] a lowercase bot id is refused — Slack ids are upper-case, and a case-insensitive match is a wider match");
+  refusesPair("123456789:987654321", "[11] a DISCORD `guildId:botUserId` pair is refused — this lever is the SLACK DM door's, and accepting the other surface's grammar would admit an identity nothing here can check");
+  refusesPair(" T0123ABCD:B0456EFGH ", "[11] a padded pair is refused rather than trimmed — the stored value is the value matched, with no normalisation step to disagree about");
+  refusesPair(["T0123ABCD:B0456EFGH", "not-a-pair"], "[11] 🔴 a list with ONE malformed element is refused WHOLE — a per-element skip would load a roll that silently differs from the reviewed diff");
+  refusesPair(["T0123ABCD:B0456EFGH", "123456789:987654321"], "[11] …and a Discord pair hidden in an otherwise valid list is refused too");
+  refusesPair([42], "[11] a non-string element is refused — the grammar is checked, not assumed");
+
+  ok(
+    !refusalFor("T0123ABCD").includes("expected object"),
+    "[11] 🔴 a malformed BARE STRING is NOT refused as a wrong TYPE — the bare string is a supported spelling, so the shape complaint would be actively misleading",
+  );
+  eq(refusalFor(["T0123ABCD:B0456EFGH"]), "", "[11] a well-formed list is not refused at all");
+  eq(refusalFor("T0123ABCD:B0456EFGH"), "", "[11] …and neither is a well-formed bare string");
 
   resetSettingsForTest();
 }

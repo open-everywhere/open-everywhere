@@ -13,6 +13,7 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
+  "seat-catch-up": "supported",
   "name-drop-mention": { unsupported: "not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake" },
   "message-edit-wake": { unsupported: "every wake leg admits `action: \"created\"` only — eve's route, the ambient extractor and the stop leg each refuse an edited comment" },
   threads: "supported",

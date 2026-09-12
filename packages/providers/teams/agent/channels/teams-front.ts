@@ -81,6 +81,8 @@ import {
   RateLimitExhaustedError,
   receiptEventTime,
   spreadVendorTs,
+  seatCatchUp,
+  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -323,9 +325,16 @@ export function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerAr
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => teamsSupervisorToken(channelId, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, tail };
       }
-      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, tail: [] as readonly WakeMessageInput[] };
+      return {
+        token: existing.token,
+        generation: existing.generation,
+        freshGeneration: existing.firstWakeAt == null,
+        tail: [] as readonly WakeMessageInput[],
+        lastWakeAt: existing.lastWakeAt ?? null,
+      };
     },
     touchSession: (_surfaceKey, atIso) => store.touchChannelSession(org, grain.registryKey, atIso),
+    catchUp: (req) => seatCatchUp("teams", req, { admit: seatAdmissionFor(req.channelKey) }),
     recordWake: (entry, token) => recordWakeTail(org, grain.registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
@@ -406,6 +415,7 @@ export async function liveTeamsDispatch(
       surfaceKey: plan.surfaceKey,
       containerKey: plan.partition.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
+      ...(a.teamId ? { teamId: a.teamId } : {}),
       auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
         surfaceKey: plan.surfaceKey,
         ...teamsRoomGroupKey(auth),

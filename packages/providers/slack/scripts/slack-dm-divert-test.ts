@@ -402,7 +402,10 @@ async function runFront(
   const DRIVER_PAIR = `${TEAM}:${DRIVER_BOT}`;
   const SELF_PAIRABLE = "B0SELF77";
 
-  const arm = (pair: string): void => void overrideSettingsForTest({ wake: { slackDmDriver: pair } });
+  const DRIVER_BOT_2 = "B0DRIVER88";
+  const DRIVER_PAIR_2 = `${TEAM}:${DRIVER_BOT_2}`;
+
+  const arm = (pairs: readonly string[] | string): void => void overrideSettingsForTest({ wake: { slackDmDriver: pairs } });
 
   arm(DRIVER_PAIR);
   const DRIVER_TS = "1768686402.910001";
@@ -432,9 +435,49 @@ async function runFront(
 
   const OTHER_TS = "1768686402.910002";
   const other = await runFront(dmEnvelope("Ev7bOther", { bot_id: OTHER_BOT, ts: OTHER_TS }), { partnerTrust: "internal" });
-  eq(other.dispatched.length, 0, "🔴 a DIFFERENT bot in the SAME workspace still wakes nothing — the setting names ONE identity, not 'bots we have heard of'");
+  eq(other.dispatched.length, 0, "🔴 a DIFFERENT bot in the SAME workspace still wakes nothing — the setting names identities, not 'bots we have heard of'");
   eq((await admitRows(OTHER_TS)).length, 0, "…and writes no admitted row");
   eq((await dropRows(OTHER_TS)).length, 1, "…and still writes its `surface.wake_dropped` row, exactly as before the carve-out existed");
+
+  arm([DRIVER_PAIR, DRIVER_PAIR_2]);
+
+  const LISTED_1_TS = "1768686402.910010";
+  const listed1 = await runFront(dmEnvelope("Ev7bListed1", { bot_id: DRIVER_BOT, ts: LISTED_1_TS }), { partnerTrust: "internal" });
+  eq(listed1.dispatched.length, 1, "🔴 the FIRST listed driver identity is admitted from a LIST — the one-pair spelling's behaviour survives the widening to a list");
+  eq((await admitRows(LISTED_1_TS)).length, 1, "…and writes its `surface.wake_admitted` row");
+
+  const LISTED_2_TS = "1768686402.910020";
+  const listed2 = await runFront(dmEnvelope("Ev7bListed2", { bot_id: DRIVER_BOT_2, ts: LISTED_2_TS }), { partnerTrust: "internal" });
+  eq(listed2.dispatched.length, 1, "🔴 the SECOND listed driver identity is ALSO admitted — this is the live-run drop, and it is the whole point of the list");
+  eq(listed2.dispatched[0]!.target.surfaceKey, SURFACE, "…into the DM's OWN window seat, the same one the first driver resolves");
+  {
+    const rows = await admitRows(LISTED_2_TS);
+    eq(rows.length, 1, "…and writes exactly ONE `surface.wake_admitted` row");
+    eq((rows[0]!.detail as Record<string, unknown>).botId, DRIVER_BOT_2, "…naming the SECOND bot record, so a soak review can tell the two drivers apart");
+  }
+
+  const UNLISTED_TS = "1768686402.910030";
+  const unlisted = await runFront(dmEnvelope("Ev7bUnlisted", { bot_id: OTHER_BOT, ts: UNLISTED_TS }), { partnerTrust: "internal" });
+  eq(unlisted.dispatched.length, 0, "🔴 an UNLISTED bot is still refused with TWO identities listed — a longer list must not become 'any bot in this workspace'");
+  eq((await admitRows(UNLISTED_TS)).length, 0, "…and writes no admitted row");
+  eq((await dropRows(UNLISTED_TS)).length, 1, "…and still writes its ordinary `surface.wake_dropped` row");
+
+  arm(DRIVER_PAIR);
+  const COMPAT_TS = "1768686402.910040";
+  const compat = await runFront(dmEnvelope("Ev7bCompat", { bot_id: DRIVER_BOT, ts: COMPAT_TS }), { partnerTrust: "internal" });
+  eq(compat.dispatched.length, 1, "a BARE STRING still admits the single identity it names — the pre-list spelling keeps working");
+  const COMPAT_OTHER_TS = "1768686402.910050";
+  const compatOther = await runFront(dmEnvelope("Ev7bCompatOther", { bot_id: DRIVER_BOT_2, ts: COMPAT_OTHER_TS }), { partnerTrust: "internal" });
+  eq(compatOther.dispatched.length, 0, "🔴 …and admits NOTHING ELSE — the negative control that keeps the line above from passing on an open door");
+
+  arm([]);
+  const EMPTY_LIST_TS = "1768686402.910060";
+  const emptyList = await runFront(dmEnvelope("Ev7bEmptyList", { bot_id: DRIVER_BOT, ts: EMPTY_LIST_TS }), { partnerTrust: "internal" });
+  eq(emptyList.dispatched.length, 0, "🔴 an EMPTY LIST admits nobody, exactly as the empty string does — both spellings of empty are the shipped posture");
+  eq((await admitRows(EMPTY_LIST_TS)).length, 0, "…and writes no admitted row");
+  eq((await dropRows(EMPTY_LIST_TS)).length, 1, "…and STILL writes its ordinary `surface.wake_dropped` row — the posture claim is 'byte-identical, audit row included', so the row is part of what empty means");
+
+  arm(DRIVER_PAIR);
 
   const FOREIGN_TEAM_TS = "1768686402.910003";
   const foreignTeamEnvelope = JSON.stringify({

@@ -72,6 +72,8 @@ import {
   carryTailForward,
   type WakeMessageInput,
   recordWakeTail,
+  seatCatchUp,
+  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -245,9 +247,16 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, tail };
       }
-      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, tail: [] as readonly WakeMessageInput[] };
+      return {
+        token: existing.token,
+        generation: existing.generation,
+        freshGeneration: existing.firstWakeAt == null,
+        tail: [] as readonly WakeMessageInput[],
+        lastWakeAt: existing.lastWakeAt ?? null,
+      };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
+    catchUp: (req) => seatCatchUp("github", req, { admit: seatAdmissionFor(req.channelKey) }),
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, githubGrainFor(surfaceKey).registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {

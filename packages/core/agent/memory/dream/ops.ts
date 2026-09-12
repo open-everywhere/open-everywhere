@@ -127,7 +127,6 @@ export function reorderBySalience(files: MemoryFiles): { files: MemoryFiles; ops
   return { files: out, ops };
 }
 
-
 const STOP = new Set([
   "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for", "with", "is",
   "are", "was", "were", "be", "by", "at", "as", "it", "its", "this", "that", "from",

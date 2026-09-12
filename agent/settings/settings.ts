@@ -12,5 +12,5 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   identity: { name: "Open Everywhere" },
 
-  wake: { slackDmDriver: "T0EXAMPLE:B0EXBOT0001" },
+  wake: { slackDmDriver: ["T0EXAMPLE:B0EXBOT0001", "T0EXAMPLE:B0EXBOT0002"] },
 });

@@ -4,6 +4,9 @@ import {
   shouldRotate,
   singleWindowMentionPolicy,
   stampNonMemberChatAuth,
+  seatCatchUpSinceMs,
+  type SeatCatchUpRequest,
+  type SeatCatchUpResult,
   type NormalizedWake,
   type WakeEngagementTier,
   type ContextLine,
@@ -14,6 +17,8 @@ import {
   type SessionTailEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
+
+const GITHUB_CATCH_UP_REACHBACK_HOURS = 168;
 
 export function githubSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -75,6 +80,7 @@ export interface GitHubSupervisorWakeInput {
   };
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
+  readonly catchUpUnavailable?: string;
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -99,6 +105,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     contextLines,
     contextSource: contextLines ? "the issue/PR this comment is on" : undefined,
     backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
+    ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorLogin ?? "unknown",
@@ -180,6 +187,7 @@ export interface GitHubSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
+  readonly lastWakeAt?: string | null;
   readonly tail: readonly WakeMessageInput[];
 }
 
@@ -195,6 +203,7 @@ export interface GitHubSupervisorDeps {
     context: readonly string[];
     window?: UnifiedWindowWake;
   }) => Promise<void>;
+  readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
   readonly now?: () => string;
 }
 
@@ -217,7 +226,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.owner, d.repo, atIso);
 
-  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[], catchUpUnavailable?: string) => {
     const nw = buildGitHubSupervisorWake({
       owner: d.owner,
       repo: d.repo,
@@ -228,13 +237,24 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       wakeId: d.window?.wakeId,
       directMention: d.directMention,
       tail,
+      catchUpUnavailable,
     });
     const { message, context } = renderWake(nw, deps.now);
     const auth = stampNonMemberChatAuth(d.auth, d.ingested, { surfaceKey: d.surfaceKey });
     await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
+  const catchUp =
+    session.freshGeneration || !deps.catchUp
+      ? undefined
+      : await deps.catchUp({
+          container: `${d.owner}/${d.repo}#${d.issueNumber}`,
+          sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), GITHUB_CATCH_UP_REACHBACK_HOURS),
+          untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
+          excludeId: d.trigger.id,
+          channelKey: d.surfaceKey,
+        });
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
   if (deps.recordWake) {
     await deps.recordWake(

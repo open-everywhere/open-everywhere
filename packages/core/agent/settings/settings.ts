@@ -1,5 +1,5 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
-import { SLACK_DRIVER_PAIR } from "../testing/driver-allowlist.js";
+import { SLACK_DRIVER_PAIR, slackDmDriverPairs } from "../testing/driver-allowlist.js";
 import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
@@ -127,7 +127,7 @@ export interface AgentSettings {
   readonly wake: {
     readonly nameDropInclude: readonly string[];
     readonly nameDropExclude: readonly string[];
-    readonly slackDmDriver: string;
+    readonly slackDmDriver: readonly string[] | string;
   };
   readonly webhooks: {
     readonly allowUnverified: boolean;
@@ -145,6 +145,7 @@ export interface SettingSpec<T> {
   readonly shipped: T;
   readonly parseEnv?: (raw: string) => T | undefined;
   readonly validate?: (value: T) => string | undefined;
+  readonly alsoAccepts?: "string" | "object";
   readonly summary: string;
   readonly format?: (value: T) => string;
 }
@@ -540,6 +541,7 @@ export const SETTINGS = {
     captureSurfacePrefix: {
       path: "soak.captureSurfacePrefix",
       shipped: "" as string | readonly string[],
+      alsoAccepts: "object",
       validate: stringOrStringArray,
       summary:
         "Narrow `soak.capture` to part of the deployment: a call is recorded only when its surface key starts with one of these prefixes. A bare string is shorthand for a one-prefix list. Surface keys read `platform/workspace/surface`, so `\"slack/T0123/\"` is one workspace and `\"slack/T0123/C0SOAK\"` is one channel — a list lets a run scope several platform families at once (e.g. `[\"slack/T0123/\", \"notion/ws1/\"]`) instead of only one. **Set it whenever you arm capture.** Empty (shipped `\"\"`, or `[]`, or any list containing `\"\"`) means every surface, which records the deployment's whole conversational traffic and is almost never what a soak run wants.",
@@ -654,15 +656,21 @@ export const SETTINGS = {
     } satisfies SettingSpec<readonly string[]>,
     slackDmDriver: {
       path: "wake.slackDmDriver",
-      shipped: "",
-      validate: (v) =>
-        v === "" || SLACK_DRIVER_PAIR.test(v)
-          ? undefined
-          : 'must be "" or exactly one Slack `teamId:botId` pair (e.g. "T0123ABCD:B0456EFGH")',
+      shipped: [] as readonly string[] | string,
+      alsoAccepts: "string",
+      validate: (v) => {
+        const bad = 'must be "" or Slack `teamId:botId` pairs (e.g. "T0123ABCD:B0456EFGH"), as one string or an array';
+        if (typeof v === "string") return v === "" || SLACK_DRIVER_PAIR.test(v) ? undefined : bad;
+        if (!Array.isArray(v)) return bad;
+        return v.every((pair) => typeof pair === "string" && SLACK_DRIVER_PAIR.test(pair)) ? undefined : bad;
+      },
       summary:
-        "The ONE Slack bot identity the DM DOOR admits, written as a `teamId:botId` pair — the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`. Slack stamps `bot_id` on anything an app posts through the Web API, a USER token included, so without this the e2e driver cannot drive a real Slack DM and the DM legs can only forge an envelope. Empty (shipped) ⇒ the DM door admits NO bot author at all: every bot-authored DM drops with its `surface.wake_dropped` row, exactly as before. Set ⇒ that ONE identity's DM wakes the DM seat like a human's, writes a `surface.wake_admitted` row naming the carve-out, and its author trust resolves from the HUMAN `user` the post carries — no trust is invented for the bot. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a DM seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
-      format: (v) => (v === "" ? "(none)" : v),
-    } satisfies SettingSpec<string>,
+        "The Slack bot identities the DM DOOR admits, each written as a `teamId:botId` pair — the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`. Give a list, or a bare string for a single identity. Slack stamps `bot_id` on anything an app posts through the Web API, a USER token included, so without this the e2e driver cannot drive a real Slack DM and the DM legs can only forge an envelope. Empty (shipped) ⇒ the DM door admits NO bot author at all: every bot-authored DM drops with its `surface.wake_dropped` row, exactly as before. Set ⇒ a LISTED identity's DM wakes the DM seat like a human's, writes a `surface.wake_admitted` row naming the carve-out, and its author trust resolves from the HUMAN `user` the post carries — no trust is invented for the bot. An unlisted bot is refused exactly as it was before. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a DM seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
+      format: (v) => {
+        const pairs = slackDmDriverPairs(v);
+        return pairs.length > 0 ? pairs.join(", ") : "(none)";
+      },
+    } satisfies SettingSpec<readonly string[] | string>,
   },
   webhooks: {
     allowUnverified: {
@@ -689,7 +697,7 @@ export const SETTINGS = {
       path: "window.topology",
       shipped: false,
       summary:
-        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Arm deliberately: a `unified` window is a wider data blast radius.** ⚠️ The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — is wired on **Slack only** today; on every other surface a seat reads its bootstrap window and nothing between its own wakes (OPE-1726).",
+        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Arm deliberately: a `unified` window is a wider data blast radius.** The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — runs on every surface through one shared path, each reading its own container (a Slack or Discord channel, a Teams channel over Microsoft Graph, a GitHub issue or pull request, a Linear issue, a Notion page discussion). A surface that registers NO history fetch states that in the wake rather than arriving with an empty context; a registered read that fails stays fail-soft to empty, so a revoked history scope reads as a quiet room.",
     } satisfies SettingSpec<boolean>,
   },
 };
@@ -698,12 +706,12 @@ export type AgentSettingsOverrides = {
   readonly [G in keyof AgentSettings]?: { readonly [K in keyof AgentSettings[G]]?: AgentSettings[G][K] };
 };
 
-function validatorAccepts(spec: SettingSpec<unknown>, value: unknown): boolean {
-  if (spec.validate === undefined) return false;
+function validatorVerdict(spec: SettingSpec<unknown>, value: unknown): string | null | undefined {
+  if (spec.validate === undefined) return null;
   try {
-    return spec.validate(value) === undefined;
+    return spec.validate(value) ?? undefined;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -737,8 +745,14 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
       }
       if (value === undefined) continue;
       if (typeof value !== typeof spec.shipped) {
-        if (!validatorAccepts(spec, value)) {
-          problems.push(`${spec.path}: expected ${typeof spec.shipped}, got ${typeof value}`);
+        const verdict = validatorVerdict(spec, value);
+        if (verdict !== undefined) {
+          const declaredArm = spec.alsoAccepts === typeof value && verdict !== null;
+          problems.push(
+            declaredArm
+              ? `${spec.path}: ${verdict} (got ${JSON.stringify(value)})`
+              : `${spec.path}: expected ${typeof spec.shipped}, got ${typeof value}`,
+          );
         }
         continue;
       }

@@ -141,10 +141,14 @@ function toIntermediate(m: GraphChatMessage): Intermediate | undefined {
 }
 
 export function teamsLinesFromRaw(raw: unknown): TeamsRenderedLine[] {
+  return teamsTimedLinesFromRaw(raw).map(({ createdMs: _createdMs, ...line }) => line);
+}
+
+export function teamsTimedLinesFromRaw(raw: unknown): Array<TeamsRenderedLine & { readonly createdMs: number }> {
   if (!Array.isArray(raw)) return [];
   const lines = (raw as GraphChatMessage[]).map(toIntermediate).filter((l): l is Intermediate => l !== undefined);
   lines.sort((a, b) => a.createdMs - b.createdMs);
-  return lines.map(({ createdMs: _createdMs, ...line }) => line);
+  return lines;
 }
 
 interface GraphPage {
@@ -152,7 +156,7 @@ interface GraphPage {
   readonly ["@odata.nextLink"]?: string;
 }
 
-async function fetchGraphPages(req: TeamsGraphRequester, initialUrl: string, limit: number): Promise<GraphChatMessage[]> {
+export async function fetchGraphPages(req: TeamsGraphRequester, initialUrl: string, limit: number): Promise<GraphChatMessage[]> {
   const all: GraphChatMessage[] = [];
   let url: string | undefined = initialUrl;
   for (let page = 0; page < TEAMS_GRAPH_MAX_PAGES && url && all.length < limit; page++) {
@@ -163,11 +167,11 @@ async function fetchGraphPages(req: TeamsGraphRequester, initialUrl: string, lim
   return all;
 }
 
-function channelMessagesUrl(teamId: string, channelId: string): string {
+export function channelMessagesUrl(teamId: string, channelId: string): string {
   return `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=${TEAMS_GRAPH_PAGE_SIZE}`;
 }
 
-function threadRepliesUrl(teamId: string, channelId: string, rootMessageId: string): string {
+export function threadRepliesUrl(teamId: string, channelId: string, rootMessageId: string): string {
   return `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(rootMessageId)}/replies?$top=${TEAMS_GRAPH_PAGE_SIZE}`;
 }
 

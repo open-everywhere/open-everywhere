@@ -13,6 +13,7 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
+  "seat-catch-up": "supported",
   "name-drop-mention": { unsupported: "not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake" },
   "message-edit-wake": { unsupported: "the ambient leg admits `Comment` with `action: \"create\"` only — an edit returns null before the classifier" },
   threads: "supported",
