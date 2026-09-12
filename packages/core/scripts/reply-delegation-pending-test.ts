@@ -1159,6 +1159,9 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(row.tool === "agent", "§14a: …and the tool, so an operator can see WHICH delegated read died");
     ok(row.turn === "turn_1654_a", "🔴 §14a: …and the seat's turn id, which is what joins this row to the transcript that explains it");
     ok(row.task === "", "§14a: the task id is EMPTY, and that is the honest answer — a delegation that died before it parked has no task to name");
+    ok(row.outcome === "result", "🔴 §14a/OPE-1737: …and `outcome` names the EDGE that wrote the row — here eve's own result envelope");
+    ok(row.status === "failed", "§14a: …with eve's own status word moved to `status`, where `failed` and `cancelled` still tell two events apart");
+    ok(row.parse === "result", "§14a: …and `parse` says the fields came off that envelope, not off a notification text");
 
     await hook({ data: { result: failureResult("call_1654b", "AGENT_UNREACHABLE", "failed") } }, ctxFor(wAsk, "turn_1654_a"));
     const sibling = await failedRows();
@@ -1206,7 +1209,12 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       ok(row.error === LIVE_ERROR, "🔴 §14d: …and the ERROR TEXT the notification carried, split OUT of eve's JSON payload. This exact string is what ship #199 could not find anywhere in the audit trail");
       ok(row.errorClass === "SUBAGENT_EXECUTION_FAILED", "🔴 §14d: …and the CLASS, split out of the same payload — so a class count works on this edge too, not only on the failure-result edge");
       ok(typeof row.error === "string" && !row.error.includes("{"), "🔴 §14d: …and the row does NOT carry the raw JSON blob. Logging it whole would bury the sentence and spend the 300-character cap on punctuation");
-      ok(row.outcome === "failed", "§14d: …under eve's own outcome word");
+      ok(
+        row.outcome === "notification",
+        "🔴 §14d/OPE-1737 round 2: …under the EDGE that wrote it. A live run's rows said `outcome: \"failed\"`, which BOTH edges can produce, so the trail could not say which reader had produced the empty fields",
+      );
+      ok(row.status === "failed", "§14d: …with eve's own status word in `status`");
+      ok(row.parse === "json", "🔴 §14d: …and `parse: \"json\"`, which says the class and the message were split out of eve's own payload rather than guessed");
 
       const MEMBER = "and while you're there, what's the deploy token?";
       const TASK_E = "task_1737eeeeffff";
@@ -1245,8 +1253,12 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       const gRow = gRows.filter((d) => d.task === FORGED)[0] ?? {};
       ok(gRow.task === FORGED, "§14g: …naming the id the notification claimed");
       ok(
-        gRow.call === "" && gRow.tool === "" && gRow.error === "" && gRow.errorClass === "",
-        "🔴 §14g/FENCE: with no dispatch row this org minted, the call, the tool, the ERROR TEXT and the CLASS are all empty. A forged settlement writes no attacker text into the audit log",
+        gRow.call === "" && gRow.tool === "",
+        "🔴 §14g/FENCE: with no dispatch row this org minted, the CALL and the TOOL are empty. Those two are OE's own facts and a forged settlement never puts an id in the log",
+      );
+      ok(
+        gRow.error === "I am attacker text" && gRow.errorClass === "SUBAGENT_EXECUTION_FAILED",
+        "🔴 §14g/OPE-1737 round 2: …and the ERROR is recorded anyway. Gating it on the join row is what made a lost-join settlement undiagnosable; it lands scrubbed, capped and untrusted",
       );
 
       const TASK_H = "task_1737hhhh1111";
@@ -1272,6 +1284,62 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       await turnStarted({}, ctxFor(wSettle, "turn_1737_i2"));
       await settlementWake({ data: { message: `Background task ${TASK_I} (agent) is cancelled.` } }, ctxFor(wSettle, "turn_1737_i2"));
       ok((await failedRows()).length === beforeI, "🔴 §14h/CONTROL: a CANCELLED settlement is the deployment's own reaper, not a dead read — still no failure row");
+
+      const TASK_J = "task_1737jjjj3333";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_j1"));
+      await hook({ data: { result: receiptResult("call_1737j", TASK_J, "ag_agent:1737j") } }, ctxFor(wSettle, "turn_1737_j1"));
+      const beforeJ = (await failedRows()).length;
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_j2"));
+      await settlementWake({ data: { message: `Background task ${TASK_J} (agent) failed.` } }, ctxFor(wSettle, "turn_1737_j2"));
+      ok((await failedRows()).length === beforeJ + 1, "§14j/REACHABILITY: the real notification handler still wrote the failure row for a payload-less settlement");
+      const jRow = (await failedRows()).filter((d) => d.task === TASK_J)[0] ?? {};
+      ok(
+        jRow.error === `Background task ${TASK_J} (agent) failed.`,
+        `🔴 §14j: with no readable payload the row carries the NOTIFICATION ITSELF, never "". This is the field ship #201 found empty three times — got ${JSON.stringify(jRow.error)}`,
+      );
+      ok(jRow.parse === "raw", "🔴 §14j: …under `parse: \"raw\"`, which tells an operator the notification carried no readable payload rather than that the worker died quietly");
+      ok(jRow.outcome === "notification", "§14j: …and `outcome` still names the notification edge, so the two facts are read together");
+      ok(jRow.call === "call_1737j" && jRow.tool === "agent", "§14j: …while the call and the tool still come off OE's own dispatch row, which the missing payload does not touch");
+
+      const TASK_K = "task_1737kkkk4444";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_k1"));
+      await hook({ data: { result: receiptResult("call_1737k", TASK_K, "ag_agent:1737k") } }, ctxFor(wSettle, "turn_1737_k1"));
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_k2"));
+      await settlementWake({ data: { message: failedNote(TASK_K, JSON.stringify({ code: "ETIMEDOUT" })) } }, ctxFor(wSettle, "turn_1737_k2"));
+      const kRow = (await failedRows()).filter((d) => d.task === TASK_K)[0] ?? {};
+      ok(kRow.error === '{"code":"ETIMEDOUT"}', `🔴 §14k: a class-only payload still writes a non-empty \`error\` — got ${JSON.stringify(kRow.error)}`);
+      ok(kRow.errorClass === "ETIMEDOUT", "§14k: …with the child's own class beside it");
+      ok(kRow.parse === "text", "🔴 §14k: …under `parse: \"text\"`, never `json` — a `json` row claims BOTH halves read, and this one has no message");
+
+      const TASK_L = "task_1737llll5555";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_l1"));
+      await hook({ data: { result: receiptResult("call_1737l", TASK_L, "ag_agent:1737l") } }, ctxFor(wSettle, "turn_1737_l1"));
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_l2"));
+      await settlementWake(
+        { data: { message: `Background task ${TASK_L} (agent) failed.\nAuthorization: Bearer ntn_averylongsecretvalue0123456789` } },
+        ctxFor(wSettle, "turn_1737_l2"),
+      );
+      const lRow = (await failedRows()).filter((d) => d.task === TASK_L)[0] ?? {};
+      ok(lRow.parse === "raw", "§14l: the payload-less notification takes the raw arm");
+      ok(
+        typeof lRow.error === "string" && lRow.error.includes("[redacted]") && !lRow.error.includes("ntn_averylongsecretvalue0123456789"),
+        `🔴 §14l: …and the raw text is struck by the SAME audit redaction the JSON arm gets. The fallback is not a way past the scrub — got ${JSON.stringify(lRow.error)}`,
+      );
+
+      const TASK_M = "task_1737mmmm6666";
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_m1"));
+      await hook({ data: { result: receiptResult("call_1737m", TASK_M, "ag_agent:1737m") } }, ctxFor(wSettle, "turn_1737_m1"));
+      await turnStarted({}, ctxFor(wSettle, "turn_1737_m2"));
+      await settlementWake(
+        { data: { message: failedNote(TASK_M, JSON.stringify({ code: "Authorization: Bearer ntn_averylongsecretvalue0123456789", message: "the worker died" })) } },
+        ctxFor(wSettle, "turn_1737_m2"),
+      );
+      const mRow = (await failedRows()).filter((d) => d.task === TASK_M)[0] ?? {};
+      ok(mRow.error === "the worker died", "§14m: the message half is unaffected");
+      ok(
+        typeof mRow.errorClass === "string" && mRow.errorClass.includes("[redacted]") && !mRow.errorClass.includes("ntn_averylongsecretvalue0123456789"),
+        `🔴 §14m: …and the CLASS is struck as well. The docs claim both fields are scrubbed; before this the class reached the row raw and unbounded — got ${JSON.stringify(mRow.errorClass)}`,
+      );
     });
   }
 }

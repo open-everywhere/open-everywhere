@@ -63,6 +63,7 @@ import {
   replyPostCount,
   reportedDirectMention,
   reportedNameDrop,
+  reportedSeatedChannelWatch,
   reportedThreadFollow,
   standDownAttemptedButUnmarked,
   standDownMarked,
@@ -328,6 +329,7 @@ async function gateEngagedWake(
     readonly surface?: string;
     readonly leg: string;
     readonly expect: "addressed" | "thread-follow" | "name-drop";
+    readonly seatedChannelWatchRoom?: string;
   },
 ): Promise<void> {
   const posts = await awaitReplyPostRows(ctx.auditRead!, {
@@ -346,15 +348,20 @@ async function gateEngagedWake(
     ctx.log(`${opts.leg}: ${opts.platform} writes no dispatch row on the addressed-only path — what woke it is evidenced by the stand-down row below, not here`);
     return;
   }
+  const seatedRoom = opts.expect === "thread-follow" ? opts.seatedChannelWatchRoom : undefined;
   const held =
     opts.expect === "addressed"
       ? reportedDirectMention(dispatched, opts.platform)
       : opts.expect === "name-drop"
         ? reportedNameDrop(dispatched, opts.platform)
-        : reportedThreadFollow(dispatched, opts.platform);
+        : reportedThreadFollow(dispatched, opts.platform) || (seatedRoom !== undefined && reportedSeatedChannelWatch(dispatched, opts.platform, seatedRoom));
+  const wanted =
+    seatedRoom === undefined
+      ? `"${opts.expect}"`
+      : `"thread-follow", or "channel-watch" on a singleWindow:true row naming ${seatedRoom} — under standing seats the auto-thread is a SEATED CHANNEL in its own right, so its follow-up diverts as that channel's own wake and the divert reports the classifier's word; a channel-watch with no seat, or from another room, is still unowned room chatter and still reds`;
   ctx.gate(
     held,
-    `${opts.leg}: the ${opts.platform}.dispatched row says what woke it, and it is "${opts.expect}" (saw ${JSON.stringify(seen)})`,
+    `${opts.leg}: the ${opts.platform}.dispatched row says what woke it, and it is ${wanted} (saw ${JSON.stringify(seen)})`,
   );
 }
 
@@ -5376,7 +5383,13 @@ export const SCENARIOS: readonly Scenario[] = [
         what: `a bot reply to the plain follow-up in thread ${threadId} that is not a turn-cancel note`,
       });
       ctx.gate(second.content.trim().length > 0, "engaged: the plain follow-up drew a FRESH reply with substance and no re-mention");
-      await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "discord", leg: "engaged follow-up", expect: "thread-follow" });
+      await gateEngagedWake(ctx, {
+        sinceIso: followFrom,
+        platform: "discord",
+        leg: "engaged follow-up",
+        expect: "thread-follow",
+        seatedChannelWatchRoom: threadId,
+      });
 
       const stopFrom = new Date().toISOString();
       const stopMsg = await discord.post(ENGAGED_STOP_ASK, threadId);

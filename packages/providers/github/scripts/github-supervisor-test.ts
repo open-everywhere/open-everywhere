@@ -40,17 +40,20 @@ for (const vouched of [true, false]) {
   for (const ambient of [true, false]) {
     const suppressed = shouldSuppressNativeMention(true, vouched);
     const mentionAddressing = vouched ? "direct" : "drop";
-    const ambientKeeps = githubAmbientLegKeeps(mentionAddressing, ambient);
+    const ambientKeeps = githubAmbientLegKeeps(mentionAddressing, ambient, false);
     ok(
       suppressed === ambientKeeps,
       `seated repo, vouched=${vouched}, ambient=${ambient}: EXACTLY ONE leg owns the @mention — native stands down iff the ambient leg keeps it (suppressed=${suppressed}, kept=${ambientKeeps}); any disagreement is a gap (nobody answers) or a double turn`,
     );
   }
 }
-ok(githubAmbientLegKeeps("direct", false), "🔴 the regression case: an ADDRESSED comment is kept with the chattiness flag OFF");
-ok(!githubAmbientLegKeeps("channel-watch", false), "…while ordinary ambient talk with the flag off is still refused (and audited)");
-ok(githubAmbientLegKeeps("channel-watch", true), "…and is kept when the domain opted in");
-ok(!githubAmbientLegKeeps("drop", true), "the classifier's own DROP is final — the flag never re-opens it");
+ok(githubAmbientLegKeeps("direct", false, false), "🔴 the regression case: an ADDRESSED comment is kept with the chattiness flag OFF");
+ok(!githubAmbientLegKeeps("channel-watch", false, false), "…while ordinary ambient talk with the flag off is still refused (and audited)");
+ok(githubAmbientLegKeeps("channel-watch", true, false), "…and is kept when the domain opted in");
+ok(!githubAmbientLegKeeps("drop", true, false), "the classifier's own DROP is final — the flag never re-opens it");
+
+ok(githubAmbientLegKeeps("channel-watch", false, true), "🔴 the measured case: an ENGAGED container's plain follow-up is kept with the chattiness flag OFF — and the un-engaged row above, refused with the same two other inputs, is what makes this a door rather than an open gate");
+ok(!githubAmbientLegKeeps("drop", false, true), "the classifier's own DROP is final — enrolment never re-opens it either");
 
 const base: GitHubAmbientComment = { body: "looks good, shipping this after lunch", authorLogin: "human-dev", authorType: "User", repoPrivate: true };
 

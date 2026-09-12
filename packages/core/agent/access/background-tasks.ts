@@ -55,7 +55,7 @@ export type DelegationFailure = {
   readonly errorClass: string;
   readonly errorText: string;
   readonly tool: string;
-  readonly outcome: string;
+  readonly status: string;
 };
 
 export function readDelegationFailure(result: unknown): DelegationFailure | null {
@@ -85,7 +85,7 @@ export function readDelegationFailure(result: unknown): DelegationFailure | null
       errorClass: typeof code === "string" && code.length > 0 ? code : "",
       errorText: typeof message === "string" ? message : "",
       tool: typeof r.subagentName === "string" ? r.subagentName : "",
-      outcome: typeof outcome === "string" && outcome.length > 0 ? outcome : "failed",
+      status: typeof outcome === "string" && outcome.length > 0 ? outcome : "failed",
     };
   } catch {
     return null;
@@ -152,12 +152,15 @@ export function readTaskNotification(message: unknown): TaskNotification | null 
 
 const TASK_FAILURE_ERROR_LABEL = "\n\nError:\n";
 
+const RAW_NOTIFICATION_MAX_CHARS = 600;
+
 export type TaskNotificationFailure = {
   readonly errorClass: string;
   readonly errorText: string;
+  readonly parse: "json" | "text" | "raw" | "none";
 };
 
-const NO_NOTIFICATION_FAILURE: TaskNotificationFailure = { errorClass: "", errorText: "" };
+const NO_NOTIFICATION_FAILURE: TaskNotificationFailure = { errorClass: "", errorText: "", parse: "none" };
 
 export function taskNotificationFailure(message: unknown): TaskNotificationFailure {
   try {
@@ -167,31 +170,41 @@ export function taskNotificationFailure(message: unknown): TaskNotificationFailu
     if (m === null) return NO_NOTIFICATION_FAILURE;
     if (m[2] !== "failed") return NO_NOTIFICATION_FAILURE;
     if (!TASK_ID_RE.test(m[1] ?? "")) return NO_NOTIFICATION_FAILURE;
+    const raw = rawFailureNotification(text, m.index);
     const tail = text.slice(m.index + m[0].length);
-    if (!tail.startsWith(TASK_FAILURE_ERROR_LABEL)) return NO_NOTIFICATION_FAILURE;
+    if (!tail.startsWith(TASK_FAILURE_ERROR_LABEL)) return raw;
     const body = tail.slice(TASK_FAILURE_ERROR_LABEL.length);
     const end = body.indexOf("\n\n");
     const payload = end < 0 ? body : body.slice(0, end);
-    if (payload.length === 0) return NO_NOTIFICATION_FAILURE;
+    if (payload.length === 0) return raw;
     return splitFailurePayload(payload);
   } catch {
     return NO_NOTIFICATION_FAILURE;
   }
 }
 
+function rawFailureNotification(text: string, at: number): TaskNotificationFailure {
+  const rest = text.slice(at);
+  const end = rest.indexOf("\n\n");
+  const bounded = (end < 0 ? rest : rest.slice(0, end)).trimEnd();
+  const capped = bounded.length <= RAW_NOTIFICATION_MAX_CHARS ? bounded : `${bounded.slice(0, RAW_NOTIFICATION_MAX_CHARS)}…`;
+  return { errorClass: "", errorText: capped, parse: "raw" };
+}
+
 function splitFailurePayload(payload: string): TaskNotificationFailure {
+  const whole: TaskNotificationFailure = { errorClass: "", errorText: payload, parse: "text" };
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
   } catch {
-    return { errorClass: "", errorText: payload };
+    return whole;
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { errorClass: "", errorText: payload };
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return whole;
   const o = parsed as { code?: unknown; message?: unknown };
   const errorClass = typeof o.code === "string" ? o.code : "";
   const errorText = typeof o.message === "string" ? o.message : "";
-  if (errorClass.length === 0 && errorText.length === 0) return { errorClass: "", errorText: payload };
-  return { errorClass, errorText };
+  if (errorText.length === 0) return { ...whole, errorClass };
+  return { errorClass, errorText, parse: "json" };
 }
 
 export function terminalTaskNotification(message: unknown): TaskSummary | null {

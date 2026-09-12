@@ -16,6 +16,13 @@ import {
   refuseSettlementReport,
   settlementReportOwedMessage,
 } from "../access/pending-delegation-signal.js";
+import {
+  conversationEnrolledForSilence,
+  NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL,
+  NO_REPLY_ON_ENGAGED_ACTION,
+} from "../channels/engaged-wake.js";
+import { resolvePartition } from "../memory/partition.js";
+import { bindFrom } from "../identity/binding.js";
 import { standDownAckRoute } from "./stand_down.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -98,6 +105,25 @@ export default defineTool({
         ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
       });
       throw new Error(settlementReportOwedMessage());
+    }
+    if (input.reason === "addressed_to_other" && peekNoReplyThisTurn() === null) {
+      let enrolled = false;
+      let anchor: string | undefined;
+      try {
+        const binding = bindFrom(ctx as BindableContext);
+        anchor = binding.engagementKey ?? binding.threadTs;
+        enrolled = await conversationEnrolledForSilence(resolvePartition(ctx as BindableContext), anchor);
+      } catch {
+        enrolled = false;
+      }
+      if (enrolled) {
+        await auditToolAction(ctx, NO_REPLY_ON_ENGAGED_ACTION, {
+          reason: input.reason,
+          ...(anchor ? { anchor } : {}),
+          ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+        });
+        throw new Error(NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL);
+      }
     }
     noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();

@@ -21,7 +21,7 @@ registerDiscordProvider();
 registerGithubProvider();
 registerLinearProvider();
 registerNotionProvider();
-const { githubOnComment } = await import("@open-everywhere/provider-github/agent/channels/github.js");
+const { githubOnComment, githubAmbientLegAdmission } = await import("@open-everywhere/provider-github/agent/channels/github.js");
 const { buildGitHubAuth } = await import("@open-everywhere/provider-github/agent/channels/github-identity.js");
 const { linearOnAgentSession, _resetLinearGuestCache } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
 const { handleNotionDelivery } = await import("@open-everywhere/provider-notion/agent/channels/notion-webhook.js");
@@ -607,6 +607,66 @@ const NOW = "2026-05-12T11:30:00.000Z";
   ok(
     (await githubOnComment(ghCtx(12) as never, ghComment(402, "and what's that plus 6?") as never)) === null,
     "🔴 OPE-1681 github: NEGATIVE CONTROL — a PLAIN comment in an issue nobody addressed returns null on the same domain, so the mention above passed a door and not an open gate",
+  );
+
+  const ghSeamFacts = (number: number, over: { readonly isPrivate?: boolean; readonly conversationKind?: string } = {}) => ({
+    owner: GH_OWNER,
+    repo: GH_REPO,
+    number,
+    isPrivate: true,
+    actorLogin: "dev",
+    isMention: false,
+    authorIsBot: false,
+    conversationKind: "issue",
+    ...over,
+  });
+
+  const engagedAdm = await githubAmbientLegAdmission("channel-watch", GH_SURFACE, ghSeamFacts(11));
+  ok(
+    engagedAdm.engagedFollowUp,
+    "OPE-1740 github ambient: precondition — the seam reads issue 11 as an ENGAGED container whose follow-up is in reach (a private repo, not an inline review comment)",
+  );
+  ok(
+    engagedAdm.keep,
+    "🔴 OPE-1740 github ambient: a PLAIN follow-up in an ENGAGED issue is KEPT on an ADDRESSED-ONLY domain — the enrolment is the address, and the chattiness flag governs uninvited talk only",
+  );
+
+  const unengagedAdm = await githubAmbientLegAdmission("channel-watch", GH_SURFACE, ghSeamFacts(12));
+  ok(
+    !unengagedAdm.engagedFollowUp,
+    "OPE-1740 github ambient: precondition — issue 12 carries no engagement row, so the seam offers the gate nothing",
+  );
+  ok(
+    !unengagedAdm.keep,
+    "🔴 OPE-1740 github ambient: NEGATIVE CONTROL — the SAME plain comment in an UN-ENGAGED issue is still REFUSED (and audited `domain-refused`), so the line above passed a door and not an open gate",
+  );
+
+  const publicAdm = await githubAmbientLegAdmission("channel-watch", GH_SURFACE, ghSeamFacts(11, { isPrivate: false }));
+  ok(
+    !publicAdm.engagedFollowUp && !publicAdm.keep,
+    "🔴 OPE-1740 github ambient: the REACH FLOOR is wired into the admission — the SAME engaged issue on a PUBLIC repo is refused, so the new door never widens an uninvited turn past the native leg's own floor",
+  );
+  const reviewAdm = await githubAmbientLegAdmission("channel-watch", GH_SURFACE, ghSeamFacts(11, { conversationKind: "review_thread" }));
+  ok(
+    !reviewAdm.engagedFollowUp && !reviewAdm.keep,
+    "🔴 OPE-1740 github ambient: …and an INLINE REVIEW COMMENT is refused too — a review thread shares its pull request's anchor, so one @mention would otherwise admit dozens of them",
+  );
+
+  const ghPart = resolvePartition({
+    channel: { kind: "github" as const },
+    session: {
+      auth: {
+        current: buildGitHubAuth({ owner: GH_OWNER, repo: GH_REPO, actorLogin: "dev", isPrivate: true }) as unknown as {
+          attributes?: Readonly<Record<string, string>>;
+        },
+      },
+    },
+  } as never);
+  ok(await store.markStopped(ghPart.org, ghPart.surfaceKey, `${GH_OWNER}/${GH_REPO}#11`), "OPE-1740 github ambient: precondition — issue 11 is stood down");
+  const stoppedAdm = await githubAmbientLegAdmission("channel-watch", GH_SURFACE, ghSeamFacts(11));
+  ok(
+    !stoppedAdm.keep && !stoppedAdm.engagedFollowUp,
+    "🔴 OPE-1740 github ambient: a STOOD-DOWN issue's plain follow-up is refused again — the enrolment door never overrides the stop",
   );
 
   const resp = (status: number, body: unknown): Response =>

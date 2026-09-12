@@ -14,6 +14,7 @@ import {
   seatCatchUpSinceMs,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
+  engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
 
@@ -129,7 +130,10 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "team",
     engagementTier: directMention ? undefined : input.engagementTier,
-    followUp: !directMention && input.threadEngaged === true ? "thread-engaged" : undefined,
+    followUp: engagedFollowUpContract({
+      addressing: directMention ? "direct-mention" : "channel-watch",
+      threadEngaged: input.threadEngaged,
+    }),
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.teamId },

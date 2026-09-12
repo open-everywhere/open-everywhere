@@ -253,7 +253,7 @@ export async function auditReplyProvenance(
   const connections = [...new Set(reads.map((r) => r.connection))];
   await appendAudit({
     org: audit.org,
-    platform: audit.platform,
+    platform,
     workspace: audit.workspace,
     surface: audit.surface,
     principalId: audit.principalId,

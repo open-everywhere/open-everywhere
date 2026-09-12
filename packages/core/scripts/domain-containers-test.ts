@@ -212,6 +212,10 @@ const throws = (fn: () => void, needle: string, label: string) => {
   ok(rows[0].surface === "github/acme/unrouted", "the row names the surface a deployer would add");
   ok((rows[0].detail as Record<string, unknown>).reason === "no-domain", "the row carries the closed-set reason");
   ok((rows[0].detail as Record<string, unknown>).via === "none", "the row carries the routing provenance");
+  ok(
+    (rows[0].detail as Record<string, unknown>).dedupe === "process",
+    "🔴 …and the row SAYS it is deduped per process, so a reader joining by time cannot take it for a per-delivery record of one message",
+  );
 
   const bogus = await auditAmbientSkip({ platform: "github", workspace: "acme", surfaceKey: "github/acme/watched" });
   ok(bogus === undefined, "an ENGAGED surface records nothing, even if an ingress calls the recorder by mistake");

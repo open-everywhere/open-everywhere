@@ -503,6 +503,27 @@ registerConfig({
   let out = await routeMessageEvent(ev(), deps(true));
   ok(out.deliver && out.woke && woke.length === 1 && touched.length === 1, "engaged human reply → wakes + touches");
 
+  {
+    const rowDeps = (row: { participating: boolean; stopped: boolean } | null): MessageRouteDeps => ({
+      ...deps(true),
+      getEngagement: async () => row as unknown as Awaited<ReturnType<NonNullable<MessageRouteDeps["getEngagement"]>>>,
+    });
+    woke.length = 0;
+    out = await routeMessageEvent(ev(), rowDeps({ participating: true, stopped: false }));
+    ok(out.woke && woke[0]!.includes('follow-up="thread-engaged"'), "🔴 OPE-1740: the per-thread seat's engaged follow-up wake STATES the enrolment");
+    woke.length = 0;
+    out = await routeMessageEvent(ev(), rowDeps({ participating: false, stopped: false }));
+    ok(
+      out.woke && !woke[0]!.includes("follow-up="),
+      "🔴 negative control: a WATCHER row (participating:false) states NO enrolment — a name-drop latch must not lower the bar it raised",
+    );
+    woke.length = 0;
+    out = await routeMessageEvent(ev(), rowDeps(null));
+    ok(out.woke && !woke[0]!.includes("follow-up="), "negative control: no row at all states nothing (byte-identical to before OPE-1740)");
+    woke.length = 0;
+    touched.length = 0;
+  }
+
   woke.length = 0;
   out = await routeMessageEvent(ev(), deps(false));
   ok(!out.woke && woke.length === 0, "not engaged → no wake");

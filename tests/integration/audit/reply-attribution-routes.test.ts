@@ -79,9 +79,8 @@ test("all three reply routes name the human who mentioned the bot — and they n
     expect(String(row.detail?.id)).toMatch(/^spoof-/);
     expect(row.detail?.platform).toBe("discord");
   }
-  expect(terminal.platform).toBe("discord");
-  expect(toolRow.platform).toBe("discord");
-  expect(bridge.platform).toBe("unified");
+  for (const row of [terminal, toolRow, bridge]) expect(row.platform).toBe("discord");
+
   expect(toolRow.surface).not.toBe(bridge.surface);
   expect(terminal.surface).not.toBe(toolRow.surface);
 });

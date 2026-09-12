@@ -371,6 +371,7 @@ export { registerReactionSurface, isRegisteredReactionSurface } from "./channels
 export { renderWake, mkMessageTrigger } from "./channels/normalized-wake.js";
 export type { NormalizedWake, WakeEngagementTier } from "./channels/normalized-wake.js";
 export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-envelope.js";
+export { engagedFollowUpContract, ENGAGED_FOLLOW_UP_CONTEXT } from "./channels/engaged-wake.js";
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
 

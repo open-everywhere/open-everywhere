@@ -57,6 +57,7 @@ export async function auditAmbientSkip(p: AmbientSkipRecord): Promise<AmbientSki
         ...(skip.domain ? { domain: skip.domain } : {}),
         fix: fixFor(skip.reason, p.surfaceKey, skip.domain, skip.via),
         firstSighting: true,
+        dedupe: "process",
       },
     });
   } catch {

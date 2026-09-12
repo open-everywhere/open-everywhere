@@ -77,6 +77,7 @@ import {
   dmWindowRegistryKey,
   auditSupervisorFailure,
   healPrunedDeploymentStrand,
+  engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -827,6 +828,7 @@ export interface DiscordUnifiedWakeInput {
   readonly parentChannelId?: string;
   readonly isThread: boolean;
   readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
+  readonly threadEngaged?: boolean;
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
@@ -849,6 +851,7 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
     reason: direct ? "mention" : "channel-activity",
     addressing: input.addressing,
     engagementTier: input.addressing === "channel-watch" ? input.engagementTier : undefined,
+    followUp: engagedFollowUpContract({ addressing: input.addressing, threadEngaged: input.threadEngaged }),
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.parentChannelId ?? input.channelId },
@@ -882,6 +885,7 @@ export interface DiscordNativeWakeInput {
   readonly isThread: boolean;
   readonly isDm: boolean;
   readonly addressing: "direct" | "thread-follow" | "name-drop";
+  readonly threadEngaged?: boolean;
   readonly botName?: string;
   readonly contextLines?: readonly ContextLine[];
   readonly contextSource?: string;
@@ -901,6 +905,7 @@ export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake
     platform: "discord",
     reason: direct ? (input.isDm ? "dm" : "mention") : input.isThread ? "thread-activity" : "channel-activity",
     addressing: input.addressing,
+    followUp: engagedFollowUpContract({ addressing: input.addressing, threadEngaged: input.threadEngaged }),
     locus: {
       channel: { id: input.parentChannelId ?? input.channelId },
       ...(input.isThread ? { thread: { ts: input.channelId } } : {}),
@@ -1033,6 +1038,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
   readonly grain: SupervisorGrain;
   readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
   readonly privacyOk: boolean;
+  readonly threadEngaged?: boolean;
   readonly receive: UnifiedReceive;
   readonly context: readonly string[];
   readonly contextIngestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>>;
@@ -1084,6 +1090,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
         parentChannelId: str(input.auth.attributes.parent_channel_id),
         isThread: isThreadChannelType(msg.channelType),
         addressing: input.addressing,
+        threadEngaged: input.threadEngaged,
         wakeId,
         engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
         tail,
@@ -1318,6 +1325,7 @@ export async function dispatchTurn(
         grain: windowGrain,
         addressing,
         privacyOk,
+        threadEngaged: engRow?.participating === true && engRow.stopped !== true,
         receive,
         context: windowContext ? [windowContext] : [],
         contextIngestion: (gradedWindowLines ?? []).map(contextLineIngestion),
@@ -1398,6 +1406,7 @@ export async function dispatchTurn(
       isThread,
       isDm,
       addressing,
+      threadEngaged: engRow?.participating === true && engRow.stopped !== true,
       botName: msg.botName,
       contextLines: gradedBackscrollLines,
       contextSource: backscroll?.source,

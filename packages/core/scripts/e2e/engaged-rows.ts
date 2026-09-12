@@ -62,6 +62,17 @@ export function reportedThreadFollow(rows: readonly AuditWireEntry[], platform: 
   return dispatchAddressings(rows, platform).includes("thread-follow");
 }
 
+export function reportedSeatedChannelWatch(rows: readonly AuditWireEntry[], platform: string, channelId: string): boolean {
+  const action = dispatchedAction(platform);
+  return rows.some(
+    (r) =>
+      r.action === action &&
+      detailString(r, "addressing") === "channel-watch" &&
+      detail(r)["singleWindow"] === true &&
+      detailString(r, "channelId") === channelId,
+  );
+}
+
 export function reportedDirectMention(rows: readonly AuditWireEntry[], platform: string): boolean {
   const seen = dispatchAddressings(rows, platform);
   return seen.includes("direct-mention") || seen.includes("direct");

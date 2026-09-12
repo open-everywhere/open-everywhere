@@ -131,6 +131,7 @@ const {
   replyPostCount,
   reportedDirectMention,
   reportedNameDrop,
+  reportedSeatedChannelWatch,
   reportedThreadFollow,
   standDownAttemptedButUnmarked,
   standDownMarked,
@@ -3666,6 +3667,61 @@ rmSync(dir, { recursive: true, force: true });
   ok(!reportedDirectMention([dispatched("name-drop")], "discord"), "NEGATIVE: a name-drop is not an @mention");
   ok(reportedNameDrop([dispatched("name-drop")], "discord"), "reportedNameDrop names the name-drop addressing");
   ok(!reportedNameDrop([dispatched("direct")], "discord"), "NEGATIVE: an @mention is not a name-drop");
+
+  const THREAD = "1300000000000000105";
+  const OTHER_ROOM = "1300000000000000102";
+  const seatedDispatch = (addressing: unknown, singleWindow?: unknown, channelId: unknown = THREAD) => ({
+    ...row("discord.dispatched", {
+      ...(addressing === undefined ? {} : { addressing }),
+      ...(singleWindow === undefined ? {} : { singleWindow }),
+      ...(channelId === null ? {} : { channelId }),
+    }),
+    platform: "discord",
+  });
+  ok(
+    reportedSeatedChannelWatch([seatedDispatch("channel-watch", true)], "discord", THREAD),
+    "reportedSeatedChannelWatch names a channel-watch that carries singleWindow:true for THIS room — the seated auto-thread's own engaged wake",
+  );
+  ok(
+    !reportedSeatedChannelWatch([seatedDispatch("channel-watch")], "discord", THREAD),
+    "🔴 NEGATIVE: a channel-watch row with NO singleWindow flag stays unowned room chatter — accepting it would delete the engaged claim every J-ENGAGED leg rests on",
+  );
+  ok(
+    !reportedSeatedChannelWatch([seatedDispatch("channel-watch", true, OTHER_ROOM)], "discord", THREAD),
+    "🔴 NEGATIVE: a SEATED channel-watch in ANOTHER room is not this conversation's wake — every seated channel in the guild writes the same pair, and the leg's read is scoped by platform and time only, so without the room a stranger's message greens the gate while the follow-up's own wake never arrives",
+  );
+  ok(
+    !reportedSeatedChannelWatch([seatedDispatch("channel-watch", true, null)], "discord", THREAD),
+    "NEGATIVE: a row that names NO room cannot be claimed as this room's — absent is never a match",
+  );
+  ok(
+    !reportedSeatedChannelWatch([seatedDispatch("channel-watch", "true")], "discord", THREAD) && !reportedSeatedChannelWatch([seatedDispatch("channel-watch", 1)], "discord", THREAD),
+    "NEGATIVE: a non-boolean singleWindow is not the flag — never coerced, the same discipline standDownMarked holds",
+  );
+  ok(!reportedSeatedChannelWatch([seatedDispatch("direct-mention", true)], "discord", THREAD), "NEGATIVE: a SEATED MENTION is the addressed leg, never the engaged follow-up");
+  ok(!reportedSeatedChannelWatch([seatedDispatch("channel-watch", true)], "slack", THREAD), "NEGATIVE: keyed to its OWN platform's action, like every other reader in this module");
+  ok(!reportedSeatedChannelWatch([], "discord", THREAD), "VACUITY: an empty window names no seated wake");
+  ok(
+    !reportedThreadFollow([seatedDispatch("channel-watch", true)], "discord"),
+    "🔴 …and the seated row is STILL not a thread-follow: the two predicates stay distinct, so a leg that accepts both has to say so at its own call site",
+  );
+
+  const engagedDiscordBody = SCENARIOS.find((s) => s.id === "J-ENGAGED-discord")!.run.toString().replace(/\s+/g, "");
+  ok(
+    (engagedDiscordBody.match(/seatedChannelWatchRoom:threadId/g) ?? []).length === 1,
+    `OPE-1745: J-ENGAGED-discord asks for the seated spelling EXACTLY ONCE — on its follow-up leg, never on its mention leg (found ${(engagedDiscordBody.match(/seatedChannelWatchRoom:threadId/g) ?? []).length})`,
+  );
+  ok(
+    !/seatedChannelWatchRoom:(?!threadId)/.test(engagedDiscordBody),
+    "🔴 OPE-1745: and it pins the AUTO-THREAD's own id — any other value (the parent channel, a constant) would put the gate back on a room the leg did not drive",
+  );
+  const otherLegsAskingForIt = SCENARIOS.filter(
+    (s) => s.id !== "J-ENGAGED-discord" && s.run.toString().replace(/\s+/g, "").includes("seatedChannelWatchRoom"),
+  ).map((s) => s.id);
+  ok(
+    otherLegsAskingForIt.length === 0,
+    `🔴 OPE-1745: NO OTHER SCENARIO takes the seated spelling — the ruling admitted it for the Discord auto-thread alone, and a second caller is a widened gate nothing else would catch (saw ${JSON.stringify(otherLegsAskingForIt)})`,
+  );
 
   ok(isAmbientLegAddressing("channel-watch"), "isAmbientLegAddressing names unowned room chatter");
   ok(isAmbientLegAddressing("thread-follow"), "🔴 …and the ENGAGED plain comment, which is the spelling the promotion introduced — drop it and every ambient-leg filter goes blind on an engaged room");

@@ -87,6 +87,7 @@ import {
   type NormalizedWake,
   type WakeEngagementTier,
   dmTrustTtlMs,
+  engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   slackMode,
@@ -562,7 +563,7 @@ function slackJudgedWake(
     },
     participants: opts.participants,
     engagementTier: directMention || addressing === "name-drop" ? undefined : opts.engagementTier,
-    followUp: !directMention && opts.threadEngaged === true ? "thread-engaged" : undefined,
+    followUp: engagedFollowUpContract({ addressing, threadEngaged: opts.threadEngaged }),
     wakeId: opts.wakeId,
     backscroll: opts.backscroll,
     ...(addressing === "name-drop" ? { nameDrop: { followUp: "follows-on-reply" as const } } : {}),
@@ -720,6 +721,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
       triggerAuthorName: trigger.authorName,
       triggerAuthorHandle: trigger.authorHandle,
       participants: names.participants,
+      threadEngaged: engRow?.participating === true && engRow.stopped !== true,
     }),
     state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
   });

@@ -303,6 +303,13 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     Array.isArray(detail.ops) && detail.ops.includes("notion/get_page"),
     "🔴 §4: the row carries the op VERB too — ids and verbs only, never an op argument and never the op's output, the same contract the `connector.op` row keeps",
   );
+
+  const bridged = rows.find((r) => (r.detail as { connections?: string[] })?.connections?.includes("github"));
+  ok(bridged !== undefined, "§4b precondition: §3b(iii)'s BRIDGE reply — the one whose struct names the window — wrote a provenance row");
+  ok(
+    bridged!.platform === "slack",
+    `🔴 §4b: the bridged reply's provenance row files under the SURFACE it landed on ("slack"), never the bridge struct's "unified" partition — an operator counting a platform's replies must not lose the bridge-routed ones (saw ${JSON.stringify(bridged!.platform)})`,
+  );
 }
 
 {

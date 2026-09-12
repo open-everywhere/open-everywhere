@@ -77,7 +77,7 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
   if (!audit) return;
   await appendAudit({
     org: audit.org,
-    platform: audit.platform,
+    platform,
     workspace: audit.workspace,
     surface: audit.surface,
     principalId: audit.principalId,
@@ -107,7 +107,7 @@ async function auditReplyPostFailed(
   if (!audit) return;
   await appendAudit({
     org: audit.org,
-    platform: audit.platform,
+    platform,
     workspace: audit.workspace,
     surface: audit.surface,
     principalId: audit.principalId,

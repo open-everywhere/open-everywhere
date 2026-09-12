@@ -23,6 +23,7 @@ import {
   seatCatchUpSinceMs,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
+  engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
@@ -144,7 +145,10 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : input.addressing,
     containerNoun: "doc",
     engagementTier: judged ? input.engagementTier : undefined,
-    followUp: judged && input.threadEngaged === true ? "thread-engaged" : undefined,
+    followUp: engagedFollowUpContract({
+      addressing: directMention ? "direct-mention" : input.addressing,
+      threadEngaged: input.threadEngaged,
+    }),
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.pageId },

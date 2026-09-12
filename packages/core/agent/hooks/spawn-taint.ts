@@ -449,11 +449,17 @@ export const TASK_SETTLED_ACTION = "delegation.task_settled";
 
 export const TASK_FAILED_ACTION = "delegation.task_failed";
 
+type DelegationFailureEdge = "notification" | "settlement" | "result";
+
+type DelegationFailureParse = TaskNotificationFailure["parse"] | "result";
+
 async function noteDelegationFailure(
-  failure: Partial<DelegationFailure> & { readonly outcome: string },
+  failure: Partial<DelegationFailure> & { readonly status: string },
   taskId: string,
   ownSessionId: string,
   turnId: string | undefined,
+  edge: DelegationFailureEdge,
+  parse: DelegationFailureParse,
 ): Promise<void> {
   await appendAudit({
     org: deploymentOrg(),
@@ -465,8 +471,10 @@ async function noteDelegationFailure(
       call: failure.callId ?? "",
       tool: failure.tool ?? "",
       error: auditErrorDetail(failure.errorText ?? "").error,
-      errorClass: failure.errorClass ?? "",
-      outcome: failure.outcome,
+      errorClass: auditErrorDetail(failure.errorClass ?? "").error,
+      parse,
+      outcome: edge,
+      status: failure.status,
       ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
       ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
     },
@@ -581,6 +589,7 @@ export async function applyTaskSettlement(
 ): Promise<boolean> {
   if (views.length === 0) return false;
   const failure = views.length === 1 ? settlement.failure : undefined;
+  const edge: DelegationFailureEdge = failure === undefined ? "settlement" : "notification";
   const bind = ctx as unknown as BindableContext;
   const inheritedWakeId = inheritedWakeStampOf(bind);
   const wakeTurnId = currentTurnId(bind);
@@ -602,14 +611,16 @@ export async function applyTaskSettlement(
       const link = settlement.link !== undefined ? settlement.link : await taskCallLink(deploymentOrg(), view.taskId);
       await noteDelegationFailure(
         {
-          outcome: view.status,
-          ...(link !== undefined
-            ? { callId: link.callId, tool: link.tool ?? "", errorText: failure?.errorText ?? "", errorClass: failure?.errorClass ?? "" }
-            : {}),
+          status: view.status,
+          errorText: failure?.errorText ?? "",
+          errorClass: failure?.errorClass ?? "",
+          ...(link !== undefined ? { callId: link.callId, tool: link.tool ?? "" } : {}),
         },
         view.taskId,
         ownSessionId,
         wakeTurnId,
+        edge,
+        failure?.parse ?? "none",
       );
     }
   }
@@ -695,7 +706,7 @@ export default defineHook({
 
         const failure = readDelegationFailure(result);
         if (failure !== null) {
-          await noteDelegationFailure(failure, "", ownSessionId, currentTurnId(ctx as unknown as BindableContext));
+          await noteDelegationFailure(failure, "", ownSessionId, currentTurnId(ctx as unknown as BindableContext), "result", "result");
         }
 
         if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;

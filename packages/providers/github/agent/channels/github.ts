@@ -7,6 +7,7 @@ import {
   githubMachineAuthored,
   markGitHubEngaged,
   resolveGitHubEngagement,
+  type GitHubEngagementVerdict,
   type GitHubSeamFacts,
 } from "./github-engagement.js";
 import { parseGitHubStopComment, routeGitHubStopComment } from "./github-stop.js";
@@ -74,6 +75,7 @@ import {
   recordWakeTail,
   seatCatchUp,
   seatAdmissionFor,
+  ENGAGED_FOLLOW_UP_CONTEXT,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -133,9 +135,19 @@ function supervisorSeedState(ev: GitHubAmbientEvent, unified: boolean): GitHubSu
   };
 }
 
-export function githubAmbientLegKeeps(addressing: string, ambientEnabled: boolean): boolean {
+export function githubAmbientLegKeeps(addressing: string, ambientEnabled: boolean, engagedFollowUp: boolean): boolean {
   if (addressing === "drop") return false;
-  return addressing === "direct" || ambientEnabled;
+  return addressing === "direct" || engagedFollowUp || ambientEnabled;
+}
+
+export async function githubAmbientLegAdmission(
+  addressing: string,
+  surfaceKey: string,
+  f: GitHubSeamFacts,
+): Promise<{ readonly keep: boolean; readonly seam: GitHubEngagementVerdict; readonly engagedFollowUp: boolean }> {
+  const seam = await resolveGitHubEngagement(f);
+  const engagedFollowUp = seam.kind === "deliver" && githubEngagedFollowUpReach(f).reachable;
+  return { keep: githubAmbientLegKeeps(addressing, githubAmbientEnabled(surfaceKey), engagedFollowUp), seam, engagedFollowUp };
 }
 
 function githubAmbientEnabled(surfaceKey: string): boolean {
@@ -316,10 +328,6 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: ${cls.reason} (private=${ev.repoPrivate === true}, vouched=${vouched})`);
     return;
   }
-  if (!githubAmbientLegKeeps(cls.addressing, githubAmbientEnabled(surfaceKey))) {
-    await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
-    return;
-  }
   const seamFacts: GitHubSeamFacts = {
     owner: ev.owner,
     repo: ev.repo,
@@ -330,12 +338,17 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
     authorIsBot: false,
     conversationKind: ev.isPullRequest ? "pull_request" : "issue",
   };
-  const seam = await resolveGitHubEngagement(seamFacts);
+  const admission = await githubAmbientLegAdmission(cls.addressing, surfaceKey, seamFacts);
+  const seam = admission.seam;
+  if (!admission.keep) {
+    await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
+    return;
+  }
   if (seam.kind === "hold" && seam.stopped) {
     slog(`comment on ${surfaceKey}#${ev.issueNumber} suppressed: stood down in ${seam.anchor} — @mention to pull the agent back in`);
     return;
   }
-  if (seam.kind === "deliver" && githubEngagedFollowUpReach(seamFacts).reachable && !shouldSuppressNativeMention(singleWindow, vouched)) {
+  if (seam.kind === "deliver" && admission.engagedFollowUp && !shouldSuppressNativeMention(singleWindow, vouched)) {
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: engaged container ${seam.anchor} — owned by the native githubChannel path`);
     return;
   }
@@ -529,7 +542,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
       return null;
     }
 
-    return { auth };
+    return isMention ? { auth } : { auth, context: [ENGAGED_FOLLOW_UP_CONTEXT] };
 };
 
 const native: GitHubChannel = githubChannel({
