@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
   fetchWakeBackscroll,
+  fetchWakeBackscrollLines,
   fetchWakeEnvelopeBackscroll,
   fetchSlackBackscrollWindow,
   isBackscrollVisible,
   RAW_FETCH_REACHBACK_HOURS,
   WAKE_BACKSCROLL_MAX,
+  THREAD_ADMISSION_MAX,
   type SlackRequester,
   type WakeBackscrollDeps,
 } from "../agent/channels/slack-wake-backscroll.js";
@@ -109,6 +111,43 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
     ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "the hint does not name the deleted read_slack_* pair (weak tripwire — see slack-context-test.ts's section note)");
     ok(untrustedEnd > -1 && out[0].indexOf("read_channel") > untrustedEnd, "the hint is appended AFTER the untrusted-wrapped block");
   }
+}
+
+{
+  const replies = (): Msg[] => [
+    ...Array.from({ length: 13 }, (_, i) => ({ ts: `${i + 1}.0`, user: "UA", text: `r${i}` })),
+    { ts: "99.0", user: "UD", text: "the trigger" },
+  ];
+  const capped = await fetchWakeBackscrollLines({ channelId: "C", ts: "99.0", threadTs: "1.0" }, deps(stub("conversations.replies", replies())));
+  ok(capped?.lines.length === WAKE_BACKSCROLL_MAX, "the thread leg caps at WAKE_BACKSCROLL_MAX when the caller asks for nothing else");
+  ok(capped?.lines[0].text === "r3" && capped?.lines[9].text === "r12", "…keeping the ten most recent replies");
+
+  const wider = await fetchWakeBackscrollLines(
+    { channelId: "C", ts: "99.0", threadTs: "1.0", threadAdmissionSlice: true },
+    deps(stub("conversations.replies", replies())),
+  );
+  ok(wider?.lines.length === 13, "🔴 threadAdmissionSlice hands back the replies the render cap would have dropped, so a caller can filter before it caps");
+  ok(wider?.lines[0].text === "r0" && wider?.lines[12].text === "r12", "…oldest-first, from the oldest reply the fetch saw to the newest");
+  ok(!wider?.lines.some((l) => l.text === "the trigger"), "…and the trigger is still excluded (its text rides on the wake message)");
+  ok(wider?.source === capped?.source && wider?.readMoreHint === capped?.readMoreHint, "…with the same source label and read-more hint (renderContext decides whether the hint shows)");
+
+  const many: Msg[] = [
+    ...Array.from({ length: THREAD_ADMISSION_MAX + 20 }, (_, i) => ({ ts: `${i + 1}.0`, user: "UA", text: `m${i}` })),
+    { ts: "9999.0", user: "UD", text: "the trigger" },
+  ];
+  const bounded = await fetchWakeBackscrollLines({ channelId: "C", ts: "9999.0", threadTs: "1.0", threadAdmissionSlice: true }, deps(stub("conversations.replies", many)));
+  ok(THREAD_ADMISSION_MAX > WAKE_BACKSCROLL_MAX, "the admission slice is WIDER than the render cap, or it would fix nothing");
+  ok(bounded?.lines.length === THREAD_ADMISSION_MAX, `the admission slice is bounded at THREAD_ADMISSION_MAX (${THREAD_ADMISSION_MAX}), not the whole fetched page`);
+  ok(bounded?.lines[bounded.lines.length - 1].text === `m${THREAD_ADMISSION_MAX + 19}`, "…and it keeps the most recent replies, so the newest conversation is never the part dropped");
+
+  const channelMsgs: Msg[] = Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `c${12 - i}` }));
+  const rec: { method?: string; params?: Record<string, string> } = {};
+  const channel = await fetchWakeBackscrollLines(
+    { channelId: "C", ts: "99.0", threadAdmissionSlice: true },
+    deps(stub("conversations.history", channelMsgs, rec)),
+  );
+  ok(rec.params?.limit === String(WAKE_BACKSCROLL_MAX), "the channel leg still asks Slack for WAKE_BACKSCROLL_MAX messages — no bigger page is bought");
+  ok(channel?.lines.length === WAKE_BACKSCROLL_MAX, "…and still caps inside the fetch, whatever the thread-leg option says");
 }
 
 {
@@ -230,4 +269,4 @@ const routing = (
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "not-a-number" }, deps(routing([{ ts: "1.0", user: "UA", text: "hi" }])))).length === 0, "an unparseable trigger ts → empty (fail-soft)");
 }
 
-console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + supervisor bootstrap adapter: visibility gate + thread enrichment + flat capped output)`);
+console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + the thread leg's bounded admission slice + subtype/empty skip + untrusted wrap + fail-soft + supervisor bootstrap adapter: visibility gate + thread enrichment + flat capped output)`);

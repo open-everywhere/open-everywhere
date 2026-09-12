@@ -13,7 +13,9 @@ import {
   type Domain,
 } from "../agent/memory/domain.js";
 import { supervisorGrainFor, grainUsesUnifiedWindow, unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
-import { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, DEFAULT_ADMISSION, SEAT_ADMISSION_FUNCTIONS } from "../agent/channels/seat-admission.js";
+import { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitContextLines, DEFAULT_ADMISSION, SEAT_ADMISSION_FUNCTIONS } from "../agent/channels/seat-admission.js";
+import { contextLinesNotInEnvelope, type ContextLine } from "../agent/channels/context-render.js";
+import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { fetchedBackscroll, seatCatchUpSinceMs, type NormalizedMessage } from "../agent/channels/backscroll-window.js";
 import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/ambient-skip.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -159,6 +161,98 @@ console.log("5 — the ambient_skipped fix text:");
   ok(!line.includes("set ambientSupervisor: true on it"), "🔴 it no longer prescribes the change the ruling refused on such a domain");
   ok(line.includes("MAY opt in"), "the setting is named as an opt-in a domain OWNER may choose");
   ok(line.includes("decision, not a gap"), "…and the reader is told which of the two they are looking at");
+}
+
+console.log("6 — admitContextLines (the hydrated context slot):");
+{
+  const cl = (senderType: ContextLine["senderType"], senderId: string | undefined, trust: ContextLine["trust"], text: string): ContextLine => ({
+    senderType,
+    senderId,
+    ts: text,
+    text,
+    ...(trust !== undefined ? { trust } : {}),
+  });
+  const room: readonly ContextLine[] = [
+    cl("user", "U_MEMBER", "peer", "a colleague"),
+    cl("user", "U_ADMIN", "principal", "an admin"),
+    cl("user", "U_GUEST", "unauth", "a guest"),
+    cl("agent", undefined, undefined, "the agent's own prior post"),
+    cl("bot", "B1", undefined, "a foreign bot"),
+    cl("unknown", undefined, undefined, "an unattributable author"),
+  ];
+
+  const membersOnly = admitContextLines(room, admissionFunction("members-only"), "channel");
+  eq(
+    membersOnly.map((l) => l.text),
+    ["a colleague", "an admin", "the agent's own prior post"],
+    "🔴 members-only admits the VOUCHED people and the deployment's own post, in room order",
+  );
+  ok(!membersOnly.some((l) => l.text === "a guest"), "🔴 …and refuses the non-member's line — the OPE-1742 leak, closed at the seam");
+  ok(
+    !membersOnly.some((l) => l.text === "an unattributable author"),
+    "🔴 …and refuses an UNATTRIBUTABLE author: `unknown` maps to a human at `unauth`, never to a harness `system` line",
+  );
+
+  const wide = admitContextLines(room, admissionFunction("wide"), "channel");
+  eq(
+    wide.map((l) => l.text),
+    ["a colleague", "an admin", "a guest", "the agent's own prior post", "an unattributable author"],
+    "negative control: `wide` admits every person at any tier, the agent's own post included",
+  );
+  ok(!wide.some((l) => l.text === "a foreign bot"), "🔴 `wide` refuses the FOREIGN BOT on this slot too — the shipped-default half of the gap");
+  ok(
+    admitContextLines(room, admissionFunction("wide-with-bots"), "channel").some((l) => l.text === "a foreign bot"),
+    "🔴 negative control: `wide-with-bots` admits the UNGRADED foreign bot — a machine author floors at `relay`, not `unauth`",
+  );
+
+  const ungraded: readonly ContextLine[] = [cl("user", "U_MEMBER", undefined, "ungraded, but a real member")];
+  eq(admitContextLines(ungraded, admissionFunction("members-only"), "channel").length, 0, "🔴 an UNGRADED line floors at `unauth`, so members-only refuses it");
+  eq(admitContextLines(ungraded, admissionFunction("wide"), "channel").length, 1, "…while `wide`, which does not read the tier, still admits it");
+  eq(admitContextLines([], admissionFunction("members-only"), "thread").length, 0, "an empty slice admits nothing and throws nothing");
+}
+
+console.log("7 — contextLinesNotInEnvelope (catch-up ∩ hydration):");
+{
+  const line = (ts: string, text: string): ContextLine => ({ senderType: "user", senderId: "U1", ts, text });
+  const sibling = (id: string, body: string): WakeMessageInput => ({ from: "human", author: "U1", id, sentAt: "2026-09-12T10:00:00.000Z", trust: "peer", body });
+  const hydration: readonly ContextLine[] = [line("10", "older than the catch-up"), line("20", "inside both"), line("30", "also inside both")];
+  const envelope: readonly WakeMessageInput[] = [sibling("20", "inside both"), sibling("30", "also inside both")];
+
+  eq(
+    contextLinesNotInEnvelope(hydration, envelope).map((l) => l.ts),
+    ["10"],
+    "🔴 the hydration keeps ONLY the message the envelope never read — each ts renders once",
+  );
+  eq(
+    contextLinesNotInEnvelope(hydration, [sibling("99", "a different message")]).map((l) => l.ts),
+    ["10", "20", "30"],
+    "negative control: an envelope with NO overlap drops nothing",
+  );
+  eq(contextLinesNotInEnvelope(hydration, []).map((l) => l.ts), ["10", "20", "30"], "an empty envelope drops nothing (a first wake with no read)");
+  eq(contextLinesNotInEnvelope([], envelope).length, 0, "an empty hydration stays empty");
+  eq(
+    contextLinesNotInEnvelope(hydration, envelope)[0]?.text,
+    "older than the catch-up",
+    "the kept line is returned whole — the filter never rewrites a line it keeps",
+  );
+
+  const refutedLine: ContextLine = { senderType: "user", senderId: "U_GUEST", ts: "20", text: "a refuted guest's words", trust: "unauth", refuted: true };
+  const plainLine: ContextLine = { senderType: "user", senderId: "U_GUEST", ts: "20", text: "a refuted guest's words", trust: "unauth" };
+  eq(
+    contextLinesNotInEnvelope([refutedLine], envelope).map((l) => l.ts),
+    ["20"],
+    "🔴 a REFUTED author's line survives the de-duplication even though the envelope carries that exact message",
+  );
+  eq(
+    contextLinesNotInEnvelope([plainLine], envelope).length,
+    0,
+    "negative control: the same line WITHOUT `refuted` is de-duplicated — the exemption is the flag deciding, not the filter giving up",
+  );
+  eq(
+    contextLinesNotInEnvelope([refutedLine, line("30", "also inside both"), line("10", "older than the catch-up")], envelope).map((l) => l.ts),
+    ["20", "10"],
+    "🔴 the exemption is per line: the refuted line and the older line stay, the overlapping member line goes",
+  );
 }
 
 console.log(`\nstanding-seat: ${n} assertions passed`);

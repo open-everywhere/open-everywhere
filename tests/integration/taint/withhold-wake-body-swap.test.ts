@@ -28,6 +28,8 @@ interface ArmFixture {
   readonly memberBody: string;
 }
 
+const RECENT_TS_SECONDS = Math.floor(Date.now() / 1_000) - 3_600;
+
 const ARMS = {
   withhold: {
     refuted: "U0GUESTW001",
@@ -42,6 +44,14 @@ const ARMS = {
     memberBody: "reminder: the release train leaves at noon",
   },
 } as const satisfies Record<"withhold" | "taint", ArmFixture>;
+
+function refutedTs(arm: ArmFixture): string {
+  return `${RECENT_TS_SECONDS}.${arm.refuted === ARMS.withhold.refuted ? "000100" : "000300"}`;
+}
+
+function memberTs(arm: ArmFixture): string {
+  return arm.member === ARMS.withhold.member ? "1700159720.000200" : "1700159720.000400";
+}
 
 let activeArm: ArmFixture = ARMS.withhold;
 
@@ -68,6 +78,17 @@ function userInfo(id: string, name: string, restricted: boolean): Record<string,
       ...(restricted ? { is_restricted: true } : {}),
     },
   };
+}
+
+function historyFor(params: URLSearchParams): Record<string, unknown> {
+  const messages = [
+    { type: "message", user: activeArm.member, text: activeArm.memberBody, ts: memberTs(activeArm) },
+    { type: "message", user: activeArm.refuted, text: activeArm.refutedBody, ts: refutedTs(activeArm) },
+  ].sort((a, b) => Number.parseFloat(b.ts) - Number.parseFloat(a.ts));
+  const oldest = params.get("oldest");
+  if (oldest === null) return { ok: true, messages };
+  const floor = Number.parseFloat(oldest);
+  return { ok: true, messages: messages.filter((m) => Number.parseFloat(m.ts) >= floor) };
 }
 
 async function armSeams(): Promise<void> {
@@ -107,13 +128,7 @@ async function armSeams(): Promise<void> {
           },
         };
       case "conversations.history":
-        return {
-          ok: true,
-          messages: [
-            { type: "message", user: activeArm.member, text: activeArm.memberBody, ts: "1700159720.000200" },
-            { type: "message", user: activeArm.refuted, text: activeArm.refutedBody, ts: "1700159720.000100" },
-          ],
-        };
+        return historyFor(params);
       case "chat.postMessage":
         return { ok: true, channel: params.get("channel"), ts: "1700159721.000000" };
       default:
@@ -206,6 +221,20 @@ test("authorGrain \"withhold\": a REFUTED author's hydrated backscroll reaches t
 
   expectLineFenced(prompt, arm.refuted);
   expectLineFenced(prompt, arm.member);
+
+  const refutedContextLines = prompt.split("\n").filter((l) => l.startsWith("[sender_type=") && l.includes(`sender_id=${arm.refuted}`));
+  expect(refutedContextLines, "the refuted author's hydrated line was de-duplicated away, or rendered twice").toHaveLength(1);
+  expect(refutedContextLines[0], "the surviving context line is not the arrived-marker").toContain(WITHHELD_MARKER);
+
+  expect(
+    prompt.split(WITHHELD_MARKER).length - 1,
+    "the envelope never carried the refuted message, so the exemption was not exercised",
+  ).toBeGreaterThanOrEqual(2);
+
+  expect(
+    prompt.split("\n").filter((l) => l.startsWith("[sender_type=") && l.includes(`sender_id=${arm.member}`)),
+    "the member's hydrated line did not render exactly once",
+  ).toHaveLength(1);
 });
 
 test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refuted author's line reaches the model verbatim", async () => {

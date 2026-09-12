@@ -1,7 +1,7 @@
 import { ingestUntrusted } from "../access/untrusted.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
-import { UNAUTH_SYSTEM_NOTE, type WakeTrust } from "./wake-envelope.js";
+import { UNAUTH_SYSTEM_NOTE, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
 
 export const MAX_MESSAGES = 10;
@@ -23,6 +23,12 @@ export interface ContextLine {
 
 export function contextLineIngestion(l: ContextLine): { readonly trust?: WakeTrust; readonly refuted?: boolean; readonly authorTrust?: AuthorTrustQuery } {
   return { trust: l.trust, refuted: l.refuted, authorTrust: l.authorTrust };
+}
+
+export function contextLinesNotInEnvelope(lines: readonly ContextLine[], envelope: readonly WakeMessageInput[]): ContextLine[] {
+  if (lines.length === 0 || envelope.length === 0) return [...lines];
+  const rendered = new Set(envelope.map((m) => m.id));
+  return lines.filter((l) => l.refuted === true || !rendered.has(l.ts));
 }
 
 function attribution(l: ContextLine): string {

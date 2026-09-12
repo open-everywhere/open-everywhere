@@ -54,6 +54,7 @@ import {
   JOIN_ACK_TEXT,
   type MessageRouteDeps,
   type NameDropRouteDeps,
+  type NameDropContextHydrator,
   type SupervisorRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
@@ -80,7 +81,7 @@ import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js
 import { renderWake } from "@open-everywhere/core/agent/adapter-api.js";
 import type { SeatCatchUpRequest, WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
-import type { WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
+import { fetchWakeBackscrollLines, WAKE_BACKSCROLL_MAX, type WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
 import type { ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { overrideSettingsForTest, WITHHELD_BODY_MARKER } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -1309,6 +1310,154 @@ registerConfig({
     calls.length = 0;
     latched.length = 0;
     infoCalls = 0;
+
+    {
+      calls.length = 0;
+      const roomLines: readonly ContextLine[] = [
+        { senderType: "agent", senderId: undefined, ts: "41.6", text: "the agent's own prior post" },
+        { senderType: "unknown", senderId: undefined, ts: "41.7", text: "an unattributable author's message" },
+        { senderType: "bot", senderId: "B_FOREIGN", ts: "41.8", text: "a foreign bot's chatter" },
+      ];
+      const hydrateUnder = async (admission: string | undefined, native = false): Promise<readonly ContextLine[]> => {
+        const baseCfg = getConfig();
+        registerConfig({
+          ...baseCfg,
+          loadDomains: () => [
+            defineDomain({ name: "transactions", reach: ["slack/T_ENG/C_TXN", "slack/T_ENG/C_TXN_EMEA"], memory: "txn", ...(admission !== undefined ? { admission } : {}) }),
+          ],
+        });
+        let seen: WakeBackscrollLines | null | undefined;
+        const nativeCtx: string[] = [];
+        try {
+          await routeNameDropEvent(topLevel(), {
+            ...deps(true, true),
+            backscroll: async () => ({ lines: roomLines, source: "slack channel C_TXN", readMoreHint: "" }),
+            ...(native
+              ? { wake: async ({ context }: { context?: readonly string[] }) => void nativeCtx.push((context ?? []).join("\n")) }
+              : {
+                  seatRoute: async (hydrate: NameDropContextHydrator) => {
+                    seen = await hydrate();
+                    return { deliver: true, reason: "seat wake", woke: true };
+                  },
+                }),
+          });
+        } finally {
+          registerConfig(baseCfg);
+        }
+        if (native) {
+          const rendered = nativeCtx.join("\n");
+          return roomLines.filter((l) => rendered.includes(l.text));
+        }
+        return seen?.lines ?? [];
+      };
+
+      const membersOnly = await hydrateUnder("members-only");
+      ok(
+        membersOnly.map((l) => l.text).join(" | ") === "the agent's own prior post",
+        "🔴 members-only: the hydration hands the seat the deployment's OWN line and nothing else",
+      );
+      ok(
+        !membersOnly.some((l) => l.senderType === "unknown"),
+        "🔴 …so the unvouched author's line never reaches the wake's context slot — the leak OPE-1742 names",
+      );
+      ok(!membersOnly.some((l) => l.senderId === "B_FOREIGN"), "…and neither does the foreign bot's chatter");
+
+      const wide = await hydrateUnder(undefined);
+      ok(wide.some((l) => l.senderType === "unknown"), "negative control: the default `wide` policy DOES admit the unvouched author's line");
+      ok(wide.some((l) => l.senderType === "agent"), "…alongside the agent's own, so the read still hydrates");
+      ok(!wide.some((l) => l.senderId === "B_FOREIGN"), "🔴 `wide` refuses the foreign bot on this read too, as it already does on the other two");
+
+      const nativeUnderMembersOnly = await hydrateUnder("members-only", true);
+      ok(
+        nativeUnderMembersOnly.length === roomLines.length,
+        "🔴 the NATIVE per-thread road is NOT narrowed by a seat policy — an unseated deployment stays byte-identical",
+      );
+      ok(
+        nativeUnderMembersOnly.some((l) => l.senderId === "B_FOREIGN") && nativeUnderMembersOnly.some((l) => l.senderType === "unknown"),
+        "…so it keeps the foreign bot's line for conversational coherence, and the unvouched author's",
+      );
+      calls.length = 0;
+      latched.length = 0;
+      infoCalls = 0;
+    }
+
+    {
+      calls.length = 0;
+      const prevToken = process.env.SLACK_BOT_TOKEN;
+      delete process.env.SLACK_BOT_TOKEN;
+      const MEMBER = "U_MEMBER_1744";
+      const replies = [
+        ...Array.from({ length: 20 }, (_, i) => ({ ts: `41.${100 + i}`, user: MEMBER, text: `member reply ${i + 1}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ ts: `41.${200 + i}`, text: `guest reply ${i + 1}` })),
+      ];
+      const hydrateThreadUnder = async (admission: string): Promise<readonly ContextLine[]> => {
+        const baseCfg = getConfig();
+        registerConfig({
+          ...baseCfg,
+          loadDomains: () => [defineDomain({ name: "transactions", reach: ["slack/T_ENG/C_TXN"], memory: "txn", admission })],
+        });
+        let seen: WakeBackscrollLines | null | undefined;
+        try {
+          await routeNameDropEvent(topLevel({ thread_ts: "40.0" }), {
+            ...deps(true, true),
+            backscroll: (input) =>
+              fetchWakeBackscrollLines(input, {
+                request: async (method: string) => (method === "conversations.replies" ? { ok: true, messages: replies } : { ok: false, error: "unexpected_method" }),
+                identity: async () => ({ userId: "U_BOT_1744" }),
+              }),
+            seatRoute: async (hydrate: NameDropContextHydrator) => {
+              seen = await hydrate();
+              return { deliver: true, reason: "seat wake", woke: true };
+            },
+          });
+        } finally {
+          registerConfig(baseCfg);
+        }
+        return seen?.lines ?? [];
+      };
+
+      try {
+        const membersOnlyThread = await hydrateThreadUnder("members-only");
+        ok(
+          membersOnlyThread.length === WAKE_BACKSCROLL_MAX,
+          "🔴 members-only thread: the hydration fills the whole ten-line slot — a refused author's replies no longer eat it",
+        );
+        ok(
+          membersOnlyThread.every((l) => l.senderId === MEMBER),
+          "🔴 …with MEMBER replies only, fetched from ABOVE the ten the read used to cap to",
+        );
+        ok(
+          membersOnlyThread[0].text === "member reply 11" && membersOnlyThread[9].text === "member reply 20",
+          "🔴 …and they are the ten MOST RECENT admissible replies, so the cap still keeps the tail",
+        );
+        ok(!membersOnlyThread.some((l) => l.senderType === "unknown"), "…and no guest reply reaches the wake's context slot");
+
+        const wideThread = await hydrateThreadUnder("wide");
+        ok(wideThread.length === WAKE_BACKSCROLL_MAX, "negative control: `wide` fills the same ten-line slot");
+        ok(
+          wideThread.every((l) => l.senderType === "unknown"),
+          "negative control: `wide` admits the guest, so the cap keeps the guest's ten most recent replies",
+        );
+
+        const askedFor: Array<boolean | undefined> = [];
+        await routeNameDropEvent(topLevel({ thread_ts: "40.0" }), {
+          ...deps(true, true),
+          backscroll: async (input) => {
+            askedFor.push(input.threadAdmissionSlice);
+            return { lines: [{ senderType: "user" as const, senderId: MEMBER, ts: "41.9", text: "a member reply" }], source: "slack thread C_TXN/40.0", readMoreHint: "" };
+          },
+          wake: async () => {},
+        });
+        ok(askedFor.length === 1, "the unseated thread wake fetched its backscroll exactly once");
+        ok(askedFor[0] !== true, "🔴 …and asked for NO admission slice: no seat road ⇒ no policy runs, so the fetch keeps its own cap");
+      } finally {
+        if (prevToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+        else process.env.SLACK_BOT_TOKEN = prevToken;
+      }
+      calls.length = 0;
+      latched.length = 0;
+      infoCalls = 0;
+    }
   }
 
   {
@@ -2173,6 +2322,41 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const ambientOut = await routeSupervisorEvent(supEv(), withLatch(false) as unknown as SupervisorRouteDeps);
     ok(ambientOut.woke && seatWakes[0].message.includes('addressing="channel-watch"'), "negative control: no tier ⇒ the ambient channel-watch wake");
     ok(latches.length === 0, "negative control: an ambient wake latches no watcher row");
+  }
+
+  {
+    const seatWakes: Array<{ token: string; message: string; context?: readonly string[] }> = [];
+    const hydrationWindow: readonly ContextLine[] = [
+      { senderType: "user", senderId: "U_OLD", ts: "5.0", text: "the older conversation", trust: "peer" },
+      { senderType: "user", senderId: "U_OLD", ts: "10.0", text: "earlier chatter", trust: "peer" },
+    ];
+    const hydrate = async (): Promise<WakeBackscrollLines> => ({ lines: hydrationWindow, source: "slack channel C_SUP", readMoreHint: "" });
+    const capture = (over: Partial<SupervisorRouteDeps> = {}): SupervisorRouteDeps => ({
+      ...supDepsFresh(false),
+      wake: async (input: { token: string; message: string; context?: readonly string[] }) => {
+        seatWakes.push(input);
+      },
+      ...over,
+    });
+
+    const dedup = await routeSupervisorEvent(supEv(), capture(), { nameDrop: true, nameDropContext: hydrate });
+    const ctx = (seatWakes[0]?.context ?? []).join("\n");
+    const body = seatWakes[0]?.message ?? "";
+    const occurrences = (hay: string, needle: string) => hay.split(needle).length - 1;
+    ok(dedup.woke && seatWakes.length === 1, "a seated name-drop wake that reads the room twice still fires exactly one wake");
+    ok(occurrences(body, "earlier chatter") === 1, "🔴 the OVERLAPPING message renders ONCE in the wake envelope");
+    ok(occurrences(ctx, "earlier chatter") === 0, "🔴 …and NOT a second time in the hydrated context block");
+    ok(/<message[^>]*author="U_OLD"/u.test(body), "…keeping the envelope-sibling framing (per-message author)");
+    ok(occurrences(ctx, "sender_id=U_OLD]") === 1, "…and the context block carries exactly ONE attributed line — the non-overlapping one");
+    ok(occurrences(ctx, "the older conversation") === 1, "🔴 the message OUTSIDE the catch-up window is still hydrated, exactly once");
+    ok(occurrences(body, "the older conversation") === 0, "…and only in the context block, since the envelope never read it");
+
+    seatWakes.length = 0;
+    const noOverlap = await routeSupervisorEvent(supEv(), capture({ catchUp: async () => ({ messages: [] }) }), { nameDrop: true, nameDropContext: hydrate });
+    const ctx2 = (seatWakes[0]?.context ?? []).join("\n");
+    ok(noOverlap.woke && occurrences(ctx2, "earlier chatter") === 1, "negative control: with an EMPTY catch-up the hydration delivers the `10.0` message itself");
+    ok(occurrences(ctx2, "the older conversation") === 1, "…alongside the older one");
+    seatWakes.length = 0;
   }
 
   backscrollCalls.length = 0;

@@ -1,4 +1,5 @@
 import type { WakeMessageSender, WakeTrust } from "./wake-envelope.js";
+import type { ContextLine } from "./context-render.js";
 
 export interface SeatAdmissionCandidate {
   readonly sender: WakeMessageSender;
@@ -30,4 +31,14 @@ export function admissionFunction(name: string | undefined): SeatAdmissionFn {
 
 export function admitToSeat<T extends SeatAdmissionCandidate>(messages: readonly T[], admit: SeatAdmissionFn): T[] {
   return messages.filter((m) => admit(m));
+}
+
+function contextLineAdmission(line: ContextLine, type: "channel" | "thread"): SeatAdmissionCandidate {
+  const sender: WakeMessageSender = line.senderType === "agent" ? "self" : line.senderType === "bot" ? "bot" : "human";
+  const trust: WakeTrust = line.trust ?? (sender === "human" ? "unauth" : "relay");
+  return { sender, trust, type };
+}
+
+export function admitContextLines(lines: readonly ContextLine[], admit: SeatAdmissionFn, type: "channel" | "thread"): ContextLine[] {
+  return lines.filter((l) => admit(contextLineAdmission(l, type)));
 }

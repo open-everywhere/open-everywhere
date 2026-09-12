@@ -25,7 +25,6 @@ export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
   "packages/core/agent/blob/hosting.ts::assertBlobHostingValid",
   "packages/core/agent/channels/channel-read.ts::ChannelScopeError",
   "packages/core/agent/channels/context-render.ts::MAX_CHARS",
-  "packages/core/agent/channels/context-render.ts::capLines",
   "packages/core/agent/channels/generation-retirement.ts::RETIREMENT_CONFIRM_TIMEOUT_MS",
   "packages/core/agent/channels/self-dispatch.ts::SELF_DISPATCH_ATTEMPTS",
   "packages/core/agent/channels/self-dispatch.ts::SELF_DISPATCH_TIMEOUT_MS",

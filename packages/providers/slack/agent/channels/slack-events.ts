@@ -26,6 +26,9 @@ import {
   seatCatchUpSinceMs,
   seatCatchUp,
   seatAdmissionFor,
+  admitContextLines,
+  capLines,
+  contextLinesNotInEnvelope,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
   supervisorGrainFor,
@@ -101,7 +104,7 @@ import {
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { holdRouteWork } from "./slack-route-hold.js";
-import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, RAW_FETCH_REACHBACK_HOURS, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
+import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, RAW_FETCH_REACHBACK_HOURS, WAKE_BACKSCROLL_MAX, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
@@ -1083,7 +1086,7 @@ export type NameDropContextHydrator = () => Promise<WakeBackscrollLines | null>;
 export interface NameDropRouteDeps {
   readonly enabledFor: (surfaceKey: string) => boolean;
   readonly confirmInternal: (channelId: string) => Promise<boolean>;
-  readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string }) => Promise<WakeBackscrollLines | null>;
+  readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string; threadAdmissionSlice?: boolean }) => Promise<WakeBackscrollLines | null>;
   readonly authorIsMember?: SlackMemberProbe;
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; context?: readonly string[]; state?: unknown }) => Promise<void>;
   readonly displayName: () => Promise<string | undefined>;
@@ -1138,12 +1141,18 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     : { deliver: true, reason: "wake arm added a wake where the name-drop abstained" };
 
   const hydrateContext: NameDropContextHydrator = async () => {
+    const admitThenCap = deps.seatRoute !== undefined && ev.threadTs !== undefined;
     const fetched = deps.backscroll
-      ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => null)
+      ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs, threadAdmissionSlice: admitThenCap }).catch(() => null)
       : null;
     if (!fetched) return null;
-    const lines = await regradeSlackContextLineTrust(fetched.lines, internal, domainKeyOf(p), ev.teamId).catch(() => fetched.lines);
-    return { ...fetched, lines };
+    const graded = await regradeSlackContextLineTrust(fetched.lines, internal, domainKeyOf(p), ev.teamId).catch(() => fetched.lines);
+    const lines = deps.seatRoute
+      ? admitContextLines(graded, seatAdmissionFor(domainKeyOf(p)), ev.threadTs ? "thread" : "channel")
+      : graded;
+    const bounded = admitThenCap ? capLines(lines, { maxMessages: WAKE_BACKSCROLL_MAX }) : lines;
+    if (bounded.length === 0) return null;
+    return { ...fetched, lines: bounded };
   };
 
   if (deps.seatRoute) {
@@ -1944,6 +1953,7 @@ export async function routeSupervisorEvent(
   }
   const regraded = fetched.length > 0 ? await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched) : fetched;
   const priorContext: readonly WakeMessageInput[] = tail.length > 0 ? tail : regraded;
+  const nameDropRendered = nameDropLines ? contextLinesNotInEnvelope(nameDropLines, priorContext) : undefined;
   const backscroll = priorContext.map((m) => (withholdsBody(m, externalPolicy) ? withheldWakeMessage(m) : m));
 
   const auth = stampNonMemberChatAuth(
@@ -1997,8 +2007,8 @@ export async function routeSupervisorEvent(
       triggerAuthorName: trigger.authorName,
       triggerAuthorHandle: trigger.authorHandle,
       participants: names.participants,
-      ...(nameDropLines && nameDropLines.length > 0
-        ? { contextLines: nameDropLines, contextSource: nameDropContext?.source, readMoreHint: nameDropContext?.readMoreHint }
+      ...(nameDropRendered && nameDropRendered.length > 0
+        ? { contextLines: nameDropRendered, contextSource: nameDropContext?.source, readMoreHint: nameDropContext?.readMoreHint }
         : {}),
     });
     const rendered = renderWake(

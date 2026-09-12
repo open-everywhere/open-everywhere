@@ -592,13 +592,13 @@ export type {
   BuiltInWakeAnswer,
 } from "./channels/wake-arm.js";
 
-export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
+export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
 export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp } from "./channels/seat-catch-up.js";
 export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatchUpOpts } from "./channels/seat-catch-up.js";
 
-export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
+export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, admitContextLines, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
 export type { SeatAdmissionFn, SeatAdmissionCandidate } from "./channels/seat-admission.js";
 
 export { buildTail, selectTail, tailEntryToWakeMessage, approxEntryTokens, tailTokenCap, SESSION_TAIL_MAX_ENTRIES } from "./channels/session-tail.js";

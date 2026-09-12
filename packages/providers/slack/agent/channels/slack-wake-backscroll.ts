@@ -17,6 +17,8 @@ import {
 
 export { WAKE_BACKSCROLL_MAX };
 
+export const THREAD_ADMISSION_MAX = WAKE_BACKSCROLL_MAX * 5;
+
 export interface WakeBotIdentity {
   readonly userId?: string;
   readonly botId?: string;
@@ -28,6 +30,7 @@ export interface WakeBackscrollInput {
   readonly channelId: string;
   readonly ts: string;
   readonly threadTs?: string;
+  readonly threadAdmissionSlice?: boolean;
 }
 
 export interface WakeBackscrollDeps {
@@ -88,7 +91,8 @@ export async function fetchWakeBackscrollLines(input: WakeBackscrollInput, deps:
       if (!raw) return null;
       const priorRaw = raw.filter((m) => (typeof m.ts === "string" ? m.ts : "") !== input.ts);
       const lines = sinceLastAgentReply(linesFromMessages(priorRaw, ids));
-      return cappedEntry(lines, `slack thread ${input.channelId}/${input.threadTs}`);
+      const source = `slack thread ${input.channelId}/${input.threadTs}`;
+      return input.threadAdmissionSlice ? backscrollEntry(lines.slice(-THREAD_ADMISSION_MAX), source) : cappedEntry(lines, source);
     }
     const res = await deps.request("conversations.history", {
       channel: input.channelId,
@@ -118,10 +122,13 @@ function extractMessages(res: Record<string, unknown> | undefined): Array<Record
   return res.messages as Array<Record<string, unknown>>;
 }
 
+function backscrollEntry(lines: readonly ContextLine[], source: string): WakeBackscrollLines | null {
+  if (lines.length === 0) return null;
+  return { lines, source, readMoreHint: readMoreHint() };
+}
+
 function cappedEntry(lines: readonly ContextLine[], source: string): WakeBackscrollLines | null {
-  const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
-  if (capped.length === 0) return null;
-  return { lines: capped, source, readMoreHint: readMoreHint() };
+  return backscrollEntry(lines.slice(-WAKE_BACKSCROLL_MAX), source);
 }
 
 export const RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
