@@ -559,4 +559,36 @@ function ok(cond: boolean, label: string): void {
   }
 }
 
+{
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
+
+  ok(!seat.includes("the line you wrote"), '🔴 the honest-ack proof clause no longer names "the line you wrote"');
+  ok(!worker.includes("the line you wrote"), "🔴 …on the worker persona either");
+
+  for (const persona of [seat, worker]) {
+    ok(persona.includes("the fact you wrote down"), "🔴 …and names the FACT recorded as the proof a save landed");
+    ok(persona.includes("Name WHAT you recorded, never WHERE you put it."), "🔴 both personas are told to report what was recorded, never where");
+    ok(
+      persona.includes("is report enough: the fact,\nand where it came from"),
+      "🔴 …and the worked example keeps the PROVENANCE instructions/access.ts requires — the fact AND who it came from",
+    );
+    ok(
+      persona.includes("their folder, their filename and the line you edited are machinery"),
+      "🔴 …with the silo folder, filename and line named as the machinery they are",
+    );
+    ok(
+      persona.includes("A repository path is different and stays too — it names work the\npeople here can go and read."),
+      "🔴 negative control: a REPOSITORY path is explicitly kept — the rule bans the memory store, not paths",
+    );
+  }
+
+  ok(seat.includes("A fact is stored when the file edit happened"), "negative control: the save-really-happened rule survives");
+  ok(
+    seat.includes("A\nroutine exists when the tool returned its row"),
+    "negative control: …and so does naming the row a tool returned, which IS member-facing",
+  );
+  ok(seat.includes("Report the OUTCOME."), "negative control: the honest-ack rule itself is untouched");
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);
