@@ -605,7 +605,58 @@ registerConfig({
   const surfaceAddr = haltTool.chatHaltAddress("surface", SURFACE);
   ok(surfaceAddr.orgWide === false && surfaceAddr.scopeKey === SURFACE && surfaceAddr.level === "surface", "§11 its `surface` scope is HOST-DERIVED from the seat's own binding");
   ok(haltTool.haltConfirmation("org").includes("resume"), "§11 the room is told how it ends");
-  ok(/still read and reply/.test(haltTool.haltConfirmation("org")), "§11 and that the agent is not silenced — a halt stops acts, not conversation");
+  ok(/still read, reply/.test(haltTool.haltConfirmation("org")), "§11 and that the agent is not silenced — a halt stops acts, not conversation");
+
+  const confirmation = haltTool.haltConfirmation("surface");
+  const seatParagraph = halt.haltSeatParagraph({ halted: true, row: row(AT_SURFACE) })!;
+  const description = haltTool.default.description ?? "";
+  const { renderSeatPersona } = await import("../agent/instructions/seat-prompt.js");
+  const persona = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } }).replace(/\s+/g, " ");
+  const SAYS_READS_WORK: readonly (readonly [string, string, RegExp])[] = [
+    ["the room's confirmation", confirmation, /I can still read, reply/],
+    ["the seat paragraph", seatParagraph, /\*\*Reading and replying still work/],
+    ["the tool description", description, /It does NOT stop reading/],
+    ["the seat persona", persona, /reading, replying and handing a read to a worker still work/],
+  ];
+  for (const [label, text, saysReadsWork] of SAYS_READS_WORK) {
+    ok(!/no connector calls/.test(text), `🔴 §11c ${label} does not claim connector calls stopped — the false clause behind the step-31 refusal`);
+    ok(!/no fetching from the internet/.test(text), `🔴 §11c ${label} does not claim the internet stopped — it names the sandbox and the two withdrawn verbs instead`);
+    ok(!/no outbound (fetch|network)/.test(text), `🔴 §11c ${label} claims no ABSOLUTE network stop — OE's own first-party transports contradict one, and a seat that believes it declines a read`);
+    ok(!/do not look for another way round it/.test(text), `🔴 §11c ${label} does not forbid another route — delegating a READ is a legitimate route, and that sentence is what stopped one`);
+    ok(saysReadsWork.test(text), `🔴 §11c ${label} says in its own words that READING still works`);
+  }
+  ok(/connected integration/.test(description), "🔴 §11c the tool description names the connector wall — a read it does refuse");
+  ok(/connected integration/.test(seatParagraph) && /image from a URL/.test(seatParagraph), "🔴 §11c the seat paragraph names BOTH reads the pause reaches, so neither refusal surprises the seat");
+  ok(/connected integration/.test(persona), "🔴 §11c and the persona names the connector wall too");
+  ok(/handing a read to a\nworker|handing a read to a worker/.test(seatParagraph.replace(/\s+/g, " ")) || /delegating one/.test(seatParagraph), "🔴 §11c the seat is told that DELEGATING a read is not a way round the pause — the act it declined at step 31");
+  ok(/memory/.test(seatParagraph) && /file into THIS conversation/.test(seatParagraph), "🔴 §11c …and that a same-room file post and a memory write are not paused (OPE-1758 item 3)");
+
+  ok(/ in this conversation/.test(seatParagraph), "🔴 §11d a surface halt tells the seat the pause is IN THIS CONVERSATION");
+  ok(/ everywhere in this deployment/.test(halt.haltSeatParagraph({ halted: true, row: row(ORG_WIDE) })!), "🔴 §11d an ORG-WIDE halt says so — the pair is what makes each a measurement");
+  ok(!seatParagraph.includes(SURFACE), "🔴 §11d NEGATIVE CONTROL: and the paragraph still carries NO scope key — host-authored, ids and names never");
+
+  const AT_WORKSPACE: HaltAddress = { orgWide: false, level: "workspace", scopeKey: WORKSPACE };
+  const bothOrders = [
+    [row(AT_SURFACE), row(AT_WORKSPACE)],
+    [row(AT_WORKSPACE), row(AT_SURFACE)],
+  ];
+  for (const rows of bothOrders) {
+    const covering = halt.haltCovering(rows, FULL_SCOPE)!;
+    const clause = halt.haltSeatParagraph({ halted: true, row: covering })!;
+    ok(/ at least (in this conversation|across this workspace)/.test(clause), "🔴 §11d with two covering rows the width is HEDGED, so it cannot under-report the wider pause whichever row the store returned first");
+  }
+  ok(!/at least/.test(halt.haltSeatParagraph({ halted: true, row: row(ORG_WIDE) })!), "🔴 §11d NEGATIVE CONTROL: an org-wide halt is NOT hedged — nothing is wider for it to under-report");
+  ok(halt.haltSeatParagraph({ halted: true, unreadable: "store down" })!.startsWith("**Consequential work is paused right now.**"), "🔴 §11d an UNREADABLE halt names no width at all, because none is known");
+  ok(halt.haltSeatParagraph(halt.NOT_HALTED) === null, "§11d NEGATIVE CONTROL: no halt, no paragraph");
+
+  ok(description.includes("A REQUEST TO STOP ONE PIECE OF WORK IS NOT THIS VERB"), "🔴 §11b the description separates a task-scoped stop from the brake");
+  ok(description.includes("`task_cancel`"), "🔴 §11b …and names the verb a NAMED piece of work routes to");
+  ok(description.includes("`stand_down`"), "🔴 §11b …and the verb 'go quiet' routes to");
+  ok(
+    !description.includes("the moment someone in the conversation asks you to stop"),
+    "🔴 §11b NEGATIVE CONTROL: the sentence that INVITED the escalation is gone — a bare 'stop' no longer points at the brake",
+  );
+  ok(!/no outbound (fetch|network)/.test(description), "🔴 §11b …and the description claims no absolute network stop, which OE's own first-party transports contradict");
 
   const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
   ok(TOOL_CONSEQUENCE["halt"]?.tier === "open", "🔴 §11 `halt` is `open` — a card needs an approver present, which during an incident is exactly what is not guaranteed");
@@ -623,5 +674,55 @@ registerConfig({
   ok(CONTROL_WRITE_TOOL_NAMES.includes("halt" as never) && CONTROL_WRITE_TOOL_NAMES.includes("resume" as never), "§11 both control-MCP verbs are registered — the second door that works when the chat door does not");
 }
 
+{
+  const { announceHalt, haltConfirmation } = await import("../agent/tools/halt.js");
+  const { REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");
+  const TARGET = { platform: "slack", channelId: "C1" } as never;
+  const posted: string[] = [];
+  const record = async (_t: unknown, text: string): Promise<string> => {
+    posted.push(text);
+    return "1757-0001";
+  };
+
+  ok(await announceHalt({} as never, "surface", { resolveTarget: () => TARGET, post: record }), "§12 a halt ANNOUNCES itself through the reply path");
+  ok(posted.length === 1, "§12 …exactly once");
+  ok(posted[0] === haltConfirmation("surface"), "🔴 §12 …and the bytes are the host's own confirmation, never a paraphrase the turn chose");
+
+  posted.length = 0;
+  ok(
+    (await announceHalt({} as never, "surface", { resolveTarget: () => null, post: record })) === false,
+    "🔴 §12 NEGATIVE CONTROL: a surface with no resolvable reply target is NOT announced",
+  );
+  ok(posted.length === 0, "§12 …and nothing was posted");
+  ok(
+    (await announceHalt({} as never, "org", {
+      resolveTarget: () => TARGET,
+      post: async () => {
+        throw new Error("slack is down");
+      },
+    })) === false,
+    "🔴 §12 NEGATIVE CONTROL: a throwing transport is NOT announced — and does not throw out of the brake",
+  );
+  ok(
+    (await announceHalt({} as never, "org", { resolveTarget: () => TARGET, post: async () => REPLY_DEDUPE_SKIPPED_ID })) === false,
+    "🔴 §12 NEGATIVE CONTROL: a DEDUPED post is not a delivered one — the sentinel is an id, so 'it did not throw' would record a delivery the room never got (defensive: see §12b on why this path cannot produce one today)",
+  );
+
+  const { haltModelMessage } = await import("../agent/tools/halt.js");
+  ok(
+    haltModelMessage(false, "surface").includes(haltConfirmation("surface")),
+    "🔴 §12a a halt the room was NOT told about hands the model the confirmation VERBATIM to say itself",
+  );
+  ok(!haltModelMessage(true, "surface").includes(haltConfirmation("surface")), "🔴 §12a NEGATIVE CONTROL: an ANNOUNCED halt does not hand it back — a repeat is noise the host already posted");
+  ok(/[Dd]o not repeat/.test(haltModelMessage(true, "org")), "§12a …and says so plainly");
+
+  const haltToolSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools", "halt.ts"), "utf8");
+  const execute = haltToolSource.slice(haltToolSource.indexOf("async execute("));
+  ok(execute.includes("announceHalt("), "§12b STRUCTURAL: the tool's execute calls the announcement — the room is told by the host, not by the turn");
+  ok(execute.includes("announced },"), "§12b STRUCTURAL: …and the `admin.halt.set` row carries `announced`, so a brake nobody heard leaves a row");
+  ok(execute.includes("haltModelMessage(announced, scope)"), "§12b STRUCTURAL: …and the tool hands the model the arm §12a measured, rather than a second copy of the sentence");
+
+}
+
 await closeAllTestPg();
-console.log(`✓ halt — ${passed} assertions (row shape on BOTH adapters, the four-axis union, fail-closed reads, the chain arrow + its one exemption, both routine legs, the grant broker, both egress planes, the connector wall, the absence seam, and the two doors)`);
+console.log(`✓ halt — ${passed} assertions (row shape on BOTH adapters, the four-axis union, fail-closed reads, the chain arrow + its one exemption, both routine legs, the grant broker, both egress planes, the connector wall, the absence seam, the announcement, and the two doors)`);

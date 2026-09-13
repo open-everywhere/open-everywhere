@@ -80,6 +80,7 @@ export interface PostArm {
   ): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps, answered?: boolean): Promise<void>;
   editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
+  editReachable?(locus: { readonly platform: string; readonly channelId: string }): Promise<boolean>;
   retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;

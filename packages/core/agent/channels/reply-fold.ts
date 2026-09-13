@@ -76,7 +76,15 @@ export async function replyFoldTarget(input: {
     ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
   });
   if (!target) return null;
-  return (await isOwnPost(window.org, locus, target.messageId, input.ledgerDeps ?? {})) ? target : null;
+  if (!(await isOwnPost(window.org, locus, target.messageId, input.ledgerDeps ?? {}))) return null;
+  const reachable = postArm(platform)?.editReachable;
+  if (reachable) {
+    try {
+      if (!(await reachable.call(postArm(platform), locus))) return null;
+    } catch {
+    }
+  }
+  return target;
 }
 
 export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean, answeringWake?: string | undefined): string {
@@ -102,7 +110,9 @@ export async function refuseIfShouldFold(input: {
   readonly audit: ReplyAudit;
   readonly answeringWake?: string | undefined;
   readonly force?: boolean | undefined;
+  readonly settlementReport?: boolean | undefined;
 }): Promise<number> {
+  if (input.settlementReport === true) return 0;
   const room = input.window?.container;
   const refusedThisTurn = wasFoldRefusedThisTurn(input.turnId, room);
   const target = await replyFoldTarget({

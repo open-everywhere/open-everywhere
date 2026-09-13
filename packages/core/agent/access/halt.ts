@@ -151,15 +151,37 @@ export function haltAddressFields(address: HaltAddress): Record<string, unknown>
   return address.orgWide ? { orgWide: true } : { level: address.level, scopeKey: address.scopeKey };
 }
 
+function haltWidthClause(state: HaltState): string {
+  if (!state.halted || state.row === undefined) return "";
+  const a = state.row.address;
+  if (a.orgWide) return " everywhere in this deployment";
+  switch (a.level) {
+    case "surface":
+      return " at least in this conversation";
+    case "workspace":
+      return " at least across this workspace";
+    case "domain":
+      return " at least across this domain";
+    case "user":
+      return " at least for one person here";
+  }
+}
+
 export function haltSeatParagraph(state: HaltState): string | null {
   if (!state.halted) return null;
   return (
-    "**Everything consequential is paused right now.** Someone pulled the stop switch, so nothing " +
-    "that would change something outside this conversation will run — no messages sent on your " +
-    "behalf, no tickets, no pull requests, no scheduled work, no connector calls, no fetching from " +
-    "the internet. You can still read this conversation and answer. If someone asks you to do one " +
-    "of the paused things, say plainly that it is paused and that an admin can start it again with " +
-    "`resume`; do not look for another way round it, and do not retry."
+    `**Consequential work is paused right now${haltWidthClause(state)}.** Someone pulled the stop ` +
+    "switch, so nothing whose effect would LEAVE this conversation will run — no messages sent on " +
+    "your behalf, no tickets, no pull requests, no scheduled or event-driven work, no borrowed " +
+    "credential. Your sandbox reaches no host, and `web_fetch` and `web_search` are not available " +
+    "while the pause stands. **Reading and replying still work, and so does handing a read to a " +
+    "worker.** A question you can answer by reading, you should still answer — reading is not a way " +
+    "round the pause, and neither is delegating one. Posting a file into THIS conversation and " +
+    "saving what is said here to memory are not paused either: both stay inside the conversation you " +
+    "are still allowed to have. TWO reads the pause does reach, so neither surprises you: a tool from " +
+    "a connected integration, and reading an image from a URL. Say so plainly if you reach for " +
+    "either. If someone asks you for one of the paused things, say " +
+    "plainly that it is paused and that an admin can start it again with `resume`."
   );
 }
 

@@ -17,7 +17,9 @@ export interface CredentialEndpointRules {
   readonly methods?: readonly HttpMethod[];
 }
 
-export class CredentialEndpointError extends Error {}
+export class CredentialEndpointError extends Error {
+  readonly applied = false as const;
+}
 
 export interface CredentialEndpointVerdict {
   readonly allowed: boolean;

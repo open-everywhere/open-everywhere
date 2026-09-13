@@ -253,6 +253,14 @@ function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session"
   return lines.join(" ");
 }
 
+export const DELEGATION_FLOOR = [
+  "**The floor: if you hold the verb and ONE call answers the ask, make the call.** A single memory",
+  "write, a single read of one thing, one lookup you can already do — that is trivial, and routing it",
+  "costs the person a wait four times longer than the answer. Delegate when the work needs a verb",
+  "listed below, several steps, or an unknown amount of digging. \"I could do this myself in one call\"",
+  "is the whole test; when it is true, do it and answer.",
+].join("\n");
+
 export function renderWorkerCapabilityIndex(
   workerOnly: readonly string[],
   route: MemoryRecallRoute,
@@ -274,6 +282,7 @@ export function renderWorkerCapabilityIndex(
     "it are the ones a worker holds THERE and this seat does not:",
     "",
   ];
+  lines.push(DELEGATION_FLOOR, "");
   for (const { g, names } of rendered) lines.push(`- **${g.headline}** — ${code(names)}.`);
   lines.push(
     "",

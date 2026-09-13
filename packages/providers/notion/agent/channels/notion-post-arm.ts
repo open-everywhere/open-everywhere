@@ -1,7 +1,7 @@
 import { createCommentReply, updateComment, resolveNotionCredential } from "./notion-api.js";
-import { notionChannelCredentialFor } from "./notion-credentials.js";
+import { notionChannelCredentialFor, NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
 import { parseNotionConversationKey } from "./notion-identity.js";
-import { getConfig, resolvePartition, markNotApplied, carryFailureSignals, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { getConfig, resolvePartition, markNotApplied, carryFailureSignals, findConnectorCredential, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 function notionDomains(): readonly Domain[] {
@@ -84,6 +84,13 @@ export const notionPostArm: PostArm = {
   dispatchReply: (target, text) => dispatchNotionReply(target as NotionTarget, text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postNotion ?? liveNotionPost)(origin as NotionOrigin, text),
   editMessage: (locus, messageId, text) => liveNotionEditComment(locus, messageId, text),
+  editReachable: async (locus) => {
+    const parsed = parseNotionConversationKey(locus.channelId);
+    if (!parsed) return true;
+    const credentialId = notionReplyCredential(parsed.workspaceId, parsed.pageId) ?? NOTION_CHANNEL_CREDENTIAL;
+    const methods = findConnectorCredential(NOTION_PROVIDER, credentialId)?.endpoints?.methods;
+    return methods === undefined || methods.includes("PATCH");
+  },
   describeRedriveTarget: (origin) => `notion discussion ${(origin as NotionOrigin).discussionId}`,
   redriveContainerId: (origin) => (origin as NotionOrigin).discussionId,
 };

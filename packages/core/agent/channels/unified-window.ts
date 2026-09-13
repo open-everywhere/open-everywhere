@@ -145,6 +145,22 @@ export async function boundConversationOrigin(
   return (await resolveUnifiedWakeTarget(store, org, turnWake)) ?? undefined;
 }
 
+export async function deliveryReachedOwedConversation(
+  store: UnifiedWakeTargetStore,
+  org: string,
+  owedWake: string,
+  deliveredWake: string,
+  origin: UnifiedWakeOrigin,
+): Promise<boolean> {
+  if (owedWake === deliveredWake) return true;
+  try {
+    const owedOrigin = await boundConversationOrigin(store, org, owedWake);
+    return owedOrigin !== undefined && sameUnifiedConversation(owedOrigin, origin);
+  } catch {
+    return false;
+  }
+}
+
 export function sameUnifiedContainer(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {
   return unifiedThreadRef(a).channelKey === unifiedThreadRef(b).channelKey;
 }

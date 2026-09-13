@@ -19,5 +19,6 @@ export const domain = defineDomain({
   credentials: [
     { connector: "notion", credential: "team-key", use: "channel-key" },
     { connector: "linear", credential: "workspace", use: "1a000000-0000-4000-8000-000000000002" },
+    { connector: "slack", credential: "work-token", use: "chat-token" },
   ],
 });

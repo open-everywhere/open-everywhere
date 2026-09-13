@@ -476,4 +476,37 @@ function ok(cond: boolean, label: string): void {
   );
 }
 
+{
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+
+  ok(seat.includes('"Stop" has three answers'), "🔴 §14: the seat is told that stop is a THREE-way question, not one word with one verb");
+  ok(
+    seat.includes("what decides between them is WHAT THE PERSON NAMED"),
+    "🔴 §14: …and that the DISCRIMINATOR is what the person named — the one fact the soak turn did not read",
+  );
+
+  ok(seat.includes("**They named a piece of work**") && seat.includes("`task_cancel`"), "🔴 §14: a NAMED piece of work routes to `task_cancel`");
+  ok(seat.includes("**They asked you to go quiet**") && seat.includes("call `stand_down`"), "🔴 §14: going quiet still routes to `stand_down`");
+  ok(seat.includes("**They asked for everything to stop**") && seat.includes("That is `halt`"), "🔴 §14: only an ask for EVERYTHING routes to `halt`");
+
+  ok(
+    seat.includes('"stop that changelog one"'),
+    "🔴 §14: the task-scoped branch quotes the member wording that PULLED the halt, so the sentence that failed sits under the right branch",
+  );
+
+  ok(
+    seat.includes("The widest answer is never the safe default"),
+    "🔴 §14: …and the seat is told the widest answer is not the safe default",
+  );
+  ok(
+    seat.includes("Work they did not name stands"),
+    "🔴 §14: …and that work the person did not name keeps running — the member's second task, which they said stood",
+  );
+
+  ok(
+    !seat.includes("however they put it — take it at face value and call `stand_down`. There is no\nmagic word"),
+    "🔴 §14/CONTROL: the old ONE-verb rule for the whole word is gone — it is now the middle branch, not the whole answer",
+  );
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

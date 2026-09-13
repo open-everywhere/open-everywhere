@@ -229,4 +229,50 @@ ok(WORKER_WITHHELD_TOOLS.has("read_channel") === true, "control: the chat read I
 ok(allowedOnWorkerSeat("read_work_channel") === true, "the WORK channel read REACHES a delegated worker");
 ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACHES a delegated worker");
 
+{
+  const { domain: soakDomain } = await import("../agent/memory/config/domains/soak.js");
+  const soakDomains = [soakDomain];
+  const soakCtx = (): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: {
+          current: {
+            attributes: { team_id: "T0EXAMPLE", channel_id: "C0EXCHAN008", channel_type: "channel", oe_sources: "slack,notion,linear,github" },
+            principalId: "U_SOAK",
+            principalType: "slack-user",
+          },
+        },
+      },
+    }) as unknown as BindableContext;
+
+  ok(
+    domainHoldsSurfaceWorkGrant(soakDomain, "slack") === true,
+    "🔴 §6: the shipped `soak` domain HOLDS the Slack work grant. Without it the wrap-up worker can read none of the day it is asked to summarise",
+  );
+  const platforms = surfaceWorkReadPlatforms(soakCtx(), soakDomains);
+  ok(platforms.includes("slack"), "🔴 §6: …so a turn in #oe-soak-dev resolves `slack` as a work-readable surface");
+  ok(surfaceWorkReadMount(soakCtx(), () => soakDomains) === true, "🔴 §6: …and the work reads MOUNT, which is what the summary worker needs");
+  const soakWithoutSlack = defineDomain({
+    name: "soak-control",
+    reach: [...(soakDomain.reach ?? [])],
+    mode: "unified",
+    ambientSupervisor: true,
+    credentials: (soakDomain.credentials ?? []).filter((c) => c.connector !== "slack"),
+  });
+  ok(
+    domainHoldsSurfaceWorkGrant(soakWithoutSlack, "slack") === false,
+    "🔴 §6/CONTROL: the SAME domain minus the Slack row holds nothing (explicit false) — this is the state that wrote \"No shipped work could be verified\"",
+  );
+  ok(
+    surfaceWorkReadPlatforms(soakCtx(), [soakWithoutSlack]).includes("slack") === false,
+    "🔴 §6/CONTROL: …and its work reads resolve no Slack surface, so the declaration is what unlocks the read",
+  );
+  ok(
+    domainHoldsSurfaceWorkGrant(soakDomain, "discord") === false,
+    "🔴 §6: the Slack row confers NOTHING on an undeclared platform (explicit false) — a container-fenced grant, never a widening",
+  );
+  ok(LEAN_SEAT_TOOLS.has("read_work_channel") === false, "🔴 §6: the seat STILL cannot make the work read — the grant arms the worker, not the seat");
+}
+
 console.log(`✓ surface-work-grant: ${passed} assertions passed`);

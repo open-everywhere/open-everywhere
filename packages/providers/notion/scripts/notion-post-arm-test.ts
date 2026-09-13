@@ -228,5 +228,56 @@ function armCredential(present: boolean): void {
   }
 }
 
+{
+  const WORKSPACE = "ws-1753";
+  const PAGE = "pg-1753";
+  const locus = { platform: "notion", channelId: `${WORKSPACE}/${PAGE}` };
+
+  const armWithMethods = (methods: readonly string[] | undefined): void => {
+    resetBrokers();
+    registerBroker("test", { async getSecret() { return TOKEN; } });
+    setRegisteredConnectorCredentials([
+      {
+        connector: "notion",
+        allows: ["api-key"],
+        credentials: [
+          {
+            id: NOTION_CHANNEL_CREDENTIAL,
+            type: "api-key",
+            secretRef: "db:notion:channel-key",
+            broker: "test",
+            intake: false,
+            ...(methods === undefined ? {} : { endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods } }),
+          },
+        ],
+      },
+    ] as never);
+  };
+
+  ok(typeof notionPostArm.editReachable === "function", "§5: the Notion arm declares an editReachable predicate at all");
+
+  armWithMethods(["GET", "POST"]);
+  ok(
+    (await notionPostArm.editReachable!(locus)) === false,
+    "🔴 §5: under the deployment's real GET,POST declaration the edit is NOT reachable — the PATCH would be refused before a byte left",
+  );
+
+  armWithMethods(["GET", "POST", "PATCH"]);
+  ok((await notionPostArm.editReachable!(locus)) === true, "🔴 §5/CONTROL: add PATCH to the SAME declaration and the edit becomes reachable");
+
+  armWithMethods(undefined);
+  ok((await notionPostArm.editReachable!(locus)) === true, "🔴 §5/FAIL-OPEN: an UNNARROWED credential answers true — nothing narrows the methods, so nothing is withheld");
+
+  resetBrokers();
+  setRegisteredConnectorCredentials([]);
+  ok((await notionPostArm.editReachable!(locus)) === true, "§5/FAIL-OPEN: an UNREGISTERED credential answers true too");
+
+  armWithMethods(["GET", "POST"]);
+  ok(
+    (await notionPostArm.editReachable!({ platform: "notion", channelId: "not-a-conversation-key" })) === true,
+    "§5/FAIL-OPEN: an unparseable locus answers true — the predicate never turns its own confusion into a refusal",
+  );
+}
+
 assert.ok(passed > 0);
 console.log(`✓ notion-post-arm: ${passed} assertions passed`);

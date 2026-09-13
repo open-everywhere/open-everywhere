@@ -52,7 +52,14 @@ import {
 import { markStandDownSilenceThisTurn, REPLY_STAND_DOWN_ACK_ACTION } from "../channels/stand-down-silence.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
-import { resolveAnswerableReplyTarget, replyRefusalMessage, answeredThisTurnRefusalMessage, boundConversationOrigin, sameUnifiedConversation } from "../channels/unified-window.js";
+import {
+  resolveAnswerableReplyTarget,
+  replyRefusalMessage,
+  answeredThisTurnRefusalMessage,
+  boundConversationOrigin,
+  sameUnifiedConversation,
+  deliveryReachedOwedConversation,
+} from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import {
   DELEGATION_PENDING_REFUSAL_REASON,
@@ -249,6 +256,10 @@ export const unifiedReplyEntry = defineTool({
         }
       }
 
+      const owedReport = settlementReportOwedOn(turnId);
+      const isSettlementReport =
+        owedReport !== undefined && (await deliveryReachedOwedConversation(store, org, owedReport.wake, input.wake, origin));
+
       const foldOverrides = await refuseIfShouldFold({
         store,
         window: tailWindow(),
@@ -258,6 +269,7 @@ export const unifiedReplyEntry = defineTool({
         audit: replyAuditFor(bind, "tool", input.wake),
         answeringWake: input.wake,
         force: input.force === true,
+        settlementReport: isSettlementReport,
       });
 
       const framed = withRunRefusalBlock(input.text, consumeRoutineRunPermissionRefusals());
@@ -278,21 +290,9 @@ export const unifiedReplyEntry = defineTool({
       if (owingTask !== undefined) {
         for (const task of pendingDelegationsOwing(turnId, input.wake, addressedWakeThisTurn(turnId))) notePromisedReport(task);
       }
-      const owedReport = settlementReportOwedOn(turnId);
-      if (owedReport !== undefined) {
-        let reachedIt = owedReport.wake === input.wake;
-        if (!reachedIt) {
-          try {
-            const owedOrigin = await boundConversationOrigin(store, org, owedReport.wake);
-            reachedIt = owedOrigin !== undefined && sameUnifiedConversation(owedOrigin, origin);
-          } catch {
-            reachedIt = false;
-          }
-        }
-        if (reachedIt) {
-          dischargeSettlementReport();
-          await auditToolAction(ctx, SETTLEMENT_REPORT_POSTED_ACTION, { task: owedReport.task, wake: input.wake });
-        }
+      if (owedReport !== undefined && isSettlementReport) {
+        dischargeSettlementReport();
+        await auditToolAction(ctx, SETTLEMENT_REPORT_POSTED_ACTION, { task: owedReport.task, wake: input.wake });
       }
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
