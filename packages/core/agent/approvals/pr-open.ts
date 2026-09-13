@@ -1,4 +1,3 @@
-import { getGitHubApp } from "../scm/provider.js";
 import { createBranch, deleteRef, getBranchSha, updateRef } from "../scm/refs.js";
 import { RateLimitExhaustedError } from "../channels/rate-limit-retry.js";
 import { createOrUpdatePullRequest } from "../scm/pr.js";
@@ -7,7 +6,7 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
+import { resolvePrWriteToken } from "../scm/write-token.js";
 import type { RepoCapability } from "../access/repo-capabilities.js";
 
 export interface PrOpenArgs {
@@ -36,21 +35,8 @@ export interface PrOpenExecuteDeps {
   readonly resolveToken?: (repo: string, capabilities?: readonly RepoCapability[]) => Promise<string>;
 }
 
-async function resolveWriteToken(repo: string, capabilities: readonly RepoCapability[] = []): Promise<string> {
-  const app = getGitHubApp();
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo], expandMintPermissions(DEFAULT_PERMISSIONS, capabilities));
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
-}
-
 export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: PrOpenExecuteDeps = {}, opts: { sessionApproved?: boolean } = {}): Promise<string> {
-  const token = await (deps.resolveToken ?? resolveWriteToken)(args.repo, args.capabilities ?? []);
+  const token = await (deps.resolveToken ?? resolvePrWriteToken)(args.repo, args.capabilities ?? []);
 
   const current = await (deps.getBranchSha ?? getBranchSha)({ repo: args.repo, branch: args.head, token });
   if (current === null) {

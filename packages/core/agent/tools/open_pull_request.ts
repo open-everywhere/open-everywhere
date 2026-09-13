@@ -7,6 +7,7 @@ import { principalIdOf, resolveAccessFor, unattendedOf } from "../access/request
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
+import { resolvePrWriteToken } from "../scm/write-token.js";
 import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { compileNetworkPolicy } from "../access/egress.js";
@@ -33,19 +34,6 @@ import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 
 export function sessionMemoAdmissible(input: { readonly sessionId?: string; readonly tainted: boolean; readonly halted: boolean }): boolean {
   return Boolean(input.sessionId) && !input.tainted && !input.halted;
-}
-
-async function resolvePrToken(repo: string): Promise<string> {
-  const app = getGitHubApp();
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo]);
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
 }
 
 async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {
@@ -113,7 +101,8 @@ export default windowGated("open_pull_request", defineTool({
     const venue = venueResult.venue;
     const originChannelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
 
-    const token = await resolvePrToken(input.repo);
+    const repoCapabilities = access.repoCapabilities[input.repo] ?? [];
+    const token = await resolvePrWriteToken(input.repo, repoCapabilities);
 
     let sandbox: Awaited<ReturnType<typeof ctx.getSandbox>>;
     try {
@@ -180,7 +169,7 @@ export default windowGated("open_pull_request", defineTool({
       headSha,
       requestedBy,
       tainted,
-      ...(access.repoCapabilities[input.repo]?.length ? { capabilities: access.repoCapabilities[input.repo] } : {}),
+      ...(repoCapabilities.length ? { capabilities: repoCapabilities } : {}),
       ...(sessionId ? { sessionId } : {}),
     };
 
