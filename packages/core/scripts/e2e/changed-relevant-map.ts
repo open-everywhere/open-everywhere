@@ -185,6 +185,15 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, as are the GitHub, Linear and Notion three since OPE-1501 — so all six turn a regression in these two files RED. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
   },
   {
+    area: "seat-catch-up",
+    globs: [
+      "packages/core/agent/channels/seat-catch-up.ts",
+      "packages/core/agent/channels/backscroll-window.ts",
+    ],
+    scenarios: ["J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear"],
+    why: "Each of the three drives its own surface's catch-up end to end (OPE-1748): the stand-down makes an idle window, a plain message in it wakes nothing, and the seat's NEXT wake must carry that message and re-show nothing from before its last one. They are the only scenarios that can fail when the bound or the fetch regresses — every other e2e room is ambient or windowed, where a message said between wakes woke the seat anyway. THREE, NOT SIX, and the missing three are missing for stated reasons rather than by oversight. J-ENGAGED-slack is out because Slack's catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead. J-ENGAGED-discord and J-ENGAGED-notion are out because this pack posts to those surfaces as a BOT and as an INTEGRATION, and the default `wide` admission drops a bot sender before the envelope — so a leg there would red on a fixture fact, not a regression (each journey states its own floor at the point the leg would sit; AUDIT.md carries the same). The evidence is the seat's replayed transcript rather than a row, so `scripts/e2e-driver-test.ts` pins the reader (`seatCatchUpWake`) and these three legs prove it against a live deployment.",
+  },
+  {
     area: "reply-provenance",
     globs: [
       "packages/core/agent/channels/reply-provenance.ts",

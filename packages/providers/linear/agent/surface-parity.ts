@@ -9,6 +9,7 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": { supported: "the author of the reacted comment costs one GraphQL read — the webhook does not carry it" },
   "ancillary-ops": "supported",
   "ambient-engagement-seam": "supported",
+  "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
 
   "addressed-leg": "supported",

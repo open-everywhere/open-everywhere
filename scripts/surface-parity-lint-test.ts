@@ -160,8 +160,8 @@ ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on
 ok(/\d+ capabilities × 6 surfaces/.test(green.out), "…with the cell count");
 ok(/8 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
 ok(
-  /2 \(ambient-engagement-seam, owned-thread-ingress\) against the bundle sources/.test(green.out),
-  "…and names the two that are source scans, not registries",
+  /3 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion\) against the bundle sources/.test(green.out),
+  "…and names the three that are source scans, not registries",
 );
 
 {

@@ -9,6 +9,7 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": { unsupported: "vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll" },
   "ancillary-ops": "supported",
   "ambient-engagement-seam": "supported",
+  "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
 
   "addressed-leg": { supported: "the `direct` wake — a name-drop or structured mention, not a platform @mention" },

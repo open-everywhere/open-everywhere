@@ -5,6 +5,7 @@ import {
   githubEngagedAdmits,
   githubEngagedFollowUpReach,
   githubMachineAuthored,
+  githubWakeAddressing,
   markGitHubEngaged,
   resolveGitHubEngagement,
   type GitHubEngagementVerdict,
@@ -417,7 +418,12 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
     surface: surfaceKey,
     principalId: ev.comment.authorLogin,
     action: "github.dispatched",
-    detail: { addressing: cls.addressing, issueNumber: ev.issueNumber, repoPrivate: ev.repoPrivate === true, vouched },
+    detail: {
+      addressing: githubWakeAddressing(cls.addressing, admission.engagedFollowUp),
+      issueNumber: ev.issueNumber,
+      repoPrivate: ev.repoPrivate === true,
+      vouched,
+    },
   });
   slog(`comment on ${surfaceKey}#${ev.issueNumber} → judged wake dispatched`);
 }

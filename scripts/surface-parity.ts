@@ -79,6 +79,19 @@ const OWNED_THREAD_INGRESS_IMPORT =
 
 const OWNED_THREAD_INGRESS_CALL = /\bawait\s+divertInboundToUnifiedWindow\s*\(/su;
 
+function engagedRowPromotionPlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (sourcesReference(dir, ENGAGED_ROW_PROMOTION_DEF) && sourcesReference(dir, ENGAGED_ROW_PROMOTION_CALL)) wired.add(platform);
+  }
+  return wired;
+}
+
+const ENGAGED_ROW_PROMOTION_DEF = /\?\s*"thread-follow"\s*:\s*addressing\b/su;
+
+const ENGAGED_ROW_PROMOTION_CALL = /\baddressing:\s*\w*WakeAddressing\s*\(/su;
+
 function sourcesReference(dir: string, pattern: RegExp): boolean {
   let entries: string[];
   try {
@@ -104,7 +117,7 @@ function setOf(platforms: Iterable<string>): ReadonlySet<string> {
   return new Set([...platforms].filter((p) => (PLATFORMS as readonly string[]).includes(p)));
 }
 
-const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress"] as const;
+const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress", "engaged-row-promotion"] as const;
 
 const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["identity-mapper", setOf(registeredIdentityMapperPlatforms())],
@@ -116,6 +129,7 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["ancillary-ops", setOf(PLATFORMS.filter((p) => surfaceMessageOps(p) !== undefined))],
   ["ambient-engagement-seam", engagementSeamPlatforms()],
   ["owned-thread-ingress", ownedThreadIngressPlatforms()],
+  ["engaged-row-promotion", engagedRowPromotionPlatforms()],
   ["search", setOf(registeredSearchConnectors())],
 ]);
 

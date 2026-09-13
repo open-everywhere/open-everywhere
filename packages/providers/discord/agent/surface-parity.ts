@@ -9,6 +9,10 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": "supported",
   "ancillary-ops": "supported",
   "ambient-engagement-seam": { supported: "enrols and honours `stopped`; gates delivery in its own gateway rule" },
+  "engaged-row-promotion": {
+    unsupported:
+      "the seated path reports the classifier's word — an auto-thread's follow-up diverts as that channel's own wake, and the journey reads `channel-watch` on a `singleWindow: true` row in that room instead",
+  },
   "owned-thread-ingress": { supported: "the guild leg only — a Discord DM carries no threads, so its divert never consults ownership" },
 
   "addressed-leg": "supported",

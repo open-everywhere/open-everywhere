@@ -9,6 +9,7 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": "supported",
   "ancillary-ops": { supported: "inline — rides Eve's own Slack client path, not the ops registry" },
   "ambient-engagement-seam": "supported",
+  "engaged-row-promotion": { unsupported: "no dispatch row — Slack writes no `slack.dispatched` action, so there is no `addressing` value to promote" },
   "owned-thread-ingress": "supported",
   "seat-catch-up": "supported",
 

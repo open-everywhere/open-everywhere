@@ -80,6 +80,68 @@ eq(
   "the shared workspace-tier mount truncates to its own silo-relative path the same way a named silo does",
 );
 
+eq(
+  truncateMemoryCitationPaths(
+    "The codename is mango-turbine-4417 — see https://github.com/example-owner/soak-scratch/blob/main/../workspace/memory/soak-brain/decisions.md#L3",
+  ),
+  "The codename is mango-turbine-4417 — see soak-brain/decisions.md#L3",
+  "🔴 step 17's fabricated blob URL renders as the silo-relative memory path, in plain text — no host, no blob base, no traversal",
+);
+
+eq(
+  truncateMemoryCitationPaths(
+    "recorded in [`decisions.md:3`](https://github.com/example-owner/soak-scratch/blob/main/../workspace/memory/soak-brain/decisions.md#L3).",
+  ),
+  "recorded in soak-brain/decisions.md#L3.",
+  "🔴 the Markdown-wrapped fabrication collapses to plain text — no half-rewritten relative link is left behind",
+);
+
+eq(
+  truncateMemoryCitationPaths(
+    "it's in <https://github.com/example-owner/soak-scratch/blob/main/../workspace/memory/soak-brain/decisions.md#L3|decisions.md:3>",
+  ),
+  "it's in soak-brain/decisions.md#L3",
+  "the Slack-wrapped fabrication collapses to plain text too",
+);
+
+eq(
+  truncateMemoryCitationPaths("see https://github.com/acme/handbook/blob/main/workspace/memory/notes.md for the checked-in copy"),
+  "see https://github.com/acme/handbook/blob/main/workspace/memory/notes.md for the checked-in copy",
+  "NEGATIVE CONTROL: a web URL reaching the mount WITHOUT a traversal is untouched — it is indistinguishable from a real repository file",
+);
+
+eq(
+  truncateMemoryCitationPaths("the diff is at https://example.com/a/b/../c/report.html today"),
+  "the diff is at https://example.com/a/b/../c/report.html today",
+  "NEGATIVE CONTROL: a traversing URL that never names the memory mount passes through byte-identical",
+);
+
+eq(
+  truncateMemoryCitationPaths("cd /srv/app/../workspace/memory/soak-brain and look"),
+  "cd /srv/app/../workspace/memory/soak-brain and look",
+  "NEGATIVE CONTROL: a schemeless traversing path is not a fabricated LINK and stays byte-identical",
+);
+
+eq(
+  truncateMemoryCitationPaths("read it from file:///srv/agent/../workspace/memory/soak-brain/standing.md#L2"),
+  "read it from soak-brain/standing.md#L2",
+  "a TRAVERSED file:// URL truncates like the plain file:// form — the same leak, written a second way",
+);
+
+eq(
+  truncateMemoryCitationPaths(
+    "redirect https://example.com/r?to=/a/../b&next=https://github.com/acme/h/blob/main/workspace/memory/n.md",
+  ),
+  "redirect https://example.com/r?to=/a/../b&next=https://github.com/acme/h/blob/main/workspace/memory/n.md",
+  "🔴 NEGATIVE CONTROL: a traversing URL followed by a second, un-traversed URL is byte-identical — a match never crosses a `scheme://`",
+);
+
+eq(
+  truncateMemoryCitationPaths("list: https://a.com/x/../y,https://github.com/acme/h/blob/main/workspace/memory/notes.md end"),
+  "list: https://a.com/x/../y,https://github.com/acme/h/blob/main/workspace/memory/notes.md end",
+  "NEGATIVE CONTROL: a comma-joined pair of URLs is byte-identical too — the crossing is closed for every separator the class admits",
+);
+
 console.log("2. postReply applies the truncation before dispatch, prefix, dedupe and audit:");
 
 const captured: Array<{ text: string }> = [];

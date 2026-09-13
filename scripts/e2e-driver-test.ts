@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -133,11 +133,15 @@ const {
   reportedNameDrop,
   reportedSeatedChannelWatch,
   reportedThreadFollow,
+  seatContinuity,
   standDownAttemptedButUnmarked,
   standDownMarked,
   standDownRows,
+  wakeIngressIds,
+  WAKE_INGRESS_ACTION,
 } = await import("../packages/core/scripts/e2e/engaged-rows.js");
 const { STAND_DOWN_ACTION } = await import("../packages/core/agent/tools/stand_down.js");
+const { WAKE_INGRESS_ACTION: PRODUCT_WAKE_INGRESS_ACTION } = await import("../packages/core/agent/channels/wake-timing.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
 const { relayGate, parseRelayPayload, authForRelayMessage } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
@@ -155,6 +159,39 @@ const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
 const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
+
+{
+  const exampleText = readFileSync(fileURLToPath(new URL("../.env.e2e.example", import.meta.url)), "utf-8");
+  const rowNames = new Set([...exampleText.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]));
+  const registryNames: readonly string[] = Object.values(ENV);
+
+  ok(!rowNames.has("E2E_A_NAME_THE_EXAMPLE_DOES_NOT_DECLARE"), "negative control: the row set rejects a name the example does not declare");
+  ok(rowNames.has(ENV.slackUserToken), "positive control: the row set finds a name the example does declare");
+  ok(registryNames.length > 50, `positive control: the ENV registry parsed into a real name set (${registryNames.length} names)`);
+
+  const undocumented = registryNames.filter((n) => !rowNames.has(n));
+  ok(
+    undocumented.length === 0,
+    `🔴 every env name the e2e harness reads carries a row in .env.e2e.example — an operator cannot set what no example names (undocumented: ${undocumented.join(", ")})`,
+  );
+
+  const e2eDir = fileURLToPath(new URL("../packages/core/scripts/e2e/", import.meta.url));
+  const harnessSource = readdirSync(e2eDir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".ts"))
+    .map((e) => readFileSync(join(e2eDir, e.name), "utf-8"))
+    .join("\n");
+  const spelled = (name: string): boolean => new RegExp(`(?<![A-Z0-9_])${name}(?![A-Z0-9_])`).test(harnessSource);
+  ok(spelled(ENV.slackUserToken), "positive control: the harness source blob really carries the registry's names");
+  ok(!spelled("E2E_A_NAME_NO_HARNESS_FILE_SPELLS"), "negative control: the harness source blob rejects a name nothing spells");
+  ok(spelled("E2E_EXPECT_MODELS"), "positive control: a name that is also a PREFIX of a longer one is found on its own, not through the longer sibling");
+  ok(!spelled("E2E_EXPECT_MODEL"), "🔴 negative control: a PREFIX of a real name is NOT accepted — the match is word-bounded, not a substring scan");
+
+  const deadRows = [...rowNames].filter((n) => !spelled(n));
+  ok(
+    deadRows.length === 0,
+    `🔴 every row in .env.e2e.example is read by some file under scripts/e2e/ — a dead row asks an operator to provision a fixture nothing looks at (dead: ${deadRows.join(", ")})`,
+  );
+}
 
 {
   const empty = {};
@@ -2364,6 +2401,59 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { seatCatchUpWake } = await import("../packages/core/scripts/e2e/transcript-read.js");
+  const STALE = "gh-stale-11111";
+  const IDLE = "gh-idle-22222";
+  const TRIG = "gh-trig-33333";
+  const wake = (index: number, trigger: string, context: readonly string[]) => ({
+    index,
+    at: "2026-05-14T11:35:00Z",
+    type: "message.received",
+    data: { message: `<channel><message>${context.join("</message><message>")}</message></channel>\n<trigger>${trigger}</trigger>` },
+  });
+  const earlier = wake(0, STALE, []);
+  const reply = { index: 2, at: "2026-05-14T11:35:02Z", type: "message.completed", data: { message: `the token was ${IDLE}` } };
+
+  const healthy = seatCatchUpWake([earlier, wake(1, TRIG, [IDLE]), reply], { trigger: TRIG, caughtUp: IDLE, stale: [STALE] });
+  ok(healthy.wakeIndex === 1, "seatCatchUpWake locates the wake by its TRIGGER marker, not by position — the earlier wake in the same stream is not it");
+  ok(healthy.carriedCatchUp, "…and reports that the same envelope carried the message said while the seat was idle");
+  ok(healthy.staleCarried.length === 0, "…and that it re-showed nothing from before the seat's last wake — the BOUND, which is the half a 'did it see the message' gate cannot see");
+
+  const blind = seatCatchUpWake([earlier, wake(1, TRIG, []), reply], { trigger: TRIG, caughtUp: IDLE, stale: [STALE] });
+  ok(
+    blind.wakeIndex === 1 && !blind.carriedCatchUp,
+    "🔴 RED ARM — a wake that carried NO catch-up context reports carriedCatchUp:false, even though the seat's later REPLY quotes the token. The reply is a different event, so a model that guessed cannot green this",
+  );
+
+  const staleWindow = seatCatchUpWake([earlier, wake(1, TRIG, [STALE, IDLE]), reply], { trigger: TRIG, caughtUp: IDLE, stale: [STALE] });
+  ok(
+    staleWindow.carriedCatchUp && staleWindow.staleCarried.join(",") === STALE,
+    "🔴 RED ARM — a STALE window reds: a read that returns the whole container every wake carries the idle message too, so it passes the catch-up gate and is caught only by this one",
+  );
+
+  ok(
+    seatCatchUpWake([earlier, reply], { trigger: TRIG, caughtUp: IDLE, stale: [STALE] }).wakeIndex === undefined,
+    "VACUITY: no event carries the trigger ⇒ no wakeIndex — the caller must red on that separately, never fold it into 'the catch-up did not run'",
+  );
+  ok(
+    !seatCatchUpWake([], { trigger: TRIG, caughtUp: IDLE }).carriedCatchUp && seatCatchUpWake([], { trigger: TRIG, caughtUp: IDLE }).staleCarried.length === 0,
+    "VACUITY: an empty stream carries nothing — never a pass",
+  );
+  ok(
+    seatCatchUpWake([wake(7, TRIG, [IDLE]), wake(3, TRIG, [])], { trigger: TRIG, caughtUp: IDLE }).wakeIndex === 3,
+    "🔴 the OLDEST event carrying the trigger wins, whatever order the pager returned them in — the prompt precedes every event the turn goes on to write, so a later echo of the trigger is never the envelope",
+  );
+  ok(
+    seatCatchUpWake([{ index: 0, at: null, type: `note-${IDLE}`, data: { message: TRIG } }], { trigger: TRIG, caughtUp: IDLE }).carriedCatchUp,
+    "the search reads the event's TYPE as well as its data — a marker is a marker wherever the stream carried it, and a reader that missed one field would report a false negative",
+  );
+  ok(
+    seatCatchUpWake([wake(0, TRIG, [IDLE])], { trigger: TRIG, caughtUp: IDLE, stale: ["", STALE] }).staleCarried.length === 0,
+    "NEGATIVE: an EMPTY stale marker matches nothing — every string contains it, and counting one would red every leg on a correct deployment",
+  );
+}
+
+{
   const { decomposeSession, joinDelegations, delegationJoinTargets, fmtMs, renderSessionTiming, renderDelegationTiming } = await import(
     "../packages/core/scripts/e2e/transcript-timings.js"
   );
@@ -3748,6 +3838,100 @@ rmSync(dir, { recursive: true, force: true });
   );
   ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
   ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
+
+  const seatPost = (sessionId: unknown, surface = "C1") =>
+    row(REPLY_POST_ACTION, { chars: 12, ...(sessionId === undefined ? {} : { sessionId }) }, surface);
+  const SEAT = "wrun_seat_one";
+  const OTHER_SEAT = "wrun_seat_two";
+  const oneSeat = seatContinuity([seatPost(SEAT), seatPost(SEAT)]);
+  ok(oneSeat.replies === 2 && oneSeat.sessionIds.join(",") === SEAT, "seatContinuity: two replies naming ONE session is the standing seat answering both name-drops");
+  ok(oneSeat.unattributed === 0, "…with nothing unattributed, which is what lets the one-session reading stand");
+  const twoSeats = seatContinuity([seatPost(SEAT), seatPost(OTHER_SEAT)]);
+  ok(
+    twoSeats.sessionIds.length === 2 && twoSeats.sessionIds.join(",") === `${SEAT},${OTHER_SEAT}`,
+    "🔴 RED ARM — the OLDER shape: two sessions across the two replies, kept in first-seen order so a red log names which pair disagreed",
+  );
+  ok(
+    seatContinuity([seatPost(undefined), seatPost(undefined)]).unattributed === 2 &&
+      seatContinuity([seatPost(undefined), seatPost(undefined)]).sessionIds.length === 0,
+    "🔴 RED ARM — rows carrying NO sessionId are COUNTED as unattributed, never dropped: dropping them would report an empty id list, which a `length === 1` gate reads as neither pass nor fail while a `<= 1` one would read as agreement",
+  );
+  ok(seatContinuity([seatPost(SEAT), seatPost(7)]).unattributed === 1, "NEGATIVE: a non-string sessionId is unattributed — never coerced, the discipline every reader in this module holds");
+  ok(seatContinuity([seatPost(SEAT), seatPost("")]).unattributed === 1, "NEGATIVE: an EMPTY sessionId names no session either");
+  ok(seatContinuity([seatPost(SEAT, "C1"), seatPost(OTHER_SEAT, "CZ")], { surface: "C1" }).sessionIds.join(",") === SEAT, "the surface scope keeps another room's seat out of this room's continuity claim");
+  ok(
+    seatContinuity([seatPost(SEAT)], { surface: "slack/T1/C1" }).replies === 0,
+    "NEGATIVE: the QUALIFIED key matches no reply.post row — the shape mistake this file's header exists for, and here it would report zero replies rather than a wrong session",
+  );
+  ok(seatContinuity([row(STOOD_DOWN_ACTION, { sessionId: SEAT })]).replies === 0, "NEGATIVE: another action carrying a sessionId is not a reply");
+  ok(seatContinuity([]).replies === 0 && seatContinuity([]).sessionIds.length === 0, "VACUITY: an empty window evidences no seat — a caller gating on `sessionIds.length === 1` must gate on `replies` too");
+
+  ok(WAKE_INGRESS_ACTION === PRODUCT_WAKE_INGRESS_ACTION, "the pack's ingress action name IS the product's own WAKE_INGRESS_ACTION — no second spelling of one row");
+  const KEYED = "slack/T1/C1";
+  const ingress = (wakeId: unknown, surfaceKey: unknown = KEYED, deliveryId?: string) => ({
+    ...row(WAKE_INGRESS_ACTION, {
+      ...(wakeId === undefined ? {} : { wakeId }),
+      ...(surfaceKey === null ? {} : { surfaceKey }),
+      ...(deliveryId ? { deliveryId } : {}),
+      ingressTs: "2026-05-11T23:30:00.000Z",
+    }),
+  });
+  ok(wakeIngressIds([ingress("w1"), ingress("w2")], { container: "C1" }).join(",") === "w1,w2", "wakeIngressIds joins on the LAST SEGMENT of detail.surfaceKey — the container id a driver actually holds");
+  ok(wakeIngressIds([ingress("w1"), ingress("w2")], { container: KEYED }).length === 2, "…and on the WHOLE qualified key, for a caller that knows it");
+  ok(
+    wakeIngressIds([ingress("w1"), ingress("w1", KEYED, "d2")], { container: "C1" }).join(",") === "w1",
+    "🔴 DISTINCT ids, not rows: a REDRIVE files a second row for ONE wake id, and counting rows would report two wakes where the deployment admitted one",
+  );
+  ok(
+    wakeIngressIds([ingress("w1"), ingress("w2", "slack/T1/CZ")], { container: "C1" }).join(",") === "w1",
+    "🔴 NEGATIVE: another room's wake is not this container's — the leg's read is scoped by platform and time only, so without the join a stranger's message greens the two-wake gate",
+  );
+  ok(wakeIngressIds([ingress("w1", null)], { container: "C1" }).length === 0, "NEGATIVE: a row naming NO container cannot be claimed as this one's — absent is never a match");
+  ok(wakeIngressIds([ingress(undefined)], { container: "C1" }).length === 0 && wakeIngressIds([ingress(7)], { container: "C1" }).length === 0, "NEGATIVE: a missing or non-string wakeId contributes nothing rather than an undefined entry");
+  ok(wakeIngressIds([row("reply.post", { wakeId: "w1", surfaceKey: KEYED })], { container: "C1" }).length === 0, "NEGATIVE: another action carrying a wakeId is not an ingress row");
+  ok(wakeIngressIds([ingress("w1"), ingress("w2", "slack/T1/CZ")]).length === 2, "an UNJOINED read counts every container's wakes — which is why every caller passes the container");
+  ok(wakeIngressIds([]).length === 0, "VACUITY: an empty window admitted no wake");
+  ok(wakeIngressIds([ingress("w1", "C1")], { container: "C1" }).join(",") === "w1", "an UNSLASHED surface key matches its container by equality — the last-segment arm is not the only one");
+  ok(wakeIngressIds([ingress("w1", "CZ")], { container: "C1" }).length === 0, "NEGATIVE: …and an unslashed key naming ANOTHER container matches nothing — the equality arm is a join, not a fallback that admits everything");
+
+  const engagedSlackBody = SCENARIOS.find((s) => s.id === "J-ENGAGED-slack")!.run.toString().replace(/\s+/g, "");
+  ok(
+    (engagedSlackBody.match(/gateOneSeatAcrossNameDrops\(/g) ?? []).length === 1,
+    `OPE-1748: J-ENGAGED-slack drives the one-seat proof EXACTLY ONCE, over the window its FIRST name-drop opened (found ${(engagedSlackBody.match(/gateOneSeatAcrossNameDrops\(/g) ?? []).length})`,
+  );
+  ok(
+    (engagedSlackBody.match(/expect:"name-drop"/g) ?? []).length === 2,
+    `🔴 OPE-1748: TWO name-drop legs, not one — the second is what the OPE-1748 proof 2 is about, and a body with one is the pack before this ticket (found ${(engagedSlackBody.match(/expect:"name-drop"/g) ?? []).length})`,
+  );
+  ok(
+    engagedSlackBody.includes("container:slack.channelId"),
+    "🔴 OPE-1748: the two-wake gate is joined to the room the leg drove — an unjoined read counts every wake the deployment admitted in the window, on any surface",
+  );
+  const catchUpLegs = SCENARIOS.filter((s) => s.run.toString().includes("gateSeatCatchUp(")).map((s) => s.id).sort();
+  ok(
+    catchUpLegs.join(",") === "J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-teams",
+    `🔴 OPE-1748: the catch-up leg runs on the THREE non-Slack surfaces whose DRIVER IDENTITY the seat admits. Slack is out because its catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead. Discord and Notion are out because this pack posts to them as a BOT and an INTEGRATION, which the default \`wide\` admission drops before the envelope — a leg there would red on a healthy deployment, and making it drivable needs \`admission: "wide-with-bots"\` on the e2e-engaged domain (recorded on OPE-1748). Each journey states its own reason at the point the leg would sit (saw ${JSON.stringify(catchUpLegs)})`,
+  );
+  const scenarioSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  ok(
+    /factToken\("gh-idle"\)[\s\S]{0,1600}?await sleep\(\d[\d_]*\);[\s\S]{0,200}?const catchUpFrom/.test(scenarioSrc),
+    "🔴 OPE-1748: J-ENGAGED-github WAITS between the idle comment and its trigger. GitHub stamps `created_at` to the SECOND, the supervisor takes the trigger's `sentAt` as `untilMs`, and core filters `m.ms < untilMs` STRICTLY — so two API round trips inside one wall-clock second bound the idle comment out of its own catch-up window",
+  );
+  for (const surface of ["DISCORD", "NOTION"]) {
+    ok(
+      new RegExp(`NO CATCH-UP LEG ON ${surface}[\\s\\S]{0,1600}?\`wide\``).test(scenarioSrc),
+      `🔴 OPE-1748: J-ENGAGED-${surface.toLowerCase()} says WHY it drives no catch-up leg, naming the \`wide\` admission floor — an undeclared absence reads as an oversight and gets re-attempted`,
+    );
+  }
+  for (const id of catchUpLegs) {
+    const body = SCENARIOS.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    ok(/stale:\[[A-Za-z]/.test(body), `${id}: its catch-up leg passes a STALE marker — without one the bound is unasserted and a read that returns the whole container every wake passes`);
+    const stopAt = Math.max(body.indexOf("gateStandDownMarked("), body.indexOf("STOOD_DOWN_ACTION"));
+    ok(
+      stopAt >= 0 && stopAt < body.indexOf("gateSeatCatchUp("),
+      `🔴 ${id}: the catch-up leg runs AFTER the stand-down. That ordering IS the idle window — the stop is what stops the idle message waking anything, and it is what makes the seat's next wake the only road into its context`,
+    );
+  }
 
   {
     const fast = (timeoutMs: number, what: string) => ({ timeoutMs, what, initialDelayMs: 1, maxDelayMs: 1 });

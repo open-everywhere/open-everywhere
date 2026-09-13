@@ -53,6 +53,35 @@ export async function fetchTranscript(
   return parsed as TranscriptResult;
 }
 
+export interface SeatCatchUpWakeVerdict {
+  readonly wakeIndex?: number;
+  readonly carriedCatchUp: boolean;
+  readonly staleCarried: readonly string[];
+}
+
+function eventText(e: TranscriptWireEvent): string {
+  return JSON.stringify({ type: e.type, data: e.data });
+}
+
+export function seatCatchUpWake(
+  events: readonly TranscriptWireEvent[],
+  opts: { readonly trigger: string; readonly caughtUp: string; readonly stale?: readonly string[] },
+): SeatCatchUpWakeVerdict {
+  let wake: { index: number; text: string } | undefined;
+  for (const e of events) {
+    const text = eventText(e);
+    if (!text.includes(opts.trigger)) continue;
+    if (wake === undefined || e.index < wake.index) wake = { index: e.index, text };
+  }
+  if (wake === undefined) return { carriedCatchUp: false, staleCarried: [] };
+  const text = wake.text;
+  return {
+    wakeIndex: wake.index,
+    carriedCatchUp: text.includes(opts.caughtUp),
+    staleCarried: (opts.stale ?? []).filter((m) => m.length > 0 && text.includes(m)),
+  };
+}
+
 export function findEvents(
   events: readonly TranscriptWireEvent[],
   type: string,

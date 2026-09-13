@@ -9,6 +9,7 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "reaction-feedback-ingest": { supported: "polled on the next delivery for that conversation — GitHub pushes no reaction webhook, so a removal is never observed" },
   "ancillary-ops": "supported",
   "ambient-engagement-seam": "supported",
+  "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
 
   "addressed-leg": "supported",

@@ -8,6 +8,7 @@ import {
   type Partition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildGitHubAuth, githubConversationKey } from "./github-identity.js";
+import type { GitHubAmbientAddressing } from "./github-supervisor.js";
 
 export function githubEngagementAnchor(owner: string | undefined, repo: string | undefined, num: number | undefined): string | undefined {
   return githubConversationKey(owner, repo, num);
@@ -124,4 +125,11 @@ export async function githubEngagedAdmits(f: GitHubSeamFacts, deps: GitHubEngage
   if (!githubEngagedFollowUpReach(f).reachable) return false;
   const verdict = await resolveGitHubEngagement(f, deps);
   return verdict.kind === "deliver";
+}
+
+export function githubWakeAddressing(
+  addressing: GitHubAmbientAddressing,
+  engagedFollowUp: boolean | undefined,
+): GitHubAmbientAddressing | "thread-follow" {
+  return addressing === "channel-watch" && engagedFollowUp === true ? "thread-follow" : addressing;
 }

@@ -221,8 +221,8 @@ const FOLLOW_UP = "and what's that plus 6?";
 
   const journey = readFileSync(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url), "utf8");
   ok(
-    journey.includes(`const followId = await github.comment(issue, "${FOLLOW_UP}");`),
-    "🔴 fixture: `J-ENGAGED-github` step (b) still posts the exact text this file drives through the ingress above — so the two cannot drift apart unnoticed",
+    journey.includes(`const followId = await github.comment(issue, \`${FOLLOW_UP} ref \${staleMarker}\`);`),
+    "🔴 fixture: `J-ENGAGED-github` step (b) still posts the exact text this file drives through the ingress above — so the two cannot drift apart unnoticed. The trailing `ref <marker>` is OPE-1748's: the comment is the trigger of a wake, and the journey's catch-up leg asserts the LAST wake does not re-show it. A run-unique suffix names nobody and changes no ingress decision, so the text this file drives is still the text the journey posts",
   );
   ok(
     !/\b(ask|for|cc)\b\s+@?\w+/i.test(FOLLOW_UP),

@@ -870,6 +870,30 @@ const NOW = "2026-05-12T11:30:00.000Z";
   );
 }
 
+{
+  const { githubWakeAddressing } = await import("@open-everywhere/provider-github/agent/channels/github-engagement.js");
+
+  ok(githubWakeAddressing("channel-watch", true) === "thread-follow", "github addressing: an engaged follow-up is PROMOTED — this is the value J-ENGAGED-github step (b) gates on");
+  ok(
+    githubWakeAddressing("channel-watch", false) === "channel-watch",
+    "🔴 github addressing: NEGATIVE CONTROL — ambient chatter in an issue that is not engaged stays `channel-watch`, so the promotion is evidence and not a rename",
+  );
+  ok(githubWakeAddressing("channel-watch", undefined) === "channel-watch", "github addressing: an absent verdict is not an engaged one — the conservative word, so a caller that omits it claims nothing");
+  ok(githubWakeAddressing("direct", true) === "direct", "github addressing: an ADDRESSED comment is never promoted — a mention is an address, not a follow-up, and step (a) of the journey reads `direct`");
+  ok(githubWakeAddressing("drop", true) === "drop", "github addressing: `drop` is never promoted — it returns before the row is written, and the guard keeps that true if it ever did not");
+
+  const { readFileSync: readGitHubSource } = await import("node:fs");
+  const githubSource = readGitHubSource(new URL("../packages/providers/github/agent/channels/github.ts", import.meta.url), "utf8");
+  ok(
+    githubSource.includes("addressing: githubWakeAddressing(cls.addressing, admission.engagedFollowUp)"),
+    "🔴 github addressing: the `github.dispatched` row is BUILT from the admission's seam verdict — without this call the mapping above is dead code and the journey reds again",
+  );
+  ok(
+    !/detail:\s*\{\s*addressing:\s*cls\.addressing/.test(githubSource),
+    "🔴 github addressing: NEGATIVE CONTROL — the raw classifier value is no longer written into a dispatch detail, which is the exact line OPE-1752 removed",
+  );
+}
+
 console.log(
-  `✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery / dispatchTurn ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control; the addressed-only domain admits a mention on GitHub and Linear with the ambient supervisor OFF; Discord's auto-thread carries its own follow-up; the two edit filters this repository owns refuse an edit; plus Linear's dispatch-row promotion and its call site)`,
+  `✓ engaged-seam-wiring: ${n} assertions passed (the real githubOnComment / linearOnAgentSession / handleNotionDelivery / dispatchTurn ingresses ask the seam — mark, deliver, stop, and the way back in, each with a negative control; the addressed-only domain admits a mention on GitHub and Linear with the ambient supervisor OFF; Discord's auto-thread carries its own follow-up; the two edit filters this repository owns refuse an edit; plus Linear's and GitHub's dispatch-row promotions and their call sites)`,
 );

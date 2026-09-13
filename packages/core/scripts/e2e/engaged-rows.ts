@@ -5,6 +5,8 @@ export const STOOD_DOWN_ACTION = "engagement.stood_down";
 
 export const REPLY_POST_ACTION = "reply.post";
 
+export const WAKE_INGRESS_ACTION = "wake.ingress";
+
 export function dispatchedAction(platform: string): string {
   return `${platform}.dispatched`;
 }
@@ -84,6 +86,48 @@ export function reportedNameDrop(rows: readonly AuditWireEntry[], platform: stri
 
 export function replyPostCount(rows: readonly AuditWireEntry[], opts: { readonly surface?: string } = {}): number {
   return rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface)).length;
+}
+
+export interface SeatContinuity {
+  readonly replies: number;
+  readonly sessionIds: readonly string[];
+  readonly unattributed: number;
+}
+
+export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly surface?: string } = {}): SeatContinuity {
+  const posts = rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface));
+  const sessionIds: string[] = [];
+  let unattributed = 0;
+  for (const r of posts) {
+    const id = detailString(r, "sessionId");
+    if (id === undefined || id.length === 0) {
+      unattributed += 1;
+      continue;
+    }
+    if (!sessionIds.includes(id)) sessionIds.push(id);
+  }
+  return { replies: posts.length, sessionIds, unattributed };
+}
+
+export function wakeIngressIds(rows: readonly AuditWireEntry[], opts: { readonly container?: string } = {}): readonly string[] {
+  const ids: string[] = [];
+  for (const r of rows) {
+    if (r.action !== WAKE_INGRESS_ACTION) continue;
+    if (opts.container !== undefined) {
+      const key = detailString(r, "surfaceKey");
+      if (key === undefined || !namesContainer(key, opts.container)) continue;
+    }
+    const id = detailString(r, "wakeId");
+    if (id === undefined || id.length === 0) continue;
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function namesContainer(surfaceKey: string, container: string): boolean {
+  if (surfaceKey === container) return true;
+  const cut = surfaceKey.lastIndexOf("/");
+  return cut >= 0 && surfaceKey.slice(cut + 1) === container;
 }
 
 export type EngagedAuditRead = (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;

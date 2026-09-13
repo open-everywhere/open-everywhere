@@ -65,10 +65,13 @@ import {
   reportedNameDrop,
   reportedSeatedChannelWatch,
   reportedThreadFollow,
+  seatContinuity,
   standDownAttemptedButUnmarked,
   standDownMarked,
+  wakeIngressIds,
+  WAKE_INGRESS_ACTION,
 } from "./engaged-rows.js";
-import type { TranscriptWireEvent } from "./transcript-read.js";
+import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
   decomposeSession,
@@ -400,6 +403,97 @@ async function gateAuditedSilence(
   ctx.gate(
     replyPostCount(posts, opts.surface ? { surface: opts.surface } : {}) === 0,
     `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on this surface after the stop (found ${posts.length})`,
+  );
+}
+
+async function gateOneSeatAcrossNameDrops(
+  ctx: ScenarioContext,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface: string;
+    readonly container: string;
+  },
+): Promise<void> {
+  const posts =
+    (await awaitReplyPostRows(ctx.auditRead!, {
+      sinceIso: opts.sinceIso,
+      platform: opts.platform,
+      surface: opts.surface,
+      budget: { timeoutMs: AUDIT_ROW_WAIT, what: `second name-drop: two ${REPLY_POST_ACTION} rows on ${opts.surface}` },
+    })) ?? [];
+  const seat = seatContinuity(posts, { surface: opts.surface });
+  ctx.gate(
+    seat.replies >= 2,
+    `second name-drop: BOTH name-drops were answered — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first one. Fewer than two and the continuity gate below has nothing to be about`,
+  );
+  ctx.gate(
+    seat.unattributed === 0,
+    `second name-drop: every ${REPLY_POST_ACTION} row NAMES its session (${seat.unattributed} unattributed) — a row with no \`detail.sessionId\` cannot support the one-seat claim, and counting it as agreement would report continuity nothing evidenced`,
+  );
+  ctx.gate(
+    seat.sessionIds.length === 1,
+    `🔴 second name-drop: ONE SEAT answered both — a single eve session id across the two replies (saw ${JSON.stringify(seat.sessionIds)}). Two ids is the older shape this journey exists to refuse: a name-drop opening its own per-thread session, so the room's second name-drop reached an agent with none of the first exchange`,
+  );
+  const wakes = wakeIngressIds(await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [WAKE_INGRESS_ACTION] }), {
+    container: opts.container,
+  });
+  ctx.gate(
+    wakes.length >= 2,
+    `second name-drop: the deployment admitted BOTH name-drops as their own wake — ${wakes.length} distinct ${WAKE_INGRESS_ACTION} wake id(s) on ${opts.container}. One id would mean the two messages were coalesced into a single wake, which is a different behaviour from one seat waking twice`,
+  );
+}
+
+async function gateSeatCatchUp(
+  ctx: ScenarioContext,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly trigger: string;
+    readonly caughtUp: string;
+    readonly stale: readonly string[];
+  },
+): Promise<void> {
+  const posts =
+    (await awaitReplyPostRows(ctx.auditRead!, {
+      sinceIso: opts.sinceIso,
+      platform: opts.platform,
+      budget: { timeoutMs: AUDIT_ROW_WAIT, what: `catch-up: the re-addressed wake's ${REPLY_POST_ACTION} row` },
+    })) ?? [];
+  const seat = seatContinuity(posts);
+  ctx.gate(
+    seat.sessionIds.length > 0,
+    `catch-up: the re-addressing woke a seat that NAMES its session — a ${REPLY_POST_ACTION} row carrying \`detail.sessionId\` (read ${posts.length} row(s), ${seat.unattributed} unattributed). Without one there is no transcript to replay, and the catch-up is unobservable`,
+  );
+  if (seat.sessionIds.length === 0) return;
+  if (!ctx.transcriptRead) {
+    ctx.gate(false, "catch-up: ctx.transcriptRead is unwired, so the seat's own context cannot be read — the harness cannot answer this leg's question either way");
+    return;
+  }
+  const CANDIDATES = 3;
+  const tried = seat.sessionIds.slice(0, CANDIDATES);
+  let picked: { readonly sessionId: string; readonly events: readonly TranscriptWireEvent[]; readonly verdict: SeatCatchUpWakeVerdict } | undefined;
+  for (const sessionId of tried) {
+    const events = await ctx.transcriptRead(sessionId);
+    const verdict = seatCatchUpWake(events, { trigger: opts.trigger, caughtUp: opts.caughtUp, stale: opts.stale });
+    if (verdict.wakeIndex === undefined) continue;
+    picked = { sessionId, events, verdict };
+    break;
+  }
+  ctx.gate(
+    picked !== undefined,
+    `catch-up: the trigger's own wake is in a replayed seat's stream — no event carries \`${opts.trigger}\` in any of the ${tried.length} session(s) this window named (${JSON.stringify(tried)}). Either the re-addressing woke nothing, or its reply came from a session the audit window did not name, and every assertion below would be about the wrong conversation`,
+  );
+  if (picked === undefined) return;
+  const verdict = picked.verdict;
+  ctx.log(`catch-up: read the envelope at event ${verdict.wakeIndex} of seat ${picked.sessionId} (${picked.events.length} event(s) replayed, ${tried.length} session(s) offered)`);
+  ctx.gate(
+    verdict.carriedCatchUp,
+    `🔴 catch-up: the wake CARRIED the message said while the seat was idle (\`${opts.caughtUp}\`, envelope at event ${verdict.wakeIndex}). It drew no wake of its own — the audited-silence gate above proves that — so the ONLY path into this envelope is the seat's since-last-wake read. A red here is either a seat road that never ran on this surface, or a catch-up read that returned nothing for it`,
+  );
+  ctx.gate(
+    verdict.staleCarried.length === 0,
+    `🔴 catch-up: the window is BOUNDED to what was said since the seat's last wake — the envelope re-shows nothing from before it (saw ${JSON.stringify(verdict.staleCarried)}). \`seatCatchUp\` filters on \`m.ms >= sinceMs\`, and \`sinceMs\` is \`max(lastWakeAt, now − the adapter's reachback)\` (\`backscroll-window.ts\` \`seatCatchUpSinceMs\`) — the seat's last wake within a journey's own minutes, the reachback floor on a rotated or first-wake generation. A marker from an earlier exchange here is a read that returns the whole container every wake, which carries the idle message too and would pass the gate above while proving nothing`,
   );
 }
 
@@ -1919,13 +2013,13 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-teams",
-    title: "Teams engaged seam (OPE-1500): an @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing",
+    title: "Teams engaged seam (OPE-1500): an @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, the next plain follow-up wakes nothing, and the wake after that catches up",
     requires: ["teams", "engagedTeams"],
     surface: "teams",
     suite: "core",
     smoke: false,
     optional: false,
-    timeoutMs: REPLY_WAIT * 4 + SILENCE_WINDOW * 3,
+    timeoutMs: REPLY_WAIT * 5 + SILENCE_WINDOW * 3 + AUDIT_ROW_WAIT * 2,
     judged: true,
     run: async (ctx) => {
       const teams = ctx.teamsEngaged!;
@@ -2018,6 +2112,21 @@ export const SCENARIOS: readonly Scenario[] = [
             "is on the native path and has no ambient leg for the stop to suppress. The reply-silence gate above carries the claim here.",
         );
       }
+
+      const idleMarker = factToken("teams-idle");
+      await teams.postReply(root.id, `noting for the record: this run's build token is ${idleMarker}. No bot needed.`);
+      const catchUpFrom = new Date().toISOString();
+      const triggerMarker = factToken("teams-trig");
+      const catchUpAsk = await teams.postMentionReply(
+        root.id,
+        `ref ${triggerMarker} — which build token was posted in this chain while you were not listening? Reply with just the token.`,
+      );
+      const caughtUp = await teams
+        .awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: catchUpAsk.createdDateTime ?? undefined })
+        .catch(() => undefined);
+      ctx.gate(caughtUp !== undefined, "catch-up: the @mention woke the chain again after the stop — the wake this leg reads the context of");
+      ctx.log(`catch-up: the reply ${caughtUp?.text.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+      await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "teams", trigger: triggerMarker, caughtUp: idleMarker, stale: [markerE] });
     },
   },
   {
@@ -5275,12 +5384,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-slack",
-    title: "Slack ADDRESSED-ONLY journey: mention → plain follow-up wakes → stand_down marks the row → audited silence (+ name-drop)",
+    title: "Slack ADDRESSED-ONLY journey: mention → plain follow-up wakes → stand_down marks the row → audited silence (+ two name-drops, one seat)",
     requires: ["slack", "engagedSlack"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5293,7 +5402,6 @@ export const SCENARIOS: readonly Scenario[] = [
       const mentionFrom = new Date().toISOString();
       const { ts: rootTs } = await slack.post(slack.mention(`what's 12*12? reply with just the number. ref ${batch}`));
       const first = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
-      ctx.gate(first.threadTs === rootTs, "mention: the reply lands in the thread the mention opened");
       ctx.gate(answerOf(first.text).includes("144"), "mention: the reply answers correctly (hard gate: 144, read with the run marker removed)");
       await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "slack", surface, leg: "mention", expect: "addressed" });
 
@@ -5321,9 +5429,16 @@ export const SCENARIOS: readonly Scenario[] = [
       const dropFrom = new Date().toISOString();
       const { ts: dropTs } = await slack.post(`has anyone asked ${ENGAGED_NAME} about the release checklist?`);
       const dropReply = await slack.awaitThreadReply(dropTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
-      ctx.gate(dropReply.threadTs === dropTs, "name-drop: the reply roots on the message that dropped the name");
+      ctx.gate(dropReply.text.trim().length > 0, "name-drop: it drew a reply with substance in the thread the name-drop opened");
       await gateEngagedWake(ctx, { sinceIso: dropFrom, platform: "slack", surface, leg: "name-drop", expect: "name-drop" });
-      ctx.log(`(control window opened ${controlFrom}; name-drop driven at ${dropTs})`);
+
+      const secondFrom = new Date().toISOString();
+      const { ts: secondTs } = await slack.post(`separately — does ${ENGAGED_NAME} know who owns the deploy runbook?`);
+      const secondReply = await slack.awaitThreadReply(secondTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(secondReply.text.trim().length > 0, "second name-drop: it drew its own reply, with substance, in the thread the second message opened");
+      await gateEngagedWake(ctx, { sinceIso: secondFrom, platform: "slack", surface, leg: "second name-drop", expect: "name-drop" });
+      await gateOneSeatAcrossNameDrops(ctx, { sinceIso: dropFrom, platform: "slack", surface, container: slack.channelId });
+      ctx.log(`(control window opened ${controlFrom}; name-drops driven at ${dropTs} and ${secondTs})`);
 
       try {
         const written = await ctx.auditRead!({ sinceIso: mentionFrom, platform: "slack", surface, actions: ["memory.write"] });
@@ -5405,17 +5520,18 @@ export const SCENARIOS: readonly Scenario[] = [
       const silent = raw.filter(notCancelNote);
       if (raw.length !== silent.length) ctx.log(`stop window: skipped ${raw.length - silent.length} turn-cancel note(s) — not replies, and not explained (OPE-1724)`);
       await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", observedSilent: silent.length === 0 });
+
       ctx.log(`(engaged thread ${threadId}; stand-down driven at ${stopMsg.id})`);
     },
   },
   {
     id: "J-ENGAGED-github",
-    title: "GitHub ADDRESSED-ONLY journey — mention engages the issue, a plain follow-up wakes, stand_down stops it",
+    title: "GitHub ADDRESSED-ONLY journey — mention engages the issue, a plain follow-up wakes, stand_down stops it, the next wake catches up",
     requires: ["github", "engagedGithub"],
     surface: "github",
     suite: "core",
     optional: false,
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5438,7 +5554,8 @@ export const SCENARIOS: readonly Scenario[] = [
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "github", leg: "mention", expect: "addressed" });
 
         const followFrom = new Date().toISOString();
-        const followId = await github.comment(issue, "and what's that plus 6?");
+        const staleMarker = factToken("gh-stale");
+        const followId = await github.comment(issue, `and what's that plus 6? ref ${staleMarker}`);
         const second = await github
           .awaitBotReply(issue, followId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) })
           .catch(() => undefined);
@@ -5459,6 +5576,22 @@ export const SCENARIOS: readonly Scenario[] = [
         const after = await github.comments(issue);
         const observedSilent = after.filter((c) => github.isBotComment(c) && c.createdAt > silenceFrom).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", observedSilent });
+
+        const idleMarker = factToken("gh-idle");
+        await github.comment(issue, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
+        await sleep(2_000);
+        const catchUpFrom = new Date().toISOString();
+        const triggerMarker = factToken("gh-trig");
+        const triggerId = await github.comment(
+          issue,
+          github.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`),
+        );
+        const caughtUp = await github
+          .awaitBotReply(issue, triggerId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) })
+          .catch(() => undefined);
+        ctx.gate(caughtUp !== undefined, "catch-up: the @mention woke the issue again after the stand-down — the wake this leg reads the context of");
+        ctx.log(`catch-up: the reply ${caughtUp?.body.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+        await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "github", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker] });
       } finally {
         await github.closeIssue(issue).catch(() => undefined);
       }
@@ -5466,12 +5599,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-linear",
-    title: "Linear ADDRESSED-ONLY journey — the mention engages the issue and the plain-comment path carries the follow-up",
+    title: "Linear ADDRESSED-ONLY journey — the mention engages the issue, the plain-comment path carries the follow-up, the next wake catches up",
     requires: ["linear", "engagedLinear"],
     surface: "linear",
     suite: "core",
     optional: false,
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5487,7 +5620,8 @@ export const SCENARIOS: readonly Scenario[] = [
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "linear", leg: "mention", expect: "addressed" });
 
         const followFrom = new Date().toISOString();
-        await linear.comment(issue.id, "and what's that plus 6?");
+        const staleMarker = factToken("lin-stale");
+        await linear.comment(issue.id, `and what's that plus 6? ref ${staleMarker}`);
         const second = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         if (second) seen.add(second.id);
         ctx.gate(
@@ -5507,6 +5641,16 @@ export const SCENARIOS: readonly Scenario[] = [
         const after = await linear.comments(issue.id);
         const observedSilent = after.filter((c) => linear.isAppComment(c) && c.createdAt > silenceFrom).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", observedSilent });
+
+        const idleMarker = factToken("lin-idle");
+        await linear.comment(issue.id, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
+        const catchUpFrom = new Date().toISOString();
+        const triggerMarker = factToken("lin-trig");
+        await linear.comment(issue.id, linear.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`));
+        const caughtUp = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        ctx.gate(caughtUp !== undefined, "catch-up: the @mention woke the issue again after the stand-down — the wake this leg reads the context of");
+        ctx.log(`catch-up: the reply ${caughtUp?.body.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+        await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "linear", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker] });
       } finally {
         await linear.archive(issue.id).catch(() => undefined);
       }
@@ -5564,6 +5708,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const silenceFloor = notionMinuteFloor(silenceFrom);
         const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", observedSilent });
+
       } finally {
         await notion.archiveBlock(blockId).catch(() => undefined);
       }

@@ -105,14 +105,15 @@ export const PENDING_WORK_INSTRUCTION =
 
 const MEMORY_MOUNT_SEGMENT = "workspace/memory/";
 
-const MARKDOWN_LINK_RE =
-  /\[[^\]\n]*\]\(((?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)[^\s()]+)\)/g;
+const TRAVERSED_URL_MOUNT = String.raw`(?:https?|file):\/\/[^\s()|<>:]{0,200}?\/\.\.\/[^\s()|<>:]{0,200}?workspace\/memory\/`;
 
-const SLACK_LINK_RE =
-  /<((?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)[^\s|>]+)\|[^>]*>/g;
+const MOUNT_URL = String.raw`(?:file:\/\/\/workspace\/memory\/|${TRAVERSED_URL_MOUNT}|(?<![\w./:-])\/workspace\/memory\/)`;
 
-const BARE_MEMORY_REF_RE =
-  /(?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)([^\s()|<>]+)/g;
+const MARKDOWN_LINK_RE = new RegExp(String.raw`\[[^\]\n]*\]\((${MOUNT_URL}[^\s()]+)\)`, "g");
+
+const SLACK_LINK_RE = new RegExp(String.raw`<(${MOUNT_URL}[^\s|>]+)\|[^>]*>`, "g");
+
+const BARE_MEMORY_REF_RE = new RegExp(String.raw`${MOUNT_URL}[^\s()|<>]+`, "g");
 
 function siloRelativePath(url: string): string {
   const idx = url.indexOf(MEMORY_MOUNT_SEGMENT);
@@ -122,7 +123,7 @@ function siloRelativePath(url: string): string {
 export function truncateMemoryCitationPaths(text: string): string {
   let out = text.replace(MARKDOWN_LINK_RE, (_m, url: string) => siloRelativePath(url));
   out = out.replace(SLACK_LINK_RE, (_m, url: string) => siloRelativePath(url));
-  out = out.replace(BARE_MEMORY_REF_RE, (_m, tail: string) => tail);
+  out = out.replace(BARE_MEMORY_REF_RE, (m: string) => siloRelativePath(m));
   return out;
 }
 
