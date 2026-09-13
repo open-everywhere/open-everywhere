@@ -566,6 +566,57 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
 {
   const org = "default";
+  const domainSurface = "slack/T1/C_ENG";
+  const currentPeriod = periodOf(new Date().toISOString());
+  const store = await import("../agent/spend/store.js");
+  const opStore = getOperationalStore();
+  const { scopeOverBudget } = await import("../agent/spend/check.js");
+  const { domainNameForScope } = await import("../agent/spend/caps.js");
+  const { spendView } = await import("../agent/control/views.js");
+
+  ok(domainNameForScope(domainSurface) === "eng", "OPE-1804 fixture: the seeded surface classifies into domain \"eng\" — the name a domain-level override matches on");
+
+  await store.recordSpend({ org, surfaceKey: domainSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DOMAIN_CAP", model: PRICED_MODEL });
+
+  const baseline = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
+  const baseRow = baseline.ledger.surfaces.find((s) => s.surfaceKey === domainSurface);
+  ok(baseRow !== undefined, "OPE-1804 control: the seeded surface appears in the report's ledger before any override");
+  ok(baseRow!.usdCap === null && baseRow!.usdOver === false, "OPE-1804 control: with no override active the shown cap is null and the row is not over");
+
+  const domainUsdCap = baseRow!.usd / 2;
+  ok(domainUsdCap > 0, "OPE-1804 control: the seeded spend priced above $0, so a half-of-it cap is a real breach");
+  await opStore.setSpendLimit(org, "eng", "domain", { monthlyUsd: domainUsdCap }, { reason: "domain bridge", setBy: "tester" });
+
+  const gateCaps = await (await import("../agent/spend/caps.js")).effectiveCaps(org, "slack/T1", domainSurface, domainNameForScope(domainSurface));
+  ok(gateCaps.surfaceMonthlyUsd === domainUsdCap, "OPE-1804 sanity: the gate's effective cap IS the domain override (the enforcement path passes the domain name)");
+  const gateVerdict = await scopeOverBudget(
+    { org, platform: "slack", workspace: "T1", surface: "C_ENG", workspaceKey: "slack/T1", surfaceKey: domainSurface, key: domainSurface } as never,
+    "channel",
+    new Date().toISOString(),
+  );
+  ok(gateVerdict.over === true, "OPE-1804 sanity: the gate refuses this scope while the domain override is active");
+
+  const report = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
+  const reportRow = report.ledger.surfaces.find((s) => s.surfaceKey === domainSurface);
+  ok(reportRow!.usdCap === gateCaps.surfaceMonthlyUsd, "🔴 OPE-1804: spend_report's ledger shows the DOMAIN override's cap — the same number the gate enforces");
+  ok(reportRow!.usdOver === true && reportRow!.over === true, "🔴 OPE-1804: spend_report agrees with the gate's verdict under a domain override (report == gate)");
+
+  const view = await spendView(currentPeriod);
+  const viewRow = view.surfaces.find((s) => s.surfaceKey === domainSurface);
+  ok(viewRow !== undefined, "OPE-1804 control: the control-plane view returns the seeded surface");
+  ok(viewRow!.usdCap === gateCaps.surfaceMonthlyUsd, "🔴 OPE-1804: the control-plane spendView shows the DOMAIN override's cap — 'agrees with the gate by construction'");
+  ok(viewRow!.usdOver === true && viewRow!.over === true, "🔴 OPE-1804: the control-plane view agrees with the gate's verdict under a domain override");
+
+  await opStore.clearSpendLimit(org, "eng", "domain");
+  const cleared = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
+  const clearedRow = cleared.ledger.surfaces.find((s) => s.surfaceKey === domainSurface);
+  ok(clearedRow!.usdCap === null && clearedRow!.usdOver === false, "OPE-1804: clearing the domain override reverts the report to the config baseline");
+  const clearedView = await spendView(currentPeriod);
+  ok(clearedView.surfaces.find((s) => s.surfaceKey === domainSurface)!.usdCap === null, "OPE-1804: …and reverts the control-plane view too");
+}
+
+{
+  const org = "default";
   const currentPeriod = periodOf(new Date().toISOString());
   const dmA = "slack/T1/D0CAPAAAAAA";
   const dmB = "slack/T1/D0CAPBBBBBB";

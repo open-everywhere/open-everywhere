@@ -250,8 +250,9 @@ export default defineTool({
 
       const overrideLimits = await activeSpendLimitsForOrg(resolved.org);
       const effCapsForScope = (workspaceKey: string, surfaceKey: string): Caps => {
-        const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
-        return overrideLimits.length ? applyCapOverrides(config, overrideLimits, workspaceKey, surfaceKey) : config;
+        const domainName = domainNameForScope(surfaceKey);
+        const config = resolveCaps(workspaceKey, surfaceKey, domainName);
+        return overrideLimits.length ? applyCapOverrides(config, overrideLimits, workspaceKey, surfaceKey, domainName) : config;
       };
 
       const workspaceKeysInScope = [...new Set(orgLedgers.map((l) => l.surfaceKey.split("/").slice(0, 2).join("/")))];

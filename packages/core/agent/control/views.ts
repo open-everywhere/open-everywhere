@@ -69,8 +69,9 @@ export async function spendView(period: string = currentPeriod()): Promise<Spend
 
   const limits = await activeSpendLimitsForOrg(org);
   const effCapsFor = (workspaceKey: string, surfaceKey: string): Caps => {
-    const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
-    return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;
+    const domainName = domainNameForScope(surfaceKey);
+    const config = resolveCaps(workspaceKey, surfaceKey, domainName);
+    return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey, domainName) : config;
   };
 
   const surfaces: SpendSurfaceRow[] = [];
