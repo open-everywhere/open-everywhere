@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_BIN_PACKAGES, exportsMapFor } from "./publish-exports-generate.js";
+import { LICENSE_FILE, checkPackageLicense, checkTarballLicense } from "./publish-license.js";
 
 const FORBIDDEN_LIFECYCLE = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 
@@ -94,6 +95,15 @@ for (const pkgDir of targets) {
     fail("exports map is stale — run `npx tsx scripts/publish-exports-generate.ts`");
   }
   if (!existsSync(join(pkgDir, "NOTICE"))) fail("no NOTICE at the package root (npm only auto-includes it from there)");
+  const readIfPresent = (file: string): string | undefined =>
+    existsSync(join(pkgDir, file)) ? readFileSync(join(pkgDir, file), "utf8") : undefined;
+  const licenseInputs = {
+    notice: readIfPresent("NOTICE"),
+    license: readIfPresent(LICENSE_FILE),
+    rootLicense: readFileSync(join(process.cwd(), LICENSE_FILE), "utf8"),
+    files: (manifest.files ?? []) as readonly string[],
+  };
+  for (const problem of checkPackageLicense(licenseInputs)) fail(problem);
   if (!isBin && !existsSync(join(pkgDir, "dist"))) {
     fail("dist/ is missing — run `npm run build:packages` first");
     continue;
@@ -110,6 +120,7 @@ for (const pkgDir of targets) {
     const listing = run("tar", ["-tzf", tgz]).out.split("\n").filter(Boolean).map((l) => l.replace(/^package\//, ""));
 
     if (!listing.includes("NOTICE")) fail("NOTICE is not in the tarball");
+    for (const problem of checkTarballLicense(listing)) fail(problem);
     if (isBin) {
       for (const t of binTargets) {
         if (!listing.includes(t)) {
