@@ -13,7 +13,7 @@ import {
 } from "../routines/fire-eligibility.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
-import { auditRoutineDisabled, auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
+import { auditRoutineDisabled, auditRoutineEligibilityUnresolved, auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { auditFireAttrsSent } from "../routines/fire-carriage.js";
 import { checkBound } from "../routines/bound.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
@@ -134,6 +134,7 @@ export async function dispatchTick(
     const teamsChannelId = firePlatform === "teams" && typeof dest.attributes["channel_id"] === "string" ? dest.attributes["channel_id"] : undefined;
     const teamsTeamId = firePlatform === "teams" && typeof dest.attributes["team_id"] === "string" ? dest.attributes["team_id"] : undefined;
     const teamsAadObjectId = firePlatform === "teams" && typeof dest.attributes["aad_object_id"] === "string" ? dest.attributes["aad_object_id"] : undefined;
+    const teamsServiceUrl = firePlatform === "teams" && typeof dest.attributes["service_url"] === "string" ? dest.attributes["service_url"] : undefined;
     if (await routineFireHalted(r, { trigger: r.trigger.kind })) {
       halted++;
       log(`SKIPPED (halted): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
@@ -157,6 +158,7 @@ export async function dispatchTick(
       ...(args.confirmCreatorActive ? { activeCheck: args.confirmCreatorActive } : {}),
       ...(teamsTeamId ? { teamsTeamId } : {}),
       ...(teamsAadObjectId ? { teamsCreatorAadObjectId: teamsAadObjectId } : {}),
+      ...(teamsServiceUrl ? { teamsServiceUrl } : {}),
       ...(args.confirmTeamsRoomMembership ? { teamsMembershipCheck: args.confirmTeamsRoomMembership } : {}),
       ...(args.confirmTeamsCreatorActive ? { teamsActiveCheck: args.confirmTeamsCreatorActive } : {}),
     }).catch((): FireEligibility => ({ eligible: true }));
@@ -172,6 +174,11 @@ export async function dispatchTick(
       });
       await auditRoutineSkip(r, eligibility.reason, { trigger: r.trigger.kind }).catch(() => false);
       continue;
+    }
+    if (eligibility.teamsMembershipUnresolved !== undefined) {
+      await auditRoutineEligibilityUnresolved(r, { check: "teams_room_membership", cause: eligibility.teamsMembershipUnresolved }).catch(
+        () => false,
+      );
     }
     try {
       const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString(), fireTrust, r.createdBy);

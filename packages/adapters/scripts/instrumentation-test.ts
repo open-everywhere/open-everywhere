@@ -22,4 +22,9 @@ const providerBefore = trace.getTracerProvider();
 instrumentation.setup?.({ agentName: "open-everywhere" });
 ok(trace.getTracerProvider() === providerBefore, "no collector → no provider registered (no-op)");
 
-console.log(`✓ instrumentation: ${passed} assertions passed (loads + no-ops cleanly without an OTLP collector)`);
+const content = instrumentation as { recordInputs?: unknown; recordOutputs?: unknown };
+ok(content.recordInputs === undefined, "🔴 OPE-1798: the adapter declares no `recordInputs` — eve reads an absent field as false, so model INPUT never reaches a span");
+ok(content.recordOutputs === undefined, "🔴 OPE-1798: the adapter declares no `recordOutputs` — model OUTPUT never reaches a span either");
+ok(content.recordInputs !== true && content.recordOutputs !== true, "…and neither is turned on by any other route through the module");
+
+console.log(`✓ instrumentation: ${passed} assertions passed (loads + no-ops cleanly without an OTLP collector; declares no model-content capture)`);

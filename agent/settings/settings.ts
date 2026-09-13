@@ -12,5 +12,12 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   identity: { name: "Open Everywhere" },
 
-  wake: { slackDmDriver: ["T0EXAMPLE:B0EXBOT0001", "T0EXAMPLE:B0EXBOT0002"] },
+  wake: {
+    e2eDrivers: [
+      { surface: "slack", principal: "T0EXAMPLE:B0EXBOT0001" },
+      { surface: "slack", principal: "T0EXAMPLE:B0EXBOT0002" },
+      { surface: "discord", principal: "1300000000000000103" },
+      { surface: "notion", principal: "40000000-0000-4000-8000-000000000106" },
+    ],
+  },
 });

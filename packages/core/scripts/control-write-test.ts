@@ -182,6 +182,17 @@ await client.connect(clientT);
 {
   ok("CONTROL_WRITE_TOOL_NAMES lists revoke_session_grants", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("revoke_session_grants"));
 
+  {
+    const { sessionGrantKind } = await import("../agent/approvals/session-grant.js");
+    const desc = (await client.listTools()).tools.find((t) => t.name === "revoke_session_grants")?.description ?? "";
+    ok("sessionGrantKind accepts pr.open", sessionGrantKind({ kind: "pr.open", argsJson: "{}" }) === "pr.open");
+    ok("…and accepts NO connector kind — the negative control", sessionGrantKind({ kind: "connector.op:notion", argsJson: "{}" }) === null);
+    ok("🔴 OPE-1778: …so the description never claims a connector write gets a fresh card on a live session", !/next PR-open or connector write/i.test(desc));
+    ok("🔴 OPE-1778: …and it names PR-open as the only kind a session click ever wrote", desc.includes("PR-open is the only kind an \"Approve for session\" click ever wrote"));
+    ok("🔴 OPE-1778: …while stating the whole-key effect on a ROUTINE grant key", desc.includes("connector.tool:") && /whole-key/i.test(desc));
+    ok("…while still pointing at revoke_connector as the ACCESS remedy", desc.includes("revoke_connector"));
+  }
+
   const store = getOperationalStore();
   const now = new Date();
   const future = new Date(now.getTime() + 3_600_000).toISOString();

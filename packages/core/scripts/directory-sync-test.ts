@@ -276,6 +276,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     org: ORG,
     platform: "github",
     authorId: "gh-ada",
+    addressed: true,
     text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`,
     trust: "peer",
   });
@@ -538,7 +539,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const dmDan = ctxFor({ channelId: "D-DAN", channelType: "im", principalId: "U-DAN" });
   const issued = await linkIdentity.execute({}, dmDan);
-  await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-dan", text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`, trust: "peer" });
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-dan", addressed: true, text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`, trust: "peer" });
 
   const peeked = await confirmLink.execute({ decision: "confirm" }, dmDan);
   ok(peeked.decided === "awaiting_acknowledgement" && peeked.claimant === "github/gh-dan" && peeked.accounts === undefined, "OPE-618: the PEEK also takes the challenge path over the standing directory suggestions");

@@ -13,7 +13,9 @@ import {
   type GitHubSupervisorSession,
   type GitHubAmbientComment,
 } from "../agent/channels/github-supervisor.js";
-import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, admissionFunction, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
 import { githubAmbientLegKeeps, shouldSuppressNativeMention } from "../agent/channels/github.js";
 
@@ -104,6 +106,24 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(context === undefined, "no issue title -> no context block");
   ok(!message.includes("engagement="), "no tier resolved -> NO engagement attribute at all (distinct from a resolved neutral)");
 }
+
+const TITLE = "Flaky retries on cold start";
+{
+  const refused = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: TITLE, trigger, admit: admissionFunction("members-only") }), NOW);
+  ok(refused.context === undefined, "🔴 members-only REFUSES the title line, and no context block reaches the envelope");
+  ok(!refused.message.includes(TITLE), "🔴 …and the title text is nowhere in the wake message either — the refusal is entry, not a render tweak");
+  ok(refused.message.includes("should we bump the retry budget here?"), "negative control: the TRIGGER comment still reaches the seat — admission governs the slot, never the wake");
+
+  const admitted = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: TITLE, trigger, admit: admissionFunction("wide") }), NOW);
+  ok(admitted.context !== undefined && admitted.context.length === 1 && admitted.context[0]!.includes(TITLE), "negative control: `wide` (the default) admits the SAME line through the SAME seam");
+  ok(admitted.context![0]!.includes(UNTRUSTED_OPEN), "…still untrusted-wrapped — admission is an entry rule, not a fencing rule");
+
+  const bots = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: TITLE, trigger, admit: admissionFunction("wide-with-bots") }), NOW);
+  ok(bots.context !== undefined && bots.context[0]!.includes(TITLE), "negative control: `wide-with-bots` admits it too — only members-only reads the vouch");
+
+  const unpoliced = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: TITLE, trigger }), NOW);
+  ok(normalizeFenceNonce(unpoliced.context![0]!) === normalizeFenceNonce(admitted.context![0]!), "no `admit` ⇒ no admission ⇒ the slot is byte-identical to the shipped-default one");
+}
 {
   const nw = buildGitHubSupervisorWake({
     owner: OWNER,
@@ -173,7 +193,7 @@ const AUTH: OpenEverywhereGitHubAuth = { authenticator: "github", principalId: "
 const SURFACE = `github/${OWNER}/${REPO}`;
 
 function dispatch(over: Partial<GitHubSupervisorDispatch> = {}): GitHubSupervisorDispatch {
-  return { surfaceKey: SURFACE, owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries", auth: AUTH, trigger, engagementTier: "reserved", ingested: [], ...over };
+  return { surfaceKey: SURFACE, owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: TITLE, auth: AUTH, trigger, admit: admissionFunction("wide"), engagementTier: "reserved", ingested: [], ...over };
 }
 
 interface WakeCapture { token: string; message: string; context: readonly string[] }
@@ -196,6 +216,20 @@ interface WakeCapture { token: string; message: string; context: readonly string
   await handleGitHubSupervisorDispatch(dispatch({ unified: true }), deps);
   ok(normalizeFenceNonce(wakes[1]!.message) === normalizeFenceNonce(wakes[0]!.message), "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
   ok(!wakes[0]!.message.includes("platform="), "and neither wake carries a platform attribute");
+
+  await handleGitHubSupervisorDispatch(dispatch({ admit: admissionFunction("members-only"), issueTitle: TITLE }), deps);
+  const refusedWake = wakes[wakes.length - 1]!;
+  ok(refusedWake.context.length === 0, "🔴 a members-only dispatch delivers NO context block — the policy crossed dispatch → builder");
+  ok(!refusedWake.message.includes(TITLE), "🔴 …and the refused title reaches neither the context nor the message");
+  await handleGitHubSupervisorDispatch(dispatch({ admit: admissionFunction("wide"), issueTitle: TITLE }), deps);
+  const admittedWake = wakes[wakes.length - 1]!;
+  ok(admittedWake.context.length === 1 && admittedWake.context[0]!.includes(TITLE), "negative control: the SAME dispatch under `wide` delivers the title");
+}
+
+{
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/github.ts", import.meta.url)), "utf8");
+  ok(src.includes("admit: seatAdmissionFor(surfaceKey)"), "🔴 the live ambient leg passes the domain's admission policy into the supervisor dispatch");
+  ok(src.includes("admit: seatAdmissionFor(req.channelKey)") || src.includes("seatCatchUp(\"github\", req, { admit: seatAdmissionFor(req.channelKey) })"), "…and the catch-up read still resolves the SAME policy, so the seat's two reads cannot disagree");
 }
 
 {

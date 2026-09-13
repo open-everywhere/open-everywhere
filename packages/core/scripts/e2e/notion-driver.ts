@@ -106,6 +106,12 @@ export function notionMinuteFloor(sinceIso: string): string {
   return new Date(Math.floor(t / 60_000) * 60_000).toISOString();
 }
 
+const MINUTE_BOUNDARY_MARGIN_MS = 2_000;
+
+export function msToNextMinuteBoundary(nowMs: number): number {
+  return 60_000 - (((nowMs % 60_000) + 60_000) % 60_000) + MINUTE_BOUNDARY_MARGIN_MS;
+}
+
 function waitQualifier(opts: NotionReplyFilter): string {
   const clauses: string[] = [];
   if (opts.seen !== undefined) clauses.push(`outside the ${opts.seen.size} comment(s) already seen`);

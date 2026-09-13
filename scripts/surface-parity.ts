@@ -28,6 +28,8 @@ import {
   type SurfaceParityDeclaration,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
 
@@ -161,6 +163,19 @@ if (problems.length > 0) {
     console.error(`  • ${p.platform}${p.capability === undefined ? "" : ` [${p.capability}]`}: ${p.message}`);
   }
   process.exit(1);
+}
+
+{
+  const unknown = SETTINGS_OVERRIDES.wake?.e2eDrivers?.filter((d) => !(PLATFORMS as readonly string[]).includes(d.surface)) ?? [];
+  if (unknown.length > 0) {
+    console.error(
+      `✗ surface-parity: wake.e2eDrivers names ${unknown.length} surface(s) no provider bundle registers: ` +
+        `${[...new Set(unknown.map((d) => d.surface))].join(", ")}.\n` +
+        `  A driver entry is matched on its surface WHOLE, so such an entry admits nobody while reading as a vouch.\n` +
+        `  Valid surfaces: ${PLATFORMS.join(", ")}. Fix the entry in agent/settings/settings.ts.`,
+    );
+    process.exit(1);
+  }
 }
 
 interface Region {

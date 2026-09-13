@@ -86,6 +86,33 @@ export interface PurgePlan {
   readonly cardLines: readonly string[];
 }
 
+const ERASING_MEMORY_PROVIDERS: ReadonlySet<string> = new Set(["sqlite", "postgres"]);
+
+const APPEND_ONLY_MEMORY_PROVIDERS: ReadonlySet<string> = new Set(["notion"]);
+
+function purgeErasureLines(locations: readonly PurgeLocation[]): readonly string[] {
+  const silosWhere = (pred: (provider: string) => boolean): string[] =>
+    [...new Set(locations.filter((l) => pred(l.provider)).map((l) => l.siloName))];
+  const list = (silos: readonly string[]): string => silos.map((s) => `\`${s}\``).join(", ");
+
+  const failing = silosWhere((p) => APPEND_ONLY_MEMORY_PROVIDERS.has(p));
+  const retaining = silosWhere((p) => !APPEND_ONLY_MEMORY_PROVIDERS.has(p) && !ERASING_MEMORY_PROVIDERS.has(p));
+  const lines: string[] = [];
+
+  if (failing.length === 0 && retaining.length === 0) return ["This ERASES the line(s) from every silo listed. It cannot be undone."];
+
+  lines.push("This removes the line(s) from the agent's memory, and it cannot be undone — except where this card says otherwise.");
+  if (retaining.length > 0) {
+    const many = retaining.length !== 1;
+    lines.push(`NOT a full erasure in silo${many ? "s" : ""} ${list(retaining)}: the backing keeps the pre-purge text in its own history. Only a sqlite- or postgres-backed silo removes the bytes for good.`);
+  }
+  if (failing.length > 0) {
+    const many = failing.length !== 1;
+    lines.push(`🔴 NOTHING is removed from silo${many ? "s" : ""} ${list(failing)}: that backing is append-only (Notion), so the erasure FAILS there and the line STAYS. Remove it in Notion itself.`);
+  }
+  return lines;
+}
+
 export function planPurge(
   binding: SurfaceBinding,
   partition: Partition,
@@ -135,7 +162,7 @@ export function planPurge(
       `PURGE ${candidates.length === 1 ? "a remembered fact" : `${candidates.length} remembered facts`} — silo${silos.length === 1 ? "" : "s"} ${silos.map((s) => `\`${s}\``).join(", ")}`,
       ...candidates.map((c) => `> ${c.bullet}`),
       `Found in ${locations.length} file(s): ${locations.map((l) => `${l.tierId}/${l.file}`).join(", ")}`,
-      "This ERASES the line(s) everywhere they are stored. It cannot be undone.",
+      ...purgeErasureLines(locations),
     ],
   };
 }

@@ -3,6 +3,7 @@ import {
   registerSeatCatchUp,
   seatCatchUp,
   seatCatchUpFetchFor,
+  seatAdmissionFor,
   catchUpUnavailableReason,
   _resetSeatCatchUp,
 } from "../agent/channels/seat-catch-up.js";
@@ -114,6 +115,61 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
   const escaped = renderWakeEnvelope({ ...base, catchUpUnavailable: `x <b>&"` });
   ok(escaped.includes("x &lt;b&gt;&amp;&quot;"), "the note is XML-escaped — a surface label can never forge structure");
   ok(!escaped.includes("<b>"), "the raw markup never survives the escape");
+}
+
+{
+  const { withE2eDriverAdmission, E2E_DRIVER_DOMAINS } = await import("../agent/channels/seat-catch-up.js");
+  const { admissionFunction } = await import("../agent/channels/seat-admission.js");
+  const { registerSettings, resetSettingsForTest, defineSettings } = await import("../agent/settings/settings.js");
+
+  const DRIVER = "1300000001500000042";
+  const OTHER_BOT = "1300000001500000099";
+  const wide = admissionFunction("wide");
+  const bot = (authorId?: string) => ({ sender: "bot" as const, trust: "relay" as const, type: "channel" as const, ...(authorId ? { authorId } : {}) });
+  const person = { sender: "human" as const, trust: "peer" as const, type: "channel" as const, authorId: "U1" };
+
+  ok(!wide(bot(DRIVER)), "🔴 the fixture domain's own `wide` policy REFUSES the driver — this is the drop that made the two catch-up legs undrivable");
+
+  resetSettingsForTest();
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER }] } }));
+
+  const admit = withE2eDriverAdmission(wide, "e2e-engaged", "discord");
+  ok(admit(bot(DRIVER)), "🔴 the NAMED driver enters the seat's context on the fixture domain — the whole point: the pack can now prove the since-last-wake read on this surface");
+  ok(!admit(bot(OTHER_BOT)), "🔴 a DIFFERENT bot on the SAME domain and surface is still REFUSED — the lever names identities, not 'bots in the fixture room'");
+  ok(!admit(bot()), "an UNATTRIBUTABLE bot is refused — a message the surface could not pin to an author can never be the driver's");
+  ok(admit(person), "a person still enters, exactly as `wide` admits them — the wrapper only ever widens");
+
+  ok(!withE2eDriverAdmission(wide, "e2e-engaged", "notion")(bot(DRIVER)), "🔴 the same principal is refused on ANOTHER surface — the entry's `surface` is matched, not decoration");
+
+  ok(!withE2eDriverAdmission(wide, "e2e-unified", "discord")(bot(DRIVER)), "🔴 the same driver is refused in a NON-fixture domain — the carve-out is scoped to the e2e fixtures, so a real room gains nothing");
+  ok(!withE2eDriverAdmission(wide, undefined, "discord")(bot(DRIVER)), "…and refused in a room that resolves to no explicit domain at all");
+  ok(E2E_DRIVER_DOMAINS.has("e2e-engaged"), "the carve-out's domain roster is the e2e fixture the engaged journeys drive");
+  ok(!E2E_DRIVER_DOMAINS.has("org") && !E2E_DRIVER_DOMAINS.has("dm") && !E2E_DRIVER_DOMAINS.has("public"), "🔴 …and NO criteria pseudo-domain. `domainForChannel` resolves EXPLICIT domains alone, so `org`/`dm`/`public` here would each be a line that reads as a vouch and admits nobody");
+
+  resetSettingsForTest();
+  ok(withE2eDriverAdmission(wide, "e2e-engaged", "discord") === wide, "🔴 an unconfigured deployment gets the base policy ITSELF back — the shipped posture is byte-identical, not merely equivalent");
+
+  const FIXTURE_ROOM = "discord/G1/C-engaged";
+  const REAL_ROOM = "discord/G1/C-real";
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const DOMAINS = [
+    defineDomain({ name: "e2e-engaged", reach: [FIXTURE_ROOM] }),
+    defineDomain({ name: "e2e-unified", reach: [REAL_ROOM] }),
+  ];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => DOMAINS,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER }] } }));
+  ok(seatAdmissionFor(FIXTURE_ROOM)(bot(DRIVER)), "🔴 `seatAdmissionFor` REACHES the carve-out for a fixture room — the catch-up read is the caller, and this is the assertion that fails if the wrapper is never wired in");
+  ok(!seatAdmissionFor(REAL_ROOM)(bot(DRIVER)), "🔴 …and does NOT reach it for a room in another domain — the negative control that keeps the line above from passing on a deployment-wide widening");
+  resetSettingsForTest();
 }
 
 console.log(`seat-catch-up: ${n} assertions passed`);

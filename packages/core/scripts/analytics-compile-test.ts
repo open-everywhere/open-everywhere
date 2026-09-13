@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { compileAnalyticsQuery, assembleAnalyticsSql, analyticsQuerySchema, isoWeekStart, AGGREGATE_SCAN_CAP, ROWS_LIMIT_MAX } from "../agent/analytics/compile.js";
+import { DATASETS } from "../agent/analytics/registry.js";
 import type { AnalyticsScope } from "../agent/access/analytics-scope.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
@@ -120,6 +121,15 @@ const parse = (q: unknown) => analyticsQuerySchema.parse(q);
 {
   ok(isoWeekStart("2026-07-24") === "2026-07-20", "2026-07-24 (Fri) → ISO week start Mon 2026-07-20");
   ok(isoWeekStart("2026-07-20") === "2026-07-20", "a Monday maps to itself");
+}
+
+{
+  const entries = Object.entries(DATASETS).sort(([a], [b]) => a.localeCompare(b));
+  ok(entries.length > 0, "the registry declares at least one dataset (a census over an empty set proves nothing)");
+  for (const [name, ds] of entries) {
+    ok(ds.principalColumn.length > 0, `🔴 OPE-1806: dataset "${name}" names a per-person column — self scope has no refusal to fall back on`);
+  }
+  ok(entries.every(([, ds]) => ds.principalColumn === "principal_id"), "…and all three name `principal_id` today — recorded, not required by the compiler");
 }
 
 console.log(`\n✓ analytics-compile: ${n} assertions passed (scope injection non-bypassable, no SQL-string injection, enum/scope refusals, dual placeholder rendering)\n`);

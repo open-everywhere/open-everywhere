@@ -188,6 +188,19 @@ export async function auditLinkCodeBackUndeliverable(input: { readonly org: stri
   });
 }
 
+export async function auditLinkClaimUnaddressed(input: {
+  readonly org: string;
+  readonly platform: string;
+  readonly tenant: string | undefined;
+  readonly nativeId: string;
+  readonly mode: string | undefined;
+}): Promise<void> {
+  await auditLink(input.org, input.platform, undefined, accountLabel(input.platform, input.tenant, input.nativeId), "identity.link.claim_unaddressed", {
+    mode: input.mode ?? "unknown",
+    reason: "a `link <code>` line on an unaddressed wake — a claim must be addressed to the agent by the surface's own addressing form (an @mention, a DM, or a name-drop where the surface has neither)",
+  });
+}
+
 export async function claimLinkChallenge(input: {
   readonly org: string;
   readonly code: string;

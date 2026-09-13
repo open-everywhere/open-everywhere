@@ -2,10 +2,10 @@ import { defineHook } from "eve/hooks";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
 import { detectLinkClaim, detectAddressedLinkClaim, mintLinkCode } from "../identity/link-challenge.js";
-import { claimCodeBackReply, claimVenueRefusal, codeBackDecision } from "../identity/link-flow.js";
+import { claimAddressingRefusal, claimCodeBackReply, claimVenueRefusal, codeBackDecision } from "../identity/link-flow.js";
 import { agentNameTokens } from "../identity/bot-name.js";
-import { auditLinkCodeBackUndeliverable, auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
-import { linkTenantOf } from "../identity/link-tenant.js";
+import { auditLinkClaimUnaddressed, auditLinkCodeBackUndeliverable, auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
+import { linkTenantOf, tryLinkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -80,6 +80,14 @@ export async function observeLinkClaim(input: {
   if (venue) {
     log(`link claim refused: a DM-capable platform (${input.platform}) only takes claims in a DM (mode=${input.mode ?? "unknown"}).`);
     await notify(input.notifyClaimant, venue);
+    return undefined;
+  }
+  const unaddressed = claimAddressingRefusal({ addressed: input.addressed === true });
+  if (unaddressed) {
+    log(`link claim refused: the wake was not addressed to the agent (platform=${input.platform}, mode=${input.mode ?? "unknown"}) — a claim must be addressed by the surface's own addressing form.`);
+    await notify(input.notifyClaimant, unaddressed);
+    const claimantTenant = tryLinkTenantOf(input.platform, input.tenant);
+    await auditLinkClaimUnaddressed({ org: input.org, platform: input.platform, tenant: claimantTenant, nativeId: input.authorId, mode: input.mode }).catch(() => undefined);
     return undefined;
   }
   const backDecision = codeBackDecision({ transport: "code", knobArmed: false, deliverable: input.codeBackDeliverable === true && input.notifyClaimant !== undefined });

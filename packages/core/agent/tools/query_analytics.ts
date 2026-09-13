@@ -14,7 +14,7 @@ export default defineTool({
   description:
     "Query your org's own operational analytics in natural language — you form a STRUCTURED query object (never SQL) over a fixed schema, the host compiles + scopes it, and returns the answer. Restricted to what your access lets you see: scope=\"self\" (your own rows), scope=\"domain\" (anyone in a memory domain — aggregates; domain/org admins also get raw rows), scope=\"org\" (org admins). Datasets/dimensions/measures:\n" +
     schemaCard() +
-    "\nmode \"aggregate\" (default) returns grouped measures; mode \"rows\" returns a raw listing (admins only). filters: [{dim, op:\"eq\"|\"in\"|\"prefix\", value}]. since/until are ISO-8601 (audit/usage). tsBucket buckets the \"ts\" group dim (hour|day|week|month). Note: DM usage is bucketed as \"(dms)\", $ figures are estimates, and audit records ACTIONS only (silences aren't rows).",
+    "\nmode \"aggregate\" (default) returns grouped measures; mode \"rows\" returns a raw listing and follows your standing — scope \"self\" lists your own rows, while scope \"domain\" and scope \"org\" list rows only for an admin. filters: [{dim, op:\"eq\"|\"in\"|\"prefix\", value}]. since/until are ISO-8601 (audit/usage). tsBucket buckets the \"ts\" group dim (hour|day|week|month). Note: DM usage is bucketed as \"(dms)\", $ figures are estimates, and audit records ACTIONS only (silences aren't rows).",
   inputSchema: analyticsQuerySchema,
   outputSchema: z.object({
     dataset: z.string(),

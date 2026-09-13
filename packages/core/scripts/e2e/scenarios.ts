@@ -17,7 +17,7 @@ import { isMissingChatScopeError } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
-import { notionMinuteFloor, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
+import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
@@ -5471,12 +5471,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-discord",
-    title: "Discord ADDRESSED-ONLY journey: mention → auto-thread → plain follow-up wakes → stand_down marks the row → audited silence",
+    title: "Discord ADDRESSED-ONLY journey: mention → auto-thread → plain follow-up wakes → stand_down marks the row → audited silence → the next wake catches up",
     requires: ["discord", "engagedDiscord"],
     surface: "discord",
     suite: "core",
     optional: false,
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5492,7 +5492,8 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const notCancelNote = (m: DiscordMessage): boolean => !isTurnCancelNote(m.content);
       const followFrom = new Date().toISOString();
-      const followUp = await discord.post("expand that into two or three sentences", threadId);
+      const staleMarker = factToken("dc-stale");
+      const followUp = await discord.post(`expand that into two or three sentences. ref ${staleMarker}`, threadId);
       const second = await discord.awaitReplyMatching(threadId, followUp.id, notCancelNote, {
         timeoutMs: REPLY_WAIT,
         what: `a bot reply to the plain follow-up in thread ${threadId} that is not a turn-cancel note`,
@@ -5520,6 +5521,24 @@ export const SCENARIOS: readonly Scenario[] = [
       const silent = raw.filter(notCancelNote);
       if (raw.length !== silent.length) ctx.log(`stop window: skipped ${raw.length - silent.length} turn-cancel note(s) — not replies, and not explained (OPE-1724)`);
       await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", observedSilent: silent.length === 0 });
+
+      const idleMarker = factToken("dc-idle");
+      await discord.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, threadId);
+      const catchUpFrom = new Date().toISOString();
+      const triggerMarker = factToken("dc-trig");
+      const trigger = await discord.post(
+        discord.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`),
+        threadId,
+      );
+      const caughtUp = await discord
+        .awaitReplyMatching(threadId, trigger.id, notCancelNote, {
+          timeoutMs: REPLY_WAIT,
+          what: `the reply to the catch-up trigger in thread ${threadId} (a turn-cancel note is not one)`,
+        })
+        .catch(() => undefined);
+      ctx.gate(caughtUp !== undefined, "catch-up: the mention woke the thread again after the stand-down — the wake this leg reads the context of");
+      ctx.log(`catch-up: the reply ${caughtUp?.content.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+      await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "discord", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker] });
 
       ctx.log(`(engaged thread ${threadId}; stand-down driven at ${stopMsg.id})`);
     },
@@ -5658,12 +5677,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-notion",
-    title: "Notion ADDRESSED-ONLY journey — the name-drop is the address, and it engages the page",
+    title: "Notion ADDRESSED-ONLY journey — the name-drop is the address, it engages the page, and the next wake catches up",
     requires: ["notionAmbient", "engagedNotion"],
     surface: "notion",
     suite: "core",
     optional: false,
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5682,7 +5701,8 @@ export const SCENARIOS: readonly Scenario[] = [
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "notion", leg: "name-drop", expect: "addressed" });
 
         const followFrom = new Date().toISOString();
-        await notion.replyToDiscussion(opened.discussionId, "and what's that plus 6?");
+        const staleMarker = factToken("not-stale");
+        await notion.replyToDiscussion(opened.discussionId, `and what's that plus 6? ref ${staleMarker}`);
         const second = await notion
           .awaitBotReplyIn(opened.discussionId, followFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
           .catch(() => undefined);
@@ -5709,6 +5729,22 @@ export const SCENARIOS: readonly Scenario[] = [
         const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", observedSilent });
 
+        await sleep(msToNextMinuteBoundary(Date.now()));
+        const idleMarker = factToken("not-idle");
+        await notion.replyToDiscussion(opened.discussionId, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
+        await sleep(msToNextMinuteBoundary(Date.now()));
+        const catchUpFrom = new Date().toISOString();
+        const triggerMarker = factToken("not-trig");
+        await notion.replyToDiscussion(
+          opened.discussionId,
+          `${ENGAGED_NAME} — ref ${triggerMarker}: which build token was posted here while you were not listening? Reply with just the token.`,
+        );
+        const caughtUp = await notion
+          .awaitBotReplyIn(opened.discussionId, catchUpFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
+          .catch(() => undefined);
+        ctx.gate(caughtUp !== undefined, "catch-up: the name-drop woke the page again after the stand-down — the wake this leg reads the context of");
+        ctx.log(`catch-up: the reply ${caughtUp?.text.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+        await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "notion", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker] });
       } finally {
         await notion.archiveBlock(blockId).catch(() => undefined);
       }

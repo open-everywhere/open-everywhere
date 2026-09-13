@@ -8,6 +8,7 @@ import {
   settingDocs,
   settingEnvNames,
 } from "../agent/settings/settings.js";
+import type { E2eDriverIdentity } from "../agent/testing/driver-allowlist.js";
 import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED } from "../agent/access/capabilities.js";
 import { oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
 import { taintTierMode } from "../agent/access/taint-enforcement.js";
@@ -474,55 +475,91 @@ console.log("\n10 — wake.nameDrop.include / wake.nameDrop.exclude (OPE-571):")
   resetSettingsForTest();
 }
 
-console.log("\n11 — wake.slackDmDriver (OPE-1023, OPE-1739):");
+console.log("\n11 — wake.e2eDrivers (OPE-1023, OPE-1739, OPE-1754):");
 {
   resetSettingsForTest();
-  eq(at({}).wake.slackDmDriver, [], "[11] 🔴 the shipped value is EMPTY — an unconfigured deployment admits NO bot author at the DM door, which is the pre-OPE-1023 behaviour exactly");
+  eq(at({}).wake.e2eDrivers, [], "[11] 🔴 the shipped value is EMPTY — an unconfigured deployment admits NO bot author at any seat door, which is the pre-OPE-1023 behaviour exactly");
 
-  registerSettings(defineSettings({ wake: { slackDmDriver: "T0123ABCD:B0456EFGH" } }));
-  eq(at({}).wake.slackDmDriver, "T0123ABCD:B0456EFGH", "[11] a well-formed `teamId:botId` pair resolves through as a bare STRING — the pre-list spelling still loads");
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "slack", principal: "T0123ABCD:B0456EFGH" }] } }));
+  eq(at({}).wake.e2eDrivers, [{ surface: "slack", principal: "T0123ABCD:B0456EFGH" }], "[11] a well-formed Slack entry resolves through unchanged");
   resetSettingsForTest();
 
-  registerSettings(defineSettings({ wake: { slackDmDriver: ["T0123ABCD:B0456EFGH", "T0123ABCD:B0999ZZZZ"] } }));
-  eq(at({}).wake.slackDmDriver, ["T0123ABCD:B0456EFGH", "T0123ABCD:B0999ZZZZ"], "[11] 🔴 a LIST of well-formed pairs resolves through with BOTH identities — the ship #199 gap was a second driver the one-pair lever could not name");
+  registerSettings(
+    defineSettings({
+      wake: {
+        e2eDrivers: [
+          { surface: "slack", principal: "T0123ABCD:B0456EFGH" },
+          { surface: "slack", principal: "T0123ABCD:B0999ZZZZ" },
+          { surface: "discord", principal: "123456789012345678" },
+          { surface: "notion", principal: "00000000-0000-0000-0000-000000000007" },
+        ],
+      },
+    }),
+  );
+  eq(
+    at({}).wake.e2eDrivers.length,
+    4,
+    "[11] 🔴 ONE declaration carries every surface at once — two Slack accounts (the live-run gap was a second driver the one-pair lever could not name), a Discord bot and a Notion integration",
+  );
+  eq(
+    at({}).wake.e2eDrivers.filter((d) => d.surface === "slack").map((d) => d.principal),
+    ["T0123ABCD:B0456EFGH", "T0123ABCD:B0999ZZZZ"],
+    "[11] …and the entries stay partitioned by surface, so a Discord id can never be matched at the Slack door",
+  );
   resetSettingsForTest();
 
-  registerSettings(defineSettings({ wake: { slackDmDriver: [] } }));
-  eq(at({}).wake.slackDmDriver, [], "[11] an EMPTY LIST loads and stays empty — the other spelling of 'admit nobody'");
+  registerSettings(defineSettings({ wake: { e2eDrivers: [] } }));
+  eq(at({}).wake.e2eDrivers, [], "[11] an EMPTY LIST loads and stays empty — the spelling of 'admit nobody'");
   resetSettingsForTest();
 
   const refusalFor = (value: unknown): string => {
     try {
-      defineSettings({ wake: { slackDmDriver: value as readonly string[] | string } });
+      defineSettings({ wake: { e2eDrivers: value as readonly E2eDriverIdentity[] } });
       return "";
     } catch (e) {
       return e instanceof Error ? e.message : String(e);
     }
   };
-  const refusesPair = (value: unknown, label: string): void => {
+  const refusesEntry = (value: unknown, label: string): void => {
     const message = refusalFor(value);
     ok(
-      message.includes("wake.slackDmDriver") && message.includes("teamId:botId"),
-      `${label} (got: ${message.slice(0, 160) || "NO THROW"})`,
+      message.includes("wake.e2eDrivers") && message.includes("{ surface, principal }"),
+      `${label} (got: ${message.slice(0, 200) || "NO THROW"})`,
+    );
+  };
+  const refusesSlackPair = (value: unknown, label: string): void => {
+    const message = refusalFor(value);
+    ok(
+      message.includes("wake.e2eDrivers") && message.includes("teamId:botId"),
+      `${label} (got: ${message.slice(0, 200) || "NO THROW"})`,
     );
   };
 
-  refusesPair("T0123ABCD:B0456EFGH,T0123ABCD:B0999ZZZZ", "[11] 🔴 a COMMA-SEPARATED string is refused — two identities are written as an ARRAY, so there is exactly one way to spell a list");
-  refusesPair("B0456EFGH", "[11] a bare bot id with no workspace is refused — the pair is workspace-pinned or it is not a pin");
-  refusesPair("T0123ABCD", "[11] …and a bare workspace with no bot id is refused too");
-  refusesPair("T0123ABCD:b0456efgh", "[11] a lowercase bot id is refused — Slack ids are upper-case, and a case-insensitive match is a wider match");
-  refusesPair("123456789:987654321", "[11] a DISCORD `guildId:botUserId` pair is refused — this lever is the SLACK DM door's, and accepting the other surface's grammar would admit an identity nothing here can check");
-  refusesPair(" T0123ABCD:B0456EFGH ", "[11] a padded pair is refused rather than trimmed — the stored value is the value matched, with no normalisation step to disagree about");
-  refusesPair(["T0123ABCD:B0456EFGH", "not-a-pair"], "[11] 🔴 a list with ONE malformed element is refused WHOLE — a per-element skip would load a roll that silently differs from the reviewed diff");
-  refusesPair(["T0123ABCD:B0456EFGH", "123456789:987654321"], "[11] …and a Discord pair hidden in an otherwise valid list is refused too");
-  refusesPair([42], "[11] a non-string element is refused — the grammar is checked, not assumed");
-
-  ok(
-    !refusalFor("T0123ABCD").includes("expected object"),
-    "[11] 🔴 a malformed BARE STRING is NOT refused as a wrong TYPE — the bare string is a supported spelling, so the shape complaint would be actively misleading",
+  {
+    const message = refusalFor("T0123ABCD:B0456EFGH");
+    ok(
+      message.includes("wake.e2eDrivers") && message.includes("expected object, got string"),
+      `[11] 🔴 a bare STRING is refused as a wrong TYPE — an identity carries its surface, so there is exactly one way to spell an entry (got: ${message.slice(0, 200) || "NO THROW"})`,
+    );
+  }
+  refusesEntry(["T0123ABCD:B0456EFGH"], "[11] …and a list of bare strings is refused with the GRAMMAR — that is the key this one replaced, so its author needs to be told the entry shape");
+  refusesEntry([{ surface: "slack" }], "[11] an entry with no `principal` is refused — an entry that names nobody still reads as a vouch in the operator table");
+  refusesEntry([{ principal: "T0123ABCD:B0456EFGH" }], "[11] …and an entry with no `surface` is refused too — an unsurfaced principal is matchable at every door");
+  refusesEntry([{ surface: "slack", principal: "" }], "[11] a BLANK principal is refused — it is the one shape where the declaration and the behaviour disagree in silence");
+  refusesEntry([{ surface: "Slack", principal: "T0123ABCD:B0456EFGH" }], "[11] a mis-cased surface is refused — a surface key's platform segment is lower-case, and a fold here is a wider match");
+  refusesEntry([{ surface: "slack", principal: " T0123ABCD:B0456EFGH " }], "[11] a padded principal is refused rather than trimmed — the stored value is the value matched, with no normalisation step to disagree about");
+  refusesSlackPair([{ surface: "slack", principal: "B0456EFGH" }], "[11] a bare Slack bot id with no workspace is refused — the pair is workspace-pinned or it is not a pin");
+  refusesSlackPair([{ surface: "slack", principal: "T0123ABCD:b0456efgh" }], "[11] a lowercase Slack bot id is refused — Slack ids are upper-case, and a case-insensitive match is a wider match");
+  refusesSlackPair([{ surface: "slack", principal: "123456789:987654321" }], "[11] a DISCORD pair declared on the SLACK surface is refused — the surface field is a claim the grammar checks, not a label");
+  refusesEntry(
+    [{ surface: "slack", principal: "T0123ABCD:B0456EFGH" }, { surface: "discord", principal: "" }],
+    "[11] 🔴 a list with ONE malformed element is refused WHOLE — a per-element skip would load a roll that silently differs from the reviewed diff",
   );
-  eq(refusalFor(["T0123ABCD:B0456EFGH"]), "", "[11] a well-formed list is not refused at all");
-  eq(refusalFor("T0123ABCD:B0456EFGH"), "", "[11] …and neither is a well-formed bare string");
+  refusesEntry([42], "[11] a non-object element is refused — the shape is checked, not assumed");
+
+  eq(refusalFor([{ surface: "slack", principal: "T0123ABCD:B0456EFGH" }]), "", "[11] a well-formed Slack entry is not refused at all");
+  eq(refusalFor([{ surface: "discord", principal: "123456789012345678" }]), "", "[11] …and neither is a Discord entry, whose principal this repository cannot check beyond its shape");
+  eq(refusalFor([]), "", "[11] …and neither is the empty list");
 
   resetSettingsForTest();
 }

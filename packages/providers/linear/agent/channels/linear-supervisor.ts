@@ -12,6 +12,8 @@ import {
   type WakeMessageInput,
   type SessionTailEntry,
   seatCatchUpSinceMs,
+  admitContextLines,
+  type SeatAdmissionFn,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
   engagedFollowUpContract,
@@ -101,6 +103,7 @@ export interface LinearSupervisorWakeInput {
   readonly issueId: string;
   readonly issueIdentifier?: string;
   readonly issueTitle?: string;
+  readonly admit?: SeatAdmissionFn;
   readonly trigger: {
     readonly id: string;
     readonly authorId?: string;
@@ -120,9 +123,11 @@ export interface LinearSupervisorWakeInput {
 export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): NormalizedWake {
   const directMention = input.directMention === true;
   const issueLabel = input.issueIdentifier ?? input.issueId;
-  const contextLines: ContextLine[] | undefined = input.issueTitle
+  const titleLine: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: issueLabel, text: `issue ${issueLabel}: ${input.issueTitle}` }]
     : undefined;
+  const admittedTitle = titleLine && input.admit ? admitContextLines(titleLine, input.admit, "thread") : titleLine;
+  const contextLines: ContextLine[] | undefined = admittedTitle && admittedTitle.length > 0 ? admittedTitle : undefined;
 
   return {
     platform: "linear",
@@ -239,6 +244,7 @@ export interface LinearSupervisorDispatch {
   readonly auth: OpenEverywhereLinearAuth;
   readonly ingested: readonly IngestedChatMessage[];
   readonly trigger: LinearSupervisorWakeInput["trigger"];
+  readonly admit: SeatAdmissionFn;
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
@@ -266,6 +272,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         issueId: d.issueId,
         issueIdentifier: d.issueIdentifier,
         issueTitle: d.issueTitle,
+        admit: d.admit,
         trigger: d.trigger,
         engagementTier: d.engagementTier,
         wakeId: d.window?.wakeId,

@@ -1,5 +1,5 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
-import { SLACK_DRIVER_PAIR, slackDmDriverPairs } from "../testing/driver-allowlist.js";
+import { e2eDriversProblem, type E2eDriverIdentity } from "../testing/driver-allowlist.js";
 import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
@@ -127,7 +127,7 @@ export interface AgentSettings {
   readonly wake: {
     readonly nameDropInclude: readonly string[];
     readonly nameDropExclude: readonly string[];
-    readonly slackDmDriver: readonly string[] | string;
+    readonly e2eDrivers: readonly E2eDriverIdentity[];
   };
   readonly webhooks: {
     readonly allowUnverified: boolean;
@@ -654,23 +654,14 @@ export const SETTINGS = {
         "Name tokens the Slack/Discord name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
     } satisfies SettingSpec<readonly string[]>,
-    slackDmDriver: {
-      path: "wake.slackDmDriver",
-      shipped: [] as readonly string[] | string,
-      alsoAccepts: "string",
-      validate: (v) => {
-        const bad = 'must be "" or Slack `teamId:botId` pairs (e.g. "T0123ABCD:B0456EFGH"), as one string or an array';
-        if (typeof v === "string") return v === "" || SLACK_DRIVER_PAIR.test(v) ? undefined : bad;
-        if (!Array.isArray(v)) return bad;
-        return v.every((pair) => typeof pair === "string" && SLACK_DRIVER_PAIR.test(pair)) ? undefined : bad;
-      },
+    e2eDrivers: {
+      path: "wake.e2eDrivers",
+      shipped: [] as readonly E2eDriverIdentity[],
+      validate: e2eDriversProblem,
       summary:
-        "The Slack bot identities the DM DOOR admits, each written as a `teamId:botId` pair — the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`. Give a list, or a bare string for a single identity. Slack stamps `bot_id` on anything an app posts through the Web API, a USER token included, so without this the e2e driver cannot drive a real Slack DM and the DM legs can only forge an envelope. Empty (shipped) ⇒ the DM door admits NO bot author at all: every bot-authored DM drops with its `surface.wake_dropped` row, exactly as before. Set ⇒ a LISTED identity's DM wakes the DM seat like a human's, writes a `surface.wake_admitted` row naming the carve-out, and its author trust resolves from the HUMAN `user` the post carries — no trust is invented for the bot. An unlisted bot is refused exactly as it was before. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a DM seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
-      format: (v) => {
-        const pairs = slackDmDriverPairs(v);
-        return pairs.length > 0 ? pairs.join(", ") : "(none)";
-      },
-    } satisfies SettingSpec<readonly string[] | string>,
+        "The e2e DRIVER bot identities the seat doors admit, one `{ surface, principal }` entry per identity. `principal` is written in the surface's OWN id vocabulary: Slack a `teamId:botId` pair (the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`), Discord the driver bot's user-id snowflake, Notion the driver integration's bot id. Every chat surface stamps a machine author on anything a script posts — Slack does it on a USER token too, Discord bans user tokens outright, and a Notion integration can never author a `person` comment — so without this the e2e pack cannot drive a real seat and its legs can only forge an envelope. Empty (shipped) ⇒ NO bot author reaches a seat on any surface: a bot-authored DM drops at the Slack DM door with its `surface.wake_dropped` row, and a bot-authored message in a seat's catch-up read is refused by the domain's own admission policy, exactly as before. Set ⇒ a LISTED identity is admitted at the Slack DM door (which writes a `surface.wake_admitted` row naming the carve-out, and resolves author trust from the HUMAN `user` the post carries — no trust is invented for the bot), and enters the standing seat's own reads — the since-last-wake catch-up, the bootstrap window and the name-drop hydration, every read `seatAdmissionFor` governs — on the E2E FIXTURE DOMAIN (`e2e-engaged`) ONLY, at the `relay` tier every machine author already carries. An unlisted bot is refused exactly as it was before, on every surface and in every domain. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
+      format: (v) => (v.length > 0 ? v.map((d) => `${d.surface}: ${d.principal}`).join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly E2eDriverIdentity[]>,
   },
   webhooks: {
     allowUnverified: {
@@ -926,7 +917,7 @@ export function getSettings(
     wake: {
       nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude, env),
       nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude, env),
-      slackDmDriver: resolve(SETTINGS.wake.slackDmDriver, o.wake?.slackDmDriver, env),
+      e2eDrivers: resolve(SETTINGS.wake.e2eDrivers, o.wake?.e2eDrivers, env),
     },
     webhooks: {
       allowUnverified: resolve(SETTINGS.webhooks.allowUnverified, o.webhooks?.allowUnverified, env),

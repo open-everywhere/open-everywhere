@@ -12,7 +12,7 @@ delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
-const { resolvePartition, getOperationalStore, defineDomain, ambientSkipFor } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { resolvePartition, getOperationalStore, defineDomain, ambientSkipFor, OE_ADDRESSED_ATTR } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { registerGithubProvider } = await import("@open-everywhere/provider-github/agent/register.js");
 const { registerLinearProvider } = await import("@open-everywhere/provider-linear/agent/register.js");
 const { registerNotionProvider } = await import("@open-everywhere/provider-notion/agent/register.js");
@@ -90,6 +90,10 @@ const NOW = "2026-05-12T11:30:00.000Z";
     engagedRes !== null && (engagedRes as { auth?: unknown }).auth !== undefined,
     "🔴 github: the SAME plain comment that returned null above now DISPATCHES — the native gate asks the seam, which is the whole wiring claim",
   );
+
+  const authAttrs = (r: unknown): Record<string, string> => (r as { auth: { attributes: Record<string, string> } }).auth.attributes;
+  ok(authAttrs(mentionRes)[OE_ADDRESSED_ATTR] === "1", "🔴 github: an @mention wake carries oe_addressed='1' — this is what lets `@bot link <code>` claim after eve strips the mention token");
+  ok(authAttrs(engagedRes)[OE_ADDRESSED_ATTR] === undefined, "🔴 github: an ENGAGED FOLLOW-UP carries NO stamp — it is not addressed, so a bare `link <code>` there is refused (the negative control)");
 
   ok(await store.markStopped(part.org, part.surfaceKey, anchor), "github: precondition — the stop flag is set on the row");
   ok((await drive(plain(104))) === null, "🔴 github: a plain comment in a STOOD-DOWN issue returns null — the stop is read on every comment, not only at mark time");
@@ -248,6 +252,11 @@ const NOW = "2026-05-12T11:30:00.000Z";
       "🔴 linear: …and the SAME call ENROLLED the ISSUE — the mention leg writes the row the plain-comment leg reads, which is the join Linear's one-shot session makes necessary",
     );
     ok(row?.participating === true, "linear: …as a participating row, so a later address clears a stand-down");
+
+    ok(
+      (res as { auth: { attributes: Record<string, string> } }).auth.attributes[OE_ADDRESSED_ATTR] === "1",
+      "🔴 linear: the Agent Session wake carries oe_addressed='1' — the session IS the address, which is what lets a bare `link <code>` claim in the agent's own thread",
+    );
 
     ok((await store.getEngagement(part.org, part.surfaceKey, "wiring-issue-2")) === null, "🔴 linear: NEGATIVE CONTROL — a different issue in the same team holds no row");
 

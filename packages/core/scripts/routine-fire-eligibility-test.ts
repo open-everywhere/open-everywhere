@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -90,6 +91,7 @@ const TEAMS_CONVERSATION = "19:conv1@thread.tacv2";
 const TEAMS_TEAM_ID = "team-1";
 const TEAMS_CHANNEL_ID = "19:chan1@thread.tacv2";
 const TEAMS_AAD_ID = "aad-0001-creator";
+const TEAMS_SERVICE_URL = "https://smba.example.com";
 const TEAMS_CREATED_BY = "29:bf-creator";
 const TEAMS_SURFACE = `teams/${TEAMS_TENANT}/${TEAMS_CONVERSATION}`;
 
@@ -103,6 +105,7 @@ routineDispatch.registerRoutineDispatch("teams", {
       conversation_id: TEAMS_CONVERSATION,
       team_id: TEAMS_TEAM_ID,
       channel_id: TEAMS_CHANNEL_ID,
+      service_url: TEAMS_SERVICE_URL,
       ...(typeof r.target?.["aadObjectId"] === "string" ? { aad_object_id: r.target["aadObjectId"] as string } : {}),
     },
   }),
@@ -112,7 +115,7 @@ function teamsRoutine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   return {
     org: ORG,
     surfaceKey: TEAMS_SURFACE,
-    target: { serviceUrl: "https://smba.example.com", conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID, aadObjectId: TEAMS_AAD_ID },
+    target: { serviceUrl: TEAMS_SERVICE_URL, conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID, aadObjectId: TEAMS_AAD_ID },
     trigger: { kind: "interval", everyMinutes: 15 },
     prompt: "Post the daily digest.",
     createdBy: TEAMS_CREATED_BY,
@@ -222,6 +225,9 @@ const rejectingReceive = (() => ({
   const alwaysThrows = async (): Promise<boolean | undefined> => {
     throw new Error("this check must never be called");
   };
+  const teamsAlwaysThrows = async (): Promise<never> => {
+    throw new Error("this check must never be called");
+  };
 
   const removed = await checkFireEligibility({
     createdBy: TEAMS_CREATED_BY,
@@ -229,7 +235,7 @@ const rejectingReceive = (() => ({
     roomId: TEAMS_CHANNEL_ID,
     teamsTeamId: TEAMS_TEAM_ID,
     teamsCreatorAadObjectId: TEAMS_AAD_ID,
-    teamsMembershipCheck: async () => false,
+    teamsMembershipCheck: async () => ({ member: false }),
     teamsActiveCheck: async () => true,
   });
   ok(!removed.eligible && removed.reason === "creator_removed_from_room", "§1b: TEAMS — a CONFIRMED non-member skips with reason creator_removed_from_room");
@@ -240,7 +246,7 @@ const rejectingReceive = (() => ({
     roomId: TEAMS_CHANNEL_ID,
     teamsTeamId: TEAMS_TEAM_ID,
     teamsCreatorAadObjectId: TEAMS_AAD_ID,
-    teamsMembershipCheck: async () => true,
+    teamsMembershipCheck: async () => ({ member: true }),
     teamsActiveCheck: async () => false,
   });
   ok(!inactive.eligible && inactive.reason === "creator_account_inactive", "§1b: TEAMS — a CONFIRMED inactive account skips with reason creator_account_inactive, independently of membership");
@@ -251,7 +257,7 @@ const rejectingReceive = (() => ({
     roomId: TEAMS_CHANNEL_ID,
     teamsTeamId: TEAMS_TEAM_ID,
     teamsCreatorAadObjectId: TEAMS_AAD_ID,
-    teamsMembershipCheck: async () => true,
+    teamsMembershipCheck: async () => ({ member: true }),
     teamsActiveCheck: async () => true,
   });
   ok(both.eligible, "§1b: TEAMS — a confirmed member with an active account is eligible");
@@ -262,7 +268,7 @@ const rejectingReceive = (() => ({
     roomId: TEAMS_CHANNEL_ID,
     teamsTeamId: TEAMS_TEAM_ID,
     teamsCreatorAadObjectId: TEAMS_AAD_ID,
-    teamsMembershipCheck: async () => undefined,
+    teamsMembershipCheck: async () => ({ member: undefined, unresolved: "read_error" }),
     teamsActiveCheck: async () => undefined,
   });
   ok(unresolvedBoth.eligible, "§1b: TEAMS — both probes unresolvable is still eligible, never a manufactured skip");
@@ -274,7 +280,7 @@ const rejectingReceive = (() => ({
         platform: "teams",
         roomId: TEAMS_CHANNEL_ID,
         teamsCreatorAadObjectId: TEAMS_AAD_ID,
-        teamsMembershipCheck: alwaysThrows,
+        teamsMembershipCheck: teamsAlwaysThrows,
         teamsActiveCheck: alwaysThrows,
       })
     ).eligible,
@@ -287,7 +293,7 @@ const rejectingReceive = (() => ({
         platform: "teams",
         roomId: TEAMS_CHANNEL_ID,
         teamsTeamId: TEAMS_TEAM_ID,
-        teamsMembershipCheck: alwaysThrows,
+        teamsMembershipCheck: teamsAlwaysThrows,
         teamsActiveCheck: alwaysThrows,
       })
     ).eligible,
@@ -301,7 +307,7 @@ const rejectingReceive = (() => ({
         roomId: TEAMS_CHANNEL_ID,
         teamsTeamId: TEAMS_TEAM_ID,
         teamsCreatorAadObjectId: TEAMS_AAD_ID,
-        teamsMembershipCheck: alwaysThrows,
+        teamsMembershipCheck: teamsAlwaysThrows,
         teamsActiveCheck: alwaysThrows,
       })
     ).eligible,
@@ -320,6 +326,70 @@ const rejectingReceive = (() => ({
     teamsActiveCheck: async () => true,
   });
   ok(brokenMembership.eligible, "§1b: TEAMS — a THROWING membership probe degrades to 'unresolved', never a crash and never a manufactured skip");
+  ok(
+    brokenMembership.eligible && brokenMembership.teamsMembershipUnresolved === "read_error",
+    "§1b: 🔴 OPE-1810 — …and it says so. A THROWING probe is a read that failed, so it rides out as `read_error` rather than as a bare pass the dispatcher cannot tell from a real check",
+  );
+
+  for (const cause of ["read_error", "team_id_unresolved", "roster_incomplete", "malformed_response", "no_provider", "missing_ids"] as const) {
+    const out = await checkFireEligibility({
+      createdBy: TEAMS_CREATED_BY,
+      platform: "teams",
+      roomId: TEAMS_CHANNEL_ID,
+      teamsTeamId: TEAMS_TEAM_ID,
+      teamsCreatorAadObjectId: TEAMS_AAD_ID,
+      teamsMembershipCheck: async () => ({ member: undefined, unresolved: cause }),
+      teamsActiveCheck: async () => true,
+    });
+    ok(out.eligible && out.teamsMembershipUnresolved === cause, `§1b: TEAMS — an unresolved membership read still fires, carrying its own cause \`${cause}\` out to the dispatcher`);
+  }
+
+  const confirmedMember = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => ({ member: true }),
+    teamsActiveCheck: async () => true,
+  });
+  ok(
+    confirmedMember.eligible && confirmedMember.teamsMembershipUnresolved === undefined,
+    "§1b: 🔴 NEGATIVE CONTROL — a CONFIRMED member carries NO unresolved cause. The field's PRESENCE is the signal, so a fire that was really checked must not set it",
+  );
+
+  const inactiveWinsOverUnresolved = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => ({ member: undefined, unresolved: "read_error" }),
+    teamsActiveCheck: async () => false,
+  });
+  ok(
+    !inactiveWinsOverUnresolved.eligible && inactiveWinsOverUnresolved.reason === "creator_account_inactive",
+    "§1b: an unresolved membership read never softens a CONFIRMED-inactive account — that fire is skipped, with its own reason",
+  );
+
+  const seen: { teamId?: string; channelId?: string; aad?: string; serviceUrl?: string } = {};
+  await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsServiceUrl: "https://smba.example.com",
+    teamsMembershipCheck: async (teamId, channelId, aad, serviceUrl) => {
+      Object.assign(seen, { teamId, channelId, aad, serviceUrl });
+      return { member: true };
+    },
+    teamsActiveCheck: async () => true,
+  });
+  ok(
+    seen.serviceUrl === "https://smba.example.com" && seen.teamId === TEAMS_TEAM_ID && seen.channelId === TEAMS_CHANNEL_ID && seen.aad === TEAMS_AAD_ID,
+    `§1b: 🔴 OPE-1810 — the membership probe receives the Connector serviceUrl alongside team/channel/creator (got serviceUrl: ${String(seen.serviceUrl)})`,
+  );
 
   const slackOverridesIgnoredOnTeams = await checkFireEligibility({
     createdBy: TEAMS_CREATED_BY,
@@ -329,7 +399,7 @@ const rejectingReceive = (() => ({
     teamsCreatorAadObjectId: TEAMS_AAD_ID,
     membershipCheck: async () => false,
     activeCheck: async () => false,
-    teamsMembershipCheck: async () => true,
+    teamsMembershipCheck: async () => ({ member: true }),
     teamsActiveCheck: async () => true,
   });
   ok(slackOverridesIgnoredOnTeams.eligible, "§1b: 🔴 NEGATIVE CONTROL — a Slack-shaped `membershipCheck`/`activeCheck` override does not leak into the Teams branch; only `teamsMembershipCheck`/`teamsActiveCheck` are read there");
@@ -426,7 +496,7 @@ const rejectingReceive = (() => ({
     },
   })) as never;
 
-  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => false });
+  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => ({ member: false }) });
   const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
   ok(after?.lastOutcome === "skipped", "§2-teams: TEAMS — the run is recorded SKIPPED, not failed");
   ok(after?.consecutiveFailures === 0, "§2-teams: 🔴 THE CORE CLAIM ON TEAMS TOO — a fire-time eligibility skip is NEVER a failure");
@@ -438,7 +508,7 @@ const rejectingReceive = (() => ({
   ok((rows[0]?.detail as { reason?: string } | undefined)?.reason === "creator_removed_from_room", "§2-teams: …carrying the SAME reason string the Slack leg uses — one vocabulary across platforms");
 
   const okReceive = (() => ({ send: async () => undefined })) as never;
-  await tick(new Date("2026-07-02T12:15:00.000Z"), okReceive, { confirmTeamsRoomMembership: async () => true });
+  await tick(new Date("2026-07-02T12:15:00.000Z"), okReceive, { confirmTeamsRoomMembership: async () => ({ member: true }) });
   const recovered = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
   ok(recovered?.lastRunAt === "2026-07-02T12:15:00.000Z", "§2-teams: TEAMS — the very next scheduled fire runs normally once membership is confirmed again");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
@@ -455,7 +525,7 @@ const rejectingReceive = (() => ({
     },
   })) as never;
 
-  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => true, confirmTeamsCreatorActive: async () => false });
+  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => ({ member: true }), confirmTeamsCreatorActive: async () => false });
   const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
   ok(after?.consecutiveFailures === 0 && after?.status === "active", "§2-teams-b: TEAMS — an inactive-account skip is ALSO not a failure, checked independently of room membership");
   const rows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.skip, limit: 500 })).filter((r) => (r.detail as { routineId?: string } | undefined)?.routineId === id);
@@ -471,10 +541,38 @@ const rejectingReceive = (() => ({
   const delivered: unknown[] = [];
   const receive = (() => ({ send: async (m: string) => void delivered.push(m) })) as never;
 
-  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => undefined, confirmTeamsCreatorActive: async () => undefined });
+  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => ({ member: undefined, unresolved: "read_error" }), confirmTeamsCreatorActive: async () => undefined });
   ok(delivered.length === 1, "§2-teams-c: TEAMS — an unresolved probe on BOTH legs still fires");
   const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
   ok(after?.lastOutcome !== "skipped", "§2-teams-c: and the run is not recorded skipped for eligibility reasons");
+
+  const failOpenRows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.eligibilityUnresolved, limit: 500 })).filter(
+    (r) => (r.detail as { routineId?: string } | undefined)?.routineId === id,
+  );
+  ok(failOpenRows.length === 1, "§2-teams-c: 🔴 THE OPE-1810 CLAIM — a fire that took the membership fail-open writes a `routine.eligibility_unresolved` row, so a silent pass-through is never mistaken for a real check");
+  const detail = failOpenRows[0]?.detail as { check?: string; cause?: string } | undefined;
+  ok(detail?.check === "teams_room_membership", "§2-teams-c: …naming WHICH check could not answer");
+  ok(detail?.cause === "read_error", "§2-teams-c: …and WHY, from the probe's own closed set — a Graph read that errored, not a roster it could not finish");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const id = "r-teams-checked";
+  await routineStore.addRoutine({} as never, teamsRoutine({ id }));
+  const delivered: unknown[] = [];
+  const receive = (() => ({ send: async (m: string) => void delivered.push(m) })) as never;
+
+  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, {
+    confirmTeamsRoomMembership: async () => ({ member: true }),
+    confirmTeamsCreatorActive: async () => true,
+  });
+  ok(delivered.length === 1, "§2-teams-e: TEAMS — a confirmed member fires, as it always has");
+  const rows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.eligibilityUnresolved, limit: 500 })).filter(
+    (r) => (r.detail as { routineId?: string } | undefined)?.routineId === id,
+  );
+  ok(rows.length === 0, "§2-teams-e: 🔴 NEGATIVE CONTROL — …and writes NO `routine.eligibility_unresolved` row. The row means 'this fire was not really checked', so a checked fire must leave none");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
 }
 
@@ -482,12 +580,36 @@ const rejectingReceive = (() => ({
   resetRoutineSkipThrottle();
   _resetFireEligibilityCachesForTest();
   const id = "r-teams-no-aad";
-  await routineStore.addRoutine({} as never, teamsRoutine({ id, target: { serviceUrl: "https://smba.example.com", conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID } }));
+  await routineStore.addRoutine({} as never, teamsRoutine({ id, target: { serviceUrl: TEAMS_SERVICE_URL, conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID } }));
   const delivered: unknown[] = [];
   const receive = (() => ({ send: async (m: string) => void delivered.push(m) })) as never;
-  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => false, confirmTeamsCreatorActive: async () => false });
+  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => ({ member: false }), confirmTeamsCreatorActive: async () => false });
   ok(delivered.length === 1, "§2-teams-d: 🔴 TEAMS — no AAD object id on the stored target ⇒ fires normally, even though `createdBy` IS set and the probes would confirm 'removed' if consulted");
+
+  const rows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.eligibilityUnresolved, limit: 500 })).filter(
+    (r) => (r.detail as { routineId?: string } | undefined)?.routineId === id,
+  );
+  ok(rows.length === 1, "§2-teams-d: 🔴 …and writes a `routine.eligibility_unresolved` row — a routine that predates AAD capture must not escape the check in silence");
+  ok((rows[0]?.detail as { cause?: string } | undefined)?.cause === "missing_ids", "§2-teams-d: …with cause `missing_ids`, distinct from a Graph read that failed");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const noRoom = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: undefined,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => ({ member: false }),
+    teamsActiveCheck: async () => true,
+  });
+  ok(noRoom.eligible, "§2-teams-f: TEAMS — a 1:1 chat routine (no channel) is eligible");
+  ok(
+    noRoom.eligible && noRoom.teamsMembershipUnresolved === undefined,
+    "§2-teams-f: 🔴 …and carries NO unresolved cause. There is no roster to ask about, so this is 'no question', not 'could not answer'",
+  );
 }
 
 {

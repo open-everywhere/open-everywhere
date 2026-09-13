@@ -118,9 +118,6 @@ export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsSco
   const spec = DATASETS[dataset];
   const mode = input.mode;
 
-  if (scope.grain === "self" && spec.principalColumn === "") {
-    throw new Error(`dataset "${dataset}" has no per-person dimension, so scope "self" is unavailable — use dataset "usage" for your own cost, or scope "domain"/"org".`);
-  }
   if (mode === "rows" && !scope.rowMode) {
     throw new Error(`rows mode isn't available at your standing for this scope (aggregates only). Use mode "aggregate", or ask an org/domain admin. (scope=${scope.grain})`);
   }

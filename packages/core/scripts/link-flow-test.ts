@@ -9,8 +9,10 @@ import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
 import { registerOperationalStore, resetOperationalStore } from "../agent/operational/provider.js";
 import type { LinkChallengeRow } from "../agent/operational/store.js";
 import { hashLinkCode, mintLinkCode } from "../agent/identity/link-challenge.js";
+import { agentNameTokens } from "../agent/identity/bot-name.js";
 import {
   asLinkTransport,
+  claimAddressingRefusal,
   claimVenueRefusal,
   codeBackDecision,
   consentGate,
@@ -140,6 +142,12 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok(/slack\/T1\/U_A/.test(noName), "consent ask: the anchor still names who asked when no profile resolves (the negative control)");
   const venueText = claimVenueRefusal({ dmCapable: true, mode: "channel" })!;
   ok(/dm me/i.test(venueText) && /nothing was used up|still good/i.test(venueText), "VENUE: the refusal points at the DM and says the code was not spent");
+
+  ok(claimAddressingRefusal({ addressed: false }) !== undefined, "🔴 ADDRESSING: an UNADDRESSED wake is refused — the minted instruction always said a bare line would not count");
+  ok(claimAddressingRefusal({ addressed: true }) === undefined, "ADDRESSING: an addressed wake is fine (the negative control — the gate is not refusing everything)");
+  const addrText = claimAddressingRefusal({ addressed: false })!;
+  ok(/@mention/i.test(addrText) && /name-drop/i.test(addrText), "🔴 ADDRESSING: the refusal names BOTH addressing forms — a surface with no @mention (Notion) is told the one it has");
+  ok(/nothing was used up|still good/i.test(addrText), "ADDRESSING: the refusal says the code was not spent, which the gate's position before the CAS makes true");
 }
 
 {
@@ -309,7 +317,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   const venueCode = venued.code!;
   const inChannel = await observeLinkClaim({
     org: ORG, platform: "slack", tenant: T1, authorId: "U_CLAIMER", text: `link ${venueCode}`,
-    trust: "peer", dmCapable: true, mode: "channel", notifyClaimant: recorder,
+    trust: "peer", addressed: true, dmCapable: true, mode: "channel", notifyClaimant: recorder,
   });
   ok(inChannel === undefined, "🔴 VENUE (hook): a claim in a CHANNEL on a DM-capable platform claims nothing");
   ok(posted.length === 1 && /dm me/i.test(posted[0]!), "VENUE (hook): the claimant is told, where they posted, to use the DM instead");
@@ -319,7 +327,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   posted.length = 0;
   const inDm = await observeLinkClaim({
     org: ORG, platform: "slack", tenant: T1, authorId: "U_CLAIMER", text: `link ${venueCode}`,
-    trust: "peer", dmCapable: true, mode: "dm", codeBackDeliverable: true, notifyClaimant: recorder,
+    trust: "peer", addressed: true, dmCapable: true, mode: "dm", codeBackDeliverable: true, notifyClaimant: recorder,
   });
   ok(inDm === venued.challenge.id, "VENUE (hook): the SAME code claims in a DM — the redirect cost nothing");
 
@@ -335,7 +343,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   const noArm = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_NOARM", surfaceKey: "slack/T1/D1" });
   const ghId = await observeLinkClaim({
     org: ORG, platform: "github", authorId: "gh-claimant", text: `link ${noArm.code!}`,
-    trust: "unauth", trustIsEvidence: false, dmCapable: false, mode: "channel",
+    trust: "unauth", trustIsEvidence: false, addressed: true, dmCapable: false, mode: "channel",
   });
   ok(ghId === noArm.challenge.id, "🔴 CODE-BACK: a platform with NO post arm still records the claim — an over-strict guard here would delete GitHub linking outright");
   ok((await pg.getLinkChallenge(ORG, noArm.challenge.id))?.backNonceHash === undefined, "CODE-BACK: no arm ⇒ no code-back digest, so the finalize degrades to an acknowledged confirm rather than dead-ending");
@@ -344,6 +352,83 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   );
   ok(downgrades.length === 1, "CODE-BACK: the downgrade lands on ONE audit row — a fail-soft nobody can see is indistinguishable from a bug");
   ok((downgrades[0]!.detail as { claimantPlatform?: string }).claimantPlatform === "github", "CODE-BACK: the row names the surface that had nowhere to put the code");
+}
+
+{
+  const posted: string[] = [];
+  const recorder = (text: string) => {
+    posted.push(text);
+  };
+  const auditRowsFor = async (platform: string, nativeId: string) =>
+    (await pg.readAudit({ org: ORG })).filter(
+      (r) => r.action === "identity.link.claim_unaddressed" && r.platform === platform && String(r.principalId ?? "").includes(nativeId),
+    );
+
+  const ghAddr = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_GH_ADDR", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "github", authorId: "gh-addressed", text: `link ${ghAddr.code!}`,
+    trust: "unauth", trustIsEvidence: false, addressed: true, dmCapable: false, mode: "channel", notifyClaimant: recorder,
+  })) === ghAddr.challenge.id, "🔴 ADDRESSING (github): an ADDRESSED `link <code>` comment still claims — the gate did not delete the mention-surface path");
+
+  posted.length = 0;
+  const ghBare = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_GH_BARE", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "github", authorId: "gh-ambient", text: `link ${ghBare.code!}`,
+    trust: "unauth", trustIsEvidence: false, addressed: false, dmCapable: false, mode: "channel", notifyClaimant: recorder,
+  })) === undefined, "🔴 ADDRESSING (github): a BARE, unaddressed `link <code>` line in a room claims NOTHING");
+  ok((await pg.getLinkChallenge(ORG, ghBare.challenge.id))?.status === "pending", "🔴 ADDRESSING (github): the refusal did NOT spend the code — the gate sits before the claim CAS");
+  ok(posted.length === 1 && /@mention/i.test(posted[0]!), "ADDRESSING (github): the claimant is told what to do instead, where they posted");
+  ok(!posted[0]!.includes(ghBare.code!), "ADDRESSING (github): the refusal never echoes the code back into the room");
+
+  const ghRows = await auditRowsFor("github", "gh-ambient");
+  ok(ghRows.length === 1, "🔴 ADDRESSING: the refusal appends exactly ONE `identity.link.claim_unaddressed` row");
+  ok((ghRows[0]!.detail as { mode?: string }).mode === "channel", "ADDRESSING: the row records the venue the unaddressed line was posted in");
+  ok(/addressed/i.test(String((ghRows[0]!.detail as { reason?: string }).reason)), "ADDRESSING: the row names WHY it was refused, not merely that it was");
+  ok(String(ghRows[0]!.principalId ?? "").includes("gh-ambient"), "ADDRESSING: the row names the account that posted the line — the only account this refusal knows");
+  ok(!JSON.stringify(ghRows[0]!).includes(ghBare.code!), "🔴 ADDRESSING: the row carries the code NOWHERE — an audit reader must not be handed a live code");
+  ok(!JSON.stringify(ghRows[0]!).includes(hashLinkCode(ghBare.code!)), "🔴 ADDRESSING: nor its DIGEST — 39 bits unsalted is brute-forceable well inside the 10-minute life");
+
+  posted.length = 0;
+  const dmAddr = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_DM_ADDR", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "slack", tenant: T1, authorId: "U_DM_CLAIMER", text: `link ${dmAddr.code!}`,
+    trust: "peer", addressed: true, dmCapable: true, mode: "dm", notifyClaimant: recorder,
+  })) === dmAddr.challenge.id, "🔴 ADDRESSING (slack DM): a claim in a DM claims — a DM is addressed by construction, so the primary documented path is untouched");
+
+  posted.length = 0;
+  const dmBare = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_DM_BARE", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "slack", tenant: T1, authorId: "U_DM_UNSTAMPED", text: `link ${dmBare.code!}`,
+    trust: "peer", addressed: false, dmCapable: true, mode: "dm", notifyClaimant: recorder,
+  })) === undefined, "🔴 ADDRESSING (slack DM): an UNSTAMPED DM delivery is refused, not claimed — the gate fails closed");
+  ok((await pg.getLinkChallenge(ORG, dmBare.challenge.id))?.status === "pending", "ADDRESSING (slack DM): the fail-closed refusal spent nothing either");
+  ok((await auditRowsFor("slack", "U_DM_UNSTAMPED")).length === 1, "ADDRESSING (slack DM): the fail-closed refusal is audited like any other");
+
+  posted.length = 0;
+  const bothGates = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_BOTH", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "slack", tenant: T1, authorId: "U_ROOM_AMBIENT", text: `link ${bothGates.code!}`,
+    trust: "peer", addressed: false, dmCapable: true, mode: "channel", notifyClaimant: recorder,
+  })) === undefined, "ADDRESSING (ordering): an unaddressed line in a DM-capable ROOM claims nothing");
+  ok(posted.length === 1 && /dm me/i.test(posted[0]!), "🔴 ADDRESSING (ordering): the DM pointer wins over 'address me' — it is the answer that gets them linked");
+  ok((await auditRowsFor("slack", "U_ROOM_AMBIENT")).length === 0, "ADDRESSING (ordering): the venue refusal returned first, so no unaddressed row was written (the negative control for the row assertions above)");
+
+  posted.length = 0;
+  const ntAddr = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_NT_ADDR", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "notion", authorId: "notion-namedropper", text: `Aria link ${ntAddr.code!}`,
+    trust: "peer", addressed: true, addressTokens: agentNameTokens("Aria"), dmCapable: false, mode: "channel", notifyClaimant: recorder,
+  })) === ntAddr.challenge.id, "🔴 ADDRESSING (notion): a NAME-DROP claim still works — the surface with neither mentions nor DMs keeps its path");
+
+  posted.length = 0;
+  const ntBare = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_NT_BARE", surfaceKey: "slack/T1/D1" });
+  ok((await observeLinkClaim({
+    org: ORG, platform: "notion", authorId: "notion-ambient", text: `link ${ntBare.code!}`,
+    trust: "peer", addressed: false, addressTokens: agentNameTokens("Aria"), dmCapable: false, mode: "channel", notifyClaimant: recorder,
+  })) === undefined, "🔴 ADDRESSING (notion): a bare page comment with NO name-drop claims nothing — this is the case the rule turns on");
+  ok((await pg.getLinkChallenge(ORG, ntBare.challenge.id))?.status === "pending", "ADDRESSING (notion): the bare comment spent nothing");
+  ok(posted.length === 1 && /name-drop/i.test(posted[0]!), "🔴 ADDRESSING (notion): the refusal names the NAME-DROP — telling a Notion user to @mention an integration they cannot @mention would be a dead end");
+  ok((await auditRowsFor("notion", "notion-ambient")).length === 1, "ADDRESSING (notion): the bare-comment refusal is audited too");
 }
 
 {
@@ -522,4 +607,4 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   _resetAccountDisplayNamesForTest();
 }
 
-console.log(`✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, forced code-back, both tools)`);
+console.log(`✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, claim addressing, forced code-back, both tools)`);

@@ -117,7 +117,7 @@ export function resolveChatWriteTargetFrom(
     "cross-domain",
     `posting to ${parsed.connector} container "${parsed.id}" is refused: it is not in this session's memory domain. ` +
       `The agent may only post in containers its own domain declares — a grant cannot reach across domains. ` +
-      `The remedy is to add the container to that domain's \`channels\` in memory/config/domains.ts, which is a reviewed ` +
+      `The remedy is to add the container to that domain's \`reach\` in memory/config/domains/<domain>.ts, which is a reviewed ` +
       `config change, and then grant it.`,
   );
 }

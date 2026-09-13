@@ -65,6 +65,7 @@ import {
 import { withSingleWindowDiversion } from "@open-everywhere/provider-slack/agent/channels/slack-front.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/provider-github/agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "@open-everywhere/provider-github/agent/channels/github-identity.js";
+import { admissionFunction } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/provider-linear/agent/channels/linear-supervisor.js";
 import { buildLinearAuth } from "@open-everywhere/provider-linear/agent/channels/linear-identity.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
@@ -368,6 +369,7 @@ const ghDeps: GitHubSupervisorDeps = {
 await handleGitHubSupervisorDispatch(
   {
     surfaceKey: GH_KEY,
+    admit: admissionFunction("wide"),
     owner: "acme",
     repo: "payments-api",
     issueNumber: 55,
@@ -424,6 +426,7 @@ const linDeps: LinearSupervisorDeps = {
 await handleLinearSupervisorDispatch(
   {
     surfaceKey: LINEAR_KEY,
+    admit: admissionFunction("wide"),
     teamId: "T_WINX",
     issueId: "issue-uuid-77",
     issueIdentifier: "ENG-77",
@@ -1288,6 +1291,7 @@ overrideSettingsForTest({ window: { topology: false } });
   await handleLinearSupervisorDispatch(
     {
       surfaceKey: LINEAR_KEY,
+      admit: admissionFunction("wide"),
       teamId: "T_WINX",
       issueId: "issue-uuid-77",
       issueIdentifier: "ENG-77",

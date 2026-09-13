@@ -5,6 +5,8 @@ import {
   singleWindowMentionPolicy,
   stampNonMemberChatAuth,
   seatCatchUpSinceMs,
+  admitContextLines,
+  type SeatAdmissionFn,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
   type NormalizedWake,
@@ -71,6 +73,7 @@ export interface GitHubSupervisorWakeInput {
   readonly repo: string;
   readonly issueNumber: number;
   readonly issueTitle?: string;
+  readonly admit?: SeatAdmissionFn;
   readonly trigger: {
     readonly id: string;
     readonly authorLogin?: string;
@@ -87,9 +90,11 @@ export interface GitHubSupervisorWakeInput {
 
 export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): NormalizedWake {
   const directMention = input.directMention === true;
-  const contextLines: ContextLine[] | undefined = input.issueTitle
+  const titleLine: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: `#${input.issueNumber}`, text: `issue/PR #${input.issueNumber}: ${input.issueTitle}` }]
     : undefined;
+  const admittedTitle = titleLine && input.admit ? admitContextLines(titleLine, input.admit, "thread") : titleLine;
+  const contextLines: ContextLine[] | undefined = admittedTitle && admittedTitle.length > 0 ? admittedTitle : undefined;
 
   return {
     platform: "github",
@@ -216,6 +221,7 @@ export interface GitHubSupervisorDispatch {
   readonly auth: OpenEverywhereGitHubAuth;
   readonly ingested: readonly IngestedChatMessage[];
   readonly trigger: GitHubSupervisorWakeInput["trigger"];
+  readonly admit: SeatAdmissionFn;
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
@@ -232,6 +238,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       repo: d.repo,
       issueNumber: d.issueNumber,
       issueTitle: d.issueTitle,
+      admit: d.admit,
       trigger: d.trigger,
       engagementTier: d.engagementTier,
       wakeId: d.window?.wakeId,

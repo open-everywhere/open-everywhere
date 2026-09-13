@@ -15,7 +15,9 @@ import {
   type LinearSupervisorDispatch,
   type LinearSupervisorSession,
 } from "../agent/channels/linear-supervisor.js";
-import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OE_CHAT_NONMEMBER_ATTR, admissionFunction, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { LINEAR_SILENCE_ACK_BODY } from "../agent/channels/linear-silence-ack.js";
 import type { OpenEverywhereLinearAuth } from "../agent/channels/linear-identity.js";
 import { readLinearIssue } from "../agent/channels/linear-api.js";
@@ -102,6 +104,24 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(!message.includes("engagement="), "no tier resolved -> NO engagement attribute at all (Linear's platform default)");
   ok(message.includes(`<thread ts="${ISSUE}">`), "no identifier -> the issue id labels the thread");
 }
+
+const TITLE = "DB migration rollout";
+{
+  const refused = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: TITLE, trigger, admit: admissionFunction("members-only") }), NOW);
+  ok(refused.context === undefined, "🔴 members-only REFUSES the title line, and no context block reaches the envelope");
+  ok(!refused.message.includes(TITLE), "🔴 …and the title text is nowhere in the wake message either — the refusal is entry, not a render tweak");
+  ok(refused.message.includes("can we ship the migration tomorrow?"), "negative control: the TRIGGER comment still reaches the seat — admission governs the slot, never the wake");
+
+  const admitted = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: TITLE, trigger, admit: admissionFunction("wide") }), NOW);
+  ok(admitted.context !== undefined && admitted.context.length === 1 && admitted.context[0]!.includes(TITLE), "negative control: `wide` (the default) admits the SAME line through the SAME seam");
+  ok(admitted.context![0]!.includes(UNTRUSTED_OPEN), "…still untrusted-wrapped — admission is an entry rule, not a fencing rule");
+
+  const bots = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: TITLE, trigger, admit: admissionFunction("wide-with-bots") }), NOW);
+  ok(bots.context !== undefined && bots.context[0]!.includes(TITLE), "negative control: `wide-with-bots` admits it too — only members-only reads the vouch");
+
+  const unpoliced = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: TITLE, trigger }), NOW);
+  ok(normalizeFenceNonce(unpoliced.context![0]!) === normalizeFenceNonce(admitted.context![0]!), "no `admit` ⇒ no admission ⇒ the slot is byte-identical to the shipped-default one");
+}
 {
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
   ok(plain.message.includes(`<channel id="${TEAM_KEY}" container="team">`), "the channel carries its opaque key — that is what the host routes on");
@@ -179,7 +199,7 @@ const AUTH: OpenEverywhereLinearAuth = { authenticator: "linear", principalId: "
 const SURFACE = `linear/org-1/${TEAM}`;
 
 function dispatch(over: Partial<LinearSupervisorDispatch> = {}): LinearSupervisorDispatch {
-  return { surfaceKey: SURFACE, teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", auth: AUTH, trigger, ingested: [], ...over };
+  return { surfaceKey: SURFACE, teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: TITLE, auth: AUTH, trigger, admit: admissionFunction("wide"), ingested: [], ...over };
 }
 
 interface WakeCapture { token: string; message: string; context: readonly string[] }
@@ -203,6 +223,21 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(wakes[1]!.message.includes('follow-up="thread-engaged"'), "🔴 dispatch: an ENGAGED issue's wake reaches deps.wake carrying the enrolment contract");
   await handleLinearSupervisorDispatch(dispatch({ threadEngaged: false }), deps);
   ok(!wakes[2]!.message.includes("follow-up="), "dispatch: NEGATIVE CONTROL — a NOT-engaged issue's wake carries no contract");
+
+  await handleLinearSupervisorDispatch(dispatch({ admit: admissionFunction("members-only") }), deps);
+  const refusedWake = wakes[wakes.length - 1]!;
+  ok(refusedWake.context.length === 0, "🔴 a members-only dispatch delivers NO context block — the policy crossed dispatch → builder");
+  ok(!refusedWake.message.includes(TITLE), "🔴 …and the refused title reaches neither the context nor the message");
+  await handleLinearSupervisorDispatch(dispatch({ admit: admissionFunction("wide") }), deps);
+  const admittedWake = wakes[wakes.length - 1]!;
+  ok(admittedWake.context.length === 1 && admittedWake.context[0]!.includes(TITLE), "negative control: the SAME dispatch under `wide` delivers the title");
+}
+
+{
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/linear.ts", import.meta.url)), "utf8");
+  ok(src.includes("admit: seatAdmissionFor(surfaceKey)"), "🔴 the live AMBIENT leg passes the domain's admission policy into the supervisor dispatch");
+  ok(src.includes("admit: seatAdmissionFor(`linear/${organizationId}/${c.teamId}`)"), "🔴 the live MENTION leg passes it too — one rule per domain, on both legs");
+  ok(src.includes("admit: seatAdmissionFor(req.channelKey)"), "…and the catch-up read still resolves the SAME policy, so the seat's two reads cannot disagree");
 }
 
 {

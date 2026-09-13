@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { resolveAnalyticsScope, isAmbientNonAddressedTurn } from "../agent/access/analytics-scope.js";
+import queryAnalyticsTool from "../agent/tools/query_analytics.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
@@ -100,6 +101,14 @@ function ctxFor(principalId: string | undefined, channelId: string, opts: CtxOpt
   ok(isAmbientNonAddressedTurn(ctxFor("U_ORG", "CA", { grain: "standing" })), "standing seat, no addressing → AMBIENT (rows held)");
   ok(!isAmbientNonAddressedTurn(ctxFor("U_ORG", "CA", { grain: "standing", addressing: "direct-mention" })), "standing seat, direct-mention → NOT ambient (rows allowed)");
   ok(!isAmbientNonAddressedTurn(ctxFor("U_ORG", "CA")), "no standing stamp (a DM/native/thread direct turn) → NOT ambient");
+}
+
+{
+  const desc = queryAnalyticsTool.description;
+  ok(resolveAnalyticsScope(ctxFor("U_RANDOM", "CA"), "self").rowMode, "a plain member's SELF scope carries rowMode — the self grain has no admin check");
+  ok(!/admins only/i.test(desc), "🔴 …so the description must not tell the model rows mode is admins-only");
+  ok(desc.includes('scope "self" lists your own rows'), "…it states the standing-dependent rule the resolver applies");
+  ok(desc.includes('scope "domain" and scope "org" list rows only for an admin'), "…and names the two grains that DO turn on admin standing");
 }
 
 console.log(`\n✓ analytics-scope: ${n} assertions passed (policy matrix org/domain/self × standing, DM-unmask audience rule, ambient-wake belt)\n`);

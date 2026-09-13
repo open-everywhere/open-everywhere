@@ -216,7 +216,7 @@ const ORG = "default";
   ok(chatDmTargetsFrom(HOME, rayGranted, DOMAINS).length === 0, "a slack-only domain names no discord person, however the bundle is bound");
   const cross = refusal(HOME, rayGranted, RAY);
   ok(cross.boundary === "cross-domain", "a granted discord person refuses as `cross-domain` for a domain with no discord container");
-  ok(cross.message.includes("memory/config/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message.includes("memory/config/domains/<domain>.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
   ok(cross.message !== ungranted.message, "the two discord refusals are different messages, because the remedies are different files");
 
   const malformed = refusal(DISCORD_HOME, rayGranted, RAY_ID);
@@ -245,11 +245,13 @@ const ORG = "default";
   ok(ungranted.boundary === "ungranted", "a person nobody granted refuses as `ungranted`");
   ok(ungranted.message.includes("resourceGrants"), "the ungranted refusal names the CONFIG remedy");
   ok(ungranted.message.includes("presence alone"), "the ungranted refusal says presence is not a grant");
-  ok(!ungranted.message.includes("channels"), "the ungranted refusal does NOT send an operator to the domain roster");
+  ok(!ungranted.message.includes("`reach`"), "the ungranted refusal does NOT send an operator to the domain roster");
 
   const cross = refusal(DISCORD_HOME, granted, SARAH);
   ok(cross.boundary === "cross-domain", "a granted person on a surface the domain does not work on refuses as `cross-domain`");
-  ok(cross.message.includes("memory/config/domains.ts"), "the cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message.includes("memory/config/domains/<domain>.ts"), "the cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message.includes("`reach`"), "🔴 OPE-1790: the cross-domain remedy names the domain's `reach` roster — the field the loader actually reads");
+  ok(!/\bchannels\b/.test(cross.message), "🔴 OPE-1790: …and never `channels`, which `Domain` does not declare");
   ok(cross.message !== ungranted.message, "the two refusals are different messages, because the remedies are different files");
 
   const blind = refusal(undefined, granted, SARAH);

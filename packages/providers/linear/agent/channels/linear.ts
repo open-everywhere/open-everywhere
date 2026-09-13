@@ -87,6 +87,7 @@ import {
   type AttachSessionForCancel,
   seatCatchUp,
   seatAdmissionFor,
+  OE_ADDRESSED_ATTR,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
@@ -642,6 +643,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
       issueIdentifier: c.issueIdentifier,
       issueTitle: c.issueTitle,
       auth,
+      admit: seatAdmissionFor(surfaceKey),
       ingested: [authorFacts],
       trigger: {
         id: c.id,
@@ -864,6 +866,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
         issueIdentifier: c.issueIdentifier,
         issueTitle: c.issueTitle,
         auth,
+        admit: seatAdmissionFor(`linear/${organizationId}/${c.teamId}`),
         ingested: [authorFacts],
         trigger: {
           id: c.id,
@@ -1035,6 +1038,8 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       [authorFacts],
       nativeSurfaceKey === undefined ? {} : { surfaceKey: nativeSurfaceKey },
     );
+
+    auth.attributes[OE_ADDRESSED_ATTR] = "1";
 
     const refuse = async (text: string): Promise<void> => {
       await createLinearActivity({ credentials: linearCredentialsForOrg(event.organizationId), activity: { agentSessionId, content: { type: "error", body: text } } });

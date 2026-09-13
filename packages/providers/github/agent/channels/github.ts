@@ -77,6 +77,7 @@ import {
   seatCatchUp,
   seatAdmissionFor,
   ENGAGED_FOLLOW_UP_CONTEXT,
+  OE_ADDRESSED_ATTR,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -383,6 +384,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
       issueNumber: ev.issueNumber,
       issueTitle: ev.issueTitle,
       auth,
+      admit: seatAdmissionFor(surfaceKey),
       ingested: [authorFacts],
       trigger: {
         id: ev.comment.id ?? "unknown",
@@ -548,6 +550,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
       return null;
     }
 
+    if (isMention) auth.attributes[OE_ADDRESSED_ATTR] = "1";
     return isMention ? { auth } : { auth, context: [ENGAGED_FOLLOW_UP_CONTEXT] };
 };
 

@@ -405,7 +405,10 @@ async function runFront(
   const DRIVER_BOT_2 = "B0DRIVER88";
   const DRIVER_PAIR_2 = `${TEAM}:${DRIVER_BOT_2}`;
 
-  const arm = (pairs: readonly string[] | string): void => void overrideSettingsForTest({ wake: { slackDmDriver: pairs } });
+  const arm = (pairs: readonly string[] | string): void =>
+    void overrideSettingsForTest({
+      wake: { e2eDrivers: (typeof pairs === "string" ? [pairs] : pairs).filter((p) => p !== "").map((principal) => ({ surface: "slack" as const, principal })) },
+    });
 
   arm(DRIVER_PAIR);
   const DRIVER_TS = "1768686402.910001";
@@ -465,15 +468,22 @@ async function runFront(
   arm(DRIVER_PAIR);
   const COMPAT_TS = "1768686402.910040";
   const compat = await runFront(dmEnvelope("Ev7bCompat", { bot_id: DRIVER_BOT, ts: COMPAT_TS }), { partnerTrust: "internal" });
-  eq(compat.dispatched.length, 1, "a BARE STRING still admits the single identity it names — the pre-list spelling keeps working");
+  eq(compat.dispatched.length, 1, "a ONE-ENTRY roll admits the single identity it names");
   const COMPAT_OTHER_TS = "1768686402.910050";
   const compatOther = await runFront(dmEnvelope("Ev7bCompatOther", { bot_id: DRIVER_BOT_2, ts: COMPAT_OTHER_TS }), { partnerTrust: "internal" });
   eq(compatOther.dispatched.length, 0, "🔴 …and admits NOTHING ELSE — the negative control that keeps the line above from passing on an open door");
 
+  overrideSettingsForTest({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER_PAIR }] } });
+  const FOREIGN_SURFACE_TS = "1768686402.910070";
+  const foreignSurface = await runFront(dmEnvelope("Ev7bForeignSurface", { bot_id: DRIVER_BOT, ts: FOREIGN_SURFACE_TS }), { partnerTrust: "internal" });
+  eq(foreignSurface.dispatched.length, 0, "🔴 the same principal declared on ANOTHER surface wakes nothing at the Slack DM door — the entry's `surface` is matched, not decoration");
+  eq((await admitRows(FOREIGN_SURFACE_TS)).length, 0, "…and writes no admitted row");
+  eq((await dropRows(FOREIGN_SURFACE_TS)).length, 1, "…and writes the ordinary drop row, exactly as an unconfigured deployment does");
+
   arm([]);
   const EMPTY_LIST_TS = "1768686402.910060";
   const emptyList = await runFront(dmEnvelope("Ev7bEmptyList", { bot_id: DRIVER_BOT, ts: EMPTY_LIST_TS }), { partnerTrust: "internal" });
-  eq(emptyList.dispatched.length, 0, "🔴 an EMPTY LIST admits nobody, exactly as the empty string does — both spellings of empty are the shipped posture");
+  eq(emptyList.dispatched.length, 0, "🔴 an EMPTY LIST admits nobody — it is the shipped posture, not 'admit nobody in particular'");
   eq((await admitRows(EMPTY_LIST_TS)).length, 0, "…and writes no admitted row");
   eq((await dropRows(EMPTY_LIST_TS)).length, 1, "…and STILL writes its ordinary `surface.wake_dropped` row — the posture claim is 'byte-identical, audit row included', so the row is part of what empty means");
 
@@ -510,10 +520,10 @@ async function runFront(
   eq(mpimAdmitted.dispatched.length, 1, "the named driver's GROUP DM is admitted at the same door");
   eq(((await admitRows(MPIM_DRIVER_TS))[0]?.detail as Record<string, unknown> | undefined)?.dmKind, "mpim", "…and the row names it as the mpim family member");
 
-  arm("");
+  arm([]);
   const DISARMED_TS = "1768686402.910007";
   const disarmed = await runFront(dmEnvelope("Ev7bDisarmed", { bot_id: DRIVER_BOT, ts: DISARMED_TS }), { partnerTrust: "internal" });
-  eq(disarmed.dispatched.length, 0, "🔴 with the setting back at its shipped `\"\"` the SAME driver DM drops again — empty is not 'admit nobody in particular', it is 'admit nobody'");
+  eq(disarmed.dispatched.length, 0, "🔴 with the setting back at its shipped `[]` the SAME driver DM drops again — empty is not 'admit nobody in particular', it is 'admit nobody'");
   eq((await admitRows(DISARMED_TS)).length, 0, "…and writes no admitted row");
   eq((await dropRows(DISARMED_TS)).length, 1, "…and writes the ordinary drop row, so an unconfigured deployment's audit trail is unchanged");
 }

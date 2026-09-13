@@ -52,12 +52,12 @@ function stripLeadingAddress(text: string, addressTokens: readonly string[]): st
 
 export function linkClaimInstructions(code: string, ttlMinutes: number): string {
   return (
-    `From your OTHER account, send me a message whose ENTIRE text is exactly this line and nothing ` +
-    `else:\n\n    link ${code}\n\n` +
-    `DM it to me if that account can DM me — a code is a secret, so I only take it in a one-to-one ` +
-    `conversation where I have one. Where I have no DMs at all, @mention me or name-drop me in a ` +
-    `comment instead; a bare, unaddressed line will not count. If you send it somewhere I cannot ` +
-    `accept it, I will say so and the code stays good.\n\n` +
+    `From your OTHER account, send me this line — on its own in a DM, or with my @mention (or my ` +
+    `name) in front of it anywhere else:\n\n    link ${code}\n\n` +
+    `Nothing else in the message either way. DM it to me if that account can DM me — a code is a ` +
+    `secret, so I only take it in a one-to-one conversation where I have one. Where I have no DMs at ` +
+    `all, @mention me or name-drop me in a comment instead; a bare, unaddressed line will not count. ` +
+    `If you send it somewhere I cannot accept it, I will say so and the code stays good.\n\n` +
     `It is single-use and expires in ${ttlMinutes} minutes. When it lands I will answer that account ` +
     `with a SECOND code and come back HERE naming the account that claimed the first one. Give me the ` +
     `second code in this conversation to finish — that is what proves one person reads both. If a ` +

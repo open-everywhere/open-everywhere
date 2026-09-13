@@ -1,4 +1,5 @@
 import { appendAudit, readAudit, type AuditInput } from "../audit/audit.js";
+import type { TeamsMembershipUnresolved } from "../channels/teams-bridge.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { usageSummary } from "../spend/usage-events.js";
 import { isSilentRoutine, type Routine } from "./routine.js";
@@ -11,6 +12,7 @@ export const ROUTINE_AUDIT = {
   stalled: "routine.stalled",
   runNow: "routine.run_now",
   collectFailed: "routine.collect_failed",
+  eligibilityUnresolved: "routine.eligibility_unresolved",
 } as const;
 
 export type RoutineSkipReason =
@@ -50,6 +52,10 @@ export function resetRoutineSkipThrottle(): void {
 
 export function skipThrottleKey(routineId: string, reason: RoutineSkipReason): string {
   return `routineskip:${routineId}:${reason}`;
+}
+
+function eligibilityUnresolvedThrottleKey(routineId: string, check: EligibilityCheckName): string {
+  return `routineeligibility:${routineId}:${check}`;
 }
 
 export function collectFailedThrottleKey(routineId: string): string {
@@ -97,6 +103,36 @@ export async function auditRoutineSkip(
         routineId: r.id,
         reason,
         ...extra,
+        ...(carried > 0 ? { suppressed: carried, windowMs: SKIP_WINDOW_MS } : {}),
+      },
+    },
+    deps,
+  );
+  return true;
+}
+
+export type EligibilityCheckName = "teams_room_membership";
+
+export type EligibilityUnresolvedCause = TeamsMembershipUnresolved;
+
+export async function auditRoutineEligibilityUnresolved(
+  r: Routine,
+  detail: { readonly check: EligibilityCheckName; readonly cause: EligibilityUnresolvedCause },
+  deps: RoutineAuditDeps = {},
+): Promise<boolean> {
+  const nowIso = (deps.now?.() ?? new Date()).toISOString();
+  const carried = await admitThrottled(r.org, eligibilityUnresolvedThrottleKey(r.id, detail.check), nowIso, deps);
+  if (carried === null) return false;
+  await write(
+    {
+      org: r.org,
+      ...routineAuditScope(r),
+      principalId: deps.principalId ?? ROUTINE_DISPATCHER_PRINCIPAL,
+      action: ROUTINE_AUDIT.eligibilityUnresolved,
+      detail: {
+        routineId: r.id,
+        check: detail.check,
+        cause: detail.cause,
         ...(carried > 0 ? { suppressed: carried, windowMs: SKIP_WINDOW_MS } : {}),
       },
     },

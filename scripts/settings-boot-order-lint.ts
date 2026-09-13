@@ -46,7 +46,7 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
   },
   {
     module: "agent/sandbox/sandbox.js",
-    why: "eve's sandbox definition. Fifteen imports evaluate BEFORE its register-config.js import on line 19 — the adapters browser/sandbox subgraph, self-host-egress, egress-denial-poller — and no other entry reaches them pre-registration.",
+    why: "eve's sandbox definition. Its register-config.js import is LAST, so every other import it names evaluates first — the adapters browser/sandbox subgraph, self-host-egress, egress-denial-poller — and no other entry reaches them pre-registration.",
     registers: true,
     floor: 300,
     evalFloor: 300,

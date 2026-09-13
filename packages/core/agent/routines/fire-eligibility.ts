@@ -1,5 +1,12 @@
 import { bridgeSlackForm, type SlackFormFn } from "../channels/slack-bridge.js";
-import { bridgeTeamsRoomMembership, bridgeTeamsAccountActive } from "../channels/teams-bridge.js";
+import {
+  bridgeTeamsRoomMembership,
+  bridgeTeamsAccountActive,
+  type TeamsAccountActiveCheck,
+  type TeamsMembershipUnresolved,
+  type TeamsRoomMembership,
+  type TeamsRoomMembershipCheck,
+} from "../channels/teams-bridge.js";
 import { dmTrustTtlMs } from "../identity/trust.js";
 import type { RoutineSkipReason } from "./fire-audit.js";
 
@@ -67,11 +74,10 @@ export function _resetFireEligibilityCachesForTest(): void {
   accountActiveCache.clear();
 }
 
-export type TeamsRoomMembershipCheck = (teamId: string, channelId: string, aadObjectId: string) => Promise<boolean | undefined>;
+export type { TeamsRoomMembershipCheck, TeamsAccountActiveCheck, TeamsMembershipUnresolved };
 
-export type TeamsAccountActiveCheck = (aadObjectId: string) => Promise<boolean | undefined>;
-
-const liveTeamsRoomMembership: TeamsRoomMembershipCheck = (teamId, channelId, aadObjectId) => bridgeTeamsRoomMembership(teamId, channelId, aadObjectId);
+const liveTeamsRoomMembership: TeamsRoomMembershipCheck = (teamId, channelId, aadObjectId, serviceUrl) =>
+  bridgeTeamsRoomMembership(teamId, channelId, aadObjectId, serviceUrl);
 
 const liveTeamsAccountActive: TeamsAccountActiveCheck = (aadObjectId) => bridgeTeamsAccountActive(aadObjectId);
 
@@ -83,11 +89,17 @@ export interface FireEligibilityInput {
   readonly activeCheck?: AccountActiveCheck;
   readonly teamsTeamId?: string;
   readonly teamsCreatorAadObjectId?: string;
+  readonly teamsServiceUrl?: string;
   readonly teamsMembershipCheck?: TeamsRoomMembershipCheck;
   readonly teamsActiveCheck?: TeamsAccountActiveCheck;
 }
 
-export type FireEligibility = { readonly eligible: true } | { readonly eligible: false; readonly reason: RoutineSkipReason };
+export type FireEligibility =
+  | {
+      readonly eligible: true;
+      readonly teamsMembershipUnresolved?: TeamsMembershipUnresolved;
+    }
+  | { readonly eligible: false; readonly reason: RoutineSkipReason };
 
 function verdictFromChecks(member: boolean | undefined, active: boolean | undefined): FireEligibility {
   if (member === false) return { eligible: false, reason: "creator_removed_from_room" };
@@ -108,14 +120,21 @@ export async function checkFireEligibility(input: FireEligibilityInput): Promise
     return verdictFromChecks(member, active);
   }
   if (input.platform === "teams") {
-    if (!input.teamsTeamId || !input.roomId || !input.teamsCreatorAadObjectId) return { eligible: true };
+    if (!input.roomId) return { eligible: true };
+    if (!input.teamsTeamId || !input.teamsCreatorAadObjectId) return { eligible: true, teamsMembershipUnresolved: "missing_ids" };
     const membershipCheck = input.teamsMembershipCheck ?? liveTeamsRoomMembership;
     const activeCheck = input.teamsActiveCheck ?? liveTeamsAccountActive;
-    const [member, active] = await Promise.all([
-      membershipCheck(input.teamsTeamId, input.roomId, input.teamsCreatorAadObjectId).catch((): boolean | undefined => undefined),
+    const [membership, active] = await Promise.all([
+      membershipCheck(input.teamsTeamId, input.roomId, input.teamsCreatorAadObjectId, input.teamsServiceUrl).catch(
+        (): TeamsRoomMembership => ({ member: undefined, unresolved: "read_error" }),
+      ),
       activeCheck(input.teamsCreatorAadObjectId).catch((): boolean | undefined => undefined),
     ]);
-    return verdictFromChecks(member, active);
+    const verdict = verdictFromChecks(membership.member, active);
+    if (verdict.eligible && membership.member === undefined) {
+      return { eligible: true, teamsMembershipUnresolved: membership.unresolved };
+    }
+    return verdict;
   }
   return { eligible: true };
 }

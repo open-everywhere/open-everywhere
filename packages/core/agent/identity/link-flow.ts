@@ -75,6 +75,15 @@ export function claimVenueRefusal(input: { readonly dmCapable: boolean; readonly
   );
 }
 
+export function claimAddressingRefusal(input: { readonly addressed: boolean }): string | undefined {
+  if (input.addressed) return undefined;
+  return (
+    "I can't take a link code from a line that isn't addressed to me — anybody can type in here, so a " +
+    "bare line is not evidence you meant it for me. Send the same line again, addressed to me: " +
+    "@mention me, or name-drop me where I have no @mention. The code is still good; nothing was used up."
+  );
+}
+
 export function linkConsentPendingInstructions(targetName: string, ttlMinutes: number): string {
   return (
     `I have asked ${targetName} to confirm, in their own DM with me, that the account is theirs. ` +

@@ -35,6 +35,7 @@ import {
   seatCatchUp,
   seatCatchUpSinceMs,
   seatAdmissionFor,
+  admitContextLines,
   backscrollTrustResolver,
   engagementTierFor,
   getConfig,
@@ -1031,6 +1032,31 @@ async function divertDiscordDmToWindow(input: {
   });
 }
 
+export function admitDiscordSeatLines(
+  lines: readonly ContextLine[] | undefined,
+  grain: SupervisorGrain,
+  domainKey: string,
+  isThread: boolean,
+): readonly ContextLine[] | undefined {
+  if (!lines || lines.length === 0) return undefined;
+  if (!grainUsesUnifiedWindow(grain)) return lines;
+  const admitted = admitContextLines(lines, seatAdmissionFor(domainKey), isThread ? "thread" : "channel");
+  return admitted.length > 0 ? admitted : undefined;
+}
+
+export function discordSeatContextForWindow(
+  lines: readonly ContextLine[] | undefined,
+  source: string | undefined,
+  grain: SupervisorGrain,
+  domainKey: string,
+  isThread: boolean,
+): { readonly context: readonly string[]; readonly ingestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>> } {
+  const admitted = admitDiscordSeatLines(lines, grain, domainKey, isThread);
+  if (!admitted) return { context: [], ingestion: [] };
+  const rendered = renderContext(admitted, source ?? "");
+  return { context: rendered ? [rendered] : [], ingestion: admitted.map(contextLineIngestion) };
+}
+
 export async function divertDiscordWakeToUnifiedWindow(input: {
   readonly msg: DiscordRelayMessage;
   readonly auth: OpenEverywhereDiscordAuth;
@@ -1316,7 +1342,7 @@ export async function dispatchTurn(
             }).catch(() => undefined)
           : undefined;
       const gradedWindowLines = windowLines ? await gradeDiscordContextLines(windowLines.lines, ctxFromAuth(auth), msg.guildId) : undefined;
-      const windowContext = gradedWindowLines ? renderContext(gradedWindowLines, windowLines!.source) : null;
+      const seatContext = discordSeatContextForWindow(gradedWindowLines, windowLines?.source, windowGrain, domainKeyOf(partition), isThreadChannelType(msg.channelType));
       const addressing = mentionPolicy.addressing ?? (nameDrop && msg.botName ? "name-drop" : "channel-watch");
       await divertDiscordWakeToUnifiedWindow({
         msg,
@@ -1327,8 +1353,8 @@ export async function dispatchTurn(
         privacyOk,
         threadEngaged: engRow?.participating === true && engRow.stopped !== true,
         receive,
-        context: windowContext ? [windowContext] : [],
-        contextIngestion: (gradedWindowLines ?? []).map(contextLineIngestion),
+        context: seatContext.context,
+        contextIngestion: seatContext.ingestion,
       });
       await appendAudit({
         org: deploymentOrg(),
@@ -1398,6 +1424,7 @@ export async function dispatchTurn(
         }).catch(() => undefined)
       : undefined;
   const gradedBackscrollLines = backscroll ? await gradeDiscordContextLines(backscroll.lines, ctxFromAuth(surface.auth), msg.guildId) : undefined;
+  const nativeContextLines = admitDiscordSeatLines(gradedBackscrollLines, windowGrain, domainKeyOf(partition), isThread);
 
   const rendered = renderWake(
     discordNativeWake({
@@ -1408,7 +1435,7 @@ export async function dispatchTurn(
       addressing,
       threadEngaged: engRow?.participating === true && engRow.stopped !== true,
       botName: msg.botName,
-      contextLines: gradedBackscrollLines,
+      contextLines: nativeContextLines,
       contextSource: backscroll?.source,
       trigger: {
         id: msg.id || "unknown",
@@ -1427,7 +1454,7 @@ export async function dispatchTurn(
       {
         auth: stampNonMemberChatAuth(
           surface.auth,
-          [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(gradedBackscrollLines ?? []).map(contextLineIngestion)],
+          [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(nativeContextLines ?? []).map(contextLineIngestion)],
           isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
         ),
         continuationToken: surface.continuationToken,

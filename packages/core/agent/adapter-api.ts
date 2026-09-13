@@ -653,7 +653,13 @@ export { registerSlackBridge, _resetSlackBridgeForTest, slackBridge } from "./ch
 export type { SlackBridge, SlackFormFn, SlackReadCallFn } from "./channels/slack-bridge.js";
 
 export { registerTeamsBridge, _resetTeamsBridgeForTest, teamsBridge } from "./channels/teams-bridge.js";
-export type { TeamsBridge, TeamsRoomMembershipCheck, TeamsAccountActiveCheck } from "./channels/teams-bridge.js";
+export type {
+  TeamsBridge,
+  TeamsRoomMembershipCheck,
+  TeamsAccountActiveCheck,
+  TeamsRoomMembership,
+  TeamsMembershipUnresolved,
+} from "./channels/teams-bridge.js";
 
 export { markThreadStopped, shouldDeliverReply, classifyParticipation, STAND_DOWN_DELIVERY_REFUSAL } from "./channels/engagement.js";
 export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.js";
@@ -687,7 +693,8 @@ export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";
 export { registeredReactionSurfaces } from "./channels/reaction-ingest.js";
 export type { IngestedReaction } from "./channels/reaction-ingest.js";
 
-export { isAllowedSlackDriver, parseDriverAllowlist, slackDmDriverPairs } from "./testing/driver-allowlist.js";
+export { isAllowedSlackDriver, parseDriverAllowlist, e2eDriverPrincipals, isE2eDriver, e2eDriversProblem } from "./testing/driver-allowlist.js";
+export type { E2eDriverIdentity } from "./testing/driver-allowlist.js";
 
 export { STATUS_REACTION, renderPinned, isPinnedStatusMessage, STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "./status/status.js";
 export type { ReactionState } from "./status/status.js";

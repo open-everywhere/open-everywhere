@@ -1,10 +1,36 @@
 const DISCORD_PAIR = /^\d+:\d+$/;
 
-export const SLACK_DRIVER_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
+const SLACK_DRIVER_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
 
-export function slackDmDriverPairs(configured: readonly string[] | string): readonly string[] {
-  const raw = typeof configured === "string" ? [configured] : configured;
-  return raw.filter((pair) => pair !== "");
+export interface E2eDriverIdentity {
+  readonly surface: string;
+  readonly principal: string;
+}
+
+const DRIVER_SURFACE = /^[a-z][a-z0-9-]*$/;
+
+export function e2eDriversProblem(value: unknown): string | undefined {
+  const bad = "must be an array of { surface, principal } entries, each naming ONE bot identity (e.g. { surface: \"slack\", principal: \"T0123ABCD:B0456EFGH\" })";
+  if (!Array.isArray(value)) return bad;
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return bad;
+    const { surface, principal } = entry as { surface?: unknown; principal?: unknown };
+    if (typeof surface !== "string" || !DRIVER_SURFACE.test(surface)) return bad;
+    if (typeof principal !== "string" || principal.trim() === "" || /\s/u.test(principal)) return bad;
+    if (surface === "slack" && !SLACK_DRIVER_PAIR.test(principal)) {
+      return 'a "slack" principal must be a `teamId:botId` pair (e.g. "T0123ABCD:B0456EFGH")';
+    }
+  }
+  return undefined;
+}
+
+export function e2eDriverPrincipals(configured: readonly E2eDriverIdentity[], surface: string): readonly string[] {
+  return configured.filter((d) => d.surface === surface).map((d) => d.principal);
+}
+
+export function isE2eDriver(configured: readonly E2eDriverIdentity[], surface: string, principal: string | undefined): boolean {
+  if (principal === undefined || principal === "") return false;
+  return configured.some((d) => d.surface === surface && d.principal === principal);
 }
 
 export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<string> {

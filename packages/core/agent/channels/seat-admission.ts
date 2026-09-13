@@ -5,6 +5,7 @@ export interface SeatAdmissionCandidate {
   readonly sender: WakeMessageSender;
   readonly trust: WakeTrust;
   readonly type: "channel" | "thread";
+  readonly authorId?: string;
 }
 
 export type SeatAdmissionFn = (candidate: SeatAdmissionCandidate) => boolean;
@@ -36,7 +37,7 @@ export function admitToSeat<T extends SeatAdmissionCandidate>(messages: readonly
 function contextLineAdmission(line: ContextLine, type: "channel" | "thread"): SeatAdmissionCandidate {
   const sender: WakeMessageSender = line.senderType === "agent" ? "self" : line.senderType === "bot" ? "bot" : "human";
   const trust: WakeTrust = line.trust ?? (sender === "human" ? "unauth" : "relay");
-  return { sender, trust, type };
+  return { sender, trust, type, ...(line.senderId ? { authorId: line.senderId } : {}) };
 }
 
 export function admitContextLines(lines: readonly ContextLine[], admit: SeatAdmissionFn, type: "channel" | "thread"): ContextLine[] {

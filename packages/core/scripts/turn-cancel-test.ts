@@ -188,12 +188,15 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
   const note = renderCancelNote(6, ["read_thread", "reply", "create_ticket"]);
   ok(note.includes("6 steps in"), "the note says how far in the turn was");
   ok(note.includes("NOT undone"), "🔴 the note states plainly that what already ran was NOT undone");
-  ok(note.includes("create_ticket"), "…and names the actions that actually executed");
+  ok(note.includes("3 actions had already run"), "…and counts what executed, in member terms");
 }
 {
-  const note = renderCancelNote(9, ["a", "b", "c", "d", "e"]);
-  ok(note.includes("and 2 earlier"), "a long turn summarises the tail rather than listing everything");
-  ok(note.includes("`e`"), "…keeping the MOST RECENT actions, which are the ones a human is looking at");
+  const ran = ["bash", "bash", "todo", "write_file", "read_thread"];
+  const note = renderCancelNote(8, ran);
+  ok(!note.includes("`"), "🔴 OPE-1819: the note carries NO backtick — the old renderer quoted every tool name it listed");
+  for (const name of ran) ok(!note.includes(name), `🔴 OPE-1819: …and never the tool name "${name}" itself`);
+  ok(note === "Stood down — 8 steps in. 5 actions had already run, and they are NOT undone.", "…it reports the COUNT and the warning, which is the member-facing fact");
+  ok(renderCancelNote(1, ["bash"]) === "Stood down — one step in. One action had already run, and it is NOT undone.", "one action reads as prose, not '1 actions'");
 }
 {
   const note = renderCancelNote(0, [], false);
@@ -213,7 +216,8 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
     renderCancelNote(0, [], false),
   ];
   for (const note of everyBranch) ok(isTurnCancelNote(note), `isTurnCancelNote recognises the renderer's own output: ${note.slice(0, 48)}…`);
-  ok(isTurnCancelNote("Stood down — one step in. Already done, and NOT undone: `reply`."), "the live 64-char cancel note (ship #197)");
+  ok(isTurnCancelNote("Stood down — one step in. One action had already run, and it is NOT undone."), "the accounted cancel note the J-ENGAGED-discord leg latches onto");
+  ok(!isTurnCancelNote("Stood down — one step in. Already done, and NOT undone: `reply`."), "🔴 OPE-1819: the RETIRED tool-name shape is not produced and is not matched — both halves moved together");
   ok(
     isTurnCancelNote("Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone."),
     "the live unaccounted cancel note (a live run)",
@@ -222,9 +226,9 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
   ok(!isTurnCancelNote("Stood down, as you asked — ping me if you need anything."), "🔴 model prose that merely opens with the same words is NOT a cancel note");
   ok(
     !isTurnCancelNote("Stood down — 2 steps in. Already done, and NOT undone: the report."),
-    "🔴 …nor prose that reaches the ACTION LIST: the renderer backticks every name, so an unquoted list is not its output (a `.+` list matched this)",
+    "🔴 …nor prose that reaches the tail: the shapes are matched whole, so free text after the step count is not the renderer's output (a `.+` tail matched this)",
   );
-  ok(isTurnCancelNote("Stood down — 2 steps in. Already done, and NOT undone: `reply`, `create_ticket` (and 3 earlier)."), "…while a real multi-action list with the earlier-count tail still matches");
+  ok(isTurnCancelNote("Stood down — 2 steps in. 14 actions had already run, and they are NOT undone."), "…while a real multi-action note still matches");
   ok(!isTurnCancelNote("Stood down — one step in"), "an incomplete sentence is not a cancel note (the shapes are matched whole)");
   ok(!isTurnCancelNote(""), "an empty message is not a cancel note");
   ok(!isTurnCancelNote("144"), "an ordinary answer is not a cancel note");

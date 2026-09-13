@@ -109,6 +109,36 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   ok(!JSON.stringify(plan.args).includes("Ada owns billing"), "planPurge: the frozen args never contain the verbatim bullet (redaction)");
   ok(plan.cardLines.some((l) => l.includes("- 2026-07-01: Ada owns billing")), "planPurge: the display-only cardLines DO carry the verbatim bullet for the approver to read");
   ok(plan.cardLines.some((l) => l.toLowerCase().includes("cannot be undone")), "planPurge: the card says out loud that this is irreversible");
+  ok(plan.cardLines.some((l) => l.includes("ERASES the line(s) from every silo listed")), "🔴 OPE-1801: an all-sqlite purge claims a real erasure");
+  ok(!plan.cardLines.some((l) => l.includes("NOT a full erasure")), "…and says nothing about retained history, because none is retained");
+  {
+    const gitTiers: PurgeSearchTier[] = [{ siloName: "eng-brain", provider: "git", tierId: engTierId, files: eng }];
+    const gitPlan = planPurge(slackBinding(), partition, gitTiers, { match: "Ada owns billing" }, "eng");
+    ok(gitPlan.cardLines.join("\n") !== plan.cardLines.join("\n"), "🔴 OPE-1801: the git-backed card differs from the sqlite-backed one — the promise is not hedged across backings");
+    ok(!gitPlan.cardLines.some((l) => l.includes("ERASES")), "🔴 OPE-1801: a git-backed purge never claims an erasure git does not deliver");
+    ok(gitPlan.cardLines.some((l) => l.includes("NOT a full erasure") && l.includes("`eng-brain`")), "…it names the silo whose pre-purge text survives in the backing's history");
+    ok(gitPlan.cardLines.some((l) => l.toLowerCase().includes("cannot be undone")), "…and still says the live removal is irreversible");
+
+    const mixed = planPurge(
+      slackBinding(),
+      partition,
+      [{ siloName: "eng-brain", provider: "sqlite", tierId: engTierId, files: eng }, { siloName: "org-brain", provider: "git", tierId: orgTierId, files: eng }],
+      { match: "Ada owns billing" },
+      "eng",
+    );
+    const mixedNote = mixed.cardLines.find((l) => l.includes("NOT a full erasure")) ?? "";
+    ok(mixedNote.includes("`org-brain`") && !mixedNote.includes("`eng-brain`"), "🔴 OPE-1801: a mixed purge names the git silo alone — the sqlite silo really is erased");
+
+    const unknown = planPurge(slackBinding(), partition, [{ siloName: "eng-brain", provider: "some-new-backing", tierId: engTierId, files: eng }], { match: "Ada owns billing" }, "eng");
+    ok(!unknown.cardLines.some((l) => l.includes("ERASES")), "🔴 OPE-1801: an unknown backing never gets the erasure claim — fail-closed");
+    ok(unknown.cardLines.some((l) => l.includes("NOT a full erasure") && l.includes("`eng-brain`")), "…it takes the retaining claim instead");
+
+    const notion = planPurge(slackBinding(), partition, [{ siloName: "org-brain", provider: "notion", tierId: orgTierId, files: eng }], { match: "Ada owns billing" }, "eng");
+    ok(notion.cardLines.some((l) => l.includes("NOTHING is removed") && l.includes("`org-brain`")), "🔴 OPE-1801: a notion silo's card says NOTHING is removed there — the write throws");
+    ok(notion.cardLines.some((l) => l.includes("append-only") && l.includes("Remove it in Notion itself")), "…and tells the approver where the fact actually has to be removed");
+    ok(!notion.cardLines.some((l) => l.includes("ERASES")), "…and never claims an erasure");
+    ok(!notion.cardLines.some((l) => l.includes("NOT a full erasure") && l.includes("`org-brain`")), "🔴 …nor the git wording, which would still promise the line leaves the agent's memory");
+  }
   ok(plan.args.locations.length === 2 && plan.args.locations.every((l) => l.siloName === "eng-brain"), "planPurge: cross-file dedupe — ONE bullet listing BOTH files it lives in");
   ok(plan.args.locations.every((l) => l.tierId === engTierId && l.provider === "sqlite"), "planPurge: each location freezes its silo's tier id + provider");
   ok(JSON.stringify(plan.args.partition) === JSON.stringify(partition), "planPurge: freezes the full partition, JSON round-trippable");

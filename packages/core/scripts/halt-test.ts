@@ -349,7 +349,7 @@ registerConfig({
     (await routineFireHalted(r, {}, { halt: { rows: async () => [row(ORG_WIDE)] }, audit: auditDeps })) === true,
     "§6a a covering halt SKIPS the fire",
   );
-  ok(skips.includes("halted"), "§6a and it writes `routine.skipped` with reason `halted` — the shared vocabulary, not a new one");
+  ok(skips.includes("halted"), "§6a and it writes `routine.skip` with reason `halted` — the shared vocabulary, not a new one");
   skips.length = 0;
   ok(
     (await routineFireHalted(r, {}, { halt: { rows: async () => [] }, audit: auditDeps })) === false,

@@ -95,8 +95,6 @@ function endedWithNoStopRequested(sessionId: string, turnId: string): boolean {
   return ENDED_TURNS.get(settledKey(sessionId, turnId))?.stopRequested === false;
 }
 
-const MAX_NAMED_ACTIONS = 3;
-
 interface TurnAnchorState {
   readonly turnId: string;
   readonly sessionId: string;
@@ -218,18 +216,15 @@ export function renderCancelNote(steps: number, ran: readonly string[], accounte
   if (!accounted) return CANCEL_NOTE_UNACCOUNTED;
   const where = steps === 1 ? "one step in" : `${steps} steps in`;
   if (ran.length === 0) return `Stood down — ${where}, nothing had run yet.`;
-  const named = ran.slice(-MAX_NAMED_ACTIONS);
-  const more = ran.length - named.length;
-  const list = named.map((n) => `\`${n}\``).join(", ");
-  const tail = more > 0 ? ` (and ${more} earlier)` : "";
-  return `Stood down — ${where}. Already done, and NOT undone: ${list}${tail}.`;
+  const done = ran.length === 1 ? "One action had already run, and it is" : `${ran.length} actions had already run, and they are`;
+  return `Stood down — ${where}. ${done} NOT undone.`;
 }
 
 const CANCEL_NOTE_UNACCOUNTED =
   "Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone.";
 
 const CANCEL_NOTE_ACCOUNTED =
-  /^Stood down — (?:one step in|\d+ steps in)(?:, nothing had run yet\.|\. Already done, and NOT undone: `[^`]+`(?:, `[^`]+`)*(?: \(and \d+ earlier\))?\.)$/;
+  /^Stood down — (?:one step in|\d+ steps in)(?:, nothing had run yet\.|\. (?:One action had already run, and it is|\d+ actions had already run, and they are) NOT undone\.)$/;
 
 export function isTurnCancelNote(text: string): boolean {
   const t = text.trim();

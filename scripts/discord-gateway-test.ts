@@ -50,8 +50,13 @@ import {
   buildDiscordUnifiedWake,
   buildDiscordDmWake,
   dispatchTurn,
+  discordSeatContextForWindow,
+  admitDiscordSeatLines,
   type DiscordRelayMessage,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
+import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
+import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
+import { supervisorGrainFor, grainUsesUnifiedWindow } from "@open-everywhere/core/agent/adapter-api.js";
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import type { WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { discordPostMessage } from "@open-everywhere/provider-discord/agent/channels/discord-post.js";
@@ -998,4 +1003,78 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   }
 }
 
-console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache, author-trust register leg)`);
+{
+  const SEAT_KEY = "discord/G_SEAT/C_SEAT";
+  const OPEN_KEY = "discord/G_SEAT/C_OPEN";
+  const DOMAINS = [
+    defineDomain({ name: "closed-room", reach: [SEAT_KEY], admission: "members-only" }),
+    defineDomain({ name: "open-room", reach: [OPEN_KEY], admission: "wide" }),
+  ];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => DOMAINS,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  registerSettings({ window: { topology: true } });
+  const grainFor = (key: string) => supervisorGrainFor(key, DOMAINS);
+  ok(grainUsesUnifiedWindow(grainFor(SEAT_KEY)), "fixture check: the declared room HAS a seat once topology is armed");
+
+  const lines = [
+    { senderType: "user" as const, senderId: "U_MEMBER", ts: "101", text: "a vouched colleague", trust: "peer" as WakeTrust },
+    { senderType: "user" as const, senderId: "U_GUEST", ts: "102", text: "an unvouched stranger", trust: "unauth" as WakeTrust },
+  ];
+
+  const closed = discordSeatContextForWindow(lines, "the channel", grainFor(SEAT_KEY), SEAT_KEY, false);
+  ok(closed.context.length === 1, "a members-only seat still gets a context block for the lines it admits");
+  ok(!closed.context[0]!.includes("an unvouched stranger"), "🔴 OPE-1800: the EXCLUDED principal's line does NOT reach the seat's context — the defect, closed");
+  ok(closed.context[0]!.includes("a vouched colleague"), "…while the vouched colleague's line still does, so the policy is deciding per author");
+  ok(closed.ingestion.length === 1 && closed.ingestion[0]!.trust === "peer", "🔴 the taint join reads the ADMITTED set too: a refused line's bytes never reach the model, so it must not key taint either");
+
+  const open = discordSeatContextForWindow(lines, "the channel", grainFor(OPEN_KEY), OPEN_KEY, false);
+  ok(open.context.length === 1 && open.context[0]!.includes("an unvouched stranger") && open.context[0]!.includes("a vouched colleague"), "negative control: a `wide` domain admits BOTH lines through the same seam");
+  ok(open.ingestion.length === 2, "…and hands the join both sets of facts");
+
+  const allRefused = discordSeatContextForWindow([lines[1]!], "the channel", grainFor(SEAT_KEY), SEAT_KEY, true);
+  ok(allRefused.context.length === 0 && allRefused.ingestion.length === 0, "🔴 nothing admitted ⇒ NO context block and no join facts, never an empty block");
+  ok(discordSeatContextForWindow(undefined, undefined, grainFor(SEAT_KEY), SEAT_KEY, false).context.length === 0, "an absent fetch yields the same empty shape and throws nothing");
+
+  const stoodDown = admitDiscordSeatLines(lines, grainFor(SEAT_KEY), SEAT_KEY, false);
+  ok(stoodDown !== undefined && stoodDown.length === 1 && stoodDown[0]!.senderId === "U_MEMBER", "🔴 a STOOD-DOWN seat's native hydration is policed by the same rule as its window road");
+
+  const flatGrain = { unified: false, registryKey: SEAT_KEY };
+  ok(!grainUsesUnifiedWindow(flatGrain), "fixture check: that grain really does not window, so the split below is the seat and not an accident");
+  const noSeat = admitDiscordSeatLines(lines, flatGrain, SEAT_KEY, false);
+  ok(noSeat !== undefined && noSeat.length === 2, "🔴 negative control: a room with NO seat keeps every graded line — admission governs a seat, and there is none");
+  ok(noSeat === lines, "…and it is the SAME array, not a copy: this road is byte-identical to its pre-OPE-1800 self");
+
+  const withBot = [...lines, { senderType: "bot" as const, senderId: "B_CI", ts: "103", text: "a build bot" }];
+  const seatedDropsBot = admitDiscordSeatLines(withBot, grainFor(OPEN_KEY), OPEN_KEY, false);
+  ok(seatedDropsBot !== undefined && !seatedDropsBot.some((l) => l.text === "a build bot"), "a SEATED `wide` room drops the attributable foreign bot — the default policy's own rule");
+  const unseatedKeepsBot = admitDiscordSeatLines(withBot, flatGrain, SEAT_KEY, false);
+  ok(unseatedKeepsBot !== undefined && unseatedKeepsBot.some((l) => l.text === "a build bot"), "🔴 …and an UNSEATED room KEEPS it — the coherence the carve-out exists to protect");
+}
+
+{
+  const src = readFileSync(fileURLToPath(new URL("../packages/providers/discord/agent/channels/discord-gateway.ts", import.meta.url)), "utf8");
+  ok(
+    src.includes("const seatContext = discordSeatContextForWindow(gradedWindowLines, windowLines?.source, windowGrain, domainKeyOf(partition)"),
+    "🔴 the WINDOW road passes its hydrated lines through the admission seam",
+  );
+  ok(
+    src.includes("const nativeContextLines = admitDiscordSeatLines(gradedBackscrollLines, windowGrain, domainKeyOf(partition), isThread)"),
+    "🔴 the NATIVE road passes its hydrated lines through the SAME seam, on the room's own grain",
+  );
+  ok(src.includes("contextLines: nativeContextLines,"), "🔴 …and the native wake's slot is fed from the ADMITTED set, not the raw graded one");
+  ok(
+    src.includes("...(nativeContextLines ?? []).map(contextLineIngestion)"),
+    "🔴 …as is its taint join, so the join never carries a line the policy refused",
+  );
+  ok(!src.includes("contextLines: gradedBackscrollLines,"), "🔴 the raw graded set no longer reaches any wake slot");
+}
+
+console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache, author-trust register leg, seat context-line admission)`);

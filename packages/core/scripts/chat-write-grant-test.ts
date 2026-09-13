@@ -275,6 +275,14 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
     "the cross-domain refusal names the boundary that stopped it",
   );
   ok(
+    (crossErr as ChatWriteGrantError).message.includes("`reach`"),
+    "🔴 OPE-1790: the remedy names the domain's `reach` roster — the field the loader actually reads",
+  );
+  ok(
+    !/\bchannels\b/.test((crossErr as ChatWriteGrantError).message),
+    "🔴 OPE-1790: …and never `channels`, which `Domain` does not declare",
+  );
+  ok(
     (crossErr as ChatWriteGrantError).message !== (err as ChatWriteGrantError).message,
     "the two refusals are DIFFERENT messages — the remedies live in different files",
   );
@@ -349,7 +357,7 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
     dCrossErr = e;
   }
   ok((dCrossErr as ChatWriteGrantError).boundary === "cross-domain", "the discord cross-domain refusal names the DOMAIN boundary, not the grant");
-  ok((dCrossErr as ChatWriteGrantError).message.includes("memory/config/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+  ok((dCrossErr as ChatWriteGrantError).message.includes("memory/config/domains/<domain>.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
 
   const slackOnly: readonly Domain[] = [{ name: "solo", reach: [HOME] }];
   ok(chatWriteTargetsFrom(HOME, dGranted, slackOnly).length === 0, "a caller whose domain rosters NO discord container names no discord target");

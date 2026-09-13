@@ -3909,18 +3909,32 @@ rmSync(dir, { recursive: true, force: true });
   );
   const catchUpLegs = SCENARIOS.filter((s) => s.run.toString().includes("gateSeatCatchUp(")).map((s) => s.id).sort();
   ok(
-    catchUpLegs.join(",") === "J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-teams",
-    `🔴 OPE-1748: the catch-up leg runs on the THREE non-Slack surfaces whose DRIVER IDENTITY the seat admits. Slack is out because its catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead. Discord and Notion are out because this pack posts to them as a BOT and an INTEGRATION, which the default \`wide\` admission drops before the envelope — a leg there would red on a healthy deployment, and making it drivable needs \`admission: "wide-with-bots"\` on the e2e-engaged domain (recorded on OPE-1748). Each journey states its own reason at the point the leg would sit (saw ${JSON.stringify(catchUpLegs)})`,
+    catchUpLegs.join(",") === "J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams",
+    `🔴 OPE-1754: the catch-up leg runs on EVERY non-Slack engaged journey. Discord and Notion joined the five when \`wake.e2eDrivers\` gave the pack's bot and integration driver identities a named way into the seat — before that the default \`wide\` admission dropped them before the envelope and a leg there red on a healthy deployment. Slack is the one surface still out, and for its own reason: its catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead (saw ${JSON.stringify(catchUpLegs)})`,
   );
   const scenarioSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
   ok(
     /factToken\("gh-idle"\)[\s\S]{0,1600}?await sleep\(\d[\d_]*\);[\s\S]{0,200}?const catchUpFrom/.test(scenarioSrc),
     "🔴 OPE-1748: J-ENGAGED-github WAITS between the idle comment and its trigger. GitHub stamps `created_at` to the SECOND, the supervisor takes the trigger's `sentAt` as `untilMs`, and core filters `m.ms < untilMs` STRICTLY — so two API round trips inside one wall-clock second bound the idle comment out of its own catch-up window",
   );
-  for (const surface of ["DISCORD", "NOTION"]) {
+  ok(
+    /await sleep\(msToNextMinuteBoundary\([\s\S]{0,200}?factToken\("not-idle"\)/.test(scenarioSrc),
+    "🔴 OPE-1754: J-ENGAGED-notion WAITS PAST THE MINUTE BOUNDARY **BEFORE** its idle comment — `sinceMs` comes from the seat's UNFLOORED `lastWakeAt`, so a comment whose floored stamp lands in the wake's own minute is dropped by the fetch's `m.ms >= sinceMs` bound",
+  );
+  ok(
+    /factToken\("not-idle"\)[\s\S]{0,1200}?await sleep\(msToNextMinuteBoundary\([\s\S]{0,200}?const catchUpFrom/.test(scenarioSrc),
+    "🔴 OPE-1754: …and AFTER it, before the trigger — core filters `m.ms < untilMs` STRICTLY against the trigger's own floored stamp, so two comments in one minute share an instant",
+  );
+  const deploymentSettingsSrc = readFileSync(fileURLToPath(new URL("../agent/settings/settings.ts", import.meta.url)), "utf-8");
+  for (const surface of ["discord", "notion"]) {
+    const body = SCENARIOS.find((s) => s.id === `J-ENGAGED-${surface}`)!.run.toString();
     ok(
-      new RegExp(`NO CATCH-UP LEG ON ${surface}[\\s\\S]{0,1600}?\`wide\``).test(scenarioSrc),
-      `🔴 OPE-1748: J-ENGAGED-${surface.toLowerCase()} says WHY it drives no catch-up leg, naming the \`wide\` admission floor — an undeclared absence reads as an oversight and gets re-attempted`,
+      new RegExp(`gateSeatCatchUp\\([\\s\\S]{0,400}?platform:\\s*"${surface}"`).test(body),
+      `🔴 OPE-1754: J-ENGAGED-${surface} drives its catch-up gate on its OWN platform — the leg the driver-identity carve-out exists to unblock`,
+    );
+    ok(
+      new RegExp(`\\{\\s*surface:\\s*"${surface}",\\s*principal:\\s*"[^"\\s]+"\\s*\\}`).test(deploymentSettingsSrc),
+      `🔴 OPE-1754: agent/settings/settings.ts names a \`${surface}\` principal in \`wake.e2eDrivers\` — the entry J-ENGAGED-${surface}'s catch-up leg depends on, without which the seat's default \`wide\` admission drops the driver before the envelope`,
     );
   }
   for (const id of catchUpLegs) {
@@ -4037,7 +4051,7 @@ rmSync(dir, { recursive: true, force: true });
       ok(not.isFreshBotComment(theReply, "d1", SINCE, { seen: new Set(["c-other"]) }), "…and an unrelated id in the set changes nothing");
       ok(!not.isFreshBotComment(theReply, "d1", SINCE, { skip: (c) => c.id === "c-reply" }), "the interim-post skip still applies (OPE-984's hand-off frame)");
 
-      ok(isTurnCancelNote("Stood down — one step in. Already done, and NOT undone: `reply`."), "OPE-1711: the cancel note J-ENGAGED-discord latched onto (ship #197)");
+      ok(isTurnCancelNote("Stood down — one step in. One action had already run, and it is NOT undone."), "OPE-1711: the cancel note J-ENGAGED-discord latches onto (the OPE-1819 shape — no tool names)");
       ok(!isTurnCancelNote("Standing down."), "🔴 …and the stand-down ACKNOWLEDGEMENT the leg was really waiting for is not one (a live run)");
 
       const driverSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/notion-driver.ts", import.meta.url)), "utf-8");
@@ -4046,7 +4060,7 @@ rmSync(dir, { recursive: true, force: true });
       ok(!/c\.createdTime > (silenceFrom|rStart)/.test(gatesSrc), "🔴 OPE-1711: nor in the Notion legs' own reads — the silence read ran in the DANGEROUS direction, reporting a same-minute post-stop reply as silence");
       ok(gatesSrc.includes("notionMinuteFloor(silenceFrom)"), "OPE-1711: J-ENGAGED-notion's audited-silence read floors its watermark too");
       ok((gatesSrc.match(/timeoutMs: REPLY_WAIT, seen/g) ?? []).length >= 3, "🔴 OPE-1711: every J-ENGAGED-notion reply wait carries the `seen` set the minute-grain watermark needs");
-      ok((gatesSrc.match(/awaitReplyMatching\(threadId, \w+\.id, notCancelNote/g) ?? []).length === 2, "🔴 OPE-1711: J-ENGAGED-discord's follow-up AND stop awaits both step past the cancel note");
+      ok((gatesSrc.match(/awaitReplyMatching\(threadId, \w+\.id, notCancelNote/g) ?? []).length === 3, "🔴 OPE-1711: J-ENGAGED-discord's follow-up, stop AND catch-up awaits all step past the cancel note — the catch-up trigger's wait joined them with OPE-1754, and a cancel note latched onto there would read as the seat having answered");
       ok(gatesSrc.includes("const silent = raw.filter(notCancelNote);"), "🔴 OPE-1711: …and its silence window does not count a cancel note as a post-stop reply");
       ok(gatesSrc.includes("if (raw.length !== silent.length) ctx.log("), "🔴 OPE-1711: the leg LOGS how many cancel notes it skipped — the filter never hides the symptom");
     }
