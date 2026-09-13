@@ -509,4 +509,54 @@ function ok(cond: boolean, label: string): void {
   );
 }
 
+{
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
+
+  ok(
+    seat.includes("**A question you can answer gets an answer.**"),
+    "🔴 the seat is told an answerable question gets an answer, not a fresh judgement call",
+  );
+  ok(
+    seat.includes("so being unnamed\nis not by itself the reason to stay silent"),
+    "🔴 …and that being unnamed is not by itself the reason to stay silent on the message that woke it",
+  );
+  ok(
+    seat.includes('The "unsure, so stay silent" rule above is\nabout whether a message is FOR you, never about whether you hold the answer'),
+    "🔴 …and the unsure-so-silent rule is scoped to addressing, not to knowing the answer",
+  );
+
+  ok(
+    seat.includes("**A statement is not a question, and saving one is not a reason to post.**"),
+    "🔴 the seat is told a statement is not a question",
+  );
+  ok(
+    seat.includes("Announcing the save is a post nobody asked for"),
+    "🔴 …and that announcing a memory save is itself an unasked-for post",
+  );
+
+  ok(
+    seat.includes("Silence is your normal output, not a\nfailure"),
+    "negative control: the silence bar itself survives the pin",
+  );
+  ok(
+    seat.includes("stay\nsilent when humans are working something out among themselves"),
+    "negative control: …and so does the human↔human carve-out the pin is scoped around",
+  );
+  ok(
+    seat.includes("It's there to orient you, not a backlog\nto answer — only the trigger message is live."),
+    "negative control: the Backscroll rule stands — the pin answers the WAKING message, never the history above it",
+  );
+  ok(
+    seat.includes("A plain question put to the channel by the\nmessage that woke you — not to a named person — is answered"),
+    "🔴 …scoped to the message that WOKE the seat, and never to a question aimed at a named person",
+  );
+  for (const seatOnly of [
+    "**A question you can answer gets an answer.**",
+    "**A statement is not a question, and saving one is not a reason to post.**",
+  ]) {
+    ok(!worker.includes(seatOnly), `🔴 the worker persona never reads the seat's "${seatOnly}"`);
+  }
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);
