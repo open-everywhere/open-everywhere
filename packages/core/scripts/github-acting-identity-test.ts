@@ -322,12 +322,18 @@ registerIdentityMapper(PLATFORM, (c) => {
 
   function derivedResolverNames(): readonly string[] {
     const names: string[] = [];
-    for (const m of readFileSync(join(repoRoot, "packages/core/agent/scm/pr-status.ts"), "utf8").matchAll(/export\s+(?:async\s+)?function\s+(resolve\w*Token)\b/gu)) names.push(m[1]!);
-    for (const m of readFileSync(join(repoRoot, "packages/core/agent/scm/app.ts"), "utf8").matchAll(/^\s{2}async\s+(tokensForRepos)\s*\(/gmu)) names.push(m[1]!);
+    const scmDir = join(repoRoot, "packages/core/agent/scm");
+    for (const entry of readdirSync(scmDir, { withFileTypes: true, recursive: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts") || /-test\.ts$|\.test\.ts$/u.test(entry.name)) continue;
+      const src = readFileSync(join(entry.parentPath, entry.name), "utf8");
+      for (const m of src.matchAll(/export\s+(?:async\s+function|function|const)\s+(resolve\w*Token)\b/gu)) names.push(m[1]!);
+    }
+    for (const m of readFileSync(join(scmDir, "app.ts"), "utf8").matchAll(/^\s{2}async\s+(tokensForRepos)\s*\(/gmu)) names.push(m[1]!);
     return [...new Set(names)];
   }
   const RESOLVER_NAMES = derivedResolverNames();
-  ok(RESOLVER_NAMES.length >= 3, `§9 the resolver names are derived from their exporting modules (${RESOLVER_NAMES.join(", ") || "none"})`);
+  ok(RESOLVER_NAMES.length >= 4, `§9 the resolver names are derived from their exporting modules (${RESOLVER_NAMES.join(", ") || "none"})`);
+  ok(RESOLVER_NAMES.includes("resolvePrWriteToken"), "🔴 §9 the WRITE resolver in its own module is derived too — a resolver that moves to a new file must not fall out of the scan");
   const RESOLVES_INSTALLATION_TOKEN = new RegExp(`\\b(?:${RESOLVER_NAMES.join("|")})\\b`, "u");
 
   function codeOnly(source: string): string {
@@ -355,6 +361,8 @@ registerIdentityMapper(PLATFORM, (c) => {
     "packages/core/agent/scm/broker.ts": "the egress broker's mint, reached from checkout_repo, which is gated",
     "packages/core/agent/scm/issue-actions.ts": "WRITE — issue-write permissions",
     "packages/core/agent/scm/pr-status.ts": "the resolvers themselves, not a call site",
+    "packages/core/agent/scm/write-token.ts":
+      "WRITE, and the resolver itself — the one mint both open_pull_request halves share (OPE-1794); its two call sites, tools/open_pull_request.ts and approvals/pr-open.ts, are named above on the same write decision",
     "packages/core/agent/tools/open_pull_request.ts": "WRITE",
     "packages/core/agent/tools/post_pr_walkthrough.ts": "WRITE — it reads status and diff to compose the post it makes",
     "packages/providers/github/agent/channels/github-catch-up.ts":
