@@ -38,7 +38,7 @@ import {
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
-import { auditErrorDetail } from "../audit/tool-action.js";
+import { auditErrorDetail, auditErrorFrames } from "../audit/tool-action.js";
 import { currentTurnId, currentWakeId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
@@ -481,6 +481,14 @@ async function noteDelegationFailure(
   }).catch(() => undefined);
 }
 
+const WORKER_TURN_FAILED_ACTION = "delegation.worker_turn_failed";
+
+interface TurnFailedData {
+  readonly code?: unknown;
+  readonly message?: unknown;
+  readonly details?: unknown;
+}
+
 function parentSessionOfChildToken(childToken: string): string | undefined {
   const m = /^subagent:([^:]+):([^:]+)$/.exec(childToken);
   return m === null ? undefined : m[1]!;
@@ -665,6 +673,30 @@ export default defineHook({
     "turn.completed": async (_event, ctx) => {
       try {
         await flushDirtyTreeAtTurnEnd(ctx as unknown as MemoryPersistContext);
+      } catch {
+      }
+    },
+
+    "turn.failed": async (event, ctx) => {
+      try {
+        const bind = ctx as unknown as BindableContext;
+        if (!isSubagentChildContext(bind)) return;
+        const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+        const data = (event as { data?: TurnFailedData }).data;
+        const turnId = currentTurnId(bind);
+        await appendAudit({
+          org: deploymentOrg(),
+          platform: "ingest",
+          workspace: "delegation",
+          action: WORKER_TURN_FAILED_ACTION,
+          detail: {
+            code: auditErrorDetail(typeof data?.code === "string" ? data.code : "").error,
+            error: auditErrorDetail(typeof data?.message === "string" ? data.message : "").error,
+            frames: auditErrorFrames(data?.details),
+            ...(typeof ownSessionId === "string" && ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+            ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
+          },
+        }).catch(() => undefined);
       } catch {
       }
     },
