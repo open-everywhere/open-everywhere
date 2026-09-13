@@ -50,6 +50,12 @@ export const OPERATIONAL_TABLES = [
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
 
+export interface NoticeClaimPrune {
+  readonly sweepPrefix: string;
+  readonly keepPrefix: string;
+  readonly olderThanMs: number;
+}
+
 export const CAPTURE_MAX_DELIVERIES = 50;
 
 export const CAPTURE_MAX_WINDOW_MS = 60 * 60_000;
@@ -971,7 +977,7 @@ export interface OperationalStore {
   revokeCredentialGrant(org: string, id: string, at: string): Promise<boolean>;
   expireCredentialGrants(org: string, nowIso: string): Promise<number>;
 
-  claimNotice(org: string, key: string, at: string): Promise<boolean>;
+  claimNotice(org: string, key: string, at: string, prune?: NoticeClaimPrune): Promise<boolean>;
   noticeClaimed(org: string, key: string): Promise<boolean>;
 
   recordProactiveAddress(org: string, row: ProactiveAddress): Promise<void>;

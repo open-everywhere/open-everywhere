@@ -1048,6 +1048,70 @@ const store = makeOperationalPostgresStore(client);
     "🔴 pg: a claim TEN YEARS LATER still loses — the row NEVER expires, which is what makes the announcement once-ever rather than once-a-day",
   );
   ok(!(await store.noticeClaimed("acme", "external-silent:join:slack/T1/C_NEVER")), "negative control: an unclaimed key reads false, so the twin is not answering true for everything");
+
+  {
+    const RETENTION = 30 * 24 * 60 * 60_000;
+    const NOW = "2026-07-30T03:30:00.000Z";
+    const ancient = new Date(Date.parse(NOW) - RETENTION - 60_000).toISOString();
+    const recent = new Date(Date.parse(NOW) - 60_000).toISOString();
+    const prune = { sweepPrefix: "oe-runtime-rotation:", keepPrefix: "oe-runtime-rotation:0.52.2:dpl_live:", olderThanMs: RETENTION };
+    const RETIRED_OLD = "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w1";
+    const RETIRED_RECENT = "oe-runtime-rotation:0.52.2:dpl_gone2:oe-domain::w1";
+    const LIVE_OLD = "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::w1";
+    const WILDCARD_TWIN = "oe-runtime-rotation:0.52.2:dplXlive:oe-domain::w1";
+    const OTHER_FAMILY = "external-silent:join:slack/T1/C_SWEEP";
+    for (const [k, at] of [
+      [RETIRED_OLD, ancient],
+      [RETIRED_RECENT, recent],
+      [LIVE_OLD, ancient],
+      [WILDCARD_TWIN, ancient],
+      [OTHER_FAMILY, ancient],
+    ] as const) {
+      ok(await store.claimNotice("acme", k, at), `pg: seeded ${k}`);
+    }
+    ok(await store.claimNotice("globex", RETIRED_OLD, ancient), "pg: …and the same expired retired-generation key in ANOTHER org");
+
+    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::trigger", NOW, prune), "pg: the trigger wins its claim");
+
+    ok(!(await store.noticeClaimed("acme", RETIRED_OLD)), "🔴 pg OPE-1751: the sweep DROPS a retired generation's expired claim — the bound on the key space");
+    ok(await store.noticeClaimed("acme", LIVE_OLD), "🔴 pg OPE-1751: …and KEEPS the running generation's claim at the same age — a live claim deleted is a second rotation for nothing");
+    ok(await store.noticeClaimed("acme", RETIRED_RECENT), "🔴 pg OPE-1751: …and keeps a retired claim inside the retention — the age bound is real");
+    ok(await store.noticeClaimed("acme", OTHER_FAMILY), "🔴 pg OPE-1751: …and never leaves the caller's key family — the silent-notice claims are permanent");
+    ok(!(await store.noticeClaimed("acme", WILDCARD_TWIN)), "🔴 pg OPE-1751: `_` in the keep-prefix is ESCAPED — `dplXlive` is swept, so a foreign `dpl_…` id cannot shelter under the live one");
+    ok(await store.noticeClaimed("globex", RETIRED_OLD), "🔴 pg OPE-1751: the other ORG's identical row survives — the sweep is org-scoped");
+
+    {
+      let refused = 0;
+      const refusingClient: PgClient = {
+        query: (text, params) => {
+          if (/^\s*DELETE\s+FROM\s+notice_claim/i.test(text)) {
+            refused++;
+            return Promise.reject(new Error('permission denied for table notice_claim'));
+          }
+          return client.query(text, params);
+        },
+      };
+      const refusingStore = makeOperationalPostgresStore(refusingClient);
+      const KEY = "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::grantless";
+      ok(
+        await refusingStore.claimNotice("acme", KEY, NOW, prune),
+        "🔴 pg OPE-1751: a WON claim whose sweep is refused still answers TRUE — a swallowed sweep costs disk, a propagated one costs the seat its rotation forever",
+      );
+      ok(refused === 1, `control: the DELETE really was attempted and really was refused (${refused} refusal(s)) — the assertion above is not passing because no sweep ran`);
+      ok(await store.noticeClaimed("acme", KEY), "…and the claim row is committed, so the caller's once-ever work is genuinely spent");
+      ok(
+        !(await refusingStore.claimNotice("acme", KEY, NOW, prune)),
+        "…and the NEXT call still LOSES it — the failed sweep left the at-most-once guarantee exactly as it was",
+      );
+    }
+
+    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w2", ancient), "pg: a second retired-generation row, seeded expired");
+    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::trigger2", NOW), "pg: a winning claim with NO prune argument");
+    ok(
+      await store.noticeClaimed("acme", "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w2"),
+      "🔴 pg: …deletes nothing — a caller that asks for no sweep keeps the table's never-delete behaviour",
+    );
+  }
 }
 
 {

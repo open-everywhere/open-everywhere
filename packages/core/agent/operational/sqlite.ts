@@ -557,10 +557,13 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key);
-    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice), five key families. No TTL
-    -- and NO prune, on purpose: the one thing it records is "this already happened", and expiring
-    -- that would make an announcement periodic and a recorded reaction repeatable. Two families are
-    -- traffic-derived; store.ts's own section states what bounds each.
+    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice), five key families. NO TTL,
+    -- on purpose: the one thing it records is "this already happened", and expiring that would make
+    -- an announcement periodic and a recorded reaction repeatable. Four families are never deleted.
+    -- The fifth, the runtime-rotation claim, carries the (eve build, deployment) pair that wrote it
+    -- and grows by one row per ship per standing seat; store.ts's NoticeClaimPrune bounds that ONE
+    -- family, outside the running generation's prefix only, where a claim can never be re-tested.
+    -- Two families are traffic-derived; store.ts's own section states what bounds each.
     CREATE TABLE IF NOT EXISTS notice_claim (
       org_id     TEXT NOT NULL,
       key        TEXT NOT NULL,
@@ -2247,9 +2250,19 @@ export const sqliteOperationalStore: OperationalStore = {
     return info.changes > 0;
   },
 
-  async claimNotice(org, key, at) {
+  async claimNotice(org, key, at, prune) {
     const info = getDb().prepare("INSERT OR IGNORE INTO notice_claim (org_id, key, claimed_at) VALUES (?, ?, ?)").run(org, key, at);
-    return info.changes > 0;
+    const won = info.changes > 0;
+    if (won && prune !== undefined) {
+      try {
+        getDb()
+          .prepare("DELETE FROM notice_claim WHERE org_id = ? AND key LIKE ? ESCAPE '\\' AND key NOT LIKE ? ESCAPE '\\' AND claimed_at < ?")
+          .run(org, likePrefixPattern(prune.sweepPrefix), likePrefixPattern(prune.keepPrefix), new Date(Date.parse(at) - prune.olderThanMs).toISOString());
+      } catch (err) {
+        console.warn(`[open-everywhere:operational] notice_claim sweep failed for "${prune.sweepPrefix}" (the claim stands): ${String(err)}`);
+      }
+    }
+    return won;
   },
 
   async noticeClaimed(org, key) {

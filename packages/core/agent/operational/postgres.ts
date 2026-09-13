@@ -1220,7 +1220,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
-  notice_claim: ["SELECT", "INSERT"],
+  notice_claim: ["SELECT", "INSERT", "DELETE"],
   model_call_capture: ["SELECT", "INSERT", "DELETE"],
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
   memory_proposal: ["SELECT", "INSERT"],
@@ -2740,12 +2740,27 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query("DELETE FROM event_dedupe WHERE org_id = $1 AND key = $2", [org, key]);
     },
 
-    async claimNotice(org, key, at) {
+    async claimNotice(org, key, at, prune) {
       const { rows } = await client.query(
         "INSERT INTO notice_claim (org_id, key, claimed_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",
         [org, key, at],
       );
-      return rows.length > 0;
+      const won = rows.length > 0;
+      if (won && prune !== undefined) {
+        try {
+          await client.query("DELETE FROM notice_claim WHERE org_id = $1 AND key LIKE $2 ESCAPE '\\' AND key NOT LIKE $3 ESCAPE '\\' AND claimed_at < $4", [
+            org,
+            likePrefixPattern(prune.sweepPrefix),
+            likePrefixPattern(prune.keepPrefix),
+            new Date(Date.parse(at) - prune.olderThanMs).toISOString(),
+          ]);
+        } catch (err) {
+          console.warn(
+            `[open-everywhere:operational] notice_claim sweep failed for "${prune.sweepPrefix}" (the claim stands): ${String(err)} — on a two-role deployment, re-run runtimeRoleGrantsSql so the runtime role holds DELETE on notice_claim`,
+          );
+        }
+      }
+      return won;
     },
 
     async noticeClaimed(org, key) {
