@@ -53,7 +53,7 @@ globalThis.fetch = (async (input: unknown, init?: { method?: string }): Promise<
   return new Response("stub: unrouted", { status: 404 });
 }) as typeof globalThis.fetch;
 
-const { REACTION_FEEDBACK_ACTION, classifyEmoji, overrideSettingsForTest, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { REACTION_FEEDBACK_ACTION, classifyEmoji, deploymentOrg, overrideSettingsForTest, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   GITHUB_REACTION_POLL_COMMENT_BUDGET,
   githubCommentIsOwn,
@@ -367,19 +367,19 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
   try {
     console.error = () => undefined;
     console.warn = () => undefined;
-    before = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+    before = (await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length;
 
     const callsBefore = calls.length;
     await drive(delivery(), "issue_comment");
-    afterUnmarked = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+    afterUnmarked = (await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length;
     readsWhileUnmarked = calls.slice(callsBefore).filter((c) => c.url.includes(`/repos/${OWNER}/${REPO}/issues/`)).length;
 
     await markGitHubConversationPosted(OWNER, REPO, NUMBER, new Date().toISOString());
 
     await drive(delivery(), "issue_comment");
-    afterPoll = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+    afterPoll = (await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length;
     await drive(delivery(), "push");
-    afterPush = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+    afterPush = (await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length;
   } finally {
     console.error = realError;
     console.warn = realWarn;
@@ -397,7 +397,7 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
   ok(afterPoll === before + 1, "🔴 REACHABILITY: once the reply path's own mark is written, the real route polls and records a durable audit row");
   ok(afterPush === afterPoll, "negative control: a `push` delivery names no conversation, so it records nothing");
 
-  const rows = await readAudit({ action: REACTION_FEEDBACK_ACTION });
+  const rows = await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION });
   const detail = rows[0]!.detail as Record<string, unknown>;
   ok(detail["surface"] === "github" && detail["emoji"] === "heart", "…naming the surface and the glyph the stub returned");
   ok(detail["messageId"] === String(AGENT_COMMENT), "…the agent's own comment, never the person's");

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX, spendLedgerConjuncts, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
+import { PROMOTER_LIST_MAX, spendLedgerConjuncts, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 import { pinSuiteStore, pinnedSuiteStorePath } from "./_suite-store.js";
@@ -334,7 +334,22 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.readAudit({ org: "acme", action: "memory.write" })).length === 1, "audit: filter by action");
   ok((await store.readAudit({ org: "acme", since: "2026-06-24T11:00:00Z" })).length === 1, "audit: filter by since");
   ok((await store.readAudit({ org: "acme", limit: 1 })).length === 1, "audit: limit caps");
-  ok((await store.readAudit({})).length === 3, "audit: no-org scan walks all");
+  {
+    const refusal = async (filter: unknown): Promise<string> => {
+      try {
+        await store.readAudit(filter as AuditFilter);
+        return "";
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    };
+    ok((await refusal({})).includes("requires an org"), "audit: a read with NO org refuses — it never widens to every org");
+    ok((await refusal({ org: "" })).includes("requires an org"), "audit: an EMPTY org refuses too, rather than answering zero rows");
+    ok((await refusal({ action: "memory.write" })).includes("requires an org"), "audit: another filter does not excuse the missing org");
+    ok((await refusal({ org: "acme" })) === "" && (await store.readAudit({ org: "acme" })).length === 2, "audit: …and a read that names its org still answers");
+    ok((await store.readAudit({ org: "acme" })).every((e) => e.org === "acme"), "audit: a read for acme returns NO globex row");
+    ok((await store.readAudit({ org: "globex" })).length === 1, "audit: …and globex's own row is still readable under globex");
+  }
   ok((acme[0].detail === undefined) === true || acme[1].detail?.files === 2, "audit: detail round-trips as JSON");
   ok(!("removeAudit" in store) && !("deleteAudit" in store), "audit: store exposes no delete method");
 }
@@ -511,13 +526,26 @@ const store = makeOperationalPostgresStore(client);
                  GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry, usage_events TO open_everywhere_app;`);
   try {
     await pg.exec("SET ROLE open_everywhere_app");
+
+    const auditOrgsGucUnset = new Set(((await client.query("SELECT DISTINCT org_id FROM audit_entry")).rows as { org_id: string }[]).map((r) => r.org_id));
+    ok(auditOrgsGucUnset.has("acme") && auditOrgsGucUnset.has("globex"), "RLS: with app.current_org UNSET the audit policy permits — both orgs' rows are visible");
+
     await setOrgContext(client, "acme");
 
     const spendOrgs = ((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id);
     ok(spendOrgs.length === 1 && spendOrgs[0] === "acme", "RLS: spend no-WHERE read returns only the GUC org");
 
     const auditOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM audit_entry")).rows as { org_id: string }[]).map((r) => r.org_id));
-    ok(auditOrgs.has("acme") && auditOrgs.has("globex"), "RLS: audit SELECT is GUC-free/permissive — isolation is the query filter, not the policy");
+    ok(auditOrgs.size === 1 && auditOrgs.has("acme"), "RLS: with the GUC set, an audit no-WHERE read returns ONLY that org's rows");
+
+    let crossOrgAppend = "";
+    try {
+      await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T13:30:00Z', 'globex', 'slack', 'T1', 'probe.cross_org')");
+    } catch (err) {
+      crossOrgAppend = err instanceof Error ? err.message : String(err);
+    }
+    ok(/row-level security/i.test(crossOrgAppend), `RLS: an append for ANOTHER org is refused BY THE POLICY while the GUC names acme — got ${crossOrgAppend || "no error"}`);
+
     const usageOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM usage_events")).rows as { org_id: string }[]).map((r) => r.org_id));
     ok(usageOrgs.has("acme") && usageOrgs.has("globex"), "RLS: usage_events SELECT is GUC-free/permissive — isolation is the query filter");
 
@@ -528,6 +556,7 @@ const store = makeOperationalPostgresStore(client);
     await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T13:00:00Z', 'acme', 'slack', 'T1', 'probe.append')");
   } finally {
     await pg.exec("RESET ROLE");
+    await client.query("SELECT set_config('app.current_org', '', false)");
   }
   await pg.exec("REVOKE UPDATE, DELETE ON audit_entry, usage_events FROM open_everywhere_app");
 }
@@ -1357,6 +1386,17 @@ const store = makeOperationalPostgresStore(client);
   }
 
   {
+    await pg.exec("DROP POLICY audit_select ON audit_entry; CREATE POLICY audit_select ON audit_entry FOR SELECT USING (true)");
+    const widened = await verifyAppendOnlyAudit(client);
+    ok(widened.some((v) => v.includes('unexpected permissive policy "audit_select"')), `tamper: an audit_select rewritten to USING (true) is a VIOLATION, not an accepted shape — got ${widened.join("; ") || "no violation"}`);
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "tamper: the owner-mode boot restores the org-keyed audit_select");
+    const restored = ((await client.query("SELECT pg_get_expr(polqual, polrelid) AS qual FROM pg_policy WHERE polrelid = to_regclass('audit_entry') AND polname = 'audit_select'")).rows as { qual: string | null }[])[0];
+    ok(restored?.qual !== null && /current_setting/.test(restored?.qual ?? ""), `tamper: …and the restored audit_select reads app.current_org — got ${String(restored?.qual)}`);
+  }
+
+  {
     await pg.exec("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY");
     await pg.exec("SET ROLE oe_runtime");
     let threw = "";
@@ -1372,7 +1412,8 @@ const store = makeOperationalPostgresStore(client);
     await initOperationalSchema(client);
     ok((await verifyAppendOnlyAudit(client)).length === 0, "tamper: owner-mode boot repairs after the runtime refusal");
     const integrity = await store.readAudit({ org: "default", action: "audit.integrity" });
-    ok(integrity.some((r) => r.detail?.healed === false) && integrity.filter((r) => r.detail?.healed === true).length === 2, "tamper: refusal (healed:false) and both repairs (healed:true) are all audit rows");
+    const healed = integrity.filter((r) => r.detail?.healed === true).length;
+    ok(integrity.some((r) => r.detail?.healed === false) && healed === 3, `tamper: the refusal (healed:false) and all three repairs (healed:true) are audit rows — got ${healed} repairs`);
   }
 
   {
@@ -1391,7 +1432,7 @@ const store = makeOperationalPostgresStore(client);
       const rawEnv = await store.readAudit({ org: "Acme Inc", action: "audit.integrity" });
       ok(rawEnv.length === 0, "🔴 nothing landed under the RAW declared value — no second spelling of one deployment's org");
       const other = await store.readAudit({ org: "default", action: "audit.integrity" });
-      ok(other.length === 3, "negative control: the \"default\" partition is unchanged by a boot under another org");
+      ok(other.length === 4, `negative control: the "default" partition is unchanged by a boot under another org — the four rows the earlier blocks wrote (dropped audit_insert, widened audit_select, the runtime refusal, the NO FORCE repair), got ${other.length}`);
     } finally {
       _setDeploymentIdentityForTest({ org: previousOrg });
     }

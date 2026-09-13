@@ -185,7 +185,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
     }) as unknown as BindableContext;
 
   const brokerRowCount = async (): Promise<number> =>
-    (await getOperationalStore().readAudit({ action: "egress.policy" })).filter(
+    (await getOperationalStore().readAudit({ org: "default", action: "egress.policy" })).filter(
       (r) => (r.detail as Record<string, unknown> | undefined)?.phase === "scm.broker",
     ).length;
   const brokerRowsBefore = await brokerRowCount();
@@ -216,7 +216,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   {
     eq(await brokerRowCount(), brokerRowsBefore + 1, "checkout_repo (enforced): the brokered re-apply appends exactly ONE egress.policy row");
 
-    const rows = await getOperationalStore().readAudit({ action: "egress.policy" });
+    const rows = await getOperationalStore().readAudit({ org: "default", action: "egress.policy" });
     const brokerRows = rows.filter((r) => (r.detail as Record<string, unknown> | undefined)?.phase === "scm.broker");
     const detail = brokerRows[0]!.detail as Record<string, unknown>;
     eq(detail.reason, "checkout_repo", "…naming which SCM call re-applied the policy");

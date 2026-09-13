@@ -222,7 +222,7 @@ function armed(on: boolean): void {
   eq(counts?.captured, 3, "cross-check: captured counts every row the store ACCEPTED");
   eq(counts?.completed, 3, "cross-check: completed counts every step eve reported");
   eq(counts?.reported, false, "cross-check: no gap row when the two agree — NEGATIVE CONTROL, the flag is present and false");
-  eq((await readAudit({ action: CAPTURE_GAP_ACTION })).length, 0, "cross-check: and no audit row exists at all yet");
+  eq((await readAudit({ org: deploymentOrg(), action: CAPTURE_GAP_ACTION })).length, 0, "cross-check: and no audit row exists at all yet");
 }
 {
   armed(true);
@@ -232,7 +232,7 @@ function armed(on: boolean): void {
   for (let i = 0; i < 3; i++) noteCompletedModelStep("s-xcheck-gap", "turn_3", ctx);
   await new Promise((r) => setTimeout(r, 50));
 
-  const gapRows = await readAudit({ action: CAPTURE_GAP_ACTION });
+  const gapRows = await readAudit({ org: deploymentOrg(), action: CAPTURE_GAP_ACTION });
   eq(gapRows.length, 1, "🔴 cross-check: a completed step with no capture writes ONE soak.capture_gap audit row");
   const detail = gapRows[0].detail as { attempted?: number; captured?: number; completed?: number; uncalled?: number; turnId?: string };
   eq(detail.captured, 2, "cross-check: the row carries the capture count");
@@ -243,7 +243,7 @@ function armed(on: boolean): void {
 
   for (let i = 0; i < 5; i++) noteCompletedModelStep("s-xcheck-gap", "turn_3", ctx);
   await new Promise((r) => setTimeout(r, 50));
-  eq((await readAudit({ action: CAPTURE_GAP_ACTION })).length, 1, "cross-check: the gap is reported once per turn, not once per step");
+  eq((await readAudit({ org: deploymentOrg(), action: CAPTURE_GAP_ACTION })).length, 1, "cross-check: the gap is reported once per turn, not once per step");
 }
 {
   resetSettingsForTest();
@@ -262,7 +262,7 @@ function armed(on: boolean): void {
   const c = captureCountsFor("s-backstop", "turn_4");
   eq(c?.uncalled, 1, "backstop: the uncalled step is excused explicitly");
   eq(c?.reported, false, "backstop: captured + uncalled covers completed ⇒ no gap (negative control)");
-  eq((await readAudit({ action: CAPTURE_GAP_ACTION })).length, 1, "backstop: still only the ONE earlier gap row — the backstop wrote none");
+  eq((await readAudit({ org: deploymentOrg(), action: CAPTURE_GAP_ACTION })).length, 1, "backstop: still only the ONE earlier gap row — the backstop wrote none");
 }
 {
   armed(false);
@@ -373,7 +373,7 @@ function armed(on: boolean): void {
   eq(unknown.status, 200, "route: an unknown session is an honest empty 200, not a 404 (the store cannot tell 'no session' from 'never armed')");
   eq(((await unknown.json()) as { count: number }).count, 0, "route: …and it carries zero captures");
 
-  const svcRows = await readAudit({ action: "control.service_call" });
+  const svcRows = await readAudit({ org: deploymentOrg(), action: "control.service_call" });
   ok(
     svcRows.some((r) => (r.detail as { view?: string } | undefined)?.view === "model_calls"),
     "route: every authenticated call writes a control.service_call audit row naming the view",
@@ -409,7 +409,7 @@ function armed(on: boolean): void {
   ok(sessPayload.sessions.some((s) => s.sessionId === "s-on"), "sessions route: s-on is present in the served list");
   ok(!JSON.stringify(sessPayload).includes("first message"), "sessions route: no body byte is ever served (a listing, not a harvest)");
 
-  const sessSvcRows = await readAudit({ action: "control.service_call" });
+  const sessSvcRows = await readAudit({ org: deploymentOrg(), action: "control.service_call" });
   ok(
     sessSvcRows.some((r) => (r.detail as { view?: string } | undefined)?.view === "model_call_sessions"),
     "sessions route: the authenticated call writes a control.service_call audit row naming the view",

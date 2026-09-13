@@ -38,10 +38,10 @@ const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
   return contextStorage.run(c, fn);
 };
 
-const { readAudit, markRepliedThisTurn, NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { readAudit, deploymentOrg, markRepliedThisTurn, NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/adapter-api.js");
 
 async function replyPosts(platform: string): Promise<Array<{ detail?: Record<string, unknown> }>> {
-  return (await readAudit({ action: "reply.post" })).filter((r) => r.platform === platform);
+  return (await readAudit({ org: deploymentOrg(), action: "reply.post" })).filter((r) => r.platform === platform);
 }
 
 {
@@ -56,7 +56,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   });
 
   await completed(NO_REPLY_SENTINEL, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "oe-sup:g1", oeSupervisor: true, oeUninvited: true }));
-  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a supervisor judged silence writes NO slack.no_reply row (actions-only)");
+  ok((await readAudit({ org: deploymentOrg(), action: "slack.no_reply" })).length === 0, "slack: a supervisor judged silence writes NO slack.no_reply row (actions-only)");
   ok(posts.length === 0, "slack: the judged silence posts NOTHING (silence stays silence)");
 
   await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
@@ -64,14 +64,14 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok(sp.length === 1, "slack: a terminal-prose reply writes exactly ONE reply.post row (choke point)");
   ok(sp[0]!.detail?.route === "terminal" && sp[0]!.detail?.chars === "here's the answer".length, "slack: the reply.post row carries route:\"terminal\" + chars");
   ok(sp[0]!.detail?.sessionId === "chat-audit-test", "slack: the reply.post row STAMPS the eve sessionId (audit→transcript join key)");
-  ok((await readAudit({ action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
+  ok((await readAudit({ org: deploymentOrg(), action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
 
   await inSession(async () => {
     markRepliedThisTurn("t1");
     await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   });
   ok((await replyPosts("slack")).length === 1, "slack: a reply-tool turn's empty terminal writes NO terminal reply.post row");
-  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
+  ok((await readAudit({ org: deploymentOrg(), action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
 }
 
 

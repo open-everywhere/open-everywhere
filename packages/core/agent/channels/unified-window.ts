@@ -136,6 +136,18 @@ export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrig
   return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
 }
 
+function withCarriedPlacement(target: UnifiedWakeOrigin, source: UnifiedWakeOrigin): UnifiedWakeOrigin {
+  if (target.platform !== source.platform) return target;
+  const codec = wakeOriginCodec(target.platform);
+  if (!codec?.carryPlacement) return target;
+  try {
+    const carried = codec.carryPlacement(target, source);
+    return isUnifiedWakeOrigin(carried) && sameUnifiedConversation(carried, target) ? carried : target;
+  } catch {
+    return target;
+  }
+}
+
 export async function boundConversationOrigin(
   store: UnifiedWakeTargetStore,
   org: string,
@@ -243,7 +255,7 @@ async function resolveWindowWakeTarget(
     resolveUnifiedWakeTarget(store, org, inputWake),
   ]);
   if (turnOrigin && echoedOrigin && sameUnifiedConversation(turnOrigin, echoedOrigin)) {
-    return { ok: true, origin: echoedOrigin, via: "same-conversation" };
+    return { ok: true, origin: withCarriedPlacement(echoedOrigin, turnOrigin), via: "same-conversation" };
   }
   if (!windowToken) return { ok: false, reason: "mismatch" };
   if (typeof inputWake !== "string" || inputWake.length === 0 || inputWake.length > 200) return { ok: false, reason: "mismatch" };

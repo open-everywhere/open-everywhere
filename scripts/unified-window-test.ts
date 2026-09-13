@@ -63,6 +63,7 @@ import {
   type SupervisorRouteDeps,
 } from "@open-everywhere/provider-slack/agent/channels/slack-events.js";
 import { withSingleWindowDiversion } from "@open-everywhere/provider-slack/agent/channels/slack-front.js";
+import { slackThreadTarget } from "@open-everywhere/provider-slack/agent/channels/slack-post-arm.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/provider-github/agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "@open-everywhere/provider-github/agent/channels/github-identity.js";
 import { admissionFunction } from "@open-everywhere/core/agent/adapter-api.js";
@@ -75,7 +76,7 @@ import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
-import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
+import { wakeOriginCodec, registerWakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
 import {
   dispatchTurn,
@@ -1491,6 +1492,84 @@ overrideSettingsForTest({ window: { topology: false } });
   }
   n++;
 
+  {
+    const org = "default";
+    const iso = () => new Date().toISOString();
+    const CH = "C_1824";
+    const trigger: UnifiedWakeOrigin = { platform: "slack", channelId: CH, replyAnchorTs: "1774431764.813000" };
+    const anchorlessSibling: UnifiedWakeOrigin = { platform: "slack", channelId: CH };
+    const olderTopLevel: UnifiedWakeOrigin = { platform: "slack", channelId: CH, replyAnchorTs: "1773391920.000100" };
+    const otherThread: UnifiedWakeOrigin = { platform: "slack", channelId: CH, threadTs: "1772694120.000001" };
+    ok(sameUnifiedConversation(trigger, anchorlessSibling), "OPE-1824: an ANCHORLESS top-level origin is the SAME conversation as the trigger (thread key is the channel id)");
+    ok(sameUnifiedConversation(trigger, olderTopLevel), "OPE-1824: two DIFFERENT top-level messages in one channel are the same conversation too");
+    ok(!sameUnifiedConversation(trigger, otherThread), "OPE-1824 negative control: a real THREAD in the same channel is a DIFFERENT conversation");
+
+    const wTrigger = mintWakeId();
+    const wAnchorless = mintWakeId();
+    const wOlder = mintWakeId();
+    const wThread = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wTrigger, trigger, iso());
+    await registerUnifiedWakeTarget(store, org, wAnchorless, anchorlessSibling, iso());
+    await registerUnifiedWakeTarget(store, org, wOlder, olderTopLevel, iso());
+    await registerUnifiedWakeTarget(store, org, wThread, otherThread, iso());
+
+    const carried = await resolveAnswerableReplyTarget(store, org, wTrigger, undefined, undefined, wAnchorless);
+    ok(carried.ok && carried.via === "same-conversation", "OPE-1824: an anchorless sibling wake is still ADMITTED (the fence is unchanged)");
+    ok(
+      carried.ok && (carried.origin as { replyAnchorTs?: string }).replyAnchorTs === "1774431764.813000",
+      "🔴 OPE-1824: …and it carries THIS TURN's reply anchor, so the answer hangs under the message that woke the seat",
+    );
+    ok(
+      carried.ok && slackThreadTarget(carried.origin as { threadTs?: string; replyAnchorTs?: string }) === "1774431764.813000",
+      "🔴 OPE-1824: the Slack post arm reads that anchor as its thread_ts — the reply is NOT flat on the channel",
+    );
+    ok(
+      carried.ok && (carried.origin as { channelId?: string }).channelId === CH && (carried.origin as { threadTs?: string }).threadTs === undefined,
+      "OPE-1824: the carry places the post and never MOVES it — same channel, and no thread scope invented",
+    );
+
+    const kept = await resolveAnswerableReplyTarget(store, org, wTrigger, undefined, undefined, wOlder);
+    ok(
+      kept.ok && (kept.origin as { replyAnchorTs?: string }).replyAnchorTs === "1773391920.000100",
+      "OPE-1824 negative control: an echoed wake that already names a message KEEPS its own anchor",
+    );
+
+    const fast = await resolveAnswerableReplyTarget(store, org, wAnchorless, undefined, undefined, wAnchorless);
+    ok(
+      fast.ok && fast.via === "turn" && (fast.origin as { replyAnchorTs?: string }).replyAnchorTs === undefined,
+      "OPE-1824 negative control: arm 2 is untouched — a turn answering its OWN anchorless wake still posts flat (a routine fire answers no message)",
+    );
+
+    const refused = await resolveAnswerableReplyTarget(store, org, wTrigger, undefined, undefined, wThread);
+    ok(!refused.ok && refused.reason === "mismatch", "OPE-1824 negative control: a DIFFERENT conversation in the same channel is still REFUSED");
+
+    const threadTurn = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, threadTurn, { platform: "slack", channelId: CH, threadTs: "1772694120.000001", replyAnchorTs: "1772694120.000009" }, iso());
+    const inThread = await resolveAnswerableReplyTarget(store, org, threadTurn, undefined, undefined, wThread);
+    ok(
+      inThread.ok && (inThread.origin as { replyAnchorTs?: string }).replyAnchorTs === undefined && slackThreadTarget(inThread.origin as { threadTs?: string; replyAnchorTs?: string }) === "1772694120.000001",
+      "OPE-1824 negative control: a THREADED echoed origin gains no anchor — its own thread already places the answer",
+    );
+
+    const realCodec = wakeOriginCodec("slack")!;
+    registerWakeOriginCodec("slack", { ...realCodec, carryPlacement: () => ({ platform: "slack", channelId: "C_ELSEWHERE", threadTs: "9999.9" }) } as never);
+    try {
+      const hostile = await resolveAnswerableReplyTarget(store, org, wTrigger, undefined, undefined, wAnchorless);
+      ok(
+        hostile.ok && (hostile.origin as { channelId?: string }).channelId === CH && (hostile.origin as { threadTs?: string }).threadTs === undefined,
+        "🔴 OPE-1824: an arm that tries to MOVE the post is discarded — the fence re-tests the carried origin's conversation and hands back the target",
+      );
+    } finally {
+      registerWakeOriginCodec("slack", realCodec as never);
+    }
+    const restored = await resolveAnswerableReplyTarget(store, org, wTrigger, undefined, undefined, wAnchorless);
+    ok(
+      restored.ok && (restored.origin as { replyAnchorTs?: string }).replyAnchorTs === "1774431764.813000",
+      "OPE-1824: the shipped Slack arm is restored after the hostile-arm control",
+    );
+  }
+  n++;
+
   noThrow(() => assertTurnSurface(unifiedCtx("slack"), "slack"), "assertTurnSurface: a slack-origin unified turn MAY read slack");
   throws(() => assertTurnSurface(unifiedCtx("github"), "slack"), "assertTurnSurface: a GITHUB-origin unified turn may NOT read slack (finding 1b)");
   noThrow(() => assertTurnSurface({ channel: { kind: "slack" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "slack-user" } } } }, "slack"), "assertTurnSurface: a slack session reading slack passes (the mount gate's own case)");
@@ -1694,6 +1773,37 @@ overrideSettingsForTest({ window: { topology: false } });
     "real config NEGATIVE CONTROL: a Teams key this deployment declares nowhere fails the floor",
   );
   _resetSurfacesForTest();
+}
+
+{
+  const asked: Array<{ threadRoot?: string; container: string }> = [];
+  const catchUpDeps = (): TeamsSupervisorDeps => ({
+    getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 2, freshGeneration: false, tail: [] }),
+    catchUp: async (req) => {
+      asked.push({ container: req.container, ...(req.threadRoot ? { threadRoot: req.threadRoot } : {}) });
+      return { messages: [] };
+    },
+    wake: async () => undefined,
+    now: () => "2026-01-14T02:00:11Z",
+  });
+  const base = {
+    surfaceKey: TEAMS_KEY,
+    containerKey: teamsPartition.surfaceKey,
+    channelId: "19:winchan@thread.tacv2",
+    teamId: "11111111-2222-3333-4444-555555555555",
+    auth: teamsAuth,
+    trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE anything new?", trust: "peer" as const },
+    window: teamsWindow,
+  };
+  await handleTeamsSingleWindowDispatch({ ...base, replyChainRootId: "170001" }, catchUpDeps());
+  ok(asked.length === 1 && asked[0]!.threadRoot === "170001", `🔴 OPE-1817: the supervisor names the REPLY CHAIN this wake sits in to the catch-up. Got ${JSON.stringify(asked[0])}`);
+  ok(asked[0]!.container === "11111111-2222-3333-4444-555555555555/19:winchan@thread.tacv2", "OPE-1817: …in the container Graph addresses — the group id and the channel grain");
+
+  await handleTeamsSingleWindowDispatch({ ...base, threadRootId: "170007" }, catchUpDeps());
+  ok(asked.length === 2 && asked[1]!.threadRoot === "170007", "OPE-1817: a dispatch that names only `threadRootId` still names that chain — the fallback, not a channel-only read");
+
+  await handleTeamsSingleWindowDispatch({ ...base }, catchUpDeps());
+  ok(asked.length === 3 && asked[2]!.threadRoot === undefined, "OPE-1817 NEGATIVE CONTROL: a dispatch naming NO chain asks for the container alone — so the two arms above measure the fields, not a constant");
 }
 
 console.log(`unified-window: ${n} assertions passed`);

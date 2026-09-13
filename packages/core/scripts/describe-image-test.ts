@@ -25,6 +25,8 @@ const tool = describeImage as unknown as {
   toModelOutput: (output: unknown) => Promise<{ type: string; value: string }>;
 };
 
+const DEPLOY_ORG = "default";
+
 const ctx = {
   channel: { kind: "slack" },
   session: { auth: { current: { attributes: { team_id: "T_DI", channel_id: "C_DI", channel_type: "channel" }, principalId: "U_DI", principalType: "slack-user" } } },
@@ -260,7 +262,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   });
   const visionOut = await tool.execute({ kind: "path", ref: "audit-probe.png" }, ctxWithSandbox(async () => PNG_BYTES));
   ok(visionOut.ok === false, "audit detail: the restricted-provider refusal still fails CLOSED (unchanged contract)");
-  const visionRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+  const visionRow = (await readAudit({ org: DEPLOY_ORG, action: "describe_image", limit: 50 })).find(
     (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "vision-error",
   );
   ok(visionRow !== undefined, "audit detail: a vision-error row landed");
@@ -270,14 +272,14 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
 
   const fetchOut = await tool.execute({ kind: "path", ref: "missing.png" }, ctxWithSandbox(async () => { throw new Error("ENOENT: no such file"); }));
   ok(fetchOut.ok === false, "audit detail: a workspace read failure still fails closed");
-  const fetchRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+  const fetchRow = (await readAudit({ org: DEPLOY_ORG, action: "describe_image", limit: 50 })).find(
     (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "fetch-failed",
   );
   ok(/ENOENT/.test(String((fetchRow?.detail as { error?: unknown } | undefined)?.error ?? "")), "audit detail: the fetch-failed row carries the underlying read error, not just the code");
 
   const badRow0 = await tool.execute({ hint: "no source at all" }, ctx);
   ok(badRow0.ok === false, "audit detail: an unusable argument bag still returns a readable refusal");
-  const badRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+  const badRow = (await readAudit({ org: DEPLOY_ORG, action: "describe_image", limit: 50 })).find(
     (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "bad-source",
   );
   ok(/no image source was given/.test(String((badRow?.detail as { error?: unknown } | undefined)?.error ?? "")), "audit detail: the bad-source row carries the refusal text naming the { kind, ref } contract");
@@ -330,7 +332,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   const won = await tool.execute({ kind: "attachment", ref: "F_WIN", path: "invented.png", url: "https://example.com/invented.png" } as never, ctx);
   ok(won.ok === true && won.description === "a red square.", "kind/ref: a flood around a valid { kind, ref } describes through the classified arm — the stripped slots cannot wedge it");
   {
-    const row = (await readAudit({ action: "describe_image", limit: 50 })).find(
+    const row = (await readAudit({ org: DEPLOY_ORG, action: "describe_image", limit: 50 })).find(
       (r) => (r.detail as { ref?: unknown } | undefined)?.ref === "fake2:F_WIN",
     );
     const detail = row?.detail as { ok?: unknown; ignoredSources?: unknown } | undefined;

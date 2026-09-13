@@ -19,6 +19,7 @@ const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { ch
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 type PrOpenArgs = import("../agent/approvals/pr-open.js").PrOpenArgs;
+type RepoCapability = import("../agent/access/repo-capabilities.js").RepoCapability;
 type PrOpenExecuteDeps = import("../agent/approvals/pr-open.js").PrOpenExecuteDeps;
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 await import("../agent/approvals/flow.js");
@@ -102,7 +103,7 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const lines = kind!.summarize(args());
   ok(lines[0].includes("`acme/web`") && lines[0].includes("`fix/issue-9`") && lines[0].includes("`main`"), "card names repo, head and base");
   ok(lines[0].includes(SHA.slice(0, 12)), "card pins the exact staged commit sha — the click publishes THESE commits or fails");
-  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a clean proposal");
+  ok(!lines.some((l) => l.includes("external content")), "no taint banner on a clean proposal");
   ok(lines.some((l) => l.includes("Fix the widget")), "card carries the frozen title");
 }
 {
@@ -113,6 +114,65 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const long = "x".repeat(2000);
   const lines = kind!.summarize(args({ body: long }));
   ok(lines.some((l) => l.includes("more bytes")), "an oversize body is capped on the card with a truncation note");
+}
+
+{
+  const lines = kind!.summarize(args());
+  const token = lines.find((l) => l.startsWith("Token the approve click mints"));
+  ok(token !== undefined, "a plain proposal's card carries the token line");
+  ok(token!.includes("contents: write") && token!.includes("pull_requests: write") && token!.includes("metadata: read"), "the plain card names every family of the default write set with its grade");
+  ok(!token!.includes("workflows"), "🔴 a plain repo's card never names `workflows` — it is not in the default write set");
+  ok(token!.includes("declares no capability"), "the plain card says the repo declares no capability");
+  ok(!lines.some((l) => l.startsWith("↳")), "a plain repo's card carries no capability detail line");
+  ok(
+    lines.some((l) => l.includes("GITHUB_TOKEN") && l.includes("GitHub App mint")),
+    "🔴 the card never states the App grades as the ceiling — it names the PAT fallback, whose rights no derivation here can read",
+  );
+}
+{
+  const lines = kind!.summarize(args({ capabilities: ["workflows"] }));
+  const token = lines.find((l) => l.startsWith("Token the approve click mints"));
+  ok(token !== undefined && token!.includes("workflows: write"), "🔴 a workflows-declared repo's card NAMES the `workflows: write` grade the click mints");
+  ok(token!.includes("contents: write") && token!.includes("pull_requests: write"), "the expansion ADDS to the default write set on the card, it never replaces it");
+  ok(
+    lines.some((l) => l.startsWith("↳") && l.includes("`workflows`") && l.includes(".github/workflows")),
+    "the card says in plain words what the declared capability buys — from the capability table's own summary",
+  );
+}
+{
+  const lines = kind!.summarize(args({ capabilities: ["workflows", "pr-admin"] }));
+  const token = lines.find((l) => l.startsWith("Token the approve click mints"));
+  ok(token!.includes("workflows: write") && token!.includes("pull_requests: write"), "two declared capabilities both reach the grade line");
+  ok(lines.filter((l) => l.startsWith("↳")).length === 2, "one detail line per declared capability");
+}
+{
+  const lines = kind!.summarize(args({ capabilities: ["workflows", "gone-in-this-build"] as unknown as readonly RepoCapability[] }));
+  const token = lines.find((l) => l.startsWith("Token the approve click mints"));
+  ok(token !== undefined && token!.includes("workflows: write"), "an unimplemented frozen name never hides the grades this build DOES map");
+  ok(
+    lines.some((l) => l.includes("gone-in-this-build") && l.includes("App publish fails")),
+    "an unimplemented frozen capability name is named on the card, with the publish failure it causes",
+  );
+}
+{
+  const lines = kind!.summarize(args({ capabilities: { workflows: true } as unknown as readonly RepoCapability[] }));
+  ok(lines.some((l) => l.startsWith("Token the approve click mints")), "a non-list frozen capabilities value still renders the card");
+  ok(lines.some((l) => l.includes("is not a list") && l.includes("App publish fails")), "a non-list frozen capabilities value is named on the card, with the publish failure it causes");
+  ok(!lines.some((l) => l.includes("workflows: write")), "🔴 a non-list value grades NOTHING — the card falls back to the default write set, never to a guessed expansion");
+}
+{
+  const lines = kind!.summarize(args({ capabilities: ["workflows"] }));
+  assert.deepEqual(lines, [
+    "Open pull request — `acme/web`: `fix/issue-9` → `main` (commit `aaaaaaaaaaaa`)",
+    "Token the approve click mints — contents: write, metadata: read, pull_requests: write, workflows: write.",
+    "↳ this repo declares `workflows` — push branches that add or change GitHub Actions workflow files under .github/workflows",
+    "These grades are the GitHub App mint. Where no App installation covers this repo, the publish falls back to the `GITHUB_TOKEN` PAT, which carries its own owner's rights instead.",
+    "*Fix the widget*",
+    "```",
+    "What changed and why.",
+    "```",
+  ]);
+  n++;
 }
 
 {

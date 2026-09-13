@@ -43,7 +43,21 @@ ok((await readAudit({ org: "acme", since: "2026-06-24T11:00:00Z" })).length === 
 ok((await readAudit({ org: "acme", limit: 1 })).length === 1, "limit caps the result");
 ok((await readAudit({ org: "acme", limit: 1 }))[0].ts === "2026-06-24T12:00:00Z", "limit keeps the newest");
 
-ok((await readAudit()).length === 4, "no-org read scans all orgs");
+{
+  const refusal = async (call: () => Promise<unknown>): Promise<string> => {
+    try {
+      await call();
+      return "";
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+  const noOrg = { action: "memory.write" } as unknown as Parameters<typeof readAudit>[0];
+  ok((await refusal(() => readAudit(noOrg))).includes("requires an org"), "a read with NO org refuses — it never widens to every org");
+  ok((await refusal(() => readAudit({ org: "", action: "memory.write" }))).includes("requires an org"), "an EMPTY org refuses too, rather than answering zero rows");
+  ok((await refusal(() => readAudit({ org: "acme" }))) === "", "…and a read that names its org still answers");
+  ok((await readAudit({ org: "acme" })).every((e) => e.org === "acme"), "a read for acme carries NO globex row");
+}
 
 await appendAudit({ org: "acme", platform: "slack", workspace: "T3", action: "action.test" });
 const stamped = await readAudit({ org: "acme", workspace: "T3" });

@@ -289,12 +289,12 @@ function syncResult(callId: string): unknown {
 }
 
 async function memoryWrites(sessionId: string): Promise<AuditEntry[]> {
-  const rows = await readAudit({ action: "memory.write" });
+  const rows = await readAudit({ org: deploymentOrg(), action: "memory.write" });
   return rows.filter((r) => (r.detail as { sessionId?: string } | undefined)?.sessionId === sessionId);
 }
 async function flushRows(): Promise<AuditEntry[]> {
   await new Promise((r) => setTimeout(r, 20));
-  return await readAudit({ action: SETTLEMENT_FLUSH_ACTION });
+  return await readAudit({ org: deploymentOrg(), action: SETTLEMENT_FLUSH_ACTION });
 }
 
 eq(ORG, deploymentOrg(), "harness: the org is the deployment default");

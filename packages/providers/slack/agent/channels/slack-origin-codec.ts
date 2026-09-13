@@ -13,4 +13,8 @@ export const slackWakeOriginCodec: WakeOriginCodec<SlackOrigin> = {
   threadRef: (origin) => ({ channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) }),
   isThreadScoped: (origin) => typeof origin.threadTs === "string" && origin.threadTs.length > 0,
   containerId: (origin) => origin.channelId,
+  carryPlacement: (target, source) =>
+    !(target.threadTs && target.threadTs.length > 0) && !(target.replyAnchorTs && target.replyAnchorTs.length > 0) && typeof source.replyAnchorTs === "string" && source.replyAnchorTs.length > 0
+      ? { ...target, replyAnchorTs: source.replyAnchorTs }
+      : target,
 };

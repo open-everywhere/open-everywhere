@@ -31,7 +31,7 @@ import { CONTROL_WRITE_TOOL_NAMES } from "../agent/control/writes.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
-import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _setDeploymentIdentityForTest, deploymentOrg } from "../agent/identity/deployment-identity.js";
 import { FIRE_UNATTENDED_ATTR } from "../agent/identity/binding.js";
 import { TOKEN_FAMILY_ATTR } from "../agent/routines/fire-auth.js";
 
@@ -320,7 +320,7 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
   await adminClient.close();
   adminServer.close();
 
-  const audited = await readAudit({ principalId: `svc:${svcName}`, limit: 100 });
+  const audited = await readAudit({ org: deploymentOrg(), principalId: `svc:${svcName}`, limit: 100 });
   ok("service principal: every call is audited as control.service_call with the service name", audited.length >= 2 && audited.every((e) => e.action === "control.service_call"));
   ok(
     "service principal: the audit detail records the JSON-RPC method (and tool when called)",

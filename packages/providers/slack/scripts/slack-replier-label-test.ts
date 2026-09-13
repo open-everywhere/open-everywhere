@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { slackReplierParams, postSlackMessage, slackThreadTarget, type SlackPostResult } from "../agent/channels/slack-post-arm.js";
+import { slackWakeOriginCodec } from "../agent/channels/slack-origin-codec.js";
 import { platformFailureClass, type ReplierLabel } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
@@ -107,6 +108,42 @@ function scopeRejectingBridge(): { post: (body: URLSearchParams) => Promise<Slac
     slackThreadTarget({ threadTs: "1720009900.111111", replyAnchorTs: "1720009900.222222" }),
     "1720009900.111111",
     "threadTs WINS over replyAnchorTs — an answer inside a thread never re-anchors on the trigger message",
+  );
+
+  const carry = slackWakeOriginCodec.carryPlacement!;
+  const woken = { platform: "slack", channelId: "C1", replyAnchorTs: "1720009900.333333" } as const;
+  const anchorless = { platform: "slack", channelId: "C1" } as const;
+  eq(
+    slackThreadTarget(carry(anchorless, woken)),
+    "1720009900.333333",
+    "🔴 OPE-1824: an ANCHORLESS sibling origin carries the woken wake's anchor — the answer threads under the message that woke the seat, not flat on the channel",
+  );
+  eq(carry(anchorless, woken).channelId, "C1", "…and the carry places the post without moving it — the channel is the target's own");
+  eq(
+    carry({ platform: "slack", channelId: "C1", replyAnchorTs: "1720009900.444444" }, woken).replyAnchorTs,
+    "1720009900.444444",
+    "OPE-1824: a target that already names a message KEEPS its own anchor",
+  );
+  eq(
+    carry({ platform: "slack", channelId: "C1", threadTs: "1720009900.555555" }, woken).replyAnchorTs,
+    undefined,
+    "OPE-1824: a THREADED target gains no anchor — threadTs already places it, and re-anchoring would nest a thread in a thread",
+  );
+  eq(carry(anchorless, anchorless).replyAnchorTs, undefined, "OPE-1824: an anchorless SOURCE carries nothing — the post stays top-level, which is right for a message that answers nothing");
+  eq(
+    carry({ platform: "slack", channelId: "C1", replyAnchorTs: "" }, woken).replyAnchorTs,
+    "1720009900.333333",
+    "OPE-1824: an EMPTY target anchor is a GAP — it is filled, not respected (slackThreadTarget reads it as no anchor too)",
+  );
+  eq(
+    carry({ platform: "slack", channelId: "C1", threadTs: "" }, woken).replyAnchorTs,
+    "1720009900.333333",
+    "OPE-1824: an EMPTY target threadTs is not a thread — the carry still fills the gap",
+  );
+  eq(
+    carry(anchorless, { platform: "slack", channelId: "C1", replyAnchorTs: "" }).replyAnchorTs,
+    undefined,
+    "OPE-1824: an EMPTY source anchor is not an anchor — the same blank Slack would refuse",
   );
 }
 

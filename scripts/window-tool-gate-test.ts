@@ -120,13 +120,13 @@ eq(dmWithheld.size, WIDE_HANDS_11.length + 1, "a standing (DM) seat withholds ex
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });
 {
-  const rows = await readAudit({ action: "turn.tool_gated" });
+  const rows = await readAudit({ org: "default", action: "turn.tool_gated" });
   eq(rows.length, 0, "empty withheld ⇒ NO turn.tool_gated row (Stage B fires for nothing in prod)");
 }
 const WITHHELD = ["checkout_repo", "bash", "open_pull_request"] as const;
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [...WITHHELD], wakeId: "w-1", sessionId: "s-1" });
 {
-  const rows = await readAudit({ action: "turn.tool_gated" });
+  const rows = await readAudit({ org: "default", action: "turn.tool_gated" });
   eq(rows.length, 1, "populated withheld ⇒ exactly one turn.tool_gated row");
   const row = rows[0];
   eq(row.action, "turn.tool_gated", "action is turn.tool_gated");
@@ -144,7 +144,7 @@ await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing
 
 await auditWindowToolGate({ org: "default", domain: "acme", grain: "task" as WindowGrain, withheld: ["bash"], wakeId: "w-2", sessionId: "s-2" });
 {
-  const rows = await readAudit({ action: "turn.tool_gated", workspace: "acme" });
+  const rows = await readAudit({ org: "default", action: "turn.tool_gated", workspace: "acme" });
   eq(rows.length, 1, "a second workspace's row is isolated by the workspace filter");
   eq((rows[0].detail as Record<string, unknown>).grain, "task", "the row records whatever grain it was given");
 }

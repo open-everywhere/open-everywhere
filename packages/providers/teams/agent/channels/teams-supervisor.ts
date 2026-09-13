@@ -154,6 +154,7 @@ export interface TeamsSupervisorDispatch {
   readonly auth: OpenEverywhereTeamsAuth;
   readonly trigger: TeamsSupervisorWakeInput["trigger"];
   readonly threadRootId?: string;
+  readonly replyChainRootId?: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly window: UnifiedWindowWake;
 }
@@ -177,6 +178,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
+  const catchUpRoot = d.replyChainRootId ?? d.threadRootId;
   const catchUp =
     session.freshGeneration || !deps.catchUp
       ? undefined
@@ -187,7 +189,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
           }
         : await deps.catchUp({
             container: `${d.teamId}/${d.channelId}`,
-            ...(d.threadRootId ? { threadRoot: d.threadRootId } : {}),
+            ...(catchUpRoot ? { threadRoot: catchUpRoot } : {}),
             sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), TEAMS_CATCH_UP_REACHBACK_HOURS),
             untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
             excludeId: d.trigger.id,

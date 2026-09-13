@@ -184,7 +184,7 @@ ok(laterTurn.includes("api.notion.com"), "🔴 …and the NEXT turn does not —
 let rows: { action: string; detail?: Record<string, unknown> }[] = [];
 for (let i = 0; i < 40 && rows.length === 0; i++) {
   await new Promise((r) => setTimeout(r, 50));
-  rows = (await readAudit({ limit: 50 })).filter((r) => r.action === OWN_ACCOUNT_EGRESS_REFUSAL_ACTION);
+  rows = (await readAudit({ org: "default", limit: 50 })).filter((r) => r.action === OWN_ACCOUNT_EGRESS_REFUSAL_ACTION);
 }
 ok(rows.length >= 1, `the withholding writes an ${OWN_ACCOUNT_EGRESS_REFUSAL_ACTION} audit row (got ${rows.length})`);
 const detail = rows[0]?.detail ?? {};

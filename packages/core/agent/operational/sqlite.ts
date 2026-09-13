@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -1372,6 +1372,7 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async readAudit(filter: AuditFilter) {
+    const org = auditReadOrg(filter);
     const where: string[] = [];
     const params: string[] = [];
     const eq = (col: string, val: string | undefined) => {
@@ -1380,7 +1381,7 @@ export const sqliteOperationalStore: OperationalStore = {
         params.push(val);
       }
     };
-    eq("org_id", filter.org);
+    eq("org_id", org);
     eq("platform", filter.platform);
     eq("workspace", filter.workspace);
     eq("surface", filter.surface);

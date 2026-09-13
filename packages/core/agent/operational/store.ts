@@ -107,7 +107,7 @@ export interface AuditChainEpochWritten {
 }
 
 export interface AuditFilter {
-  readonly org?: string;
+  readonly org: string;
   readonly platform?: string;
   readonly workspace?: string;
   readonly surface?: string;
@@ -115,6 +115,17 @@ export interface AuditFilter {
   readonly principalId?: string;
   readonly since?: string;
   readonly limit?: number;
+}
+
+export function auditReadOrg(filter: AuditFilter): string {
+  const org: unknown = filter.org;
+  if (typeof org !== "string" || org.length === 0) {
+    throw new Error(
+      "readAudit requires an org — a read without one would return every org's audit rows. " +
+        "Pass the org the caller is acting for; to read the whole log, name the orgs with listAuditOrgs() and read each.",
+    );
+  }
+  return org;
 }
 
 export type CostSource = "measured" | "derived";

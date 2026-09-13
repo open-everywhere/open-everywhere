@@ -24,6 +24,8 @@ import {
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+
+const AUDIT_ORG = "default";
 import {
   _resetNotionTrustRootProbesForTest,
   clearNotionAncestryCache,
@@ -428,9 +430,9 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     }, attrs);
     ok(posts.length === 0, "🔴 OPE-811: a per-doc notion completion posts NOTHING — completion text is not a delivery channel");
     const { readAudit: readDropped0 } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const dropped0 = (await readDropped0({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "here is your answer".length);
+    const dropped0 = (await readDropped0({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "here is your answer".length);
     ok(dropped0.length === 1, "OPE-811: the dropped prose is audited on the per-doc path too");
-    ok((await readDropped0({ action: "notion.replied" })).length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO notion.replied row");
+    ok((await readDropped0({ org: AUDIT_ORG, action: "notion.replied" })).length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO notion.replied row");
 
     posts = [];
     await inSession(async () => {
@@ -438,7 +440,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await turnStarted(ctx);
       await completed("answering the second discussion", ctx);
     }, { ...attrs, discussion_id: "fresh-second-discussion" });
-    const secondDrop = (await readDropped0({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "answering the second discussion".length);
+    const secondDrop = (await readDropped0({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "answering the second discussion".length);
     ok(
       secondDrop.length === 1 && secondDrop[0]!.detail?.discussionId === "fresh-second-discussion",
       "notion reply-targeting: the per-turn auth snapshot beats the stale seeded state (the terminal row names the FRESH discussion)",
@@ -452,8 +454,8 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     });
     ok(posts.length === 0, "notion reply-targeting: no auth target ⇒ posts NOTHING (stale seed ignored)");
     const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
-    ok((await readNoTarget({ action: "notion.no_target" })).length === 0, "OPE-811: the notion.no_target row is retired with the poster that needed it");
-    const droppedNoTarget = (await readNoTarget({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
+    ok((await readNoTarget({ org: AUDIT_ORG, action: "notion.no_target" })).length === 0, "OPE-811: the notion.no_target row is retired with the poster that needed it");
+    const droppedNoTarget = (await readNoTarget({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
     ok(droppedNoTarget.length === 1, "OPE-811: the undelivered completion is recorded as a dropped-prose row instead");
     ok(droppedNoTarget[0]!.detail?.discussionId === null, "OPE-811: and its anchor states the CLEARED target as an explicit null");
 
@@ -465,7 +467,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     }, attrs);
     ok(posts.length === 0, "notion message.completed: the NO_REPLY sentinel still suppresses the reply");
     const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const silences = await readAudit({ action: "notion.no_reply" });
+    const silences = await readAudit({ org: AUDIT_ORG, action: "notion.no_reply" });
     ok(silences.length >= 1 && silences.some((a) => a.detail?.discussionId === DISCUSSION), "notion message.completed: judged silence writes a notion.no_reply audit row (audited silence)");
 
     posts = [];
@@ -487,11 +489,11 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await completed("stray narration the judge never posted via the reply tool", ctx);
     }, attrs);
     ok(posts.length === 0, "UNIFIED notion turn: terminal prose is DROPPED (message-tool-only) — nothing posts");
-    const dropped = await readAudit2({ action: "turn.supervisor_prose_dropped" });
+    const dropped = await readAudit2({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" });
     ok(dropped.length >= 1 && dropped.some((a) => a.detail?.discussionId === DISCUSSION), "UNIFIED notion turn: the dropped stray prose is audited (turn.supervisor_prose_dropped)");
 
     posts = [];
-    const droppedBefore = (await readAudit2({ action: "turn.supervisor_prose_dropped" })).length;
+    const droppedBefore = (await readAudit2({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).length;
     await inSession(async () => {
       const ctx = { state: unifiedState };
       await turnStarted(ctx);
@@ -499,17 +501,17 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await completed("trailing narration after a real tool reply", ctx);
     }, attrs);
     ok(posts.length === 0, "UNIFIED notion turn: trailing narration after a tool reply is dropped too (never double-posts)");
-    ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBefore, "…but a tool-replied turn's dropped narration is NOT audited as a leak");
+    ok((await readAudit2({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).length === droppedBefore, "…but a tool-replied turn's dropped narration is NOT audited as a leak");
 
     posts = [];
-    const droppedBeforePerDoc = (await readAudit2({ action: "turn.supervisor_prose_dropped" })).length;
+    const droppedBeforePerDoc = (await readAudit2({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).length;
     await inSession(async () => {
       const ctx = { state: { ...state } };
       await turnStarted(ctx);
       await completed("per-doc sessions drop terminal text too", ctx);
     }, attrs);
     ok(posts.length === 0, "🔴 OPE-811: a per-doc (non-unified) notion turn drops its terminal text exactly like a windowed one");
-    ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBeforePerDoc + 1, "OPE-811: and audits the drop — one seat, one delivery contract, whatever the topology");
+    ok((await readAudit2({ org: AUDIT_ORG, action: "turn.supervisor_prose_dropped" })).length === droppedBeforePerDoc + 1, "OPE-811: and audits the drop — one seat, one delivery contract, whatever the topology");
 
     posts = [];
     await inSession(async () => {

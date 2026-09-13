@@ -362,12 +362,12 @@ for (const [label, err] of [
         await completed("shipping tomorrow works — the index backfill finished", { state });
       }, { issue_id: ISSUE, comment_id: "c-top" });
       ok(gql.length === 0, "🔴 OPE-811: the supervisor's turn-final text posts NOTHING — completion text is not a delivery channel");
-      const { readAudit: readDropped } = await import("@open-everywhere/core/agent/adapter-api.js");
-      const dropped = (await readDropped({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "linear");
+      const { readAudit: readDropped, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const dropped = (await readDropped({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "linear");
       ok(dropped.length === 1, "OPE-811: the dropped prose is audited — one turn.supervisor_prose_dropped row on the linear partition");
       ok(dropped[0]!.detail?.chars === "shipping tomorrow works — the index backfill finished".length, "OPE-811: the row counts the lost completion (a COUNT, never the text)");
       ok(!JSON.stringify(dropped[0]!.detail).includes("index backfill"), "OPE-811: taint-clean — the dropped answer's text is not in the row");
-      ok((await readDropped({ action: "linear.replied" })).length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO linear.replied row");
+      ok((await readDropped({ org: deploymentOrg(), action: "linear.replied" })).length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO linear.replied row");
     }
 
     {
@@ -378,9 +378,9 @@ for (const [label, err] of [
         await completed("this must not post", { state });
       });
       ok(gql.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING");
-      const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
-      ok((await readNoTarget({ action: "linear.no_target" })).length === 0, "OPE-811: the linear.no_target row is retired with the poster that needed it");
-      const dropped = (await readNoTarget({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
+      const { readAudit: readNoTarget, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      ok((await readNoTarget({ org: deploymentOrg(), action: "linear.no_target" })).length === 0, "OPE-811: the linear.no_target row is retired with the poster that needed it");
+      const dropped = (await readNoTarget({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
       ok(dropped.length === 1, "OPE-811: the undelivered completion is recorded as a dropped-prose row instead");
     }
 
@@ -393,8 +393,8 @@ for (const [label, err] of [
       }, { issue_id: "issue-uuid-OTHER", comment_id: "c-x", team_id: "team-uuid-2", organization_id: "org-1" });
       ok(state.oeReplyTarget?.teamId === "team-uuid-2" && state.oeReplyTarget?.organizationId === "org-1", "unified turn.started snapshots THIS wake's team/org off the delivery auth");
       ok(gql.length === 0, "OPE-811: the unified completion posts nothing either — the snapshot feeds the audit partition, not a poster");
-      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-      const dropped2 = (await readAudit({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "answering the other team's issue".length);
+      const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const dropped2 = (await readAudit({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "answering the other team's issue".length);
       ok(dropped2.some((r) => r.surface === "linear/org-1/team-uuid-2"), "the terminal row still names the WAKING container (snapshot team), not the seed team");
       const perTeam = supervisorState();
       await inSession(() => turnStarted({ state: perTeam }), { issue_id: ISSUE, comment_id: "c-top", team_id: "team-uuid-2", organization_id: "org-1" });
@@ -409,8 +409,8 @@ for (const [label, err] of [
         await completed("NO_REPLY", { state });
       }, { issue_id: ISSUE, comment_id: "c-top" });
       ok(gql.length === 0, "NO_REPLY suppresses the supervisor reply");
-      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-      const silences = await readAudit({ action: "linear.no_reply" });
+      const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const silences = await readAudit({ org: deploymentOrg(), action: "linear.no_reply" });
       ok(silences.length >= 1, "judged silence writes a linear.no_reply audit row (audited silence, cross-surface parity)");
     }
 
@@ -444,8 +444,8 @@ for (const [label, err] of [
     }
 
     {
-      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-      const nativeSilenceRows = async () => (await readAudit({ action: "linear.no_reply" })).filter((r) => r.detail?.route === "native");
+      const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const nativeSilenceRows = async () => (await readAudit({ org: deploymentOrg(), action: "linear.no_reply" })).filter((r) => r.detail?.route === "native");
       const nativeState = () => ({ ...supervisorState(), oeSupervisor: undefined, agentSessionId: "agent-session-883", issueId: ISSUE });
       type ActivityCall = { query?: string; variables?: { input?: { agentSessionId?: string; ephemeral?: boolean; signal?: string; content?: { body?: string; type?: string } } } };
 
@@ -562,8 +562,8 @@ for (const [label, err] of [
       gql = [];
       await inSession(() => linearChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state }));
       ok(gql.length === 0, "a failed supervisor turn posts NOTHING");
-      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-      const fails = await readAudit({ action: "linear.supervisor_turn_failed" });
+      const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const fails = await readAudit({ org: deploymentOrg(), action: "linear.supervisor_turn_failed" });
       ok(fails.length >= 1, "the failed supervisor turn is audited instead");
     }
   } finally {

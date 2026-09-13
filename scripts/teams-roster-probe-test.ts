@@ -27,6 +27,9 @@ import {
 import { buildTeamsAuth, type OpenEverywhereTeamsAuth } from "@open-everywhere/provider-teams/agent/channels/teams-identity.js";
 import { planTeamsSingleWindow } from "@open-everywhere/provider-teams/agent/channels/teams-supervisor.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
+import { teamsSeatCatchUpFetch } from "@open-everywhere/provider-teams/agent/channels/teams-catch-up.js";
+import { _resetTeamsGraphTeamIdCache, _seedTeamsGraphTeamIdForTest } from "@open-everywhere/provider-teams/agent/channels/teams-graph-team-id.js";
+import { registerSeatCatchUp, _resetSeatCatchUp, type SeatCatchUpRequest } from "@open-everywhere/core/agent/channels/seat-catch-up.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
 import { supervisorGrainFor, effectiveEveToken, UNIFIED_CHANNEL_NAME } from "@open-everywhere/core/agent/channels/unified-supervisor.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
@@ -189,7 +192,7 @@ const TEAM = "TEAM-R";
 const AUTHOR = "29:example-owner";
 
 function channelActivity(
-  over: { readonly id?: string; readonly text?: string; readonly from?: { id: string; name: string; aadObjectId: string } } = {},
+  over: { readonly id?: string; readonly text?: string; readonly from?: { id: string; name: string; aadObjectId: string }; readonly noChannelData?: true } = {},
 ): TeamsMessageActivity {
   const parsed = parseTeamsActivity({
     type: "message",
@@ -198,7 +201,7 @@ function channelActivity(
     from: over.from ?? { id: AUTHOR, name: "example-owner", aadObjectId: "a0d00000-0000-4000-8000-00000000a0d1" },
     recipient: { id: "28:bot" },
     conversation: { id: CONVERSATION, conversationType: "channel", tenantId: TENANT },
-    channelData: { channel: { id: CHANNEL, membershipType: "standard" }, team: { id: TEAM } },
+    channelData: over.noChannelData ? { team: { id: TEAM } } : { channel: { id: CHANNEL, membershipType: "standard" }, team: { id: TEAM } },
     text: over.text ?? "hello, what can you do?",
     isBotMentioned: true,
   });
@@ -240,6 +243,7 @@ async function driveWake(input: {
   readonly id?: string;
   readonly text?: string;
   readonly from?: { id: string; name: string; aadObjectId: string };
+  readonly noChannelData?: true;
   readonly probe?: TeamsRosterProbe | undefined;
 }): Promise<{ readonly received: Received; readonly partition: ReturnType<typeof resolvePartition>; readonly wakeId: string }> {
   _resetTeamsUserTypeCacheForTest();
@@ -445,6 +449,43 @@ function newTurn(turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
     (await forcedRows()) === forcedBefore,
     "🔴 2c/AUDIT: and NO `reply.forced` row — nothing pushed the seat to force past a verdict, which is what the 15-minute a live run runaway did",
   );
+}
+
+{
+  const GRAPH_TEAM = "11111111-2222-3333-4444-555555555555";
+  const seen: SeatCatchUpRequest[] = [];
+  _seedTeamsGraphTeamIdForTest(TEAM, GRAPH_TEAM);
+  registerSeatCatchUp("teams", async (req) => {
+    seen.push(req);
+    return [];
+  });
+  try {
+    const woken = await driveWake({ id: "act-2d-1", text: "anything new while I was away?" });
+    ok(seen.length === 1, `🔴 2d: the REAL front's wake ran the seat catch-up exactly once (an ongoing generation, a resolved Graph team). Got ${seen.length}`);
+    const req = seen[0]!;
+    eq(
+      req.threadRoot,
+      "170001",
+      "🔴 2d/OPE-1817: the read NAMES the reply chain this wake sits in — the `;messageid=` root of the conversation, on an activity that carries NO replyToId. Without it the read is the channel alone, whose Graph endpoint holds no replies at all, and the seat reads an empty room that spoke",
+    );
+    eq(req.container, `${GRAPH_TEAM}/${CHANNEL}`, "🔴 2d: …and the container is the GRAPH team id plus the CHANNEL grain — never the reply-chain id, which Graph has no channel by that name for");
+    eq(req.channelKey, domainKeyOf(woken.partition), "2d: the read carries the domain-grain channel key, so the row it writes is attributable to this surface");
+
+    seen.length = 0;
+    await driveWake({ id: "act-2d-2", text: "first, to open the generation", noChannelData: true });
+    await driveWake({ id: "act-2d-3", text: "second, the one that reads", noChannelData: true });
+    ok(seen.length === 1, `🔴 2d/fallback: the first wake opened the generation and the second read a catch-up. Got ${seen.length}`);
+    eq(
+      seen[0]!.container,
+      `${GRAPH_TEAM}/${CHANNEL}`,
+      "🔴 2d/OPE-1817: an activity with NO `channelData.channel` still addresses Graph at the CHANNEL grain — the conversation id's reply-chain suffix is stripped, never handed to a `/channels/{id}` url",
+    );
+    ok(!seen[0]!.container.includes(";messageid="), "🔴 2d/fallback CONTROL: …and the container carries no reply-chain suffix — the half that used to make the URL a 404");
+  } finally {
+    _resetSeatCatchUp("teams");
+    registerSeatCatchUp("teams", teamsSeatCatchUpFetch);
+    _resetTeamsGraphTeamIdCache();
+  }
 }
 
 const DM_CONVERSATION = "19:1on1-r@thread.v2";

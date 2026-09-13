@@ -8,7 +8,7 @@ import { getConfig, registerConfig } from "../agent/access/config.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
-import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _setDeploymentIdentityForTest, deploymentOrg } from "../agent/identity/deployment-identity.js";
 import type { TranscriptExportRequest } from "../agent/control/transcript-export.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
@@ -46,7 +46,7 @@ const due = await routinesView({ onlyDue: true });
 ok("routinesView --due reports dueCount", typeof due.dueCount === "number");
 ok("routinesView --due never exceeds total", due.routines.length <= routines.total);
 
-const audit = await auditView({ limit: 5 });
+const audit = await auditView({ org: deploymentOrg(), limit: 5 });
 ok("auditView entries is an array", Array.isArray(audit.entries));
 ok("auditView respects the limit", audit.entries.length <= 5);
 ok("auditView echoes the resolved filter limit", audit.filter.limit === 5);

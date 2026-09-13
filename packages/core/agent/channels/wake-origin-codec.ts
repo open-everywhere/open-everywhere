@@ -7,6 +7,7 @@ export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin
   threadRef(origin: O): UnifiedThreadRef;
   isThreadScoped(origin: O): boolean;
   containerId(origin: O): string;
+  carryPlacement?(target: O, source: O): O;
 }
 
 const WAKE_ORIGIN_CODECS = processRegistryMap<WakeOriginCodec>("wake-origin-codecs.v1");

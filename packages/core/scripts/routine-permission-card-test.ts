@@ -664,7 +664,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const reaped = await store.getPendingAction(ORG, card!.id);
   ok(reaped?.status === "expired" && reaped.decidedBy === "system", "§reap: the row is EXPIRED, decided by the system rather than by a human who never clicked");
 
-  const expiredRows = await readAudit({ action: "approval.expired" });
+  const expiredRows = await readAudit({ org: "acme", action: "approval.expired" });
   ok(expiredRows.filter((r) => (r.detail as { id?: string } | undefined)?.id === card!.id).length === 1, "§reap: exactly one approval.expired row names this card");
   const cause = (expiredRows.find((r) => (r.detail as { id?: string } | undefined)?.id === card!.id)?.detail ?? {}) as { cause?: string; routine?: string };
   ok(cause.cause === "routine-superseded", `🔴 §reap: the cause is NOT "ttl" — no clock ran out, and an operator has to be able to tell the two apart (got ${String(cause.cause)})`);
@@ -700,7 +700,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(await removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-gone"), "§reap: the routine is deleted");
   ok((await reapSupersededRoutineCards(ORG)) >= 1, "§reap: the reap closes the card of a routine that no longer exists");
   ok((await store.getPendingAction(ORG, second!.id))?.status === "expired", "§reap: that card's own row is expired");
-  const goneDetail = ((await readAudit({ action: "approval.expired" })).find((r) => (r.detail as { id?: string } | undefined)?.id === second!.id)?.detail ??
+  const goneDetail = ((await readAudit({ org: "acme", action: "approval.expired" })).find((r) => (r.detail as { id?: string } | undefined)?.id === second!.id)?.detail ??
     {}) as { cause?: string };
   ok(goneDetail.cause === "routine-deleted", `§reap: with the cause that says WHICH road — deleted, not edited (got ${String(goneDetail.cause)})`);
 

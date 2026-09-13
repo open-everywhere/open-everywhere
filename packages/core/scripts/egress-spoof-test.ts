@@ -84,7 +84,7 @@ function liftInput(): Record<string, unknown> {
 }
 
 async function autoApprovedRows(): Promise<unknown[]> {
-  return (await readAudit({})).filter((r) => r.action === "approval.autoapproved");
+  return (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.autoapproved");
 }
 
 {

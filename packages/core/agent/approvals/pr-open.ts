@@ -7,7 +7,8 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
-import type { RepoCapability } from "../access/repo-capabilities.js";
+import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
+import { REPO_CAPABILITIES, isRepoCapability, type RepoCapability } from "../access/repo-capabilities.js";
 
 export interface PrOpenArgs {
   readonly org: string;
@@ -25,6 +26,26 @@ export interface PrOpenArgs {
 }
 
 const CARD_BODY_MAX = 1200;
+
+function mintGradeLines(capabilities: readonly RepoCapability[]): string[] {
+  const malformed = !Array.isArray(capabilities);
+  const declared = malformed ? [] : [...capabilities].sort();
+  const known = declared.filter((cap) => isRepoCapability(cap));
+  const unknown = declared.filter((cap) => !isRepoCapability(cap));
+  const grades = Object.entries(expandMintPermissions(DEFAULT_PERMISSIONS, known))
+    .filter(([, grade]) => grade !== undefined)
+    .map(([family, grade]) => `${family}: ${grade}`)
+    .sort()
+    .join(", ");
+  const lines =
+    declared.length === 0 && !malformed
+      ? [`Token the approve click mints — ${grades}. This repo declares no capability, so the mint carries the default write set.`]
+      : [`Token the approve click mints — ${grades}.`, ...known.map((cap) => `↳ this repo declares \`${cap}\` — ${REPO_CAPABILITIES[cap].summary}`)];
+  if (unknown.length) lines.push(`⚠ this proposal froze capability names this build does not implement (${unknown.join(", ")}) — the App publish fails instead of minting them`);
+  if (malformed) lines.push("⚠ this proposal's frozen capability list is not a list — the App publish fails instead of minting anything from it");
+  lines.push("These grades are the GitHub App mint. Where no App installation covers this repo, the publish falls back to the `GITHUB_TOKEN` PAT, which carries its own owner's rights instead.");
+  return lines;
+}
 
 export interface PrOpenExecuteDeps {
   readonly getBranchSha?: typeof getBranchSha;
@@ -93,6 +114,7 @@ const prOpen: ActionKind<PrOpenArgs> = {
     return [
       `Open pull request — \`${args.repo}\`: \`${args.head}\` → \`${args.base}\` (commit \`${args.headSha.slice(0, 12)}\`)`,
       ...(args.tainted ? ["⚠ proposed in a turn that read external content — review the diff before approving"] : []),
+      ...mintGradeLines(args.capabilities ?? []),
       `*${args.title}*`,
       "```",
       body,

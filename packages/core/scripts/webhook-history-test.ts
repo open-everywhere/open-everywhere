@@ -98,7 +98,7 @@ function harness(over: {
     deps: {
       configHooks: () => over.config ?? [CONFIG_HOOK],
       routines: async () => over.routines ?? [],
-      read: async (f = {}) => (rows[f.action ?? ""] ?? []) as AuditEntry[],
+      read: async (f) => (rows[f.action ?? ""] ?? []) as AuditEntry[],
       audit: async (e) => {
         written.push(e);
       },

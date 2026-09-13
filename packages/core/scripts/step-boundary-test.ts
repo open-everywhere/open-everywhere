@@ -375,7 +375,7 @@ const smallSettings = (budget: number, multiple = 2): void => {
   let rows: { action: string; detail?: Record<string, unknown> }[] = [];
   for (let i = 0; i < 40 && rows.length < 2; i++) {
     await new Promise((r) => setTimeout(r, 50));
-    rows = mine((await readAudit({ action: STEP_BOUNDARY_ACTION })) as typeof rows);
+    rows = mine((await readAudit({ org: "default", action: STEP_BOUNDARY_ACTION })) as typeof rows);
   }
   eq(rows.length, 2, "audit: EIGHT round-trips past a budget of 2 write exactly TWO `turn.step_boundary` rows — one per crossing, not one per call");
   const tiers = rows.map((r) => r.detail?.["tier"]).sort();

@@ -208,7 +208,7 @@ async function fireStart(sessionId: string, attrs: Record<string, string> = {}):
 }
 
 async function syncRows(): Promise<AuditWireEntry[]> {
-  return (await readAudit({ action: MEMORY_SYNC_TIMING_ACTION })) as unknown as AuditWireEntry[];
+  return (await readAudit({ org: "default", action: MEMORY_SYNC_TIMING_ACTION })) as unknown as AuditWireEntry[];
 }
 
 {

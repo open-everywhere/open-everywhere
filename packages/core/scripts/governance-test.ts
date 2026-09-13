@@ -137,13 +137,13 @@ const ok = (cond: boolean, label: string) => {
   registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A", "U_B"], resolved: true, isPrivate: true, hasGuest: false }));
   const armed = await attestGovernanceChannel("slack/T1/C_ADMIN", domains, attestCtx);
   ok(armed.armed, "attestGovernanceChannel arms on an all-admin private roster");
-  ok((await readAudit({ action: "governance.floor_breach" })).length === 0, "no floor_breach audit row when armed");
+  ok((await readAudit({ org: "gov-test", action: "governance.floor_breach" })).length === 0, "no floor_breach audit row when armed");
 
   _resetGovernanceFloorCacheForTest();
   registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A", "U_STRANGER"], resolved: true, isPrivate: true, hasGuest: false }));
   const breached = await attestGovernanceChannel("slack/T1/C_ADMIN", domains, attestCtx);
   ok(!breached.armed && breached.breach?.reason === "non-admin-member", "attestGovernanceChannel demotes fail-closed on a non-admin member");
-  const breachRows = await readAudit({ action: "governance.floor_breach" });
+  const breachRows = await readAudit({ org: "gov-test", action: "governance.floor_breach" });
   ok(breachRows.length === 1, "exactly one governance.floor_breach audit row is written on the breach");
   ok(
     (breachRows[0].detail as { missing?: string[]; domain?: string })?.missing?.includes("U_STRANGER") === true &&
@@ -156,7 +156,7 @@ const ok = (cond: boolean, label: string) => {
   });
   const cached = await attestGovernanceChannel("slack/T1/C_ADMIN", domains, attestCtx);
   ok(!cached.armed, "attestation is memoized within the TTL (no re-fetch)");
-  ok((await readAudit({ action: "governance.floor_breach" })).length === 1, "memoized attestation does not write a second floor_breach row");
+  ok((await readAudit({ org: "gov-test", action: "governance.floor_breach" })).length === 1, "memoized attestation does not write a second floor_breach row");
   _resetGovernanceMemberSupplierForTest();
   _resetGovernanceFloorCacheForTest();
 }
@@ -237,7 +237,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
     }
     ok(threw, "requirePaneVenue redirects (throws) from a plain channel");
   }
-  const redirected = await readAudit({ action: "governance.redirected" });
+  const redirected = await readAudit({ org: "gov-test", action: "governance.redirected" });
   ok(redirected.length >= 1, "a governance.redirected audit row is stamped on the redirect");
   ok(
     (redirected[0].detail as { from?: string; to?: string; kind?: string })?.from === "slack/T1/C_GENERAL" &&
@@ -257,7 +257,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
       ok(err instanceof PaneRedirectError, "a breached governance channel redirects fail-closed rather than rendering inline");
     }
     ok(threw, "requirePaneVenue redirects from a breached governance channel");
-    ok((await readAudit({ action: "governance.floor_breach" })).some((r) => (r.detail as { missing?: string[] })?.missing?.includes("U_STRANGER")), "the breach in a governance channel stamps floor_breach naming the stranger");
+    ok((await readAudit({ org: "gov-test", action: "governance.floor_breach" })).some((r) => (r.detail as { missing?: string[] })?.missing?.includes("U_STRANGER")), "the breach in a governance channel stamps floor_breach naming the stranger");
   }
   _resetGovernanceMemberSupplierForTest();
   _resetGovernanceFloorCacheForTest();
@@ -359,7 +359,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
     ok(/TOTALS: org-wide totals/.test(sent[0].text), "the DM carries the rendered substance");
     ok(/asked in slack\/T1\/C_GENERAL/.test(sent[0].text), "the DM envelope names where it was asked + why it arrived");
 
-    const delivered = await readAudit({ action: "governance.dm_delivered" });
+    const delivered = await readAudit({ org: "gov-test", action: "governance.dm_delivered" });
     ok(delivered.length === 1, "exactly one governance.dm_delivered audit row is written");
     const d = delivered[0].detail as { kind?: string; from?: string; to?: string; dmSurface?: string };
     ok(d.kind === "spend.report.org" && d.from === "slack/T1/C_GENERAL" && d.to === "requester-dm" && d.dmSurface === "D_REQUESTER", "governance.dm_delivered detail carries { kind, from, to, dmSurface }");
@@ -381,7 +381,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
       ok(/holds no admin standing/.test(String((err as Error).message)), "the refusal names why the DM wasn't sent");
     }
     ok(threw && !ran && sent.length === 0, "an unverifiable role NEVER computes or delivers org-scope substance");
-    const rows = await readAudit({ action: "governance.redirected" });
+    const rows = await readAudit({ org: "gov-test", action: "governance.redirected" });
     ok(rows.some((r) => (r.detail as { refused?: string })?.refused === "role-unverified"), "a role-unverified refusal is audited as governance.redirected { refused }");
   }
 
@@ -400,7 +400,7 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
       ok(/can't DM on "slack"/.test(String((err as Error).message)), "the refusal names the platform that can't DM");
     }
     ok(threw && !ran, "a provider with no DM arm never computes org-scope substance");
-    ok((await readAudit({ action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "no-dm-arm"), "a missing DM arm is audited as governance.redirected { refused: no-dm-arm }");
+    ok((await readAudit({ org: "gov-test", action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "no-dm-arm"), "a missing DM arm is audited as governance.redirected { refused: no-dm-arm }");
   }
 
   {
@@ -420,8 +420,8 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
       ok(/missing_scope/.test(msg) && !/org-wide totals/.test(msg), "the refusal names the delivery failure and carries no substance");
     }
     ok(threw, "a failed DM post throws rather than returning the substance");
-    ok((await readAudit({ action: "governance.dm_delivered" })).length === 1, "a failed DM post writes NO extra governance.dm_delivered row");
-    ok((await readAudit({ action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "dm-delivery-failed"), "a failed DM post is audited as governance.redirected { refused: dm-delivery-failed }");
+    ok((await readAudit({ org: "gov-test", action: "governance.dm_delivered" })).length === 1, "a failed DM post writes NO extra governance.dm_delivered row");
+    ok((await readAudit({ org: "gov-test", action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "dm-delivery-failed"), "a failed DM post is audited as governance.redirected { refused: dm-delivery-failed }");
   }
 
   {

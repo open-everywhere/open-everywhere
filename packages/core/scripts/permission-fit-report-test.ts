@@ -147,7 +147,7 @@ await seed("connector.unattended_lift", { connection: "linear", op: "linear__upd
 await seed("aws.exec", { roleArn: IDLE_ROLE, command: "s3:get-object", exitCode: 0, unattended: true, domain: "finance" }, 2);
 for (let i = 1; i <= 8; i++) await seed("connector.op", { connection: "linear", op: "list_issues" }, i, "other-channel");
 
-const auditBefore = (await readAudit({})).length;
+const auditBefore = (await readAudit({ org: "default" })).length;
 
 {
   const res = await tool.execute({ days: 30 }, ctx);
@@ -209,7 +209,7 @@ const auditBefore = (await readAudit({})).length;
 
 {
   ok(JSON.stringify(BUNDLES) === CONFIG_SNAPSHOT, "⭐ actuates nothing: the loaded bundle config is byte-identical after two full runs");
-  const rows = await readAudit({});
+  const rows = await readAudit({ org: "default" });
   const added = rows.filter((r) => r.ts >= new Date(Date.now() - 60_000).toISOString());
   ok(added.every((r) => r.action === "permission.fit_report"), "⭐ actuates nothing: the ONLY rows the tool added are its own review rows — no access.request, no approval.*, no connector.grant");
   ok(rows.length === auditBefore + 1, "audit: exactly ONE new row since the seed — the run added its own review row and nothing else");

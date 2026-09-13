@@ -62,7 +62,7 @@ const NEXT_HOUR = "2026-09-08T05:00:00.000Z";
   ok((await spendGitHubPollBudget(OWNER, REPO, NEXT_HOUR, BUDGET)).admitted, "the next clock hour starts fresh");
   ok((await spendGitHubPollBudget(OWNER, "other-repo", HOUR, BUDGET)).admitted, "another repository in the same hour starts fresh");
 
-  const rows = await readAudit({ action: GITHUB_REACTION_POLL_BUDGET_ACTION });
+  const rows = await readAudit({ org: deploymentOrg(), action: GITHUB_REACTION_POLL_BUDGET_ACTION });
   const mine = rows.filter((r) => r.surface === SURFACE);
   ok(mine.length === 1, `🔴 a tripped budget writes ONE row per repository per hour (got ${mine.length})`);
   const detail = mine[0]!.detail as Record<string, unknown>;
@@ -157,7 +157,7 @@ const NEXT_HOUR = "2026-09-08T05:00:00.000Z";
 
 {
   await auditGitHubReactionClaimUnreadable(OWNER, REPO, HOUR, 3);
-  const rows = (await readAudit({ action: GITHUB_REACTION_CLAIM_UNREADABLE_ACTION })).filter((r) => r.surface === SURFACE);
+  const rows = (await readAudit({ org: deploymentOrg(), action: GITHUB_REACTION_CLAIM_UNREADABLE_ACTION })).filter((r) => r.surface === SURFACE);
   ok(rows.length === 1, `the unreadable-claim write lands one queryable row (got ${rows.length})`);
   const detail = rows[0]!.detail as Record<string, unknown>;
   ok(detail["skipped"] === 3, "…naming how many reactions the fail-closed dedupe skipped");

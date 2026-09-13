@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
+import { spendView, routinesView, auditView, accessView, accessQueryScope, overridesView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { foreignOrgDenial, scopeDenial, siloScopeDenial } from "./auth.js";
+import { surfaceKeyOf } from "../access/resolver.js";
 import { unpairedStops, UNPAIRED_STOP_MAX_WINDOW_MS } from "../channels/turn-cancel.js";
 import { renderTranscriptExport, TRANSCRIPT_EXPORT_DEFAULT_LIMIT, TRANSCRIPT_EXPORT_MAX_LIMIT, type TranscriptExportReader } from "./transcript-export.js";
 import { getConfig } from "../access/config.js";
@@ -105,8 +106,9 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Query audit log",
       description:
-        "Read the append-only audit trail — who did what, when (memory writes, network grants, consequential tool actions). Always this deployment's own org; every other filter is optional. Read-only.",
+        'Read the append-only audit trail — who did what, when (memory writes, network grants, consequential tool actions). Always this deployment\'s own org; every other filter is optional. Scope-gated: pass the full platform + workspace + surface triple to narrow the read to one container, which a covering "domain:<name>" role can do; any wider ask (a missing segment, or no container filter at all) is org-wide and needs the org-wide "admin" role. Read-only.',
       inputSchema: {
+        platform: z.string().optional(),
         workspace: z.string().optional(),
         surface: z.string().optional(),
         action: z.string().optional(),
@@ -115,7 +117,17 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         limit: z.number().int().positive().max(1000).optional(),
       },
     },
-    (args) => jsonTool(() => auditView({ ...args, org: deploymentOrg() }))(),
+    (args) =>
+      jsonTool(async () => {
+        const org = deploymentOrg();
+        const container =
+          args.platform !== undefined && args.workspace !== undefined && args.surface !== undefined
+            ? surfaceKeyOf({ platform: args.platform, workspace: args.workspace, channel: args.surface })
+            : undefined;
+        const denial = scopeDenial(roles, { org, ...(container ? { surfaceKey: container } : {}) });
+        if (denial) throw new Error(denial);
+        return auditView({ ...args, org });
+      })(),
   );
 
   server.registerTool(
@@ -148,7 +160,8 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "access_preview",
     {
       title: "Preview effective access",
-      description: "Resolve what a given scope can reach — reachable hosts, connections (secret NAMES only), repos, plugins, host-side connectors, and the instruction precedence stack. The same resolution the running agent uses. No secret values. Read-only.",
+      description:
+        'Resolve what a given scope can reach — reachable hosts, connections (secret NAMES only), repos, plugins, host-side connectors, and the instruction precedence stack. The same resolution the running agent uses. No secret values. Scope-gated: for a channel or mpim ask, an org-wide "admin" previews any scope and a "domain:<name>" role only a platform/workspace/channel triple that resolves to its own domain, with an omitted segment taking its default (local/dev/default) for the gate as well as for the answer. A mode="dm" ask answers about the PERSON named by principalId, not about the triple, and no domain covers a person — so it needs the org-wide "admin" role. Read-only.',
       inputSchema: {
         platform: z.string().optional(),
         workspace: z.string().optional(),
@@ -157,7 +170,14 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         principalId: z.string().optional(),
       },
     },
-    (args) => jsonTool(() => accessView(args))(),
+    (args) =>
+      jsonTool(async () => {
+        const org = deploymentOrg();
+        const scope = args.mode === "dm" ? { org } : { org, surfaceKey: surfaceKeyOf(accessQueryScope(args)) };
+        const denial = scopeDenial(roles, scope);
+        if (denial) throw new Error(denial);
+        return accessView(args);
+      })(),
   );
 
   server.registerTool(

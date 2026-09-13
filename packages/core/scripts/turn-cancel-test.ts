@@ -472,7 +472,7 @@ const NO_REQUESTER_BASELINE =
     const TURN = "t-745";
     const ctx = { channel: { continuationToken: WINDOW }, session: { id: "s-745" } };
     const org = resolvePartition(ctx as never).org;
-    const countRows = async (): Promise<number> => (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+    const countRows = async (): Promise<number> => (await readAudit({ org, action: TURN_CANCELLED_ACTION })).length;
 
     await recordTurnAnchor(org, { windowKey: WINDOW, sessionId: "s-745", turnId: TURN, surfaceKey: "slack/T1/C1" }, new Date().toISOString());
     ok((await resolveTurnAnchor(org, { windowKey: WINDOW })) !== null, "(precondition) the anchor row is there before the cancel");
@@ -483,7 +483,7 @@ const NO_REQUESTER_BASELINE =
       await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: TURN } }, ctx);
 
       ok((await countRows()) === before + 1, "🔴 a cancel with NO surviving accumulator still writes the turn.cancelled audit row");
-      const row = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+      const row = (await readAudit({ org, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
       ok(row.detail?.["accounted"] === false, "🔴 …and the row SAYS the accumulator was lost");
       ok(!("steps" in (row.detail ?? {})) && !("ran" in (row.detail ?? {})), "🔴 …and OMITS steps/ran rather than writing a fabricated 0 and []");
 
@@ -552,10 +552,11 @@ const NO_REQUESTER_BASELINE =
       });
     };
 
-    const before = (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+    const driveOrg = resolvePartition({ channel: { continuationToken: "w-764" }, session: { id: "s-764" } } as never).org;
+    const before = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION })).length;
     await drive({ turnId: "t-764", session: "s-764", window: "w-764", delegates: true });
-    const row = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
-    ok((await readAudit({ action: TURN_CANCELLED_ACTION })).length === before + 1, "(precondition) the cancelled arm wrote exactly one new row to read");
+    const row = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+    ok((await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION })).length === before + 1, "(precondition) the cancelled arm wrote exactly one new row to read");
     ok(row.detail?.["accounted"] === true, "a cancel whose turn this process started is ACCOUNTED — the tally saw the whole turn");
     ok(
       JSON.stringify(row.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]),
@@ -572,7 +573,7 @@ const NO_REQUESTER_BASELINE =
     reactions.length = 0;
     await drive({ turnId: "t-765-nodel", session: "s-765-nodel", window: "w-765-nodel", delegates: false });
     ok(reactions.filter((r) => r.emoji === STOP_HAND_UNICODE).length === 0, `🔴 a turn that placed no ✋ removes none — got ${JSON.stringify(reactions)}`);
-    const second = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+    const second = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
     ok(second.detail?.["accounted"] === true, "…and that turn's row is still accounted for");
     ok(JSON.stringify(second.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]), "…with the aborted step's tool named there too");
 
@@ -646,7 +647,8 @@ const NO_REQUESTER_BASELINE =
     };
 
     posts.length = 0;
-    const cancelledBefore = (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+    const strictOrg = resolvePartition({ channel: { continuationToken: "w-1190a" }, session: { id: "s-1190a" } } as never).org;
+    const cancelledBefore = (await readAudit({ org: strictOrg, action: TURN_CANCELLED_ACTION })).length;
     const org1 = await runStoppedTurn({ turnId: "t-1190a", session: "s-1190a", window: "w-1190a", endedAs: "completed", stop: "dropped" });
     const ignored = (await rowsFor(org1, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190a");
     ok(ignored.length === 1, `🔴 an ignored stop writes exactly one ${TURN_STOP_IGNORED_ACTION} row — got ${ignored.length}`);
@@ -657,7 +659,7 @@ const NO_REQUESTER_BASELINE =
     ok(ignored[0]!["endedAs"] === "completed", "🔴 …and HOW the turn really ended — the fact that makes this a finding and not a guess");
     ok(ignored[0]!["platform"] === "discord", "…on the surface the turn was running on");
 
-    ok((await readAudit({ action: TURN_CANCELLED_ACTION })).length === cancelledBefore, "🔴 …and NO turn.cancelled row — the strict row's meaning is unchanged");
+    ok((await readAudit({ org: strictOrg, action: TURN_CANCELLED_ACTION })).length === cancelledBefore, "🔴 …and NO turn.cancelled row — the strict row's meaning is unchanged");
 
     ok(posts.length === 1, `🔴 the ignored-stop arm posts exactly one note — got ${posts.length}`);
     ok(posts[0]!.text === IGNORED_STOP_NOTE, `🔴 …and it says the stop did not take effect — got ${JSON.stringify(posts[0]?.text)}`);

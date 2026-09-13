@@ -8,7 +8,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("../agent/access/config.js");
-const { readAudit } = await import("../agent/audit/audit.js");
+const { getOperationalStore } = await import("../agent/operational/provider.js");
 const tool = (await import("../agent/tools/explain_permission.js")).default as {
   execute(
     input: { tool: string; unattended?: boolean; tainted?: boolean; domain?: string },
@@ -89,8 +89,8 @@ const ctx = {
 }
 
 {
-  const rows = await readAudit({});
-  ok(rows.length === 0, "simulate: a simulation writes NO audit rows — the approval.chain row records decisions, not curiosity");
+  const orgs = await getOperationalStore().listAuditOrgs();
+  ok(orgs.length === 0, `simulate: a simulation writes NO audit rows in ANY org — the approval.chain row records decisions, not curiosity (found: ${orgs.join(", ") || "none"})`);
 }
 
 console.log(`✓ explain-permission: ${passed} assertions — the simulator resolves the real chain (config deny named, unattended/domain previews, shared trace formatter) and records nothing`);

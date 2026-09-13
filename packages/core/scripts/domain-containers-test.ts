@@ -207,7 +207,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
   ok(logged[0].includes("add it to a domain's reach"), "the log names the exact edit (add it to a reach list), not the blockage");
   ok(logged[0].includes('the whole tenant "github/acme"'), "…and it spells out the container form too, so the wide fix is one paste");
 
-  const rows = await readAudit({ action: "github.ambient_skipped" });
+  const rows = await readAudit({ org: "containers-test", action: "github.ambient_skipped" });
   ok(rows.length === 1, "the audit row is written ONCE per surface+reason, not once per delivery");
   ok(rows[0].surface === "github/acme/unrouted", "the row names the surface a deployer would add");
   ok((rows[0].detail as Record<string, unknown>).reason === "no-domain", "the row carries the closed-set reason");
@@ -219,7 +219,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
 
   const bogus = await auditAmbientSkip({ platform: "github", workspace: "acme", surfaceKey: "github/acme/watched" });
   ok(bogus === undefined, "an ENGAGED surface records nothing, even if an ingress calls the recorder by mistake");
-  ok((await readAudit({ action: "github.ambient_skipped" })).length === 1, "…and writes no row");
+  ok((await readAudit({ org: "containers-test", action: "github.ambient_skipped" })).length === 1, "…and writes no row");
 }
 
 {
@@ -448,7 +448,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
   });
   ok(reason === "no-domain", "the recorder records the excluded surface");
   ok(logged[0]?.includes("exclude"), "the operator line names the EXCLUSION — the edit is 'drop it', not 'add a claim you already wrote'");
-  const rows = await readAudit({ action: "github.ambient_skipped", surface: "github/acme/pay-secrets" });
+  const rows = await readAudit({ org: "containers-test", action: "github.ambient_skipped", surface: "github/acme/pay-secrets" });
   ok(String((rows[0]?.detail as Record<string, unknown>)?.via ?? "").startsWith("excluded:"), "…and the audit row carries the exclusion provenance");
 }
 

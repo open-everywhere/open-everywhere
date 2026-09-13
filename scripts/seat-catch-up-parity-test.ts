@@ -11,7 +11,13 @@ import { fetchDiscordSeatCatchUp } from "@open-everywhere/provider-discord/agent
 import { fetchGitHubCatchUpWindow } from "@open-everywhere/provider-github/agent/channels/github-catch-up.js";
 import { fetchLinearCatchUpWindow, linearOrgFromChannelKey } from "@open-everywhere/provider-linear/agent/channels/linear-catch-up.js";
 import { fetchNotionCatchUpWindow } from "@open-everywhere/provider-notion/agent/channels/notion-catch-up.js";
-import { fetchTeamsCatchUpWindow, parseTeamsCatchUpContainer } from "@open-everywhere/provider-teams/agent/channels/teams-catch-up.js";
+import {
+  TEAMS_CATCH_UP_ACTION,
+  fetchTeamsCatchUpWindow,
+  parseTeamsCatchUpContainer,
+  teamsCatchUpScopeFromChannelKey,
+} from "@open-everywhere/provider-teams/agent/channels/teams-catch-up.js";
+import type { AuditInput } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -172,20 +178,85 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
       ],
     };
   };
+  const quiet = async () => {};
   ok(parseTeamsCatchUpContainer("team-1/chan-1")?.teamId === "team-1", "teams: the container carries BOTH ids Graph needs");
   ok(parseTeamsCatchUpContainer("chan-only") === undefined, "teams: a half address reads nothing rather than guessing a team");
-  const out = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request });
+  const out = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request, audit: quiet });
   ok(urls[0]?.includes("/teams/team-1/channels/chan-1/messages"), "teams: the catch-up reads over Microsoft Graph, the transport `read_channel` uses");
   ok(out.length === 2, "teams: both attributable messages survive");
   ok(out.every((m) => m.text !== "no create time"), "teams: a message Graph gave no create time for is DROPPED — core bounds the window by time");
   ok(out.every((m) => m.text !== "no id"), "teams: a message with no id is DROPPED — core dedupes and excludes the trigger by id");
   ok(out.every((m) => m.text !== "no author at all"), "teams: VISIBILITY GATE — a message Graph named no author for never reaches the seat");
   ok(out.some((m) => m.sender === "human") && out.some((m) => m.sender === "bot"), "teams: an application author is MARKED AWARENESS beside the person");
-  const threaded = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: "root-1", sinceMs: SINCE }, { request });
-  ok(urls[1]?.includes("/messages/root-1/replies"), "teams: a reply-chain-bound seat reads that chain");
-  ok(threaded.every((m) => m.type === "thread" && m.threadId === "root-1"), "teams: a reply-chain read tags its messages thread-scoped");
-  const soft = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); } });
+  const threaded = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: "root-1", sinceMs: SINCE }, { request, audit: quiet });
+  ok(urls.length === 3 && urls[1]!.endsWith("/channels/chan-1/messages?$top=50"), "teams: a chain-bound wake still reads the CHANNEL — Graph's channel endpoint carries the chain roots");
+  ok(urls[2]!.includes("/messages/root-1/replies"), "🔴 teams: …and ALSO the chain, because Graph serves roots and replies from different endpoints and neither holds the other");
+  ok(threaded.some((m) => m.type === "thread" && m.threadId === "root-1"), "teams: the chain half tags its messages thread-scoped");
+  ok(threaded.some((m) => m.type === "channel"), "teams: …and the channel half stays container-scoped — the two halves are told apart, not merged into one kind");
+  const soft = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); }, audit: quiet });
   ok(soft.length === 0, "teams: a throwing Graph call fails soft to empty (the requester itself fails LOUD by contract)");
+}
+
+{
+  const ROOT = "1757600000000";
+  const reply = { id: "r1", createdDateTime: AFTER, body: { content: "said in the chain while away" }, from: { user: { id: "E1", displayName: "Ada" } } };
+  const root = { id: ROOT, createdDateTime: "2026-09-11T11:00:00.000Z", body: { content: "the chain root" }, from: { user: { id: "E1" } } };
+  const graph = async (url: string) => ({ value: url.includes(`/messages/${ROOT}/replies`) ? [reply] : [root] });
+
+  const rows: AuditInput[] = [];
+  const audit = async (entry: AuditInput) => {
+    rows.push(entry);
+  };
+  const KEY = "teams/TEN-1/19-chan-1-thread.tacv2";
+
+  const chain = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY }, { request: graph, audit });
+  ok(chain.length === 1 && chain[0]!.text === "said in the chain while away", "🔴 teams/OPE-1817: a seat bound to a reply chain READS THAT CHAIN — the message said while it was idle comes back");
+
+  const channelRead = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE, channelKey: KEY }, { request: graph, audit });
+  ok(channelRead.length === 0, "🔴 teams/OPE-1817 CONTROL: the same recorded Graph answer read at the CHANNEL carries none of the chain's replies — the two live runs shape");
+
+  ok(rows.length === 3 && rows.every((r) => r.action === TEAMS_CATCH_UP_ACTION), "teams/OPE-1817: every GRAPH CALL writes exactly one row, under one action name (two for a chain-bound wake, one for a container-bound one)");
+  ok(rows[0]!.workspace === "TEN-1" && rows[0]!.surface === "19-chan-1-thread.tacv2", "teams/OPE-1817: the row is filed under the seat's own workspace and surface, from the domain-grain channel key");
+  const rootsRow = rows[0]!.detail!;
+  ok(rootsRow["resource"] === "channel-messages" && rootsRow["raw"] === 1 && rootsRow["kept"] === 0, "🔴 teams/OPE-1817: raw 1 / kept 0 on the channel half — the row separates OUR bound dropping a message from Graph returning none");
+  const chainRow = rows[1]!.detail!;
+  ok(chainRow["resource"] === "thread-replies" && String(chainRow["path"]).endsWith(`/messages/${ROOT}/replies`), "🔴 teams/OPE-1817: the second row names WHICH Graph call the read made, and the chain root it addressed");
+  ok(chainRow["status"] === "ok" && chainRow["raw"] === 1 && chainRow["kept"] === 1, "teams/OPE-1817: a healthy read records the raw Graph count beside the kept count");
+  ok(rows[2]!.detail!["resource"] === "channel-messages", "🔴 teams/OPE-1817: a wake naming NO chain makes the channel call ALONE — the field that tells the next red ship which container the seat read");
+
+  rows.length = 0;
+  const empty = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY }, { request: async () => ({ value: [] }), audit });
+  ok(empty.length === 0 && rows.length === 2 && rows.every((r) => r.detail!["status"] === "ok" && r.detail!["raw"] === 0), "🔴 teams/OPE-1817: a genuine EMPTY page records status ok with raw 0");
+  rows.length = 0;
+  const failed = await fetchTeamsCatchUpWindow(
+    { container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY },
+    { request: async (u: string) => { throw new Error(`read: Teams Graph GET failed (HTTP 404) for ${u} — {"error":{"code":"NotFound"}}`); }, audit },
+  );
+  ok(failed.length === 0, "teams/OPE-1817: a 404 still fails soft — a wake never depends on its catch-up");
+  ok(rows.length === 2 && rows.every((r) => r.detail!["status"] === "error" && r.detail!["httpStatus"] === 404), "🔴 teams/OPE-1817: …and both rows say 404, so a 404 and an empty room are no longer the same evidence");
+  ok(!JSON.stringify(rows[0]!.detail).includes("NotFound"), "teams/OPE-1817: the row takes the STATUS out of the vendor error and never the response body");
+
+  rows.length = 0;
+  const halfDown = await fetchTeamsCatchUpWindow(
+    { container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY },
+    { request: async (u: string) => { if (!u.includes("/replies")) throw new Error("read: Teams Graph GET failed (HTTP 500) for x"); return { value: [reply] }; }, audit },
+  );
+  ok(halfDown.length === 1, "🔴 teams/OPE-1817: the channel call failing still returns the CHAIN's messages — fail-soft is per read, not per wake");
+  ok(rows.length === 2 && rows[0]!.detail!["status"] === "error" && rows[1]!.detail!["status"] === "ok", "teams/OPE-1817: …and the two rows say which half failed");
+
+  rows.length = 0;
+  const half = await fetchTeamsCatchUpWindow({ container: "chan-only", sinceMs: SINCE, channelKey: KEY }, { request: graph, audit });
+  ok(half.length === 0 && rows[0]!.detail!["status"] === "unaddressable" && rows[0]!.detail!["resource"] === "none", "teams/OPE-1817: a half address records `unaddressable` — no Graph call was made at all");
+
+  rows.length = 0;
+  await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY }, { request: graph, audit });
+  const dump = JSON.stringify(rows);
+  ok(rows.length === 2 && dump.includes(ROOT), "teams/OPE-1817 PRECONDITION: both rows are in the dump, and it does carry the ids — so the absences below are measurements");
+  ok(!dump.includes("said in the chain") && !dump.includes("the chain root"), "🔴 teams/OPE-1817: NEGATIVE CONTROL — neither call's message body reaches any audit row");
+  ok(!dump.includes("Ada"), "🔴 teams/OPE-1817: …and no author name reaches one either");
+
+  ok(teamsCatchUpScopeFromChannelKey(KEY)?.workspace === "TEN-1", "teams/OPE-1817: the domain-grain key splits into the row's workspace and surface");
+  ok(teamsCatchUpScopeFromChannelKey("slack/W/C") === undefined && teamsCatchUpScopeFromChannelKey(undefined) === undefined, "teams/OPE-1817: a foreign or absent key yields NO scope — the row says `unknown` rather than borrowing another surface's");
 }
 
 {

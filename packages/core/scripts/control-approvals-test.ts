@@ -227,7 +227,7 @@ await client.connect(clientT);
 {
   const { approvalJudgeAdminDisarmed } = await import("../agent/access/approval-judge.js");
   const contradictions = async () =>
-    (await readAudit({ action: "approval.judge.contradicted" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+    (await readAudit({ org: "default", action: "approval.judge.contradicted" })) as { principalId?: string; detail?: Record<string, unknown> }[];
 
   ok("disarm_approval_judge is a declared WRITE tool", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("disarm_approval_judge"));
   ok("rearm_approval_judge is a declared WRITE tool", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("rearm_approval_judge"));
@@ -265,7 +265,7 @@ await client.connect(clientT);
   ok("🔴 the judge is now DISARMED for that domain off ONE row", (await approvalJudgeAdminDisarmed("eng", "default")) === true);
   ok("a sibling domain's judge stays armed", (await approvalJudgeAdminDisarmed("other", "default")) === false);
 
-  const provenance = (await readAudit({ action: "admin.approval.judge_disarm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+  const provenance = (await readAudit({ org: "default", action: "admin.approval.judge_disarm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
   ok("a control-plane provenance row names the door and the operator", provenance.length === 1 && provenance[0]!.principalId === "admin@example.com" && (provenance[0]!.detail ?? {}).domain === "eng");
 
   const refusedRearm = await otherClient.callTool({ name: "rearm_approval_judge", arguments: { org: "default", domain: "eng" } });
@@ -284,7 +284,7 @@ await client.connect(clientT);
   ok("🔴 the judge is ARMED again for that domain", (await approvalJudgeAdminDisarmed("eng", "default")) === false);
   ok("🔴 the cancelled disarm row survives — the ledger is append-only", afterRearm.some((r) => (r.detail ?? {}).humanAction === "admin-disarm" && (r.detail ?? {}).domain === "eng"));
 
-  const rearmProvenance = (await readAudit({ action: "admin.approval.judge_rearm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+  const rearmProvenance = (await readAudit({ org: "default", action: "admin.approval.judge_rearm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
   ok("a control-plane provenance row names the re-arm door and the operator", rearmProvenance.length === 1 && rearmProvenance[0]!.principalId === "admin@example.com" && (rearmProvenance[0]!.detail ?? {}).domain === "eng");
 
   const rbacServer = buildControlServer({ includeWrites: true, actor: "eng-op", roles: ["domain:eng"] });
@@ -330,7 +330,7 @@ await client.connect(clientT);
   ok("🔴 a DOMAIN is left armed by it — `orgWide` is not a wildcard over the per-domain rules", (await approvalJudgeAdminDisarmed("eng", "default")) === false);
   const orgLedgerRow = (await contradictions()).find((r) => (r.detail ?? {}).orgWide === true && (r.detail ?? {}).humanAction === "admin-disarm")!;
   ok("the org-wide ledger row carries the explicit marker, names no domain, and names who acted", orgLedgerRow !== undefined && (orgLedgerRow.detail ?? {}).domain === undefined && orgLedgerRow.principalId === "admin@example.com");
-  const orgProvenance = (await readAudit({ action: "admin.approval.judge_disarm" })) as { detail?: Record<string, unknown> }[];
+  const orgProvenance = (await readAudit({ org: "default", action: "admin.approval.judge_disarm" })) as { detail?: Record<string, unknown> }[];
   ok("the provenance row carries the org marker too, not a domain", orgProvenance.some((r) => (r.detail ?? {}).orgWide === true && (r.detail ?? {}).domain === undefined));
 
   const orgRearm = await callJson(client, "rearm_approval_judge", { org: "default", orgWide: true });

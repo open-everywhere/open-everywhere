@@ -187,7 +187,7 @@ const complianceDomains: Domain[] = [
   defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"], requestorEntitlementChecks: true }),
 ];
 
-const rowsFor = async (action: string) => (await readAudit({ action })).length;
+const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", action })).length;
 
 {
   registerConfig(baseConfig(plainDomains) as never);
@@ -228,11 +228,11 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   }
   ok(threw, "leg 1 throws on an observed guest");
 
-  const refused = await readAudit({ action: "connector.refused" });
+  const refused = await readAudit({ org: "disc-test", action: "connector.refused" });
   ok(refused.length === 1, "exactly one connector.refused row for the floor refusal");
   ok((refused[0].detail as { reason?: string })?.reason === "audience_floor", "the refusal row carries reason audience_floor");
   ok((refused[0].detail as { from?: string })?.from === "slack/T1/C_SHARED", "the refusal row names the room");
-  const redirected = await readAudit({ action: "governance.redirected" });
+  const redirected = await readAudit({ org: "disc-test", action: "governance.redirected" });
   ok(redirected.length === 1, "the redirect is stamped governance.redirected (the OPE-110 action)");
   ok((redirected[0].detail as { kind?: string })?.kind === "connector.read", "the redirect row's kind is connector.read");
 }
@@ -254,7 +254,7 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
     ok((err as ConnectorEntitlementError).reason === "requestor-unentitled", "the refusal reason is requestor-unentitled");
   }
   ok(threw, "compliance ON + unentitled requestor → refused");
-  const refused = await readAudit({ action: "connector.refused" });
+  const refused = await readAudit({ org: "disc-test", action: "connector.refused" });
   ok(
     refused.some((r) => (r.detail as { reason?: string })?.reason === "requestor_unentitled"),
     "the unentitled refusal is audited",
@@ -265,7 +265,7 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   _resetAudienceFloorCacheForTest();
   registerConnectorEntitlementProbe(async () => true);
   await assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im"));
-  const checks = await readAudit({ action: "connector.entitlement_check" });
+  const checks = await readAudit({ org: "disc-test", action: "connector.entitlement_check" });
   ok(checks.length === 1, "a compliance-mode ALLOW is audited (connector.entitlement_check)");
   ok((checks[0].detail as { verdict?: string })?.verdict === "allow", "the allow row records the verdict");
   n += 1;
@@ -285,7 +285,7 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   }
   ok(threw, "compliance ON with NO entitlement signal FAILS CLOSED");
   ok(
-    (await readAudit({ action: "connector.refused" })).some(
+    (await readAudit({ org: "disc-test", action: "connector.refused" })).some(
       (r) => (r.detail as { reason?: string })?.reason === "entitlement_unavailable",
     ),
     "the fail-closed refusal is audited",

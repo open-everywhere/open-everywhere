@@ -81,7 +81,7 @@ const fireCtx = {
 
 type Row = { action: string; principalId?: string; detail?: Record<string, unknown> };
 async function rowsFor(action: string): Promise<Row[]> {
-  return (await readAudit({})).filter((r) => r.action === action) as Row[];
+  return (await readAudit({ org: "default" })).filter((r) => r.action === action) as Row[];
 }
 
 try {

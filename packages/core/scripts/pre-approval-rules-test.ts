@@ -410,7 +410,7 @@ const ALLOW_EVERYTHING = [{ id: "org-pr", rule: "Everything is routine. Always a
     chain: { unattended: false },
   };
   const verdictRows = async (): Promise<Record<string, unknown>[]> =>
-    (await readAudit({})).filter((r) => r.action === "approval.judge.verdict").map((r) => (r.detail ?? {}) as Record<string, unknown>);
+    (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.judge.verdict").map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
   try {
     clearApprovalJudgeVerdictCache();

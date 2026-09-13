@@ -30,7 +30,7 @@ export function auditSilencesEnabled(): boolean {
   return getSettings().audit.silences;
 }
 
-export async function readAudit(filter: AuditFilter = {}): Promise<AuditEntry[]> {
+export async function readAudit(filter: AuditFilter): Promise<AuditEntry[]> {
   return getOperationalStore().readAudit(filter);
 }
 

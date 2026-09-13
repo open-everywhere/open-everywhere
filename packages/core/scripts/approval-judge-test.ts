@@ -217,13 +217,13 @@ const baseInput = {
 };
 async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, unknown> }[]> {
   for (let i = 0; i < 50; i++) {
-    const rows = (await readAudit({})).filter((r) => r.action === "approval.judge.shadow") as {
+    const rows = (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.judge.shadow") as {
       detail?: Record<string, unknown>;
     }[];
     if (rows.length >= expectAtLeast) return rows;
     await new Promise((r) => setTimeout(r, 20));
   }
-  return (await readAudit({})).filter((r) => r.action === "approval.judge.shadow") as { detail?: Record<string, unknown> }[];
+  return (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.judge.shadow") as { detail?: Record<string, unknown> }[];
 }
 
 {
@@ -342,7 +342,7 @@ const spendInput = {
 };
 
 async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[]> {
-  return (await readAudit({})).filter((r) => r.action === "approval.judge.verdict") as { detail?: Record<string, unknown> }[];
+  return (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.judge.verdict") as { detail?: Record<string, unknown> }[];
 }
 
 async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, label: string): Promise<Record<string, unknown>> {
@@ -422,7 +422,7 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
 }
 
 const contradictionRows = async (): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
-  (await readAudit({})).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
+  (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
 
 const contradictionRowsFor = async (org: string): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
   (await readAudit({ org })).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
@@ -583,7 +583,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
 {
   const orgWhere = async (): Promise<{ platform?: string; workspace?: string; detail?: Record<string, unknown> }[]> =>
-    (await readAudit({})).filter(
+    (await readAudit({ org: "test-org" })).filter(
       (r) => r.action === "approval.judge.contradicted" && (r.detail as { orgWide?: unknown } | undefined)?.orgWide === true,
     ) as { platform?: string; workspace?: string; detail?: Record<string, unknown> }[];
 

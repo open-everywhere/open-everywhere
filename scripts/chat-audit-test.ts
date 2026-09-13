@@ -6,7 +6,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
-import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { _resetDeploymentIdentityForTest, deploymentOrg } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-chat-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -45,7 +45,7 @@ const { markRepliedThisTurn } = await import("@open-everywhere/core/agent/channe
 const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/turn-delivery.js");
 
 async function replyPosts(platform: string): Promise<Array<{ detail?: Record<string, unknown> }>> {
-  return (await readAudit({ action: "reply.post" })).filter((r) => r.platform === platform);
+  return (await readAudit({ org: deploymentOrg(), action: "reply.post" })).filter((r) => r.platform === platform);
 }
 
 {
@@ -55,12 +55,12 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   const ctx = { state: { channelId: "C_D1", guildId: "G_D1", conversationId: null }, discord: { post: async (t: string) => void posts.push(t) } };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord: a judged silence writes NO discord.no_reply row (actions-only)");
+  ok((await readAudit({ org: deploymentOrg(), action: "discord.no_reply" })).length === 0, "discord: a judged silence writes NO discord.no_reply row (actions-only)");
 
   await completed("rolled back to v42", ctx);
   const dp = await replyPosts("discord");
   ok(dp.length === 1 && dp[0]!.detail?.route === "terminal" && dp[0]!.detail?.chars === "rolled back to v42".length, "discord: a terminal-prose reply writes ONE reply.post row (route:terminal)");
-  ok((await readAudit({ action: "discord.replied" })).length === 0, "discord: the legacy discord.replied row is GONE");
+  ok((await readAudit({ org: deploymentOrg(), action: "discord.replied" })).length === 0, "discord: the legacy discord.replied row is GONE");
 }
 
 {
@@ -69,7 +69,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   const ctx = { channelId: "C_G1", state: { channelId: "C_G1", guildId: "G_G1" } };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord gateway: an ambient judged silence writes NO discord.no_reply row (actions-only)");
+  ok((await readAudit({ org: deploymentOrg(), action: "discord.no_reply" })).length === 0, "discord gateway: an ambient judged silence writes NO discord.no_reply row (actions-only)");
 }
 
 rmSync(tmp, { recursive: true, force: true });

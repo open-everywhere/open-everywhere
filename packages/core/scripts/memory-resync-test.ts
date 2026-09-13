@@ -484,14 +484,14 @@ overrideSettingsForTest({ window: { topology: true } });
   await fire(ext, "turn.started");
   ok(pubStore.calls.tierVersion > pubP0, "external resync probes the public silo");
   ok(brain.calls.tierVersion === brainP0 && engStore.calls.tierVersion === engP0, "ISOLATION: an external resync NEVER probes an internal silo (the trust gate holds through re-sync too)");
-  const extGate = (await readAudit({ action: "memory.trust_gate" })).find((e) => e.detail?.sessionId === "sup-ext");
+  const extGate = (await readAudit({ org: "default", action: "memory.trust_gate" })).find((e) => e.detail?.sessionId === "sup-ext");
   ok(!!extGate, "WS-4: an external session.started audits a memory.trust_gate row");
   ok(typeof extGate?.detail?.reason === "string" && typeof extGate?.detail?.reads === "number" && extGate?.detail?.sessionId === "sup-ext" && (extGate?.detail as { mode?: unknown }).mode !== undefined, "WS-4: the trust_gate detail carries mode/reads/reason/sessionId (taint-clean — no memory content)");
 
   const engP1 = engStore.calls.tierVersion;
   const a = makeSession("sup-a", SUP_TOKEN);
   await fire(a, "session.started");
-  ok((await readAudit({ action: "memory.trust_gate" })).every((e) => e.detail?.sessionId !== "sup-a"), "WS-4: an internal (trusted) session.started writes NO memory.trust_gate row");
+  ok((await readAudit({ org: "default", action: "memory.trust_gate" })).every((e) => e.detail?.sessionId !== "sup-a"), "WS-4: an internal (trusted) session.started writes NO memory.trust_gate row");
   await brain.provider.writeTier(partition, BRAIN, { "a-only.md": "x" }, "bump A");
   await fire(a, "turn.started");
   ok(engStore.calls.tierVersion === engP1, "ISOLATION: a domain-A supervisor never probes domain-B's silo");
@@ -534,7 +534,7 @@ overrideSettingsForTest({ window: { topology: true } });
   ok(stored["MEMORY.md"] === BRAIN_TEXT, "OPE-245: persistMemoryNow REFUSES the truncation — the domain's brain is intact in the store");
   const parked = Object.keys(stored).find((k) => k.includes(".rejected-"));
   ok(parked !== undefined && stored[parked] === "", "OPE-245: the refused version is parked as a `.rejected-` sibling (recoverable, not silently dropped)");
-  const refusal = (await readAudit({ action: "memory.write_refused" })).find((r) => r.detail?.sessionId === "sup-destroy");
+  const refusal = (await readAudit({ org: "default", action: "memory.write_refused" })).find((r) => r.detail?.sessionId === "sup-destroy");
   ok(refusal !== undefined, "OPE-245: the refusal gets its OWN audit row (it must not depend on the memory.write row, which only fires when a write changed something)");
   const detail = JSON.stringify(refusal?.detail ?? {});
   ok(detail.includes("MEMORY.md") && !detail.includes("chargeback SLA"), "the refusal row carries file names + counts, never memory CONTENT (the taint rule)");
@@ -576,7 +576,7 @@ const setPaymentsMemory = (memory: string[]) => {
   const idx = s.sandbox.files.get("memory/MEMORY.md") ?? "";
   ok(!idx.includes("baseline-silo"), "G4: the on-disk index stops listing the removed silo (otherwise the agent keeps citing a map to nothing and reads the empty grep as 'we never knew that')");
   ok(idx.includes("brain-silo"), "G4: …and still lists the silos that remain");
-  const change = (await readAudit({ action: "memory.index_change" })).find((e) => Array.isArray((e.detail as { removed?: unknown })?.removed));
+  const change = (await readAudit({ org: "default", action: "memory.index_change" })).find((e) => Array.isArray((e.detail as { removed?: unknown })?.removed));
   ok((change?.detail as { removed?: string[] })?.removed?.includes("baseline-silo") === true, "G4: a memory.index_change row carries the removal — the wake-delta PUSH is the only signal the model gets that its frozen index snapshot moved");
   ok(JSON.stringify(change?.detail ?? {}).includes("baseline-silo") && !JSON.stringify(change?.detail ?? {}).includes("# baseline"), "G4: the row carries silo NAMES only, never memory content (the taint rule)");
 

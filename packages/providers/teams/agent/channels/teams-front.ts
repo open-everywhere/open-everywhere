@@ -10,7 +10,7 @@ import {
   type OpenEverywhereTeamsAuth,
 } from "./teams-identity.js";
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
-import { recordTeamsConversationReference } from "./teams-conversation-ref.js";
+import { recordTeamsConversationReference, teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
 import {
   clearTeamsRoomStop,
@@ -412,11 +412,12 @@ export async function liveTeamsDispatch(
     engagementTier = undefined;
   }
   const graphTeamId = await teamsGraphTeamId(a.teamId, a.serviceUrl);
+  const replyChainRootId = teamsReplyChainRoot(a.conversation.id);
   await handleTeamsSingleWindowDispatch(
     {
       surfaceKey: plan.surfaceKey,
       containerKey: plan.partition.surfaceKey,
-      channelId: a.teamsChannelId ?? a.conversation.id,
+      channelId: a.teamsChannelId ?? teamsChannelGrainConversationId(a.conversation.id),
       ...(graphTeamId ? { teamId: graphTeamId } : {}),
       ...(!graphTeamId && a.teamId ? { teamAddressUnresolved: true } : {}),
       auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
@@ -432,6 +433,7 @@ export async function liveTeamsDispatch(
         trust,
       },
       ...(a.replyToId ? { threadRootId: teamsThreadRootActivityId(a) ?? a.replyToId } : {}),
+      ...(replyChainRootId ? { replyChainRootId } : {}),
       engagementTier,
       window: plan.window,
     },

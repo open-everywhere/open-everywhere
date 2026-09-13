@@ -10,7 +10,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.OE_TELEMETRY = "off";
 
-const { REACTION_FEEDBACK_ACTION, classifyEmoji, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { REACTION_FEEDBACK_ACTION, classifyEmoji, deploymentOrg, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { parseTeamsReaction, routeTeamsStopReaction, TEAMS_STOP_REACTION } = await import("../agent/channels/teams-stop.js");
 const { routeTeamsReactionFeedback } = await import("../agent/channels/teams-reaction-feedback.js");
 const { buildTeamsFrontHandler, PUBLIC_TEAMS_ROUTE } = await import("../agent/channels/teams-front.js");
@@ -184,7 +184,7 @@ function captureSink(): { deps: { sink: ReactionSinkDeps }; recorded: IngestedRe
 }
 
 {
-  const before = (await readAudit({ action: REACTION_FEEDBACK_ACTION })).length;
+  const before = (await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length;
   const forwarded: string[] = [];
   const handler = buildTeamsFrontHandler(
     async () => {
@@ -206,7 +206,7 @@ function captureSink(): { deps: { sink: ReactionSinkDeps }; recorded: IngestedRe
   ok(res.status === 200, "the front acks the reaction activity");
   ok(forwarded.length === 0, "…and never forwards it to the native channel");
 
-  const rows = await readAudit({ action: REACTION_FEEDBACK_ACTION });
+  const rows = await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION });
   ok(rows.length === before + 1, "🔴 REACHABILITY: the real front drives a Teams reaction to a durable audit row");
   const detail = rows[0]!.detail as Record<string, unknown>;
   ok(detail["surface"] === "teams" && detail["emoji"] === "like", "…naming the surface and the glyph");
@@ -217,7 +217,7 @@ function captureSink(): { deps: { sink: ReactionSinkDeps }; recorded: IngestedRe
   const args2 = { ...(args as object), waitUntil: (p: Promise<unknown>) => void waited2.push(p) } as unknown as Parameters<typeof handler>[1];
   await handler(new Request(`https://example.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body: JSON.stringify({ type: "conversationUpdate" }) }), args2);
   await Promise.all(waited2);
-  ok((await readAudit({ action: REACTION_FEEDBACK_ACTION })).length === before + 1, "negative control: a conversationUpdate records nothing");
+  ok((await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length === before + 1, "negative control: a conversationUpdate records nothing");
 }
 
 rmSync(dir, { recursive: true, force: true });

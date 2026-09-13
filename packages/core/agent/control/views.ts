@@ -160,7 +160,7 @@ export interface AuditView {
   readonly entries: readonly AuditEntry[];
 }
 
-export async function auditView(filter: AuditFilter = {}): Promise<AuditView> {
+export async function auditView(filter: AuditFilter): Promise<AuditView> {
   const limit = filter.limit ?? 200;
   const f: AuditFilter = { ...filter, limit };
   const entries = await readAudit(f);
@@ -805,11 +805,13 @@ export interface AccessQuery {
   readonly principalId?: string;
 }
 
+export function accessQueryScope(q: AccessQuery = {}): { platform: string; workspace: string; channel: string } {
+  return { platform: q.platform ?? "local", workspace: q.workspace ?? "dev", channel: q.channel ?? "default" };
+}
+
 export async function accessView(q: AccessQuery = {}) {
   const cfg = getConfig();
-  const platform = q.platform ?? "local";
-  const workspace = q.workspace ?? "dev";
-  const channel = q.channel ?? "default";
+  const { platform, workspace, channel } = accessQueryScope(q);
   const req: ResolveRequest = {
     mode: q.mode ?? "channel",
     platform,

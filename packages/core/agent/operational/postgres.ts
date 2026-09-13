@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -19,6 +19,15 @@ export { setOrgContext } from "../memory/postgres.js";
 const ORG_GUC =
   `(org_id = current_setting('app.current_org', true)
      OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`;
+
+function isOrgGucExpr(expr: string | null): boolean {
+  return (
+    expr !== null &&
+    /\borg_id\b/.test(expr) &&
+    /current_setting\(\s*'app\.current_org'(::text)?\s*,\s*true\s*\)/i.test(expr) &&
+    /\bNULLIF\s*\(/i.test(expr)
+  );
+}
 
 const SCHEMA_STATEMENTS: readonly string[] = [
   `DO $$ BEGIN
@@ -695,8 +704,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY routine_org_isolation ON routine
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
-  `CREATE POLICY audit_select ON audit_entry FOR SELECT USING (true)`,
-  `CREATE POLICY audit_insert ON audit_entry FOR INSERT WITH CHECK (true)`,
+  `CREATE POLICY audit_select ON audit_entry FOR SELECT USING ${ORG_GUC}`,
+  `CREATE POLICY audit_insert ON audit_entry FOR INSERT WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY spend_limit_org_isolation ON spend_limit
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -821,13 +830,13 @@ interface ExpectedPolicy {
   readonly name: string;
   readonly permissive: boolean;
   readonly cmd: string;
-  readonly qual: string | null;
-  readonly withCheck: string | null;
+  readonly qual: string | null | ((expr: string | null) => boolean);
+  readonly withCheck: string | null | ((expr: string | null) => boolean);
 }
 const EXPECTED_POLICIES: Readonly<Record<string, readonly ExpectedPolicy[]>> = {
   audit_entry: [
-    { name: "audit_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
-    { name: "audit_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
+    { name: "audit_select", permissive: true, cmd: "r", qual: isOrgGucExpr, withCheck: null },
+    { name: "audit_insert", permissive: true, cmd: "a", qual: null, withCheck: isOrgGucExpr },
   ],
   usage_events: [
     { name: "usage_events_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
@@ -851,8 +860,12 @@ interface FoundPolicy {
   readonly withcheck: string | null;
 }
 
+function expressionMatches(found: string | null, expected: string | null | ((expr: string | null) => boolean)): boolean {
+  return typeof expected === "function" ? expected(found) : found === expected;
+}
+
 function policyMatchesExpected(p: FoundPolicy, e: ExpectedPolicy): boolean {
-  return p.name === e.name && p.permissive === e.permissive && p.cmd === e.cmd && p.qual === e.qual && p.withcheck === e.withCheck;
+  return p.name === e.name && p.permissive === e.permissive && p.cmd === e.cmd && expressionMatches(p.qual, e.qual) && expressionMatches(p.withcheck, e.withCheck);
 }
 
 async function policiesOn(client: PgClient, table: string): Promise<FoundPolicy[]> {
@@ -1789,6 +1802,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async readAudit(filter: AuditFilter) {
+      const org = auditReadOrg(filter);
       const where: string[] = [];
       const params: unknown[] = [];
       const eq = (col: string, val: string | undefined) => {
@@ -1797,7 +1811,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           where.push(`${col} = $${params.length}`);
         }
       };
-      eq("org_id", filter.org);
+      eq("org_id", org);
       eq("platform", filter.platform);
       eq("workspace", filter.workspace);
       eq("surface", filter.surface);

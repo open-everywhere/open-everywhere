@@ -131,7 +131,7 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
 
 type Row = { action: string; detail?: Record<string, unknown> };
 async function rowsFor(action: string): Promise<Row[]> {
-  return (await readAudit({})).filter((r) => r.action === action) as Row[];
+  return (await readAudit({ org: "test-org" })).filter((r) => r.action === action) as Row[];
 }
 
 async function chainRowFor(key: Record<string, unknown>): Promise<Record<string, unknown>> {

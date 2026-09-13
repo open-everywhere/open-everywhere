@@ -340,12 +340,12 @@ for (const [label, err] of [
       await completed("the retry budget is fine — the flake is the cold-start race", { state, github });
     }, { owner: OWNER, repo: REPO, issue_number: "42" });
     ok(posts.length === 0, "🔴 OPE-811: the supervisor's turn-final text posts NOTHING — completion text is not a delivery channel");
-    const { readAudit: readDropped } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const dropped = (await readDropped({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github");
+    const { readAudit: readDropped, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const dropped = (await readDropped({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github");
     ok(dropped.length === 1, "OPE-811: the dropped prose is audited — one turn.supervisor_prose_dropped row on the github partition");
     ok(dropped[0]!.detail?.chars === "the retry budget is fine — the flake is the cold-start race".length, "OPE-811: the row counts the lost completion (a COUNT, never the text)");
     ok(!JSON.stringify(dropped[0]!.detail).includes("cold-start race"), "OPE-811: taint-clean — the dropped answer's text is not in the row");
-    const replied = (await readDropped({ action: "github.replied" }));
+    const replied = (await readDropped({ org: deploymentOrg(), action: "github.replied" }));
     ok(replied.length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO github.replied row");
   }
 
@@ -358,9 +358,9 @@ for (const [label, err] of [
       await completed("this must not post", { state, github });
     });
     ok(posts.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING");
-    const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
-    ok((await readNoTarget({ action: "github.no_target" })).length === 0, "OPE-811: the github.no_target row is retired with the poster that needed it");
-    const dropped = (await readNoTarget({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
+    const { readAudit: readNoTarget, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    ok((await readNoTarget({ org: deploymentOrg(), action: "github.no_target" })).length === 0, "OPE-811: the github.no_target row is retired with the poster that needed it");
+    const dropped = (await readNoTarget({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
     ok(dropped.length === 1, "OPE-811: the undelivered completion is recorded as a dropped-prose row instead");
   }
 
@@ -395,8 +395,8 @@ for (const [label, err] of [
       await completed("NO_REPLY", { state, github });
     }, { owner: OWNER, repo: REPO, issue_number: "42" });
     ok(posts.length === 0, "NO_REPLY suppresses the supervisor reply");
-    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const silences = await readAudit({ action: "github.no_reply" });
+    const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const silences = await readAudit({ org: deploymentOrg(), action: "github.no_reply" });
     ok(silences.length >= 1, "judged silence writes a github.no_reply audit row (audited silence, Slack/Notion parity)");
   }
 
@@ -421,8 +421,8 @@ for (const [label, err] of [
   }
 
   {
-    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const nativeSilenceRows = async () => (await readAudit({ action: "github.no_reply" })).filter((r) => r.detail?.route === "native");
+    const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const nativeSilenceRows = async () => (await readAudit({ org: deploymentOrg(), action: "github.no_reply" })).filter((r) => r.detail?.route === "native");
     const nonSupervisor = () => ({ ...supervisorState(), oeSupervisor: undefined, issueNumber: 42 });
 
     {
@@ -473,10 +473,10 @@ for (const [label, err] of [
     }
 
     {
-      const { readAudit: readPosts } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const { readAudit: readPosts, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
       const { _resetGitHubInstallationTokenCache } = await import("../agent/channels/github-post-arm.js");
       const { generateKeyPairSync } = await import("node:crypto");
-      const replyPostRows = async () => (await readPosts({ action: "reply.post" })).filter((r) => r.platform === "github");
+      const replyPostRows = async () => (await readPosts({ org: deploymentOrg(), action: "reply.post" })).filter((r) => r.platform === "github");
 
       const state = { ...nonSupervisor(), triggeringUserLogin: "octo-reviewer" };
       const posts: unknown[] = [];
@@ -540,9 +540,9 @@ for (const [label, err] of [
 
     {
       const { _resetGitHubInstallationTokenCache } = await import("../agent/channels/github-post-arm.js");
-      const { readAudit: readPosts2 } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const { readAudit: readPosts2, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
       const { generateKeyPairSync } = await import("node:crypto");
-      const replyPostRows2 = async () => (await readPosts2({ action: "reply.post" })).filter((r) => r.platform === "github");
+      const replyPostRows2 = async () => (await readPosts2({ org: deploymentOrg(), action: "reply.post" })).filter((r) => r.platform === "github");
       const state = { ...nonSupervisor(), conversationKind: "review_thread", issueNumber: null, pullRequestNumber: 7, reviewCommentId: 11, triggeringUserLogin: "octo-reviewer" };
       const posts: unknown[] = [];
       const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
@@ -586,8 +586,8 @@ for (const [label, err] of [
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
     await inSession(() => githubChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state, github }));
     ok(posts.length === 0, "a failed supervisor turn posts NO error comment (reserved posture)");
-    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const fails = await readAudit({ action: "github.supervisor_turn_failed" });
+    const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const fails = await readAudit({ org: deploymentOrg(), action: "github.supervisor_turn_failed" });
     ok(fails.length >= 1, "the failed supervisor turn is audited instead");
   }
 }

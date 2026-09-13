@@ -72,6 +72,10 @@ export function registerSlackFixtureCodec(): void {
     threadRef: (origin: SlackOrigin) => ({ channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) }),
     isThreadScoped: (origin: SlackOrigin) => typeof origin.threadTs === "string" && origin.threadTs.length > 0,
     containerId: (origin: SlackOrigin) => origin.channelId,
+    carryPlacement: (target: SlackOrigin, source: SlackOrigin) =>
+      !(target.threadTs && target.threadTs.length > 0) && !(target.replyAnchorTs && target.replyAnchorTs.length > 0) && typeof source.replyAnchorTs === "string" && source.replyAnchorTs.length > 0
+        ? { ...target, replyAnchorTs: source.replyAnchorTs }
+        : target,
   });
 }
 
