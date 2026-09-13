@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +20,9 @@ for (;;) {
   repoRoot = up;
 }
 const rel = (p: string): string => relative(repoRoot, p) || ".";
+
+const rootZod = createRequire(import.meta.url)("zod/package.json") as { version: string };
+const rootZodVersion = rootZod.version;
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -235,6 +239,26 @@ for (const eveDir of copies) {
     compactionSrc.includes("__oeNoteNoOpCompaction("),
     `anchor: ${where} carries __oeNoteNoOpCompaction (OPE-689) — the event-contract backstop. Without it a compaction that changes nothing after the trigger fired passes silently as compaction.completed, which is how the defect stayed invisible for weeks`,
   );
+  const pnpmDir = join(eveDir, "dist", "src", "node_modules", ".pnpm");
+  ok(
+    existsSync(pnpmDir),
+    `zod: ${where}/dist/src/node_modules/.pnpm exists — that is where eve vendors the zod behind \`#compiled/zod\`. If eve stopped vendoring (or moved the directory), re-read dist/src/tools/schema.js and re-derive which zod rehydrates an MCP inputSchema before relaxing this gate (OPE-1751)`,
+  );
+  const vendoredZod4 = existsSync(pnpmDir)
+    ? readdirSync(pnpmDir)
+        .filter((d) => /^zod@4\./.test(d))
+        .map((d) => d.slice("zod@".length))
+        .sort()
+    : [];
+  ok(
+    vendoredZod4.length === 1,
+    `zod: ${where} vendors exactly ONE zod v4 under dist/src/node_modules/.pnpm — found ${vendoredZod4.length === 0 ? "none" : vendoredZod4.join(", ")}. \`#compiled/zod\` is the v4 copy (it exports fromJSONSchema); with two of them this gate cannot say which one rehydrates a tool schema (OPE-1751)`,
+  );
+  const eveVendoredZod = vendoredZod4[0];
+  ok(
+    typeof eveVendoredZod === "string" && rootZodVersion === eveVendoredZod,
+    `zod: root zod ${rootZodVersion} != eve's vendored zod ${eveVendoredZod ?? "unknown"} — every session that mounts a connector tool with an allOf dies (OPE-1751). Pin the root zod to ${eveVendoredZod ?? "eve's vendored version"} exactly: the version in every package.json that declares zod AND the root \`overrides.zod\`, which is what stops npm nesting a private copy for the packages that pin zod exactly (@agent-browser/eve, @vercel/cli-config). Then \`npm install\` and confirm \`npm ls zod\` shows one version and exits 0`,
+  );
   for (const dead of RETIRED) {
     ok(
       !src.includes(dead.symbol),
@@ -260,5 +284,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor, its no-op backstop, the compaction event-contract stamp, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor, its no-op backstop, the compaction event-contract stamp, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion} matches eve's vendored zod)\n`,
 );
