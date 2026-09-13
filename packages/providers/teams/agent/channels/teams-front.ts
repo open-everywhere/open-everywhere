@@ -21,6 +21,7 @@ import {
   teamsRoomWatchStopped,
   type TeamsEngagementVerdict,
 } from "./teams-engagement.js";
+import { teamsGraphTeamId } from "./teams-graph-team-id.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -410,12 +411,14 @@ export async function liveTeamsDispatch(
   } catch {
     engagementTier = undefined;
   }
+  const graphTeamId = await teamsGraphTeamId(a.teamId, a.serviceUrl);
   await handleTeamsSingleWindowDispatch(
     {
       surfaceKey: plan.surfaceKey,
       containerKey: plan.partition.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
-      ...(a.teamId ? { teamId: a.teamId } : {}),
+      ...(graphTeamId ? { teamId: graphTeamId } : {}),
+      ...(!graphTeamId && a.teamId ? { teamAddressUnresolved: true } : {}),
       auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
         surfaceKey: plan.surfaceKey,
         ...teamsRoomGroupKey(auth),

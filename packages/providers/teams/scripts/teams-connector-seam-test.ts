@@ -112,6 +112,10 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
       file: "agent/channels/teams-directory.ts",
       why: "the conversation-member directory read — a GET, same posture as the roster probe.",
     },
+    {
+      file: "agent/channels/teams-graph-team-id.ts",
+      why: "the team-details read that maps the Connector's team id onto the Microsoft 365 group id Graph takes (OPE-1808) — a GET. Cached per team, so a RESOLVED team costs one uncovered read per process; a team that does not resolve is re-read on every wake, because a failure is deliberately never cached.",
+    },
   ];
 
   const found: string[] = [];

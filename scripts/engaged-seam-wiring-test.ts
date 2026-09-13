@@ -23,7 +23,7 @@ registerLinearProvider();
 registerNotionProvider();
 const { githubOnComment, githubAmbientLegAdmission } = await import("@open-everywhere/provider-github/agent/channels/github.js");
 const { buildGitHubAuth } = await import("@open-everywhere/provider-github/agent/channels/github-identity.js");
-const { linearOnAgentSession, _resetLinearGuestCache } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
+const { linearOnAgentSession, _resetLinearGuestCache, _resetLinearViewerCache } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
 const { handleNotionDelivery } = await import("@open-everywhere/provider-notion/agent/channels/notion-webhook.js");
 const { dispatchTurn, authForRelayMessage, engagementCoordsFor } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
@@ -175,6 +175,25 @@ const NOW = "2026-05-12T11:30:00.000Z";
     session: { auth: { current: { attributes: { organization_id: ORG, team_id: TEAM }, principalId: "creator-1", principalType: "linear-user" } } },
   } as never);
 
+  const APP_NAME = "OeApp";
+  const APP_USER_ID = "app-user-1";
+  const RE_MENTION_COMMENT = "c-rementioned";
+  const RE_MENTION_COMMENT_2 = "c-rementioned-2";
+  const PLAIN_PROMPT_COMMENT = "c-plain-prompt";
+  const SELF_MENTION_COMMENT = "c-self-mention";
+  const AUTHORLESS_MENTION_COMMENT = "c-authorless-mention";
+  const GUEST_MENTION_COMMENT = "c-guest-mention";
+  const MENTION_BODY = `@${APP_NAME} which build token was posted while you were not listening?`;
+  const MEMBER = { id: "member-1", name: "Member", guest: false };
+  const PROMPT_COMMENTS: readonly { id: string; body: string; user?: { id: string; name?: string; guest?: boolean } }[] = [
+    { id: RE_MENTION_COMMENT, body: MENTION_BODY, user: MEMBER },
+    { id: RE_MENTION_COMMENT_2, body: MENTION_BODY, user: MEMBER },
+    { id: PLAIN_PROMPT_COMMENT, body: "and what's that plus 6?", user: MEMBER },
+    { id: SELF_MENTION_COMMENT, body: MENTION_BODY, user: { id: APP_USER_ID, name: APP_NAME } },
+    { id: AUTHORLESS_MENTION_COMMENT, body: MENTION_BODY },
+    { id: GUEST_MENTION_COMMENT, body: MENTION_BODY, user: { id: "guest-1", name: "Guest", guest: true } },
+  ];
+
   const resp = (status: number, body: unknown): Response =>
     ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
   const activities: string[] = [];
@@ -185,6 +204,20 @@ const NOW = "2026-05-12T11:30:00.000Z";
     if (!u.includes("api.linear.app")) return resp(500, { error: "unexpected host" });
     if (body.includes("OeUserGuest")) return resp(200, { data: { user: { guest: false } } });
     if (body.includes("OeIssueTeam")) return resp(200, { data: { issue: { team: { id: TEAM, private: true } } } });
+    if (body.includes("OeViewer")) return resp(200, { data: { viewer: { id: APP_USER_ID, name: APP_NAME, displayName: APP_NAME } } });
+    if (body.includes("OeAmbientComment")) {
+      const id = PROMPT_COMMENTS.find((c) => body.includes(c.id)) ?? PROMPT_COMMENTS[0]!;
+      return resp(200, {
+        data: {
+          comment: {
+            id: id.id,
+            body: id.body,
+            ...(id.user === undefined ? {} : { user: id.user }),
+            issue: { id: ISSUE, identifier: "WIR-1", team: { id: TEAM, private: true } },
+          },
+        },
+      });
+    }
     if (refuseNextActivity && body.includes("AgentActivityCreate")) {
       refuseNextActivity = false;
       return resp(200, { data: { agentActivityCreate: { success: false } } });
@@ -306,6 +339,114 @@ const NOW = "2026-05-12T11:30:00.000Z";
     await linearOnAgentSession({} as never, event("sess-4") as never);
     const afterFresh = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
     ok(afterFresh !== null && afterFresh.stopped === false, "🔴 linear: NEGATIVE CONTROL — a NEW Agent Session still lifts it, so the guard is per delivery and not a blanket refusal");
+
+    _resetLinearGuestCache();
+    _resetLinearViewerCache();
+    activities.length = 0;
+    ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — the issue is stood down again, so the re-address below has a stop to lift");
+    const reMention = await linearOnAgentSession({} as never, {
+      ...(event("sess-4") as Record<string, unknown>),
+      action: "prompted",
+      delivery: { id: "d-sess-4-rementioned" },
+      agentActivity: { sourceCommentId: RE_MENTION_COMMENT },
+    } as never);
+    ok(
+      reMention !== null && (reMention as { auth?: unknown }).auth !== undefined,
+      "🔴 OPE-1807 linear: a `prompted` delivery whose OWN comment @mentions the app DISPATCHES on a stood-down issue — an explicit re-address is the way back in, whatever event shape carries it",
+    );
+    const afterReMention = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
+    ok(
+      afterReMention !== null && afterReMention.stopped === false,
+      "🔴 OPE-1807 linear: …and the SAME call CLEARED the stop, keyed on the COMMENT — a session-keyed lift would find `sess-4`'s once-key spent, no-op, and leave the stop standing",
+    );
+    ok(
+      !activities.some((b) => b.includes("Standing down on this issue")),
+      "🔴 OPE-1807 linear: …and it posts NO stand-down line — the ack that tells a member to @mention must never be the answer to their @mention",
+    );
+
+    _resetLinearGuestCache();
+    activities.length = 0;
+    ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — stopped again for the negative control");
+    const plainPrompt = await linearOnAgentSession({} as never, {
+      ...(event("sess-5") as Record<string, unknown>),
+      action: "prompted",
+      delivery: { id: "d-sess-5-plain" },
+      agentActivity: { sourceCommentId: PLAIN_PROMPT_COMMENT },
+    } as never);
+    ok(
+      plainPrompt === null,
+      "🔴 OPE-1807 linear: NEGATIVE CONTROL — a comment-backed `prompted` whose comment names NOBODY is still SUPPRESSED, so the lift is driven by the comment's @mention and not by the presence of a comment",
+    );
+    const afterPlainPrompt = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
+    ok(afterPlainPrompt !== null && afterPlainPrompt.stopped === true, "🔴 OPE-1807 linear: NEGATIVE CONTROL — …and the stop STANDS, so a plain follow-up cannot re-invite");
+    ok(
+      activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+      "🔴 OPE-1807 linear: NEGATIVE CONTROL — …and the session is still closed with the fixed host line, exactly once",
+    );
+
+    const refusedLift = async (label: string, sessionId: string, commentId: string): Promise<void> => {
+      _resetLinearGuestCache();
+      activities.length = 0;
+      ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), `linear: precondition — stopped for ${label}`);
+      const res2 = await linearOnAgentSession({} as never, {
+        ...(event(sessionId) as Record<string, unknown>),
+        action: "prompted",
+        delivery: { id: `d-${sessionId}-${commentId}` },
+        agentActivity: { sourceCommentId: commentId },
+      } as never);
+      ok(res2 === null, `🔴 OPE-1807 linear: ${label} — the delivery is SUPPRESSED, not lifted`);
+      const after2 = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
+      ok(after2 !== null && after2.stopped === true, `🔴 OPE-1807 linear: ${label} — …and the stop STANDS, so this author cannot re-open an issue somebody closed`);
+      ok(
+        activities.filter((b) => b.includes("Standing down on this issue")).length === 1,
+        `🔴 OPE-1807 linear: ${label} — …and exactly ONE fixed line is posted, so a refused lift never doubles up with the external-policy line`,
+      );
+    };
+
+    await refusedLift("a SELF-authored @mention (our own reply)", "sess-6", SELF_MENTION_COMMENT);
+    await refusedLift("an AUTHOR-LESS @mention (a bot or integration wrote it)", "sess-7", AUTHORLESS_MENTION_COMMENT);
+
+    registerConfig({
+      loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+      loadDomains: () => [{ name: "org", match: "org", externalPolicy: { authorGrain: "withhold" } }],
+      loadSilos: () => [], domainsForSurface: () => [],
+    } as never);
+    await refusedLift("a GUEST's @mention under a `withhold` author grain", "sess-8", GUEST_MENTION_COMMENT);
+    registerConfig({
+      loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+      loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
+    } as never);
+
+    _resetLinearGuestCache();
+    activities.length = 0;
+    ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — stopped for the member re-address control");
+    const memberLift = await linearOnAgentSession({} as never, {
+      ...(event("sess-9") as Record<string, unknown>),
+      action: "prompted",
+      delivery: { id: "d-sess-9-member" },
+      agentActivity: { sourceCommentId: RE_MENTION_COMMENT_2 },
+    } as never);
+    ok(
+      memberLift !== null && (memberLift as { auth?: unknown }).auth !== undefined,
+      "🔴 OPE-1807 linear: NEGATIVE CONTROL — a MEMBER's @mention still lifts, so the author floor refuses by author and not by default",
+    );
+    const afterMemberLift = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
+    ok(afterMemberLift !== null && afterMemberLift.stopped === false, "🔴 OPE-1807 linear: NEGATIVE CONTROL — …and the stop is cleared");
+
+    _resetLinearGuestCache();
+    ok(await store.markStopped(part.org, part.surfaceKey, ISSUE), "linear: precondition — stopped again, on an issue already lifted by this comment");
+    const replayedLift = await linearOnAgentSession({} as never, {
+      ...(event("sess-9") as Record<string, unknown>),
+      action: "prompted",
+      delivery: { id: "d-sess-9-member-replay" },
+      agentActivity: { sourceCommentId: RE_MENTION_COMMENT_2 },
+    } as never);
+    const afterReplayedLift = await store.getEngagement(part.org, part.surfaceKey, ISSUE);
+    ok(
+      afterReplayedLift !== null && afterReplayedLift.stopped === true,
+      "🔴 OPE-1807 linear: a REDELIVERED re-address leaves the NEW stop in place — the once-guard keys on the comment, so replaying one @mention cannot lift twice",
+    );
+    ok(replayedLift !== null, "OPE-1807 linear: …and the delivery still dispatches, the same trade a redelivered `created` has always made — the guard protects the row, not the turn");
   });
 }
 

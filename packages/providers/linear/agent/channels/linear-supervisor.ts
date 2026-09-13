@@ -72,7 +72,7 @@ export interface LinearAmbientClassification {
   readonly reason: string;
 }
 
-function mentionsApp(body: string, name: string): boolean {
+export function linearBodyMentionsApp(body: string, name: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return new RegExp(`@${escaped}(?=$|[^A-Za-z0-9_-])`, "iu").test(body);
 }
@@ -86,7 +86,7 @@ export function classifyLinearAmbientComment(c: LinearAmbientComment, viewer: Li
   if (c.parentAuthorId && c.parentAuthorId === viewer.id) {
     return { addressing: "drop", reason: "reply inside the app's own comment thread — owned by the agent-session path" };
   }
-  if (c.body && mentionsApp(c.body, viewer.name)) {
+  if (c.body && linearBodyMentionsApp(c.body, viewer.name)) {
     return { addressing: "drop", reason: "app @mention — owned by the agent-session path" };
   }
   return { addressing: "channel-watch", reason: "ambient comment — judged by the team supervisor" };

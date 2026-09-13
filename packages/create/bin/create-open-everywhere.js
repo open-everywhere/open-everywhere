@@ -12,7 +12,9 @@ let tsxCli;
 try {
   const tsxPkgPath = require.resolve("tsx/package.json");
   const tsxPkg = JSON.parse(readFileSync(tsxPkgPath, "utf8"));
-  tsxCli = join(dirname(tsxPkgPath), tsxPkg.bin);
+  const tsxBin = typeof tsxPkg.bin === "string" ? tsxPkg.bin : tsxPkg.bin?.tsx;
+  if (typeof tsxBin !== "string") throw new Error(`tsx@${tsxPkg.version} declares no usable "bin" entry`);
+  tsxCli = join(dirname(tsxPkgPath), tsxBin);
 } catch (err) {
   console.error("create-open-everywhere: could not resolve its `tsx` dependency — try `npm install` in this package first.");
   console.error(err instanceof Error ? err.message : err);

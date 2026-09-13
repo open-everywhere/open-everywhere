@@ -14,6 +14,10 @@ export const PUBLISHABLE_PACKAGES = [
   "packages/providers/teams",
 ] as const;
 
+export const PUBLISHABLE_BIN_PACKAGES = ["packages/create"] as const;
+
+export const ALL_PUBLISHABLE_PACKAGES = [...PUBLISHABLE_PACKAGES, ...PUBLISHABLE_BIN_PACKAGES] as const;
+
 function walkTs(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = join(dir, entry.name);

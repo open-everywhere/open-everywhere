@@ -13,6 +13,7 @@ import {
   _resetTeamsGraphTokenCache,
   type TeamsGraphRequester,
 } from "../agent/channels/teams-read.js";
+import { _seedTeamsGraphTeamIdForTest } from "../agent/channels/teams-graph-team-id.js";
 import {
   decodeJwtRoles,
   boundaryFromRoles,
@@ -98,6 +99,7 @@ const RAW_ENG = "19:channel-eng@thread.tacv2";
 const RAW_STANDUP = "19:channel-standup@thread.tacv2";
 const RAW_OUTSIDE = "19:channel-outside@thread.tacv2";
 const RAW_TEAM = "19:team-eng@thread.tacv2";
+const GROUP_TEAM = "00000000-0000-4000-8000-000000000021";
 
 registerConfig({
   loadBundles: () => [],
@@ -118,6 +120,8 @@ function teamsCtx(input: TeamsIdentityInput): BindableContext {
   const auth = buildTeamsAuth(input);
   return { channel: { kind: "teams" }, session: { auth: { current: auth } } } as unknown as BindableContext;
 }
+
+_seedTeamsGraphTeamIdForTest(RAW_TEAM, GROUP_TEAM);
 
 const engCtx = teamsCtx({
   userId: "29:user-alice",
@@ -141,7 +145,7 @@ const engCtx = teamsCtx({
     };
   };
   const lines = await teamsReadAdapter.readChannel(engCtx, RAW_ENG, 50, req);
-  ok(calls.length === 1 && calls[0] === `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(RAW_TEAM)}/channels/${encodeURIComponent(RAW_ENG)}/messages?$top=50`, "readChannel: builds the exact Graph URL with the RAW team + channel ids");
+  ok(calls.length === 1 && calls[0] === `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(GROUP_TEAM)}/channels/${encodeURIComponent(RAW_ENG)}/messages?$top=50`, "readChannel: builds the exact Graph URL with the RESOLVED group id and the raw channel id — the Connector-spelled team id never reaches Graph");
   ok(JSON.stringify(lines) === JSON.stringify([
     { author: "Alice", ts: "100", text: "first & best" },
     { author: "Bob", ts: "200", text: "second" },
@@ -155,7 +159,7 @@ const engCtx = teamsCtx({
     return { value: [{ id: "r1", createdDateTime: "2021-01-01T00:05:00Z", messageType: "message", from: { user: { displayName: "Carol" } }, body: { contentType: "html", content: "a reply" } }] };
   };
   const lines = await teamsReadAdapter.readThread(engCtx, RAW_ENG, "root-42", 50, req);
-  ok(calls[0] === `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(RAW_TEAM)}/channels/${encodeURIComponent(RAW_ENG)}/messages/${encodeURIComponent("root-42")}/replies?$top=50`, "readThread: builds the replies URL against the root message id");
+  ok(calls[0] === `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(GROUP_TEAM)}/channels/${encodeURIComponent(RAW_ENG)}/messages/${encodeURIComponent("root-42")}/replies?$top=50`, "readThread: builds the replies URL against the root message id");
   ok(lines.length === 1 && lines[0].text === "a reply", "readThread: renders the reply");
 }
 

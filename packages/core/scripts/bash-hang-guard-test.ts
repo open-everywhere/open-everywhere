@@ -54,7 +54,7 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
     "config: the default clears the ~400s foreground command measured returning cleanly in prod (OPE-132)",
   );
   overrideSettingsForTest({ bash: { timeoutMs: 90000 } });
-  ok(bashTimeoutMs() === 90_000, "config: OE_BASH_TIMEOUT_MS overrides the default");
+  ok(bashTimeoutMs() === 90_000, "config: the bash.timeoutMs setting overrides the default");
   overrideSettingsForTest({ bash: { timeoutMs: 0 } });
   ok(bashTimeoutMs() === 0, "config: 0 disables the timeout");
   overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
@@ -65,7 +65,7 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
   overrideSettingsForTest({ bash: { backgroundGuard: true } });
   ok(backgroundGuardEnabled(), "config: the background guard is armed by default");
   overrideSettingsForTest({ bash: { backgroundGuard: false } });
-  ok(!backgroundGuardEnabled(), "config: OE_BASH_BACKGROUND_GUARD=off disarms the detector");
+  ok(!backgroundGuardEnabled(), "config: bash.backgroundGuard false disarms the detector");
   overrideSettingsForTest({ bash: { backgroundGuard: true } });
 }
 
@@ -167,14 +167,14 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
   const { tool, ran } = fakeBash();
   const wrapped = withBashHangGuard(tool);
   await wrapped.execute({ command: "python3 -m http.server 8000 &" }, fakeCtx);
-  ok(ran.length === 1, "disable: OE_BASH_BACKGROUND_GUARD=off lets the broken form through (the escape hatch works)");
+  ok(ran.length === 1, "disable: bash.backgroundGuard false lets the broken form through (the escape hatch works)");
   overrideSettingsForTest({ bash: { backgroundGuard: true } });
 
   overrideSettingsForTest({ bash: { timeoutMs: 0 } });
   const slow = fakeBash({ delayMs: 30 });
   const wrapped2 = withBashHangGuard(slow.tool);
   const out = (await wrapped2.execute({ command: "sleep 0.03" }, fakeCtx)) as { exitCode: number };
-  ok(out.exitCode === 0 && slow.ran.length === 1, "disable: OE_BASH_TIMEOUT_MS=0 removes the timeout race entirely");
+  ok(out.exitCode === 0 && slow.ran.length === 1, "disable: bash.timeoutMs 0 removes the timeout race entirely");
   overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
 }
 

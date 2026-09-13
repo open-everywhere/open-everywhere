@@ -57,8 +57,13 @@ for (const [file, source] of sources) {
   dynamicSites.push(...scan.dynamic);
 }
 
+const DOC_SCAN_EXCLUDE_PREFIX = "docs/inventory/";
+const isAuditInventory = (file: string): boolean => file.startsWith(DOC_SCAN_EXCLUDE_PREFIX);
+
 const documentation = [
-  ...DOC_ROOTS.flatMap((root) => filesUnder(root, (name) => name.endsWith(".md"))),
+  ...DOC_ROOTS.flatMap((root) => filesUnder(root, (name) => name.endsWith(".md"))).filter(
+    (file) => !isAuditInventory(file)
+  ),
   ...DOC_FILES,
 ]
   .map((p) => {
@@ -177,10 +182,18 @@ for (const file of DOC_TABLES_NOT_ENV.keys()) {
   }
 }
 
+if (!existsSync(join(LINT_SOURCE_ROOT, DOC_SCAN_EXCLUDE_PREFIX))) {
+  reds.push(
+    `STALE DOC_SCAN_EXCLUDE_PREFIX: ${DOC_SCAN_EXCLUDE_PREFIX} is excluded from this lint's documentation corpus ` +
+      `in scripts/env-docs-lint.ts but no such directory exists — it was renamed or deleted. Update the prefix, or ` +
+      `a renamed inventory page counts as documentation again and arm 1 goes permanently green.`
+  );
+}
+
 function documentedEnvNames(): Set<string> {
   const names = new Set<string>();
   for (const file of DOC_ROOTS.flatMap((root) => filesUnder(root, (name) => name.endsWith(".md")))) {
-    if (DOC_TABLES_NOT_ENV.has(file)) continue;
+    if (DOC_TABLES_NOT_ENV.has(file) || isAuditInventory(file)) continue;
     for (const m of readFileSync(file, "utf8").matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)) names.add(m[1]);
   }
   for (const file of DOC_FILES) {

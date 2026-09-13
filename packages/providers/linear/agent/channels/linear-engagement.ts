@@ -8,7 +8,7 @@ import {
   type Partition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildLinearAuth } from "./linear-identity.js";
-import type { LinearAmbientAddressing } from "./linear-supervisor.js";
+import { linearBodyMentionsApp, type LinearAmbientAddressing } from "./linear-supervisor.js";
 
 export interface LinearSeamFacts {
   readonly organizationId: string | undefined;
@@ -73,6 +73,39 @@ export async function resolveLinearEngagement(
   return { kind: "hold", anchor, reason: decision.reason, stopped: row?.stopped === true };
 }
 
+export type LinearPromptReAddress = "mention" | "none" | "unreadable";
+
+export function linearPromptReAddress(body: string | undefined, viewerName: string | undefined): LinearPromptReAddress {
+  if (body === undefined || body.length === 0) return "unreadable";
+  if (viewerName === undefined || viewerName.length === 0) return "unreadable";
+  return linearBodyMentionsApp(body, viewerName) ? "mention" : "none";
+}
+
+export type LinearStandDownVerdict =
+  | { readonly kind: "pass-through"; readonly reason: string }
+  | { readonly kind: "lift"; readonly anchor: string; readonly reason: string }
+  | { readonly kind: "suppress"; readonly anchor: string; readonly reason: string };
+
+export function linearStandDownVerdict(input: {
+  readonly action: string | undefined;
+  readonly anchor: string | null;
+  readonly reAddress: LinearPromptReAddress;
+}): LinearStandDownVerdict {
+  if (input.action !== "prompted") return { kind: "pass-through", reason: "not a `prompted` follow-up — this gate reads no other action" };
+  if (input.anchor === null) return { kind: "pass-through", reason: "no stored stand-down holds on this issue" };
+  if (input.reAddress === "mention") {
+    return { kind: "lift", anchor: input.anchor, reason: "the prompt's own comment @mentions the app — an explicit re-address is the way back in" };
+  }
+  return {
+    kind: "suppress",
+    anchor: input.anchor,
+    reason:
+      input.reAddress === "none"
+        ? "a follow-up that addresses nobody, on an issue the agent was asked to leave"
+        : "the prompt's comment could not be read, so no re-address is proved — the stop stands",
+  };
+}
+
 export async function linearStandDownHolds(f: LinearSeamFacts, deps: LinearEngagementDeps = {}): Promise<string | null> {
   const anchor = linearEngagementAnchor(f);
   if (!anchor) return null;
@@ -83,16 +116,16 @@ export async function linearStandDownHolds(f: LinearSeamFacts, deps: LinearEngag
   return row?.stopped === true ? anchor : null;
 }
 
-export async function markLinearEngaged(f: LinearSeamFacts, agentSessionId: string | undefined, deps: LinearEngagementDeps = {}): Promise<string | null> {
+export async function markLinearEngaged(f: LinearSeamFacts, onceKey: string | undefined, deps: LinearEngagementDeps = {}): Promise<string | null> {
   const anchor = linearEngagementAnchor(f);
   if (!anchor) return null;
   const partition = linearSeamPartition(f);
   if (!partition) return null;
   const now = deps.now ?? (() => new Date().toISOString());
   const atIso = now();
-  if (agentSessionId !== undefined && agentSessionId.length > 0) {
+  if (onceKey !== undefined && onceKey.length > 0) {
     const seen = deps.markEventSeen ?? liveMarkEngageSeen;
-    if (!(await seen(partition.org, `linear-engage:${anchor}:${agentSessionId}`, atIso))) return null;
+    if (!(await seen(partition.org, `linear-engage:${anchor}:${onceKey}`, atIso))) return null;
   }
   const mark = deps.markEngaged ?? ((p, key, at) => markThreadEngaged(p, key, at, { participating: true }));
   await mark(partition, anchor, atIso);

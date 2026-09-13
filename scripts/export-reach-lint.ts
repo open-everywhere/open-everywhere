@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codeOnly } from "./ambient-env-manifest.js";
-import { PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
+import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -338,7 +338,7 @@ function makeResolver(root: string): (from: string, spec: string) => string | nu
 
 function importerRoots(root: string): string[] {
   const roots = ["agent", "scripts", "tests", "deploy"].map((d) => join(root, d));
-  for (const rel of [...PUBLISHABLE_PACKAGES, "packages/create"]) {
+  for (const rel of ALL_PUBLISHABLE_PACKAGES) {
     for (const sub of ["agent", "scripts", "src", "bin"]) roots.push(join(root, rel, sub));
   }
   roots.push(join(root, "packages/core/templates"));

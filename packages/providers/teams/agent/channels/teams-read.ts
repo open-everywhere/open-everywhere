@@ -17,6 +17,7 @@ import {
   domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { noteTeamsReadBoundary, teamsReadBoundary, _resetTeamsReadBoundaryForTest } from "./teams-graph-boundary.js";
+import { teamsGraphTeamId } from "./teams-graph-team-id.js";
 import { teamsReplyChainRoot } from "./teams-conversation-ref.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -210,14 +211,17 @@ export async function assertTeamsChannelAllowed(ctx: BindableContext, channelId:
   );
 }
 
-function currentTeamId(ctx: BindableContext): string | undefined {
+async function currentGraphTeamId(ctx: BindableContext): Promise<string | undefined> {
   const t = bindFrom(ctx).target;
-  return typeof t?.teamId === "string" && t.teamId.length > 0 ? t.teamId : undefined;
+  const botTeamId = typeof t?.teamId === "string" && t.teamId.length > 0 ? t.teamId : undefined;
+  const serviceUrl = typeof t?.serviceUrl === "string" && t.serviceUrl.length > 0 ? t.serviceUrl : undefined;
+  return await teamsGraphTeamId(botTeamId, serviceUrl);
 }
 
 function noTeamIdError(what: string): Error {
   return new Error(
-    `read: couldn't resolve this Teams channel's team id from the live session — Teams ${what} need an engaged team-channel turn.`,
+    `read: couldn't resolve this Teams channel's team id from the live session — Teams ${what} need an engaged team-channel turn, ` +
+      `and the team's Microsoft 365 group id must be resolvable from the Bot Connector.`,
   );
 }
 
@@ -233,7 +237,7 @@ export const teamsReadAdapter = {
   },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, req: TeamsGraphRequester = liveTeamsGraphRequest): Promise<readonly TeamsRenderedLine[]> {
     await assertTeamsChannelAllowed(ctx, channel);
-    const teamId = currentTeamId(ctx);
+    const teamId = await currentGraphTeamId(ctx);
     if (!teamId) throw noTeamIdError("channel reads");
     const n = limit ?? TEAMS_CHANNEL_DEFAULT_LIMIT;
     const raw = await fetchGraphPages(req, channelMessagesUrl(teamId, channel), n);
@@ -241,7 +245,7 @@ export const teamsReadAdapter = {
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, req: TeamsGraphRequester = liveTeamsGraphRequest): Promise<readonly TeamsRenderedLine[]> {
     await assertTeamsChannelAllowed(ctx, channel);
-    const teamId = currentTeamId(ctx);
+    const teamId = await currentGraphTeamId(ctx);
     if (!teamId) throw noTeamIdError("thread reads");
     const n = limit ?? TEAMS_THREAD_DEFAULT_LIMIT;
     const raw = await fetchGraphPages(req, threadRepliesUrl(teamId, channel, threadTs), n);

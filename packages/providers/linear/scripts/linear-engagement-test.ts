@@ -3,8 +3,10 @@ import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/r
 registerLinearProvider();
 import {
   linearEngagementAnchor,
+  linearPromptReAddress,
   linearSeamPartition,
   linearStandDownHolds,
+  linearStandDownVerdict,
   markLinearEngaged,
   resolveLinearEngagement,
   type LinearEngagementDeps,
@@ -165,6 +167,30 @@ ok(linearEngagementAnchor({ ...FACTS, issueId: "" }) === undefined, "1c: NEGATIV
   ok((await linearStandDownHolds({ ...FACTS, teamId: undefined }, stubDeps(engagedRow({ stopped: true })))) === null, "4f: NEGATIVE CONTROL — no team, no partition, so no row to read");
 }
 
+{
+  ok(linearPromptReAddress("@OpenEverywhere which token was posted?", "OpenEverywhere") === "mention", "🔴 5a: an explicit @mention of the app reads as `mention` — this is the act the stand-down ack promises brings the agent back");
+  ok(linearPromptReAddress("and what's that plus 6?", "OpenEverywhere") === "none", "5b: NEGATIVE CONTROL — a comment that addresses nobody reads as `none`, so a plain follow-up still meets the stop");
+  ok(linearPromptReAddress("@openeverywhere, please", "OpenEverywhere") === "mention", "5c: the match is case-insensitive — Linear renders the handle as the member typed it");
+  ok(linearPromptReAddress("@OpenEverywhereElse ping", "OpenEverywhere") === "none", "🔴 5d: NEGATIVE CONTROL — a LONGER handle that merely starts with the app's name is NOT this app; without the word-boundary guard this reads `mention` and a stranger's handle lifts our stop");
+  ok(linearPromptReAddress("mail openeverywhere@example.com", "OpenEverywhere") === "none", "5e: NEGATIVE CONTROL — the name without a leading `@` is not a mention");
+  ok(linearPromptReAddress(undefined, "OpenEverywhere") === "unreadable", "🔴 5f: an unread comment body is `unreadable`, never `none` — the gate cannot report a question it did not ask");
+  ok(linearPromptReAddress("", "OpenEverywhere") === "unreadable", "5g: an EMPTY body is unreadable for the same reason");
+  ok(linearPromptReAddress("@OpenEverywhere hello", undefined) === "unreadable", "🔴 5h: no resolved app name is `unreadable` — nothing can detect a mention without the name to look for, the same precondition the ambient classifier states");
+}
+
+{
+  const verdict = (action: string | undefined, anchor: string | null, reAddress: "mention" | "none" | "unreadable") => linearStandDownVerdict({ action, anchor, reAddress }).kind;
+
+  ok(verdict("prompted", "ISSUE_L", "mention") === "lift", "🔴 6a: THE DEFECT ROW — a `prompted` delivery whose own comment @mentions the app LIFTS the stand-down. A live run suppressed exactly this and answered the member with the ack that told them to do it");
+  ok(verdict("prompted", "ISSUE_L", "none") === "suppress", "🔴 6b: NEGATIVE CONTROL — a `prompted` follow-up that addresses nobody is still SUPPRESSED, so the lift is driven by the comment and not by the action");
+  ok(verdict("prompted", "ISSUE_L", "unreadable") === "suppress", "🔴 6c: an UNREADABLE comment suppresses — lifting on an unanswered question would empty `stand_down` of meaning for as long as the comment read is broken");
+  ok(verdict("prompted", null, "none") === "pass-through", "6d: NEGATIVE CONTROL — no stored stop, nothing to suppress; the delivery keeps its own path");
+  ok(verdict("prompted", null, "mention") === "pass-through", "6e: NEGATIVE CONTROL — a mention on a LIVE issue is a pass-through, not a lift: there is no stop to clear");
+  ok(verdict("created", "ISSUE_L", "none") === "pass-through", "🔴 6f: a `created` event is never gated here, stop or no stop — it marks on its own leg, and gating it would leave the surface no way back in at all");
+  ok(verdict("updated", "ISSUE_L", "none") === "pass-through", "6g: NEGATIVE CONTROL — an unclassified future action stays ungated, the limit the parity cell records");
+  ok(verdict(undefined, "ISSUE_L", "mention") === "pass-through", "6h: NEGATIVE CONTROL — an action-less delivery is not a `prompted` follow-up");
+}
+
 console.log(
-  `✓ linear-engagement: ${n} assertions passed (issue anchor + team partition + the decision table with a negative control on every boolean + the mention leg's mark landing on the comment leg's key + the mark's redelivery guard + the agent-session legs' stop predicate and its null-reads-as-live polarity)`,
+  `✓ linear-engagement: ${n} assertions passed (issue anchor + team partition + the decision table with a negative control on every boolean + the mention leg's mark landing on the comment leg's key + the mark's redelivery guard + the agent-session legs' stop predicate and its null-reads-as-live polarity + the re-address read and the stand-down table that lifts on an explicit @mention)`,
 );

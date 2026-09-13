@@ -21,6 +21,9 @@ import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
 const TEAMS_CATCH_UP_REACHBACK_HOURS = 168;
 
+const TEAM_ADDRESS_UNRESOLVED_NOTE =
+  "teams: this team's Microsoft 365 group id could not be resolved on this wake, so the channel's history since your last wake is NOT shown. That is a failure to READ, not a quiet room — an absence of messages here says nothing about what was said.";
+
 function teamsSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
 }
@@ -147,6 +150,7 @@ export interface TeamsSupervisorDispatch {
   readonly containerKey: string;
   readonly channelId: string;
   readonly teamId?: string;
+  readonly teamAddressUnresolved?: boolean;
   readonly auth: OpenEverywhereTeamsAuth;
   readonly trigger: TeamsSupervisorWakeInput["trigger"];
   readonly threadRootId?: string;
@@ -177,7 +181,10 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
     session.freshGeneration || !deps.catchUp
       ? undefined
       : !d.teamId
-        ? { messages: [] as readonly WakeMessageInput[], unavailable: catchUpUnavailableReason("teams") }
+        ? {
+            messages: [] as readonly WakeMessageInput[],
+            unavailable: d.teamAddressUnresolved ? TEAM_ADDRESS_UNRESOLVED_NOTE : catchUpUnavailableReason("teams"),
+          }
         : await deps.catchUp({
             container: `${d.teamId}/${d.channelId}`,
             ...(d.threadRootId ? { threadRoot: d.threadRootId } : {}),
