@@ -6,8 +6,10 @@ import {
   checkDocsSourceMap,
   docSummaryOf,
   docTitleOf,
+  isCompiledDoc,
   providerForDocPath,
   sectionForDocPath,
+  UNCOMPILED_DOC_SECTIONS,
 } from "@open-everywhere/core/agent/docs/source-map.js";
 
 const rootFlagAt = process.argv.indexOf("--root");
@@ -87,10 +89,12 @@ if (mapProblems.length > 0) {
   process.exit(1);
 }
 
+const compiled = paths.filter(isCompiledDoc);
+
 const read = (p: string): string => readFileSync(join(root, p), "utf8");
 const universal = new Map<string, string[]>();
 const perProvider = new Map<string, string[]>();
-for (const p of paths) {
+for (const p of compiled) {
   const provider = providerForDocPath(p, bundles);
   const bucket = provider === undefined ? universal : perProvider;
   const key = provider ?? sectionForDocPath(p);
@@ -153,7 +157,10 @@ if (check) {
     console.error("  Run: npx tsx scripts/docs-generate.ts");
     process.exit(1);
   }
-  console.log(`✓ docs registry in sync — ${paths.length} docs (${[...perProvider.keys()].length} provider runbooks) across ${files.size} generated modules`);
+  console.log(
+    `✓ docs registry in sync — ${compiled.length} docs (${[...perProvider.keys()].length} provider runbooks) across ${files.size} generated modules` +
+      `${paths.length - compiled.length ? `, ${paths.length - compiled.length} not compiled (${UNCOMPILED_DOC_SECTIONS.join(", ")})` : ""}`,
+  );
 } else {
   let written = 0;
   for (const [rel, content] of files) {
@@ -161,7 +168,8 @@ if (check) {
   }
   for (const rel of stale) rmSync(join(root, rel));
   console.log(
-    `✓ ${files.size} generated modules for ${paths.length} docs — ${written} written, ${files.size - written} already current` +
+    `✓ ${files.size} generated modules for ${compiled.length} docs — ${written} written, ${files.size - written} already current` +
+      `${paths.length - compiled.length ? `, ${paths.length - compiled.length} not compiled (${UNCOMPILED_DOC_SECTIONS.join(", ")})` : ""}` +
       `${stale.length ? ` (removed ${stale.length} stale)` : ""}`,
   );
 }

@@ -14,7 +14,9 @@ import {
   docTitleOf,
   providerForDocPath,
   sectionForDocPath,
+  isCompiledDoc,
   MAX_SUMMARY_CHARS,
+  UNCOMPILED_DOC_SECTIONS,
 } from "../agent/docs/source-map.js";
 import { chdir, cwd } from "node:process";
 import { tmpdir } from "node:os";
@@ -153,17 +155,42 @@ ok(providerForDocPath("docs/deploy/surfaces/nested/alpha.md", BUNDLES) === undef
 ok(sectionForDocPath("docs/README.md") === "root", "a top-level doc lands in the root section");
 ok(sectionForDocPath("docs/deploy/platforms/aws.md") === "deploy", "a nested doc lands in its top-level section");
 
+const NO_EXCLUSION = { uncompiledSections: [] as readonly string[] };
 ok(
-  checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/beta.md"], bundleIds: BUNDLES }).length === 0,
+  checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/beta.md"], bundleIds: BUNDLES, ...NO_EXCLUSION }).length === 0,
   "a 1:1 bundle↔runbook map is clean",
 );
-const missingRunbook = checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md"], bundleIds: BUNDLES });
+const missingRunbook = checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md"], bundleIds: BUNDLES, ...NO_EXCLUSION });
 ok(missingRunbook.length === 1 && /beta/u.test(missingRunbook[0]), "a bundle with no runbook fails the map");
-const orphanDoc = checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/gamma.md"], bundleIds: ["alpha"] });
+const orphanDoc = checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/gamma.md"], bundleIds: ["alpha"], ...NO_EXCLUSION });
 ok(orphanDoc.length === 1 && /gamma/u.test(orphanDoc[0]), "a runbook with no bundle fails the map (it would ship universally)");
 ok(
-  checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/support-matrix.md"], bundleIds: [] }).length === 0,
+  checkDocsSourceMap({ docPaths: ["docs/deploy/surfaces/support-matrix.md"], bundleIds: [], ...NO_EXCLUSION }).length === 0,
   "the declared universal surface doc is exempt from the orphan rule",
+);
+
+ok(UNCOMPILED_DOC_SECTIONS.includes("inventory"), "the behaviour inventories are declared uncompiled");
+ok(isCompiledDoc("docs/capabilities/memory.md"), "an ordinary doc is compiled into the manual");
+ok(isCompiledDoc("docs/README.md"), "a root doc is compiled into the manual");
+ok(isCompiledDoc("docs/inventory-notes.md") === true, "a root doc whose NAME starts with the section name is still compiled");
+ok(isCompiledDoc("docs/inventory/tools.md") === false, "a page under an uncompiled section is not compiled");
+ok(isCompiledDoc("docs/inventory/nested/deep.md") === false, "a nested page under an uncompiled section is not compiled");
+const staleExclusion = checkDocsSourceMap({
+  docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/beta.md"],
+  bundleIds: BUNDLES,
+  uncompiledSections: ["inventory"],
+});
+ok(
+  staleExclusion.length === 1 && /UNCOMPILED_DOC_SECTIONS/u.test(staleExclusion[0]),
+  "an exclusion that matches no doc on disk fails the map",
+);
+ok(
+  checkDocsSourceMap({
+    docPaths: ["docs/deploy/surfaces/alpha.md", "docs/deploy/surfaces/beta.md", "docs/inventory/tools.md"],
+    bundleIds: BUNDLES,
+    uncompiledSections: ["inventory"],
+  }).length === 0,
+  "an exclusion that names a real section is clean",
 );
 
 console.log(`✓ docs registry + source map — ${passed} assertions`);

@@ -4,6 +4,8 @@ export const UNIVERSAL_SURFACE_DOCS: readonly string[] = ["support-matrix.md"];
 
 export const MAX_SUMMARY_CHARS = 240;
 
+export const UNCOMPILED_DOC_SECTIONS: readonly string[] = ["inventory"];
+
 export function docTitleOf(path: string, markdown: string): string {
   for (const line of markdown.split(/\r?\n/u)) {
     const m = /^#\s+(.+?)\s*$/u.exec(line);
@@ -54,13 +56,26 @@ export function sectionForDocPath(path: string): string {
   return slash === -1 ? "root" : rest.slice(0, slash);
 }
 
+export function isCompiledDoc(path: string): boolean {
+  return !UNCOMPILED_DOC_SECTIONS.includes(sectionForDocPath(path));
+}
+
 export interface DocsSourceMapInput {
   readonly docPaths: readonly string[];
   readonly bundleIds: readonly string[];
+  readonly uncompiledSections?: readonly string[];
 }
 
 export function checkDocsSourceMap(input: DocsSourceMapInput): readonly string[] {
   const problems: string[] = [];
+  const uncompiled = input.uncompiledSections ?? UNCOMPILED_DOC_SECTIONS;
+  for (const section of uncompiled) {
+    if (!input.docPaths.some((p) => sectionForDocPath(p) === section)) {
+      problems.push(
+        `UNCOMPILED_DOC_SECTIONS names "${section}", but no doc lives under docs/${section}/ — the exclusion is stale and would silently drop that section from the shipped manual the day the directory comes back. Delete the entry (packages/core/agent/docs/source-map.ts).`,
+      );
+    }
+  }
   const prefix = `${SURFACE_DOC_DIR}/`;
   const surfaceFiles = input.docPaths.filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/"));
 

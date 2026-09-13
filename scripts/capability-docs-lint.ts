@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkCapabilityDocs, docCodeSpans } from "@open-everywhere/core/agent/docs/capability-map.js";
+import { isCompiledDoc } from "@open-everywhere/core/agent/docs/source-map.js";
 import { TOOL_CONSEQUENCE } from "@open-everywhere/core/agent/access/consequence.js";
 import { readMountedToolNames } from "./read-mounted-tools.js";
 
@@ -17,7 +18,7 @@ function docPaths(): string[] {
     }
   };
   walk(join(root, "docs"));
-  return out.sort();
+  return out.filter(isCompiledDoc).sort();
 }
 
 const toolNames = await readMountedToolNames(root);
