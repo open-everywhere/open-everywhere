@@ -116,6 +116,19 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario. S-ROUTINE-CONNECTOR-WRITE is the only leg on `withUnattendedConnectorFence` (connections/connector-auth.ts), and S-DISCORD-GRANT the only one on the credential-GRANT plane. S-OWN-ACCOUNT-NOTION (OPE-1599) is the only leg that GATES on the `connector.acting_identity` row — the row `connections/own-account-gate.ts` writes when it refuses a team-key read of a member's own account. J-NOT's ordinary Notion reads run the same gate and write `install` rows, but assert nothing about them. That gate decides WHICH credential a connector read spends, so the leg belongs with the credential legs even though it reads rather than writes. `hooks/own-account-ask.ts` is in the globs for the same leg: it is the sole producer AND clearer of the `oe_own_account_ask` stamp the gate reads before the requester's own words (OPE-1597), so a change there decides whether the refusal can be produced at all. That file sat outside every glob until OPE-1599 — a change touched it and this map selected no leg that drives it. S-EVE-CARD is the only leg that SETTLES a `connectorApprovalPolicy()` card, so a change that stops eve receiving the policy — the OPE-1218 class, where the resolver drops a non-function `approval` — reds it.",
   },
   {
+    area: "proactive-dm-road",
+    globs: [
+      "packages/core/agent/channels/dm-audience.ts",
+      "packages/core/agent/channels/proactive-dm-manifest.ts",
+      "packages/core/agent/tools/set_dm_delivery.ts",
+      "packages/core/agent/access/chat-dm-grant.ts",
+      "packages/core/agent/access/credential-grant-card.ts",
+      "packages/core/agent/access/credential-grant-notice.ts",
+    ],
+    scenarios: ["S-DM-STOP-GRANT", "S-DISCORD-GRANT"],
+    why: "S-DM-STOP-GRANT (OPE-1855) is the only leg that drives a person's own DM stop against a SECOND plane — it sets the stop by inference in a real 1:1 DM, then raises a credential-grant ask naming that same person as the owner, and gates on the dm.refused row rather than on any reply. It is the live half of the one-road rule the deterministic test:proactive-dm-road leg pins offline. S-DISCORD-GRANT rides beside it as the NEGATIVE control the stop leg cannot give: it proves the grant card and the first-use notice still reach an owner who has NOT stopped, so a road change that refused everything would red there rather than pass here.",
+  },
+  {
     area: "aws-tool",
     globs: ["packages/core/agent/tools/aws.ts", "packages/core/agent/connections/aws-*.ts"],
     scenarios: ["S-AWS-BOUNDARY"],

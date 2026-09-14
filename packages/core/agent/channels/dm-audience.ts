@@ -1,9 +1,10 @@
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { surfaceKeySegment } from "../identity/binding.js";
-import { dispatchDirectMessage, type DirectMessageDelivery } from "./post-arms.js";
+import { dispatchDirectMessage, type DirectMessageAction, type DirectMessageDelivery } from "./post-arms.js";
 import type { DmAudienceRow } from "../operational/store.js";
 import { resourceAddress } from "../access/resource-grant.js";
+import { proactiveDmPlaneRow, type ProactiveDmPlane } from "./proactive-dm-manifest.js";
 
 export const PERSON_RESOURCE_TYPE = "person";
 
@@ -99,8 +100,94 @@ export interface DmDeliveryWhere {
   readonly surface?: string;
 }
 
+export const DM_REFUSED_ACTION = "dm.refused";
+
+export class ProactiveDmRefusedError extends Error {
+  constructor(
+    readonly plane: ProactiveDmPlane,
+    readonly platform: string,
+    readonly recipientId: string,
+    readonly address: string,
+    readonly boundary: "stopped" | "unreadable",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export function dmStoppedRefusalMessage(platform: string, recipientId: string): string {
+  return (
+    `${platform} person "${recipientId}" asked this agent to stop sending them direct messages, so nothing ` +
+    `was sent. That boundary is theirs and no configuration overrides it — only they can lift it, by telling the ` +
+    `agent in their own DM. Say so plainly rather than trying another route to reach them.`
+  );
+}
+
+export function dmUnreadableRefusalMessage(platform: string, recipientId: string): string {
+  return (
+    `nothing was sent to ${platform} person "${recipientId}": this deployment could not read whether they ` +
+    `have asked the agent to stop, and it will not send a direct message it cannot check. Nobody refused you — say ` +
+    `that the check itself failed, and that an operator should look at the store.`
+  );
+}
+
+export async function assertProactiveDmAllowed(input: {
+  readonly where: DmDeliveryWhere;
+  readonly plane: ProactiveDmPlane;
+  readonly platform: string;
+  readonly recipientId: string;
+  readonly address: string;
+  readonly attributedTo?: string;
+}): Promise<void> {
+  proactiveDmPlaneRow(input.plane);
+  const audience = await readDmAudience(input.where.org, input.address);
+  if (audience.readable && !audience.stopped) return;
+  const refusal = audience.readable
+    ? new ProactiveDmRefusedError(
+        input.plane,
+        input.platform,
+        input.recipientId,
+        input.address,
+        "stopped",
+        dmStoppedRefusalMessage(input.platform, input.recipientId),
+      )
+    : new ProactiveDmRefusedError(
+        input.plane,
+        input.platform,
+        input.recipientId,
+        input.address,
+        "unreadable",
+        dmUnreadableRefusalMessage(input.platform, input.recipientId),
+      );
+  await auditProactiveDmRefusal(input.where, refusal, input.attributedTo);
+  throw refusal;
+}
+
+async function auditProactiveDmRefusal(where: DmDeliveryWhere, refusal: ProactiveDmRefusedError, attributedTo?: string): Promise<void> {
+  try {
+    const foreignCaller = where.platform !== refusal.platform;
+    await appendAudit({
+      org: where.org,
+      platform: refusal.platform,
+      workspace: foreignCaller ? "unknown" : where.workspace,
+      ...(where.surface === undefined ? {} : { surface: foreignCaller ? "unknown" : where.surface }),
+      ...(attributedTo ? { principalId: attributedTo } : {}),
+      action: DM_REFUSED_ACTION,
+      detail: {
+        target: refusal.recipientId,
+        boundary: refusal.boundary,
+        plane: refusal.plane,
+        grant: refusal.address,
+      },
+    });
+  } catch (err) {
+    console.warn(`[open-everywhere:audit] ${DM_REFUSED_ACTION} row was not written: ${String(err)}`);
+  }
+}
+
 export async function deliverProactiveDm(input: {
   readonly where: DmDeliveryWhere;
+  readonly plane: ProactiveDmPlane;
   readonly platform: string;
   readonly recipientId: string;
   readonly address: string;
@@ -108,14 +195,25 @@ export async function deliverProactiveDm(input: {
   readonly footer: string;
   readonly requestedBy: string;
   readonly attributedTo: string;
-  readonly first: boolean;
+  readonly first?: boolean;
+  readonly actions?: readonly DirectMessageAction[];
   readonly tainted?: boolean;
 }): Promise<DirectMessageDelivery> {
+  const plane = proactiveDmPlaneRow(input.plane);
+  await assertProactiveDmAllowed({
+    where: input.where,
+    plane: input.plane,
+    platform: input.platform,
+    recipientId: input.recipientId,
+    address: input.address,
+    attributedTo: input.attributedTo,
+  });
   const delivery = await dispatchDirectMessage(input.platform, {
     principalId: input.recipientId,
     text: `${input.text}${input.footer}`,
+    ...(input.actions === undefined ? {} : { actions: input.actions }),
   });
-  await noteDmAudienceDelivery(input.where.org, input.address, new Date().toISOString());
+  if (plane.recordsDelivery) await noteDmAudienceDelivery(input.where.org, input.address, new Date().toISOString());
   await appendAudit({
     org: input.where.org,
     platform: input.where.platform,
@@ -125,12 +223,13 @@ export async function deliverProactiveDm(input: {
     action: DM_DELIVERY_ACTION,
     detail: {
       platform: input.platform,
+      plane: input.plane,
       recipient: input.recipientId,
       grant: input.address,
       surfaceId: delivery.surfaceId,
       messageId: delivery.messageId,
       requestedBy: input.requestedBy,
-      first: input.first,
+      first: Boolean(input.first),
       tainted: Boolean(input.tainted),
     },
   }).catch((err: unknown) => console.warn(`[open-everywhere:audit] ${DM_DELIVERY_ACTION} row was not written: ${String(err)}`));

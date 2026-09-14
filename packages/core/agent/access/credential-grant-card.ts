@@ -1,4 +1,11 @@
-import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
+import { canDeliverDirectMessage, type DirectMessageAction } from "../channels/post-arms.js";
+import {
+  deliverProactiveDm,
+  dmDeliveryFooter,
+  personAddress,
+  ProactiveDmRefusedError,
+  type DmDeliveryWhere,
+} from "../channels/dm-audience.js";
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
@@ -233,29 +240,49 @@ export function grantConsentPromptText(ask: CredentialGrantAskRow, url: string):
   ].join("\n");
 }
 
+export type GrantCardRefusal = "no_dm_arm" | "send_failed" | "owner_stopped_dms" | "owner_dm_unreadable";
+
 export type GrantCardDelivery =
   | { readonly delivered: true; readonly surfaceId: string; readonly messageId: string }
-  | { readonly delivered: false; readonly reason: "no_dm_arm" | "send_failed" };
+  | { readonly delivered: false; readonly reason: GrantCardRefusal };
+
+export function grantOwnerDmAddress(ask: Pick<CredentialGrantAskRow, "ownerPlatform" | "ownerNativeId">): string {
+  return personAddress(ask.ownerPlatform, ask.ownerNativeId);
+}
+
+function grantDmFooter(ask: CredentialGrantAskRow): string {
+  return dmDeliveryFooter({ requestedBy: ask.requesterPrincipalId, fromContainer: ask.scopeKey });
+}
+
+function grantDmRefusal(err: unknown): GrantCardRefusal {
+  if (!(err instanceof ProactiveDmRefusedError)) return "send_failed";
+  return err.boundary === "stopped" ? "owner_stopped_dms" : "owner_dm_unreadable";
+}
 
 export async function deliverGrantCard(
   ask: CredentialGrantAskRow,
+  where: DmDeliveryWhere,
   requesterLabel: string,
   workerOrigin?: GrantAskWorkerOrigin,
   conversationLabel?: string,
 ): Promise<GrantCardDelivery> {
   if (!canDeliverDirectMessage(ask.ownerPlatform)) return { delivered: false, reason: "no_dm_arm" };
-  const arm = postArm(ask.ownerPlatform);
-  const deliver = arm?.deliverDirectMessage;
-  if (deliver === undefined || arm === undefined) return { delivered: false, reason: "no_dm_arm" };
   try {
-    const landed = await deliver.call(arm, {
-      actions: grantCardActions(ask),
-      principalId: ask.ownerNativeId,
+    const landed = await deliverProactiveDm({
+      where,
+      plane: "credential.grant.card",
+      platform: ask.ownerPlatform,
+      recipientId: ask.ownerNativeId,
+      address: grantOwnerDmAddress(ask),
       text: grantCardText(ask, requesterLabel, workerOrigin, conversationLabel),
+      footer: grantDmFooter(ask),
+      requestedBy: ask.requesterPrincipalId,
+      attributedTo: ask.requesterPrincipalId,
+      actions: grantCardActions(ask),
     });
     return { delivered: true, messageId: landed.messageId, surfaceId: landed.surfaceId };
-  } catch {
-    return { delivered: false, reason: "send_failed" };
+  } catch (err) {
+    return { delivered: false, reason: grantDmRefusal(err) };
   }
 }
 
@@ -280,13 +307,20 @@ async function rewriteGrantCard(ask: CredentialGrantAskRow, text: string): Promi
   return await editSurfaceText(ask.ownerPlatform, { channelId: ask.cardSurfaceId, messageId: ask.cardMessageId }, text);
 }
 
-export async function deliverGrantConsentPrompt(ask: CredentialGrantAskRow, url: string): Promise<boolean> {
+export async function deliverGrantConsentPrompt(ask: CredentialGrantAskRow, where: DmDeliveryWhere, url: string): Promise<boolean> {
   if (!canDeliverDirectMessage(ask.ownerPlatform)) return false;
-  const arm = postArm(ask.ownerPlatform);
-  const deliver = arm?.deliverDirectMessage;
-  if (deliver === undefined || arm === undefined) return false;
   try {
-    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantConsentPromptText(ask, url) });
+    await deliverProactiveDm({
+      where,
+      plane: "credential.grant.consent",
+      platform: ask.ownerPlatform,
+      recipientId: ask.ownerNativeId,
+      address: grantOwnerDmAddress(ask),
+      text: grantConsentPromptText(ask, url),
+      footer: grantDmFooter(ask),
+      requestedBy: ask.requesterPrincipalId,
+      attributedTo: ask.requesterPrincipalId,
+    });
     return true;
   } catch {
     return false;

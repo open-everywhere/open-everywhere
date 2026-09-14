@@ -32,6 +32,7 @@ const chatDm: ActionKind<ChatDmArgs> = {
   async execute(args, decidedBy) {
     await deliverProactiveDm({
       where: whereFromScope(args.org, args.scopeKey),
+      plane: "chat.dm",
       platform: args.platform,
       recipientId: args.principalId,
       address: args.grant,

@@ -259,6 +259,14 @@ console.log("3. the golden:");
     "🔴 the tap answer POINTS AT the connect message and never repeats the step — that duplication is what made the detour read as two",
   );
 
+  {
+    const undelivered = grantApproveFailureText("consent_required", false);
+    ok(undelivered.includes("stop sending you direct messages"), "the undelivered-link answer names the owner's own stop as a reason the link did not arrive");
+    ok(undelivered.includes("press Approve once more"), "…and tells them what to do after they lift it, because the ask is still pending");
+    ok(undelivered.includes("ask an operator"), "…and still keeps the operator remedy for the case where this deployment cannot address them at all");
+    ok(!undelivered.includes("set_dm_delivery"), "…and names no internal verb — an owner reads this, and a tool name is not a step they can take");
+  }
+
   eq(
     credentialGrantRefusalNote("notion", "grant_already_live", {
       audience: "owner",

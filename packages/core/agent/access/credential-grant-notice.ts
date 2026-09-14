@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { canDeliverDirectMessage, postArm } from "../channels/post-arms.js";
+import { canDeliverDirectMessage } from "../channels/post-arms.js";
+import { assertProactiveDmAllowed, deliverProactiveDm, dmDeliveryFooter, ProactiveDmRefusedError } from "../channels/dm-audience.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import type { BindableContext } from "../identity/binding.js";
 import { accountProfileFor, composedAccountName } from "../identity/account-display-name.js";
@@ -11,7 +12,7 @@ import {
   GrantRoomNoticeAlreadyRegisteredError,
   registerCoreGrantRoomNotice,
 } from "./grant-room-notice-registry.internal.js";
-import { GRANT_MODE_WORDS, grantBorrowPhrase } from "./credential-grant-card.js";
+import { GRANT_MODE_WORDS, grantBorrowPhrase, grantOwnerDmAddress } from "./credential-grant-card.js";
 import { connectorDisplayName, grantClockPhrase, grantDisplayLabel, grantExpiryPhrase, grantOwnerPhrase } from "./credential-grant-copy.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 
@@ -100,13 +101,35 @@ export async function deliverGrantOwnerNotice(
   const ask = await store.getCredentialGrantAsk(context.org, grant.askId);
   if (ask === null) return false;
   if (!canDeliverDirectMessage(ask.ownerPlatform)) return false;
-  const arm = postArm(ask.ownerPlatform);
-  const deliver = arm?.deliverDirectMessage;
-  if (deliver === undefined || arm === undefined) return false;
+  const where = { org: context.org, platform: context.platform, workspace: context.workspace, ...(context.surface === undefined ? {} : { surface: context.surface }) };
+  const address = grantOwnerDmAddress(ask);
+  const road = {
+    where,
+    plane: "credential.grant.notice" as const,
+    platform: ask.ownerPlatform,
+    recipientId: ask.ownerNativeId,
+    address,
+    attributedTo: grant.requesterPrincipalId,
+  };
+  try {
+    await assertProactiveDmAllowed(road);
+  } catch (err) {
+    if (err instanceof ProactiveDmRefusedError) {
+      log(`owner notice for grant ${grant.id} was refused before the claim: ${err.boundary} — the grant is unchanged and the claim is unspent.`);
+      return false;
+    }
+    throw err;
+  }
   const won = await store.claimNotice(context.org, grantUseNoticeKey(grant.id), atIso);
   if (!won) return false;
   try {
-    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantOwnerNoticeText(grant, requesterLabel, Date.parse(atIso)) });
+    await deliverProactiveDm({
+      ...road,
+      text: grantOwnerNoticeText(grant, requesterLabel, Date.parse(atIso)),
+      footer: dmDeliveryFooter({ requestedBy: grant.requesterPrincipalId, fromContainer: grant.scopeKey }),
+      requestedBy: grant.requesterPrincipalId,
+      attributedTo: grant.requesterPrincipalId,
+    });
   } catch (err) {
     await auditOwnerNotice(context, grant, ask.ownerPlatform, "failed", err);
     throw err;

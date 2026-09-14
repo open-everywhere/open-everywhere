@@ -94,7 +94,9 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
     case "consent_required":
       return prompted
         ? "Not yet — I have just sent you the link to connect your account. Nothing has been granted."
-        : "Your own account is not connected yet, and this deployment could not send you the link to connect it. Nothing has been granted. Ask an operator to check the connector setup.";
+        :
+          "Your own account is not connected yet, and this deployment could not send you the link to connect it. Nothing has been granted. " +
+          "If you have asked me to stop sending you direct messages, say here that I may message you again and press Approve once more. Otherwise ask an operator to check the connector setup.";
     case "catalogue_unreachable":
       return "Your account could not be reached just now, so nothing was granted and nothing was spent. Press Approve again in a moment.";
     case "tool_absent":

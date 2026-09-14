@@ -58,7 +58,8 @@ const setDmDeliveryEntry = defineTool({
         delivering: false,
         changed,
         note: changed
-          ? "Done — you will not start another direct message with them. They can still message you here whenever they want, and you still answer."
+          ?
+            "Done — you will not start another direct message with them, and no configuration lifts that. Two things still reach them: an alert about their own account, and an answer to something they asked for themselves. They can also message you here whenever they want, and you still answer."
           : "They had already stopped it, and it is still stopped. Say so plainly rather than implying you just changed something.",
       };
     }

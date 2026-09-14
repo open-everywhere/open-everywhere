@@ -4,6 +4,7 @@ import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplica
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
+import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } from "../../agent/channels/dm-audience.js";
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
 import { APPROVAL_ANSWER_HINT } from "../../agent/channels/question-bridge.js";
@@ -6053,6 +6054,87 @@ export const SCENARIOS: readonly Scenario[] = [
         allNoticesDelivered(notified, "discord"),
         `🔴 (hard): every notice row for this grant records outcome "sent" AND ownerPlatform "discord" (the DELIVERY arm — the one row on this plane that does carry a platform field) — a "failed" outcome means the DM arm threw and the owner was NOT told (the row exists to make that visible, never to paper over it), and the platform is what says it was DISCORD's arm that delivered, which is this leg's whole point (${JSON.stringify(notified.map((e) => e.detail))})`,
       );
+    },
+  },
+  {
+    id: "S-DM-STOP-GRANT",
+    title:
+      "OPE-1855: a person who tells the agent to stop DMing them is not reached by the CREDENTIAL-GRANT plane either — the stop outranks every proactive-DM plane, and it refuses the message without touching the grant",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      if (!ctx.auditRead) {
+        ctx.skip(
+          "the refusal is assertable only over the audit trail — the grant card lands in the OWNER's private DM, which the driver bot cannot read, so a room reply cannot tell a refused ask from a sent one. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
+        );
+      }
+      const auditRead = ctx.auditRead!;
+      const dm = ctx.dm!;
+      const slack = ctx.slack!;
+      const { userId } = await slack.identity();
+      const token = factToken("dmstop");
+      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const adminAddress = personAddress("slack", userId);
+
+      const awaitRow = async (action: string, what: string, match: (d: Record<string, unknown>) => boolean): Promise<AuditWireEntry> =>
+        await pollUntil(
+          async () => (await auditRead({ sinceIso, actions: [action] })).find((e) => match((e.detail ?? {}) as Record<string, unknown>)),
+          { timeoutMs: AUDIT_ROW_WAIT, what },
+        );
+
+      let stopped = false;
+      try {
+        stopped = true;
+        const { ts: stopTs } = await dm.post("please stop sending me direct messages — do not start a new DM with me until I ask you to");
+        const stopAck = await dm.collectBotMessagesAfter(stopTs, stopTs).catch(() => []);
+        ctx.log(`(stop asked at ${stopTs}${stopAck.length > 0 ? `, ${String(stopAck.length)} bot message(s) so far` : ""})`);
+        const stopRow = await awaitRow(DM_STOP_ACTION, `the stop: a ${DM_STOP_ACTION} audit row for ${adminAddress}`, (d) => d.address === adminAddress);
+        ctx.gate(stopRow !== undefined, `stop: the seat really called the verb — a ${DM_STOP_ACTION} row, written from the person's own words rather than a button`);
+
+        const asked = await slack.post(
+          slack.mention(
+            `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask <@${userId}> to lend this conversation ONE Notion tool — a page-read — so we can check the borrow path end to end. Use the credential-grant ask for it. The purpose is: "e2e stop-then-grant fixture, ref ${token}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`,
+          ),
+        );
+        const reply = await slack.awaitThreadReply(asked.ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+
+        const refused = await awaitRow(
+          DM_REFUSED_ACTION,
+          `the refusal: a ${DM_REFUSED_ACTION} row naming the credential.grant.card plane and the recipient's stop`,
+          (d) => d.plane === "credential.grant.card" && d.boundary === "stopped" && d.grant === adminAddress,
+        );
+        ctx.gate(
+          refused !== undefined,
+          `🔴 (hard): the GRANT CARD was refused by the recipient's own stop — a ${DM_REFUSED_ACTION} row carrying plane "credential.grant.card" and boundary "stopped" (${JSON.stringify(refused.detail)})`,
+        );
+
+        const askedRows = await auditRead({ sinceIso, actions: ["grant.asked"] });
+        ctx.gate(
+          askedRows.length === 0,
+          `🔴 (hard): NO grant.asked row in this run's window — a refused card must leave no ask alive (found ${String(askedRows.length)}: ${JSON.stringify(askedRows.map((e) => e.detail))})`,
+        );
+
+        ctx.gate(reply.text.trim().length > 0, "the requester is TOLD — the room gets an answer rather than silence when the owner cannot be reached");
+        ctx.log(`S-DM-STOP-GRANT: the room was answered with: ${reply.text.trim().slice(0, 300)}`);
+      } finally {
+        if (stopped) {
+          try {
+            const { ts: resumeTs } = await dm.post("you can start sending me direct messages again when there is a reason to");
+            await pollUntil(
+              async () => (await auditRead({ sinceIso, actions: [DM_RESUME_ACTION] })).find((e) => ((e.detail ?? {}) as Record<string, unknown>).address === adminAddress),
+              { timeoutMs: AUDIT_ROW_WAIT, what: `the resume: a ${DM_RESUME_ACTION} audit row` },
+            );
+            ctx.log(`(stop lifted at ${resumeTs})`);
+          } catch (err) {
+            ctx.log(
+              `🔴 S-DM-STOP-GRANT COULD NOT LIFT THE STOP IT SET: ${String(err)}. The admin's DM stop is still live — say "you can DM me again" in the 1:1 DM with the bot to clear it.`,
+            );
+          }
+        }
+      }
     },
   },
   {

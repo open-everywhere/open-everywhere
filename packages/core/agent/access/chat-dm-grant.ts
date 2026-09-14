@@ -1,6 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
 import { allowedSurfaceIdsFrom } from "../channels/channel-read.js";
-import { PERSON_RESOURCE_TYPE, personAddress, readDmAudience } from "../channels/dm-audience.js";
+import { DM_REFUSED_ACTION, dmStoppedRefusalMessage, dmUnreadableRefusalMessage, PERSON_RESOURCE_TYPE, personAddress, readDmAudience } from "../channels/dm-audience.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
@@ -154,9 +154,7 @@ export async function assertChatDmAllowed(
       target.platform,
       target.principalId,
       "unreadable",
-      `nothing was sent to ${target.platform} person "${target.principalId}": this deployment could not read whether they ` +
-        `have asked the agent to stop, and it will not send a direct message it cannot check. Nobody refused you — say ` +
-        `that the check itself failed, and that an operator should look at the store.`,
+      dmUnreadableRefusalMessage(target.platform, target.principalId),
     );
     await auditChatDmRefusal(ctx, refusal);
     throw refusal;
@@ -166,9 +164,7 @@ export async function assertChatDmAllowed(
       target.platform,
       target.principalId,
       "stopped",
-      `${target.platform} person "${target.principalId}" asked this agent to stop sending them direct messages, so nothing ` +
-        `was sent. That boundary is theirs and no configuration overrides it — only they can lift it, by telling the ` +
-        `agent in their own DM. Say so plainly rather than trying another route to reach them.`,
+      dmStoppedRefusalMessage(target.platform, target.principalId),
     );
     await auditChatDmRefusal(ctx, refusal);
     throw refusal;
@@ -196,7 +192,7 @@ async function auditChatDmRefusal(ctx: BindableContext, refusal: ChatDmGrantErro
       workspace: foreignCaller ? "unknown" : partition.workspace,
       surface: foreignCaller ? "unknown" : partition.surface,
       ...(principalId ? { principalId } : {}),
-      action: "dm.refused",
+      action: DM_REFUSED_ACTION,
       detail: {
         target: refusal.principalId,
         boundary: refusal.boundary,

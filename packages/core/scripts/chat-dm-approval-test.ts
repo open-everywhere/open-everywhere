@@ -127,6 +127,7 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   const before = (await readAudit({ org: "default" })).filter((r) => r.action === "chat.dm").length;
   await deliverProactiveDm({
     where: { org: "default", platform: "slack", workspace: "T1", surface: "slack/T1/C_HOME" },
+    plane: "chat.dm",
     platform: PLATFORM,
     recipientId: "U_SARAH",
     address: GRANT,

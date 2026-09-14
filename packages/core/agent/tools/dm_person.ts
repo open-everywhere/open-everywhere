@@ -67,6 +67,7 @@ const dmPersonEntry = defineTool({
     if (admitted.delivered) {
       await deliverProactiveDm({
         where: { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surfaceKey },
+        plane: "chat.dm",
         platform: target.platform,
         recipientId: target.principalId,
         address: target.address,

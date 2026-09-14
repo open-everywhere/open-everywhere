@@ -155,7 +155,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     verb: toolSlug,
   };
   await store.addCredentialGrantAsk(input.org, ask);
-  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel, input.workerOrigin, input.conversationLabel);
+  const delivery: GrantCardDelivery = await deliverGrantCard(ask, input, input.requesterLabel, input.workerOrigin, input.conversationLabel);
   if (!delivery.delivered) {
     await store.decideCredentialGrantAsk(input.org, ask.id, ["pending"], "expired", nowIso);
     await auditGrant(input, "grant.refused", ask.requesterPrincipalId, {
@@ -312,7 +312,7 @@ async function readApprovedToolSchema(stamps: GrantAuditStamps, ask: CredentialG
     let prompted = false;
     try {
       const url = await startOwnerConnectorAuthorization(conn, owner.vaultSubject, GRANT_CONSENT_LINK_TTL_MS);
-      prompted = await deliverGrantConsentPrompt(ask, url);
+      prompted = await deliverGrantConsentPrompt(ask, stamps, url);
     } catch (err) {
       log(`ask ${ask.id}: no ${ask.connector} connect link could be minted for the owner: ${String(err)}`);
     }
