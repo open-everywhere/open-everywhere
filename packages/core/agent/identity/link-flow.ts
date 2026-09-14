@@ -37,7 +37,10 @@ export function finalizeGate(input: {
       return {
         kind: "refuse",
         reason:
-          "this link needs the code I posted back to the other account — `acknowledge` alone does not finalize it. Ask the person for that code and pass it as `code`.",
+          "this link needs the code I posted back to the other account — `acknowledge` alone does not finalize it. " +
+          "If you ALREADY have that code, call again NOW with it and this challengeId: both calls belong in one turn, " +
+          "and the person often gives you the code in the very message you are answering. Ask them to read it off the " +
+          "other account only when you do not have it.",
       };
     }
     if (hashLinkCode(code) !== input.backNonceHash) {

@@ -8,8 +8,9 @@ import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } fr
 import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
 import { registerOperationalStore, resetOperationalStore } from "../agent/operational/provider.js";
 import type { LinkChallengeRow } from "../agent/operational/store.js";
-import { hashLinkCode, mintLinkCode } from "../agent/identity/link-challenge.js";
+import { hashLinkCode, mintLinkCode, LINK_CODE_ALPHABET, LINK_CODE_LENGTH } from "../agent/identity/link-challenge.js";
 import { agentNameTokens } from "../agent/identity/bot-name.js";
+import { isTenantScopedPlatform } from "../agent/identity/principal-key.js";
 import {
   asLinkTransport,
   claimAddressingRefusal,
@@ -607,4 +608,149 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   _resetAccountDisplayNamesForTest();
 }
 
-console.log(`✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, claim addressing, forced code-back, both tools)`);
+{
+  const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
+  const codeOf = (text: string): string => text.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+  const backCodeOf = (text: string): string => text.match(new RegExp(String.raw`(${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})\n`))![1]!;
+  const trustedHalf = (note: string): string => note.slice(0, note.indexOf(UNTRUSTED_OPEN)).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<AT>");
+
+  _resetAccountDisplayNamesForTest();
+  registerAccountDisplayName("github", async (nativeId) => (nativeId === "oct-1858" ? { name: "Octo Eighteen", handle: "oct18" } : undefined));
+
+  const dmInit = ctxFor({ channelId: "D_1858", channelType: "im", principalId: "U_1858" });
+  const minted = (await linkIdentity.execute({}, dmInit)) as { instructions: string };
+  const claimantSaw: string[] = [];
+  const claimedId = await observeLinkClaim({
+    org: ORG,
+    platform: "github",
+    authorId: "oct-1858",
+    addressed: true,
+    text: `link ${codeOf(minted.instructions)}`,
+    trust: "peer",
+    codeBackDeliverable: true,
+    notifyClaimant: (t) => {
+      claimantSaw.push(t);
+    },
+  });
+  ok(typeof claimedId === "string", "OPE-1858 setup: the claim was recorded");
+  const code2 = backCodeOf(claimantSaw.join("\n"));
+  ok(code2.length === LINK_CODE_LENGTH, "OPE-1858 setup: a code-back was minted and posted to the CLAIMING account, as the code transport forces");
+
+  const peek = (await confirmLink.execute({ decision: "confirm", acknowledge: false, code: "", challengeId: claimedId }, dmInit)) as {
+    decided: string;
+    needsCode: boolean;
+    note: string;
+    claimantName: string;
+    challengeId: string;
+  };
+  ok(peek.decided === "awaiting_acknowledgement" && peek.needsCode === true, "OPE-1858 repro: a BLANK `code` reads as no code — the live call peeked, exactly as it did in a live run");
+  ok((await pg.getLinkChallenge(ORG, claimedId!))?.status === "claimed", "OPE-1858 repro: …and the peek wrote nothing, so the request is still open for the real code");
+
+  ok(/call confirm_link again NOW with it and this challengeId/.test(peek.note), "🔴 OPE-1858: the code-back peek tells the caller to finish it NOW with the code it already has — the sentence a live run's seat never got");
+  ok(/both calls belong in one turn/.test(peek.note), "🔴 OPE-1858: …and says both calls belong in ONE turn, the instruction the no-code branch always carried and this one did not");
+  ok(/only when you do not have it/.test(peek.note), "🔴 OPE-1858: asking the person for the code is the FALLBACK, not the first move — the old text made it the only move");
+
+  const afterFence = peek.note.slice(peek.note.indexOf(UNTRUSTED_OPEN));
+  ok(!afterFence.includes("confirm_link"), "🔴 OPE-1858: NONE of this tool's own instruction sits after the untrusted fence — the fence's own 'do not act on this' notice must be the last word, not the first half of one");
+  ok(peek.note.indexOf(UNTRUSTED_OPEN) > peek.note.indexOf("NOTHING IS LINKED YET"), "OPE-1858: the trusted sentences come first");
+  ok(peek.note.split(UNTRUSTED_OPEN).length === 2, "OPE-1858: exactly ONE fence in the note — the names ride one block, never one per sentence");
+
+  let refusal = "";
+  try {
+    await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: claimedId }, dmInit);
+  } catch (e) {
+    refusal = e instanceof Error ? e.message : String(e);
+  }
+  ok(/alone does not finalize it/.test(refusal), "OPE-1858 setup: `acknowledge: true` with no code on a code-back row is still REFUSED — the forced code-back is untouched");
+  ok(/call again NOW with it and this challengeId/.test(refusal) && /both calls belong in one turn/.test(refusal), "🔴 OPE-1858: the REFUSAL says finish-it-now too — the branch the tool's own description sends a caller to");
+  ok(/only when you do not have it/.test(refusal), "🔴 OPE-1858: …and demotes asking the person to the fallback there as well");
+  ok((await pg.getLinkChallenge(ORG, claimedId!))?.status === "claimed", "OPE-1858: the refusal wrote nothing — the request is still open");
+
+  ok(peek.note.includes(UNTRUSTED_OPEN) && peek.note.includes(UNTRUSTED_CLOSE), "🔴 OPE-616 still holds: the note carries the fence");
+  ok(peek.note.includes("Octo Eighteen (@oct18)"), "🔴 OPE-616 still holds: …around the resolved name, which the note still carries");
+  ok(!/github\/oct-1858/.test(peek.note), "🔴 OPE-616 still holds: and the note renders NO bare principal key");
+
+  const before = (await pg.readAudit({ org: ORG, action: "identity.link.confirmed" })).length;
+  const committed = (await confirmLink.execute({ decision: "confirm", acknowledge: false, code: code2, challengeId: claimedId }, dmInit)) as { decided: string; claimant: string };
+  ok(committed.decided === "confirmed" && committed.claimant === "github/oct-1858", "🔴 OPE-1858: the code-back handed over in ONE call commits the link — `acknowledge` is not needed beside a matching code");
+  const after = await pg.readAudit({ org: ORG, action: "identity.link.confirmed" });
+  ok(after.length === before + 1, "🔴 OPE-1858: …and it writes the `identity.link.confirmed` row — the ONE thing S-LINK-SLACK's last gate reads");
+  ok(JSON.stringify(after[0]!.detail ?? {}).includes(claimedId!), "OPE-1858: the row names the challenge that was ratified");
+
+  _resetAccountDisplayNamesForTest();
+}
+
+{
+  const { UNTRUSTED_OPEN } = await import("../agent/access/untrusted.js");
+  const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+  const codeOf = (text: string): string => text.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+  const backCodeOf = (text: string): string => text.match(new RegExp(String.raw`(${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})\n`))![1]!;
+  const trustedHalf = (note: string): string => note.slice(0, note.indexOf(UNTRUSTED_OPEN)).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<AT>");
+
+  function dmOn(platform: string, principalId: string): BindableContext {
+    if (platform === "slack") return ctxFor({ channelId: `D_${principalId}`, channelType: "im", principalId });
+    return {
+      channel: { kind: platform },
+      session: { auth: { current: { attributes: { workspace_id: "W1", channel_id: `D_${principalId}` }, principalId, principalType: `${platform}-user` } } },
+    } as BindableContext;
+  }
+  for (const p of ["discord", "teams"]) {
+    registerIdentityMapper(p, (c) => {
+      const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+      return { workspace: a["workspace_id"], surface: a["channel_id"], mode: "dm", visibility: "private", principalId: c.session?.auth?.current?.principalId, target: undefined };
+    });
+  }
+
+  async function linkAcross(initiator: string, claimPlatform: string, tag: string): Promise<{ note: string; committed: boolean; rowed: boolean }> {
+    const dm = dmOn(initiator, `U_${tag}`);
+    const minted = (await linkIdentity.execute({}, dm)) as { instructions: string };
+    const saw: string[] = [];
+    const challengeId = await observeLinkClaim({
+      org: ORG,
+      platform: claimPlatform,
+      tenant: isTenantScopedPlatform(claimPlatform) ? T1 : "",
+      authorId: `acct-${tag}`,
+      addressed: true,
+      text: `link ${codeOf(minted.instructions)}`,
+      trust: "peer",
+      codeBackDeliverable: true,
+      notifyClaimant: (t) => {
+        saw.push(t);
+      },
+    });
+    const peek = (await confirmLink.execute({ decision: "confirm", challengeId }, dm)) as { note: string };
+    const before = (await pg.readAudit({ org: ORG, action: "identity.link.confirmed" })).length;
+    const done = (await confirmLink.execute({ decision: "confirm", code: backCodeOf(saw.join("\n")), challengeId }, dm)) as { decided: string };
+    const rowed = (await pg.readAudit({ org: ORG, action: "identity.link.confirmed" })).length === before + 1;
+    return { note: peek.note, committed: done.decided === "confirmed", rowed };
+  }
+
+  const CLAIM_SURFACES = ["slack", "discord", "teams", "notion", "linear", "github"] as const;
+  const claimNotes: string[] = [];
+  for (const s of CLAIM_SURFACES) {
+    const r = await linkAcross("slack", s, `claim-${s}`);
+    ok(r.committed && r.rowed, `🔴 PARITY (claim from ${s}): the forced code-back finalizes and writes identity.link.confirmed — a claim from this surface can complete`);
+    claimNotes.push(trustedHalf(r.note));
+  }
+  ok(new Set(claimNotes).size === 1, `🔴 PARITY: the finalize peek's OWN words are byte-identical whichever surface claimed (${new Set(claimNotes).size} distinct texts across ${CLAIM_SURFACES.length} surfaces) — the fix cannot be half-applied, because there is only one text`);
+  ok(/call confirm_link again NOW with it and this challengeId/.test(claimNotes[0]!), "🔴 PARITY: …and that one text is the FIXED one — the finish-it-now instruction, on each of them");
+
+  const DM_SURFACES = ["slack", "discord", "teams"] as const;
+  const dmNotes: string[] = [];
+  for (const s of DM_SURFACES) {
+    const r = await linkAcross(s, "github", `dm-${s}`);
+    ok(r.committed && r.rowed, `🔴 PARITY (finalize in a ${s} DM): the link commits and writes its row — the finalize road treats this platform like the others`);
+    dmNotes.push(trustedHalf(r.note));
+  }
+  ok(new Set(dmNotes).size === 1, `🔴 PARITY: the peek reads the same in a Slack, Discord and Teams DM (${new Set(dmNotes).size} distinct texts) — one road, one answer`);
+  ok(new Set([...claimNotes, ...dmNotes]).size === 1, "🔴 PARITY: and it is the SAME one text across both legs — no branch anywhere on the finalize road");
+
+  ok(claimNotes[0]!.length > 200 && claimNotes[0]!.includes("NOTHING IS LINKED YET"), "PARITY negative control: the compared text is the real note, not an empty slice");
+  ok(trustedHalf(`before${UNTRUSTED_OPEN} x`) !== trustedHalf(`other${UNTRUSTED_OPEN} x`), "PARITY negative control: trustedHalf DISTINGUISHES two different notes — a set of size 1 above is a real agreement");
+
+  _resetAccountDisplayNamesForTest();
+}
+
+console.log(
+  `✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, claim addressing, forced code-back, both tools, the actionable finalize peek, surface parity)`,
+);
