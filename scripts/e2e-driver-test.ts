@@ -3406,6 +3406,12 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(JSON.stringify(resolveExpectedModels("deepseek/deepseek-v4-flash-0731, alibaba/qwen3-vl-instruct")) === JSON.stringify(["deepseek/deepseek-v4-flash-0731", "alibaba/qwen3-vl-instruct"]), "resolveExpectedModels honours an explicit operator override over the shipped default, trimmed (order preserved, same as the CSV it replaces)");
   ok(shippedIds.length === 2, "the shipped default stack (american-closed) collapses five roles to exactly two ids (luna text + gemini vision) — dedup is real");
   ok(shippedIds.includes("google/gemini-3.7-flash"), "the shipped set carries the vision id — an F-ART run's describer rows are expected models, not a red");
+
+  const { UNKNOWN_MODEL } = await import("../packages/core/agent/spend/spend.js");
+  const unknownRow = { surfaceKey: "slack/T1/C1", model: UNKNOWN_MODEL, calls: 1, inputTokens: 1286, outputTokens: 152, cacheReadTokens: 0, cacheWriteTokens: 1283 };
+  const ok6 = checkExpectedModels([...rows, unknownRow], ["test/model-a", "test/unpriced", "(unstamped)"]);
+  ok(!ok6.ok && ok6.unexpected.includes(UNKNOWN_MODEL), "🔴 OPE-1878: checkExpectedModels reds on the UNKNOWN_MODEL sentinel — a token-bearing call nothing could name is a routing gap, never a pass");
+  ok(!defaultExpectedModels().includes(UNKNOWN_MODEL), "…and the DERIVED expected set never names the sentinel, so no stack flip can make an unnamed call acceptable");
 }
 
 {

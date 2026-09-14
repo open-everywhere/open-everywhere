@@ -6,7 +6,7 @@ import { noteCompletedModelStep } from "../model/call-capture.js";
 import { periodOf, UNKNOWN_MODEL, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
-import { readModelStamp } from "../model/model-stamp.js";
+import { noteHostStepModel, readHostStepModel, readModelStamp } from "../model/model-stamp.js";
 import { readModelArm, MODEL_ARM_DETAIL_KEY, MODEL_AB_BUCKET_DETAIL_KEY, type ModelArmStamp } from "../model/ab-test.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { SurfaceMode } from "../operational/store.js";
@@ -171,6 +171,13 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
 
 export default defineHook({
   events: {
+    "step.started": (event) => {
+      try {
+        noteHostStepModel(event.data.modelId);
+      } catch (err) {
+        console.warn(`[open-everywhere:spend] host model reference not recorded: ${String(err)}`);
+      }
+    },
     "step.completed": async (event, ctx: HookContext) => {
       noteCompletedModelStep(ctx.session?.id, (event.data as { turnId?: string } | undefined)?.turnId, ctx);
       const usage = event.data?.usage as Usage | undefined;
@@ -182,7 +189,7 @@ export default defineHook({
         return typeof raw === "string" && raw.length > 0 ? raw : undefined;
       })();
 
-      const stampedModel = readModelStamp() ?? undefined;
+      const stampedModel = readModelStamp() ?? readHostStepModel() ?? undefined;
       const stampedArm = readModelArm() ?? undefined;
       await recordModelCall(ctx, {
         usage,

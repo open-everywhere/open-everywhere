@@ -411,6 +411,54 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok(isolatedRows.length === 1 && isolatedRows[0].model === UNKNOWN_MODEL, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
 
   {
+    const ledgerStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+    const { MAX_OBSERVABLE_DELEGATION_DEPTH } = await import("../agent/operational/store.js");
+    const ledgerPeriod = periodOf(new Date().toISOString());
+    const ledgerFor = (surfaceKey: string) => ledgerStore.listSpendLedger("default", { surfaceKey, period: ledgerPeriod });
+    const startedEvent = (modelId: string) => ({ data: { modelId, sequence: 0, stepIndex: 0, turnId: "turn-depth2" } });
+    const delegatedCtx = (channelId: string) => ({
+      channel: { kind: "slack" },
+      session: {
+        id: "sess-subagent-child",
+        parent: { sessionId: "sess-worker", callId: "call-fresh-eyes", rootSessionId: "sess-root" },
+        auth: { current: { attributes: { team_id: "T1", channel_id: channelId }, principalId: "U1", principalType: "slack-user" } },
+      },
+    });
+    const delegatedUsage = stepEvent(1_286_000, 152_000);
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      await spendHook.events!["step.started"]!(startedEvent(PRICED_MODEL) as never, delegatedCtx("C_DEPTH2") as never);
+      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2") as never);
+    });
+    const depth2 = await usageEvents.usageForSession("default", "sess-worker");
+    ok(depth2.length === 1, "control: the delegated call wrote exactly one usage row");
+    ok(depth2[0].delegationDepth === MAX_OBSERVABLE_DELEGATION_DEPTH, "control: the row really is at delegation depth 2 — the assertion below is about the depth the defect was seen at");
+    ok(depth2[0].kind === "subagent", "control: the row really is a delegated call");
+    ok(
+      depth2[0].model === PRICED_MODEL && depth2[0].model !== UNKNOWN_MODEL,
+      "🔴 OPE-1878 hooks/spend: a delegated call whose session stamped NOTHING is named from the host's own step.started model reference, never recorded as the unknown-model sentinel",
+    );
+    const depth2Ledger = (await ledgerFor("slack/T1/C_DEPTH2")).filter((r) => r.model === PRICED_MODEL);
+    ok(depth2Ledger.length === 1, "🔴 OPE-1878: the CAP ledger row carries the registry model id too — spend_ledger is the store every cap denomination sums");
+    ok(depth2Ledger[0].usdMicros > 0, "…and it is rate-priced, where the unknown-model sentinel priced the same tokens at $0");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_UNSEEN") as never);
+    });
+    const unseenLedger = await ledgerFor("slack/T1/C_DEPTH2_UNSEEN");
+    ok(unseenLedger.length === 1 && unseenLedger[0].model === UNKNOWN_MODEL, "🔴 OPE-1878: a delegated call NO source could name still records the unknown-model sentinel — the fix names what was observed, it never guesses");
+    ok(unseenLedger[0].usdMicros === 0, "…and is still unpriced, so the evidence rule the sentinel enforces is intact");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      await spendHook.events!["step.started"]!(startedEvent("some-other/model") as never, delegatedCtx("C_DEPTH2_BOTH") as never);
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_BOTH") as never);
+    });
+    const bothLedger = await ledgerFor("slack/T1/C_DEPTH2_BOTH");
+    ok(bothLedger.length === 1 && bothLedger[0].model === PRICED_MODEL, "🔴 OPE-1878: with BOTH a routed stamp and a host reference, the row takes the ROUTED id — the host reference never overwrites the route's own answer");
+  }
+
+  {
     const { usdMicrosAtWrite } = await import("../agent/spend/pricing.js");
     const big = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
     ok(usdMicrosAtWrite(big) > 0, "control: a STAMPLESS write still prices at the deploy's sole configured model — the legacy fallback is intact and is what a legacy row still gets");

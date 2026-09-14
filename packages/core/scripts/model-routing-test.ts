@@ -527,6 +527,34 @@ const supDomains: Domain[] = [
   });
 
   {
+    const { registryModelIdFrom, noteHostStepModel, readHostStepModel } = await import("../agent/model/model-stamp.js");
+
+    ok(registryModelIdFrom("openai/gpt-5.6-luna") === "openai/gpt-5.6-luna", "registryModelIdFrom: an authored STRING model id passes through — a declared subagent's registry id already arrives spelled right");
+    ok(registryModelIdFrom("gateway/openai/gpt-5.6-luna") === "openai/gpt-5.6-luna", "registryModelIdFrom: the gateway INSTANCE prefix is dropped, recovering the id the rate table and the e2e routing check are keyed on");
+    ok(registryModelIdFrom("gateway/luna") === "gateway/luna", "🔴 registryModelIdFrom: a prefixed id whose remainder names NO vendor is left exactly as the host wrote it — shortening it would invent another model's spelling");
+    ok(registryModelIdFrom("  openai/gpt-5.6-luna  ") === "openai/gpt-5.6-luna", "registryModelIdFrom: surrounding whitespace is trimmed");
+    for (const unusable of ["", "   ", undefined, null, 7]) {
+      ok(registryModelIdFrom(unusable) === undefined, `registryModelIdFrom: ${JSON.stringify(unusable) ?? "undefined"} names no model`);
+    }
+
+    ok(readHostStepModel() === null, "host step model: read outside a session context -> null (fail-soft)");
+    noteHostStepModel("openai/gpt-5.6-luna");
+    ok(readHostStepModel() === null, "host step model: a note attempted outside a session is a no-op");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      ok(readHostStepModel() === null, "host step model: a fresh session starts with no host reference");
+      noteHostStepModel("gateway/anthropic/claude-sonnet-5");
+      ok(readHostStepModel() === "anthropic/claude-sonnet-5", "host step model: the slot holds the REGISTRY spelling, never the harness's own label");
+      noteHostStepModel("");
+      noteHostStepModel(undefined);
+      ok(readHostStepModel() === "anthropic/claude-sonnet-5", "🔴 host step model: an unusable id leaves the last real reference in place — it never clears the slot");
+    });
+    await contextStorage.run(new ContextContainer(), async () => {
+      ok(readHostStepModel() === null, "host step model: a DIFFERENT session is unaffected by another session's host reference");
+    });
+  }
+
+  {
     const calls: FakeCall[] = [];
     const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, fakeBackend(calls));
     await m.doGenerate(turnCall);

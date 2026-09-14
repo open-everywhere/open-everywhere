@@ -27,6 +27,35 @@ export function swapModelStamp(modelId: string | null): string | null {
   }
 }
 
+const GATEWAY_MODEL_ID_PREFIX = "gateway/";
+
+const hostSlot = defineState<string | null>("open-everywhere.host-step-model", () => null);
+
+export function registryModelIdFrom(hostModelId: unknown): string | undefined {
+  if (typeof hostModelId !== "string") return undefined;
+  const id = hostModelId.trim();
+  if (id.length === 0) return undefined;
+  const rest = id.startsWith(GATEWAY_MODEL_ID_PREFIX) ? id.slice(GATEWAY_MODEL_ID_PREFIX.length) : id;
+  return rest.includes("/") ? rest : id;
+}
+
+export function noteHostStepModel(hostModelId: unknown): void {
+  const id = registryModelIdFrom(hostModelId);
+  if (id === undefined) return;
+  try {
+    hostSlot.update(() => id);
+  } catch {
+  }
+}
+
+export function readHostStepModel(): string | null {
+  try {
+    return hostSlot.get();
+  } catch {
+    return null;
+  }
+}
+
 export async function withModelStampScope<T>(modelId: string, fn: () => Promise<T>): Promise<T> {
   const prev = swapModelStamp(modelId);
   try {
