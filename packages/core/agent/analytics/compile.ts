@@ -57,6 +57,8 @@ export interface AnalyticsPlan {
   readonly outputLimit: number;
   readonly surfaceColumn: string | null;
   readonly surfaceParts: readonly string[] | null;
+  readonly surfaceModeColumn: string | null;
+  readonly surfaceKindColumn: string | null;
   readonly orderBy?: { readonly by: string; readonly dir: "asc" | "desc" };
 }
 
@@ -210,6 +212,8 @@ export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsSco
         outputLimit: Math.min(input.limit ?? ROWS_LIMIT_MAX, ROWS_LIMIT_MAX),
         surfaceColumn: spec.surfaceColumn,
         surfaceParts: spec.surfaceParts,
+        surfaceModeColumn: spec.surfaceModeColumn,
+        surfaceKindColumn: spec.surfaceKindColumn,
       },
     };
   }
@@ -250,6 +254,7 @@ export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsSco
     }
   }
   if (wantsEstUsd && spec.dims.model?.kind === "column") addGroup((spec.dims.model as { column: string }).column, "model");
+  if (groupDims.includes("surface") && spec.surfaceModeColumn) addGroup(spec.surfaceModeColumn, spec.surfaceModeColumn);
 
   const sqlMeasureNames = new Set(measures.filter((m) => spec.measures[m]?.kind === "sql"));
   if (wantsEstUsd) for (const t of ["input_tokens", "output_tokens", "cache_read_tokens"]) if (spec.measures[t]) sqlMeasureNames.add(t);
@@ -277,6 +282,8 @@ export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsSco
       outputLimit: Math.min(input.limit ?? AGGREGATE_LIMIT_MAX, AGGREGATE_LIMIT_MAX),
       surfaceColumn: spec.surfaceColumn,
       surfaceParts: spec.surfaceParts,
+      surfaceModeColumn: spec.surfaceModeColumn,
+      surfaceKindColumn: spec.surfaceKindColumn,
       ...(input.orderBy ? { orderBy: input.orderBy } : {}),
     },
   };

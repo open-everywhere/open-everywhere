@@ -17,6 +17,8 @@ export interface DatasetSpec {
   readonly measures: Readonly<Record<string, MeasureSpec>>;
   readonly rowColumns: readonly string[];
   readonly surfaceColumn: string | null;
+  readonly surfaceModeColumn: string | null;
+  readonly surfaceKindColumn: string | null;
   readonly surfaceParts: readonly string[] | null;
   readonly principalColumn: string;
   readonly platformColumn: string | null;
@@ -39,6 +41,8 @@ const AUDIT: DatasetSpec = {
   },
   rowColumns: ["ts", "platform", "workspace", "surface", "principal_id", "action"],
   surfaceColumn: null,
+  surfaceModeColumn: null,
+  surfaceKindColumn: null,
   surfaceParts: ["platform", "workspace", "surface"],
   principalColumn: "principal_id",
   platformColumn: "platform",
@@ -78,6 +82,7 @@ const USAGE: DatasetSpec = {
     "surface_key",
     "principal_id",
     "kind",
+    "surface_mode",
     "routine_id",
     "model",
     "session_id",
@@ -93,6 +98,8 @@ const USAGE: DatasetSpec = {
     "root_session_id",
   ],
   surfaceColumn: "surface_key",
+  surfaceModeColumn: "surface_mode",
+  surfaceKindColumn: "kind",
   surfaceParts: null,
   principalColumn: "principal_id",
   platformColumn: null,
@@ -124,6 +131,7 @@ const SPEND: DatasetSpec = {
     "period",
     "surface_key",
     "principal_id",
+    "surface_mode",
     "routine_id",
     "model",
     "cost_source",
@@ -137,6 +145,8 @@ const SPEND: DatasetSpec = {
     "calls",
   ],
   surfaceColumn: "surface_key",
+  surfaceModeColumn: "surface_mode",
+  surfaceKindColumn: null,
   surfaceParts: null,
   principalColumn: "principal_id",
   platformColumn: null,

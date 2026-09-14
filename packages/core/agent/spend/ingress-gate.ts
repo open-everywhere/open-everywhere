@@ -4,6 +4,7 @@ import { scopeOverBudget } from "./check.js";
 import { capBypassFor } from "./bypass.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { SessionMode } from "../access/resolver.js";
+import type { CapLayer } from "./spend.js";
 
 export type SpendGateDoor = "mention" | "engagement" | "join" | "window" | "answer";
 
@@ -12,7 +13,7 @@ export type SpendGateDecision = "proceed" | "declined";
 interface Verdict {
   readonly over: boolean;
   readonly reason?: string;
-  readonly layer?: "user" | "surface" | "workspace";
+  readonly layer?: CapLayer;
   readonly scopeKey?: string;
 }
 
@@ -53,21 +54,42 @@ export interface IngressSpendGateInput {
   readonly appendGateAudit?: (row: SpendGateAuditRow) => Promise<void>;
 }
 
-export function spendRefusalCopy(
-  reason: string | undefined,
-  surfaceKey: string,
-  workspaceKey: string,
-  isDm = false,
-  badge: string = UNICODE_SPEND_BADGES.refusal,
-  userScopeKey?: string,
-): string {
-  if (isDm) {
-    const keys = userScopeKey
-      ? `The keys an admin needs: this conversation = \`${surfaceKey}\`, your own allowance = \`${userScopeKey}\`.`
-      : `The scope key for this conversation is \`${surfaceKey}\`.`;
-    return `${badge} I'm holding off — ${reason}. This is a cap on your own usage, and I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card. ${keys}`;
-  }
-  return `${badge} I'm holding off here — ${reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = \`${surfaceKey}\`, whole workspace = \`${workspaceKey}\`.`;
+export interface SpendRefusalCopyInput {
+  readonly reason?: string;
+  readonly surfaceKey: string;
+  readonly workspaceKey: string;
+  readonly mode: SessionMode;
+  readonly layer?: CapLayer;
+  readonly layerKey?: string;
+  readonly badge?: string;
+}
+
+const PLACE_WORD: Record<SessionMode, string> = { dm: "this DM", mpim: "this group DM", channel: "this channel" };
+
+const CAP_LAYER_COPY: Record<CapLayer, { readonly keyLabel: (mode: SessionMode) => string }> = {
+  user: { keyLabel: () => "your own allowance" },
+  surface: { keyLabel: (mode) => PLACE_WORD[mode] },
+  workspace: { keyLabel: () => "whole workspace" },
+};
+
+export function spendRefusalCopy(input: SpendRefusalCopyInput): string {
+  const { reason, surfaceKey, workspaceKey, mode, layer, layerKey } = input;
+  const badge = input.badge ?? UNICODE_SPEND_BADGES.refusal;
+  const inDm = mode === "dm" || mode === "mpim";
+
+  const remedy = inDm
+    ? "I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card."
+    : "An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card.";
+
+  const breached = layer && layerKey ? `${CAP_LAYER_COPY[layer].keyLabel(mode)} = \`${layerKey}\`` : undefined;
+  const here = `${PLACE_WORD[mode]} = \`${surfaceKey}\``;
+  const keys = breached
+    ? breached === here
+      ? breached
+      : `${breached}, ${here}`
+    : `${here}, whole workspace = \`${workspaceKey}\``;
+
+  return `${badge} I'm holding off${inDm ? "" : " here"} — ${reason}. ${remedy} Scope keys for the override: ${keys}.`;
 }
 
 export function spendBypassWarnCopy(reason: string | undefined, badge: string = UNICODE_SPEND_BADGES.warning): string {
@@ -122,14 +144,15 @@ export async function ingressSpendGate(input: IngressSpendGateInput): Promise<Sp
     }
     try {
       await input.post(
-        spendRefusalCopy(
-          verdict.reason,
-          domainKeyOf(partition),
-          `${binding.platform}/${binding.workspace}`,
-          mode === "dm" || mode === "mpim",
-          badges.refusal,
-          verdict.layer === "user" ? verdict.scopeKey : undefined,
-        ),
+        spendRefusalCopy({
+          ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}),
+          surfaceKey: domainKeyOf(partition),
+          workspaceKey: `${binding.platform}/${binding.workspace}`,
+          mode,
+          ...(verdict.layer !== undefined ? { layer: verdict.layer } : {}),
+          ...(verdict.scopeKey !== undefined ? { layerKey: verdict.scopeKey } : {}),
+          badge: badges.refusal,
+        }),
       );
     } catch {
     }

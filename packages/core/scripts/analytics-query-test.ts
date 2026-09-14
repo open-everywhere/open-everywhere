@@ -34,10 +34,15 @@ const pgStore = makeOperationalPostgresStore(pgClient);
 const sqlStore = sqliteOperationalStore;
 
 const seedUsage = [
-  { surfaceKey: "slack/T1/CA", sessionId: "s1", principalId: "U_A", ts: "2026-07-01T10:00:00Z", kind: "channel", inputTokens: 100, outputTokens: 20 },
-  { surfaceKey: "slack/T1/CA", sessionId: "s2", principalId: "U_A", ts: "2026-07-02T10:00:00Z", kind: "channel", inputTokens: 50, outputTokens: 10 },
-  { surfaceKey: "slack/T1/CB", sessionId: "s3", principalId: "U_B", ts: "2026-07-01T10:00:00Z", kind: "channel", inputTokens: 999, outputTokens: 999 },
-  { surfaceKey: "slack/T1/D01ABCDEF", sessionId: "s4", principalId: "U_A", ts: "2026-07-03T10:00:00Z", kind: "dm", inputTokens: 7, outputTokens: 3 },
+  { surfaceKey: "slack/T1/CA", sessionId: "s1", principalId: "U_A", ts: "2026-07-01T10:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 100, outputTokens: 20 },
+  { surfaceKey: "slack/T1/CA", sessionId: "s2", principalId: "U_A", ts: "2026-07-02T10:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 50, outputTokens: 10 },
+  { surfaceKey: "slack/T1/CB", sessionId: "s3", principalId: "U_B", ts: "2026-07-01T10:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 999, outputTokens: 999 },
+  { surfaceKey: "slack/T1/D01ABCDEF", sessionId: "s4", principalId: "U_A", ts: "2026-07-03T10:00:00Z", kind: "dm", surfaceMode: "dm" as const, inputTokens: 7, outputTokens: 3 },
+  { surfaceKey: "discord/G1/1180000000000000447", sessionId: "s5", principalId: "U_A", ts: "2026-07-03T11:00:00Z", kind: "routine", surfaceMode: "dm" as const, inputTokens: 11, outputTokens: 1 },
+  { surfaceKey: "teams/T1/19:meeting_ZmFrZQ==@thread.v2", sessionId: "s6", principalId: "U_B", ts: "2026-07-03T12:00:00Z", kind: "dm", surfaceMode: "dm" as const, inputTokens: 13, outputTokens: 2 },
+  { surfaceKey: "discord/G1/1180000000000000913", sessionId: "s7", principalId: "U_B", ts: "2026-07-03T13:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 17, outputTokens: 4 },
+  { surfaceKey: "slack/T1/D0LEGACY01", sessionId: "s8", principalId: "U_A", ts: "2026-07-03T14:00:00Z", kind: "routine", inputTokens: 19, outputTokens: 5 },
+  { surfaceKey: "slack/T1/C0LEGACY02", sessionId: "s10", principalId: "U_A", ts: "2026-07-03T15:00:00Z", kind: "channel", inputTokens: 23, outputTokens: 6 },
 ];
 for (const e of seedUsage) {
   await sqlStore.appendUsageEvent({ org: ORG, cacheReadTokens: 0, cacheWriteTokens: 0, ...e });
@@ -84,7 +89,7 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   const cb = s.rows.find((r) => r.surface === "slack/T1/CB");
   ok(cb?.input_tokens === 999, "org admin sees domain-B (CB) rows");
   const total = s.rows.reduce((t, r) => t + Number(r.input_tokens), 0);
-  ok(total === 100 + 50 + 999 + 7, "org total is exactly this org's four rows — the 'other' org's row is NEVER included (org_id isolation)");
+  ok(total === 100 + 50 + 999 + 7 + 11 + 13 + 17 + 19 + 23, "org total is exactly this org's nine rows — the 'other' org's row is NEVER included (org_id isolation)");
 }
 
 {
@@ -92,6 +97,37 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   ok(masked.s.rows.some((r) => r.surface === "slack/T1/(dms)") && !masked.s.rows.some((r) => r.surface === "slack/T1/D01ABCDEF"), "DM surface is bucketed to (dms) at org grain in a room");
   const unmasked = await runBoth({ dataset: "usage", scope: "org", groupBy: ["surface"], select: ["events"] }, orgScopeDmUnmasked);
   ok(unmasked.s.rows.some((r) => r.surface === "slack/T1/D01ABCDEF"), "org admin asking from their own DM sees the DM surface unbucketed");
+
+  const surfaces = (rows: readonly Record<string, unknown>[]) => rows.map((r) => String(r.surface));
+  const grouped = masked.s.rows;
+  ok(canon(masked.s.rows) === canon(masked.p.rows), "OPE-1862: the masked grouping is identical on SQLite and Postgres (the mode column is grouped in SQL, so both engines fold the same way)");
+  for (const [platform, leaked, bucket] of [
+    ["discord", "discord/G1/1180000000000000447", "discord/G1/(dms)"],
+    ["teams", "teams/T1/19:meeting_ZmFrZQ==@thread.v2", "teams/T1/(dms)"],
+  ] as const) {
+    ok(surfaces(grouped).includes(bucket), `🔴 OPE-1862/${platform}: query_analytics groups the DM row under (dms)`);
+    ok(!surfaces(grouped).includes(leaked), `🔴 OPE-1862/${platform}: …and never names the individual's surface`);
+  }
+  ok(surfaces(grouped).includes("discord/G1/1180000000000000913"), "OPE-1862: a Discord CHANNEL is still named — the mask hides DMs, not the dataset");
+  ok(surfaces(grouped).includes("slack/T1/(unclassified)") && !surfaces(grouped).includes("slack/T1/D0LEGACY01"), "🔴 OPE-1862: an UNSTAMPED row masks to (unclassified) — fail closed");
+  ok(!surfaces(grouped).includes("slack/T1/C0LEGACY02"), "🔴 OPE-1862: an unstamped CHANNEL row masks in aggregate mode too — the grouping may only use a column that cannot split a session, so the legacy tag is not read here");
+  const discordDm = grouped.find((r) => r.surface === "discord/G1/(dms)");
+  ok(discordDm?.events === 1, "OPE-1862: the masked bucket keeps its measures — masking a key never drops the spend it carried");
+
+  for (const store of [sqlStore, pgStore]) {
+    await store.appendUsageEvent({ org: ORG, surfaceKey: "slack/T1/C_SESS", sessionId: "s-sess-1", principalId: "U_SESS", ts: "2026-07-05T10:00:00Z", kind: "channel", surfaceMode: "channel", inputTokens: 5, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    await store.appendUsageEvent({ org: ORG, surfaceKey: "slack/T1/C_SESS", sessionId: "s-sess-1", principalId: "U_SESS", ts: "2026-07-05T10:01:00Z", kind: "sandbox", surfaceMode: "channel", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+  }
+  const sess = await runBoth({ dataset: "usage", scope: "org", groupBy: ["surface"], select: ["sessions", "events"] }, orgScope);
+  const sessRow = sess.s.rows.find((r) => r.surface === "slack/T1/C_SESS");
+  ok(canon(sess.s.rows) === canon(sess.p.rows), "OPE-1862: the session count folds identically on both engines");
+  ok(Number(sessRow?.events) === 2, "fixture control: both rows are in scope — the session assertion below is the DISTINCT count, not an empty group");
+  ok(Number(sessRow?.sessions) === 1, "🔴 OPE-1862: two rows of ONE session under two different origin tags still count as ONE session — the mask's grouping never inflates a distinct count");
+
+  const rows = await runBoth({ dataset: "usage", scope: "org", mode: "rows", limit: 50 }, orgScope);
+  const rowKeys = rows.s.rows.map((r) => String(r.surface_key));
+  ok(rowKeys.includes("discord/G1/(dms)") && !rowKeys.includes("discord/G1/1180000000000000447"), "🔴 OPE-1862: rows mode masks a Discord DM too — the raw key never reaches the caller");
+  ok(rowKeys.includes("slack/T1/(unclassified)"), "OPE-1862: rows mode fails closed on an unstamped row");
 }
 
 {
@@ -101,7 +137,7 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
 }
 
 {
-  const discordRow = { org: ORG, surfaceKey: "discord/G9/C_DEV", sessionId: "s9", principalId: "U_A", ts: "2026-07-04T10:00:00Z", kind: "channel", inputTokens: 4242, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  const discordRow = { org: ORG, surfaceKey: "discord/G9/C_DEV", sessionId: "s9", principalId: "U_A", ts: "2026-07-04T10:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 4242, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   await sqlStore.appendUsageEvent(discordRow);
   await pgStore.appendUsageEvent(discordRow);
   const discordAudit = { org: ORG, ts: "2026-07-04T10:00:00Z", platform: "discord", workspace: "G9", surface: "C_DEV", principalId: "U_A", action: "reply.post", detail: { note: "discord row" } };
@@ -113,10 +149,20 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   const slackUsage = await runBoth({ dataset: "usage", scope: "self", groupBy: ["surface"], select: ["input_tokens"] }, selfAScope);
   ok(canon(slackUsage.s.rows) === canon(slackUsage.p.rows), "OPE-309: cross-platform self scope keeps dual-engine parity (usage)");
   ok(!slackUsage.s.rows.some((r) => String(r.surface).startsWith("discord/")), "🔴 OPE-309: the SLACK U_A's self scope does not read the DISCORD U_A's usage rows — a bare-id predicate would have returned both");
-  ok(slackUsage.s.rows.reduce((t, r) => t + Number(r.input_tokens), 0) === 100 + 50 + 7, "OPE-309: …and still returns every one of the caller's OWN rows (the fix narrows the namespace, not the person)");
+  ok(
+    slackUsage.s.rows.reduce((t, r) => t + Number(r.input_tokens), 0) === 100 + 50 + 7 + 19 + 23,
+    "OPE-309: …and still returns every one of the caller's OWN rows, the unstamped legacy one included (the fix narrows the namespace, not the person)",
+  );
 
   const discordUsage = await runBoth({ dataset: "usage", scope: "self", groupBy: ["surface"], select: ["input_tokens"] }, discordSelf);
-  ok(discordUsage.s.rows.length === 1 && discordUsage.s.rows[0].input_tokens === 4242, "OPE-309: …and the DISCORD U_A sees exactly their own row — the fence cuts both ways, and neither caller is left blind");
+  ok(
+    discordUsage.s.rows.some((r) => r.surface === "discord/G9/C_DEV" && r.input_tokens === 4242),
+    "OPE-309: …and the DISCORD U_A sees exactly their own row — the fence cuts both ways, and neither caller is left blind",
+  );
+  ok(
+    discordUsage.s.rows.every((r) => !String(r.surface).includes("1180000000000000447")),
+    "OPE-1862: a self-scope read masks the caller's OWN Discord DM too — self grain never unmasks (access/analytics-scope.ts)",
+  );
 
   const slackAudit = await runBoth({ dataset: "audit", scope: "self", groupBy: ["platform"], select: ["rows"] }, selfAScope);
   ok(slackAudit.s.rows.length === 1 && slackAudit.s.rows[0].platform === "slack", "🔴 OPE-309: the audit dataset is namespaced by its own `platform` column — the Slack caller never sees the Discord row");
@@ -180,15 +226,26 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
 }
 
 {
-  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000 });
-  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000 });
-  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured" });
-  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured" });
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000, surfaceMode: "channel" });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000, surfaceMode: "channel" });
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured", surfaceMode: "channel" });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured", surfaceMode: "channel" });
 
   const spendUsd = await runBoth({ dataset: "spend", scope: "org", groupBy: ["surface"], select: ["usd", "usd_measured", "calls"] }, orgScope);
   ok(canon(spendUsd.s.rows) === canon(spendUsd.p.rows), "spend usd: dual-engine parity");
   const ca = spendUsd.s.rows.find((r) => r.surface === "slack/T1/CA");
   ok(Number(ca?.usd) === 4, "🔴 REGRESSION: the spend dataset's `usd` measure returns the real total ($2.50 + $1.50) — it silently reported 0 for every query before this fix");
+
+  const dmLedgerKey = "discord/G1/1180000000000000447";
+  for (const store of [sqlStore, pgStore]) {
+    await store.recordSpend(ORG, { surfaceKey: dmLedgerKey, principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 100_000, surfaceMode: "dm" });
+    await store.recordSpend(ORG, { surfaceKey: "slack/T1/C_LEDGER_NOMODE", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 100_000 });
+  }
+  const spendSurfaces = await runBoth({ dataset: "spend", scope: "org", groupBy: ["surface"], select: ["usd"] }, orgScope);
+  const spendKeys = spendSurfaces.s.rows.map((r) => String(r.surface));
+  ok(canon(spendSurfaces.s.rows) === canon(spendSurfaces.p.rows), "OPE-1862: the masked ledger grouping is identical on both engines");
+  ok(spendKeys.includes("discord/G1/(dms)") && !spendKeys.includes(dmLedgerKey), "🔴 OPE-1862: a Discord DM LEDGER row groups under (dms) — the ledger case the id-shape mask could never reach");
+  ok(spendKeys.includes("slack/T1/(unclassified)") && !spendKeys.includes("slack/T1/C_LEDGER_NOMODE"), "🔴 OPE-1862: an unstamped ledger row masks — fail closed, and into its own bucket");
   ok(Number(ca?.usd_measured) === 1, "OPE-369: `usd_measured` sums the gateway's own figure over the measured rows only");
   ok(Number(ca?.calls) === 2, "…alongside the call count, which was in the old allowlist and is unchanged");
 
@@ -199,9 +256,9 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
 
 {
   const attribution = [
-    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-1", principalId: "U_A", ts: "2026-07-05T10:00:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 5, cacheWriteTokens: 2, cacheTokensReported: true, reasoningTokens: 30 },
-    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-2", principalId: "U_A", ts: "2026-07-05T10:01:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: true, reasoningTokens: 0 },
-    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-3", principalId: "U_A", ts: "2026-07-05T10:02:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: false },
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-1", principalId: "U_A", ts: "2026-07-05T10:00:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 10, outputTokens: 1, cacheReadTokens: 5, cacheWriteTokens: 2, cacheTokensReported: true, reasoningTokens: 30 },
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-2", principalId: "U_A", ts: "2026-07-05T10:01:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: true, reasoningTokens: 0 },
+    { surfaceKey: "slack/T1/CATTR", sessionId: "attr-3", principalId: "U_A", ts: "2026-07-05T10:02:00Z", kind: "channel", surfaceMode: "channel" as const, inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cacheTokensReported: false },
   ];
   for (const e of attribution) {
     await sqlStore.appendUsageEvent({ org: ORG, ...e });
@@ -220,8 +277,8 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   ok(Number(cb?.reasoning_tokens) === 30, "OPE-1611: the reasoning sum COALESCEs the unreported row to 0 rather than going NULL over the group");
   ok(Number(cb?.reasoning_reported_calls) === 2, "🔴 OPE-1611: reasoning_reported_calls counts non-NULL only, so a REPORTED zero (attr-2) counts and an UNREPORTED one (attr-3) does not — the pair a truthiness read would collapse");
 
-  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30 });
-  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30 });
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30, surfaceMode: "channel" });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CATTR", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 10, usdMicros: 1000, reasoningTokens: 30, surfaceMode: "channel" });
   const led = await runBoth({ dataset: "spend", scope: "org", groupBy: ["surface"], select: ["usd", "reasoning_tokens"] }, orgScope);
   ok(canon(led.s.rows) === canon(led.p.rows), "OPE-1611: the ledger's reasoning_tokens measure is dual-engine identical");
   const ledCb = led.s.rows.find((r) => r.surface === "slack/T1/CATTR");

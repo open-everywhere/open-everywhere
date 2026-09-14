@@ -9,6 +9,7 @@ import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { readModelArm, MODEL_ARM_DETAIL_KEY, MODEL_AB_BUCKET_DETAIL_KEY, type ModelArmStamp } from "../model/ab-test.js";
 import { getOperationalStore } from "../operational/provider.js";
+import type { SurfaceMode } from "../operational/store.js";
 import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
 import { delegationDepthOf, stampSubagentRun } from "../spend/subagent-runs.js";
@@ -40,6 +41,15 @@ export function subagentParentOf(
     }
     const parsed = parseSubagentToken(continuationToken);
     return parsed ? { parentSessionId: parsed.parentSessionId, callId: parsed.callId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function turnSurfaceMode(ctx: BindableContext): SurfaceMode | undefined {
+  try {
+    const mode = bindFrom(ctx).mode;
+    return mode === "dm" || mode === "mpim" || mode === "channel" ? mode : undefined;
   } catch {
     return undefined;
   }
@@ -103,6 +113,10 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
         principalId: bindFrom(ctx).principalId,
         routineId,
         model,
+        ...((): { surfaceMode?: SurfaceMode } => {
+          const mode = turnSurfaceMode(ctx);
+          return mode ? { surfaceMode: mode } : {};
+        })(),
         ...(measuredUsd !== undefined ? { measuredUsd } : {}),
       });
     } catch (err) {
@@ -116,6 +130,10 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
         sessionId: delegatedFrom?.parentSessionId ?? sessionId,
         principalId: bindFrom(ctx).principalId,
         kind: turnKind(ctx, token),
+        ...((): { surfaceMode?: SurfaceMode } => {
+          const mode = turnSurfaceMode(ctx);
+          return mode ? { surfaceMode: mode } : {};
+        })(),
         ...((): { detail?: Readonly<Record<string, unknown>> } => {
           const arm = call.arm;
           const detail = {

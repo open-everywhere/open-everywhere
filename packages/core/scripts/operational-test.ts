@@ -100,7 +100,7 @@ const store = makeOperationalPostgresStore(client);
     { surfaceKey: "slack/T5/C1", period: "2026-04", inputTokens: 4, usdMicros: 40 },
     { surfaceKey: "slack/T5/C1", period: "2026-05", inputTokens: 5, usdMicros: 50 },
     { surfaceKey: "slack/T5/C1", period: "2026-06", inputTokens: 6, usdMicros: 60 },
-    { surfaceKey: "slack/T5/C2", period: "2026-06", principalId: "U9", routineId: "r-9", model: "m-1", costSource: "measured", inputTokens: 7, outputTokens: 3, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 8, usdMicros: 70, usdMicrosMeasured: 65 },
+    { surfaceKey: "slack/T5/C2", period: "2026-06", principalId: "U9", routineId: "r-9", model: "m-1", costSource: "measured", surfaceMode: "dm", inputTokens: 7, outputTokens: 3, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 8, usdMicros: 70, usdMicrosMeasured: 65 },
   ] as const;
   for (const w of writes) {
     await store.recordSpend(ORG, w);
@@ -112,7 +112,7 @@ const store = makeOperationalPostgresStore(client);
   const shape = (rows: readonly SpendLedgerRow[]): string =>
     rows
       .map((r) =>
-        JSON.stringify([r.org, r.surfaceKey, r.principalId, r.routineId, r.model, r.period, r.costSource, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.usdMicros, r.usdMicrosMeasured, r.calls]),
+        JSON.stringify([r.org, r.surfaceKey, r.principalId, r.routineId, r.model, r.period, r.costSource, r.surfaceMode, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.usdMicros, r.usdMicrosMeasured, r.calls]),
       )
       .sort()
       .join(",");
@@ -140,6 +140,25 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.listSpendLedger(ORG, { period: "2026-05" })).length < (await store.listSpendLedger(ORG)).length, "OPE-1653: a bounded read returns FEWER rows than the unbounded one (pg)");
   ok((await sqliteOperationalStore.listSpendLedger(ORG, { period: "2026-05" })).length < (await sqliteOperationalStore.listSpendLedger(ORG)).length, "OPE-1653: a bounded read returns FEWER rows than the unbounded one (sqlite)");
   ok((await store.listSpendLedger(OTHER_ORG, { period: "2026-05" })).length === 1 && (await sqliteOperationalStore.listSpendLedger(OTHER_ORG, { period: "2026-05" })).length === 1, "fixture control: the foreign org's row exists in that period on both adapters — the org pin excluded it, not an empty ledger");
+
+  {
+    const HEAL_ORG = "surface-mode-heal";
+    const HEAL = { surfaceKey: "slack/T5/C_HEAL", period: "2026-06", principalId: "U_H", model: "m-1" } as const;
+    for (const s of [store, sqliteOperationalStore]) {
+      const label = s === store ? "pg" : "sqlite";
+      await s.recordSpend(HEAL_ORG, { ...HEAL, inputTokens: 1 });
+      const blank = (await s.listSpendLedger(HEAL_ORG, { surfaceKey: HEAL.surfaceKey }))[0]!;
+      ok(blank.surfaceMode === "", `OPE-1862(${label}): a write with no mode lands UNSTAMPED — which every report masks, rather than guessing`);
+      await s.recordSpend(HEAL_ORG, { ...HEAL, inputTokens: 1, surfaceMode: "dm" });
+      const healed = (await s.listSpendLedger(HEAL_ORG, { surfaceKey: HEAL.surfaceKey }))[0]!;
+      ok(healed.surfaceMode === "dm", `🔴 OPE-1862(${label}): a stamped write HEALS the unstamped row it sums into`);
+      await s.recordSpend(HEAL_ORG, { ...HEAL, inputTokens: 1 });
+      const kept = (await s.listSpendLedger(HEAL_ORG, { surfaceKey: HEAL.surfaceKey }))[0]!;
+      ok(kept.surfaceMode === "dm", `🔴 OPE-1862(${label}): an UNSTAMPED write never erases the mode the row already holds — erasing it would republish a DM key`);
+      ok(kept.inputTokens === 3 && kept.calls === 3, `OPE-1862(${label}): …and all three writes still summed into one row — the heal is not a new key`);
+    }
+  }
+
   ok((await store.listSpendLedger(ORG, { periodTo: "2026-06" })).length === 4 && (await sqliteOperationalStore.listSpendLedger(ORG, { periodTo: "2026-06" })).length === 4, "🔴 OPE-1653: periodTo is INCLUSIVE on both adapters — the newest month is never dropped");
 
   const summed = await store.spendTotals(ORG, { periodFrom: "2026-05", periodTo: "2026-06" });

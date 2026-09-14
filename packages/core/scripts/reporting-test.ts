@@ -38,12 +38,10 @@ import {
   slackUserIdIn,
   slackChannelIdIn,
   resolveSlackLabels,
-  isDmSurface,
-  dmBucketKey,
-  maskDmSurfaceKey,
   summariseCostDrift,
   costDriftNote,
 } from "../agent/spend/reporting.js";
+import { surfaceDisclosureOf, foldDisclosure, dmBucketKey, unclassifiedBucketKey, maskSurfaceKey, maskedSurfaceKeyOf, maskDmSurfaceKey } from "../agent/spend/dm-mask.js";
 import sessionCostTool from "../agent/tools/session_cost.js";
 import spendReportTool from "../agent/tools/spend_report.js";
 import usageReportTool from "../agent/tools/usage_report.js";
@@ -227,6 +225,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     usdDerivedOnMeasured: 0,
     measuredCalls: 0,
     calls: 0,
+    disclosure: "open",
     ...over,
   });
 
@@ -317,11 +316,11 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   );
 
   const rollup = (): SurfacePeriodSpend[] => [
-    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 100, usd: 1, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 5 },
-    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-08", tokens: 200, usd: 2, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 7 },
-    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-05", tokens: 900, usd: 9, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 99 },
-    { org: "default", surfaceKey: "slack/T1/C_OTHER", period: "2026-09", tokens: 400, usd: 4, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 11 },
-    { org: "other-tenant", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 800, usd: 8, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 13 },
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 100, usd: 1, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 5, disclosure: "open" },
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-08", tokens: 200, usd: 2, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 7, disclosure: "open" },
+    { org: "default", surfaceKey: "slack/T1/C_ENG", period: "2026-05", tokens: 900, usd: 9, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 99, disclosure: "open" },
+    { org: "default", surfaceKey: "slack/T1/C_OTHER", period: "2026-09", tokens: 400, usd: 4, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 11, disclosure: "open" },
+    { org: "other-tenant", surfaceKey: "slack/T1/C_ENG", period: "2026-09", tokens: 800, usd: 8, usdMeasured: 0, usdDerivedOnMeasured: 0, measuredCalls: 0, calls: 13, disclosure: "open" },
   ];
   const scanDeps = { spendRollup: async () => rollup(), domains: domainsFixture };
   const engWindow = await domainSpendWindow("default", "eng", "2026-09-12T10:00:00Z", 30, scanDeps as never);
@@ -514,8 +513,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const opStore = getOperationalStore();
   const { scopeOverBudget } = await import("../agent/spend/check.js");
 
-  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_CAP", model: PRICED_MODEL });
-  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 9_000_000 }, principalId: "U_CAP", model: "mystery/unpriced" });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_CAP", model: PRICED_MODEL, surfaceMode: "channel" });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 9_000_000 }, principalId: "U_CAP", model: "mystery/unpriced", surfaceMode: "channel" });
 
   const before = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
   const rowBefore = before.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
@@ -555,7 +554,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const prevDate = new Date(Date.UTC(curYear, curMonth1Indexed - 1, 1));
   prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
   const prevPeriod = prevDate.toISOString().slice(0, 7);
-  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: prevPeriod, usage: { inputTokens: 2_000_000 }, principalId: "U_CAP", model: PRICED_MODEL });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: prevPeriod, usage: { inputTokens: 2_000_000 }, principalId: "U_CAP", model: PRICED_MODEL, surfaceMode: "channel" });
   const prevReport = await execTool(spendReportTool)({ sinceDays: 365, scope: "org", period: prevPeriod }, ctxOrgAdmin as never);
   const prevRow = prevReport.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(prevReport.ledger.period === prevPeriod, "spend_report ledger: an explicit past period is honoured");
@@ -576,7 +575,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
   ok(domainNameForScope(domainSurface) === "eng", "OPE-1804 fixture: the seeded surface classifies into domain \"eng\" — the name a domain-level override matches on");
 
-  await store.recordSpend({ org, surfaceKey: domainSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DOMAIN_CAP", model: PRICED_MODEL });
+  await store.recordSpend({ org, surfaceKey: domainSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DOMAIN_CAP", model: PRICED_MODEL, surfaceMode: "channel" });
 
   const baseline = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
   const baseRow = baseline.ledger.surfaces.find((s) => s.surfaceKey === domainSurface);
@@ -623,8 +622,15 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const store = await import("../agent/spend/store.js");
   const opStore = getOperationalStore();
 
-  await store.recordSpend({ org, surfaceKey: dmA } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DM_A", model: PRICED_MODEL });
-  await store.recordSpend({ org, surfaceKey: dmB } as never, { period: currentPeriod, usage: { inputTokens: 500_000 }, principalId: "U_DM_B", model: PRICED_MODEL });
+  await store.recordSpend({ org, surfaceKey: dmA } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DM_A", model: PRICED_MODEL, surfaceMode: "dm" });
+  await store.recordSpend({ org, surfaceKey: dmB } as never, { period: currentPeriod, usage: { inputTokens: 500_000 }, principalId: "U_DM_B", model: PRICED_MODEL, surfaceMode: "dm" });
+
+  const dmDiscord = "discord/G_ACME/1180000000000000447";
+  const dmTeams = "teams/T_ACME/19:meeting_ZmFrZQ==@thread.v2";
+  const unstamped = "slack/T1/C_NOMODE";
+  await store.recordSpend({ org, surfaceKey: dmDiscord } as never, { period: currentPeriod, usage: { inputTokens: 300_000 }, principalId: "U_DM_C", model: PRICED_MODEL, surfaceMode: "dm" });
+  await store.recordSpend({ org, surfaceKey: dmTeams } as never, { period: currentPeriod, usage: { inputTokens: 200_000 }, principalId: "U_DM_D", model: PRICED_MODEL, surfaceMode: "dm" });
+  await store.recordSpend({ org, surfaceKey: unstamped } as never, { period: currentPeriod, usage: { inputTokens: 100_000 }, principalId: "U_NOMODE", model: PRICED_MODEL });
 
   await opStore.setSpendLimit(org, dmA, "surface", { monthlyUsd: modelPricing(PRICED_MODEL)!.inPerMtok / 2 }, { reason: "test", setBy: "tester" });
 
@@ -636,6 +642,19 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(
     !report.ledger.surfaces.some((s) => s.surfaceKey === dmA || s.surfaceKey === dmB),
     "spend_report ledger: individual DM surfaces are never listed, even when one of them is over budget",
+  );
+
+  const rendered = JSON.stringify(report);
+  for (const [platform, leaked, bucket] of [
+    ["discord", dmDiscord, "discord/G_ACME/(dms)"],
+    ["teams", dmTeams, "teams/T_ACME/(dms)"],
+  ] as const) {
+    ok(report.ledger.surfaces.some((s) => s.surfaceKey === bucket), `🔴 OPE-1862/${platform}: the DM ledger row folds into that workspace's (dms) bucket`);
+    ok(!rendered.includes(leaked), `🔴 OPE-1862/${platform}: the individual DM surface id appears NOWHERE in the report — this is the line that fails on the id-shape fallback`);
+  }
+  ok(
+    report.ledger.surfaces.some((s) => s.surfaceKey === "slack/T1/(unclassified)") && !rendered.includes(unstamped),
+    "🔴 OPE-1862: an UNSTAMPED ledger row is masked too — fail closed, into its own bucket rather than into (dms)",
   );
 
   await opStore.clearSpendLimit(org, dmA, "surface");
@@ -688,24 +707,81 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  ok(isDmSurface("slack/T1/D0EXDMCH001") === true, "dm-mask: slack D-prefixed surface id recognised without a kind");
-  ok(isDmSurface("slack/T1/C123ABC") === false, "dm-mask: a channel surface is not a DM");
-  ok(isDmSurface("teams/T1/19-something", "dm") === true, "dm-mask: kind=dm marks a DM on ANY platform (ledger-less rows aside)");
-  ok(isDmSurface("slack/T1/C123ABC", "channel") === false, "dm-mask: kind=channel never masks");
-  ok(dmBucketKey("slack/T1/D0EXDMCH001") === "slack/T1/(dms)", "dm-mask: bucket key keeps platform/workspace, drops the DM id");
+  const DM_SURFACE = {
+    slack: "slack/T_ACME/D0EXDMCH001",
+    discord: "discord/G_ACME/1180000000000000447",
+    teams: "teams/T_ACME/19:meeting_ZmFrZQ==@thread.v2",
+  } as const;
+  const ROOM_SURFACE = {
+    slack: "slack/T_ACME/C123ABC",
+    discord: "discord/G_ACME/1180000000000000913",
+    teams: "teams/T_ACME/19:general@thread.tacv2",
+  } as const;
+  type Platform = keyof typeof DM_SURFACE;
+  const PLATFORMS = Object.keys(DM_SURFACE) as Platform[];
 
-  const dmRow = { surfaceKey: "slack/T1/D0EXDMCH001", kind: "dm", events: 4 };
-  const chRow = { surfaceKey: "slack/T1/C123ABC", kind: "channel", events: 2 };
-  ok(maskDmSurfaceKey(dmRow).surfaceKey === "slack/T1/(dms)", "dm-mask: a DM row's surfaceKey is rewritten to the bucket");
+  for (const platform of PLATFORMS) {
+    const dmKey = DM_SURFACE[platform];
+    const workspace = dmKey.split("/")[1]!;
+    const bucket = `${platform}/${workspace}/(dms)`;
+
+    ok(
+      maskedSurfaceKeyOf({ surfaceKey: dmKey, surfaceMode: "dm" }) === bucket,
+      `dm-mask/${platform}: a DM row collapses to (dms) — its own key shape, not Slack's`,
+    );
+    ok(!maskedSurfaceKeyOf({ surfaceKey: dmKey, surfaceMode: "dm" }).includes(dmKey.split("/")[2]!), `dm-mask/${platform}: the raw DM surface id is absent from the masked key`);
+
+    for (const kind of ["routine", "supervisor", "subagent"]) {
+      ok(
+        maskedSurfaceKeyOf({ surfaceKey: dmKey, surfaceMode: "dm", kind }) === bucket,
+        `dm-mask/${platform}: a kind="${kind}" row in a DM masks exactly as a kind="dm" row does`,
+      );
+    }
+
+    ok(
+      maskedSurfaceKeyOf({ surfaceKey: ROOM_SURFACE[platform], surfaceMode: "channel" }) === ROOM_SURFACE[platform],
+      `dm-mask/${platform}: a channel row keeps its own key`,
+    );
+    ok(
+      maskedSurfaceKeyOf({ surfaceKey: ROOM_SURFACE[platform], surfaceMode: "mpim" }) === ROOM_SURFACE[platform],
+      `dm-mask/${platform}: a group DM is NOT masked — deliberate, and this pins it`,
+    );
+
+    ok(
+      maskedSurfaceKeyOf({ surfaceKey: dmKey }) === `${platform}/${workspace}/(unclassified)`,
+      `dm-mask/${platform}: an UNSTAMPED row masks to (unclassified) — never published, never miscounted as a DM`,
+    );
+  }
+
+  ok(surfaceDisclosureOf({ surfaceKey: DM_SURFACE.teams, kind: "dm" }) === "dm", "dm-mask: a legacy kind=dm row is still a DM on any platform");
+  ok(surfaceDisclosureOf({ surfaceKey: ROOM_SURFACE.teams, kind: "channel" }) === "open", "dm-mask: a legacy kind=channel row is still open");
+  ok(surfaceDisclosureOf({ surfaceKey: DM_SURFACE.teams, kind: "routine" }) === "unknown", "dm-mask: kind=routine alone classifies NOTHING — it masks");
+  ok(surfaceDisclosureOf({ surfaceKey: DM_SURFACE.slack }) === "unknown", "dm-mask: a Slack DM id with no stamp is unknown — the id SHAPE is never read");
+
+  ok(dmBucketKey(DM_SURFACE.slack) === "slack/T_ACME/(dms)", "dm-mask: bucket key keeps platform/workspace, drops the surface id");
+  ok(unclassifiedBucketKey(DM_SURFACE.discord) === "discord/G_ACME/(unclassified)", "dm-mask: the unclassified bucket keeps platform/workspace too");
+  ok(maskSurfaceKey("slack/T_ACME/C1", "open") === "slack/T_ACME/C1", "dm-mask: an open row is published unchanged");
+
+  ok(foldDisclosure([{ surfaceKey: DM_SURFACE.discord, kind: "routine" }, { surfaceKey: DM_SURFACE.discord, surfaceMode: "dm" }]) === "dm", "dm-mask/fold: one stamped DM row in the group makes the whole line a DM");
+  ok(foldDisclosure([{ surfaceKey: ROOM_SURFACE.discord, kind: "routine" }, { surfaceKey: ROOM_SURFACE.discord, surfaceMode: "channel" }]) === "open", "dm-mask/fold: a stamped open row beats an unstamped neighbour");
+  ok(foldDisclosure([{ surfaceKey: ROOM_SURFACE.discord, kind: "routine" }]) === "unknown", "dm-mask/fold: a group with nothing stamped stays unknown, and masks");
+  ok(foldDisclosure([]) === "unknown", "dm-mask/fold: an empty group is unknown — nothing classified it");
+
+  const dmRow: { surfaceKey: string; surfaceMode: string; events: number } = { surfaceKey: DM_SURFACE.slack, surfaceMode: "dm", events: 4 };
+  const chRow: { surfaceKey: string; surfaceMode: string; events: number } = { surfaceKey: ROOM_SURFACE.slack, surfaceMode: "channel", events: 2 };
+  ok(maskDmSurfaceKey(dmRow).surfaceKey === "slack/T_ACME/(dms)", "dm-mask: a DM row's surfaceKey is rewritten to the bucket");
   ok(maskDmSurfaceKey(chRow) === chRow, "dm-mask: a non-DM row passes through as the SAME object");
 
   const aggregated = aggregateBySurface(
     [
-      { surfaceKey: "slack/T1/D0AAA11AAAA", principalId: "U_A", kind: "dm", model: null, events: 2, sessions: 1, inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      { surfaceKey: "slack/T1/D0BBB22BBBB", principalId: "U_B", kind: "dm", model: null, events: 3, sessions: 1, inputTokens: 20, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      { surfaceKey: DM_SURFACE.discord, principalId: "U_A", surfaceMode: "dm", kind: "routine", model: null, events: 2, sessions: 1, inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      { surfaceKey: "discord/G_ACME/1180000000000000913", principalId: "U_B", surfaceMode: "dm", kind: "dm", model: null, events: 3, sessions: 1, inputTokens: 20, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
     ].map(maskDmSurfaceKey) as never,
   );
-  ok(aggregated.length === 1 && aggregated[0].surfaceKey === "slack/T1/(dms)" && aggregated[0].events === 5, "dm-mask: two distinct DMs aggregate into one (dms) bucket row");
+  ok(
+    aggregated.length === 1 && aggregated[0].surfaceKey === "discord/G_ACME/(dms)" && aggregated[0].events === 5,
+    "dm-mask: two distinct Discord DMs — one of them a routine fire — aggregate into ONE (dms) bucket row",
+  );
 }
 
 console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels + DM masking, session_cost/spend_report/usage_report tools)`);

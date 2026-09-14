@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings, isSubagentChildContext, liveTaskIds, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, turnSurfaceMode, getSettings, isSubagentChildContext, liveTaskIds, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveSandboxStopper, shouldStop, type SandboxListing, type SandboxStopper } from "./backend-stop.js";
 
 export { shouldStop, type SandboxListing, type SandboxStopper };
@@ -106,6 +106,7 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
     const p = resolvePartition(ctx);
     const principalId = bindFrom(ctx).principalId;
     const routineId = routineIdOf(ctx);
+    const surfaceMode = turnSurfaceMode(ctx);
     const priorBilled = new Map<string, number>();
     try {
       for (const e of await usageForSession(p.org, ctx.session.id)) {
@@ -133,6 +134,7 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
           principalId,
           routineId,
           model: "",
+          ...(surfaceMode !== undefined ? { surfaceMode } : {}),
           usdMicros: Math.round(estimateSandboxCostUsd(billedSeconds) * 1_000_000),
         });
       } catch (err) {
@@ -145,6 +147,7 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
           surfaceKey: domainKeyOf(p),
           sessionId: ctx.session.id,
           kind: "sandbox",
+          ...(surfaceMode !== undefined ? { surfaceMode } : {}),
           principalId,
           ...(routineId !== undefined ? { routineId } : {}),
           inputTokens: 0,

@@ -9,6 +9,7 @@ import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/sched
 import type { RoutineTrigger } from "../routines/routine.js";
 import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
 import { UNKNOWN_MODEL, periodOf } from "./spend.js";
+import { foldDisclosure, type SurfaceDisclosure } from "./dm-mask.js";
 import { spendRollup, type SurfacePeriodSpend } from "./store.js";
 import type { BindableContext, SurfaceBinding } from "../identity/binding.js";
 
@@ -312,6 +313,7 @@ export function firesPerDay(trigger: RoutineTrigger): number | undefined {
 
 export interface RoutinePredictionRow {
   readonly surfaceKey: string;
+  readonly disclosure: SurfaceDisclosure;
   readonly observedFires: number;
   readonly avgTokensPerFire: number;
   readonly cadencePerDay?: number;
@@ -331,9 +333,10 @@ export async function buildRoutinePredictions(
   routineRows: readonly UsageSummaryRow[],
   pricing: ModelPricing | undefined,
 ): Promise<RoutinePredictionRow[]> {
-  const bySurface = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; sessions: number }>();
+  const bySurface = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; sessions: number; rows: UsageSummaryRow[] }>();
   for (const r of routineRows) {
-    const acc = bySurface.get(r.surfaceKey) ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, sessions: 0 };
+    const acc = bySurface.get(r.surfaceKey) ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, sessions: 0, rows: [] };
+    acc.rows.push(r);
     acc.inputTokens += r.inputTokens;
     acc.outputTokens += r.outputTokens;
     acc.cacheReadTokens += r.cacheReadTokens;
@@ -347,6 +350,7 @@ export async function buildRoutinePredictions(
     if (acc.sessions < MIN_FIRES_FOR_PREDICTION) {
       out.push({
         surfaceKey,
+        disclosure: foldDisclosure(acc.rows),
         observedFires: acc.sessions,
         avgTokensPerFire: acc.sessions > 0 ? (acc.inputTokens + acc.outputTokens) / acc.sessions : 0,
         projected: null,
@@ -371,6 +375,7 @@ export async function buildRoutinePredictions(
     if (!sawClockScheduled) {
       out.push({
         surfaceKey,
+        disclosure: foldDisclosure(acc.rows),
         observedFires: acc.sessions,
         avgTokensPerFire,
         projected: null,
@@ -386,6 +391,7 @@ export async function buildRoutinePredictions(
 
     out.push({
       surfaceKey,
+      disclosure: foldDisclosure(acc.rows),
       observedFires: acc.sessions,
       avgTokensPerFire,
       cadencePerDay: cadence,
@@ -455,21 +461,6 @@ export async function resolveSlackLabels(
   }
   await Promise.all(lookups);
   return { users, channels };
-}
-
-export function isDmSurface(surfaceKey: string, kind?: string): boolean {
-  if (kind === "dm") return true;
-  const parts = surfaceKey.split("/");
-  return parts.length >= 3 && /^D[A-Z0-9]{5,}$/.test(parts[2]);
-}
-
-export function dmBucketKey(surfaceKey: string): string {
-  const parts = surfaceKey.split("/");
-  return parts.length >= 2 ? `${parts[0]}/${parts[1]}/(dms)` : "(dms)";
-}
-
-export function maskDmSurfaceKey<T extends { readonly surfaceKey: string; readonly kind?: string }>(row: T): T {
-  return isDmSurface(row.surfaceKey, row.kind) ? { ...row, surfaceKey: dmBucketKey(row.surfaceKey) } : row;
 }
 
 export function approxConversationCount(rows: readonly UsageSummaryRow[]): number {

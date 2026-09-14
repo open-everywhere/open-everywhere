@@ -16,14 +16,12 @@ import {
   pricingNote,
   buildRoutinePredictions,
   resolveSlackLabels,
-  maskDmSurfaceKey,
-  isDmSurface,
-  dmBucketKey,
   summariseCostDrift,
   costDriftNote,
   tokenAttribution,
   tokenAttributionNote,
 } from "../spend/reporting.js";
+import { maskDmSurfaceKey, maskSurfaceKey } from "../spend/dm-mask.js";
 import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 import { fulfilPaneRead } from "../access/pane-venue.js";
 
@@ -264,19 +262,20 @@ export default defineTool({
         const tokenOver = tokenCap != null && l.tokens >= tokenCap;
         const usdCap = caps.surfaceMonthlyUsd ?? null;
         const usdOver = usdCap != null && l.usd >= usdCap;
-        return { surfaceKey: l.surfaceKey, tokens: l.tokens, tokenCap, tokenOver, usd: l.usd, usdCap, usdOver, over: tokenOver || usdOver };
+        return { surfaceKey: l.surfaceKey, disclosure: l.disclosure, tokens: l.tokens, tokenCap, tokenOver, usd: l.usd, usdCap, usdOver, over: tokenOver || usdOver };
       });
-      const dmLedger = new Map<string, (typeof rawLedgerSurfaces)[number]>();
+      const maskedLedger = new Map<string, (typeof rawLedgerSurfaces)[number]>();
       const ledgerSurfaces: typeof rawLedgerSurfaces = [];
       for (const s of rawLedgerSurfaces) {
-        if (!isDmSurface(s.surfaceKey)) {
+        const key = maskSurfaceKey(s.surfaceKey, s.disclosure);
+        if (key === s.surfaceKey) {
           ledgerSurfaces.push(s);
           continue;
         }
-        const key = dmBucketKey(s.surfaceKey);
-        const acc = dmLedger.get(key) ?? { surfaceKey: key, tokens: 0, tokenCap: null, tokenOver: false, usd: 0, usdCap: null, usdOver: false, over: false };
-        dmLedger.set(key, {
+        const acc = maskedLedger.get(key) ?? { surfaceKey: key, disclosure: s.disclosure, tokens: 0, tokenCap: null, tokenOver: false, usd: 0, usdCap: null, usdOver: false, over: false };
+        maskedLedger.set(key, {
           surfaceKey: key,
+          disclosure: s.disclosure,
           tokens: acc.tokens + s.tokens,
           tokenCap: null,
           tokenOver: acc.tokenOver || s.tokenOver,
@@ -286,7 +285,7 @@ export default defineTool({
           over: acc.over || s.over,
         });
       }
-      ledgerSurfaces.push(...dmLedger.values());
+      ledgerSurfaces.push(...maskedLedger.values());
       const ledgerTotalTokens = ledgerSurfaces.reduce((sum, s) => sum + s.tokens, 0);
       const ledgerTotalUsd = ledgerSurfaces.reduce((sum, s) => sum + s.usd, 0);
 
@@ -303,9 +302,10 @@ export default defineTool({
       });
 
       const routineRows = scopedRows.filter((r) => r.kind === "routine");
-      const routinePredictions = (await buildRoutinePredictions(resolved.org, routineRows, assumed.pricing)).map((p) =>
-        isDmSurface(p.surfaceKey) ? { ...p, surfaceKey: dmBucketKey(p.surfaceKey) } : p,
-      );
+      const routinePredictions = (await buildRoutinePredictions(resolved.org, routineRows, assumed.pricing)).map((p) => {
+        const key = maskSurfaceKey(p.surfaceKey, p.disclosure);
+        return key === p.surfaceKey ? p : { ...p, surfaceKey: key };
+      });
 
       const labels = await resolveSlackLabels(
         [],
@@ -329,7 +329,8 @@ export default defineTool({
         "ledger caps are EFFECTIVE caps — config-as-code overlaid with any currently-active admin override (set_spend_limit) — the same numbers the spend gate enforces; an expired override has already reverted to config here, same as at the gate.",
         "ledger.*.usd is the spend ledger's own stored figure — priced evidence-only at WRITE time (a call's stamped model's rate, the sole-priced-model fallback for a stampless call, $0 for an unpriced model, never a guessed rate) — the EXACT sum the gate enforces for the same period; it is independent of any assumedModelId you passed above (that only re-prices the usage-window figures).",
         "channel labels are best-effort Slack lookups — prefer them when presenting; the surfaceKey stays the ground truth.",
-        'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution); tokenCap/usdCap are hidden as null for that bucket (a shared bucket has no single cap) but over/tokenOver/usdOver are never masked.',
+        'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution); tokenCap/usdCap are hidden as null for that bucket (a shared bucket has no single cap) but over/tokenOver/usdOver are never masked.' +
+          'A row written before the conversation-mode stamp existed cannot be classified, so it reports under a separate "(unclassified)" bucket per workspace: masked rather than named, and kept apart from "(dms)" so a channel\'s spend is never reported as DM spend.',
       ];
       if (userCaps) {
         notes.push(
@@ -358,11 +359,11 @@ export default defineTool({
           period,
           totalTokens: ledgerTotalTokens,
           totalUsd: ledgerTotalUsd,
-          surfaces: ledgerSurfaces.map(labelled),
+          surfaces: ledgerSurfaces.map(({ disclosure: _disclosure, ...row }) => labelled(row)),
           workspaces: ledgerWorkspaces,
         },
         ...(userCaps ? { userCaps } : {}),
-        routinePredictions: routinePredictions.map(labelled),
+        routinePredictions: routinePredictions.map(({ disclosure: _disclosure, ...row }) => labelled(row)),
         note: notes.join(" "),
       };
     };

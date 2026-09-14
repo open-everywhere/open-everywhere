@@ -124,6 +124,12 @@ export function auditReadOrg(filter: AuditFilter): string {
 
 export type CostSource = "measured" | "derived";
 
+export type SurfaceMode = "dm" | "mpim" | "channel";
+
+export function asSurfaceMode(value: unknown): SurfaceMode | undefined {
+  return value === "dm" || value === "mpim" || value === "channel" ? value : undefined;
+}
+
 export interface SpendLedgerKey {
   readonly surfaceKey: string;
   readonly principalId: string;
@@ -135,6 +141,7 @@ export interface SpendLedgerKey {
 
 export interface SpendLedgerRow extends SpendLedgerKey {
   readonly org: string;
+  readonly surfaceMode: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
@@ -150,6 +157,7 @@ export interface SpendLedgerWrite {
   readonly principalId?: string;
   readonly routineId?: string;
   readonly model?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly period: string;
   readonly inputTokens?: number;
   readonly outputTokens?: number;
@@ -413,6 +421,7 @@ export interface UsageEventEntry {
   readonly principalId?: string;
   readonly ts: string;
   readonly kind?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly routineId?: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -447,6 +456,7 @@ export interface UsageSummaryRow {
   readonly surfaceKey: string;
   readonly principalId?: string;
   readonly kind?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly routineId?: string;
   readonly model?: string;
   readonly inputTokens: number;

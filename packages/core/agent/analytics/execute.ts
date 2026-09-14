@@ -2,7 +2,8 @@ import type { OperationalStore } from "../operational/store.js";
 import type { Domain } from "../memory/domain.js";
 import { type AnalyticsPlan, type CompiledAnalytics, domainOfRow, isoWeekStart } from "./compile.js";
 import { DATASETS, type DatasetName } from "./registry.js";
-import { isDmSurface, dmBucketKey, rowCostUsd, type AssumedModelPricing } from "../spend/reporting.js";
+import { rowCostUsd, type AssumedModelPricing } from "../spend/reporting.js";
+import { maskSurfaceKey, surfaceDisclosureOf } from "../spend/dm-mask.js";
 
 export interface AnalyticsResult {
   readonly mode: "aggregate" | "rows";
@@ -22,12 +23,22 @@ function isSummableMeasure(dataset: string, measure: string): boolean {
   return DATASETS[dataset as DatasetName]?.measures[measure]?.kind === "sql";
 }
 
-function maskSurface(value: unknown, dmUnmasked: boolean): unknown {
+function maskSurface(value: unknown, row: Record<string, unknown>, plan: AnalyticsPlan, dmUnmasked: boolean): unknown {
   if (dmUnmasked || typeof value !== "string") return value;
-  if (isDmSurface(value)) return dmBucketKey(value);
-  if (/^D[A-Z0-9]{5,}$/.test(value)) return "(dms)";
-  return value;
+  if (!plan.surfaceModeColumn) return LEGACY_SLACK_DM_SURFACE_ID.test(value) ? "(dms)" : value;
+  const mode = row[plan.surfaceModeColumn];
+  const kind = plan.surfaceKindColumn ? row[plan.surfaceKindColumn] : undefined;
+  return maskSurfaceKey(
+    value,
+    surfaceDisclosureOf({
+      surfaceKey: value,
+      ...(typeof mode === "string" ? { surfaceMode: mode } : {}),
+      ...(typeof kind === "string" ? { kind } : {}),
+    }),
+  );
 }
+
+const LEGACY_SLACK_DM_SURFACE_ID = /^D[A-Z0-9]{5,}$/;
 
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
@@ -51,7 +62,7 @@ export async function executeAnalytics(compiled: CompiledAnalytics, deps: Analyt
       let value: unknown;
       if (d.kind === "domain") value = domainOfRow(r, plan, deps.domains);
       else if (d.kind === "ts") value = d.tsBucket === "week" ? isoWeekStart(String(r.ts ?? "")) : r.ts;
-      else value = maskSurface(r[d.column!], plan.dmUnmasked || d.name !== "surface");
+      else value = maskSurface(r[d.column!], r, plan, plan.dmUnmasked || d.name !== "surface");
       dimValues[d.name] = value ?? null;
       keyParts.push(`${d.name}=${String(value)}`);
     }
@@ -96,7 +107,7 @@ function shapeRow(r: Record<string, unknown>, plan: AnalyticsPlan): Record<strin
   for (const c of plan.rowColumns) {
     let v = r[c];
     if (v === null || v === undefined) continue;
-    if (c === "surface_key" || c === "surface") v = maskSurface(v, plan.dmUnmasked);
+    if (c === "surface_key" || c === "surface") v = maskSurface(v, r, plan, plan.dmUnmasked);
     out[c] = v;
   }
   if ("detail" in r && r.detail != null) {

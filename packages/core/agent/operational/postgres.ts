@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -45,6 +45,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      routine_id         text   NOT NULL DEFAULT '',  -- '' = not a routine turn
      model              text   NOT NULL DEFAULT '',  -- '' = no model (sandbox runtime); '(unknown)' = an unattributed model call
      period             text   NOT NULL,
+     -- OPE-1862 (mirrored in the ALTER list below): WHICH KIND OF CONVERSATION this row's spend
+     -- happened in — 'dm' | 'mpim' | 'channel', or '' when nothing stamped it. The anti-doxxing
+     -- mask reads THIS and never the shape of a surface id, so Discord and Teams DMs mask exactly
+     -- as Slack's do. OUTSIDE the primary key: a surface's mode never changes, so keying on it
+     -- would split a month for nothing.
+     surface_mode       text   NOT NULL DEFAULT '',
      input_tokens       bigint NOT NULL DEFAULT 0,
      output_tokens      bigint NOT NULL DEFAULT 0,
      cache_read_tokens  bigint NOT NULL DEFAULT 0,
@@ -356,6 +362,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      -- OPE-1611 (mirrored in the ALTER list below): the two attribution dimensions the cache/
      -- reasoning question needs. Both NULLABLE on purpose — NULL is "the source reported nothing",
      -- which is a different fact from a reported zero, and that difference is the whole ticket.
+     -- OPE-1862 (mirrored in the ALTER list below): the conversation this event happened in —
+     -- 'dm' | 'mpim' | 'channel'; NULL = unstamped. The kind column above cannot answer this: a routine,
+     -- supervisor or subagent turn wins that tag before the DM test runs, so a routine fired in a
+     -- DM reads kind 'routine'. Reports mask an unstamped row rather than guess.
+     surface_mode       text,
      cache_tokens_reported boolean,          -- true = the call reported a cache split; false = it did not; NULL = never asked
      reasoning_tokens   bigint,              -- NULL = unreported; a number (0 included) = reported
      -- OPE-369 (mirrored in the ALTER list below, which is what an existing DB takes)
@@ -530,6 +541,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE spend_ledger ADD COLUMN IF NOT EXISTS reasoning_tokens bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_tokens_reported boolean`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_tokens bigint`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS surface_mode text`,
+  `ALTER TABLE spend_ledger ADD COLUMN IF NOT EXISTS surface_mode text NOT NULL DEFAULT ''`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -1287,10 +1300,13 @@ function mutableTableGrantsSql(role: string): string[] {
 
 const UPSERT_SPEND =
   `INSERT INTO spend_ledger
-     (org_id, surface_key, principal_id, routine_id, model, period, cost_source,
+     (org_id, surface_key, principal_id, routine_id, model, period, cost_source, surface_mode,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, usd_micros, usd_micros_measured, calls)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 1)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1)
    ON CONFLICT (org_id, surface_key, principal_id, routine_id, model, period, cost_source) DO UPDATE SET
+     -- OPE-1862: a stamped mode HEALS a row an older build (or a writer with no binding) left
+     -- unstamped, and an unstamped write never erases a mode the row already holds.
+     surface_mode        = COALESCE(NULLIF(excluded.surface_mode, ''), spend_ledger.surface_mode),
      input_tokens        = spend_ledger.input_tokens        + excluded.input_tokens,
      output_tokens       = spend_ledger.output_tokens       + excluded.output_tokens,
      cache_read_tokens   = spend_ledger.cache_read_tokens   + excluded.cache_read_tokens,
@@ -1594,6 +1610,7 @@ type SpendLedgerPgRow = {
   routine_id: string;
   model: string;
   period: string;
+  surface_mode: string | null;
   input_tokens: number | string;
   output_tokens: number | string;
   cache_read_tokens: number | string;
@@ -1614,6 +1631,7 @@ function spendRowFromPg(r: SpendLedgerPgRow): SpendLedgerRow {
     model: r.model,
     period: r.period,
     costSource: r.cost_source === "measured" ? "measured" : "derived",
+    surfaceMode: r.surface_mode ?? "",
     inputTokens: Number(r.input_tokens),
     outputTokens: Number(r.output_tokens),
     cacheReadTokens: Number(r.cache_read_tokens),
@@ -1639,6 +1657,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         write.model ?? "",
         write.period,
         write.costSource ?? "derived",
+        write.surfaceMode ?? "",
         write.inputTokens ?? 0,
         write.outputTokens ?? 0,
         write.cacheReadTokens ?? 0,
@@ -2412,8 +2431,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
            (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
             usd_micros_measured, cost_source, delegation_depth, root_session_id,
-            cache_tokens_reported, reasoning_tokens)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+            cache_tokens_reported, reasoning_tokens, surface_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [
           entry.org,
           entry.surfaceKey,
@@ -2434,6 +2453,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           entry.rootSessionId ?? null,
           entry.cacheTokensReported ?? null,
           entry.reasoningTokens ?? null,
+          entry.surfaceMode ?? null,
         ],
       );
     },
@@ -2443,7 +2463,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
                 usd_micros_measured, cost_source, delegation_depth, root_session_id,
-                cache_tokens_reported, reasoning_tokens
+                cache_tokens_reported, reasoning_tokens, surface_mode
          FROM usage_events WHERE org_id = $1 AND session_id = $2 ORDER BY seq ASC`,
         [org, sessionId],
       );
@@ -2466,6 +2486,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         root_session_id: string | null;
         cache_tokens_reported: boolean | null;
         reasoning_tokens: number | string | null;
+        surface_mode: string | null;
       }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
@@ -2485,6 +2506,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.root_session_id ? { rootSessionId: r.root_session_id } : {}),
         ...(r.cache_tokens_reported != null ? { cacheTokensReported: r.cache_tokens_reported } : {}),
         ...(r.reasoning_tokens != null ? { reasoningTokens: Number(r.reasoning_tokens) } : {}),
+        ...((): { surfaceMode?: SurfaceMode } => {
+          const mode = asSurfaceMode(r.surface_mode);
+          return mode ? { surfaceMode: mode } : {};
+        })(),
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
     },
@@ -2511,7 +2536,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         );
       }
       const { rows } = await client.query(
-        `SELECT surface_key, principal_id, kind, routine_id, model,
+        `SELECT surface_key, principal_id, kind, routine_id, model, surface_mode,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
                 -- OPE-1611: the attribution dimension AND its coverage. COALESCE keeps the sum an
@@ -2522,7 +2547,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
                 COUNT(reasoning_tokens) AS reasoning_reported_calls,
                 COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
          FROM usage_events WHERE ${where.join(" AND ")}
-         GROUP BY surface_key, principal_id, kind, routine_id, model`,
+         -- OPE-1862: surface_mode joins the GRAIN rather than riding along as MAX(). A group must
+         -- be homogeneous in every column it reports, and one surface can hold both unstamped
+         -- legacy rows and stamped new ones; those two masks differently, so they must not blend.
+         GROUP BY surface_key, principal_id, kind, routine_id, model, surface_mode`,
         params,
       );
       return (rows as {
@@ -2531,6 +2559,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         kind: string | null;
         routine_id: string | null;
         model: string | null;
+        surface_mode: string | null;
         input_tokens: number;
         output_tokens: number;
         cache_read_tokens: number;
@@ -2546,6 +2575,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.kind ? { kind: r.kind } : {}),
         ...(r.routine_id ? { routineId: r.routine_id } : {}),
         ...(r.model ? { model: r.model } : {}),
+        ...((): { surfaceMode?: SurfaceMode } => {
+          const mode = asSurfaceMode(r.surface_mode);
+          return mode ? { surfaceMode: mode } : {};
+        })(),
         inputTokens: Number(r.input_tokens),
         outputTokens: Number(r.output_tokens),
         cacheReadTokens: Number(r.cache_read_tokens),

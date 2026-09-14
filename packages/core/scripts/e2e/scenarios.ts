@@ -1224,6 +1224,86 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-SPEND-DM-MASK",
+    title: "OPE-1862: a spend report asked in a DISCORD channel names the (dms) bucket and NEVER an individual's DM surface",
+    requires: ["discord", "slack", "syntheticDm"],
+    surface: "discord",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const discord = ctx.discord!;
+      const { ts: dmTs } = await dm.post("quick one — what's 7*6? reply with just the number");
+      await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.log(`S-SPEND-DM-MASK: drove one DM turn in ${dm.channelId} — its ledger row is this month's DM spend`);
+
+      const ask = await discord.post(discord.mention("give me this month's spend report, broken down by surface"));
+      const threadId = await discord.awaitThread(ask.id, { timeoutMs: REPLY_WAIT });
+      const reply = await discord.awaitReply(threadId, ask.id, { timeoutMs: FILE_REPLY_WAIT });
+
+      ctx.gate(
+        !reply.content.includes(dm.channelId),
+        `the spend report NEVER names the individual DM surface (${dm.channelId}) — the anti-doxxing property docs/capabilities/analytics.md states`,
+      );
+      if (/\(dms\)/.test(reply.content)) {
+        ctx.gate(true, "the report renders the masked (dms) bucket — DM spend is reported, and reported anonymously");
+        return;
+      }
+      ctx.skip(
+        "no (dms) line in the reply — the Discord driver identity may not hold the org-admin standing spend_report needs, or the report " +
+          "rendered no surface rows. The exclusion gate above still ran. Give the driver identity org-admin standing to make this leg assert the bucket too.",
+      );
+    },
+  },
+  {
+    id: "S-SPEND-REFUSAL-KEYS",
+    title: "OPE-1860: a spend refusal in a DM names the layer that actually bit and the key that raises it — never 'your own usage' for a room's or the workspace's cap",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 660_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      if (process.env.E2E_SPEND_CAP_FIXTURE !== "1") {
+        ctx.skip(
+          "E2E_SPEND_CAP_FIXTURE is not 1 — no cap is declared as provisioned, so a DM turn is expected to be admitted and there is no refusal to read. " +
+            "Provision a cap that covers the DM (a workspace-level budget, or a perSurface cap on the DM's own key) and set the pin to arm this leg.",
+        );
+        return;
+      }
+      const { teamId } = await dm.identity();
+      const workspaceKey = `slack/${teamId}`;
+      for (let i = 0; i < 5; i++) {
+        const { ts } = await dm.post(`cap check ${i + 1}: summarise our last exchange in one line`);
+        const reply = await dm.awaitAnyReply(ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+        if (!CAP_REFUSAL_MARKER.test(reply.text)) continue;
+
+        const claimsOwn = /cap on your own usage/i.test(reply.text);
+        ctx.gate(/Scope keys for the override:/i.test(reply.text), "the DM refusal names the scope keys an admin needs — a refusal with no key costs the reader a round trip");
+        if (/per-workspace cap/i.test(reply.text)) {
+          ctx.gate(reply.text.includes(workspaceKey), `the WORKSPACE cap's refusal names the workspace key (${workspaceKey}) — the only key that raises it`);
+          ctx.gate(!claimsOwn, "…and never claims the workspace's cap is the reader's own — the OPE-1860 defect, read from a live refusal");
+        } else if (/per-user cap/i.test(reply.text)) {
+          ctx.gate(claimsOwn, "a PER-USER breach is the one refusal that may say the cap is the reader's own");
+          ctx.gate(/your own allowance = /.test(reply.text), "…and it names the allowance key, which is what set_spend_limit level:\"user\" takes");
+        } else {
+          ctx.gate(!claimsOwn, "a SURFACE-layer refusal in a DM never claims the cap is the reader's own — it is the room's");
+          ctx.gate(reply.text.includes(dm.channelId), "…and names this conversation's own key, which is the one an admin raises");
+        }
+        ctx.log(`S-SPEND-REFUSAL-KEYS: refusal read on turn ${i + 1} — "${reply.text.slice(0, 200)}"`);
+        return;
+      }
+      ctx.skip(
+        "no refusal posted in the DM within the 5-turn budget — E2E_SPEND_CAP_FIXTURE declares a CHANNEL cap, which never bites in a DM. " +
+          "This leg needs a cap whose scope covers the DM (workspace-level, or a perSurface cap on the DM key).",
+      );
+    },
+  },
+  {
     id: "S11",
     title: "Private channel: engagement + memory never feeds the shared tier",
     requires: ["slack", "slackPrivate"],

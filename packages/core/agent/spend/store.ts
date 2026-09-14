@@ -1,8 +1,9 @@
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import { billableTokens, type Usage } from "./spend.js";
 import { usdMicrosAtWrite } from "./pricing.js";
+import { foldDisclosure, type SurfaceDisclosure } from "./dm-mask.js";
 import { getOperationalStore } from "../operational/provider.js";
-import type { SpendLedgerFilter, SpendLedgerRow, SpendTotals } from "../operational/store.js";
+import type { SpendLedgerFilter, SpendLedgerRow, SpendTotals, SurfaceMode } from "../operational/store.js";
 
 export function spendRoot(): string {
   return getOperationalStore().root();
@@ -14,6 +15,7 @@ export interface SpendEntry {
   readonly principalId?: string;
   readonly routineId?: string;
   readonly model?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly usdMicros?: number;
   readonly measuredUsd?: number;
 }
@@ -28,6 +30,7 @@ export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void
     routineId: entry.routineId ?? "",
     model,
     period: entry.period,
+    ...(entry.surfaceMode !== undefined ? { surfaceMode: entry.surfaceMode } : {}),
     inputTokens: entry.usage.inputTokens ?? 0,
     outputTokens: entry.usage.outputTokens ?? 0,
     cacheReadTokens: entry.usage.cacheReadTokens ?? 0,
@@ -73,17 +76,19 @@ export interface SurfacePeriodSpend {
   readonly usdDerivedOnMeasured: number;
   readonly measuredCalls: number;
   readonly calls: number;
+  readonly disclosure: SurfaceDisclosure;
 }
 
 function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): SurfacePeriodSpend[] {
   const byKey = new Map<
     string,
-    { org: string; surfaceKey: string; period: string; tokens: number; usdMicros: number; measuredMicros: number; derivedOnMeasuredMicros: number; measuredCalls: number; calls: number }
+    { org: string; surfaceKey: string; period: string; rows: SpendLedgerRow[]; tokens: number; usdMicros: number; measuredMicros: number; derivedOnMeasuredMicros: number; measuredCalls: number; calls: number }
   >();
   for (const r of rows) {
     const k = `${r.org}\u0000${r.surfaceKey}\u0000${r.period}`;
     const acc =
-      byKey.get(k) ?? { org: r.org, surfaceKey: r.surfaceKey, period: r.period, tokens: 0, usdMicros: 0, measuredMicros: 0, derivedOnMeasuredMicros: 0, measuredCalls: 0, calls: 0 };
+      byKey.get(k) ?? { org: r.org, surfaceKey: r.surfaceKey, period: r.period, rows: [], tokens: 0, usdMicros: 0, measuredMicros: 0, derivedOnMeasuredMicros: 0, measuredCalls: 0, calls: 0 };
+    acc.rows.push(r);
     acc.tokens += billableTokens(r);
     acc.usdMicros += r.usdMicros;
     acc.calls += r.calls;
@@ -104,6 +109,7 @@ function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): Surface
     usdDerivedOnMeasured: a.derivedOnMeasuredMicros / 1_000_000,
     measuredCalls: a.measuredCalls,
     calls: a.calls,
+    disclosure: foldDisclosure(a.rows),
   }));
 }
 

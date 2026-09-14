@@ -151,7 +151,7 @@ async function run(opts: {
   ok((m.audits[0]!.detail as Record<string, unknown>).mode === "channel", "the row still carries the session mode");
 }
 
-ok(spendRefusalCopy("over cap", "slack/T/C", "slack/T").includes(":no_entry:"), "refusal copy carries the :no_entry: marker");
+ok(spendRefusalCopy({ reason: "over cap", surfaceKey: "slack/T/C", workspaceKey: "slack/T", mode: "channel" }).includes(":no_entry:"), "refusal copy carries the :no_entry: marker");
 ok(spendBypassWarnCopy("over cap").includes(":warning:"), "bypass copy carries the :warning: marker");
 
 {

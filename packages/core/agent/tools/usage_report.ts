@@ -3,7 +3,8 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
 import { getConfig } from "../access/config.js";
-import { resolveReportScope, filterToDomain, approxConversationCount, aggregateByUser, aggregateBySurface, resolveSlackLabels, maskDmSurfaceKey } from "../spend/reporting.js";
+import { resolveReportScope, filterToDomain, approxConversationCount, aggregateByUser, aggregateBySurface, resolveSlackLabels } from "../spend/reporting.js";
+import { maskDmSurfaceKey } from "../spend/dm-mask.js";
 import { fulfilPaneRead } from "../access/pane-venue.js";
 import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 
@@ -81,7 +82,7 @@ export default defineTool({
         byUser,
         busiestSurfaces,
         note:
-          'conversations is an approximation: usage rows are grouped by (surface, user, kind), and a single conversation CAN carry more than one sender (per-turn identity changes turn to turn), so this can overcount a multi-sender thread — turns/byUser/busiestSurfaces event counts are exact (plain sums), only the distinct-session figures ("conversations" and each surface\'s "sessions") share this caveat. name/channel labels are best-effort Slack lookups — prefer them when presenting, but the raw ids are the ground truth (a row without a label is a non-Slack principal, a DM, or a failed lookup). DM usage is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the underlying rows keep full resolution).',
+          'conversations is an approximation: usage rows are grouped by (surface, user, kind), and a single conversation CAN carry more than one sender (per-turn identity changes turn to turn), so this can overcount a multi-sender thread — turns/byUser/busiestSurfaces event counts are exact (plain sums), only the distinct-session figures ("conversations" and each surface\'s "sessions") share this caveat. name/channel labels are best-effort Slack lookups — prefer them when presenting, but the raw ids are the ground truth (a row without a label is a non-Slack principal, a DM, or a failed lookup). DM usage is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the underlying rows keep full resolution). A row written before the conversation-mode stamp existed cannot be classified, so it reports under a separate "(unclassified)" bucket per workspace: masked rather than named, and kept apart from "(dms)" so a channel\'s spend is never reported as DM spend.',
       };
     };
     if (input.scope !== "org") return await build();

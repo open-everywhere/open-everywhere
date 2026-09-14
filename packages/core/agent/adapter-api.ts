@@ -632,7 +632,7 @@ export {
 
 export { scopeOverBudget } from "./spend/check.js";
 export { capBypassFor } from "./spend/bypass.js";
-export { ingressSpendGate, spendRefusalCopy, spendBypassWarnCopy, UNICODE_SPEND_BADGES, SLACK_SPEND_BADGES } from "./spend/ingress-gate.js";
+export { ingressSpendGate, spendRefusalCopy, spendBypassWarnCopy, UNICODE_SPEND_BADGES, SLACK_SPEND_BADGES, type SpendRefusalCopyInput } from "./spend/ingress-gate.js";
 export type { IngressSpendGateInput, SpendGateBadges, SpendGateDecision, SpendGateDoor, SpendGateAuditRow } from "./spend/ingress-gate.js";
 
 export { classifyWakeMapping, unmappedWakeCopy, UNMAPPED_WAKE_DROP_REASON } from "./access/wake-mapping.js";
@@ -812,7 +812,7 @@ export type { ModelPricing } from "./spend/pricing.js";
 export { recordSpend, spendTotals } from "./spend/store.js";
 export { periodOf } from "./spend/spend.js";
 export { estimateSandboxCostUsd } from "./spend/sandbox-pricing.js";
-export { routineIdOf } from "./hooks/spend.js";
+export { routineIdOf, turnSurfaceMode } from "./hooks/spend.js";
 export { default as spendHook } from "./hooks/spend.js";
 
 export { liveTaskIds, liveTaskCount } from "./access/live-delegated-tasks.js";

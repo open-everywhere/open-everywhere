@@ -194,6 +194,27 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "Each of the five drives its own surface's catch-up end to end (OPE-1748, extended to Discord and Notion by OPE-1754): the stand-down makes an idle window, a plain message in it wakes nothing, and the seat's NEXT wake must carry that message and re-show nothing from before its last one. They are the only scenarios that can fail when the bound or the fetch regresses — every other e2e room is ambient or windowed, where a message said between wakes woke the seat anyway. FIVE, NOT SIX: J-ENGAGED-slack is out because Slack's catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead. J-ENGAGED-discord and J-ENGAGED-notion drive the read as a BOT and as an INTEGRATION, which a seat's default `wide` admission drops before the envelope — and `wake.e2eDrivers` in `agent/settings/settings.ts` names both driver principals, so a red on either catch-up gate is a PRODUCT DEFECT in the catch-up read rather than a missing declaration. Delete either entry and that leg reds again. Each journey states the same rule at the point its leg sits, and AUDIT.md carries it too. The evidence is the seat's replayed transcript rather than a row, so `scripts/e2e-driver-test.ts` pins the reader (`seatCatchUpWake`) and these five legs prove it against a live deployment.",
   },
   {
+    area: "spend-disclosure",
+    globs: [
+      "packages/core/agent/spend/dm-mask.ts",
+      "packages/core/agent/spend/reporting.ts",
+      "packages/core/agent/spend/ingress-gate.ts",
+      "packages/core/agent/spend/store.ts",
+      "packages/core/agent/hooks/spend.ts",
+      "packages/core/agent/tools/spend_report.ts",
+      "packages/core/agent/tools/usage_report.ts",
+      "packages/core/agent/analytics/execute.ts",
+      "packages/core/agent/analytics/compile.ts",
+      "packages/core/agent/analytics/registry.ts",
+      "packages/core/agent/operational/store.ts",
+      "packages/core/agent/operational/sqlite.ts",
+      "packages/core/agent/operational/postgres.ts",
+    ],
+    scenarios: ["S-SPEND-DM-MASK", "S-SPEND-REFUSAL-KEYS"],
+    why:
+      "OPE-1862/OPE-1860. S-SPEND-DM-MASK spends in a REAL DM and then reads a spend report in a room on ANOTHER platform: the mask reads a `surface_mode` stamp the spend hook writes from the turn's own binding, and no offline tier can see whether a real turn's row carries it — an unstamped row masks to `(unclassified)` instead, which is safe but wrong-looking and invisible to every unit test. S-SPEND-REFUSAL-KEYS reads a live refusal's bytes against the cap layer its own reason names: the copy is a pure function, but it is only as right as the `layer`/`scopeKey` the gate hands it, and a gate that dropped either would render a refusal naming a cap that did not bite. Changing any file here changes one of those two answers.",
+  },
+  {
     area: "reply-provenance",
     globs: [
       "packages/core/agent/channels/reply-provenance.ts",
