@@ -158,10 +158,10 @@ const green = gate("--check");
 ok(green.code === 0, `the real gate passes on the tracked tree (exit ${green.code})\n${green.out}`);
 ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on a green run");
 ok(/\d+ capabilities × 6 surfaces/.test(green.out), "…with the cell count");
-ok(/10 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
+ok(/9 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
 ok(
-  /3 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion\) against the bundle sources/.test(green.out),
-  "…and names the three that are source scans, not registries",
+  /4 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion, unified-action-plane\) against the bundle sources/.test(green.out),
+  "…and names the four that read the bundle sources, not registries alone",
 );
 
 {

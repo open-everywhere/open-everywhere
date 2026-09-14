@@ -83,6 +83,19 @@ const OWNED_THREAD_INGRESS_IMPORT =
 
 const OWNED_THREAD_INGRESS_CALL = /\bawait\s+divertInboundToUnifiedWindow\s*\(/su;
 
+const APPROVAL_TAP_ROAD_IMPORT =
+  /import\s*(?:type\s*)?\{[^}]*\bresolveApprovalCardClick\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
+const APPROVAL_TAP_ROAD_CALL = /\bawait\s+resolveApprovalCardClick\s*\(/su;
+
+function approvalTapRoadPlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (sourcesReference(dir, APPROVAL_TAP_ROAD_IMPORT) && sourcesReference(dir, APPROVAL_TAP_ROAD_CALL)) wired.add(platform);
+  }
+  return wired;
+}
+
 function engagedRowPromotionPlatforms(): ReadonlySet<string> {
   const wired = new Set<string>();
   for (const platform of PLATFORMS) {
@@ -121,14 +134,14 @@ function setOf(platforms: Iterable<string>): ReadonlySet<string> {
   return new Set([...platforms].filter((p) => (PLATFORMS as readonly string[]).includes(p)));
 }
 
-const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress", "engaged-row-promotion"] as const;
+const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress", "engaged-row-promotion", "unified-action-plane"] as const;
 
 const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["identity-mapper", setOf(registeredIdentityMapperPlatforms())],
   ["capability-manifest", setOf(registeredCapabilityManifestPlatforms())],
   ["post-arm", setOf(registeredPostArmPlatforms())],
   ["wake-origin-codec", setOf(PLATFORMS.filter((p) => wakeOriginCodec(p) !== undefined))],
-  ["unified-action-plane", setOf(unifiedActionCapablePlatforms())],
+  ["unified-action-plane", setOf(unifiedActionCapablePlatforms().filter((p) => approvalTapRoadPlatforms().has(p)))],
   [
     "origin-placement-carry",
     setOf(

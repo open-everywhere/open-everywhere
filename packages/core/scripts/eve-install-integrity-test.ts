@@ -114,6 +114,7 @@ ok(
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 const COMPACTION = join("dist", "src", "harness", "compaction.js");
+const SESSION_TASK_INDEX = join("dist", "src", "tasks", "session-index.js");
 
 const RETIRED = [
   { symbol: "__oeCfg", why: "OPE-172" },
@@ -224,6 +225,16 @@ for (const eveDir of copies) {
   ok(
     src.includes("__oeProjectModelMessages(validateHarnessModelMessages(normalizeModelMessages("),
     `copies: ${where} carries the model-message projection seam (OPE-1396, part 6) WRAPPING normalizeModelMessages — this is the only seam that hands OE the list the model actually reads, so an unpatched copy takes OPE-593's \`[Agents]\` subtraction off the model call and the seat learns a live worker \`agentId\` from the listing`,
+  );
+  const taskIndexFile = join(eveDir, SESSION_TASK_INDEX);
+  ok(
+    existsSync(taskIndexFile),
+    `cohort: ${where}/${SESSION_TASK_INDEX} exists (if eve moved the task index, patch part 8 and packages/core/scripts/task-cohort-starvation-test.ts are both stale)`,
+  );
+  const taskIndexSrc = existsSync(taskIndexFile) ? readFileSync(taskIndexFile, "utf8") : "";
+  ok(
+    taskIndexSrc.includes("function __oeTaskCohortJoin(") && /else\{let [A-Za-z_$][A-Za-z_$0-9]*=__oeTaskCohortJoin\(/.test(taskIndexSrc),
+    `cohort: ${where} carries patch part 8 (OPE-1856, __oeTaskCohortJoin AND its call site in recordSessionTask) — an unpatched copy gives a new task the cohort of the first task with no terminal view WHATEVER TURN IT CAME FROM, so one worker parked on an unanswered question starves every later delegation settlement on that seat for the life of the session (measured on deploy #212: two workers completed, neither ever settled, no completing reply)`,
   );
   const compactionFile = join(eveDir, COMPACTION);
   ok(

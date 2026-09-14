@@ -341,8 +341,11 @@ export {
   readApprovalCardTicket,
   forgetApprovalCardTicket,
   resolveApprovalCardClick,
+  APPROVAL_CARD_SETTLED_AUDIT_ACTION,
+  APPROVAL_CARD_REFUSED_AUDIT_ACTION,
+  auditApprovalCardTap,
 } from "./channels/approval-card.js";
-export type { ApprovalCardTicket, ApprovalClickRouting, ApprovalClickRefusal, ApprovalClickDeps } from "./channels/approval-card.js";
+export type { ApprovalCardTicket, ApprovalClickRouting, ApprovalClickRefusal, ApprovalClickDeps, ApprovalClickAuditReason, ApprovalCardTapOutcome } from "./channels/approval-card.js";
 export { bareTokenFromEveContext } from "./channels/window-key.js";
 
 export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
