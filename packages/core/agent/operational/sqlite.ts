@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -168,6 +168,8 @@ function getDb(): DatabaseSync {
       first_wake_at      TEXT,                        -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
       last_input_tokens  INTEGER,                     -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
       rotate_marked_at   TEXT,                        -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
+      served_code_fingerprint   TEXT,                  -- OPE-1821: the runtime CODE hash this seat was last served with; NULL = never stamped. Written ONLY by stampChannelSessionRuntime, and deliberately NOT reset by a rotation
+      served_domain_fingerprint TEXT,                  -- OPE-1821: the DOMAIN declaration hash this seat was last served with. Same writer, same NULL meaning — the pair moves together
       PRIMARY KEY (org_id, surface_key)
     );
     -- session_tail (OPE-794): the standing-seat TAIL ring. One row per recorded conversational
@@ -557,13 +559,13 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key);
-    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice), five key families. NO TTL,
-    -- on purpose: the one thing it records is "this already happened", and expiring that would make
-    -- an announcement periodic and a recorded reaction repeatable. Four families are never deleted.
-    -- The fifth, the runtime-rotation claim, carries the (eve build, deployment) pair that wrote it
-    -- and grows by one row per ship per standing seat; store.ts's NoticeClaimPrune bounds that ONE
-    -- family, outside the running generation's prefix only, where a claim can never be re-tested.
-    -- Two families are traffic-derived; store.ts's own section states what bounds each.
+    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice), four key families. NO TTL
+    -- and NO DELETE at all, on purpose: the one thing it records is "this already happened", and
+    -- dropping that would make an announcement periodic and a recorded reaction repeatable. Every
+    -- family is bounded by the thing it records (one room, one grant, one reaction), never by the
+    -- number of ships. Two families are traffic-derived; store.ts's own section states what bounds
+    -- each. The fifth family, OPE-1751's runtime-rotation claim, was the one entry that grew per
+    -- ship per standing seat, and OPE-1821 retired it with the sweep it needed.
     CREATE TABLE IF NOT EXISTS notice_claim (
       org_id     TEXT NOT NULL,
       key        TEXT NOT NULL,
@@ -669,6 +671,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
     "ALTER TABLE channel_session ADD COLUMN last_input_tokens INTEGER",
     "ALTER TABLE channel_session ADD COLUMN rotate_marked_at TEXT",
+
+    "ALTER TABLE channel_session ADD COLUMN served_code_fingerprint TEXT",
+    "ALTER TABLE channel_session ADD COLUMN served_domain_fingerprint TEXT",
 
     "ALTER TABLE unified_wake_target ADD COLUMN window_token TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN answered_at TEXT",
@@ -1749,9 +1754,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getChannelSession(org, surfaceKey) {
     const row = getDb()
-      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = ? AND surface_key = ?")
       .get(org, surfaceKey) as
-      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null; rotate_marked_at: string | null }
+      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null; rotate_marked_at: string | null; served_code_fingerprint: string | null; served_domain_fingerprint: string | null }
       | undefined;
     return row
       ? {
@@ -1761,8 +1766,30 @@ export const sqliteOperationalStore: OperationalStore = {
           firstWakeAt: row.first_wake_at ?? null,
           lastInputTokens: row.last_input_tokens == null ? null : Number(row.last_input_tokens),
           rotateMarkedAt: row.rotate_marked_at ?? null,
+          servedCodeFingerprint: row.served_code_fingerprint ?? null,
+          servedDomainFingerprint: row.served_domain_fingerprint ?? null,
         }
       : null;
+  },
+
+  async stampChannelSessionRuntime(org, surfaceKey, codeFingerprint, domainFingerprint) {
+    const handle = getDb();
+    const prev = handle
+      .prepare("SELECT served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .get(org, surfaceKey) as { served_code_fingerprint: string | null; served_domain_fingerprint: string | null } | undefined;
+    if (prev === undefined) return { outcome: "absent", previousCodeFingerprint: null, previousDomainFingerprint: null };
+    const previousCodeFingerprint = prev.served_code_fingerprint ?? null;
+    const previousDomainFingerprint = prev.served_domain_fingerprint ?? null;
+    const info = handle
+      .prepare(
+        `UPDATE channel_session SET served_code_fingerprint = ?, served_domain_fingerprint = ?
+          WHERE org_id = ? AND surface_key = ?
+            AND (served_code_fingerprint IS NOT ? OR served_domain_fingerprint IS NOT ?)`,
+      )
+      .run(codeFingerprint, domainFingerprint, org, surfaceKey, codeFingerprint, domainFingerprint);
+    if (Number(info.changes ?? 0) === 0) return { outcome: "current", previousCodeFingerprint, previousDomainFingerprint };
+    const outcome: ChannelSessionRuntimeStamp["outcome"] = previousCodeFingerprint === null ? "adopted" : "rotate";
+    return { outcome, previousCodeFingerprint, previousDomainFingerprint };
   },
 
   async rotateChannelSession(org, surfaceKey, newToken, at) {
@@ -1781,11 +1808,15 @@ export const sqliteOperationalStore: OperationalStore = {
            first_wake_at      = NULL,
            last_input_tokens  = NULL,
            rotate_marked_at   = NULL
-         RETURNING generation`,
+         RETURNING generation, served_code_fingerprint, served_domain_fingerprint`,
       )
-      .get(org, surfaceKey, newToken, at, at) as { generation: number };
+      .get(org, surfaceKey, newToken, at, at) as { generation: number; served_code_fingerprint: string | null; served_domain_fingerprint: string | null };
     const generation = row.generation;
-    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null };
+    return {
+      org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null,
+      servedCodeFingerprint: row.served_code_fingerprint ?? null,
+      servedDomainFingerprint: row.served_domain_fingerprint ?? null,
+    };
   },
 
   async markChannelSessionRotation(org, surfaceKey, at) {
@@ -1812,14 +1843,15 @@ export const sqliteOperationalStore: OperationalStore = {
     const rows = (
       keyPrefix === undefined
         ? getDb()
-            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ?")
+            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = ?")
             .all(org)
         : getDb()
-            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ? AND surface_key LIKE ?")
+            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = ? AND surface_key LIKE ?")
             .all(org, `${keyPrefix}%`)
     ) as {
       surface_key: string; token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
       input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null; rotate_marked_at: string | null;
+      served_code_fingerprint: string | null; served_domain_fingerprint: string | null;
     }[];
     return rows.map((r) => ({
       org, surfaceKey: r.surface_key, token: r.token, generation: r.generation, createdAt: r.created_at,
@@ -1828,6 +1860,8 @@ export const sqliteOperationalStore: OperationalStore = {
       firstWakeAt: r.first_wake_at ?? null,
       lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
       rotateMarkedAt: r.rotate_marked_at ?? null,
+      servedCodeFingerprint: r.served_code_fingerprint ?? null,
+      servedDomainFingerprint: r.served_domain_fingerprint ?? null,
     }));
   },
 
@@ -2251,19 +2285,9 @@ export const sqliteOperationalStore: OperationalStore = {
     return info.changes > 0;
   },
 
-  async claimNotice(org, key, at, prune) {
+  async claimNotice(org, key, at) {
     const info = getDb().prepare("INSERT OR IGNORE INTO notice_claim (org_id, key, claimed_at) VALUES (?, ?, ?)").run(org, key, at);
-    const won = info.changes > 0;
-    if (won && prune !== undefined) {
-      try {
-        getDb()
-          .prepare("DELETE FROM notice_claim WHERE org_id = ? AND key LIKE ? ESCAPE '\\' AND key NOT LIKE ? ESCAPE '\\' AND claimed_at < ?")
-          .run(org, likePrefixPattern(prune.sweepPrefix), likePrefixPattern(prune.keepPrefix), new Date(Date.parse(at) - prune.olderThanMs).toISOString());
-      } catch (err) {
-        console.warn(`[open-everywhere:operational] notice_claim sweep failed for "${prune.sweepPrefix}" (the claim stands): ${String(err)}`);
-      }
-    }
-    return won;
+    return info.changes > 0;
   },
 
   async noticeClaimed(org, key) {

@@ -2,6 +2,7 @@ import { GitHubContents } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
 import { prApiHeaders, type PrFetchFn } from "../scm/pr.js";
 import { getGitHubApp } from "../scm/provider.js";
+import { resolveConfigRepoWriteToken } from "../scm/config-repo-token.js";
 import {
   registerConfigPrProvider,
   type CommitIdentity,
@@ -17,19 +18,6 @@ const DEFAULT_COMMITTER: CommitIdentity = {
   name: "open-everywhere[bot]",
   email: "open-everywhere@users.noreply.github.com",
 };
-
-async function resolveWriteToken(repo: string): Promise<string> {
-  const app = getGitHubApp();
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo]);
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential for the config repo: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
-}
 
 async function openOrReopenPr(
   opts: { repo: string; head: string; base: string; title: string; body: string; token: string; draft?: boolean },
@@ -126,7 +114,7 @@ export function makeGitHubConfigPrProvider(
   const committerFn = deps.committer ?? (() => getGitHubApp()?.committer() ?? DEFAULT_COMMITTER);
 
   return {
-    resolveWriteToken,
+    resolveWriteToken: resolveConfigRepoWriteToken,
     committer: committerFn,
     async getBranchSha(args): Promise<string | null> {
       return refSha({ repo: args.repo, branch: args.branch, token: args.token });

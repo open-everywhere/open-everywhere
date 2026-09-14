@@ -1,5 +1,6 @@
 
 import { readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import { PROMOTER_LIST_MAX, spendLedgerConjuncts, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
@@ -18,6 +19,14 @@ let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {
     console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+function eq(actual: unknown, expected: unknown, label: string): void {
+  if (!isDeepStrictEqual(actual, expected)) {
+    console.error(`✗ ${label}\n  actual:   ${JSON.stringify(actual)}\n  expected: ${JSON.stringify(expected)}`);
     process.exit(1);
   }
   passed++;
@@ -1078,69 +1087,76 @@ const store = makeOperationalPostgresStore(client);
   );
   ok(!(await store.noticeClaimed("acme", "external-silent:join:slack/T1/C_NEVER")), "negative control: an unclaimed key reads false, so the twin is not answering true for everything");
 
+  ok(
+    !/DELETE\s+FROM\s+notice_claim/i.test(readFileSync(new URL("../agent/operational/postgres.ts", import.meta.url), "utf8")),
+    "🔴 pg OPE-1821: the adapter carries NO DELETE on notice_claim — a claim is a lifetime record, and the one sweep that existed retired with the key space that needed it",
+  );
   {
-    const RETENTION = 30 * 24 * 60 * 60_000;
-    const NOW = "2026-07-30T03:30:00.000Z";
-    const ancient = new Date(Date.parse(NOW) - RETENTION - 60_000).toISOString();
-    const recent = new Date(Date.parse(NOW) - 60_000).toISOString();
-    const prune = { sweepPrefix: "oe-runtime-rotation:", keepPrefix: "oe-runtime-rotation:0.52.2:dpl_live:", olderThanMs: RETENTION };
-    const RETIRED_OLD = "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w1";
-    const RETIRED_RECENT = "oe-runtime-rotation:0.52.2:dpl_gone2:oe-domain::w1";
-    const LIVE_OLD = "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::w1";
-    const WILDCARD_TWIN = "oe-runtime-rotation:0.52.2:dplXlive:oe-domain::w1";
-    const OTHER_FAMILY = "external-silent:join:slack/T1/C_SWEEP";
-    for (const [k, at] of [
-      [RETIRED_OLD, ancient],
-      [RETIRED_RECENT, recent],
-      [LIVE_OLD, ancient],
-      [WILDCARD_TWIN, ancient],
-      [OTHER_FAMILY, ancient],
-    ] as const) {
-      ok(await store.claimNotice("acme", k, at), `pg: seeded ${k}`);
-    }
-    ok(await store.claimNotice("globex", RETIRED_OLD, ancient), "pg: …and the same expired retired-generation key in ANOTHER org");
-
-    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::trigger", NOW, prune), "pg: the trigger wins its claim");
-
-    ok(!(await store.noticeClaimed("acme", RETIRED_OLD)), "🔴 pg OPE-1751: the sweep DROPS a retired generation's expired claim — the bound on the key space");
-    ok(await store.noticeClaimed("acme", LIVE_OLD), "🔴 pg OPE-1751: …and KEEPS the running generation's claim at the same age — a live claim deleted is a second rotation for nothing");
-    ok(await store.noticeClaimed("acme", RETIRED_RECENT), "🔴 pg OPE-1751: …and keeps a retired claim inside the retention — the age bound is real");
-    ok(await store.noticeClaimed("acme", OTHER_FAMILY), "🔴 pg OPE-1751: …and never leaves the caller's key family — the silent-notice claims are permanent");
-    ok(!(await store.noticeClaimed("acme", WILDCARD_TWIN)), "🔴 pg OPE-1751: `_` in the keep-prefix is ESCAPED — `dplXlive` is swept, so a foreign `dpl_…` id cannot shelter under the live one");
-    ok(await store.noticeClaimed("globex", RETIRED_OLD), "🔴 pg OPE-1751: the other ORG's identical row survives — the sweep is org-scoped");
-
-    {
-      let refused = 0;
-      const refusingClient: PgClient = {
-        query: (text, params) => {
-          if (/^\s*DELETE\s+FROM\s+notice_claim/i.test(text)) {
-            refused++;
-            return Promise.reject(new Error('permission denied for table notice_claim'));
-          }
-          return client.query(text, params);
-        },
-      };
-      const refusingStore = makeOperationalPostgresStore(refusingClient);
-      const KEY = "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::grantless";
-      ok(
-        await refusingStore.claimNotice("acme", KEY, NOW, prune),
-        "🔴 pg OPE-1751: a WON claim whose sweep is refused still answers TRUE — a swallowed sweep costs disk, a propagated one costs the seat its rotation forever",
-      );
-      ok(refused === 1, `control: the DELETE really was attempted and really was refused (${refused} refusal(s)) — the assertion above is not passing because no sweep ran`);
-      ok(await store.noticeClaimed("acme", KEY), "…and the claim row is committed, so the caller's once-ever work is genuinely spent");
-      ok(
-        !(await refusingStore.claimNotice("acme", KEY, NOW, prune)),
-        "…and the NEXT call still LOSES it — the failed sweep left the at-most-once guarantee exactly as it was",
-      );
-    }
-
-    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w2", ancient), "pg: a second retired-generation row, seeded expired");
-    ok(await store.claimNotice("acme", "oe-runtime-rotation:0.52.2:dpl_live:oe-domain::trigger2", NOW), "pg: a winning claim with NO prune argument");
-    ok(
-      await store.noticeClaimed("acme", "oe-runtime-rotation:0.52.2:dpl_gone:oe-domain::w2"),
-      "🔴 pg: …deletes nothing — a caller that asks for no sweep keeps the table's never-delete behaviour",
-    );
+    const KEY_ANCIENT = "external-silent:join:slack/T1/C_ANCIENT";
+    ok(await store.claimNotice("acme", KEY_ANCIENT, "2016-01-01T00:00:00.000Z"), "pg: seeded a ten-year-old claim");
+    ok(await store.noticeClaimed("acme", KEY_ANCIENT), "🔴 pg: …and it is still held — nothing on this table expires or is swept");
   }
+}
+
+{
+  const sk = "slack/T_FP/C_FP";
+  const F1 = "0.52.2:aaaaaaaaaaaaaaaa";
+  const F2 = "0.52.2:bbbbbbbbbbbbbbbb";
+  const D1 = "dddddddddddddddd";
+  const D2 = "eeeeeeeeeeeeeeee";
+
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F1, D1),
+    { outcome: "absent", previousCodeFingerprint: null, previousDomainFingerprint: null },
+    "🔴 pg: a surface with NO seat answers `absent` and writes nothing — there is no generation to retire, and this statement must never mint one",
+  );
+
+  await store.rotateChannelSession("acme", sk, "T_FP:oe-sup:1", "2026-07-09T10:00:00Z");
+  eq((await store.getChannelSession("acme", sk))!.servedCodeFingerprint, null, "pg: a freshly-minted generation carries NO pair — the mint arm writes none");
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F1, D1),
+    { outcome: "adopted", previousCodeFingerprint: null, previousDomainFingerprint: null },
+    "🔴 pg: a row with no pair is ADOPTED, never rotated — it was minted by this same bundle, and rotating it would be amnesia at generation 1",
+  );
+  eq((await store.getChannelSession("acme", sk))!.servedCodeFingerprint, F1, "pg: …and the adopt WROTE the pair…");
+  eq((await store.getChannelSession("acme", sk))!.servedDomainFingerprint, D1, "pg: …both halves of it");
+
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F1, D1),
+    { outcome: "current", previousCodeFingerprint: F1, previousDomainFingerprint: D1 },
+    "🔴 pg: an unchanged pair answers `current` — this is every wake between two ships, and it must cost no context",
+  );
+
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F2, D1),
+    { outcome: "rotate", previousCodeFingerprint: F1, previousDomainFingerprint: D1 },
+    "🔴 pg: a CODE change answers `rotate` and reports the pair the seat was actually running",
+  );
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F2, D1),
+    { outcome: "current", previousCodeFingerprint: F2, previousDomainFingerprint: D1 },
+    "🔴 pg AT-MOST-ONCE: the very next call answers `current` — the winner's write landed in the same statement that decided, so a second wake on the same stale seat cannot rotate it again",
+  );
+  eq(
+    (await store.stampChannelSessionRuntime("acme", sk, F2, D2)).outcome,
+    "rotate",
+    "🔴 pg: a DOMAIN change rotates on its own — one domain's declaration edit reaches that domain's seats and no others",
+  );
+  eq(
+    await store.stampChannelSessionRuntime("acme", sk, F1, D2),
+    { outcome: "rotate", previousCodeFingerprint: F2, previousDomainFingerprint: D2 },
+    "🔴 pg OPE-1821 THE FIX: a ROLLBACK to code the instance already served ROTATES — the comparison asks `different from what this seat ran`, where a lifetime claim asked `never seen before` and answered no",
+  );
+
+  const rotated = await store.rotateChannelSession("acme", sk, "T_FP:oe-sup:2", "2026-07-09T11:00:00Z");
+  eq(rotated.generation, 2, "control: the rotation really minted the next generation");
+  eq(rotated.servedCodeFingerprint, F1, "🔴 pg: …and KEPT the code fingerprint the pre-dispatch stamp wrote");
+  eq(rotated.servedDomainFingerprint, D2, "🔴 pg: …and the domain half with it");
+  eq((await store.stampChannelSessionRuntime("acme", sk, F1, D2)).outcome, "current", "🔴 pg: so the wake after a rotation resumes — the seat is not rotated twice for one ship");
+
+  await store.rotateChannelSession("globex", sk, "T_FP:oe-sup:1", "2026-07-09T10:00:00Z");
+  eq((await store.stampChannelSessionRuntime("globex", sk, F1, D2)).outcome, "adopted", "pg: the SAME surface key in another org has its own row…");
+  eq((await store.getChannelSession("acme", sk))!.servedCodeFingerprint, F1, "🔴 pg: …and stamping it left the first org's row untouched");
 }
 
 {

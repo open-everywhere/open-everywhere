@@ -1,7 +1,7 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
 import { shouldRotate, rotationClockMsFromDays, supervisorRotateContextSize, type RotationThresholds } from "./turn-delivery.js";
-import { claimRuntimeRotation } from "./runtime-rotation.js";
+import { claimRuntimeRotation, stampMintedRuntime } from "./runtime-rotation.js";
 import { carryTailForward } from "./session-tail-record.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
@@ -37,6 +37,7 @@ export interface DmSeatDeps {
   readonly store?: OperationalStore;
   readonly thresholds?: RotationThresholds;
   readonly claimRuntimeRotation?: typeof claimRuntimeRotation;
+  readonly stampMintedRuntime?: typeof stampMintedRuntime;
 }
 
 export interface DmSeatRef {
@@ -56,6 +57,7 @@ export async function getOrCreateDmSeat(org: string, dm: DmSeatRef, atIso: strin
   const existing = await store.getChannelSession(org, key);
   if (!existing) {
     const row = await store.rotateChannelSession(org, key, mint(1), atIso);
+    await (deps.stampMintedRuntime ?? stampMintedRuntime)({ org, registryKey: key, surfaceKey: dm.surfaceKey, atIso }, deps.store ? { store: deps.store } : {});
     return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] };
   }
   if (shouldRotate(existing, atIso, { ...thresholds, runtimeChanged })) {

@@ -39,6 +39,7 @@ import {
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
+  stampMintedRuntime,
   grainUsesUnifiedWindow,
   resolvePartition,
   domainKeyOf,
@@ -314,10 +315,11 @@ export function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerAr
   const grain = plan.grain;
   return {
     async getOrCreateSession(_surfaceKey, channelId, atIso) {
-      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey: plan.surfaceKey, atIso });
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey: plan.surfaceKey, domainName: grain.domainName, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => teamsSupervisorToken(channelId, 1)), atIso);
+        await stampMintedRuntime({ org, registryKey: grain.registryKey, surfaceKey: plan.surfaceKey, domainName: grain.domainName, atIso });
         return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] as readonly WakeMessageInput[] };
       }
       if (shouldRotate(existing, atIso, { runtimeChanged })) {

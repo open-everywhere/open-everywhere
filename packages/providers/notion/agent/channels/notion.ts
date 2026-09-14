@@ -23,6 +23,7 @@ import {
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
+  stampMintedRuntime,
   grainUsesUnifiedWindow,
   divertInboundToUnifiedWindow,
   healPrunedDeploymentStrand,
@@ -166,10 +167,11 @@ export function liveNotionSupervisorDeps(
   return {
     async getOrCreateSession(surfaceKey, pageId, atIso) {
       const grain = notionGrainFor(surfaceKey);
-      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, domainName: grain.domainName, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
+        await stampMintedRuntime({ org, registryKey: grain.registryKey, surfaceKey, domainName: grain.domainName, atIso });
         return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] as readonly WakeMessageInput[] };
       }
       if (shouldRotate(existing, atIso, { runtimeChanged })) {

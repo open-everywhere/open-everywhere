@@ -207,6 +207,7 @@ export async function divertTriggeredFire(
     org,
     registryKey: grain.registryKey,
     surfaceKey: input.surfaceKey,
+    domainName: grain.domainName,
     atIso,
   });
   const healed = await healFireParentGeneration(org, grain, atIso, registryStore(), runtimeChanged);

@@ -8,6 +8,7 @@ import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
 import { createOrUpdatePullRequest } from "../scm/pr.js";
 import { getGitHubApp } from "../scm/provider.js";
+import { resolveConfigRepoWriteToken } from "../scm/config-repo-token.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -40,17 +41,6 @@ export interface WebhookDeclareExecuteDeps {
   readonly postThreadNote?: (platform: string, target: { channelId: string; text: string; threadTs?: string | null }) => Promise<string | undefined>;
   readonly resolveToken?: (repo: string) => Promise<string>;
   readonly committer?: CommitId;
-}
-
-async function resolveWriteToken(repo: string): Promise<string> {
-  const app = getGitHubApp();
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo]);
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) throw new Error("no GitHub credential for the config repo: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  return pat;
 }
 
 export type EnabledWebhookDeclareConfig = AccessRequestsConfig & { readonly adminChannel: string; readonly configRepo: string };
@@ -173,7 +163,7 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
     return `dry-run — would commit the declaration to ${repo}#${branch} and open a PR against ${base}; validation passed`;
   }
 
-  const token = await (deps.resolveToken ?? resolveWriteToken)(repo);
+  const token = await (deps.resolveToken ?? resolveConfigRepoWriteToken)(repo);
   const contents = deps.contents ?? new GitHubContents();
   const refSha = deps.getBranchSha ?? getBranchSha;
   const mkBranch = deps.createBranch ?? createBranch;

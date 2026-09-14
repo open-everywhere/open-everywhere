@@ -389,7 +389,7 @@ export type { StrandHealInput, StrandHealOutcome } from "./channels/stranded-sea
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";
 
-export { claimRuntimeRotation } from "./channels/runtime-rotation.js";
+export { claimRuntimeRotation, stampMintedRuntime } from "./channels/runtime-rotation.js";
 
 export { completeSupervisorTurn, auditSupervisorFailure, consumeSupervisorReplyMark } from "./channels/supervisor-complete.js";
 export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";

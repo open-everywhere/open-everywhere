@@ -359,6 +359,8 @@ registerIdentityMapper(PLATFORM, (c) => {
       "INGRESS — a routine re-fetches an entity under the routine's own declared principal, with no requester turn behind it, so there is no own-account ask to honour",
     "packages/core/agent/scm/app.ts": "the mint itself — what every call site calls, not a call site",
     "packages/core/agent/scm/broker.ts": "the egress broker's mint, reached from checkout_repo, which is gated",
+    "packages/core/agent/scm/config-repo-token.ts":
+      "WRITE, and the resolver itself — the one mint the five config-repo bot-PR flows share (OPE-1823); its five call sites, approvals/access-request.ts, approvals/agent-create.ts, approvals/webhook-declare.ts, credentials/config-pr-github.ts and identity/groups-delivery.ts, are named on the same write decision",
     "packages/core/agent/scm/issue-actions.ts": "WRITE — issue-write permissions",
     "packages/core/agent/scm/pr-status.ts": "the resolvers themselves, not a call site",
     "packages/core/agent/scm/write-token.ts":

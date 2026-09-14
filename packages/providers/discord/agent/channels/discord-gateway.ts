@@ -17,6 +17,7 @@ import {
   grainUsesUnifiedWindow,
   mintRotationToken,
   claimRuntimeRotation,
+  stampMintedRuntime,
   mintWakeId,
   discordVendorEventTime,
   spreadVendorTs,
@@ -1080,12 +1081,13 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
   const domainName = grain.domainName ?? "unknown";
   const tokenFor = (gen: number) => mintRotationToken(grain, gen, () => unifiedSupervisorToken(domainName, gen));
 
-  const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey: input.partition.surfaceKey, atIso });
+  const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey: input.partition.surfaceKey, domainName: grain.domainName, atIso });
 
   const existing = await store.getChannelSession(org, grain.registryKey);
   let session: { token: string; generation: number; fresh: boolean; tail: readonly WakeMessageInput[] };
   if (!existing) {
     const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(1), atIso);
+    await stampMintedRuntime({ org, registryKey: grain.registryKey, surfaceKey: input.partition.surfaceKey, domainName: grain.domainName, atIso });
     session = { token: row.token, generation: row.generation, fresh: true, tail: [] };
   } else if (shouldRotate(existing, atIso, { runtimeChanged })) {
     const tail = await carryTailForward(org, grain.registryKey, existing.token);

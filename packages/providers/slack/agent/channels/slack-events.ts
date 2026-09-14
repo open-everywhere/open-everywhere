@@ -34,6 +34,7 @@ import {
   supervisorGrainFor,
   mintRotationToken,
   claimRuntimeRotation,
+  stampMintedRuntime,
   grainUsesUnifiedWindow,
   mintWakeId,
   singleWindowMentionPolicy,
@@ -2063,11 +2064,12 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const grain = grainFor(surfaceKey);
-      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, domainName: grain.domainName, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const token = tokenFor(grain, channelId, 1);
         const row = await store.rotateChannelSession(org, grain.registryKey, token, atIso);
+        await stampMintedRuntime({ org, registryKey: grain.registryKey, surfaceKey, domainName: grain.domainName, atIso });
         return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] as readonly WakeMessageInput[] };
       }
       if (shouldRotate(existing, atIso, { runtimeChanged })) {

@@ -599,6 +599,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   await store.rotateChannelSession(ORG, parentKey, "oe-dom:treasury:oe-sup:g1-old", "2026-07-01T00:00:00.000Z");
   const stale = await store.rotateChannelSession(ORG, parentKey, "oe-dom:treasury:oe-sup:g2-old", "2026-07-01T00:00:00.000Z");
   ok(stale.generation === 2, "heal/setup: the parent window sits at generation 2, minted under the old build");
+  await store.stampChannelSessionRuntime(ORG, parentKey, "eve:AN-OLDER-BUILD", "a-stale-domain-declaration");
 
   await routineStore.addRoutine(
     {} as never,
@@ -703,8 +704,8 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   const rotaKey = unifiedDomainSessionKey(ROTA_DOMAIN);
   ok(
-    (await claimRuntimeRotation({ org: ORG, registryKey: rotaKey, surfaceKey: ROTA_SURFACE, atIso: NOW.toISOString() })) === true,
-    "chain/setup: burn ROTA_DOMAIN's runtime-change claim up front — every subtest below fires under runtimeChanged=false",
+    (await claimRuntimeRotation({ org: ORG, registryKey: rotaKey, surfaceKey: ROTA_SURFACE, atIso: NOW.toISOString() })) === false,
+    "chain/setup: ROTA_DOMAIN's runtime-change rung reports FALSE — every subtest below fires under runtimeChanged=false and measures exactly the rung it names",
   );
 
   const realNow = Date.now();

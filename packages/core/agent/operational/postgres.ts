@@ -150,6 +150,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      first_wake_at      text,                 -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
      last_input_tokens  bigint,               -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
      rotate_marked_at   text,                 -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
+     served_code_fingerprint   text,          -- OPE-1821: the runtime CODE hash this seat was last served with; NULL = never stamped. Written ONLY by stampChannelSessionRuntime, and deliberately NOT reset by a rotation
+     served_domain_fingerprint text,          -- OPE-1821: the DOMAIN declaration hash this seat was last served with. Same writer, same NULL meaning — the pair moves together
      PRIMARY KEY (org_id, surface_key)
    )`,
   `CREATE TABLE IF NOT EXISTS session_tail (
@@ -545,6 +547,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS last_input_tokens bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS rotate_marked_at text`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS served_code_fingerprint text`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS served_domain_fingerprint text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS window_token text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_turn_id text`,
@@ -1233,7 +1237,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
-  notice_claim: ["SELECT", "INSERT", "DELETE"],
+  notice_claim: ["SELECT", "INSERT"],
   model_call_capture: ["SELECT", "INSERT", "DELETE"],
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
   memory_proposal: ["SELECT", "INSERT"],
@@ -2154,12 +2158,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getChannelSession(org, surfaceKey) {
       const { rows } = await client.query(
-        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = $1 AND surface_key = $2",
         [org, surfaceKey],
       );
       const r = (rows as {
         token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
         input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null; rotate_marked_at: string | null;
+        served_code_fingerprint: string | null; served_domain_fingerprint: string | null;
       }[])[0];
       return r
         ? {
@@ -2169,6 +2174,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
             firstWakeAt: r.first_wake_at ?? null,
             lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
             rotateMarkedAt: r.rotate_marked_at ?? null,
+            servedCodeFingerprint: r.served_code_fingerprint ?? null,
+            servedDomainFingerprint: r.served_domain_fingerprint ?? null,
           }
         : null;
     },
@@ -2187,11 +2194,41 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
            first_wake_at      = NULL,
            last_input_tokens  = NULL,
            rotate_marked_at   = NULL
-         RETURNING generation`,
+         RETURNING generation, served_code_fingerprint, served_domain_fingerprint`,
         [org, surfaceKey, newToken, at, at],
       );
-      const generation = Number((rows as { generation: number | string }[])[0].generation);
-      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null };
+      const r = (rows as { generation: number | string; served_code_fingerprint: string | null; served_domain_fingerprint: string | null }[])[0];
+      const generation = Number(r.generation);
+      return {
+        org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null,
+        servedCodeFingerprint: r.served_code_fingerprint ?? null,
+        servedDomainFingerprint: r.served_domain_fingerprint ?? null,
+      };
+    },
+
+    async stampChannelSessionRuntime(org, surfaceKey, codeFingerprint, domainFingerprint) {
+      const { rows } = await client.query(
+        `WITH prev AS (
+           SELECT served_code_fingerprint AS c, served_domain_fingerprint AS d
+             FROM channel_session WHERE org_id = $1 AND surface_key = $2
+         ), upd AS (
+           UPDATE channel_session SET served_code_fingerprint = $3, served_domain_fingerprint = $4
+            WHERE org_id = $1 AND surface_key = $2
+              AND (served_code_fingerprint IS DISTINCT FROM $3 OR served_domain_fingerprint IS DISTINCT FROM $4)
+           RETURNING 1
+         )
+         SELECT (SELECT c FROM prev) AS prev_code,
+                (SELECT d FROM prev) AS prev_domain,
+                EXISTS (SELECT 1 FROM prev) AS present,
+                EXISTS (SELECT 1 FROM upd) AS changed`,
+        [org, surfaceKey, codeFingerprint, domainFingerprint],
+      );
+      const r = (rows as { prev_code: string | null; prev_domain: string | null; present: boolean; changed: boolean }[])[0];
+      if (!r || !r.present) return { outcome: "absent", previousCodeFingerprint: null, previousDomainFingerprint: null };
+      const previousCodeFingerprint = r.prev_code ?? null;
+      const previousDomainFingerprint = r.prev_domain ?? null;
+      if (!r.changed) return { outcome: "current", previousCodeFingerprint, previousDomainFingerprint };
+      return { outcome: previousCodeFingerprint === null ? "adopted" : "rotate", previousCodeFingerprint, previousDomainFingerprint };
     },
 
     async markChannelSessionRotation(org, surfaceKey, at) {
@@ -2221,17 +2258,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } =
         keyPrefix === undefined
           ? await client.query(
-              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1",
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = $1",
               [org],
             )
           : await client.query(
-              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1 AND surface_key LIKE $2",
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at, served_code_fingerprint, served_domain_fingerprint FROM channel_session WHERE org_id = $1 AND surface_key LIKE $2",
               [org, `${keyPrefix}%`],
             );
       return (
         rows as {
           surface_key: string; token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
           input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null; rotate_marked_at: string | null;
+          served_code_fingerprint: string | null; served_domain_fingerprint: string | null;
         }[]
       ).map((r) => ({
         org, surfaceKey: r.surface_key, token: r.token, generation: Number(r.generation), createdAt: r.created_at,
@@ -2240,6 +2278,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         firstWakeAt: r.first_wake_at ?? null,
         lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
         rotateMarkedAt: r.rotate_marked_at ?? null,
+        servedCodeFingerprint: r.served_code_fingerprint ?? null,
+        servedDomainFingerprint: r.served_domain_fingerprint ?? null,
       }));
     },
 
@@ -2754,27 +2794,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query("DELETE FROM event_dedupe WHERE org_id = $1 AND key = $2", [org, key]);
     },
 
-    async claimNotice(org, key, at, prune) {
+    async claimNotice(org, key, at) {
       const { rows } = await client.query(
         "INSERT INTO notice_claim (org_id, key, claimed_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",
         [org, key, at],
       );
-      const won = rows.length > 0;
-      if (won && prune !== undefined) {
-        try {
-          await client.query("DELETE FROM notice_claim WHERE org_id = $1 AND key LIKE $2 ESCAPE '\\' AND key NOT LIKE $3 ESCAPE '\\' AND claimed_at < $4", [
-            org,
-            likePrefixPattern(prune.sweepPrefix),
-            likePrefixPattern(prune.keepPrefix),
-            new Date(Date.parse(at) - prune.olderThanMs).toISOString(),
-          ]);
-        } catch (err) {
-          console.warn(
-            `[open-everywhere:operational] notice_claim sweep failed for "${prune.sweepPrefix}" (the claim stands): ${String(err)} — on a two-role deployment, re-run runtimeRoleGrantsSql so the runtime role holds DELETE on notice_claim`,
-          );
-        }
-      }
-      return won;
+      return rows.length > 0;
     },
 
     async noticeClaimed(org, key) {
