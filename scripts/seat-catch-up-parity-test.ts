@@ -3,15 +3,23 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   seatCatchUpFetchFor,
+  seatCatchUpPrecisionFor,
   surfaceParityFor,
   seatCatchUp,
   registerSeatCatchUp,
   _resetSeatCatchUp,
   SEAT_CATCH_UP_ACTION,
+  DEFAULT_TIMESTAMP_PRECISION_MS,
   type NormalizedMessage,
   type SeatCatchUpFetch,
   type SeatCatchUpRequest,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { SLACK_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-slack/agent/channels/slack-wake-backscroll.js";
+import { DISCORD_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-discord/agent/channels/discord-backscroll.js";
+import { TEAMS_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-teams/agent/channels/teams-catch-up.js";
+import { GITHUB_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-github/agent/channels/github-catch-up.js";
+import { LINEAR_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-linear/agent/channels/linear-catch-up.js";
+import { NOTION_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-notion/agent/channels/notion-catch-up.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
@@ -148,10 +156,10 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
       blocksScanned: 1,
       truncated: false,
       comments: [
-        { discussionId: "D1", authorId: "N1", authorKind: "person", createdTime: AFTER, text: "said while away" },
-        { discussionId: "D1", authorId: "N2", authorKind: "bot", createdTime: AFTER, text: "an integration posted" },
-        { discussionId: "D1", createdTime: AFTER, text: "no author" },
-        { discussionId: "D2", authorId: "N3", authorKind: "person", createdTime: AFTER, text: "a different discussion" },
+        { id: "c-1", discussionId: "D1", authorId: "N1", authorKind: "person", createdTime: AFTER, text: "said while away" },
+        { id: "c-2", discussionId: "D1", authorId: "N2", authorKind: "bot", createdTime: AFTER, text: "an integration posted" },
+        { id: "c-3", discussionId: "D1", createdTime: AFTER, text: "no author" },
+        { id: "c-4", discussionId: "D2", authorId: "N3", authorKind: "person", createdTime: AFTER, text: "a different discussion" },
       ],
     };
   }) as never;
@@ -165,6 +173,19 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(out.every((m) => m.type === "thread" && m.threadId === "D1"), "notion: every comment is thread-scoped — a Notion wake is thread-first");
   ok(out.every((m) => m.text !== "a different discussion"), "notion: another discussion on the same page never enters the seat's context");
   ok(out.some((m) => m.sender === "bot"), "notion: an integration author is MARKED AWARENESS, not silently dropped");
+  ok(out.map((m) => m.id).join(",") === "c-1,c-2", "🔴 notion: each comment normalizes under its OWN Notion id — the only thing `excludeId` can match on a surface whose comments share one floored instant");
+  const deduped = await fetchNotionCatchUpWindow({ container: "page-1", threadRoot: "D1", sinceMs: SINCE }, { readComments, resolveCredential, domains: [] });
+  ok(deduped.filter((m) => m.id === "c-1").length === 1, "notion: an id identifies exactly one comment, so removing the wake's own message removes one message");
+  {
+    const noId = (async () => ({
+      discussionCount: 1,
+      blocksScanned: 1,
+      truncated: false,
+      comments: [{ discussionId: "D1", authorId: "N1", authorKind: "person", createdTime: AFTER, text: "served with no id" }],
+    })) as never;
+    const fallback = await fetchNotionCatchUpWindow({ container: "page-1", threadRoot: "D1", sinceMs: SINCE }, { readComments: noId, resolveCredential, domains: [] });
+    ok(fallback.length === 1 && fallback[0].id === `D1:${AFTER}`, "notion: a comment served with no id falls back to the discussion-plus-time label rather than vanishing");
+  }
   askedCredential.length = 0;
   await fetchNotionCatchUpWindow(
     { container: "page-1", sinceMs: SINCE, channelKey: "notion/ws-1/page-1" },
@@ -472,6 +493,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   for (const d of drives) {
     const real = seatCatchUpFetchFor(d.platform);
     ok(real !== undefined, `🔴 ${d.platform}: ON THE SHARED ROAD — its provider registers a catch-up fetch, so its reads go through \`seatCatchUp\` and get the row with them`);
+    const declared: { readonly timestampPrecisionMs: number } = { timestampPrecisionMs: seatCatchUpPrecisionFor(d.platform) };
 
     const wiring = readFileSync(fileURLToPath(new URL(`../${CALL_SITES[d.platform]!}`, import.meta.url)), "utf-8");
     ok(
@@ -480,7 +502,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
     );
 
     rows.length = 0;
-    registerSeatCatchUp(d.platform, d.reads);
+    registerSeatCatchUp(d.platform, d.reads, declared);
     const res = await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
     ok(res.messages.length === 1, `${d.platform} PRECONDITION: the canned transport really did reach the seat — without this the row assertions below would pass on a fetch that read nothing`);
     ok(rows.length === 1, `🔴 ${d.platform}: driving the catch-up writes EXACTLY ONE audit row — not zero, and not one per vendor call`);
@@ -491,12 +513,13 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
     ok(!JSON.stringify(rows[0]).includes(BODY), `🔴 ${d.platform}: NEGATIVE CONTROL — the message body never reaches the row, on this surface as on every other`);
 
     rows.length = 0;
-    registerSeatCatchUp(d.platform, d.empty);
+    registerSeatCatchUp(d.platform, d.empty, declared);
     await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
     ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "empty", `🔴 ${d.platform}: a quiet room writes its own row, reading \`empty\` — an empty catch-up is now a RECORDED fact on every surface, not an absence`);
 
-    registerSeatCatchUp(d.platform, real!);
+    registerSeatCatchUp(d.platform, real!, declared);
     ok(seatCatchUpFetchFor(d.platform) === real, `${d.platform}: the real fetch is back on the road after the drive`);
+    ok(seatCatchUpPrecisionFor(d.platform) === declared.timestampPrecisionMs, `${d.platform}: …under its OWN declared stamp unit, not the default a stub registration would have left behind`);
   }
 
   rows.length = 0;
@@ -504,6 +527,68 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   const gone = await seatCatchUp("nosuchsurface", { container: "X", sinceMs: SINCE }, { audit });
   ok(gone.unavailable !== undefined, "OPE-1831 PRECONDITION: an unregistered platform still answers with the unavailable note");
   ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "unavailable", "🔴 OPE-1831: a surface OFF the road records `unavailable`, not `empty` — the fact a red ship needs and the one an empty message list destroyed");
+}
+
+{
+  const UNITS: ReadonlyArray<{ platform: string; ms: number; constant: number; why: string }> = [
+    { platform: "slack", ms: 1, constant: SLACK_TIMESTAMP_PRECISION_MS, why: "a Slack `ts` is a second with a six-digit fraction" },
+    { platform: "discord", ms: 1, constant: DISCORD_TIMESTAMP_PRECISION_MS, why: "a snowflake encodes milliseconds" },
+    { platform: "teams", ms: 1, constant: TEAMS_TIMESTAMP_PRECISION_MS, why: "Graph `createdDateTime` carries milliseconds" },
+    { platform: "linear", ms: 1, constant: LINEAR_TIMESTAMP_PRECISION_MS, why: "GraphQL `createdAt` carries milliseconds" },
+    { platform: "github", ms: 1_000, constant: GITHUB_TIMESTAMP_PRECISION_MS, why: "`created_at` is stamped to the SECOND" },
+    { platform: "notion", ms: 60_000, constant: NOTION_TIMESTAMP_PRECISION_MS, why: "`created_time` floors to the MINUTE (OPE-1711)" },
+  ];
+  ok(UNITS.length === 6, "OPE-1847: the unit is asked of all SIX surfaces — a table short of one is a surface nobody checked");
+
+  const rows: AuditInput[] = [];
+  const audit = async (e: AuditInput) => {
+    rows.push(e);
+  };
+  const WAKE = Date.parse("2026-01-15T12:40:31.400Z");
+
+  for (const u of UNITS) {
+    const register = readFileSync(fileURLToPath(new URL(`../packages/providers/${u.platform}/agent/register.ts`, import.meta.url)), "utf-8");
+    ok(
+      new RegExp(`registerSeatCatchUp\\("${u.platform}",[^;]*timestampPrecisionMs:`).test(register),
+      `🔴 ${u.platform}: its provider DECLARES a stamp unit when it registers its catch-up fetch — ${u.why}`,
+    );
+
+    ok(u.constant === u.ms, `${u.platform}: its declared unit is ${u.ms} ms — ${u.why}`);
+    ok(seatCatchUpPrecisionFor(u.platform) === u.ms, `🔴 ${u.platform}: …and the LIVE registry reports that unit, so the road applies what the provider declared rather than the default`);
+
+    const unitFloor = (ms: number): number => Math.floor(ms / u.ms) * u.ms;
+    const TRIGGER_STAMP = unitFloor(WAKE);
+    const LAST_WAKE = WAKE - 90_000;
+    const line = (id: string, ms: number, text: string): NormalizedMessage => ({ id, ms, authorId: "U1", sender: "human", type: "channel", text });
+    const fixture = [
+      line("way-old", unitFloor(LAST_WAKE) - u.ms, "the previous wake read this"),
+      line("since-unit-floor", unitFloor(LAST_WAKE), "said just after the seat looked away"),
+      line("trigger-unit-floor", TRIGGER_STAMP, "the build token you are being asked about"),
+      line("trig", TRIGGER_STAMP, "the message that woke the seat"),
+      line("next-unit", TRIGGER_STAMP + u.ms, "posted after the wake was dispatched"),
+    ];
+    const stub: SeatCatchUpFetch = async (r) => fixture.filter((m) => m.ms >= r.sinceMs);
+    const req = { container: "C1", sinceMs: LAST_WAKE, untilMs: TRIGGER_STAMP, excludeId: "trig", channelKey: `${u.platform}/WS-1/room-1` };
+    const real = seatCatchUpFetchFor(u.platform);
+    rows.length = 0;
+    registerSeatCatchUp(u.platform, stub, { timestampPrecisionMs: u.ms });
+    const kept = (await seatCatchUp(u.platform, req, { audit, admit: () => true })).messages.map((m) => m.id);
+    ok(kept.includes("trigger-unit-floor"), `🔴 ${u.platform}: a message stamped at the TRIGGER'S OWN instant reaches the seat — the live-run defect, asked of this surface`);
+    ok(kept.includes("since-unit-floor"), `🔴 ${u.platform}: the message at the FLOOR of the last wake's own unit reaches the seat — below the unfloored \`lastWakeAt\` on a coarse surface, and exactly at an inclusive bound on a millisecond-grain one`);
+    ok(!kept.includes("trig"), `🔴 ${u.platform}: the wake's OWN message is removed BY ID and never arrives twice — the only removal that works once the bound admits the trigger's whole unit`);
+    ok(!kept.includes("way-old"), `${u.platform}: a message a whole unit before the window is still dropped — the widening is one unit, not an open window`);
+    ok(!kept.includes("next-unit"), `${u.platform}: a message in the NEXT unit is still dropped — the widening is one unit at the top too`);
+    ok(rows.length === 1 && rows[0]!.detail!["precisionMs"] === u.ms, `${u.platform}: the \`seat.catch_up\` row carries the unit it applied, so a red ship names the bound without a second deploy`);
+
+    registerSeatCatchUp(u.platform, stub, {});
+    const bare = (await seatCatchUp(u.platform, req, { audit, admit: () => true })).messages.map((m) => m.id);
+    if (u.ms === DEFAULT_TIMESTAMP_PRECISION_MS) {
+      ok(bare.length === kept.length, `${u.platform}: NEGATIVE CONTROL — this surface stamps at the default unit, so removing its declaration changes nothing HERE; the source check (a1) is what holds the declaration on it`);
+    } else {
+      ok(!bare.includes("since-unit-floor") && bare.length < kept.length, `🔴 ${u.platform}: NEGATIVE CONTROL — with the declaration REMOVED the same window LOSES the message inside the last wake's own unit, so the widening is what does the work`);
+    }
+    registerSeatCatchUp(u.platform, real!, { timestampPrecisionMs: u.ms });
+  }
 }
 
 console.log(`seat-catch-up parity: ${n} assertions passed`);

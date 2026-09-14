@@ -596,8 +596,19 @@ export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, cont
 export type { HydrationSlices } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
-export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp, SEAT_CATCH_UP_ACTION } from "./channels/seat-catch-up.js";
-export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatchUpOpts } from "./channels/seat-catch-up.js";
+export {
+  registerSeatCatchUp,
+  seatCatchUp,
+  seatCatchUpFetchFor,
+  seatCatchUpPrecisionFor,
+  seatCatchUpBounds,
+  seatAdmissionFor,
+  catchUpUnavailableReason,
+  _resetSeatCatchUp,
+  SEAT_CATCH_UP_ACTION,
+  DEFAULT_TIMESTAMP_PRECISION_MS,
+} from "./channels/seat-catch-up.js";
+export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatchUpOpts, SeatCatchUpDeclaration } from "./channels/seat-catch-up.js";
 
 export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, admitContextLines, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
 export type { SeatAdmissionFn, SeatAdmissionCandidate } from "./channels/seat-admission.js";

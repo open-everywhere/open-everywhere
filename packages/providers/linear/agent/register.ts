@@ -28,7 +28,7 @@ import { linearCredentialsConfigured } from "./channels/linear-credentials.js";
 import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-event-normalizer.js";
 import { linearMessageOps } from "./channels/linear-message-ops.js";
 import { linearReadAdapter } from "./channels/linear-read.js";
-import { linearSeatCatchUpFetch } from "./channels/linear-catch-up.js";
+import { linearSeatCatchUpFetch, LINEAR_TIMESTAMP_PRECISION_MS } from "./channels/linear-catch-up.js";
 import { registerLinearWorkSearch } from "./channels/linear-work-search.js";
 
 export function registerLinearProvider(): void {
@@ -41,7 +41,7 @@ export function registerLinearProvider(): void {
   registerSurfaceMessageOps(linearMessageOps);
   registerWakeOriginCodec("linear", linearWakeOriginCodec);
   registerReadAdapter(linearReadAdapter);
-  registerSeatCatchUp("linear", linearSeatCatchUpFetch);
+  registerSeatCatchUp("linear", linearSeatCatchUpFetch, { timestampPrecisionMs: LINEAR_TIMESTAMP_PRECISION_MS });
   registerLinearWorkSearch();
   registerEntityActionAdapter(linearEntityAdapter);
   registerTicketCreateAdapter(linearTicketCreateAdapter);

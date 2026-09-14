@@ -23,7 +23,7 @@ import { notionPostArm } from "./channels/notion-post-arm.js";
 import { notionMessageOps } from "./channels/notion-message-ops.js";
 import { notionWakeOriginCodec } from "./channels/notion-origin-codec.js";
 import { notionReadAdapter } from "./channels/notion-read.js";
-import { notionSeatCatchUpFetch } from "./channels/notion-catch-up.js";
+import { notionSeatCatchUpFetch, NOTION_TIMESTAMP_PRECISION_MS } from "./channels/notion-catch-up.js";
 import { registerNotionWorkSearch } from "./channels/notion-work-search.js";
 import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
@@ -38,7 +38,7 @@ export function registerNotionProvider(): void {
   registerSurfaceMessageOps(notionMessageOps);
   registerWakeOriginCodec("notion", notionWakeOriginCodec);
   registerReadAdapter(notionReadAdapter);
-  registerSeatCatchUp("notion", notionSeatCatchUpFetch);
+  registerSeatCatchUp("notion", notionSeatCatchUpFetch, { timestampPrecisionMs: NOTION_TIMESTAMP_PRECISION_MS });
   registerNotionWorkSearch();
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);

@@ -5,8 +5,10 @@ import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
+import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
 import { APPROVAL_ANSWER_HINT } from "../../agent/channels/question-bridge.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
+import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { tsAfter } from "./slack-driver.js";
@@ -201,13 +203,26 @@ const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const EDIT_SETTLE_WAIT = 45_000;
 const AUDIT_ROW_WAIT = 60_000;
-const OE_STATUS_COMPACTION_THRESHOLD_TOKENS = 525_000;
+export function oeStatusCompactionThresholdTokens(contextWindowTokens: number): number {
+  return Math.max(1, Math.floor(contextWindowTokens * SETTINGS.agent.compactionThresholdPercent.shipped));
+}
 
 export interface OeStatusFacts {
   readonly deploymentSha?: string;
   readonly evePin?: string;
   readonly contextWindowTokens?: number;
   readonly compactionThresholdTokens?: number;
+}
+
+export function decodeSlackEphemeralText(body: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  const text = (parsed as { text?: unknown } | null)?.text;
+  return typeof text === "string" ? text : body;
 }
 
 export function parseOeStatusFacts(body: string): OeStatusFacts {
@@ -991,9 +1006,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const res = await synthetic.slash("status", ctx.slackUnifiedA!.channelId);
       ctx.log(`${res.label}: /oe status on the unified container → ${res.status}`);
       ctx.gate(res.status === 200, `/oe status answers 200 on the unified seat (got ${res.status})`);
-      const facts = parseOeStatusFacts(res.body);
+      const statusText = decodeSlackEphemeralText(res.body);
+      const facts = parseOeStatusFacts(statusText);
 
-      ctx.gate(facts.deploymentSha !== undefined, `status: a "deployment sha" line is present — reply head: "${res.body.slice(0, 200)}"`);
+      ctx.gate(facts.deploymentSha !== undefined, `status: a "deployment sha" line is present — reply head: "${statusText.slice(0, 200)}"`);
       ctx.gate(facts.deploymentSha !== "unknown", 'status: the deployment sha is a real build identity, not the "unknown" the renderer prints when the platform exposes none');
       ctx.gate(/^[0-9a-f]{7,40}$/u.test(facts.deploymentSha ?? ""), `status: the deployment sha is a commit sha (got "${facts.deploymentSha ?? "(no line)"}")`);
       ctx.log(`status: deployment sha ${facts.deploymentSha}`);
@@ -1004,16 +1020,16 @@ export const SCENARIOS: readonly Scenario[] = [
 
       ctx.gate(
         facts.contextWindowTokens !== undefined && facts.compactionThresholdTokens !== undefined,
-        `status: a "context window … compaction fires at …" line is present — reply tail: "${res.body.slice(-240)}"`,
+        `status: a "context window … compaction fires at …" line is present — reply tail: "${statusText.slice(-240)}"`,
       );
       const windowTokens = facts.contextWindowTokens ?? 0;
       const thresholdTokens = facts.compactionThresholdTokens ?? 0;
       ctx.gate(windowTokens > 0, `status: the context window is a positive token count (got ${facts.contextWindowTokens ?? "(no line)"})`);
+      const expectedThresholdTokens = oeStatusCompactionThresholdTokens(windowTokens);
       ctx.gate(
-        thresholdTokens === OE_STATUS_COMPACTION_THRESHOLD_TOKENS,
-        `status: compaction fires at ${OE_STATUS_COMPACTION_THRESHOLD_TOKENS} tokens (OPE-1634's registered value) — got ${facts.compactionThresholdTokens ?? "(no line)"}`,
+        thresholdTokens === expectedThresholdTokens,
+        `status: compaction fires at ${expectedThresholdTokens} tokens — the shipped ${SETTINGS.agent.compactionThresholdPercent.shipped} ratio of the ${windowTokens}-token window this reply reports — got ${facts.compactionThresholdTokens ?? "(no line)"}`,
       );
-      ctx.gate(thresholdTokens < windowTokens, `status: the threshold sits below the window (${thresholdTokens} < ${windowTokens}) — a threshold at or above it would never fire`);
       ctx.log(`status: context window ${windowTokens}, compaction at ${thresholdTokens}`);
     },
   },
@@ -3913,35 +3929,30 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for the DM answer ${answer.ts}` },
       );
       if (provRow === undefined) {
-        const delegated = await auditRead({ sinceIso: runStart, actions: [...PROVENANCE_DELEGATION_ACTIONS] });
-        if (delegated.length > 0) {
-          ctx.skip(
-            `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and the window carries ${delegated.length} delegation row(s) ` +
-              `(${[...new Set(delegated.map((r) => r.action))].join(", ")}). That is RESIDUAL (2), and it is the only one measured here: the connector read happened inside a worker session's turn while the ` +
-              "seat posted the answer from its own, so the turn-keyed provenance ledger the posting turn read was empty. It is a deployment fact this harness cannot create — whether the worker posts the " +
-              "final answer on this route is this leg's own open premise. Re-run against a deployment whose worker posts it. Nothing is asserted about the footer.",
-          );
-          return;
-        }
         const edits = await auditRead({ sinceIso: runStart, actions: ["reply.edit"] });
         const reRendered = edits.filter((r) => r.detail?.id === answer.ts);
         if (reRendered.length > 0) {
           ctx.skip(
             `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and ${reRendered.length} reply.edit row(s) re-rendered that exact message. ` +
-              "That is RESIDUAL (3), and it is the only one measured here: a later turn rewrote the answer, so the bytes in the room belong to that turn's ledger and not to the reading turn's. A deployment " +
-              "fact this harness cannot create. Nothing is asserted about the footer.",
+              "That is the ONE fixture route left here: a later turn rewrote the answer, so the bytes in the room belong to that turn's ledger and not to the reading turn's. The harness cannot stop the seat " +
+              "editing its own message, so it is a deployment fact and not a footer defect. Nothing is asserted about the footer.",
           );
           return;
         }
+        const delegated = await auditRead({ sinceIso: runStart, actions: [...PROVENANCE_DELEGATION_ACTIONS] });
+        const carried = await auditRead({ sinceIso: runStart, actions: [DELEGATED_PROVENANCE_ACTION] });
         ctx.gate(
           false,
-          `🔴 REGRESSION: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and neither fixture route fired — ` +
-            "the window carries NO delegation row and NO edit of that message. So the turn that READ is the turn that POSTED, and its provenance ledger was still empty. Two causes remain, and NEITHER is one " +
-            "of the four empty-ledger routes `channels/reply-provenance.ts` lists as non-defects. FIRST, the LEDGER SEAM unwired — a fifth cause that file does not name, because it describes the routes a " +
-            "healthy build takes: `noteConnectorRead` is called at hooks/connector-audit.ts and at channels/read-reach.ts, so check BOTH reach the posting turn's ledger. SECOND, that file's route 4, the " +
-            "unidentifiable-state fallback posting through eve's raw primitive (channels/slack.ts). It calls that route a degenerate case rather than a defect IN GENERAL, and it is a defect HERE: this leg " +
-            "drives a DM whose partition the deployment resolves on every other turn, so a DM that reaches the fallback is itself the break. Its route 1, a BORROWED `grant__…` read, cannot reach this branch " +
-            "at all — hooks/connector-audit.ts returns on the reserved namespace BEFORE the connector.op row, and this branch already has one.",
+          `🔴 REGRESSION: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and no reply.edit re-rendered it. ` +
+            `The window carries ${delegated.length} delegation row(s) (${[...new Set(delegated.map((r) => r.action))].join(", ") || "none"}) and ${carried.length} ${DELEGATED_PROVENANCE_ACTION} row(s). ` +
+            "READ THOSE TWO NUMBERS FIRST — they name which half broke. Delegation rows with NO carriage row means the SETTLE never carried: check `settleDelegatedReads` in `applyTaskSettlement` " +
+            "(hooks/spawn-taint.ts), and check the worker wrote at all — the carriage joins through the dispatch row the TAINT plane writes, so `taint.mode: \"off\"` leaves nothing to join. That settle is " +
+            "FAIL-SOFT: it catches every store error and returns `found: 0`, so an operational store that is down costs the footer and looks exactly like a worker that read nothing. A carriage row " +
+            "with no provenance row means the reads reached the ledger and the REPLY did not read it: check `applyReplyProvenance` at the choke point the seat posted through. NEITHER kind of row, on a turn " +
+            "that read, means the ledger seam itself is unwired — `noteConnectorRead` is called at hooks/connector-audit.ts, at channels/read-reach.ts and at channels/delegated-provenance.ts, so check ALL THREE. The remaining cause is " +
+            "`channels/reply-provenance.ts`'s route 3, the unidentifiable-state fallback posting through eve's raw primitive (channels/slack.ts); it is a degenerate case in general and a defect HERE, because " +
+            "this leg drives a DM whose partition the deployment resolves on every other turn. Its route 1, a BORROWED `grant__…` read, cannot reach this branch at all — hooks/connector-audit.ts returns on " +
+            "the reserved namespace BEFORE the connector.op row, and this branch already has one.",
         );
         return;
       }

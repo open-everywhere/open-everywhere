@@ -28,7 +28,7 @@ import { bindTeams, teamsMode } from "./channels/teams-identity.js";
 import { teamsPostArm } from "./channels/teams-post-arm.js";
 import { teamsWakeOriginCodec } from "./channels/teams-origin-codec.js";
 import { teamsReadAdapter } from "./channels/teams-read.js";
-import { teamsSeatCatchUpFetch } from "./channels/teams-catch-up.js";
+import { teamsSeatCatchUpFetch, TEAMS_TIMESTAMP_PRECISION_MS } from "./channels/teams-catch-up.js";
 import { liveTeamsRoomMembership, liveTeamsAccountActive } from "./channels/teams-fire-eligibility.js";
 import { teamsBotDisplayName } from "./channels/teams-bot-name.js";
 import { fetchTeamsDirectory } from "./channels/teams-directory.js";
@@ -81,7 +81,7 @@ export function registerTeamsProvider(): void {
   registerPostArm(teamsPostArm);
   registerWakeOriginCodec("teams", teamsWakeOriginCodec);
   registerReadAdapter(teamsReadAdapter);
-  registerSeatCatchUp("teams", teamsSeatCatchUpFetch);
+  registerSeatCatchUp("teams", teamsSeatCatchUpFetch, { timestampPrecisionMs: TEAMS_TIMESTAMP_PRECISION_MS });
   registerRoutineDispatch("teams", { resolveTarget: resolveTeamsTarget });
   registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
   registerBotDisplayName("teams", teamsBotDisplayName);

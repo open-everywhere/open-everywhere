@@ -46,6 +46,9 @@ import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
 import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
+import { delegatingParentLink, settleDelegatedReads } from "../channels/delegated-provenance.js";
+import { stampReadReach } from "../channels/read-reach.js";
+import { resolvePartition } from "../memory/partition.js";
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
@@ -146,18 +149,7 @@ const subagentIdentity = defineState<{ org: string; sessionId: string; parent: {
 );
 
 function readParentLink(ctx: HookContext): { sessionId: string; callId: string } | null {
-  const token = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
-  if (typeof token === "string") {
-    const m = /^subagent:([^:]+):([^:]+)$/.exec(token);
-    if (m !== null) return { sessionId: m[1]!, callId: m[2]! };
-  }
-  const parent = (ctx as { session?: { parent?: { sessionId?: unknown; callId?: unknown } } }).session?.parent;
-  const sessionId = parent?.sessionId;
-  const callId = parent?.callId;
-  if (typeof sessionId === "string" && sessionId.length > 0 && typeof callId === "string" && callId.length > 0) {
-    return { sessionId, callId };
-  }
-  return null;
+  return delegatingParentLink(ctx);
 }
 
 function rememberSubagentIdentity(ctx: HookContext): void {
@@ -447,6 +439,8 @@ export const TASK_STARTED_ACTION = "delegation.task_started";
 
 export const TASK_SETTLED_ACTION = "delegation.task_settled";
 
+export const DELEGATED_PROVENANCE_ACTION = "delegation.provenance_carried";
+
 export const TASK_FAILED_ACTION = "delegation.task_failed";
 
 type DelegationFailureEdge = "notification" | "settlement" | "result";
@@ -598,12 +592,20 @@ export async function applyTaskSettlement(
   if (views.length === 0) return false;
   const failure = views.length === 1 ? settlement.failure : undefined;
   const edge: DelegationFailureEdge = failure === undefined ? "settlement" : "notification";
+  const settlementLink = views.length === 1 ? settlement.link : undefined;
   const bind = ctx as unknown as BindableContext;
   const inheritedWakeId = inheritedWakeStampOf(bind);
   const wakeTurnId = currentTurnId(bind);
   for (const view of views) noteDelegationSettled(wakeTurnId, view.taskId);
   for (const view of views) await clearGenerationDelegation(deploymentOrg(), view.taskId);
+  let seatSurfaceKey: string | undefined;
+  try {
+    seatSurfaceKey = resolvePartition(bind).surfaceKey;
+  } catch {
+    seatSurfaceKey = undefined;
+  }
   for (const view of views) {
+    const link = settlementLink !== undefined ? settlementLink : await taskCallLink(deploymentOrg(), view.taskId);
     const install = await installTaskWake({
       org: deploymentOrg(),
       taskId: view.taskId,
@@ -615,8 +617,36 @@ export async function applyTaskSettlement(
     if (install.outcome === "installed" && claimPromisedReport(view.taskId)) {
       noteSettlementReportOwed(wakeTurnId, view.taskId, install.wakeId ?? undefined);
     }
+    if (link !== undefined) {
+      const reach = stampReadReach(bind, wakeTurnId, seatSurfaceKey);
+      const wakeProvable = reach.proof !== "wake" || (install.wakeId !== null && reach.wakeId === install.wakeId);
+      const provable = view.status === "completed" && wakeProvable;
+      const spend = await settleDelegatedReads({
+        org: deploymentOrg(),
+        childToken: link.childToken,
+        turnId: wakeTurnId,
+        reach: provable ? reach : undefined,
+      });
+      if (spend.found > 0) {
+        void appendAudit({
+          org: deploymentOrg(),
+          platform: "ingest",
+          workspace: "delegation",
+          action: DELEGATED_PROVENANCE_ACTION,
+          detail: {
+            task: view.taskId,
+            call: link.callId,
+            reads: spend.carried,
+            found: spend.found,
+            outcome: provable ? "carried" : view.status !== "completed" ? "not-completed" : "wake-unprovable",
+            proof: reach.proof,
+            ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+            ...(wakeTurnId !== undefined && wakeTurnId.length > 0 ? { turn: wakeTurnId } : {}),
+          },
+        }).catch(() => undefined);
+      }
+    }
     if (view.status === "failed") {
-      const link = settlement.link !== undefined ? settlement.link : await taskCallLink(deploymentOrg(), view.taskId);
       await noteDelegationFailure(
         {
           status: view.status,

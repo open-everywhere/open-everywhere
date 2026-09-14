@@ -23,7 +23,7 @@ function normalizeComment(c: NotionCommentSummary, selfActorId: string | undefin
   if (!Number.isFinite(ms)) return undefined;
   const isSelf = selfActorId !== undefined && c.authorId === selfActorId;
   return {
-    id: `${c.discussionId}:${c.createdTime ?? ms}`,
+    id: c.id ?? `${c.discussionId}:${c.createdTime ?? ms}`,
     ms,
     ...(isSelf ? {} : { authorId: c.authorId }),
     sender: isSelf ? "self" : c.authorKind === "person" ? "human" : "bot",
@@ -68,6 +68,8 @@ export async function fetchNotionCatchUpWindow(
     return [];
   }
 }
+
+export const NOTION_TIMESTAMP_PRECISION_MS = 60_000;
 
 export const notionSeatCatchUpFetch: SeatCatchUpFetch = (req) =>
   fetchNotionCatchUpWindow({

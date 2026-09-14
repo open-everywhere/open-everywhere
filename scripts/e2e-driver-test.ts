@@ -117,8 +117,10 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned, parseOeStatusFacts } =
-  await import("../packages/core/scripts/e2e/scenarios.js");
+const {
+  SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
+  parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
+} = await import("../packages/core/scripts/e2e/scenarios.js");
 const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const {
@@ -1495,6 +1497,45 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
   ok(noWindow.deploymentSha === info.deploymentSha, "…and the other facts still read, so a missing window line reds one gate rather than all of them");
   ok(parseOeStatusFacts("").deploymentSha === undefined, "an empty body yields no facts — never a silently-matching default");
+
+  const envelope = JSON.stringify({ response_type: "ephemeral", text: rendered });
+  ok(
+    rendered.includes("\n") && !envelope.includes("\n"),
+    "the renderer emits real newlines and the envelope collapses them into escapes — the live-run shape, not a fixture somebody typed",
+  );
+  ok(
+    parseOeStatusFacts(envelope).deploymentSha === undefined,
+    "the RAW envelope yields no facts — the live-run defect, pinned: an anchored regex cannot match a JSON body whose newlines are escaped",
+  );
+  const decoded = parseOeStatusFacts(decodeSlackEphemeralText(envelope));
+  ok(decoded.deploymentSha === info.deploymentSha, `the DECODED envelope reads the deployment sha — got ${decoded.deploymentSha}`);
+  ok(decoded.evePin === "0.51.0", `…and the eve pin — got ${decoded.evePin}`);
+  ok(
+    decoded.contextWindowTokens === 750_000 && decoded.compactionThresholdTokens === 525_000,
+    `…and both window numbers — got ${decoded.contextWindowTokens} / ${decoded.compactionThresholdTokens}`,
+  );
+
+  ok(decodeSlackEphemeralText(rendered) === rendered, "a plain-text body passes through undecoded — the decode never throws on prose");
+  ok(decodeSlackEphemeralText('{"response_type":"ephemeral"}') === '{"response_type":"ephemeral"}', "a JSON body carrying no text field passes through unchanged rather than vanishing");
+  ok(decodeSlackEphemeralText('{"text":42}') === '{"text":42}', "a non-string text field passes through unchanged — the decode answers the envelope's text or the body, never a coerced number");
+  ok(decodeSlackEphemeralText("") === "", "an empty body stays empty, so it still reaches the parser as the no-facts case");
+
+  const statusRun = SCENARIOS.find((s) => s.id === "S-OE-STATUS")!.run.toString().replace(/\s+/gu, "");
+  ok(
+    statusRun.includes("decodeSlackEphemeralText(res.body)"),
+    "S-OE-STATUS decodes the envelope BEFORE it parses — deleting that one call is exactly what a live run was",
+  );
+  ok(!/parseOeStatusFacts\(res\.body\)/u.test(statusRun), "…and it never hands the raw HTTP body to the parser");
+
+  ok(
+    oeStatusCompactionThresholdTokens(1_050_000) === 525_000,
+    `the shipped stack's 1050000-token window yields OPE-1634's 525000 — got ${oeStatusCompactionThresholdTokens(1_050_000)}`,
+  );
+  ok(
+    oeStatusCompactionThresholdTokens(272_000) === 136_000,
+    `…and a smaller-window stack yields its OWN number, which a pinned 525000 would have red on — got ${oeStatusCompactionThresholdTokens(272_000)}`,
+  );
+  ok(oeStatusCompactionThresholdTokens(0) === 1, "a zero window floors at 1 rather than 0, so a missing window line still reds the threshold gate instead of matching it");
 }
 
 {
@@ -1517,11 +1558,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const provBody = scenarioSrc.slice(provStart, provEnd);
   const skips = provBody.match(/ctx\.skip\(/g) ?? [];
   ok(
-    skips.length === 3,
-    `🔴 S-PROVENANCE-DM must carry exactly 3 \`ctx.skip\` calls, each naming a deployment fact this harness cannot create. Found ${skips.length}. ` +
-      "A fourth skip means a measurable condition was turned back into a dry pass; one fewer means a fixture fact is now reported as a red.",
+    skips.length === 2,
+    `🔴 S-PROVENANCE-DM must carry exactly 2 \`ctx.skip\` calls, each naming a deployment fact this harness cannot create. Found ${skips.length}. ` +
+      "A third skip means a measurable condition was turned back into a dry pass — a DELEGATED read is measurable since OPE-1849 and must never become a skip again; one fewer means a fixture fact is now reported as a red.",
   );
-  ok(/🔴 REGRESSION:/.test(provBody), "🔴 S-PROVENANCE-DM's empty-ledger fall-through is a RED naming the regression — residuals (1) and (4) are code defects, not fixture facts");
+  ok(/🔴 REGRESSION:/.test(provBody), "🔴 S-PROVENANCE-DM's empty-ledger fall-through is a RED naming the regression — an unwired seam, an uncarried delegation and a nameless channel state are code defects, not fixture facts");
   ok(!/^\s*optional:\s*true/mu.test(provBody), "S-PROVENANCE-DM declares no `optional: true` field");
   ok(
     /needs E2E_TARGET_URL \+ E2E_CONTROL_READ_TOKEN/.test(provBody) && !/ctx\.skip\(\s*\n?\s*"needs E2E_TARGET_URL/.test(provBody),

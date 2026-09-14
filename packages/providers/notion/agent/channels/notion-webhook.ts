@@ -222,7 +222,7 @@ async function deliver(
   const triggerText = richTextToPlainText(comment.rich_text);
   const trigger: NotionUntieredWakeMessage = {
     from: "human",
-    id: commentId,
+    id: comment.id ?? commentId,
     authorId: comment.created_by?.id,
     sentAt: comment.created_time ?? new Date().toISOString(),
     text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",

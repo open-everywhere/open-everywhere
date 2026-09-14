@@ -6,6 +6,7 @@ import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../a
 import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
 import { noteConnectorRead, PROVENANCE_READ_TIER } from "../channels/reply-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
+import { noteDelegatedRead } from "../channels/delegated-provenance.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -48,6 +49,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       const bind = ctx as unknown as BindableContext;
       const turnId = currentTurnId(bind);
       noteConnectorRead(turnId, { ...stampReadReach(bind, turnId, surfaceKey), connection, op });
+      noteDelegatedRead(bind, connection, op);
     }
 
     await appendAudit({

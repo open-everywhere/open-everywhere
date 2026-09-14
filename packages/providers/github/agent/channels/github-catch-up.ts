@@ -70,4 +70,6 @@ export async function fetchGitHubCatchUpWindow(
   }
 }
 
+export const GITHUB_TIMESTAMP_PRECISION_MS = 1_000;
+
 export const githubSeatCatchUpFetch: SeatCatchUpFetch = (req) => fetchGitHubCatchUpWindow({ container: req.container, sinceMs: req.sinceMs });

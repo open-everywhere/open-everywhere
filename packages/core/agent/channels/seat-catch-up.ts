@@ -22,19 +22,45 @@ export interface SeatCatchUpRequest {
 
 export type SeatCatchUpFetch = (req: SeatCatchUpRequest) => Promise<readonly NormalizedMessage[]>;
 
-const FETCHES = processRegistryMap<SeatCatchUpFetch>("seat-catch-up.v1");
+export interface SeatCatchUpDeclaration {
+  readonly timestampPrecisionMs?: number;
+}
 
-export function registerSeatCatchUp(platform: string, fetch: SeatCatchUpFetch): void {
+export const DEFAULT_TIMESTAMP_PRECISION_MS = 1;
+
+interface SeatCatchUpRegistration {
+  readonly fetch: SeatCatchUpFetch;
+  readonly timestampPrecisionMs: number;
+}
+
+const FETCHES = processRegistryMap<SeatCatchUpRegistration>("seat-catch-up.v2");
+
+export function registerSeatCatchUp(platform: string, fetch: SeatCatchUpFetch, declaration: SeatCatchUpDeclaration = {}): void {
   if (!admitProviderRegistration(platform, "seat-catch-up")) return;
-  FETCHES.set(platform, fetch);
+  const declared = declaration.timestampPrecisionMs;
+  const timestampPrecisionMs = typeof declared === "number" && Number.isInteger(declared) && declared >= 1 ? declared : DEFAULT_TIMESTAMP_PRECISION_MS;
+  FETCHES.set(platform, { fetch, timestampPrecisionMs });
 }
 
 export function seatCatchUpFetchFor(platform: string): SeatCatchUpFetch | undefined {
-  return FETCHES.get(platform);
+  return FETCHES.get(platform)?.fetch;
+}
+
+export function seatCatchUpPrecisionFor(platform: string): number {
+  return FETCHES.get(platform)?.timestampPrecisionMs ?? DEFAULT_TIMESTAMP_PRECISION_MS;
 }
 
 export function _resetSeatCatchUp(platform: string): void {
   FETCHES.delete(platform);
+}
+
+export function seatCatchUpBounds(sinceMs: number, untilMs: number | undefined, precisionMs: number): { readonly sinceMs: number; readonly untilMs: number | undefined } {
+  const unit = Number.isInteger(precisionMs) && precisionMs >= 1 ? precisionMs : DEFAULT_TIMESTAMP_PRECISION_MS;
+  const floorTo = (t: number): number => (Number.isFinite(t) ? Math.floor(t / unit) * unit : t);
+  return {
+    sinceMs: floorTo(sinceMs),
+    untilMs: untilMs === undefined || !Number.isFinite(untilMs) ? untilMs : floorTo(untilMs) + unit,
+  };
 }
 
 const CATCH_UP_UNAVAILABLE_NOTE =
@@ -103,6 +129,8 @@ function errorNameOf(err: unknown): string {
 
 export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opts: SeatCatchUpOpts = {}): Promise<SeatCatchUpResult> {
   const scope = seatCatchUpScopeFromChannelKey(platform, req.channelKey);
+  const precisionMs = seatCatchUpPrecisionFor(platform);
+  const bounds = seatCatchUpBounds(req.sinceMs, req.untilMs, precisionMs);
   const record = async (outcome: SeatCatchUpOutcome, raw: number, kept: number, extra: Readonly<Record<string, unknown>> = {}): Promise<void> => {
     try {
       await (opts.audit ?? appendAudit)({
@@ -117,7 +145,8 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
           kept,
           container: req.container,
           ...(req.threadRoot === undefined ? {} : { threadRoot: req.threadRoot }),
-          since: Number.isFinite(req.sinceMs) ? new Date(req.sinceMs).toISOString() : "unparsable",
+          since: Number.isFinite(bounds.sinceMs) ? new Date(bounds.sinceMs).toISOString() : "unparsable",
+          precisionMs,
           ...extra,
         },
       });
@@ -130,9 +159,10 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
     await record("unavailable", 0, 0, { reason: "no-registered-fetch" });
     return { messages: [], unavailable: catchUpUnavailableReason(platform) };
   }
+  const boundedReq: SeatCatchUpRequest = { ...req, sinceMs: bounds.sinceMs, ...(bounds.untilMs === undefined ? {} : { untilMs: bounds.untilMs }) };
   let window: readonly NormalizedMessage[];
   try {
-    window = await fetch(req);
+    window = await fetch(boundedReq);
   } catch (err) {
     const status = httpStatusOf(err);
     await record("failed", 0, 0, { reason: "fetch-threw", errorName: errorNameOf(err), ...(status === undefined ? {} : { httpStatus: status }) });
@@ -142,7 +172,7 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
     await record("empty", 0, 0, { reason: "fetch-returned-none" });
     return { messages: [] };
   }
-  const bounded = window.filter((m) => m.ms >= req.sinceMs && (req.untilMs === undefined || m.ms < req.untilMs) && m.id !== req.excludeId);
+  const bounded = window.filter((m) => m.ms >= bounds.sinceMs && (bounds.untilMs === undefined || m.ms < bounds.untilMs) && m.id !== req.excludeId);
   if (bounded.length === 0) {
     await record("empty", window.length, 0, { reason: "bounds-dropped-all" });
     return { messages: [] };

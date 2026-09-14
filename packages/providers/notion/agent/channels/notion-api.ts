@@ -333,6 +333,7 @@ export async function notionParentLink(id: string, opts: NotionCallOpts): Promis
 }
 
 export interface NotionCommentSummary {
+  readonly id?: string;
   readonly discussionId?: string;
   readonly anchorId?: string;
   readonly anchorText?: string;
@@ -344,6 +345,7 @@ export interface NotionCommentSummary {
 
 export function toNotionCommentSummary(c: NotionComment, fallbackAnchor: string, anchorText?: string): NotionCommentSummary {
   return {
+    ...(c.id === undefined ? {} : { id: c.id }),
     discussionId: c.discussion_id,
     anchorId: c.parent?.block_id ?? c.parent?.page_id ?? fallbackAnchor,
     ...(anchorText !== undefined && anchorText.length > 0 ? { anchorText } : {}),

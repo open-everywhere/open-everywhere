@@ -110,6 +110,8 @@ export async function fetchTeamsCatchUpWindow(
   return out;
 }
 
+export const TEAMS_TIMESTAMP_PRECISION_MS = 1;
+
 export const teamsSeatCatchUpFetch: SeatCatchUpFetch = (req) =>
   fetchTeamsCatchUpWindow({
     container: req.container,

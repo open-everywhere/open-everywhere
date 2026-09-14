@@ -29,7 +29,7 @@ import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
 import { discordWakeOriginCodec } from "./channels/discord-origin-codec.js";
 import { discordReadAdapter } from "./channels/discord-read.js";
-import { discordSeatCatchUpFetch } from "./channels/discord-backscroll.js";
+import { discordSeatCatchUpFetch, DISCORD_TIMESTAMP_PRECISION_MS } from "./channels/discord-backscroll.js";
 import { discordMessageOps } from "./channels/discord-message-ops.js";
 import { discordBotDisplayName } from "./channels/discord-bot-name.js";
 import { fetchGuildDirectory } from "./channels/discord-directory.js";
@@ -46,7 +46,7 @@ export function registerDiscordProvider(): void {
   registerPostArm(discordPostArm);
   registerWakeOriginCodec("discord", discordWakeOriginCodec);
   registerReadAdapter(discordReadAdapter);
-  registerSeatCatchUp("discord", discordSeatCatchUpFetch);
+  registerSeatCatchUp("discord", discordSeatCatchUpFetch, { timestampPrecisionMs: DISCORD_TIMESTAMP_PRECISION_MS });
   registerReactionSurface("discord");
   registerSurfaceMessageOps(discordMessageOps);
   registerCardPoster("discord", postDiscordApprovalCard);

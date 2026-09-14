@@ -10,6 +10,7 @@ import {
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { resolvePartition } from "../memory/partition.js";
 import { noteConnectorRead, rememberRecordName, type ConnectorRead, type ConnectorReadProof } from "./reply-provenance.js";
+import { noteDelegatedRead } from "./delegated-provenance.js";
 
 export type ReadReach = Pick<ConnectorRead, "proof" | "surfaceKey" | "wakeId">;
 
@@ -87,6 +88,7 @@ export function noteAuthoredRecordRead(ctx: unknown, read: AuthoredRecordRead): 
       op: spec.op,
       ...(named ? { record: { kind: read.kind, id: read.id } } : {}),
     });
+    noteDelegatedRead(bind, spec.connection, spec.op);
     if (named) rememberRecordName(currentSessionId(bind), turnId, read.kind, read.id, read.name);
   } catch {
   }

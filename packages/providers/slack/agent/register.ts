@@ -22,7 +22,7 @@ import { bindSlack, partnerFactsFromInfo } from "./channels/slack-identity.js";
 import { slackPostArm } from "./channels/slack-post-arm.js";
 import { slackWakeOriginCodec } from "./channels/slack-origin-codec.js";
 import { slackReadAdapter, callSlackRead } from "./channels/slack-read.js";
-import { slackSeatCatchUpFetch } from "./channels/slack-wake-backscroll.js";
+import { slackSeatCatchUpFetch, SLACK_TIMESTAMP_PRECISION_MS } from "./channels/slack-wake-backscroll.js";
 import { registerSlackAttachmentResolver } from "./channels/slack-attachments.js";
 import {
   slackForm,
@@ -46,7 +46,7 @@ export function registerSlackProvider(): void {
   registerPostArm(slackPostArm);
   registerWakeOriginCodec("slack", slackWakeOriginCodec);
   registerReadAdapter(slackReadAdapter);
-  registerSeatCatchUp("slack", slackSeatCatchUpFetch);
+  registerSeatCatchUp("slack", slackSeatCatchUpFetch, { timestampPrecisionMs: SLACK_TIMESTAMP_PRECISION_MS });
   registerReactionSurface("slack");
   registerBotDisplayName("slack", botDisplayName);
   registerAccountDisplayName("slack", (nativeId) => fetchUserProfileNames(nativeId));

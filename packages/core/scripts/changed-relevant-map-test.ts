@@ -60,6 +60,17 @@ for (const area of CHANGED_RELEVANT_MAP) {
   ok(`area "${area.area}" gives a non-empty reason`, area.why.trim().length > 0);
 }
 
+let notionNotes = 0;
+for (const area of CHANGED_RELEVANT_MAP) {
+  if (!area.scenarios.includes("J-ENGAGED-notion") && !area.why.includes("J-ENGAGED-notion")) continue;
+  notionNotes++;
+  ok(
+    `area "${area.area}" does not call a J-ENGAGED-notion red a "fixture fact" — the driver is declared, so a red there is a product defect (OPE-1846)`,
+    !area.why.includes("fixture fact"),
+  );
+}
+ok("at least one area's note is about J-ENGAGED-notion, so the wording check above really ran", notionNotes > 0);
+
 const discordOnly = relevantScenarios(["packages/providers/discord/agent/channels/discord-events.ts"]);
 ok("a Discord-only change selects J-DISC", discordOnly.includes("J-DISC"));
 ok("a Discord-only change does NOT select J-GH (github-only surface)", !discordOnly.includes("J-GH"));

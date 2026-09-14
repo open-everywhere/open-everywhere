@@ -9,6 +9,9 @@ import {
   _resetSeatCatchUp,
   SEAT_CATCH_UP_ACTION,
   seatCatchUpScopeFromChannelKey,
+  seatCatchUpBounds,
+  seatCatchUpPrecisionFor,
+  DEFAULT_TIMESTAMP_PRECISION_MS,
 } from "../agent/channels/seat-catch-up.js";
 import type { AuditInput } from "../agent/audit/audit.js";
 import type { NormalizedMessage } from "../agent/channels/backscroll-window.js";
@@ -171,6 +174,78 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
   ok(rows[0]!.workspace === "unknown" && rows[0]!.surface === undefined, "🔴 OPE-1831: a call with NO channel key files the row under `unknown` — a stated gap, never a filled-in blank");
 
   _resetSeatCatchUp("fixture");
+}
+
+{
+  const MINUTE = 60_000;
+  const floorMinute = (ms: number): number => Math.floor(ms / MINUTE) * MINUTE;
+  const LAST_WAKE = Date.parse("2026-04-19T23:45:40.250Z");
+  const TRIGGER_STAMP = floorMinute(Date.parse("2026-04-19T23:47:31.400Z"));
+  const at = (iso: string): number => floorMinute(Date.parse(iso));
+
+  const seen: Array<{ sinceMs: number; untilMs: number | undefined }> = [];
+  const window = [
+    msg({ id: "way-old", ms: at("2026-04-19T23:43:12.000Z"), text: "the previous wake already read this" }),
+    msg({ id: "same-minute-as-last-wake", ms: at("2026-04-19T23:45:58.000Z"), text: "said just after the seat looked away" }),
+    msg({ id: "trigger-minute", ms: at("2026-04-19T23:47:10.000Z"), text: "the build token you are being asked about" }),
+    msg({ id: "trig", ms: TRIGGER_STAMP, text: "which build token was posted while you were away?" }),
+    msg({ id: "after", ms: at("2026-04-19T23:48:04.000Z"), text: "posted after the wake was dispatched" }),
+  ];
+  const req = { container: "PAGE-1", sinceMs: LAST_WAKE, untilMs: TRIGGER_STAMP, excludeId: "trig", channelKey: "coarse/WS-1/page-1" };
+  const drive = async (declaredMs: number | undefined): Promise<{ ids: readonly string[]; rows: AuditInput[] }> => {
+    const rows: AuditInput[] = [];
+    seen.length = 0;
+    _resetSeatCatchUp("coarse");
+    registerSeatCatchUp(
+      "coarse",
+      async (r) => {
+        seen.push({ sinceMs: r.sinceMs, untilMs: r.untilMs });
+        return window.filter((m) => m.ms >= r.sinceMs);
+      },
+      declaredMs === undefined ? {} : { timestampPrecisionMs: declaredMs },
+    );
+    const res = await seatCatchUp("coarse", req, { audit: async (e) => void rows.push(e), admit: () => true });
+    return { ids: res.messages.map((m) => m.id), rows };
+  };
+
+  const wide = await drive(MINUTE);
+  ok(seen.length === 1 && seen[0].sinceMs === floorMinute(LAST_WAKE), "🔴 OPE-1847: the FETCH receives the lower bound already widened to the start of its own stamp unit — the surface and this core ask the same question");
+  ok(seen[0].untilMs === TRIGGER_STAMP + MINUTE, "🔴 OPE-1847: …and the upper bound already widened to the END of the trigger's unit, so a message sharing the trigger's instant is inside the window the surface is asked for");
+  ok(wide.ids.includes("trigger-minute"), "🔴 OPE-1847: a message stamped at the TRIGGER'S OWN instant is KEPT — the live-run defect, and the whole reason a seat on a coarse surface reads anything at all");
+  ok(wide.ids.includes("same-minute-as-last-wake"), "🔴 OPE-1847: a message whose floored stamp lands before the seat's unfloored `lastWakeAt` is KEPT — the lower bound is widened too, not only the upper one");
+  ok(!wide.ids.includes("trig"), "🔴 OPE-1847: the wake's OWN message leaves by ID — `excludeId` is the only thing that can remove it, because it shares its instant with the messages the seat is reading for");
+  ok(!wide.ids.includes("after"), "OPE-1847: a message in the NEXT unit is still newer than the wake and is still dropped — the widening is exactly one unit, never an open upper bound");
+  ok(!wide.ids.includes("way-old"), "OPE-1847: a message a whole unit before the last wake is still dropped — the widening is exactly one unit at the bottom too");
+  ok(wide.rows.length === 1 && wide.rows[0]!.detail!["outcome"] === "read" && wide.rows[0]!.detail!["kept"] === 2, "OPE-1847: the row reads `read` with the two kept messages counted");
+  ok(wide.rows[0]!.detail!["precisionMs"] === MINUTE && wide.rows[0]!.detail!["since"] === new Date(floorMinute(LAST_WAKE)).toISOString(), "🔴 OPE-1847: the row carries the unit it applied and the bound AS APPLIED — the next red ship reads both off the row instead of inferring them from a provider module");
+
+  const narrow = await drive(undefined);
+  ok(!narrow.ids.includes("same-minute-as-last-wake"), "🔴 OPE-1847 NEGATIVE CONTROL: with the declaration REMOVED, the message whose floored stamp falls inside the last wake's own unit is LOST — the lower bound is widened by the declaration and by nothing else");
+  ok(narrow.ids.length === 1 && narrow.ids[0] === "trigger-minute", "OPE-1847 NEGATIVE CONTROL: the undeclared window keeps ONE of the two messages the declared one keeps");
+  ok(narrow.rows[0]!.detail!["raw"] === 3 && narrow.rows[0]!.detail!["precisionMs"] === DEFAULT_TIMESTAMP_PRECISION_MS, "OPE-1847 NEGATIVE CONTROL: the raw count falls too — the un-widened bound reached the SURFACE, and the row names the default unit it fell back to");
+
+  {
+    const rows: AuditInput[] = [];
+    _resetSeatCatchUp("coarse");
+    registerSeatCatchUp("coarse", async (r) => window.filter((m) => m.ms >= r.sinceMs), { timestampPrecisionMs: MINUTE });
+    await seatCatchUp("coarse", req, { audit: async (e) => void rows.push(e), admit: () => false });
+    ok(rows[0]!.detail!["reason"] === "admission-dropped-all", "🔴 OPE-1847: a window the BOUNDS kept and the ADMISSION POLICY emptied reads `admission-dropped-all` — `bounds-dropped-all` never covers for the policy");
+    ok(rows[0]!.detail!["raw"] === 4 && rows[0]!.detail!["kept"] === 0, "OPE-1847: …with the same raw count, so the two reasons are told apart by name and not by the numbers");
+  }
+
+  ok(seatCatchUpPrecisionFor("coarse") === MINUTE, "OPE-1847: the registry reports the unit the surface declared");
+  _resetSeatCatchUp("coarse");
+  ok(seatCatchUpPrecisionFor("coarse") === DEFAULT_TIMESTAMP_PRECISION_MS, "OPE-1847: a platform that is not on the road reports the default unit, never `undefined` — the arithmetic always has a number");
+  registerSeatCatchUp("coarse", async () => [], { timestampPrecisionMs: 0.5 });
+  ok(seatCatchUpPrecisionFor("coarse") === DEFAULT_TIMESTAMP_PRECISION_MS, "🔴 OPE-1847: a declaration that is not a whole number of milliseconds ≥ 1 falls back to the default rather than throwing — a bundle registration must never cost a deployment its surface");
+  _resetSeatCatchUp("coarse");
+
+  ok(seatCatchUpBounds(90_000, 150_000, MINUTE).sinceMs === 60_000, "OPE-1847: the lower bound floors to the start of its unit");
+  ok(seatCatchUpBounds(90_000, 150_000, MINUTE).untilMs === 180_000, "OPE-1847: the upper bound rises to the end of the unit the trigger sits in");
+  ok(seatCatchUpBounds(90_000, 150_000, 1).sinceMs === 90_000 && seatCatchUpBounds(90_000, 150_000, 1).untilMs === 150_001, "OPE-1847: at millisecond grain the widening is one millisecond — the trigger's own instant stays inside, and its id is what removes it");
+  ok(seatCatchUpBounds(-90_000, undefined, MINUTE).sinceMs === -120_000, "🔴 OPE-1847: a PRE-EPOCH bound floors DOWNWARD — `Math.floor`, never `t - (t % unit)`, which keeps the sign of the dividend and would raise the bound toward a newer instant");
+  ok(seatCatchUpBounds(90_000, undefined, MINUTE).untilMs === undefined, "OPE-1847: an absent upper bound stays absent — an unbounded window is not widened into a bounded one");
+  ok(Number.isNaN(seatCatchUpBounds(Number.NaN, undefined, MINUTE).sinceMs), "OPE-1847: a non-finite bound passes through unchanged — widening it would invent a number, and the row says `unparsable` instead");
 }
 
 {

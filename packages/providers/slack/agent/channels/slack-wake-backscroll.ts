@@ -279,6 +279,8 @@ export async function fetchSlackSeatCatchUp(req: SeatCatchUpRequest, deps: WakeB
   return fetchSlackBackscrollWindow({ channelId: req.container, ts: latestTs, sinceMs: req.sinceMs }, deps);
 }
 
+export const SLACK_TIMESTAMP_PRECISION_MS = 1;
+
 export const slackSeatCatchUpFetch: SeatCatchUpFetch = (req) => fetchSlackSeatCatchUp(req);
 
 export async function fetchWakeEnvelopeBackscroll(

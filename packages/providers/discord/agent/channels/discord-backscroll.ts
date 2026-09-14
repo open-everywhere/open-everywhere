@@ -276,4 +276,6 @@ export async function fetchDiscordSeatCatchUp(req: SeatCatchUpRequest, deps: Dis
   return fetchDiscordBackscrollWindow({ channelId: anchor, triggerMessageId, isThread, sinceMs: req.sinceMs }, deps);
 }
 
+export const DISCORD_TIMESTAMP_PRECISION_MS = 1;
+
 export const discordSeatCatchUpFetch: SeatCatchUpFetch = (req) => fetchDiscordSeatCatchUp(req);

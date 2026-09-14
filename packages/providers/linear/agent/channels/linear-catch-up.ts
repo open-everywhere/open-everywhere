@@ -46,6 +46,8 @@ export function linearOrgFromChannelKey(channelKey: string | undefined): string 
   return parts[1] || undefined;
 }
 
+export const LINEAR_TIMESTAMP_PRECISION_MS = 1;
+
 export const linearSeatCatchUpFetch: SeatCatchUpFetch = (req) => {
   const organizationId = linearOrgFromChannelKey(req.channelKey);
   return fetchLinearCatchUpWindow({
