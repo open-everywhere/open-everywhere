@@ -30,6 +30,8 @@ import {
   type SurfaceParityDeclaration,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { hasApprovalCardPath } from "@open-everywhere/core/agent/approvals/flow.js";
+
 import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -109,6 +111,21 @@ const ENGAGED_ROW_PROMOTION_DEF = /\?\s*"thread-follow"\s*:\s*addressing\b/su;
 
 const ENGAGED_ROW_PROMOTION_CALL = /\baddressing:\s*\w*WakeAddressing\s*\(/su;
 
+const CONTEXT_ADMISSION_IMPORT =
+  /import\s*(?:type\s*)?\{[^}]*\badmitContextLines\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
+const CONTEXT_ADMISSION_CALL = /\badmitContextLines\s*\(/su;
+const CONTEXT_LINE_FILL = /\bcontextLines\s*:/su;
+
+function contextAdmissionPlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (!sourcesReference(dir, CONTEXT_LINE_FILL)) continue;
+    if (sourcesReference(dir, CONTEXT_ADMISSION_IMPORT) && sourcesReference(dir, CONTEXT_ADMISSION_CALL)) wired.add(platform);
+  }
+  return wired;
+}
+
 function sourcesReference(dir: string, pattern: RegExp): boolean {
   let entries: string[];
   try {
@@ -134,7 +151,13 @@ function setOf(platforms: Iterable<string>): ReadonlySet<string> {
   return new Set([...platforms].filter((p) => (PLATFORMS as readonly string[]).includes(p)));
 }
 
-const SOURCE_SCAN_PROBES = ["ambient-engagement-seam", "owned-thread-ingress", "engaged-row-promotion", "unified-action-plane"] as const;
+const SOURCE_SCAN_PROBES = [
+  "ambient-engagement-seam",
+  "owned-thread-ingress",
+  "engaged-row-promotion",
+  "unified-action-plane",
+  "seat-context-admission",
+] as const;
 
 const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["identity-mapper", setOf(registeredIdentityMapperPlatforms())],
@@ -157,6 +180,8 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["ambient-engagement-seam", engagementSeamPlatforms()],
   ["owned-thread-ingress", ownedThreadIngressPlatforms()],
   ["engaged-row-promotion", engagedRowPromotionPlatforms()],
+  ["seat-context-admission", contextAdmissionPlatforms()],
+  ["approval-card", setOf(PLATFORMS.filter((p) => hasApprovalCardPath(p)))],
   ["search", setOf(registeredSearchConnectors())],
 ]);
 

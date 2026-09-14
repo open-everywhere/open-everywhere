@@ -23,6 +23,8 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },
   "seat-catch-up": "supported",
+  "seat-context-admission": "supported",
+  "approval-card": { unsupported: "an issue/PR comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead" },
   "name-drop-mention": { unsupported: "not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake" },
   "message-edit-wake": { unsupported: "every wake leg admits `action: \"created\"` only — eve's route, the ambient extractor and the stop leg each refuse an edited comment" },
   threads: "supported",

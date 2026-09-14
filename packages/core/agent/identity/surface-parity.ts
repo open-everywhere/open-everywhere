@@ -29,6 +29,8 @@ export const SURFACE_CAPABILITIES = [
   { id: "engaged-row-promotion", label: "**Engaged wake row promotion** (`thread-follow`)", section: "§2.5", group: "seam" },
   { id: "owned-thread-ingress", label: "**Owned-thread ingress divert**", section: "§2.6", group: "seam" },
   { id: "seat-catch-up", label: "**Seat catch-up read** (since last wake)", section: "§2.5", group: "seam" },
+  { id: "seat-context-admission", label: "**Seat context-line admission** (`admitContextLines`)", section: "§2.5", group: "seam" },
+  { id: "approval-card", label: "**Approval card** (tappable Approve/Reject)", section: "§4.1", group: "seam" },
 
   { id: "addressed-leg", label: "Addressed (@mention) leg", section: "§2.2", group: "shape" },
   { id: "ambient-leg", label: "Ambient (non-mention) leg", section: "§2.5", group: "shape" },

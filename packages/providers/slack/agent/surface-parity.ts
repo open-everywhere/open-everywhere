@@ -14,6 +14,8 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "engaged-row-promotion": { unsupported: "no dispatch row — Slack writes no `slack.dispatched` action, so there is no `addressing` value to promote" },
   "owned-thread-ingress": "supported",
   "seat-catch-up": "supported",
+  "seat-context-admission": "supported",
+  "approval-card": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": "supported",
