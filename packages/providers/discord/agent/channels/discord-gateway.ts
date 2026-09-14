@@ -76,6 +76,7 @@ import {
   carryTailForward,
   type WakeMessageInput,
   recordWakeTail,
+  tailAuthorGrain,
   dmWindowRegistryKey,
   auditSupervisorFailure,
   healPrunedDeploymentStrand,
@@ -834,6 +835,8 @@ export interface DiscordUnifiedWakeInput {
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly tail?: readonly WakeMessageInput[];
+  readonly contextLines?: readonly ContextLine[];
+  readonly contextSource?: string;
   readonly botName?: string;
   readonly catchUpUnavailable?: string;
   readonly trigger: {
@@ -867,6 +870,9 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
         }
       : {}),
     backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
+    ...(input.contextLines && input.contextLines.length > 0
+      ? { contextLines: input.contextLines, ...(input.contextSource === undefined ? {} : { contextSource: input.contextSource }) }
+      : {}),
     ...(input.catchUpUnavailable !== undefined ? { catchUpUnavailable: input.catchUpUnavailable } : {}),
     trigger: mkMessageTrigger({
       from: "human",
@@ -1024,6 +1030,7 @@ async function divertDiscordDmToWindow(input: {
     at: atIso,
     from: "human",
     trust,
+    ...tailAuthorGrain({ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }),
     author: msg.author.username ?? msg.author.id,
     authorId: msg.author.id,
     id: msg.id || "unknown",
@@ -1051,11 +1058,10 @@ export function discordSeatContextForWindow(
   grain: SupervisorGrain,
   domainKey: string,
   isThread: boolean,
-): { readonly context: readonly string[]; readonly ingestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>> } {
+): { readonly lines: readonly ContextLine[]; readonly source?: string; readonly ingestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>> } {
   const admitted = admitDiscordSeatLines(lines, grain, domainKey, isThread);
-  if (!admitted) return { context: [], ingestion: [] };
-  const rendered = renderContext(admitted, source ?? "");
-  return { context: rendered ? [rendered] : [], ingestion: admitted.map(contextLineIngestion) };
+  if (!admitted) return { lines: [], ingestion: [] };
+  return { lines: admitted, ...(source === undefined ? {} : { source }), ingestion: admitted.map(contextLineIngestion) };
 }
 
 export async function divertDiscordWakeToUnifiedWindow(input: {
@@ -1067,7 +1073,8 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
   readonly privacyOk: boolean;
   readonly threadEngaged?: boolean;
   readonly receive: UnifiedReceive;
-  readonly context: readonly string[];
+  readonly contextLines: readonly ContextLine[];
+  readonly contextSource?: string;
   readonly contextIngestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>>;
 }): Promise<void> {
   const { msg, grain } = input;
@@ -1122,6 +1129,8 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
         wakeId,
         engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
         tail,
+        contextLines: input.contextLines,
+        contextSource: input.contextSource,
         botName: msg.botName,
         catchUpUnavailable,
         trigger: {
@@ -1138,7 +1147,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
     try {
       await divertInboundToUnifiedWindow(input.receive, {
         message: rendered.message,
-        context: [...(rendered.context ?? []), ...input.context],
+        context: rendered.context ?? [],
         token,
         window: {
           wakeId,
@@ -1188,6 +1197,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
     at: atIso,
     from: "human",
     trust,
+    ...tailAuthorGrain({ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }),
     author: msg.author.username ?? msg.author.id,
     authorId: msg.author.id,
     id: msg.id || "unknown",
@@ -1355,7 +1365,8 @@ export async function dispatchTurn(
         privacyOk,
         threadEngaged: engRow?.participating === true && engRow.stopped !== true,
         receive,
-        context: seatContext.context,
+        contextLines: seatContext.lines,
+        contextSource: seatContext.source,
         contextIngestion: seatContext.ingestion,
       });
       await appendAudit({

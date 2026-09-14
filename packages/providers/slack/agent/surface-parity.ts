@@ -5,6 +5,8 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
+  "unified-action-plane": "supported",
+  "origin-placement-carry": "supported",
   "read-adapter": "supported",
   "reaction-feedback-ingest": "supported",
   "ancillary-ops": { supported: "inline — rides Eve's own Slack client path, not the ops registry" },

@@ -8,6 +8,7 @@ import { domainForChannel } from "../memory/domain.js";
 import { bindFrom } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { chatHaltAddress } from "./halt.js";
 
@@ -33,15 +34,16 @@ export default defineTool({
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const scope = input.scope ?? "org";
-    const address = chatHaltAddress(scope, p.surfaceKey);
+    const address = chatHaltAddress(scope, proposeScopeKey);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
         "resume needs a verified sender on this turn — the approval card has to name who asked. Ask someone in this conversation to propose it, or lift the halt from the control plane instead.",
       );
     }
-    const domain = domainForChannel(p.surfaceKey, getConfig().loadDomains())?.name ?? null;
+    const domain = domainForChannel(proposeScopeKey, getConfig().loadDomains())?.name ?? null;
     const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "lift that halt"));
@@ -57,7 +59,7 @@ export default defineTool({
           ...(address.orgWide ? { orgWide: true as const } : { level: address.level, scopeKey: address.scopeKey }),
           scopeLabel: scope === "org" ? "the whole deployment" : "this conversation",
         },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain,
         requestedBy,
         channelId: venue.channelId,

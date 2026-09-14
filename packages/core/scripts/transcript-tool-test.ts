@@ -100,10 +100,15 @@ const FIRE = {
   const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
   const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
   const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
+  const contextKeys = (await import(pathToFileURL(join(eveRoot, "dist/src/context/keys.js")).href)) as {
+    SessionIdKey: unknown;
+  };
+  const SESSION_ID = "s-transcript-tool";
 
   const makeCtx = (): Record<string, unknown> => {
     const durable = new Map<unknown, unknown>();
     const virtual = new Map<unknown, unknown>();
+    durable.set(contextKeys.SessionIdKey, SESSION_ID);
     return {
       get: (k: unknown) => (virtual.has(k) ? virtual.get(k) : durable.get(k)),
       set: (k: unknown, v: unknown) => durable.set(k, v),
@@ -135,9 +140,27 @@ const FIRE = {
     event: { type: "session.started" },
     messages: [],
   });
+  {
+    const setKey = ctx.set as (k: unknown, v: unknown) => void;
+    setKey(contextKeys.SessionIdKey, "");
+    let refusal: unknown;
+    try {
+      builder.buildDynamicTools(ctx);
+    } catch (e) {
+      refusal = e;
+    }
+    setKey(contextKeys.SessionIdKey, SESSION_ID);
+    ok(refusal instanceof Error, "buildDynamicTools REFUSES the replay of a registered entry when the session id is empty");
+    ok(
+      /requires a session id/i.test((refusal as Error).message),
+      `that refusal is eve's session-id requirement, not an unrelated throw (got: ${(refusal as Error | undefined)?.message ?? "no error"})`,
+    );
+    ok((ctx.get as (k: unknown) => unknown)(contextKeys.SessionIdKey) === SESSION_ID, "the session id is restored, so the replay below runs WITH one");
+  }
+
   const defs = builder.buildDynamicTools(ctx) as Array<{ name: string; inputSchema: unknown; toModelOutput?: unknown }>;
   const def = defs.find((d) => d.name === "read_routine_transcript");
-  ok(def !== undefined, "the tool is built for the model call off the session.started path");
+  ok(def !== undefined, "the tool is built for the model call off the session.started path (replay runs WITH the session id)");
   ok(
     typeof def!.toModelOutput === "function",
     "eve PRESERVES the authored toModelOutput on the replay path — and is now its only carrier, so a red here means the transcript reaches the model unfenced unless eve refuses the entry outright",

@@ -1,4 +1,4 @@
-import { getSettings, browserHostDeclarations, type BrowserHostDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, browserHostDeclarations, browserPlaneRefusal, type BrowserHostDeclaration } from "@open-everywhere/core/agent/adapter-api.js";
 
 const AGENT_BROWSER_FLAG = "browser.enabled";
 
@@ -19,6 +19,11 @@ export function loadAgentBrowserConfig(): AgentBrowserConfig | undefined {
   cachedResolved = true;
   cached = undefined;
   if (!agentBrowserEnabled()) return undefined;
+  const refusal = browserPlaneRefusal();
+  if (refusal !== undefined) {
+    console.error(`[open-everywhere:agent-browser] ${AGENT_BROWSER_FLAG}: true but ${refusal} NOT arming (fail closed): no tools mount, no egress host opens, no browser bakes.`);
+    return undefined;
+  }
   const hosts = browserHostDeclarations();
   if (hosts.length === 0) {
     console.error(

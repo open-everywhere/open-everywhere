@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -30,6 +31,7 @@ export default defineTool({
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "cancel_routine");
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const id = input.id.trim();
 
     const routine = await getRoutine(p.org, p.surfaceKey, id);
@@ -56,7 +58,7 @@ export default defineTool({
         org: p.org,
         kind: "routine.cancel",
         args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, id, description, requestedBy, tainted },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

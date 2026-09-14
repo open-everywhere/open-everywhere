@@ -247,7 +247,7 @@ console.log("discord:");
         addressing: "channel-watch",
         privacyOk: true,
         receive: captureReceive as never,
-        context: [],
+        contextLines: [],
         contextIngestion: [],
       });
     });
@@ -291,7 +291,7 @@ console.log("discord:");
         addressing: "channel-watch",
         privacyOk: true,
         receive: captureReceive as never,
-        context: [],
+        contextLines: [],
         contextIngestion: [],
       });
     });

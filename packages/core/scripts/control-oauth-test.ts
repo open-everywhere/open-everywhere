@@ -451,7 +451,7 @@ let code = "";
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const evePkg = JSON.parse(readFileSync(resolve(here, "../../../node_modules/eve/package.json"), "utf-8")) as { version: string };
-  ok(evePkg.version === "0.52.2", `the parity claims below are pinned to eve 0.52.2 (installed: ${evePkg.version})`);
+  ok(evePkg.version === "0.54.3", `the parity claims below are pinned to eve 0.54.3 (installed: ${evePkg.version})`);
   const eveAuth = readFileSync(resolve(here, "../../../node_modules/eve/dist/src/public/channels/auth.d.ts"), "utf-8");
 
   for (const symbol of ["function jwtHmac", "function oauthResource", "function routeAuth", "function readOAuthResourceOptions"]) {

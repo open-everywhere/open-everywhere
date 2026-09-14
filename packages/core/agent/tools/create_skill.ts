@@ -3,6 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -66,6 +67,7 @@ export default windowGated("create_skill", defineTool({
     const domain = resolved.domain;
 
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const existing = await listDomainSkills(p.org, domain);
     const already = existing.some((s) => s.name === name);
     const cap = domainSkillCap();
@@ -92,7 +94,7 @@ export default windowGated("create_skill", defineTool({
         org: p.org,
         kind: "skill.create",
         args: { org: p.org, domain, name, content, action, ...(authoredBy ? { authoredBy } : {}), tainted },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain,
         requestedBy: authoredBy,
         channelId: venue.channelId,

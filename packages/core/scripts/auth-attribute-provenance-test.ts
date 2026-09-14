@@ -41,7 +41,8 @@ console.log(`auth-attribute-provenance: verifying against installed eve ${eveVer
 }
 
 const WRITE_RE = /\.set\(\s*(?:Initiator)?AuthKey\b/g;
-const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/workflow-steps.js"]);
+const WORKFLOW_STEP_TWIN = "execution/tools/workflow/step-execution.js";
+const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/workflow-steps.js", WORKFLOW_STEP_TWIN]);
 {
   const found = new Set<string>();
   const walk = (dir: string): void => {
@@ -62,13 +63,60 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     console.error(
       `✗ eve ${eveVersion} has NEW writers of the session auth slot: ${unexpected.join(", ")}\n` +
         `  The "host-set auth attributes are model-unforgeable" invariant (OPE-129) was verified against exactly\n` +
-        `  two writers. Read each new site and confirm it cannot carry model-derived data BEFORE widening\n` +
-        `  EXPECTED_WRITERS here, and update agent/channels/unified-window.ts §AUTH-ATTRIBUTE PROVENANCE.`,
+        `  the ${EXPECTED_WRITERS.size} writers listed in EXPECTED_WRITERS. Read each new site and confirm it cannot carry\n` +
+        `  model-derived data BEFORE widening EXPECTED_WRITERS here. A site that only COPIES the slot needs a\n` +
+        `  shape assertion beside the widening, the way §3a pins the workflow-step twin — the widening alone is\n` +
+        `  a blanket permission. Then update agent/channels/unified-window.ts §AUTH-ATTRIBUTE PROVENANCE.`,
     );
     process.exit(1);
   }
   passed++;
   for (const w of EXPECTED_WRITERS) ok(found.has(w), `eve still writes the auth slot in ${w} (the site is not gone/renamed)`);
+}
+
+{
+  const twin = read(WORKFLOW_STEP_TWIN);
+  const bound = /let\{args:(\w+),context:(\w+)\}=/.exec(twin);
+  ok(bound !== null, `${WORKFLOW_STEP_TWIN} still destructures {args, context} from the step invocation`);
+  const argsLocal = bound?.[1] ?? "";
+  const contextLocal = bound?.[2] ?? "";
+  ok(
+    new RegExp(`\\.set\\(AuthKey,${contextLocal}\\.session\\.auth\\.current\\)`).test(twin),
+    "the workflow-step twin still writes AuthKey from context.session.auth.current (a copy of the host slot)",
+  );
+  ok(
+    new RegExp(`\\.set\\(InitiatorAuthKey,${contextLocal}\\.session\\.auth\\.initiator\\)`).test(twin),
+    "the workflow-step twin still writes InitiatorAuthKey from context.session.auth.initiator",
+  );
+  ok(
+    !new RegExp(`\\.set\\(\\s*(?:Initiator)?AuthKey,[^)]*\\b${argsLocal}\\b`).test(twin),
+    "the workflow-step twin's auth writes never read the model-supplied `args` local",
+  );
+  const dispatch = read("execution/coordination-dispatch-shared.js");
+  ok(
+    /auth:\w+\.get\(AuthKey\)\?\?null/.test(dispatch),
+    "the workflow-tool run's `auth` is still a host read of AuthKey (coordination-dispatch-shared.js)",
+  );
+  ok(
+    /initiatorAuth:\w+\.get\(InitiatorAuthKey\)\?\?null/.test(dispatch),
+    "the workflow-tool run's `initiatorAuth` is still a host read of InitiatorAuthKey",
+  );
+  ok(
+    /session:\{auth:\{current:(\w+)\.auth,initiator:\1\.initiatorAuth\}/.test(read("execution/tools/workflow/start.js")),
+    "startWorkflowTask still builds the run's session.auth from its OWN auth/initiatorAuth arguments, never off the model's task input",
+  );
+  ok(
+    /startWorkflowTask\(\{auth:(\w+)\.auth,[^}]*initiatorAuth:\1\.initiatorAuth/.test(read("execution/coordination-dispatch-step.js")),
+    "the coordination step still passes those two straight from the prepared dispatch — the AuthKey read pinned above",
+  );
+  ok(
+    /session:\w+\.session/.test(read("execution/tools/workflow/body.js")),
+    "createWorkflowBodyContext still takes ctx.session from the RUN INPUT (the model's own half is ctx.input), so the twin copies THAT bag",
+  );
+  ok(
+    /Symbol\.for\(`eve\.workflow-tool-run\.context`\)/.test(read("execution/tools/workflow/ask.js")),
+    "the workflow-tool run context is still branded with a symbol (unreachable from JSON tool input)",
+  );
 }
 
 {
@@ -96,7 +144,12 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     "subagent dispatch still takes the child's auth from the PARENT's deserialized context — no module of the installed eve pairs `deserializeContext` with a `get(AuthKey)??null` read any more",
   );
   const sub = read(SUBAGENT_TOOL);
-  ok(/\{action:\w+,auth:\w+,batchEvent/.test(sub), "buildSubagentRunInput still takes `auth` as a caller argument, not off the action");
+  const subInput = /function buildSubagentRunInput\((\w+)\)\{let\{([^}]*)\}=\1,/.exec(sub);
+  ok(subInput !== null, "buildSubagentRunInput still destructures its single parameter object");
+  const subKeys = new Set((subInput?.[2] ?? "").split(",").map((p) => (p.split(":")[0] ?? "").trim()));
+  ok(subKeys.has("auth"), "buildSubagentRunInput still takes `auth` as a caller argument, not off the action");
+  ok(subKeys.has("initiatorAuth"), "buildSubagentRunInput still takes `initiatorAuth` as a caller argument too");
+  ok(subKeys.has("action"), "buildSubagentRunInput still takes the model's action SEPARATELY from those two");
   ok(!/\w+\.input\.auth/.test(sub), "buildSubagentRunInput still never reads `auth` off the model's action input");
 }
 

@@ -12,6 +12,7 @@ import {
   backscrollTrustResolver,
   carryTailForward,
   recordWakeTail,
+  tailAuthorGrain,
   standingSeatRegistryKey,
   stampNonMemberChatAuth,
   contextLineIngestion,
@@ -27,8 +28,7 @@ import {
   seatCatchUp,
   seatAdmissionFor,
   admitContextLines,
-  capLines,
-  contextLinesNotInEnvelope,
+  hydrationSlices,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
   supervisorGrainFor,
@@ -1141,18 +1141,17 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     : { deliver: true, reason: "wake arm added a wake where the name-drop abstained" };
 
   const hydrateContext: NameDropContextHydrator = async () => {
-    const admitThenCap = deps.seatRoute !== undefined && ev.threadTs !== undefined;
+    const threadAdmissionSlice = deps.seatRoute !== undefined && ev.threadTs !== undefined;
     const fetched = deps.backscroll
-      ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs, threadAdmissionSlice: admitThenCap }).catch(() => null)
+      ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs, threadAdmissionSlice }).catch(() => null)
       : null;
     if (!fetched) return null;
     const graded = await regradeSlackContextLineTrust(fetched.lines, internal, domainKeyOf(p), ev.teamId).catch(() => fetched.lines);
     const lines = deps.seatRoute
       ? admitContextLines(graded, seatAdmissionFor(domainKeyOf(p)), ev.threadTs ? "thread" : "channel")
       : graded;
-    const bounded = admitThenCap ? capLines(lines, { maxMessages: WAKE_BACKSCROLL_MAX }) : lines;
-    if (bounded.length === 0) return null;
-    return { ...fetched, lines: bounded };
+    if (lines.length === 0) return null;
+    return { ...fetched, lines };
   };
 
   if (deps.seatRoute) {
@@ -1953,13 +1952,14 @@ export async function routeSupervisorEvent(
   }
   const regraded = fetched.length > 0 ? await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched) : fetched;
   const priorContext: readonly WakeMessageInput[] = tail.length > 0 ? tail : regraded;
-  const nameDropRendered = nameDropLines ? contextLinesNotInEnvelope(nameDropLines, priorContext) : undefined;
+  const nameDropSlices = nameDropLines ? hydrationSlices(nameDropLines, priorContext, { maxMessages: WAKE_BACKSCROLL_MAX }) : undefined;
+  const nameDropRendered = nameDropSlices?.rendered;
   const backscroll = priorContext.map((m) => (withholdsBody(m, externalPolicy) ? withheldWakeMessage(m) : m));
 
   const auth = stampNonMemberChatAuth(
     authForEvent(ev, { isExternal: false, trustChecked: true }),
     ingestedAfterWithholding(
-      [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...priorContext, ...(nameDropLines ?? []).map(contextLineIngestion)],
+      [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...priorContext, ...(nameDropSlices?.ingested ?? []).map(contextLineIngestion)],
       externalPolicy,
     ),
     { surfaceKey: domainKeyOf(p) },
@@ -2032,6 +2032,7 @@ export async function routeSupervisorEvent(
     at: atIso,
     from: "human",
     trust: wakeTrust,
+    ...tailAuthorGrain({ trust: wakeTrust, refuted: authorFacts.refuted }),
     author: ev.userId ?? "unknown",
     ...(ev.userId ? { authorId: ev.userId } : {}),
     ...(ev.ts ? { id: ev.ts } : {}),

@@ -166,7 +166,7 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
     [],
     "…and a view-SHAPED payload under a NON-view-bearing tool name is still ignored — the accept-set is exactly {task_peek, task_cancel}, never a prefix match",
   );
-  eq([...tasks.TASK_TOOL_NAMES].sort(), ["task_cancel", "task_peek", "task_sleep", "task_update"], "the four task tool names are named once, in the isolation module");
+  eq([...tasks.TASK_TOOL_NAMES].sort(), ["task_cancel", "task_peek", "task_sleep"], "the three task tool names are named once, in the isolation module — `task_update` left the union when eve 0.54.3 was pinned");
 }
 
 {

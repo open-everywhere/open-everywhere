@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { approxEntryTokens, buildTail, selectTail, tailEntryToWakeMessage, type SessionTailEntry } from "../agent/channels/session-tail.js";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { approxEntryTokens, buildTail, selectTail, tailAuthorGrain, tailEntryToWakeMessage, type SessionTailEntry } from "../agent/channels/session-tail.js";
+import { withholdsBody, type ExternalPolicy } from "../agent/access/external-policy.js";
+import { nonMemberChatTrust, type IngestedChatMessage } from "../agent/access/taint-signal.js";
+import { registerAuthorTrust, _resetAuthorTrustForTest, type AuthorTrustQuery } from "../agent/identity/author-trust.js";
 import { carryTailForward, editPostTail, recordPostTail, seedTailWindow, tailWindowFor, type TailWindow } from "../agent/channels/session-tail-record.js";
 import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
@@ -289,4 +294,79 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   eq(calls, 0, "🔴 neither function touches the store with no seeded window — a worker/task/routine post is recorded (and edited) nowhere, same as §8");
 }
 
-console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor, the OPE-815 id thread + ring rewrite)`);
+{
+  const WITHHOLD: ExternalPolicy = { authorGrain: "withhold", roomGrain: "engage" };
+  const SHIPPED: ExternalPolicy = { authorGrain: "taint", roomGrain: "engage" };
+  const REGISTER: AuthorTrustQuery = { tenantKey: "discord/guild-1", authorId: "U_STRANGER" };
+
+  const shapes: readonly { readonly name: string; readonly refuted: IngestedChatMessage; readonly member: IngestedChatMessage }[] = [
+    { name: "surface-roster leg (slack, slack-dm, teams, teams-dm, github, linear)", refuted: { trust: "unauth", refuted: true }, member: { trust: "peer", refuted: false } },
+    { name: "register-only leg (discord, discord-dm, notion)", refuted: { trust: "peer", refuted: false, authorTrust: REGISTER }, member: { trust: "peer", refuted: false } },
+  ];
+  registerAuthorTrust([{ tenant: "discord/guild-1", internal: ["discord/U_MEMBER"] }]);
+
+  for (const s of shapes) {
+    const refutedRow = wake(0, "a refuted author's words", { ...tailAuthorGrain(s.refuted) });
+    const memberRow = wake(10, "a member's words", { ...tailAuthorGrain(s.member) });
+    const [refutedMsg, memberMsg] = buildTail([refutedRow, memberRow]);
+
+    ok(withholdsBody(refutedMsg!, WITHHOLD), `🔴 ${s.name}: a refuted author's tail row is WITHHELD under authorGrain: "withhold"`);
+    ok(!withholdsBody(memberMsg!, WITHHOLD), `🔴 ${s.name} NEGATIVE CONTROL: a member's tail row in the same position is NOT withheld — the row's facts decide, not the grain`);
+    ok(!withholdsBody(refutedMsg!, SHIPPED), `${s.name}: the SHIPPED \`taint\` grain withholds nothing, so no deployment moves without opting in`);
+    eq(memberRow.refuted, false, `${s.name}: a member's row records a graded "no" as \`false\`, never as an absent field`);
+    eq(tailAuthorGrain({ trust: "peer" }).refuted, false, `${s.name}: …and so does a fact set that OMITTED it — the road normalises, it does not forward`);
+    eq(refutedMsg!.ungraded, undefined, `${s.name}: a row this road wrote is never UNGRADED — that state is reserved for a row persisted before the field existed`);
+  }
+
+  const olderRow: SessionTailEntry = { kind: "wake", at: at(20), from: "human", trust: "peer", author: "alice", authorId: "U_ALICE", text: "written before the field existed" };
+  const [olderMsg] = buildTail([olderRow]);
+  eq(olderMsg!.body, "written before the field existed", "an older row still renders — the read path tolerates the missing field");
+  eq(olderMsg!.ungraded, true, "…and rides as UNGRADED rather than as a claim about its author");
+  eq(olderMsg!.refuted, undefined, "🔴 …and is NEVER stamped `refuted`, which would be a verdict nothing measured (and would mark the turn on the shipped grain)");
+  ok(withholdsBody(olderMsg!, WITHHOLD), '🔴 an UNGRADED row is withheld under "withhold" — unknown reads as the fail-closed answer, never as "not refuted"');
+  ok(!withholdsBody(olderMsg!, SHIPPED), "negative control: …and is byte-identical on the shipped `taint` grain");
+  ok(!nonMemberChatTrust(olderMsg!), "🔴 …while the TAINT JOIN still fails OPEN on it — an ungraded old row must not start marking every turn it appears in");
+
+  const [postMsg] = buildTail([post(30, "the seat's own reply", { refuted: false })]);
+  ok(!withholdsBody(postMsg!, WITHHOLD), "the seat's own recorded post is never withheld (graded, and `relay` besides)");
+  const [oldPostMsg] = buildTail([{ kind: "post", at: at(40), from: "self", trust: "relay", author: "self", text: "an older self post" }]);
+  eq(oldPostMsg!.ungraded, true, "an older POST row is ungraded too");
+  ok(!withholdsBody(oldPostMsg!, WITHHOLD), "🔴 …but is still not withheld: `relay` is a machine author, not a person outside the organisation");
+
+  const [registerMsg] = buildTail([wake(50, "a stranger in an armed tenant", { ...tailAuthorGrain({ trust: "peer", refuted: false, authorTrust: REGISTER }) })]);
+  eq(registerMsg!.authorTrust, REGISTER, "🔴 the operator's register query survives the round trip onto the wake message");
+  ok(withholdsBody(registerMsg!, WITHHOLD), "…and is what withholds the body where the surface has no verdict of its own");
+  _resetAuthorTrustForTest();
+}
+
+{
+  const providers = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "providers");
+  const sites: string[] = [];
+  const missing: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name === "dist" || e.name === "scripts") continue;
+        walk(p);
+        continue;
+      }
+      if (!e.name.endsWith(".ts")) continue;
+      const src = readFileSync(p, "utf8");
+      for (const anchor of ["recordWakeTail(", "deps.recordWake("]) {
+        for (const [i, part] of src.split(anchor).entries()) {
+          if (i === 0) continue;
+          const window = part.slice(0, 1500);
+          if (!window.includes('kind: "wake"')) continue;
+          sites.push(p);
+          if (!window.includes("tailAuthorGrain(")) missing.push(`${p} (${anchor})`);
+        }
+      }
+    }
+  };
+  walk(providers);
+  ok(sites.length >= 9, `every seat surface's record site is found (got ${sites.length}: the six surfaces plus the DM seats)`);
+  eq(missing, [], `🔴 every wake row resolves its author grain through tailAuthorGrain. Missing: ${missing.join(", ")}`);
+}
+
+console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor, the OPE-815 id thread + ring rewrite, the OPE-1747 withhold grain + its per-surface parity)`);

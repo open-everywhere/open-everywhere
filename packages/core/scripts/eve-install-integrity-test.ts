@@ -222,22 +222,22 @@ for (const eveDir of copies) {
     `copies: ${where} carries the empty-step terminal guard (OPE-762, __oeThrowEmptyResponseUnlessTerminal) on BOTH throw sites — an unpatched copy reissues the model call with "Your previous reply was empty and was not delivered" after every correctly-silent turn, so the seat replies to the wake it just declined`,
   );
   ok(
-    src.includes("__oeProjectModelMessages(normalizeModelMessages("),
+    src.includes("__oeProjectModelMessages(validateHarnessModelMessages(normalizeModelMessages("),
     `copies: ${where} carries the model-message projection seam (OPE-1396, part 6) WRAPPING normalizeModelMessages — this is the only seam that hands OE the list the model actually reads, so an unpatched copy takes OPE-593's \`[Agents]\` subtraction off the model call and the seat learns a live worker \`agentId\` from the listing`,
   );
   const compactionFile = join(eveDir, COMPACTION);
   ok(
     existsSync(compactionFile),
-    `anchor: ${where}/${COMPACTION} exists (if eve moved the harness file, the OPE-689 hunk and eve-compaction-anchor-test.ts are both stale)`,
+    `adjust: ${where}/${COMPACTION} exists (if eve moved the harness file, this tripwire and eve-compaction-anchor-test.ts are both stale)`,
   );
   const compactionSrc = existsSync(compactionFile) ? readFileSync(compactionFile, "utf8") : "";
   ok(
-    compactionSrc.includes("__oeAnchoredConfig("),
-    `anchor: ${where} carries __oeAnchoredConfig (OPE-689) — without it the work step re-decides with JSON.stringify/4 while the trigger counted the provider's real token figure, so a dense session emits compaction.completed having compacted NOTHING and the generation wedges`,
+    compactionSrc.includes("tokenEstimateAdjustment"),
+    `adjust: ${where} carries eve's OWN tokenEstimateAdjustment (landed 0.52.3) — without it the work step re-decides with JSON.stringify/4 while the trigger counted the provider's real token figure, so a dense session emits compaction.completed having compacted NOTHING and the generation wedges. OE's part-3 hunk was retired against this; a red here means it must be restored`,
   );
   ok(
-    compactionSrc.includes("__oeNoteNoOpCompaction("),
-    `anchor: ${where} carries __oeNoteNoOpCompaction (OPE-689) — the event-contract backstop. Without it a compaction that changes nothing after the trigger fired passes silently as compaction.completed, which is how the defect stayed invisible for weeks`,
+    !compactionSrc.includes("__oeAnchoredConfig(") && !compactionSrc.includes("__oeNoteNoOpCompaction("),
+    `adjust: ${where} carries NO part-3 helper — the hunk is retired, and a re-roll that ports it back would patch upstream's fix on top of itself`,
   );
   const pnpmDir = join(eveDir, "dist", "src", "node_modules", ".pnpm");
   ok(
@@ -284,5 +284,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor, its no-op backstop, the compaction event-contract stamp, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion} matches eve's vendored zod)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction event-contract stamp, a PRISTINE compaction.js (part 3 retired), all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion} matches eve's vendored zod)\n`,
 );

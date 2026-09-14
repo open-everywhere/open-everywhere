@@ -4,6 +4,7 @@ import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
@@ -60,6 +61,7 @@ export const setStateEntry = defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => domains);
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "change that ticket's status"));
@@ -72,7 +74,7 @@ export const setStateEntry = defineTool({
 
     const args: TicketSetStateArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       platform: ref.platform,
       entityId: ref.id,
       ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
@@ -87,7 +89,7 @@ export const setStateEntry = defineTool({
         org: p.org,
         kind: "ticket.set_state",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

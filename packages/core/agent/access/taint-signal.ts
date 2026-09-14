@@ -138,6 +138,7 @@ export interface IngestedChatMessage {
   readonly trust?: WakeTrust;
   readonly refuted?: boolean;
   readonly authorTrust?: AuthorTrustQuery;
+  readonly ungraded?: boolean;
 }
 
 const HUMAN_TIERS: ReadonlySet<WakeTrust> = new Set<WakeTrust>(["principal", "peer", "unauth"]);

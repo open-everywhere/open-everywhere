@@ -115,7 +115,7 @@ ok(/arrives as a NEW message on a later turn/.test(standingBlock), "the seat is 
 ok(!standingBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
 ok(/that message tells you how to read its output/.test(standingBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");
 ok(standingBlock.includes("`task_cancel`"), "the STOP verb is named — `task_cancel` is how a seat drops work it no longer needs");
-ok(!standingBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
+ok(!standingBlock.includes("`task_update`"), "🔴 `task_update` was the CHILD's verb and eve 0.54.1 DELETED it — naming it would be the dead-affordance class OPE-359 removed");
 ok(!standingBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
 ok(/which request the result answers/.test(standingBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
 ok(/`agentId` is refused/.test(standingBlock), "🔴 OPE-593: the copy states the refusal — eve's own prompt still teaches `agentId`, so OE must contradict it out loud");

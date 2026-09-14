@@ -152,5 +152,5 @@ const turnDispatch = flat(read("execution/turn-dispatch.d.ts"));
 }
 
 console.log(
-  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.52.2 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and turn-dispatch contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate child runs; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
+  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.54.3 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and turn-dispatch contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate child runs; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
 );

@@ -95,8 +95,8 @@ eq(suppressAgentsListing("[Agents]"), 0, "§1 a non-array ⇒ 0");
 
   const toolLoop = readFileSync(join(eveRoot, "dist/src/harness/tool-loop.js"), "utf8");
   ok(
-    toolLoop.includes("__oeProjectModelMessages(normalizeModelMessages("),
-    "🔴 §1b the installed eve carries part 6, wrapping `normalizeModelMessages` — the seam that hands OE the list the model actually reads",
+    toolLoop.includes("__oeProjectModelMessages(validateHarnessModelMessages(normalizeModelMessages("),
+    "🔴 §1b the installed eve carries part 6, wrapping the WHOLE `validateHarnessModelMessages(normalizeModelMessages(…))` call — the seam that hands OE the list the model actually reads. eve 0.54.x added the validator around the list, so the wrap moved outward with it; wrapping the inner call alone would leave the final list unprojected",
   );
   ok(
     toolLoop.includes("globalThis.__oeModelMessageProjection"),

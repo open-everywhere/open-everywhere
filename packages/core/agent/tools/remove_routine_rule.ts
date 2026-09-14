@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
 import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
@@ -40,6 +41,7 @@ export default defineTool({
     if (refusal) throw new Error(refusal);
 
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const routineId = input.routineId.trim();
     const ruleId = input.ruleId.trim();
 
@@ -87,7 +89,7 @@ export default defineTool({
           countBefore: rules.length,
           requestedBy,
         },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

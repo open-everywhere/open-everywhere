@@ -5,6 +5,14 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
+  "unified-action-plane": {
+    unsupported:
+      "a Notion discussion comment is rich text with no component plane — the API offers no tappable button an integration may render into one, so there is nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete",
+  },
+  "origin-placement-carry": {
+    unsupported:
+      "the placement is INSIDE the conversation identity: a reply targets `discussionId`, which is exactly what `threadRef` keys on, so two origins that pass the conversation test name the same discussion and cannot disagree about placement",
+  },
   "read-adapter": "supported",
   "reaction-feedback-ingest": { unsupported: "vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll" },
   "ancillary-ops": "supported",

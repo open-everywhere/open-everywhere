@@ -74,6 +74,7 @@ import {
   stampNonMemberChatAuth,
   externalPolicyIsInert,
   recordWakeTail,
+  tailAuthorGrain,
   dmWindowRegistryKey,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
@@ -747,6 +748,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           at: atIso,
           from: "human",
           trust: wakeTrust,
+          ...tailAuthorGrain({ trust: wakeTrust, refuted: authorRefuted }),
           author: ev.userId ?? "unknown",
           ...(ev.userId ? { authorId: ev.userId } : {}),
           ...(ev.ts ? { id: ev.ts } : {}),

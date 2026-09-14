@@ -78,6 +78,7 @@ import {
   carryTailForward,
   type WakeMessageInput,
   recordWakeTail,
+  tailAuthorGrain,
   dmWindowRegistryKey,
   type AttachSessionForCancel,
   RateLimitExhaustedError,
@@ -415,6 +416,7 @@ export async function liveTeamsDispatch(
   }
   const graphTeamId = await teamsGraphTeamId(a.teamId, a.serviceUrl);
   const replyChainRootId = teamsReplyChainRoot(a.conversation.id);
+  const triggerFacts: IngestedChatMessage = { trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) };
   await handleTeamsSingleWindowDispatch(
     {
       surfaceKey: plan.surfaceKey,
@@ -422,10 +424,11 @@ export async function liveTeamsDispatch(
       channelId: a.teamsChannelId ?? teamsChannelGrainConversationId(a.conversation.id),
       ...(graphTeamId ? { teamId: graphTeamId } : {}),
       ...(!graphTeamId && a.teamId ? { teamAddressUnresolved: true } : {}),
-      auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
+      auth: stampNonMemberChatAuth(auth, [triggerFacts], {
         surfaceKey: plan.surfaceKey,
         ...teamsRoomGroupKey(auth),
       }),
+      ingested: [triggerFacts],
       trigger: {
         id: a.id,
         authorId: a.from.id,
@@ -509,6 +512,7 @@ export async function liveTeamsDmDivert(
     at: atIso,
     from: "human",
     trust,
+    ...tailAuthorGrain({ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }),
     author: a.from.name ?? a.from.id,
     authorId: a.from.id,
     id: a.id || "unknown",

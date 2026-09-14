@@ -40,7 +40,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_update"] as const;
+const TASK_FAMILY = ["task_cancel"] as const;
 
 const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
 
@@ -85,7 +85,7 @@ for (const name of ["task_cancel"]) {
 for (const [name, why] of [
   ["task_peek", "DELETED by eve 0.40.0 — the worker's output now arrives inline on the settlement notification, so no seat-side read verb exists to grant"],
   ["task_sleep", "DELETED by eve 0.42.0 — task-mode parents rely on lifecycle notifications instead of model-paced waits"],
-  ["task_update", "CHILD-only: eve hides it from a seat at the advertise seam, `harness/advertised-tools.js` `shouldHideTool` (measured on the T1 probe)"],
+  ["task_update", "DELETED by eve 0.54.1 — the tool and its child-to-parent progress callbacks are gone, and the release ships no replacement verb"],
 ] as const) {
   ok(!allowedOnLeanSeat(name), `lean seat does NOT hold ${name} — ${why}`);
   ok(!LEAN_SEAT_TOOLS.has(name), `${name} is NOT a named LEAN_SEAT_TOOLS member — the table tracks what the pinned eve mounts`);
@@ -187,7 +187,7 @@ ok(!allowedOnWorkerSeat("stand_down"), "🔴 OPE-877: a worker does NOT hold sta
 ok(allowedOnLeanSeat("stand_down"), "…and the SEAT still holds stand_down — it is the only session a human can address 'stop following this' to");
 ok(!allowedOnWorkerSeat("no_reply"), "🔴 OPE-877: a worker does NOT hold no_reply — it discharges a REPLY obligation a worker does not have, and on the native route the worker's last message IS its report, so a turn ending in silence hands the seat nothing");
 ok(allowedOnLeanSeat("no_reply"), "…and the SEAT still holds no_reply — judged silence is a seat's normal output");
-for (const name of ["update_status", "task_update", "reply", "edit_reply", "react"]) {
+for (const name of ["update_status", "reply", "edit_reply", "react"]) {
   ok(allowedOnWorkerSeat(name), `the worker subtraction does NOT take ${name} — neither admission test admits it`);
 }
 ok(!allowedOnWorkerSeat("read_channel"), "🔴 OPE-929: a worker does NOT hold read_channel — it is the CHAT surface's verb on the chat credential, and a worker holds the WORK surface under the domain's work grant");
@@ -326,7 +326,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), ["task_update"], "an unmarked wake's toolset is unchanged by OPE-301 — its only loss is the child-only `task_update` (OPE-564)");
+  eq(removedBy(before, toolset), [], "an unmarked wake's toolset is unchanged by OPE-301, and there is no longer a child-only verb to lose (eve 0.54.1 removed `task_update`)");
   ok(GRANT_DECOYS.every((d) => d in toolset), "…and every grant look-alike SURVIVES an unmarked wake — nothing but the lean filter removes them");
 });
 

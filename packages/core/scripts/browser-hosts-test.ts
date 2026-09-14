@@ -12,11 +12,16 @@ import {
   type BrowserHostDeclaration,
 } from "../agent/access/browser-hosts.js";
 import { GIT_BROKER_HOSTS } from "../agent/access/reserved-hosts.js";
-import { assertEvaluateArmedFor, currentBrowseHost, registerBrowserToolkit, registeredBrowserToolkit, resetBrowseHostsForTest, resetBrowserToolkitForTest } from "../agent/access/browser-toolkit.js";
+import { assertEvaluateArmedFor, browserPlaneRefusal, currentBrowseHost, openBrowserEgressHosts, registerBrowserToolkit, registeredBrowserToolkit, resetBrowseHostsForTest, resetBrowserToolkitForTest } from "../agent/access/browser-toolkit.js";
+import { extraEgressHosts, resetExtraEgressHostsForTest } from "../agent/access/extra-hosts.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
   n++;
 };
 
@@ -217,4 +222,28 @@ const row = (extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaratio
   resetSettingsForTest();
 }
 
-console.log(`\n✓ browser-hosts: ${n} assertions passed (declaration lint + fail-closed boot + derived views + the two browser_evaluate walls)\n`);
+{
+  const saved = process.env.OE_PLATFORM;
+  try {
+    resetExtraEgressHostsForTest();
+    process.env.OE_PLATFORM = "self-host";
+    ok(browserPlaneRefusal() !== undefined, "fixture check: the plane refuses on this platform");
+    ok(openBrowserEgressHosts(["qa.example.com", "preview.example.com"]) === false, "🔴 off-Vercel the opener REFUSES, and says so in its return value");
+    eq(extraEgressHosts(), [], "🔴 …and opens NO host — the firewall reach is byte-identical to flag-off");
+
+    process.env.OE_PLATFORM = "vercel";
+    ok(openBrowserEgressHosts(["qa.example.com", "preview.example.com"]) === true, "negative control: ON Vercel the same call opens them");
+    eq(extraEgressHosts(), ["qa.example.com", "preview.example.com"], "negative control: …and both hosts are in the reach table");
+
+    process.env.VERCEL = "";
+    process.env.OE_PLATFORM = "vercel";
+    ok(browserPlaneRefusal() === undefined, "🔴 OE_PLATFORM=vercel makes the plane arm off Vercel — the operator's choice, stated in docs/capabilities/browser-qa.md");
+    resetExtraEgressHostsForTest();
+  } finally {
+    if (saved === undefined) delete process.env.OE_PLATFORM;
+    else process.env.OE_PLATFORM = saved;
+    resetExtraEgressHostsForTest();
+  }
+}
+
+console.log(`\n✓ browser-hosts: ${n} assertions passed (declaration lint + fail-closed boot + derived views + the two browser_evaluate walls + the plane's platform-gated egress opener)\n`);

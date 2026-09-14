@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -116,6 +117,7 @@ export default defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that webhook"));
@@ -216,7 +218,7 @@ export default defineTool({
         kind: "webhook.declare",
         args: {
           org: p.org,
-          scopeKey: p.surfaceKey,
+          scopeKey: proposeScopeKey,
           requestId: randomUUID(),
           declaration,
           requestedBy,
@@ -225,7 +227,7 @@ export default defineTool({
           threadTs: binding.threadTs ?? null,
           configRepo: cfg.configRepo,
         },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

@@ -49,13 +49,15 @@ const requireEve = createRequire(import.meta.url);
 const eveRoot = dirname(requireEve.resolve("eve/package.json"));
 const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
 const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown): { execute: { closure: Record<string, unknown> } };
+  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
 };
 const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(toolName: string, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
+  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
 };
+const ownerFor = (name: string): Record<string, unknown> => ({ sessionId: "sess-credential-grant-borrow", scope: "session", resolverSlug: name, entryKey: "_single", name });
+
 const boundExecute = (name: string): ((closure: Record<string, unknown>, input: unknown, ctx: unknown) => unknown) => {
-  const cb = durable.lookupDurableDynamicCallback(name, "execute");
+  const cb = durable.lookupDurableDynamicCallback(ownerFor(name), "execute");
   assert.ok(typeof cb === "function", `eve bound one execute callback under ${name}`);
   return cb as (closure: Record<string, unknown>, input: unknown, ctx: unknown) => unknown;
 };
@@ -183,7 +185,7 @@ console.log("2. two rows in one chat pinned to one name:");
     eq(pinnedPageId(mounted[NAME]), "FIRST-PAGE", `[${label}] the FIRST-MINTED grant holds the name — read off the schema constant, which is the value the fence compares`);
     ok(descriptionOf(mounted[NAME]).includes("First brief"), `[${label}] …and the description shows the FIRST grant's own target label`);
     ok(!descriptionOf(mounted[NAME]).includes("Second brief"), `[${label}] …and the later grant's narrowing is nowhere in what the model reads`);
-    lifecycle.validateDurableDynamicToolCallbacks(NAME, mounted[NAME]);
+    lifecycle.validateDurableDynamicToolCallbacks(NAME, mounted[NAME], ownerFor(NAME));
     assert.throws(
       () => boundExecute(NAME)({ entryKey: "grant-second" }, {}, seatCtx(SCOPE)),
       /no variant key in its durable closure/u,
@@ -281,9 +283,9 @@ console.log("6. two chats, one pinned name, the installed eve:");
   await store.addCredentialGrant(ORG, chatB);
 
   const mountedA = mountGrantEntries([chatA])[NAME];
-  const aClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedA).execute.closure;
+  const aClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedA, ownerFor(NAME)).execute.closure;
   const mountedB = mountGrantEntries([chatB])[NAME];
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedB);
+  lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedB, ownerFor(NAME));
   eq(aClosure, { entryKey: "grant-chat-a" }, "eve persists the GRANT ID in chat A's durable closure");
 
   const bound = boundExecute(NAME);

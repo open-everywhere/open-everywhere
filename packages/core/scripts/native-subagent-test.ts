@@ -288,18 +288,16 @@ function inSession<T>(fn: () => T): T {
   });
 
   const { setWorkerWake } = await import("../agent/access/worker-seat-state.js");
-  const { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } = await import("../agent/access/background-tasks.js");
+  const { TASK_PARENT_TOOL_NAMES } = await import("../agent/access/background-tasks.js");
   const makeTaskToolset = () => ({
     agent: { execute: () => undefined },
     reply: { execute: () => undefined },
     task_peek: { execute: () => undefined },
     task_cancel: { execute: () => undefined },
     task_sleep: { execute: () => undefined },
-    task_update: { execute: () => undefined },
   });
 
-  eq([...TASK_PARENT_TOOL_NAMES], ["task_peek", "task_cancel", "task_sleep"], "🔴 D6 TASKS: the PARENT list is eve's own root-only set — `shouldHideDelegationTool` reads `name !== task_update && TASK_TOOL_NAMES.has(name)`");
-  eq(TASK_CHILD_TOOL_NAME, "task_update", "🔴 D6 TASKS: `task_update` is the CHILD's own progress verb — measured as the delegated child's ENTIRE roster (OPE-555 T1)");
+  eq([...TASK_PARENT_TOOL_NAMES], ["task_peek", "task_cancel", "task_sleep"], "🔴 D6 TASKS: the PARENT list is eve's own root-only set — `shouldHideTool` (`harness/advertised-tools.js`) hides a `root-session` tool wherever a rootSessionId exists");
 
   inSession(() => {
     setNativeDelegationSeat("allow");
@@ -309,7 +307,7 @@ function inSession<T>(fn: () => T): T {
     eq(
       Object.keys(toolset).sort(),
       ["agent", "reply", "task_cancel", "task_peek", "task_sleep"],
-      "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and all three parent lifecycle verbs, and LOSES `task_update` — a seat writing progress onto a task row it does not own is writing about nothing",
+      "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and all three parent lifecycle verbs — the verbs that read back and stop work THIS seat started",
     );
   });
 
@@ -321,7 +319,7 @@ function inSession<T>(fn: () => T): T {
     eq(
       Object.keys(toolset).sort(),
       ["reply"],
-      "🔴 D6 TASKS, NON-DELEGATING SEAT: `agent` and all four `task_*` verbs go — read-back and cancel of work this seat could never have started are dead weight, and dead weight on an unclassified seat is the OPE-421 inversion",
+      "🔴 D6 TASKS, NON-DELEGATING SEAT: `agent` and all three `task_*` verbs go — read-back and cancel of work this seat could never have started are dead weight, and dead weight on an unclassified seat is the OPE-421 inversion",
     );
   });
 
@@ -339,8 +337,8 @@ function inSession<T>(fn: () => T): T {
     projectToolSet(toolset as unknown as Record<string, unknown>);
     eq(
       Object.keys(toolset).sort(),
-      ["reply", "task_update"],
-      "🔴 D6 TASKS, WORKER: a delegated child keeps ONLY `task_update` out of the family — which is eve's own `shouldHideDelegationTool` answer, reached independently",
+      ["reply"],
+      "🔴 D6 TASKS, WORKER: a delegated child keeps NOTHING of the task family — it loses the three parent verbs, and eve 0.54.1 removed the child's own `task_update`. Its return leg `reply` survives",
     );
   });
 
@@ -612,10 +610,10 @@ function inSession<T>(fn: () => T): T {
     );
 
     const subagentTool = dist("subagents/tool.js");
-    const authParam = /,auth:(\w+),batchEvent:/.exec(subagentTool);
+    const authParam = /function buildSubagentRunInput\(\w+\)\{let\{action:\w+,auth:(\w+)[,}]/.exec(subagentTool);
     ok(authParam !== null, "🔴 D9 TRIPWIRE 4/4a: `buildSubagentRunInput` still destructures an `auth` input");
     ok(
-      authParam !== null && subagentTool.includes(`,auth:${authParam[1]},capabilities:`),
+      authParam !== null && new RegExp(`\\{kind:SUBAGENT_ADAPTER_KIND,state:\\w+\\},auth:${authParam[1]}[,}]`).test(subagentTool),
       "🔴 D9 TRIPWIRE 4/4b: …and puts it into the child's `runInput.auth` verbatim, with no filtering of the attributes bag",
     );
 

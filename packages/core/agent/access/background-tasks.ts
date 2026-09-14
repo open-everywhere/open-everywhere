@@ -1,8 +1,6 @@
-export const TASK_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep", "task_update"];
+export const TASK_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep"];
 
 export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep"];
-
-export const TASK_CHILD_TOOL_NAME = "task_update";
 
 const TASK_PEEK_TOOL = "task_peek";
 const TASK_CANCEL_TOOL = "task_cancel";

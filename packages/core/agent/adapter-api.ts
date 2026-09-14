@@ -110,7 +110,7 @@ export type { SelfHostBackendKind } from "./sandbox/backend-select.js";
 
 export { isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
 
-export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
+export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, browserPlaneRefusal, openBrowserEgressHosts, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
 export type { BrowserToolEntry } from "./access/browser-toolkit.js";
 
 export { browserHostDeclarations, isLoopbackBrowseHost, _setBrowserHostsForTest, resetBrowserHostsForTest } from "./access/browser-hosts.js";
@@ -307,7 +307,7 @@ export type {
   ParityProblem,
 } from "./identity/surface-parity.js";
 
-export { registerPostArm, registeredPostArmPlatforms } from "./channels/post-arms.js";
+export { registerPostArm, registeredPostArmPlatforms, unifiedActionCapablePlatforms } from "./channels/post-arms.js";
 export type { PostArm, PostIntent, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery, DirectMessageAction, ReactTarget } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
@@ -592,7 +592,8 @@ export type {
   BuiltInWakeAnswer,
 } from "./channels/wake-arm.js";
 
-export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope } from "./channels/context-render.js";
+export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope, hydrationSlices } from "./channels/context-render.js";
+export type { HydrationSlices } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
 export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp, SEAT_CATCH_UP_ACTION } from "./channels/seat-catch-up.js";
@@ -601,8 +602,8 @@ export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatch
 export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, admitContextLines, DEFAULT_ADMISSION } from "./channels/seat-admission.js";
 export type { SeatAdmissionFn, SeatAdmissionCandidate } from "./channels/seat-admission.js";
 
-export { buildTail, selectTail, tailEntryToWakeMessage, approxEntryTokens, tailTokenCap, SESSION_TAIL_MAX_ENTRIES } from "./channels/session-tail.js";
-export type { SessionTailEntry } from "./channels/session-tail.js";
+export { buildTail, selectTail, tailEntryToWakeMessage, tailAuthorGrain, approxEntryTokens, tailTokenCap, SESSION_TAIL_MAX_ENTRIES } from "./channels/session-tail.js";
+export type { SessionTailEntry, SessionTailWakeRow } from "./channels/session-tail.js";
 export { recordWakeTail, recordPostTail, carryTailForward, seedTailWindow } from "./channels/session-tail-record.js";
 
 export {

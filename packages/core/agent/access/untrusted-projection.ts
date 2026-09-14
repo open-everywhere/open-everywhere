@@ -10,7 +10,7 @@ import { currentWorkerWake } from "./worker-seat-state.js";
 import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
-import { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
+import { TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 import { refuseAgentContinuation } from "./worker-continuation.js";
 import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
 import { auditWorkerToolset } from "../audit/worker-toolset.js";
@@ -100,9 +100,6 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
     for (const name of TASK_PARENT_TOOL_NAMES) {
       if (toolset[name] !== undefined) delete toolset[name];
     }
-  }
-  if (!workerWake && toolset[TASK_CHILD_TOOL_NAME] !== undefined) {
-    delete toolset[TASK_CHILD_TOOL_NAME];
   }
 
   refuseAgentContinuation(toolset);

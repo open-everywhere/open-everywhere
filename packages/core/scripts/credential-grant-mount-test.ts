@@ -258,23 +258,26 @@ const require2 = createRequire(import.meta.url);
 const eveRoot = dirname(require2.resolve("eve/package.json"));
 const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
 const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown): { execute: { closure: Record<string, unknown> } };
+  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
 };
 const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(toolName: string, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
+  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
 };
+const ownerFor = (name: string): Record<string, unknown> => ({ sessionId: "sess-credential-grant-mount", scope: "session", resolverSlug: name, entryKey: "_single", name });
+
 
 {
   const NAME = "grant__pat__read_page";
   const alpha: ReplayableToolEntry = { execute: () => "GRANT-ALPHA" };
   const beta: ReplayableToolEntry = { execute: () => "GRANT-BETA" };
   registerDynamicVariant(NAME, "grant-alpha", alpha);
-  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha).execute.closure;
+  const variantOwner = ownerFor(NAME);
+  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha, variantOwner).execute.closure;
   registerDynamicVariant(NAME, "grant-beta", beta);
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta);
+  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta, variantOwner);
   eq(alphaClosure, { entryKey: "grant-alpha" }, "eve persists the GRANT ID in session A's durable closure");
-  const bound = durable.lookupDurableDynamicCallback(NAME, "execute");
-  ok(typeof bound === "function", "eve bound one callback under (grant__pat__read_page, execute)");
+  const bound = durable.lookupDurableDynamicCallback(variantOwner, "execute");
+  ok(typeof bound === "function", "eve bound one callback under the mounted name's owner scope");
   eq(bound!(alphaClosure), "GRANT-ALPHA", "a replay driven from session A's closure runs session A's GRANT, though session B registered LAST");
   eq(bound!({ entryKey: "grant-beta" }), "GRANT-BETA", "…and session B's closure still runs session B's grant");
   assert.throws(() => bound!({}), /no variant key in its durable closure/u, "a closure with no grant id FAILS CLOSED — guessing which credential to spend is the defect this exists for");
@@ -287,9 +290,10 @@ const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
   const beta: ReplayableToolEntry = { execute: () => "GRANT-BETA" };
   preRegisterDynamicEntry(NAME, NAME, alpha);
   preRegisterDynamicEntry(NAME, NAME, beta);
-  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta);
-  const bound = durable.lookupDurableDynamicCallback(NAME, "execute");
+  const collidedOwner = ownerFor(NAME);
+  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha, collidedOwner).execute.closure;
+  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta, collidedOwner);
+  const bound = durable.lookupDurableDynamicCallback(collidedOwner, "execute");
   eq(bound!(alphaClosure), "GRANT-BETA", "the pre-fix shape runs the WRONG grant from session A's closure — the measured defect, reproduced with a credential behind it");
 }
 

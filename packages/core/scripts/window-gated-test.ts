@@ -304,7 +304,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
   const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
   };
   const replayed = lifecycle.replayDynamicSessionTools(
     [
@@ -318,6 +318,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
       },
     ],
     [],
+    "sess-window-gated-replay",
   );
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
@@ -347,6 +348,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
       },
     ],
     [],
+    "sess-window-gated-replay",
   );
   eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
   const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
@@ -462,7 +464,14 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
     /,name:(\w+)\.name,execution:\1\.execution,/.test(life6),
     "…and replay carries the tool's own `execution` mode through from that metadata too, so a background dynamic tool stays background across a replay",
   );
-  ok(/toModelOutput:(\w+)=>\{if\(\w+===void 0\)throw missingCallbackError/.test(life6), "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946");
+  ok(
+    /bindDynamicCallback\((\w+),(\w+),`toModelOutput`,\1\.callbacks\.toModelOutput\)/.test(life6),
+    "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946",
+  );
+  ok(
+    /function bindDynamicCallback\(\w+,\w+,\w+,(\w+)\)\{if\(\1===void 0\)return;let (\w+)=lookupDurableDynamicCallback\([^)]*\);return\(\.\.\.\w+\)=>\{if\(\2===void 0\)throw missingCallbackError/.test(life6),
+    "…and the shared binder still THROWS on an absent binding — a replayed projection fails loudly rather than passing the raw output through unfenced",
+  );
 }
 
 {

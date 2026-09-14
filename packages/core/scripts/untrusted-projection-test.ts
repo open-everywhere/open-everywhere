@@ -28,6 +28,9 @@ const eveRoot = dirname(require.resolve("eve/package.json"));
 const lifecycle = await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href);
 const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
 const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
+const contextKeys = (await import(pathToFileURL(join(eveRoot, "dist/src/context/keys.js")).href)) as {
+  SessionIdKey: unknown;
+};
 const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
 const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/tools/durable-callbacks.js")).href)) as {
   stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: (c: Record<string, unknown>, ...a: never[]) => unknown; closure: Record<string, unknown> }): T;
@@ -49,6 +52,7 @@ const TOOL_BRAND = Symbol.for("eve:tool-brand");
 function makeCtx() {
   const durable = new Map<unknown, unknown>();
   const virtual = new Map<unknown, unknown>();
+  durable.set(contextKeys.SessionIdKey, "s-untrusted-projection");
   return {
     get: (k: unknown) => (virtual.has(k) ? virtual.get(k) : durable.get(k)),
     set: (k: unknown, v: unknown) => durable.set(k, v),
@@ -156,7 +160,7 @@ interface BuiltTool {
   const projected = await toolset["parity_tool"].toModelOutput!({ output: { body: "RAW" }, toolCallId: "c-parity" });
   ok(
     projected.type === "text" && projected.value === "EVE-CARRIED(RAW)",
-    "🔴 1D: eve 0.52.2 carries the AUTHORED projection through replay with NO OE arm on the toolset — this is what the retired registered-names replace arm was compensating for (OPE-378). A red here means every dynamic read tool's envelope is missing from the model-visible bytes.",
+    "🔴 1D: eve 0.54.3 carries the AUTHORED projection through replay with NO OE arm on the toolset — this is what the retired registered-names replace arm was compensating for (OPE-378). A red here means every dynamic read tool's envelope is missing from the model-visible bytes.",
   );
 
   const bare = eveDefineTool({

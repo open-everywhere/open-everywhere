@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { assertChatDmAllowed, chatDmMount, PERSON_RESOURCE_TYPE } from "../access/chat-dm-grant.js";
@@ -56,6 +57,7 @@ const dmPersonEntry = defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("dm_person needs a verified sender — no principal id resolved, so there is nobody to name as the person who asked for this message.");
@@ -92,7 +94,7 @@ const dmPersonEntry = defineTool({
 
     const args: ChatDmArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       platform: target.platform,
       principalId: target.principalId,
       grant: target.address,
@@ -107,7 +109,7 @@ const dmPersonEntry = defineTool({
         org: p.org,
         kind: "chat.dm",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

@@ -16,7 +16,8 @@ import {
   type WakeTrust,
   type IngestedChatMessage,
   type WakeMessageInput,
-  type SessionTailEntry,
+  tailAuthorGrain,
+  type SessionTailWakeRow,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
 
@@ -199,7 +200,7 @@ export interface GitHubSupervisorSession {
 export interface GitHubSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, owner: string, repo: string, atIso: string) => Promise<GitHubSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
-  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailWakeRow, token: string, surfaceKey: string) => Promise<void>;
 
   readonly wake: (input: {
     token: string;
@@ -270,6 +271,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
         at: atIso,
         from: "human",
         trust: d.trigger.trust,
+        ...tailAuthorGrain(d.ingested[0] ?? { trust: d.trigger.trust }),
         author: d.trigger.authorLogin ?? "unknown",
         ...(d.trigger.authorLogin ? { authorId: d.trigger.authorLogin } : {}),
         id: d.trigger.id,

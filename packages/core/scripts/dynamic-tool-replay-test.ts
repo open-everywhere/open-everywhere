@@ -12,7 +12,8 @@ delete process.env.OE_PLATFORM;
 
 import { replayStepNames } from "../agent/access/window-gated.js";
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
-import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
+import { openBrowserEgressHosts, registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
+import { extraEgressHosts, resetExtraEgressHostsForTest } from "../agent/access/extra-hosts.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest, resetSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
@@ -114,8 +115,8 @@ const CASES: readonly ToolCase[] = [
     ctx: slackCtx,
     env: { OE_TRANSCRIPT_RELAY_SECRET: "fixture-relay-secret", OE_PUBLIC_BASE_URL: "https://fixture.invalid" },
   },
-  { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx },
-  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx },
+  { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx, env: { OE_PLATFORM: "vercel" } },
+  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx, env: { OE_PLATFORM: "vercel" } },
   { slug: "read_work_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_work_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "check_pr_status", entryKey: "_single", ctx: slackCtx },
@@ -205,13 +206,35 @@ for (const c of CASES) {
   }
 }
 
+console.log("3b. the off-Vercel replay arms nothing:");
+{
+  const saved = process.env.OE_PLATFORM;
+  try {
+    process.env.OE_PLATFORM = "self-host";
+    resetExtraEgressHostsForTest();
+    const resolved = (await resolvers.get("browser_tools")!({}, taskCtx)) as Record<string, unknown> | null;
+    ok(resolved === null, "🔴 off-Vercel the browser_tools resolver mounts NOTHING on the SAME wide-hands session that arms it on Vercel");
+    ok(openBrowserEgressHosts(["qa.example.com"]) === false, "🔴 …and the plane's egress opener refuses, so the declared host never reaches the firewall");
+    ok(extraEgressHosts().length === 0, "…leaving the reach table empty");
+
+    process.env.OE_PLATFORM = "vercel";
+    const rearmed = (await resolvers.get("browser_tools")!({}, taskCtx)) as Record<string, unknown> | null;
+    ok(rearmed !== null && "browser_navigate" in rearmed, "negative control: declaring the platform vercel re-arms the same resolver on the same session");
+  } finally {
+    if (saved === undefined) delete process.env.OE_PLATFORM;
+    else process.env.OE_PLATFORM = saved;
+    resetExtraEgressHostsForTest();
+  }
+}
+
 console.log("4. installed-eve replay (no skip):");
 {
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
   const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
   };
+  const REPLAY_SESSION_ID = "sess-dynamic-tool-replay";
   const meta = CASES.map((c) => ({
     name: c.slug,
     description: `replay ${c.slug}`,
@@ -220,7 +243,7 @@ console.log("4. installed-eve replay (no skip):");
     entryKey: c.entryKey,
     callbacks: { execute: { closure: {} } },
   }));
-  const replayed = lifecycle.replayDynamicSessionTools(meta, []);
+  const replayed = lifecycle.replayDynamicSessionTools(meta, [], REPLAY_SESSION_ID);
   eq(replayed.length, CASES.length, `eve's replay path mounts ALL ${CASES.length} durable rows back into tools`);
 }
 
@@ -232,7 +255,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
   const distUrl = (rel: string): string => pathToFileURL(join(distSrc, rel)).href;
   const nativeLifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
     dispatchDynamicToolEvent(e: unknown): Promise<void>;
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
   };
   const nativeKeys = (await import(distUrl("context/keys.js"))) as {
     SessionIdKey: unknown;
@@ -243,7 +266,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
   };
   const { ChannelKey } = (await import(distUrl("runtime/sessions/runtime-context-keys.js"))) as { ChannelKey: unknown };
   const nativeDurable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-    lookupDurableDynamicCallback(toolName: string, phase: string): ((c: Record<string, unknown>, ...a: unknown[]) => unknown) | undefined;
+    lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((c: Record<string, unknown>, ...a: unknown[]) => unknown) | undefined;
   };
 
   interface FixtureCtx {
@@ -293,12 +316,13 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
         `${c.slug}:${c.entryKey} persists the descriptor's closure and nothing else`,
       );
       ok(!("stepId" in row.callbacks.execute), `${c.slug}:${c.entryKey} …and carries NO stepId — that key is refused as the pre-release shape`);
-      ok(!JSON.stringify(row.callbacks.execute).includes(sessionId), `${c.slug}:${c.entryKey} …and names no session, so a fresh invocation rebinds the same identity`);
+      ok(!JSON.stringify(row.callbacks.execute).includes(sessionId), `${c.slug}:${c.entryKey} …and the PERSISTED closure names no session — the row is portable even though the live binding is not`);
+      const owner = { ...row, sessionId, scope: "session" } as unknown as Record<string, unknown>;
       ok(
-        typeof nativeDurable.lookupDurableDynamicCallback(row.name, "execute") === "function",
-        `${c.slug}:${c.entryKey} …and resolve BOUND the live callback under (${row.name}, execute) — the second half eve validates`,
+        typeof nativeDurable.lookupDurableDynamicCallback(owner, "execute") === "function",
+        `${c.slug}:${c.entryKey} …and resolve BOUND the live callback under (${row.name}, execute) in this session — the second half eve validates`,
       );
-      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row], []);
+      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row], [], sessionId);
       eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} eve replays the durable row back into a mounted tool`);
     } finally {
       for (const [k, v] of Object.entries(saved)) {

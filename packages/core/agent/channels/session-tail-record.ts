@@ -2,7 +2,7 @@ import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { noteGenerationForRetirement } from "./generation-retirement.js";
-import { buildTail, type SessionTailEntry } from "./session-tail.js";
+import { buildTail, type SessionTailWakeRow } from "./session-tail.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
 import { bareTokenFromEveContext, classifySessionId } from "./window-key.js";
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
@@ -54,7 +54,7 @@ export async function recordWakeTail(
   org: string,
   registryKey: string,
   token: string,
-  entry: SessionTailEntry,
+  entry: SessionTailWakeRow,
   store: OperationalStore = getOperationalStore(),
 ): Promise<void> {
   try {
@@ -82,6 +82,7 @@ export async function recordPostTail(
       at: post.at,
       from: "self",
       trust: "relay" satisfies WakeTrust,
+      refuted: false,
       author: "self",
       ...(post.platform ?? w.platform ? { platform: post.platform ?? w.platform } : {}),
       ...(w.container ? { container: w.container } : {}),

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
@@ -84,6 +85,7 @@ export default defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that agent"));
@@ -189,7 +191,7 @@ export default defineTool({
 
     const args: AgentCreateArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       requestId: randomUUID(),
       spec,
       requestedBy,

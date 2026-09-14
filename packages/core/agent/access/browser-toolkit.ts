@@ -5,6 +5,8 @@ import { currentSessionId, type BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
 import { browserEvaluateHosts } from "./browser-hosts.js";
+import { onVercel } from "./platform.js";
+import { registerExtraEgressHosts } from "./extra-hosts.js";
 
 export interface BrowserToolEntry {
   readonly description: string;
@@ -15,6 +17,24 @@ export interface BrowserToolEntry {
 }
 
 const BROWSER_TOOLS_SLUG = "browser_tools";
+
+export function browserPlaneRefusal(): string | undefined {
+  return onVercel()
+    ? undefined
+    : "the browser plane needs the Vercel Sandbox backend — the self-host image ships no Chromium, so nothing arms here (agent/access/browser-toolkit.ts).";
+}
+
+const BROWSER_EGRESS_SOURCE = "agent-browser";
+
+export function openBrowserEgressHosts(hosts: readonly string[]): boolean {
+  const refusal = browserPlaneRefusal();
+  if (refusal !== undefined) {
+    console.error(`[open-everywhere:agent-browser] NOT opening ${hosts.length} declared egress host(s): ${refusal}`);
+    return false;
+  }
+  registerExtraEgressHosts(BROWSER_EGRESS_SOURCE, hosts);
+  return true;
+}
 
 export const BROWSER_TOOL_NAMES = [
   "browser_navigate",
@@ -193,6 +213,7 @@ export function resetBrowserToolkitForTest(): void {
 }
 
 export function resolveBrowserKit(grain: WindowGrain): Readonly<Record<string, BrowserToolEntry>> | null {
+  if (browserPlaneRefusal() !== undefined) return null;
   if (registered === undefined || Object.keys(registered).length === 0) return null;
   return fullKit().includes(grain) ? registered : null;
 }

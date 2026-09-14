@@ -19,7 +19,8 @@ import {
   type WakeMessageInput,
   type WakeTrust,
   type UnifiedWindowWake,
-  type SessionTailEntry,
+  tailAuthorGrain,
+  type SessionTailWakeRow,
   seatCatchUpSinceMs,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
@@ -182,7 +183,7 @@ export interface NotionSupervisorDeps {
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
   readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
   readonly markEngaged?: (d: NotionSupervisorDispatch) => Promise<void>;
-  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailWakeRow, token: string, surfaceKey: string) => Promise<void>;
 
   readonly wake: (input: {
     token: string;
@@ -329,6 +330,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
         at: atIso,
         from: d.trigger.from,
         trust: d.trigger.trust,
+        ...tailAuthorGrain(ingested[0] ?? { trust: d.trigger.trust }),
         author: d.trigger.authorId ?? "unknown",
         ...(d.trigger.authorId ? { authorId: d.trigger.authorId } : {}),
         id: d.trigger.id,

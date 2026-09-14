@@ -6,7 +6,7 @@ import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, cur
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { WAKE_INGRESS_ACTION, wakeIngressDetail } from "./wake-timing.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { canPostUnifiedActions } from "./post-arms.js";
@@ -370,7 +370,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
-    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing);
+    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing, t.surfaceKey);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     await drainGenerationRetirements(from, { org, incomingToken: t.token }, { labelsFor: auditLabels });
     const answerText = typeof input.message === "string" ? input.message : undefined;
@@ -743,7 +743,7 @@ export async function divertToUnifiedWindow(
   rememberUnifiedReceive(receive);
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
   const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
-  const replyAnchor = input.window.origin.platform === "slack" ? input.window.origin.replyAnchorTs : undefined;
+  const replyAnchor = unifiedPlacementRef(input.window.origin);
   const deliveryId = mintWakeId();
   const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor, deliveryId);
   try {

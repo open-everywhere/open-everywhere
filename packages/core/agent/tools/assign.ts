@@ -4,6 +4,7 @@ import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
@@ -65,6 +66,7 @@ export const assignEntry = defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => domains);
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "assign that ticket"));
@@ -77,7 +79,7 @@ export const assignEntry = defineTool({
 
     const args: TicketAssignArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       platform: ref.platform,
       entityId: ref.id,
       ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
@@ -92,7 +94,7 @@ export const assignEntry = defineTool({
         org: p.org,
         kind: "ticket.assign",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

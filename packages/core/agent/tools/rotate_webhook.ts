@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
@@ -49,6 +50,7 @@ export default defineTool({
     }
 
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const id = input.source.trim().toLowerCase();
     const declared = findWebhook(getConfig().loadWebhooks?.() ?? [], id);
     if (!declared) {
@@ -79,7 +81,7 @@ export default defineTool({
           platform: binding.platform,
           channelId,
         },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId,

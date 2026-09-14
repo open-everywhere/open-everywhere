@@ -5,6 +5,7 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
@@ -34,6 +35,7 @@ export default windowGated("delete_skill", defineTool({
     const domain = resolved.domain;
     const name = input.name.trim();
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
 
     const existing = await listDomainSkills(p.org, domain);
     if (!existing.some((s) => s.name === name)) {
@@ -57,7 +59,7 @@ export default windowGated("delete_skill", defineTool({
         org: p.org,
         kind: "skill.delete",
         args: { org: p.org, domain, name, requestedBy },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain,
         requestedBy,
         channelId: venue.channelId,

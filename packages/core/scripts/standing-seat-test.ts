@@ -14,8 +14,12 @@ import {
 } from "../agent/memory/domain.js";
 import { supervisorGrainFor, grainUsesUnifiedWindow, unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitContextLines, DEFAULT_ADMISSION, SEAT_ADMISSION_FUNCTIONS } from "../agent/channels/seat-admission.js";
-import { contextLinesNotInEnvelope, type ContextLine } from "../agent/channels/context-render.js";
+import { capLines, contextLinesNotInEnvelope, hydrationSlices, MAX_MESSAGES, type ContextLine } from "../agent/channels/context-render.js";
+import { mkMessageTrigger, renderWake } from "../agent/channels/normalized-wake.js";
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fetchedBackscroll, seatCatchUpSinceMs, type NormalizedMessage } from "../agent/channels/backscroll-window.js";
 import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/ambient-skip.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -253,6 +257,116 @@ console.log("7 — contextLinesNotInEnvelope (catch-up ∩ hydration):");
     ["20", "10"],
     "🔴 the exemption is per line: the refuted line and the older line stay, the overlapping member line goes",
   );
+}
+
+console.log("8 — hydrationSlices (the ORDER) + per-surface parity through renderWake:");
+{
+  const CAP = MAX_MESSAGES;
+  const line = (ts: string, text: string): ContextLine => ({ senderType: "user", senderId: "U1", ts, text });
+  const sibling = (id: string, body: string): WakeMessageInput => ({ from: "human", author: "U1", id, sentAt: "2026-09-13T10:00:00.000Z", trust: "peer", body });
+
+  const hydration: readonly ContextLine[] = Array.from({ length: 15 }, (_, i) => line(`${i + 1}`, `message ${i + 1}`));
+  const envelope: readonly WakeMessageInput[] = hydration.slice(-5).map((l) => sibling(l.ts, l.text));
+
+  const slices = hydrationSlices(hydration, envelope, { maxMessages: CAP });
+  eq(slices.rendered.length, CAP, `🔴 the rendered slice FILLS the cap (${CAP}) — de-duplicate first, cap second`);
+  eq(
+    slices.rendered.map((l) => l.ts),
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+    "🔴 …and it is the ten most recent NON-DUPLICATE lines, oldest first — the older conversation the envelope never carried",
+  );
+  ok(
+    slices.rendered.every((l) => !envelope.some((m) => m.id === l.ts)),
+    "no rendered line is a message the envelope already carries — the de-duplication still holds",
+  );
+
+  eq(capLines(hydration, { maxMessages: CAP }).filter((l) => !envelope.some((m) => m.id === l.ts)).length, 5, "negative control: cap-THEN-de-duplicate renders 5 of 10 — the shallow block this order removes");
+
+  eq(slices.ingested.map((l) => l.ts), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"], "the join keeps every line the envelope replaced (its bytes DID enter, through that sibling)");
+  {
+    const noOverlap = hydrationSlices(hydration, [sibling("999", "unrelated")], { maxMessages: CAP });
+    eq(noOverlap.rendered.map((l) => l.ts), ["6", "7", "8", "9", "10", "11", "12", "13", "14", "15"], "with no overlap the cap keeps the ten most recent");
+    eq(noOverlap.ingested.map((l) => l.ts), noOverlap.rendered.map((l) => l.ts), "🔴 a CAP-dropped line leaves the join — nothing rendered it and no envelope sibling replaced it");
+  }
+  {
+    const withBlank = hydrationSlices([line("1", "   "), line("2", "real")], [], { maxMessages: CAP });
+    eq(withBlank.rendered.map((l) => l.ts), ["2"], "an empty-text line does not render");
+    eq(withBlank.ingested.map((l) => l.ts), ["2"], "…and does not join either");
+  }
+  eq(hydrationSlices(slices.rendered, envelope, { maxMessages: CAP }).rendered.map((l) => l.ts), slices.rendered.map((l) => l.ts), "🔴 applying the road twice changes nothing — renderWake can re-apply it safely");
+
+  for (const platform of ["slack", "discord", "teams", "github", "notion", "linear", "slack-dm"]) {
+    const rendered = renderWake(
+      {
+        platform,
+        reason: "mention",
+        addressing: "name-drop",
+        locus: { channel: { id: "C1", type: "channel" } },
+        trigger: mkMessageTrigger(sibling("trigger", "what's the status?")),
+        backscroll: envelope,
+        contextLines: hydration,
+        contextSource: `${platform} room`,
+        readMoreHint: "Read more with read_channel.",
+      },
+      () => "2026-09-13T10:30:00.000Z",
+    );
+    const block = rendered.context?.[0] ?? "";
+    const shown = hydration.filter((l) => block.includes(l.text));
+    eq(shown.length, CAP, `🔴 ${platform}: the context block renders ${CAP} lines — the cap is spent below the de-duplication`);
+    ok(
+      envelope.every((m) => !shown.some((l) => l.ts === m.id)),
+      `🔴 ${platform}: no line the envelope already carries is rendered again — one wake renders each message once`,
+    );
+    ok(block.includes("Read more with read_channel."), `${platform}: the read-more hint fires — the RENDERED slice filled the cap, which is the claim the hint makes`);
+  }
+  {
+    const thin = renderWake(
+      {
+        platform: "slack",
+        reason: "mention",
+        addressing: "name-drop",
+        locus: { channel: { id: "C1", type: "channel" } },
+        trigger: mkMessageTrigger(sibling("trigger", "what's the status?")),
+        backscroll: envelope,
+        contextLines: hydration.slice(-8),
+        contextSource: "slack room",
+        readMoreHint: "Read more with read_channel.",
+      },
+      () => "2026-09-13T10:30:00.000Z",
+    );
+    ok(!(thin.context?.[0] ?? "").includes("Read more with read_channel."), "negative control: a slice that does NOT fill the cap carries no read-more hint");
+  }
+
+  {
+    const providers = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "providers");
+    const ALLOWED: ReadonlyMap<string, string> = new Map([
+      ["slack/agent/channels/slack-context.ts", "the native (unseated) mention road — the wake carries no envelope siblings"],
+      ["slack/agent/channels/slack-wake-backscroll.ts", "the native wake's own backscroll render — same road, no envelope"],
+    ]);
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "node_modules" || e.name === "dist" || e.name === "scripts") continue;
+          walk(p);
+        } else if (e.name.endsWith(".ts")) {
+          const src = readFileSync(p, "utf8");
+          const rel = p.slice(p.indexOf("/providers/") + "/providers/".length);
+          for (const banned of ["capLines(", "contextLinesNotInEnvelope(", "renderContext("]) {
+            if (!src.includes(banned)) continue;
+            if (banned === "renderContext(" && ALLOWED.has(rel)) continue;
+            offenders.push(`${rel} → ${banned}`);
+          }
+        }
+      }
+    };
+    walk(providers);
+    eq(offenders, [], `🔴 no provider decides the cap-versus-de-duplication order itself, and no SEAT road renders its own context block — both go through core. Offenders: ${offenders.join(", ")}`);
+    for (const [rel, why] of ALLOWED) {
+      ok(readFileSync(join(providers, rel), "utf8").includes("renderContext("), `the allow-list entry for ${rel} is still live (${why})`);
+    }
+  }
 }
 
 console.log(`\nstanding-seat: ${n} assertions passed`);

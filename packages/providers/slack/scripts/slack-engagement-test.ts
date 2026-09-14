@@ -81,6 +81,7 @@ import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js
 import { renderWake } from "@open-everywhere/core/agent/adapter-api.js";
 import type { SeatCatchUpRequest, WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { hydrationSlices } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchWakeBackscrollLines, WAKE_BACKSCROLL_MAX, type WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
 import type { ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { overrideSettingsForTest, WITHHELD_BODY_MARKER } from "@open-everywhere/core/agent/adapter-api.js";
@@ -1419,23 +1420,27 @@ registerConfig({
       try {
         const membersOnlyThread = await hydrateThreadUnder("members-only");
         ok(
-          membersOnlyThread.length === WAKE_BACKSCROLL_MAX,
-          "🔴 members-only thread: the hydration fills the whole ten-line slot — a refused author's replies no longer eat it",
+          membersOnlyThread.length === 20,
+          `🔴 members-only thread: every admissible member reply survives the read — 20, not the ten a pre-admission cap left (got ${membersOnlyThread.length})`,
         );
         ok(
           membersOnlyThread.every((l) => l.senderId === MEMBER),
           "🔴 …with MEMBER replies only, fetched from ABOVE the ten the read used to cap to",
         );
-        ok(
-          membersOnlyThread[0].text === "member reply 11" && membersOnlyThread[9].text === "member reply 20",
-          "🔴 …and they are the ten MOST RECENT admissible replies, so the cap still keeps the tail",
-        );
         ok(!membersOnlyThread.some((l) => l.senderType === "unknown"), "…and no guest reply reaches the wake's context slot");
+        const membersOnlyRendered = hydrationSlices(membersOnlyThread, [], { maxMessages: WAKE_BACKSCROLL_MAX }).rendered;
+        ok(membersOnlyRendered.length === WAKE_BACKSCROLL_MAX, "🔴 …and the core cap fills the whole ten-line slot from them");
+        ok(
+          membersOnlyRendered[0].text === "member reply 11" && membersOnlyRendered[9].text === "member reply 20",
+          "🔴 …with the ten MOST RECENT admissible replies, so the cap still keeps the tail",
+        );
 
         const wideThread = await hydrateThreadUnder("wide");
-        ok(wideThread.length === WAKE_BACKSCROLL_MAX, "negative control: `wide` fills the same ten-line slot");
+        ok(wideThread.length === 30, `negative control: \`wide\` admits everything the thread leg read — all 30 (got ${wideThread.length})`);
+        const wideRendered = hydrationSlices(wideThread, [], { maxMessages: WAKE_BACKSCROLL_MAX }).rendered;
+        ok(wideRendered.length === WAKE_BACKSCROLL_MAX, "negative control: `wide` fills the same ten-line slot");
         ok(
-          wideThread.every((l) => l.senderType === "unknown"),
+          wideRendered.every((l) => l.senderType === "unknown"),
           "negative control: `wide` admits the guest, so the cap keeps the guest's ten most recent replies",
         );
 

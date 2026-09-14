@@ -155,6 +155,7 @@ async function roomSaid(atMs: number, container = SURFACE): Promise<void> {
     at: new Date(atMs).toISOString(),
     from: "human",
     trust: "principal",
+    refuted: false,
     author: "U1",
     authorId: "U1",
     platform: "slack",

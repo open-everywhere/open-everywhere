@@ -3,6 +3,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
@@ -282,7 +283,7 @@ const requestAccessEntry = defineTool({
             : undefined;
 
           const planned = planRequestAccess(binding, planCtx, input, {
-            scopeKey: partition.surfaceKey,
+            scopeKey: await proposalScopeKey(ctx, partition),
             channelId,
             configRepo: ar.configRepo,
             permalink,

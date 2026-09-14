@@ -2,6 +2,7 @@ import { ingestUntrusted, untrustedCloseTag, UNTRUSTED_OPEN } from "../access/un
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
+import type { AuthorTrustQuery } from "../identity/author-trust.js";
 
 export type WakeReason =
   | "channel-activity"
@@ -52,6 +53,8 @@ export interface WakeMessageInput {
   readonly sentAt: string;
   readonly trust: WakeTrust;
   readonly refuted?: boolean;
+  readonly authorTrust?: AuthorTrustQuery;
+  readonly ungraded?: boolean;
   readonly trigger?: boolean;
   readonly mention?: boolean;
   readonly edited?: boolean;

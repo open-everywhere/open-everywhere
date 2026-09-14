@@ -43,7 +43,9 @@ export function authorIsExcluded(m: IngestedChatMessage): boolean {
 }
 
 export function withholdsBody(m: IngestedChatMessage, policy: ExternalPolicy): boolean {
-  return policy.authorGrain === "withhold" && authorIsExcluded(m);
+  if (policy.authorGrain !== "withhold") return false;
+  if (authorIsExcluded(m)) return true;
+  return m.ungraded === true && m.trust !== "relay";
 }
 
 export const WITHHELD_BODY_MARKER =
@@ -99,12 +101,12 @@ export function ingestedAfterWithholding<M extends IngestedChatMessage>(
   policy: ExternalPolicy,
 ): readonly M[] {
   if (policy.authorGrain !== "withhold") return ingested;
-  const kept = ingested.filter((m) => !authorIsExcluded(m));
+  const kept = ingested.filter((m) => !withholdsBody(m, policy));
   return kept.length === ingested.length ? ingested : kept;
 }
 
 export function suppressesAddressedWake(m: IngestedChatMessage, policy: ExternalPolicy): boolean {
-  return withholdsBody(m, policy);
+  return policy.authorGrain === "withhold" && authorIsExcluded(m);
 }
 
 export function suppressesAmbientWake(m: IngestedChatMessage, policy: ExternalPolicy): boolean {

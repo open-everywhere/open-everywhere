@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routinePermissionGeneration } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -38,6 +39,7 @@ export default defineTool({
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "edit_routine");
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const id = input.id.trim();
     const prompt = input.prompt.trim();
 
@@ -89,7 +91,7 @@ export default defineTool({
           tainted,
           generation: routinePermissionGeneration(routine),
         },
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

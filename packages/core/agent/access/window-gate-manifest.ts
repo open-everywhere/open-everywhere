@@ -118,7 +118,6 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "load_skill",
   "connection_search",
   "task_cancel",
-  "task_update",
   "fresh_eyes_review",
 ]);
 

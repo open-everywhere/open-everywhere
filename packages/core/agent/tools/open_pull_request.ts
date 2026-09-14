@@ -3,6 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { principalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
@@ -89,6 +90,7 @@ export default windowGated("open_pull_request", defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("open_pull_request needs a verified sender to gate the publish — no principal id resolved, so there's no proposer to show on the approval card.");
@@ -160,7 +162,7 @@ export default windowGated("open_pull_request", defineTool({
     const sessionId = proposingSessionId(ctx);
     const args: PrOpenArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       repo: input.repo,
       head: input.head,
       base: input.base,
@@ -173,7 +175,7 @@ export default windowGated("open_pull_request", defineTool({
       ...(sessionId ? { sessionId } : {}),
     };
 
-    const halt = await resolveHalt(haltScopeFor({ org: p.org, scopeKey: p.surfaceKey, principalId: requestedBy }));
+    const halt = await resolveHalt(haltScopeFor({ org: p.org, scopeKey: proposeScopeKey, principalId: requestedBy }));
     const store = getOperationalStore();
     const memo = sessionMemoAdmissible({ sessionId, tainted, halted: halt.halted })
       ? await store.getSessionApproval(p.org, sessionId!, "pr.open", new Date().toISOString()).catch(() => null)
@@ -198,7 +200,7 @@ export default windowGated("open_pull_request", defineTool({
         org: p.org,
         kind: "pr.open",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

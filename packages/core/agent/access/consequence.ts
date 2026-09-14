@@ -214,9 +214,6 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
   connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
 
-  task_update: open(
-    "writes a one-line status message onto the CALLING task's own row — the same shape as record_job_state next door: bookkeeping about itself, located from the running task rather than a supplied id, aimed at nobody else",
-  ),
   task_cancel: open(
     "stops delegated work this session itself spawned — de-escalation only, the same posture as revoke_routine_permissions and stand_down. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal. It cannot reach another session's task: eve validates the ids against this session's own receipts",
   ),

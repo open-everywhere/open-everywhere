@@ -400,4 +400,65 @@ await new Promise((r) => setTimeout(r, 60));
   }
 }
 
+{
+  const { retargetTaskWakes } = await import("../agent/channels/task-wake.js");
+  const { sameUnifiedConversation, sameUnifiedPlacement, unifiedPlacementRef } = await import("../agent/channels/unified-window.js");
+
+  const ROOM_ASKED = { platform: "slack", channelId: "C_ROOM", replyAnchorTs: "900.1" } as const;
+  const ROOM_ASIDE = { platform: "slack", channelId: "C_ROOM", replyAnchorTs: "900.2" } as const;
+  const ROOM_UNPLACED = { platform: "slack", channelId: "C_ROOM" } as const;
+
+  ok(sameUnifiedConversation(ROOM_ASKED, ROOM_ASIDE), "P13 precondition: the two wakes ARE one conversation — this is why the old skip fired");
+  ok(!sameUnifiedPlacement(ROOM_ASKED, ROOM_ASIDE), "🔴 P13 precondition: …and they are NOT one placement — the axis the conversation test cannot see");
+  eq(unifiedPlacementRef(ROOM_ASKED), "900.1", "P13: the placement axis reads the Slack anchor through the codec, never a platform check in core");
+  eq(unifiedPlacementRef(ROOM_UNPLACED), undefined, "P13: an origin with no anchor names no placement — emptiness is absence");
+
+  const W_ASKED = "wake-p13-asked";
+  const W_ASIDE = "wake-p13-aside";
+  await registerUnifiedWakeTarget(store, ORG, W_ASKED, ROOM_ASKED, iso(), WINDOW);
+  await registerUnifiedWakeTarget(store, ORG, W_ASIDE, ROOM_ASIDE, iso(), WINDOW);
+
+  const T13 = "task-p13";
+  const W_TASK = "wake-p13-task";
+  await registerUnifiedWakeTarget(store, ORG, W_TASK, ROOM_ASIDE, iso(), WINDOW);
+  eq(
+    (await resolveUnifiedWakeTarget(store, ORG, W_TASK)) as unknown,
+    ROOM_ASIDE,
+    "🔴 P13 THE DEFECT, ASSERTED FIRST: the task is registered under the ASIDE wake's anchor — the message nobody is waiting under",
+  );
+
+  const moved = await retargetTaskWakes({ org: ORG, tasks: [{ taskId: T13, wakeId: W_TASK }], addressedWakeId: W_ASKED, windowToken: WINDOW, turnId: "turn_p13" });
+  eq(moved, 1, "🔴 P13 THE FIX: the re-point FIRED even though the two wakes are one conversation — the old `sameUnifiedConversation` skip returned 0 here");
+  eq(
+    (await resolveUnifiedWakeTarget(store, ORG, W_TASK)) as unknown,
+    ROOM_ASKED,
+    "🔴 P13 END TO END: the task's row now carries the ADDRESSED wake's placement — the worker's answer hangs under the message that asked for it",
+  );
+
+  const again = await retargetTaskWakes({ org: ORG, tasks: [{ taskId: T13, wakeId: W_TASK }], addressedWakeId: W_ASKED, windowToken: WINDOW, turnId: "turn_p13b" });
+  eq(again, 0, "P13: a re-point to the SAME conversation AND the same placement writes nothing — the skip is narrowed, not removed");
+
+  const W_ASKED_FLAT = "wake-p13-asked-flat";
+  const W_TASK2 = "wake-p13-task2";
+  await registerUnifiedWakeTarget(store, ORG, W_ASKED_FLAT, ROOM_UNPLACED, iso(), WINDOW);
+  await registerUnifiedWakeTarget(store, ORG, W_TASK2, ROOM_ASIDE, iso(), WINDOW);
+  await retargetTaskWakes({ org: ORG, tasks: [{ taskId: "task-p13b", wakeId: W_TASK2 }], addressedWakeId: W_ASKED_FLAT, windowToken: WINDOW, turnId: "turn_p13c" });
+  eq(
+    (await resolveUnifiedWakeTarget(store, ORG, W_TASK2)) as unknown,
+    ROOM_ASIDE,
+    "🔴 P13 CONTROL: the addressed wake carries no placement, so the row KEEPS its own — a carry fills a gap and never blanks one",
+  );
+
+  const W_ELSEWHERE = "wake-p13-elsewhere";
+  const W_TASK3 = "wake-p13-task3";
+  await registerUnifiedWakeTarget(store, ORG, W_ELSEWHERE, { platform: "slack", channelId: "C_ELSE" }, iso(), WINDOW);
+  await registerUnifiedWakeTarget(store, ORG, W_TASK3, ROOM_ASKED, iso(), WINDOW);
+  await retargetTaskWakes({ org: ORG, tasks: [{ taskId: "task-p13c", wakeId: W_TASK3 }], addressedWakeId: W_ELSEWHERE, windowToken: WINDOW, turnId: "turn_p13d" });
+  eq(
+    (await resolveUnifiedWakeTarget(store, ORG, W_TASK3)) as unknown,
+    { platform: "slack", channelId: "C_ELSE" },
+    "🔴 P13 CONTROL: a cross-conversation re-point carries NOTHING across — no anchor from the room it left",
+  );
+}
+
 console.log(`task-wake-identity: ${n} assertions passed`);

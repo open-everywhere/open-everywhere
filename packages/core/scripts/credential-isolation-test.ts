@@ -74,11 +74,30 @@ console.log(`credential-isolation: verifying against installed eve ${eveVersion}
 
 pinMatchSet(
   /\bresolveScopedToken\b/g,
-  ["execution/tool-auth.js", "runtime/connections/mcp-client.js", "runtime/connections/scoped-authorization.js"],
-  "modules touching a resolved connection token (resolveScopedToken)",
-  "The 'injection, not exposure' claim (docs/security/credentials-and-planes.md:41) was verified against exactly\n" +
-    "  three. Read each new site and confirm the token cannot reach the model or the sandbox BEFORE widening this list.",
+  ["runtime/connections/mcp-client.js", "runtime/connections/scoped-authorization.js"],
+  "modules naming the connection-token funnel entry (resolveScopedToken)",
+  "The 'injection, not exposure' claim (docs/security/credentials-and-planes.md:61) was verified against exactly\n" +
+    "  these two. Read each new site and confirm the token cannot reach the model or the sandbox BEFORE widening this list.",
 );
+
+pinMatchSet(
+  /\bcreateAuthorizationExecution\b/g,
+  ["execution/tools/connection-search.js", "runtime/authorization-context.js", "runtime/connections/scoped-authorization.js"],
+  "modules holding an authorization EXECUTION (createAuthorizationExecution — its getToken resolves a bearer)",
+  "Each holder is a candidate bearer-holder. Read the new site: if it calls `.getToken` on the execution it is a\n" +
+    "  FOURTH place the raw bearer flows, and §1c below must be extended with it BEFORE this list is widened.",
+);
+
+{
+  ok(
+    !/\bgetToken\b/.test(read("execution/tools/connection-search.js")),
+    "connection-search.js still never calls getToken — it holds an authorization execution for complete/handleError only",
+  );
+  ok(
+    /await \w+\.getToken\(/.test(read("runtime/authorization-context.js")),
+    "runtime/authorization-context.js still awaits the execution's getToken (it is the module that holds the resolved value)",
+  );
+}
 
 {
   const connectionFiles = distFiles("runtime/connections");
@@ -87,7 +106,7 @@ pinMatchSet(
   if (touchingSandbox.length > 0) {
     console.error(
       `✗ eve ${eveVersion}'s connection runtime now references a sandbox: ${touchingSandbox.join(", ")}\n` +
-        `  docs/security/credentials-and-planes.md:41 claims "the sandbox isn't even in the loop" for the connector\n` +
+        `  docs/security/credentials-and-planes.md:61 claims "the sandbox isn't even in the loop" for the connector\n` +
         `  plane. Read the new reference: if a connector call can now traverse a sandbox, the DOC IS WRONG and must\n` +
         `  be corrected before this expectation is widened.`,
     );
@@ -160,11 +179,20 @@ pinMatchSet(
 
 {
   const toolAuth = read("execution/tool-auth.js");
-  ok(/async getToken\(\w+,\w+\)\{/.test(toolAuth), "eve still exposes ctx.getToken on the authored-tool context (the seam we abstain from is real)");
-  ok(/requireAuth\(\w+,\w+\)\{/.test(toolAuth), "eve still exposes ctx.requireAuth on the authored-tool context");
   ok(
-    /return await resolveInlineToken\(\{/.test(toolAuth),
-    "ctx.getToken still RETURNS the resolved TokenResult into the authored tool body (this is why we abstain: exposure, not injection)",
+    /getToken:\w+\.getToken,requireAuth:\w+\.requireAuth/.test(toolAuth),
+    "eve still wires ctx.getToken and ctx.requireAuth onto the authored-tool context (the seam we abstain from is real)",
+  );
+  ok(
+    /createAuthorizationContext\(\{scope:/.test(toolAuth),
+    "that wiring still comes from createAuthorizationContext (the authored-tool context's auth capability)",
+  );
+  const authContext = read("runtime/authorization-context.js");
+  ok(/async getToken\(\w+,\w+\)\{/.test(authContext), "eve still implements an async ctx.getToken");
+  ok(/requireAuth\(\w+,\w+\)\{/.test(authContext), "eve still implements ctx.requireAuth");
+  ok(
+    /return await \w+\.getToken\(resolve\(/.test(authContext),
+    "ctx.getToken still RETURNS the resolved token into the authored tool body (this is why we abstain: exposure, not injection)",
   );
 }
 
@@ -212,7 +240,7 @@ ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length
       `✗ ${adopters.join(", ")} now uses eve's inline ctx.getToken/ctx.requireAuth.\n` +
         `  This tree deliberately does NOT adopt that seam ("injection, not exposure"): it materialises a raw bearer\n` +
         `  as a JS value inside authored tool code, one careless return away from the model's context. Adopting it\n` +
-        `  needs its own review AND a docs correction to docs/security/credentials-and-planes.md:41 — not a widened\n` +
+        `  needs its own review AND a docs correction to docs/security/credentials-and-planes.md:61 — not a widened\n` +
         `  expectation here.`,
     );
     process.exit(1);
@@ -256,20 +284,44 @@ const EVE_POLICY_SITES = [
   "execution/sandbox/session.js",
   "public/channels/github/checkout.js",
   "context/build-callback-context.js",
+  "self-modification/git.js",
+  "self-modification/sandbox.js",
 ];
 pinMatchSet(
   /setNetworkPolicy/g,
   EVE_POLICY_SITES,
   "setNetworkPolicy",
-  "docs/security/credentials-and-planes.md:103 claims the agent 'cannot reach in and widen its own egress policy'.\n" +
+  "docs/security/credentials-and-planes.md:198 claims the agent 'cannot reach in and widen its own egress policy'.\n" +
     "  Every known site is a sandbox binding or a host-side channel. A site under public/tools/ or harness/ would mean\n" +
     "  the model can reach it — that is a SECURITY FINDING and a docs correction, not an expectation to widen.",
 );
 {
   const offSandbox = [...distFilesMatching(/setNetworkPolicy/g)].filter(
-    (f) => !f.startsWith("execution/sandbox/") && !f.startsWith("public/channels/") && f !== "context/build-callback-context.js",
+    (f) =>
+      !f.startsWith("execution/sandbox/") &&
+      !f.startsWith("public/channels/") &&
+      !f.startsWith("self-modification/") &&
+      f !== "context/build-callback-context.js",
   );
-  ok(offSandbox.length === 0, "no module outside execution/sandbox/** or public/channels/** names setNetworkPolicy (never on the model tool surface)");
+  ok(
+    offSandbox.length === 0,
+    "no module outside execution/sandbox/**, public/channels/** or self-modification/** names setNetworkPolicy (never on the model tool surface)",
+  );
+  const selfModPolicySites = distFiles("self-modification").filter((f) => /setNetworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
+  const selfModPolicyTools = selfModPolicySites.filter((f) =>
+    /\b(?:defineTool|createTool|inputSchema)\b/.test(readFileSync(join(distSrc, f), "utf8")),
+  );
+  ok(
+    selfModPolicyTools.length === 0,
+    `eve's self-modification policy sites still define NO tool (got: ${selfModPolicyTools.join(", ")}) — the allow-all baseline stays host-decided`,
+  );
+  const selfModToolPolicies = distFiles("self-modification")
+    .filter((f) => /\/tools\//.test(f))
+    .filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
+  ok(
+    selfModToolPolicies.length === 0,
+    `no self-modification TOOL module names a network policy (got: ${selfModToolPolicies.join(", ")}) — a model holding these tools cannot name a policy value`,
+  );
   const cbctx = readFileSync(join(distSrc, "context/build-callback-context.js"), "utf8");
   const mentions = cbctx.match(/setNetworkPolicy[^,}]*/g) ?? [];
   ok(mentions.length > 0, "the reviewed 0.32.0 site still exists (drop the exemption when eve removes it)");

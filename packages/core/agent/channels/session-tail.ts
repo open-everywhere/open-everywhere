@@ -1,11 +1,15 @@
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { getSettings } from "../settings/settings.js";
+import type { IngestedChatMessage } from "../access/taint-signal.js";
+import type { AuthorTrustQuery } from "../identity/author-trust.js";
 
 export interface SessionTailEntry {
   readonly kind: "wake" | "post";
   readonly at: string;
   readonly from: "self" | "human" | "bot";
   readonly trust: WakeTrust;
+  readonly refuted?: boolean;
+  readonly authorTrust?: AuthorTrustQuery;
   readonly author: string;
   readonly authorId?: string;
   readonly id?: string;
@@ -14,6 +18,12 @@ export interface SessionTailEntry {
   readonly container?: string;
   readonly threadRoot?: string;
   readonly text: string;
+}
+
+export type SessionTailWakeRow = Omit<SessionTailEntry, "refuted"> & { readonly refuted: boolean };
+
+export function tailAuthorGrain(facts: IngestedChatMessage): { readonly refuted: boolean; readonly authorTrust?: AuthorTrustQuery } {
+  return { refuted: facts.refuted === true, ...(facts.authorTrust === undefined ? {} : { authorTrust: facts.authorTrust }) };
 }
 
 export const SESSION_TAIL_MAX_ENTRIES = 200;
@@ -50,6 +60,9 @@ export function tailEntryToWakeMessage(e: SessionTailEntry): WakeMessageInput {
     id: e.id ?? `${e.kind}:${e.at}`,
     sentAt: e.at,
     trust: e.trust,
+    ...(e.refuted === true ? { refuted: true } : {}),
+    ...(e.refuted === undefined ? { ungraded: true } : {}),
+    ...(e.authorTrust === undefined ? {} : { authorTrust: e.authorTrust }),
     ...(e.container ? { container: e.container } : {}),
     ...(e.threadRoot ? { type: "thread" as const, threadRoot: e.threadRoot } : {}),
     body: e.text,

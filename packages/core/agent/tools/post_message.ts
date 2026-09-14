@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { assertChatWriteAllowed, chatWriteMount, CONTAINER_RESOURCE_TYPE } from "../access/chat-write-grant.js";
@@ -53,6 +54,7 @@ const postMessageEntry = defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => domains);
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "post that message"));
@@ -65,7 +67,7 @@ const postMessageEntry = defineTool({
 
     const args: ChatPostArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       platform: target.platform,
       container: target.container,
       grant: target.address,
@@ -79,7 +81,7 @@ const postMessageEntry = defineTool({
         org: p.org,
         kind: "chat.post",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

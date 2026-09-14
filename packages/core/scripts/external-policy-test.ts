@@ -18,7 +18,9 @@ import {
   SILENT_NOTICE_KINDS,
   type ExternalPolicy,
 } from "../agent/access/external-policy.js";
-import { stampNonMemberChatAuth, OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, sep } from "node:path";
+import { stampNonMemberChatAuth, nonMemberChatTrust, OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
 import { defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -498,6 +500,39 @@ console.log("7. silent-room-grain reachability signal:");
     console.warn = originalWarn;
   }
   ok(sink.warned === true, "OMITTED deps.warn falls back to console.warn — the real boot log, not a silently-dropped call");
+}
+
+{
+  ok(withholdsBody({ trust: "peer", ungraded: true }, WITHHOLD) === true, "🔴 an UNGRADED author's body is WITHHELD — unknown is the fail-closed answer, never 'not refuted'");
+  ok(withholdsBody({ trust: "peer" }, WITHHOLD) === false, "🔴 NEGATIVE CONTROL: the same facts WITHOUT the flag are not withheld — the flag is what decides, not the tier or the grain");
+  ok(withholdsBody({ trust: "peer", ungraded: true }, TAINT) === false, "…and the shipped `taint` grain withholds it just as it withholds everything else: not at all");
+  ok(withholdsBody({ trust: "relay", ungraded: true }, WITHHOLD) === false, "🔴 a `relay` author is exempt — the seat's own recorded posts are a machine author, not a person outside the organisation");
+  ok(nonMemberChatTrust({ trust: "peer", ungraded: true }) === false, "🔴 the TAINT JOIN never reads it: an ungraded row must not start marking turns (that join fails OPEN by design)");
+  ok(
+    ingestedAfterWithholding([{ trust: "peer", ungraded: true }, { trust: "peer" }], WITHHOLD).length === 1,
+    "the withheld ungraded entry leaves the join too — its bytes did not enter, so the render and the join agree",
+  );
+  const packagesRoot = new URL("../..", import.meta.url).pathname;
+  const producers: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name === "dist" || e.name === "scripts") continue;
+        walk(p);
+        continue;
+      }
+      if (!e.name.endsWith(".ts") || !p.includes(`${sep}agent${sep}`)) continue;
+      const code = readFileSync(p, "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join("\n");
+      if (/\bungraded: true\b/.test(code)) producers.push(p.slice(packagesRoot.length));
+    }
+  };
+  walk(packagesRoot);
+  eq(producers, ["core/agent/channels/session-tail.ts"], `🔴 EXACTLY ONE producer of \`ungraded\` in the whole monorepo — tailEntryToWakeMessage. A second one silently converts a member's addressed ask into a stand-down at the five live gates. Found: ${producers.join(", ")}`);
+  ok(producers.length === 1, "…and the scan actually found it, so the assertion above cannot pass on an empty walk");
 }
 
 console.log(`\n✅ external-policy: ${passed} assertions passed`);

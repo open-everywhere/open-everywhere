@@ -210,7 +210,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_update"] as const;
+const TASK_FAMILY = ["task_cancel"] as const;
 
 {
   const toolset = makeToolset();
@@ -261,7 +261,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), ["task_update"], "an ESCALATED job wake keeps the full toolset apart from the child-only `task_update` — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
+  eq(removedBy(before, toolset), [], "an ESCALATED job wake keeps the FULL toolset — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
   ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
   ok(GRANT_TOOL in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
@@ -273,7 +273,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), ["task_update"], "an ordinary session's toolset is unchanged by OPE-111 — the one name it loses is the child-only `task_update`, withdrawn by OPE-564 and not by the job filter");
+  eq(removedBy(before, toolset), [], "an ordinary session's toolset is unchanged by OPE-111, and eve 0.54.1 removed the child-only `task_update` that used to be its one loss");
 });
 
 {

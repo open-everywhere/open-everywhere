@@ -9,7 +9,7 @@ import {
   type WakeEngagementTier,
   type WakeFollowUp,
 } from "./wake-envelope.js";
-import { renderContext, type ContextLine } from "./context-render.js";
+import { hydrationSlices, renderContext, type ContextLine } from "./context-render.js";
 import { encodeChannelKey } from "./channel-key.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
@@ -104,7 +104,9 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
   }
 
   if (nw.contextLines && nw.contextLines.length > 0) {
-    const rendered = renderContext(nw.contextLines, nw.contextSource ?? "", { readMoreHint: nw.readMoreHint });
+    const envelope = nw.addressing === "direct" ? [] : (nw.backscroll ?? []);
+    const lines = hydrationSlices(nw.contextLines, envelope).rendered;
+    const rendered = renderContext(lines, nw.contextSource ?? "", { readMoreHint: nw.readMoreHint });
     if (rendered) return { message, context: [rendered] };
   }
   return { message };

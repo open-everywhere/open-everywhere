@@ -4097,7 +4097,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.observe(
         `S-EVE-CARD: the DECIDED eve-native card ${card.message.ts} ` +
           `${reread === undefined ? "could not be re-read" : eveRequestApprovalButtons(reread) ? "STILL carries its buttons" : "has had its buttons removed"}` +
-          " — eve 0.52.2 re-renders it answered and drops the actions block; a card that still carries buttons means the settle never reached the surface.",
+          " — eve 0.54.3 re-renders it answered and drops the actions block; a card that still carries buttons means the settle never reached the surface.",
       );
       if (ctx.auditRead) {
         const rows = await ctx.auditRead({

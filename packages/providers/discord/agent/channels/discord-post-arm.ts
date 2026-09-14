@@ -23,6 +23,7 @@ import {
   type EditLocus,
   type DirectMessageRequest,
   type DirectMessageDelivery,
+  type DirectMessageAction,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type DiscordTarget = Extract<ReplyTarget, { platform: "discord" }>;
@@ -66,6 +67,16 @@ async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<str
   return first;
 }
 
+async function liveDiscordPostWithActions(origin: DiscordOrigin, text: string, actions: readonly DirectMessageAction[]): Promise<string> {
+  const buttons = actions.map((a) => ({ customId: a.id, label: a.label, intent: a.intent }));
+  if (buttons.length === 0 || text.length > DISCORD_MESSAGE_MAX) return liveDiscordPost(origin, text);
+  try {
+    return await discordPostMessageWithButtons(origin.channelId, text, buttons, origin.messageId ? { replyToMessageId: origin.messageId } : undefined);
+  } catch {
+    throw new Error(`unified reply couldn't post to Discord — create-message with buttons failed on channel ${origin.channelId}`);
+  }
+}
+
 async function editDiscordMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
   await discordEditMessage(locus.channelId, messageId, text);
 }
@@ -96,6 +107,8 @@ export const discordPostArm: PostArm = {
   dispatchReply: (target, text) => discordPostMessage((target as DiscordTarget).channelId, text),
   splitText: (text) => splitForDiscord(text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postDiscord ?? liveDiscordPost)(origin as DiscordOrigin, text),
+  dispatchUnifiedActions: (origin, text, actions, deps: UnifiedReplyDeps) =>
+    deps.postDiscord ? deps.postDiscord(origin as DiscordOrigin, text) : liveDiscordPostWithActions(origin as DiscordOrigin, text, actions),
   describeRedriveTarget: (origin) => `discord channel ${(origin as DiscordOrigin).channelId}`,
   redriveContainerId: (origin) => (origin as DiscordOrigin).channelId,
   editMessage: editDiscordMessage,

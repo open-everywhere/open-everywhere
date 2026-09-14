@@ -79,11 +79,19 @@ const require2 = createRequire(import.meta.url);
 const eveRoot = dirname(require2.resolve("eve/package.json"));
 const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
 const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown): { execute: { closure: Record<string, unknown> } };
+  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
 };
 const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(toolName: string, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
+  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
 };
+
+const ownerFor = (name: string): Record<string, unknown> => ({
+  sessionId: "sess-dynamic-entry-collision",
+  scope: "session",
+  resolverSlug: name,
+  entryKey: "_single",
+  name,
+});
 
 function fixturePair(): { unified: ReplayableToolEntry; base: ReplayableToolEntry } {
   return {
@@ -95,11 +103,12 @@ function fixturePair(): { unified: ReplayableToolEntry; base: ReplayableToolEntr
 {
   const { unified, base } = fixturePair();
   preRegisterDynamicVariants("pretend_reply_dispatched", { _base: base, _single: unified });
-  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", unified).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", base);
+  const dispatchedOwner = ownerFor("pretend_reply_dispatched");
+  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", unified, dispatchedOwner).execute.closure;
+  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", base, dispatchedOwner);
   eq(unifiedClosure, { entryKey: "_single" }, "eve persists the unified variant's key in the durable closure");
-  const bound = durable.lookupDurableDynamicCallback("pretend_reply_dispatched", "execute");
-  ok(typeof bound === "function", "eve bound a callback under (pretend_reply_dispatched, execute)");
+  const bound = durable.lookupDurableDynamicCallback(dispatchedOwner, "execute");
+  ok(typeof bound === "function", "eve bound a callback under the mounted name's owner scope");
   eq(bound!(unifiedClosure), "UNIFIED", "a replay driven from the UNIFIED closure runs the UNIFIED implementation, though the per-surface variant registered LAST");
   eq(bound!({ entryKey: "_base" }), "BASE", "…and the per-surface closure still runs the per-surface implementation");
   assert.throws(
@@ -115,9 +124,10 @@ console.log("4. negative control — the pre-fix registration shape runs the WRO
   const { unified, base } = fixturePair();
   preRegisterDynamicEntry("pretend_reply_collided", "_single", unified);
   preRegisterDynamicEntry("pretend_reply_collided", "_base", base);
-  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", unified).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", base);
-  const bound = durable.lookupDurableDynamicCallback("pretend_reply_collided", "execute");
+  const collidedOwner = ownerFor("pretend_reply_collided");
+  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", unified, collidedOwner).execute.closure;
+  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", base, collidedOwner);
+  const bound = durable.lookupDurableDynamicCallback(collidedOwner, "execute");
   eq(bound!(unifiedClosure), "BASE", "the pre-fix shape runs the PER-SURFACE implementation from the UNIFIED closure — the measured defect, reproduced");
   const collided = mountedEntryCollisions().find((c) => c.name === "pretend_reply_collided");
   ok(collided !== undefined && !collided.variantManaged, "…and leg 1's check sees it as an unmanaged collision");

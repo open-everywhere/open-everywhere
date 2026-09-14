@@ -201,16 +201,30 @@ console.log("3. replay registration (the unapprovable-card trap):");
   preRegisterDynamicEntry("pretend_publish", "_single", entry as never);
   ok(typeof reg.get(names.approvalResponse) === "function", "preRegisterDynamicEntry registers the RESPONSE policy under eve's deterministic name");
 
-  const keys = (await import(pathToFileURL(join(distSrc, "context/keys.js")).href)) as { SessionDynamicToolMetadataKey: unknown };
+  const keys = (await import(pathToFileURL(join(distSrc, "context/keys.js")).href)) as {
+    SessionDynamicToolMetadataKey: unknown;
+    SessionIdKey: unknown;
+  };
   const builder = (await import(pathToFileURL(join(distSrc, "context/build-dynamic-tools.js")).href)) as {
     buildResponseAuthorizationTools(input: { authoredTools: Map<string, unknown>; context?: { get(key: unknown): unknown } }): Map<string, { approval?: unknown }>;
   };
-  const contextOf = (meta: readonly unknown[]) => ({ get: (key: unknown) => (key === keys.SessionDynamicToolMetadataKey ? meta : undefined) });
-  const replayLookup = (meta: readonly unknown[]) => builder.buildResponseAuthorizationTools({ authoredTools: new Map(), context: contextOf(meta) });
-  const lifecycle = (await import(pathToFileURL(join(distSrc, "context/dynamic-tool-lifecycle.js")).href)) as {
-    validateDurableDynamicToolCallbacks(name: string, entry: unknown): Record<string, { closure: Record<string, unknown> }>;
+  const SESSION_ID = "sess-eve-approval-response";
+  const contextOf = (meta: readonly unknown[], sessionId: string = SESSION_ID) => ({
+    get: (key: unknown) => (key === keys.SessionDynamicToolMetadataKey ? meta : key === keys.SessionIdKey ? sessionId : undefined),
+  });
+  const replayLookup = (meta: readonly unknown[], sessionId: string = SESSION_ID) =>
+    builder.buildResponseAuthorizationTools({ authoredTools: new Map(), context: contextOf(meta, sessionId) });
+  const REGISTRATION_OWNER: Record<string, unknown> = {
+    sessionId: SESSION_ID,
+    scope: "session",
+    resolverSlug: "pretend_publish",
+    entryKey: "_single",
+    name: "pretend_publish",
   };
-  const persisted = lifecycle.validateDurableDynamicToolCallbacks("pretend_publish", entry);
+  const lifecycle = (await import(pathToFileURL(join(distSrc, "context/dynamic-tool-lifecycle.js")).href)) as {
+    validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): Record<string, { closure: Record<string, unknown> }>;
+  };
+  const persisted = lifecycle.validateDurableDynamicToolCallbacks("pretend_publish", entry, REGISTRATION_OWNER);
   ok(persisted.approvalResponse !== undefined, "resolve-time validation persists the approval RESPONSE phase preRegisterDynamicEntry described");
   ok(!("stepId" in persisted.approvalResponse!), "…as a closure-only reference — a stepId key is refused as the pre-release shape");
   const metaRow = {
@@ -241,6 +255,26 @@ console.log("3. replay registration (the unapprovable-card trap):");
   const bad = unregistered.get("never_registered_tool")?.approval as { response?: (c: unknown) => Promise<{ status?: string }> } | undefined;
   const badDecision = await bad?.response?.({ responder: alice, session: { initiator: alice } });
   eq(badDecision?.status, "rejected", "an UNREGISTERED response authorizer rejects even the initiator — the trap is real (negative control)");
+
+  const foreignSession = replayLookup([metaRow], "sess-some-other-session");
+  const foreign = foreignSession.get("pretend_publish")?.approval as { response?: (c: unknown) => Promise<{ status?: string }> } | undefined;
+  const foreignDecision = await foreign?.response?.({ responder: alice, session: { initiator: alice } });
+  eq(
+    foreignDecision?.status,
+    "rejected",
+    "a replay under a DIFFERENT session id finds no binding and rejects even the initiator — the registry is session-scoped",
+  );
+  let blindRefusal: unknown;
+  try {
+    replayLookup([metaRow], "");
+  } catch (e) {
+    blindRefusal = e;
+  }
+  ok(blindRefusal instanceof Error, "a replay with an EMPTY session id is refused rather than silently unbound");
+  ok(
+    /requires a session id/i.test((blindRefusal as Error).message),
+    `that refusal is eve's session-id requirement (got: ${(blindRefusal as Error | undefined)?.message ?? "no error"})`,
+  );
 }
 
 console.log("4. settlement audit (adopt-part C):");

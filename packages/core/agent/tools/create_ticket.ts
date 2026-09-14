@@ -4,6 +4,7 @@ import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels/ticket-create.js";
@@ -68,6 +69,7 @@ export const createTicketEntry = defineTool({
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
+    const proposeScopeKey = await proposalScopeKey(ctx, p);
     const venueResult = await checkApprovalVenue(binding, p, () => domains);
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "file that ticket"));
@@ -80,7 +82,7 @@ export const createTicketEntry = defineTool({
 
     const args: TicketCreateArgs = {
       org: p.org,
-      scopeKey: p.surfaceKey,
+      scopeKey: proposeScopeKey,
       platform,
       target,
       ...(organizationId ? { organizationId } : {}),
@@ -95,7 +97,7 @@ export const createTicketEntry = defineTool({
         org: p.org,
         kind: "ticket.create",
         args,
-        scopeKey: p.surfaceKey,
+        scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
         channelId: venue.channelId,

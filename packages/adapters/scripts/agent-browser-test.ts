@@ -37,8 +37,7 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   overrideSettingsForTest({ browser: { enabled: values.enabled ?? false } });
   if (values.hosts === undefined) resetBrowserHostsForTest();
   else _setBrowserHostsForTest(values.hosts);
-  if (values.platform === undefined) delete process.env.OE_PLATFORM;
-  else process.env.OE_PLATFORM = values.platform;
+  process.env.OE_PLATFORM = values.platform ?? "vercel";
   resetAgentBrowserConfigForTest();
 }
 
@@ -211,6 +210,38 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   ok(/apt-get|dnf/.test(commands[0] ?? ""), "install 1/3: Chromium system dependencies (apt/dnf)");
   ok(/npm.*install -g.*agent-browser@\d/.test(commands[1] ?? ""), "install 2/3: agent-browser CLI pinned to the package-matched version");
   ok(/agent-browser.*install/.test(commands[2] ?? ""), "install 3/3: `agent-browser install` fetches Chromium into the template");
+}
+
+{
+  resetBrowserToolkitForTest();
+  resetExtraEgressHostsForTest();
+  const declaration = [ro("qa.example.com"), ro("preview.vercel.app", { methods: ["GET", "HEAD", "POST"], credential: "vendor-login" })];
+
+  setEnv({ enabled: true, hosts: declaration, platform: "self-host" });
+  ok(agentBrowserEnabled(), "off-Vercel: the master flag is genuinely ARMED — the refusal below is the platform's, not the flag's");
+  ok(loadAgentBrowserConfig() === undefined, "off-Vercel: the config loader refuses, so no arming path has a config to arm from");
+  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "off-Vercel: nothing bakes");
+  const mount = (): boolean => {
+    const cfg = agentBrowserEnabled() ? loadAgentBrowserConfig() : undefined;
+    return cfg ? registerAgentBrowser(cfg) : false;
+  };
+  ok(mount() === false, "🔴 off-Vercel: the app's own mount expression registers NOTHING — it never reaches registerAgentBrowser");
+  ok(registeredBrowserToolkit() === undefined, "🔴 …so NO browser tool is registered");
+  ok(extraEgressHosts().length === 0, "🔴 …and NO declared egress host is opened — the firewall reach stays byte-identical to flag-off");
+  ok(resolveBrowserKit("task") === null, "off-Vercel: the grain resolver mounts nothing on the one wide-hands grain");
+
+  setEnv({ enabled: true, hosts: declaration, platform: "vercel" });
+  ok(mount() === true, "negative control: the SAME mount expression, the SAME declaration, arms on Vercel");
+  ok(Object.keys(registeredBrowserToolkit() ?? {}).length > 0, "negative control: …and the tools are registered there");
+  ok(extraEgressHosts().includes("qa.example.com"), "negative control: …and the uncredentialed declared host IS opened there");
+  ok(resolveBrowserKit("task") !== null, "negative control: …and a worker seat resolves the kit there");
+  process.env.OE_PLATFORM = "self-host";
+  ok(resolveBrowserKit("task") === null, "🔴 the resolver refuses off-Vercel even with 20 entries already registered (the second door stays shut)");
+  process.env.OE_PLATFORM = "vercel";
+  ok(resolveBrowserKit("task") !== null, "…and flipping the platform back re-admits it, so the arm above measured the platform and nothing else");
+
+  resetBrowserToolkitForTest();
+  resetExtraEgressHostsForTest();
 }
 
 if (saved === undefined) delete process.env.OE_PLATFORM;

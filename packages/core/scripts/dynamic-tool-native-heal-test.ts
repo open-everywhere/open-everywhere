@@ -23,17 +23,19 @@ const { defineTool } = (await import(u("public/tools/index.js"))) as {
 };
 const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   dispatchDynamicToolEvent(e: unknown): Promise<void>;
-  replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; approval?: unknown }[];
+  replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; approval?: unknown }[];
   refreshDynamicSessionToolsForRuntimeRevision?(i: unknown): Promise<void>;
 };
 type ReplayFn = (closure: Record<string, unknown>, ...a: unknown[]) => unknown;
 const durable = (await import(u("tools/durable-callbacks.js"))) as {
   stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: ReplayFn; closure: Record<string, unknown> }): T;
-  lookupDurableDynamicCallback(toolName: string, phase: string): ReplayFn | undefined;
-  hasUnregisteredDurableDynamicCallbacks(meta: readonly { callbacks: Record<string, unknown>; name: string }[]): boolean;
+  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ReplayFn | undefined;
+  hasUnregisteredDurableDynamicCallbacks(meta: readonly { callbacks: Record<string, unknown>; name: string }[], scope: Record<string, unknown>): boolean;
 };
 const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; SessionDynamicToolMetadataKey: unknown };
 const { dispatchDynamicToolEvent, replayDynamicSessionTools } = lifecycle;
+
+const ownerOf = (row: { name: string }, sessionId: string): Record<string, unknown> => ({ ...row, sessionId, scope: "session" });
 const { SessionIdKey, SessionDynamicToolMetadataKey } = keys;
 
 ok(!("hydrateDynamicSessionTools" in lifecycle), "eve no longer exports hydrateDynamicSessionTools — the durable descriptor replaced it");
@@ -42,8 +44,10 @@ ok(
   "…and refreshDynamicSessionToolsForRuntimeRevision is the replacement heal — it re-runs the session.started resolvers",
 );
 
-const REG_SYMBOL = Symbol.for("eve:dynamic-tool-callbacks");
+const REG_SYMBOL = Symbol.for("eve:scoped-dynamic-tool-callbacks");
 const registry = (): Map<string, Map<string, unknown>> => (globalThis as Record<symbol, unknown>)[REG_SYMBOL] as Map<string, Map<string, unknown>>;
+const keyOf = (row: Record<string, unknown>, phase: string): string =>
+  JSON.stringify(["session", row.resolverSlug, row.entryKey, row.name, phase]);
 
 function described<A extends unknown[], R>(fn: (...a: A) => R): (...a: A) => R {
   const live = (...a: A): R => fn(...a);
@@ -99,13 +103,24 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
   const row = metadata[0]!;
   eq(row.callbacks.execute, { closure: {} }, "the PERSISTED row carries only the closure — identity travels as (toolName, phase), not in the row");
   ok(!("stepId" in (row.callbacks.execute as object)), "…and it carries NO stepId — that key is the refused pre-release shape");
-  ok(typeof durable.lookupDurableDynamicCallback(TOOL, "execute") === "function", "warm path: resolve REGISTERED the live callback under (toolName, phase)");
+  ok(
+    typeof durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1"), "execute") === "function",
+    "warm path: resolve REGISTERED the live callback under the row's OWNER SCOPE",
+  );
 
   const ctx2 = makeCtx("sess-ope867-native-heal-1-other");
   await dispatchDynamicToolEvent({ ctx: ctx2, resolvers: [resolverDescriptor], event, messages: [] });
   const row2 = (ctx2.get(SessionDynamicToolMetadataKey) as DurableRow[])[0]!;
   eq(row2.name, row.name, "a DIFFERENT session resolves the SAME tool name — the binding names code, never a session");
-  eq(row2.callbacks.execute, row.callbacks.execute, "…and the same persisted descriptor, so replay in either session finds the same binding");
+  eq(row2.callbacks.execute, row.callbacks.execute, "…and the same persisted descriptor, so a re-resolve in any session rebuilds the same row");
+  ok(
+    durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1-other"), "execute") !== undefined,
+    "the SECOND session registered its own binding for the same code (it resolved in that session too)",
+  );
+  ok(
+    durable.lookupDurableDynamicCallback(ownerOf(row, "sess-never-resolved-here"), "execute") === undefined,
+    "🔴 …and a session that never resolved has NO binding — the registry is bucketed by session id since eve 0.54.x, so identity no longer crosses sessions",
+  );
 
   const undescribed = defineTool({
     description: "undescribed probe tool",
@@ -149,25 +164,31 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
 
   (globalThis as Record<symbol, unknown>)[REG_SYMBOL] = new Map();
   ok(registry().size === 0, "registry wiped (cold-start simulation)");
-  const cold = replayDynamicSessionTools([row], []);
+  const cold = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-1");
   eq(cold.length, 1, "RED: a cold-resumed replay still MOUNTS the tool (eve does not drop it silently)");
-  ok(durable.lookupDurableDynamicCallback(TOOL, "execute") === undefined, "RED: …and its binding is genuinely absent — the tool would throw if called");
   ok(
-    durable.hasUnregisteredDurableDynamicCallbacks([{ callbacks: row.callbacks as Record<string, unknown>, name: row.name }]),
+    durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1"), "execute") === undefined,
+    "RED: …and its binding is genuinely absent — the tool would throw if called",
+  );
+  ok(
+    durable.hasUnregisteredDurableDynamicCallbacks([row as unknown as { callbacks: Record<string, unknown>; name: string }], { sessionId: "sess-ope867-native-heal-1", scope: "session" }),
     "RED: …and eve's own detector reports it, which is what triggers the resolver re-run on resume",
   );
 
   const ctxWarm = makeCtx("sess-ope867-native-heal-1-resumed");
   await dispatchDynamicToolEvent({ ctx: ctxWarm, resolvers: [resolverDescriptor], event, messages: [] });
-  ok(typeof durable.lookupDurableDynamicCallback(TOOL, "execute") === "function", "GREEN: re-resolving rebinds the SAME (toolName, phase) after a simulated cold start");
   ok(
-    !durable.hasUnregisteredDurableDynamicCallbacks([{ callbacks: row.callbacks as Record<string, unknown>, name: row.name }]),
+    typeof durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1-resumed"), "execute") === "function",
+    "GREEN: re-resolving rebinds the row's owner scope after a simulated cold start",
+  );
+  ok(
+    !durable.hasUnregisteredDurableDynamicCallbacks([row as unknown as { callbacks: Record<string, unknown>; name: string }], { sessionId: "sess-ope867-native-heal-1-resumed", scope: "session" }),
     "…and eve's detector agrees the row is bound again",
   );
-  const replayed = replayDynamicSessionTools([row], []);
+  const replayed = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-1-resumed");
   eq(replayed.length === 1 && replayed[0]!.name, TOOL, "post-heal replay returns the tool under its mounted name");
 
-  const bound = durable.lookupDurableDynamicCallback(TOOL, "execute")!;
+  const bound = durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1-resumed"), "execute")!;
   const result = (await bound(row.callbacks.execute!.closure, {}, {})) as { ok: boolean; callCount: number };
   eq(result, { ok: true, callCount: 1 }, "the restored binding IS the real closure (its own counter moved), not a mismatched tool");
 }
@@ -191,15 +212,15 @@ console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
   const row = (ctx.get(SessionDynamicToolMetadataKey) as DurableRow[])[0]!;
   ok(row.callbacks.approvalRequest !== undefined, "the approval REQUEST phase carries its own durable descriptor");
   ok(row.callbacks.approvalResponse !== undefined, "…and so does the approval RESPONSE phase (the OPE-575 half)");
-  ok(typeof durable.lookupDurableDynamicCallback(APPROVAL_TOOL, "approvalResponse") === "function", "…and resolve bound the response phase under its own (toolName, phase)");
+  ok(typeof durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-2"), "approvalResponse") === "function", "…and resolve bound the response phase under its own (toolName, phase)");
 
   type ApprovalPair = { request(a: unknown): Promise<unknown>; response(a: unknown): Promise<{ status: string; reason?: string }> };
-  const healthy = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
+  const healthy = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2")[0]!.approval as ApprovalPair;
   eq(await healthy.request({}), "user-approval", "replay serves the REAL approval request policy");
   eq(await healthy.response({}), { status: "approved", reason: "probe" }, "replay serves the REAL approval response authorizer");
 
-  registry().get(APPROVAL_TOOL)!.delete("approvalResponse");
-  const degraded = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
+  registry().get("sess-ope867-native-heal-2")!.delete(keyOf(row as unknown as Record<string, unknown>, "approvalResponse"));
+  const degraded = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2")[0]!.approval as ApprovalPair;
   const verdict = await degraded.response({});
   eq(verdict.status, "rejected", "RED: a MISSING approval-response binding degrades to reject-everything (OPE-575's hazard, stated by eve itself)");
   ok(String(verdict.reason).includes(APPROVAL_TOOL), "…and the refusal names the tool whose binding went missing, so the cause is countable");
@@ -207,7 +228,7 @@ console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
 
   const ctxAgain = makeCtx("sess-ope867-native-heal-2-resumed");
   await dispatchDynamicToolEvent({ ctx: ctxAgain, resolvers: [resolverDescriptor], event, messages: [] });
-  const restored = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
+  const restored = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2-resumed")[0]!.approval as ApprovalPair;
   eq(await restored.response({}), { status: "approved", reason: "probe" }, "GREEN: re-resolving restores the real authorizer");
 }
 
@@ -236,7 +257,10 @@ console.log("3. a build-transform descriptor whose capture cannot serialize (OPE
     0,
     "THE OPE-1063 DEFECT: a transform descriptor holding a non-serializable capture stores NO durable row — eve drops the tool silently",
   );
-  ok(durable.lookupDurableDynamicCallback(BROKEN, "execute") === undefined, "…and nothing is bound, so the tool is absent from the seat rather than broken at call time");
+  ok(
+    durable.lookupDurableDynamicCallback({ name: BROKEN, resolverSlug: BROKEN, entryKey: "_single", sessionId: "sess-ope1063-unserializable", scope: "session" }, "execute") === undefined,
+    "…and nothing is bound, so the tool is absent from the seat rather than broken at call time",
+  );
 
   preRegisterDynamicEntry(BROKEN, "_single", entry as unknown as Parameters<typeof preRegisterDynamicEntry>[2]);
   const ctxHealed = makeCtx("sess-ope1063-unserializable-healed");
@@ -245,7 +269,7 @@ console.log("3. a build-transform descriptor whose capture cannot serialize (OPE
   eq(healedRows.length, 1, "GREEN: after preRegisterDynamicEntry the SAME entry resolves and stores its durable row");
   eq(healedRows[0]!.callbacks.execute, { closure: {} }, "…and the persisted closure is EMPTY — the unserializable capture is gone from the metadata");
 
-  const bound = durable.lookupDurableDynamicCallback(BROKEN, "execute")!;
+  const bound = durable.lookupDurableDynamicCallback(ownerOf(healedRows[0]!, "sess-ope1063-unserializable-healed"), "execute")!;
   const result = (await bound(healedRows[0]!.callbacks.execute!.closure, {}, {})) as { ok: boolean; callCount: number };
   eq(result, { ok: true, callCount: 1 }, "…and the restored binding IS the real callback — the backstop keeps the behaviour, it only drops the capture");
 
@@ -314,13 +338,13 @@ console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-10
   eq(rowAlpha.callbacks.toModelOutput, { closure: { entryKey: "alpha" } }, "alpha's PERSISTED row names its own variant in the toModelOutput closure");
   eq(rowBeta.callbacks.toModelOutput, { closure: { entryKey: "beta" } }, "…and beta's names beta — the closure is the only thing that tells them apart");
   ok(
-    typeof durable.lookupDurableDynamicCallback(NAME, "toModelOutput") === "function",
-    "resolve BOUND one shared toModelOutput callback under (toolName, phase) — eve holds exactly one, whichever variant resolved last",
+    typeof durable.lookupDurableDynamicCallback(ownerOf(rowBeta, "sess-ope1068-variant-beta"), "toModelOutput") === "function",
+    "resolve BOUND a toModelOutput callback under the resolving session's owner scope — since eve 0.54.x each session holds its own binding, so this asks beta's session for beta's row",
   );
 
   type Replayed = { name: string; toModelOutput?: (output: unknown) => { type: string; value: string } };
-  const replayedAlpha = replayDynamicSessionTools([rowAlpha], [])[0]! as Replayed;
-  const replayedBeta = replayDynamicSessionTools([rowBeta], [])[0]! as Replayed;
+  const replayedAlpha = replayDynamicSessionTools([rowAlpha], [], "sess-ope1068-variant-alpha")[0]! as Replayed;
+  const replayedBeta = replayDynamicSessionTools([rowBeta], [], "sess-ope1068-variant-beta")[0]! as Replayed;
   ok(typeof replayedAlpha.toModelOutput === "function", "eve REPLAYS the authored projection onto the rebuilt tool (the OPE-73 drop is closed at 0.44.0)");
   eq(replayedAlpha.toModelOutput!({ n: 1 }), { type: "text", value: 'alpha|{"n":1}' }, "alpha's replayed tool runs ALPHA's projection — the closure re-selected the variant the session mounted");
   eq(replayedBeta.toModelOutput!({ n: 1 }), { type: "text", value: 'beta|{"n":1}' }, "…and beta's runs BETA's, from the same shared callback — one name, two projections, no collision");
@@ -329,7 +353,7 @@ console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-10
   ok(rowPlain.callbacks.toModelOutput === undefined, "NEGATIVE CONTROL: a variant with no authored projection persists NO toModelOutput phase");
   ok(rowPlain.callbacks.execute !== undefined, "…while still carrying its execute descriptor, so it mounts normally");
   ok(
-    (replayDynamicSessionTools([rowPlain], [])[0]! as Replayed).toModelOutput === undefined,
+    (replayDynamicSessionTools([rowPlain], [], "sess-ope1068-variant-plain")[0]! as Replayed).toModelOutput === undefined,
     "…and its replayed tool carries no projection — the raw output reaches eve's own default rendering",
   );
 

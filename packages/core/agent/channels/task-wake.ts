@@ -2,7 +2,15 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { adoptTaskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
 import type { DispatchedTaskWake } from "../access/dispatch-origin-signal.js";
-import { mintWakeId, registerUnifiedWakeTarget, resolveUnifiedWakeTarget, sameUnifiedConversation, WAKE_TARGET_TTL_MS } from "./unified-window.js";
+import {
+  mintWakeId,
+  registerUnifiedWakeTarget,
+  resolveUnifiedWakeTarget,
+  sameUnifiedConversation,
+  sameUnifiedPlacement,
+  withCarriedPlacement,
+  WAKE_TARGET_TTL_MS,
+} from "./unified-window.js";
 
 export const TASK_WAKE_ACTION = "unified.task_wake";
 
@@ -65,9 +73,10 @@ export async function retargetTaskWakes(input: {
     let moved = 0;
     for (const task of input.tasks) {
       const current = await resolveUnifiedWakeTarget(store, input.org, task.wakeId);
-      if (current !== null && sameUnifiedConversation(current, origin)) continue;
+      if (current !== null && sameUnifiedConversation(current, origin) && sameUnifiedPlacement(current, origin)) continue;
       const at = new Date().toISOString();
-      await registerUnifiedWakeTarget(store, input.org, task.wakeId, origin, at, input.windowToken);
+      const next = current !== null && sameUnifiedConversation(current, origin) ? withCarriedPlacement(origin, current) : origin;
+      await registerUnifiedWakeTarget(store, input.org, task.wakeId, next, at, input.windowToken);
       moved++;
       void appendAudit({
         org: input.org,

@@ -10,7 +10,8 @@ import {
   type WakeTrust,
   type IngestedChatMessage,
   type WakeMessageInput,
-  type SessionTailEntry,
+  tailAuthorGrain,
+  type SessionTailWakeRow,
   seatCatchUpSinceMs,
   admitContextLines,
   type SeatAdmissionFn,
@@ -221,7 +222,7 @@ export interface LinearSupervisorSession {
 export interface LinearSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, teamId: string, atIso: string) => Promise<LinearSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
-  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailWakeRow, token: string, surfaceKey: string) => Promise<void>;
   readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
 
   readonly wake: (input: {
@@ -307,6 +308,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         at: atIso,
         from: "human",
         trust: d.trigger.trust,
+        ...tailAuthorGrain(d.ingested[0] ?? { trust: d.trigger.trust }),
         author: d.trigger.authorName ?? d.trigger.authorId ?? "unknown",
         ...(d.trigger.authorId ? { authorId: d.trigger.authorId } : {}),
         id: d.trigger.id,

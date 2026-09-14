@@ -21,6 +21,7 @@ import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { NOT_HALTED, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
+import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wake.js";
 import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
@@ -443,7 +444,16 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
 export async function renderScopeMarkdown(ctx: BindableContext): Promise<string> {
   const scope = await (isUnifiedWindowContext(ctx) ? renderUnifiedScope(ctx) : renderPerSurfaceScope(ctx));
   const cancelNote = renderPendingCancelNote();
-  const haltNote = haltSeatParagraph(await resolveHalt(haltScopeForCtx(ctx)).catch(() => NOT_HALTED));
+  const turnState = await resolveHalt(haltScopeForCtx(ctx)).catch(() => NOT_HALTED);
+  const org = ((): string => {
+    try {
+      return resolvePartition(ctx).org;
+    } catch {
+      return deploymentOrg();
+    }
+  })();
+  const reach = await resolveTurnHaltReach(ctx, turnState, org);
+  const haltNote = reach.kind === "none" ? null : [partialHaltPrefix(reach), haltSeatParagraph(reach.state)].filter((n) => n !== null && n.length > 0).join("\n\n");
   const appended = [cancelNote, haltNote].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
   if (appended.length === 0) return scope;
   return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");

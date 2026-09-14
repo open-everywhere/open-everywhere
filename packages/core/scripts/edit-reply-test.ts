@@ -158,6 +158,7 @@ async function wakeAt(channelId: string, atIso: string, threadTs?: string): Prom
     at: new Date().toISOString(),
     from: "human",
     trust: "principal",
+    refuted: false,
     author: "U1",
     authorId: "U1",
     platform: "slack",

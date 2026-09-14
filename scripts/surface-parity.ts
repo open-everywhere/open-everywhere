@@ -24,6 +24,7 @@ import {
   supportedReadPlatforms,
   surfaceMessageOps,
   surfaceParityFor,
+  unifiedActionCapablePlatforms,
   wakeOriginCodec,
   type CapabilityProbe,
   type SurfaceParityDeclaration,
@@ -127,6 +128,16 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["capability-manifest", setOf(registeredCapabilityManifestPlatforms())],
   ["post-arm", setOf(registeredPostArmPlatforms())],
   ["wake-origin-codec", setOf(PLATFORMS.filter((p) => wakeOriginCodec(p) !== undefined))],
+  ["unified-action-plane", setOf(unifiedActionCapablePlatforms())],
+  [
+    "origin-placement-carry",
+    setOf(
+      PLATFORMS.filter((p) => {
+        const codec = wakeOriginCodec(p);
+        return codec?.placementRef !== undefined && codec.carryPlacement !== undefined;
+      }),
+    ),
+  ],
   ["read-adapter", setOf(supportedReadPlatforms())],
   ["reaction-feedback-ingest", setOf(registeredReactionSurfaces())],
   ["ancillary-ops", setOf(PLATFORMS.filter((p) => surfaceMessageOps(p) !== undefined))],

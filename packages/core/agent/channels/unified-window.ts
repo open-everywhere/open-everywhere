@@ -95,9 +95,22 @@ export async function registerUnifiedWakeTarget(
   windowToken?: string,
   inbound?: boolean,
   addressing?: string,
+  surfaceKey?: string,
 ): Promise<void> {
-  const targetJson = JSON.stringify(addressing ? { ...origin, addressing } : origin);
+  const targetJson = JSON.stringify({ ...origin, ...(addressing ? { addressing } : {}), ...(surfaceKey ? { surfaceKey } : {}) });
   await store.putUnifiedWakeTarget(org, wakeId, targetJson, atIso, WAKE_TARGET_TTL_MS, windowToken, inbound);
+}
+
+export function wakeSurfaceKeyFromTargetJson(targetJson: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(targetJson);
+    if (parsed && typeof parsed === "object") {
+      const surfaceKey = (parsed as Record<string, unknown>).surfaceKey;
+      if (typeof surfaceKey === "string" && surfaceKey.length > 0) return surfaceKey;
+    }
+  } catch {
+  }
+  return undefined;
 }
 
 export function wakeAddressingFromTargetJson(targetJson: string): string | undefined {
@@ -136,7 +149,21 @@ export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrig
   return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
 }
 
-function withCarriedPlacement(target: UnifiedWakeOrigin, source: UnifiedWakeOrigin): UnifiedWakeOrigin {
+export function unifiedPlacementRef(origin: UnifiedWakeOrigin): string | undefined {
+  try {
+    const ref = wakeOriginCodec(origin.platform)?.placementRef?.(origin);
+    return typeof ref === "string" && ref.length > 0 ? ref : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function sameUnifiedPlacement(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {
+  if (a.platform !== b.platform) return false;
+  return unifiedPlacementRef(a) === unifiedPlacementRef(b);
+}
+
+export function withCarriedPlacement(target: UnifiedWakeOrigin, source: UnifiedWakeOrigin): UnifiedWakeOrigin {
   if (target.platform !== source.platform) return target;
   const codec = wakeOriginCodec(target.platform);
   if (!codec?.carryPlacement) return target;

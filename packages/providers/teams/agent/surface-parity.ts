@@ -5,6 +5,14 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
+  "unified-action-plane": {
+    unsupported:
+      "the arm posts a plain message activity, and a button here needs an Adaptive Card PLUS an invoke route to receive the tap. `teams-front.ts` forwards every `invoke` to the native channel, whose HITL route resolves a tap against the TEAMS channel's own session — a unified seat's parked request lives on another session entirely, so an OE-minted card would render a button that settles nothing. Prose, which stands on its own, until that route exists",
+  },
+  "origin-placement-carry": {
+    unsupported:
+      "the placement is INSIDE the conversation identity: `threadRef` keys on `replyToActivityId`, the very activity a reply hangs under, so two origins that pass the conversation test already agree on placement and there is no gap to carry",
+  },
   "read-adapter": "supported",
   "reaction-feedback-ingest": { supported: "the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare" },
   "ancillary-ops": "supported",

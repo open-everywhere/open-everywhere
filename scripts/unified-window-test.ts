@@ -727,6 +727,7 @@ await handleTeamsSingleWindowDispatch(
   {
     surfaceKey: TEAMS_KEY,
     containerKey: teamsPartition.surfaceKey,
+    ingested: [{ trust: "peer" as const }],
     channelId: "19:winchan@thread.tacv2",
     auth: teamsAuth,
     trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE what was the deploy window token we agreed?", trust: "peer" },
@@ -1792,6 +1793,7 @@ overrideSettingsForTest({ window: { topology: false } });
     channelId: "19:winchan@thread.tacv2",
     teamId: "11111111-2222-3333-4444-555555555555",
     auth: teamsAuth,
+    ingested: [{ trust: "peer" as const }],
     trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE anything new?", trust: "peer" as const },
     window: teamsWindow,
   };

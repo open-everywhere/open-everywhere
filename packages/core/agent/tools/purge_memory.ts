@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolvePartition, type Partition } from "../memory/partition.js";
+import { proposalScopeKey } from "../channels/propose-scope.js";
 import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -219,7 +220,7 @@ const purgeEntry = defineTool({
         org: purgePlan.args.org,
         kind: purgePlan.kind,
         args: purgePlan.args,
-        scopeKey: purgePlan.scopeKey,
+        scopeKey: await proposalScopeKey(ctx, { org: purgePlan.args.org, surfaceKey: purgePlan.scopeKey }),
         domain: purgePlan.domain,
         requestedBy: principalIdOf(ctx)!,
         channelId: venue.channelId,

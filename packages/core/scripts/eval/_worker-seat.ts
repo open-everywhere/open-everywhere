@@ -42,7 +42,6 @@ const EVE_FRAMEWORK_MODULES: Readonly<Record<string, string>> = {
   ask_question: "tools/framework/ask-question.js",
   connection_search: "tools/framework/connection-search.js",
   task_cancel: "tools/framework/task-cancel.js",
-  task_update: "tools/framework/task-update.js",
   todo: "tools/provided/todo.js",
   load_skill: "tools/provided/load-skill.js",
   web_search: "tools/provided/web-search.js",

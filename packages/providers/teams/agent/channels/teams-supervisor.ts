@@ -11,7 +11,9 @@ import {
   type SingleWindowMentionPolicy,
   type UnifiedWindowWake,
   type WakeMessageInput,
-  type SessionTailEntry,
+  tailAuthorGrain,
+  type IngestedChatMessage,
+  type SessionTailWakeRow,
   seatCatchUpSinceMs,
   catchUpUnavailableReason,
   type SeatCatchUpRequest,
@@ -139,7 +141,7 @@ export interface TeamsSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, channelId: string, atIso: string) => Promise<TeamsSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
   readonly catchUp?: (req: SeatCatchUpRequest) => Promise<SeatCatchUpResult>;
-  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailWakeRow, token: string, surfaceKey: string) => Promise<void>;
 
   readonly wake: (input: { token: string; auth: OpenEverywhereTeamsAuth; message: string; context: readonly string[]; window: UnifiedWindowWake }) => Promise<void>;
   readonly now?: () => string;
@@ -152,6 +154,7 @@ export interface TeamsSupervisorDispatch {
   readonly teamId?: string;
   readonly teamAddressUnresolved?: boolean;
   readonly auth: OpenEverywhereTeamsAuth;
+  readonly ingested: readonly IngestedChatMessage[];
   readonly trigger: TeamsSupervisorWakeInput["trigger"];
   readonly threadRootId?: string;
   readonly replyChainRootId?: string;
@@ -204,6 +207,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
         at: atIso,
         from: "human",
         trust: d.trigger.trust,
+        ...tailAuthorGrain(d.ingested[0] ?? { trust: d.trigger.trust }),
         author: d.trigger.authorName ?? d.trigger.authorId,
         authorId: d.trigger.authorId,
         id: d.trigger.id,

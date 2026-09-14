@@ -24,6 +24,7 @@ interface CompactionConfig {
 interface Msg {
   readonly role: string;
   readonly content: unknown;
+  readonly kind?: string;
 }
 interface CompactionModule {
   compactMessages(
@@ -44,6 +45,9 @@ const compaction = (await import(pathToFileURL(compactionPath).href)) as unknown
 const { estimateTokens } = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/token-estimate.js")).href)) as unknown as {
   estimateTokens(messages: readonly unknown[]): number;
 };
+const { validateHarnessModelMessages } = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/messages.js")).href)) as unknown as {
+  validateHarnessModelMessages(messages: readonly Msg[]): Msg[];
+};
 const promptModule = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/compaction-prompt.js")).href)) as unknown as {
   COMPACTION_CHECKPOINT_MARKER: string;
   COMPACTION_PROMPT_ENVELOPE: { prompt: string; system: string };
@@ -55,52 +59,20 @@ const OVERHEAD = estimateTokens([
   { content: promptModule.COMPACTION_PROMPT_ENVELOPE.prompt, role: "user" },
 ]);
 
-const ANCHORED_CONFIG_DEF =
-  "function __oeAnchoredConfig(e,t){let n=getInputTokenCount(e,t)-estimateTokens(e);return n>0?{...t,threshold:t.threshold-n}:t}";
-const NOOP_GUARD_DEF =
-  'function __oeNoteNoOpCompaction(e,t,n,r){if(t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e)))return t;if(r!==!0&&!shouldCompact(e,n))return t;console.warn("[oe][OPE-689] compaction returned the input unchanged after the trigger fired ("+e.length+" messages, threshold "+n.threshold+"). The harness will emit compaction.completed for a no-op and the session will not shrink.");return t}';
-
 const src = readFileSync(compactionPath, "utf8");
-ok(src.includes("=== OE PATCH HELPERS (OPE-689) ==="), "presence: the OPE-689 marker comment is in the installed bytes");
-ok(src.includes(ANCHORED_CONFIG_DEF), "presence: the __oeAnchoredConfig helper is byte-exact in the installed bytes");
-ok(src.includes(NOOP_GUARD_DEF), "presence: the __oeNoteNoOpCompaction backstop is byte-exact in the installed bytes");
-const END = "// === END OE PATCH HELPERS ===";
-ok(src.indexOf(ANCHORED_CONFIG_DEF) < src.indexOf(END), "presence: the helpers live inside the OE helper block");
-
+ok(src.includes("tokenEstimateAdjustment"), "upstream: eve carries its own tokenEstimateAdjustment correction (landed 0.52.3)");
 ok(
-  /\{config:__oeA,conversation:[A-Za-z_$]{1,2},older:/.test(src),
-  "wiring: the anchored config is the one the compaction heuristics receive",
+  !src.includes("__oeAnchoredConfig") && !src.includes("__oeNoteNoOpCompaction"),
+  "upstream: NO part-3 helper of ours is installed — the hunk is retired, and porting it back would patch upstream's fix on top of itself",
 );
-ok((src.match(/__oeAnchoredConfig\(/g) ?? []).length === 2, "wiring: exactly one call site (helper definition plus one invocation)");
-ok((src.match(/__oeA[,)]/g) ?? []).length === 1, "wiring: the anchored config is read exactly once — nothing else re-budgets on it");
-const anchorCall = /__oeA=__oeAnchoredConfig\([A-Za-z_$]{1,2},([A-Za-z_$]{1,2})\)/.exec(src);
-ok(
-  anchorCall !== null,
-  "wiring: the anchored config is declared from the work step's own messages and config parameters",
-);
-const configLetter = anchorCall![1];
-ok(
-  new RegExp(
-    `selectRecentWindowSize\\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\\?\\{\\.\\.\\.${configLetter},recentWindowSize:1\\}:${configLetter}\\)`,
-  ).test(src),
-  "wiring: selectRecentWindowSize still reads the original config — per-message budgeting keeps the estimator",
-);
-const wrapper =
-  /async function compactMessages\(([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2})=!1\)\{return __oeNoteNoOpCompaction\(\1,await __oeCompactMessagesInner\(\1,\2,\3,\4,\5,\6,\7,\8\),\3,\8\)\}/.exec(
-    src,
-  );
-ok(
-  wrapper !== null,
-  "wiring: the exported compactMessages forwards every parameter to the inner function and routes its result through the no-op backstop",
-);
-ok(src.includes("export{compactMessages,"), "wiring: `compactMessages` is still the exported name, so every eve caller gets the wrapper");
+ok(src.includes("export{compactMessages,"), "upstream: `compactMessages` is still the exported name every eve caller reaches");
 
 const DENSE = "eJyVk1tv2jAUx7/KUZ42qUlIQmhJpUmoTNM0abtIm/YwTZUJDrhN7Mx2oKzqd99xEijQru";
 
 function denseSession(): Msg[] {
   const out: Msg[] = [];
   for (let i = 0; i < 20; i++) out.push({ role: i % 2 === 0 ? "user" : "assistant", content: `step-${i} ${DENSE.repeat(20)}` });
-  out.push({ role: "user", content: "final question" });
+  out.push({ role: "user", content: "final question", kind: "user" });
   return out;
 }
 
@@ -177,12 +149,12 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
 
 {
   const messages: Msg[] = [
-    { role: "user", content: "hello" },
+    { role: "user", content: "hello", kind: "user" },
     { role: "assistant", content: "hi" },
-    { role: "user", content: "how are you" },
+    { role: "user", content: "how are you", kind: "user" },
     { role: "assistant", content: "fine" },
-    { role: "user", content: "thanks" },
-    { role: "user", content: "one more thing" },
+    { role: "user", content: "thanks", kind: "user" },
+    { role: "user", content: "one more thing", kind: "user" },
   ];
   const before = JSON.stringify(messages);
   const estimated = estimateTokens(messages);
@@ -216,7 +188,7 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
       ],
     });
   }
-  messages.push({ role: "user", content: "what did you find" });
+  messages.push({ role: "user", content: "what did you find", kind: "user" });
 
   const estimated = estimateTokens(messages);
   const config: CompactionConfig = {
@@ -249,83 +221,13 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
   );
 }
 
-{
-  const anchoredConfig = new Function(
-    "getInputTokenCount",
-    "estimateTokens",
-    `${ANCHORED_CONFIG_DEF}\nreturn __oeAnchoredConfig;`,
-  )(compaction.getInputTokenCount, estimateTokens) as (messages: readonly Msg[], config: CompactionConfig) => CompactionConfig;
-
-  const messages = denseSession();
-  const estimated = estimateTokens(messages);
-  const over: CompactionConfig = {
-    lastKnownInputTokens: 30_000,
-    lastKnownPromptMessageCount: messages.length,
-    recentWindowSize: 4,
-    threshold: THRESHOLD,
-  };
-  const anchored = anchoredConfig(messages, over);
-  const gap = compaction.getInputTokenCount(messages, over) - estimated;
-  ok(gap > 0, `anchor-drive: the fixture really has a real-minus-estimate gap (${gap} tokens)`);
-  ok(
-    anchored.threshold === THRESHOLD - gap,
-    `anchor-drive: the threshold drops by exactly that gap (${THRESHOLD} → ${anchored.threshold})`,
-  );
-  ok(anchored.recentWindowSize === over.recentWindowSize, "anchor-drive: every other field is carried through unchanged");
-  ok(anchored !== over, "anchor-drive: a COPY is returned — the session's own compaction config is never mutated");
-
-  const none: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
-  ok(anchoredConfig(messages, none) === none, "anchor-drive: with no reported usage the config passes through untouched");
-  const under: CompactionConfig = { ...over, lastKnownInputTokens: Math.round(estimated / 2) };
-  ok(anchoredConfig(messages, under) === under, "anchor-drive: a reported count below the estimate never LOOSENS the budget");
-}
-
-{
-  let triggerFires = true;
-  const guard = new Function("shouldCompact", `${NOOP_GUARD_DEF}\nreturn __oeNoteNoOpCompaction;`)(
-    () => triggerFires,
-  ) as (before: Msg[], after: Msg[], config: CompactionConfig, force?: boolean) => Msg[];
-
-  const warned: string[] = [];
-  const realWarn = console.warn;
-  console.warn = (...args: unknown[]): void => {
-    warned.push(args.map(String).join(" "));
-  };
-  try {
-    const config: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
-    const list: Msg[] = [{ role: "user", content: "a" }];
-
-    warned.length = 0;
-    ok(guard(list, list, config) === list, "guard-drive: the result is passed through unchanged (the backstop only observes)");
-    ok(warned.length === 1, "guard-drive: an unchanged list after the trigger fired logs exactly one line");
-    ok(warned[0].includes("OPE-689"), "guard-drive: the line names the defect, so a log search finds it");
-
-    warned.length = 0;
-    guard(list, [{ role: "user", content: "a" }], config);
-    ok(warned.length === 1, "guard-drive: an equal-by-value copy counts as a no-op, not as work");
-
-    warned.length = 0;
-    guard(list, [], config);
-    ok(warned.length === 0, "guard-drive: a list that really changed is silent");
-
-    triggerFires = false;
-    warned.length = 0;
-    guard(list, list, config);
-    ok(warned.length === 0, "guard-drive: an unchanged list is silent when the trigger would not have fired");
-
-    warned.length = 0;
-    guard(list, list, config, true);
-    ok(warned.length === 1, "guard-drive: a FORCED compaction that changed nothing still logs");
-  } finally {
-    console.warn = realWarn;
-  }
-}
 const toolLoopPath = join(eveRoot, "dist/src/harness/tool-loop.js");
 const toolLoopSrc = readFileSync(toolLoopPath, "utf8");
 
 const REDUCED_DEF =
   "function __oeCompactionReduced(e,t){return t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e))}";
 const WITH_REDUCED_DEF = "function __oeWithReduced(e,t){return{...e,data:{...e.data,reduced:t}}}";
+const END = "// === END OE PATCH HELPERS ===";
 
 ok(toolLoopSrc.includes(REDUCED_DEF), "event-wiring: __oeCompactionReduced is byte-exact in the installed tool loop");
 ok(toolLoopSrc.includes(WITH_REDUCED_DEF), "event-wiring: __oeWithReduced is byte-exact in the installed tool loop");
@@ -339,7 +241,7 @@ ok(
   ),
   "event-wiring: the OPE-73 untrusted-projection hook is still byte-exact beside the OPE-697 helpers",
 );
-const workStepPin = /:\[\.\.\.([A-Za-z_$]{1,2})\];__oeRed=__oeCompactionReduced\(\1,([A-Za-z_$]{1,2})\);if\([A-Za-z_$]{1,2}=\[\.\.\.[A-Za-z_$]{1,2}\.memory,\.\.\.\2\],/.exec(toolLoopSrc);
+const workStepPin = /:\[\.\.\.([A-Za-z_$]{1,2})\];__oeRed=__oeCompactionReduced\(\1,([A-Za-z_$]{1,2})\);if\([A-Za-z_$]{1,2}=(?:[A-Za-z_$]+\()?\[\.\.\.[A-Za-z_$]{1,2}\.memory,\.\.\.\2\]/.exec(toolLoopSrc);
 ok(
   workStepPin !== null,
   "event-wiring: the flag is computed from the work step's OWN input and output, between the ternary that runs it and the memory rebuild that consumes it",
@@ -427,6 +329,8 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: Dri
     "drainMemoryCommit",
     "__oeCompactionReduced",
     "__oeWithReduced",
+    "validateHarnessModelMessages",
+    "replaceSessionHistory",
     `${maybeCompactSrc}\nreturn maybeCompact;`,
   ) as (...deps: unknown[]) => (input: Record<string, unknown>) => Promise<{ messages: Msg[] }>;
 
@@ -451,6 +355,8 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: Dri
     () => undefined,
     isReduced,
     withReduced,
+    validateHarnessModelMessages,
+    (session: Record<string, unknown>, history: Msg[]) => ({ ...session, history }),
   );
 
   return maybeCompact({
@@ -459,9 +365,9 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: Dri
       events.push(event);
     },
     messages: [
-      { role: "user", content: "one" },
+      { role: "user", content: "one", kind: "user" },
       { role: "assistant", content: "two" },
-      { role: "user", content: "three" },
+      { role: "user", content: "three", kind: "user" },
     ],
     model: { modelId: "stub" },
     onCompaction,
@@ -482,7 +388,7 @@ function completedEvent(events: Emitted[]): Emitted {
 }
 
 {
-  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY" }]);
+  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY", kind: "user" }]);
   ok(events.some((e) => e.type === "compaction.requested"), "event-honesty: the requested event still fires (contract unchanged)");
   const completed = completedEvent(events);
   ok("reduced" in completed.data, "event-honesty: a real compaction carries the reduced field at all");
@@ -524,14 +430,14 @@ function completedEvent(events: Emitted[]): Emitted {
 }
 {
   const events = await driveMaybeCompact(
-    () => [{ role: "user", content: "SUMMARY" }],
+    () => [{ role: "user", content: "SUMMARY", kind: "user" }],
     () => [{ role: "assistant", content: "appended after compaction" }],
   );
   ok(completedEvent(events).data.reduced === true, "event-honesty: a real reduction with an appended message still reports true");
 }
 
 {
-  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY" }], undefined, {
+  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY", kind: "user" }], undefined, {
     compactTriggered: false,
     canonicalizeTriggered: true,
   });
@@ -556,6 +462,6 @@ function completedEvent(events: Emitted[]): Emitted {
 }
 
 console.log(
-  `\n✓ eve-compaction-anchor: ${n} assertions passed (presence, wiring, premise, reduces, fast-path, tool-cap, no-usage, ` +
-    `anchor-drive, guard-drive, event-wiring, reduced-drive, event-honesty)\n`,
+  `\n✓ eve-compaction-anchor: ${n} assertions passed (upstream, premise, reduces, fast-path, tool-cap, no-usage, ` +
+    `event-wiring, reduced-drive, event-honesty)\n`,
 );

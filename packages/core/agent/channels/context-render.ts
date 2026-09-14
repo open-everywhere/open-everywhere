@@ -31,6 +31,23 @@ export function contextLinesNotInEnvelope(lines: readonly ContextLine[], envelop
   return lines.filter((l) => l.refuted === true || !rendered.has(l.ts));
 }
 
+export interface HydrationSlices {
+  readonly rendered: ContextLine[];
+  readonly ingested: ContextLine[];
+}
+
+export function hydrationSlices(
+  lines: readonly ContextLine[],
+  envelope: readonly WakeMessageInput[],
+  opts: { readonly maxMessages?: number; readonly maxChars?: number } = {},
+): HydrationSlices {
+  const deduped = contextLinesNotInEnvelope(lines, envelope);
+  const rendered = capLines(deduped, opts);
+  const kept = new Set<ContextLine>(rendered);
+  const droppedByCap = new Set<ContextLine>(deduped.filter((l) => !kept.has(l)));
+  return { rendered, ingested: lines.filter((l) => !droppedByCap.has(l)) };
+}
+
 function attribution(l: ContextLine): string {
   const trustPart = l.trust === "unauth" ? " trust=unauth" : "";
   if (l.senderType === "agent") return "[sender_type=agent]";

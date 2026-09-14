@@ -17,4 +17,5 @@ export const slackWakeOriginCodec: WakeOriginCodec<SlackOrigin> = {
     !(target.threadTs && target.threadTs.length > 0) && !(target.replyAnchorTs && target.replyAnchorTs.length > 0) && typeof source.replyAnchorTs === "string" && source.replyAnchorTs.length > 0
       ? { ...target, replyAnchorTs: source.replyAnchorTs }
       : target,
+  placementRef: (origin) => (typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined),
 };

@@ -1,6 +1,6 @@
 import browserExtension from "@agent-browser/eve";
 import * as vendorTools from "@agent-browser/eve/tools";
-import { registerBrowserToolkit, registerExtraEgressHosts, isLoopbackBrowseHost, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerBrowserToolkit, openBrowserEgressHosts, isLoopbackBrowseHost, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
 import { type AgentBrowserConfig } from "./config.js";
 
 interface BoundBrowserConfig {
@@ -40,10 +40,7 @@ export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
   }
   registerBrowserToolkit(entries);
 
-  registerExtraEgressHosts(
-    "agent-browser",
-    cfg.hosts.filter((h) => h.credential === undefined && !isLoopbackBrowseHost(h.host)).map((h) => h.host),
-  );
+  openBrowserEgressHosts(cfg.hosts.filter((h) => h.credential === undefined && !isLoopbackBrowseHost(h.host)).map((h) => h.host));
 
   const credentialed = cfg.hosts.filter((h) => h.credential !== undefined).length;
   console.log(

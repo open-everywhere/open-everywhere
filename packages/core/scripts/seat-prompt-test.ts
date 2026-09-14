@@ -591,4 +591,47 @@ function ok(cond: boolean, label: string): void {
   ok(seat.includes("Report the OUTCOME."), "negative control: the honest-ack rule itself is untouched");
 }
 
+{
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
+  const flat = (s: string): string => s.replace(/\s+/g, " ");
+  const SENTENCE =
+    "A fact you learned in another channel of THIS domain is yours to use when a member ASKS for it. " +
+    "Answer from what you already hold — never scan, never search another channel to answer. " +
+    "If nobody asked, do not volunteer it: an unsolicited fact from another room is a leak, and a solicited one is an answer.";
+
+  ok(flat(seat).includes(SENTENCE), "🔴 the seat carries the cross-channel answer rule verbatim");
+
+  ok(
+    flat(seat).includes("is yours to use when a member ASKS for it"),
+    "🔴 …the held fact is usable only on a member's ASK (solicited)",
+  );
+  ok(
+    flat(seat).includes("never scan, never search another channel to answer"),
+    "🔴 …answering never buys a read of another channel (no scanning)",
+  );
+  ok(
+    flat(seat).includes("If nobody asked, do not volunteer it"),
+    "🔴 …and an unasked fact is never volunteered",
+  );
+  ok(
+    flat(seat).includes("an unsolicited fact from another room is a leak, and a solicited one is an answer"),
+    "🔴 …with the two outcomes named, so the seat reads the ask as the whole discriminator",
+  );
+
+  ok(
+    flat(seat).includes("When you're unsure whether a message clears that bar, it doesn't — stay silent."),
+    "negative control: the unsure-so-silent bar the line sits beside survives",
+  );
+  ok(
+    flat(seat).includes("**A statement is not a question, and saving one is not a reason to post.**"),
+    "negative control: …and so does the statement-is-not-a-question rule directly above it",
+  );
+  ok(!flat(worker).includes(SENTENCE), "🔴 the worker persona never reads the cross-channel answer rule");
+  ok(
+    !flat(worker).includes("never scan, never search another channel to answer"),
+    "🔴 …not even the no-scanning clause on its own",
+  );
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

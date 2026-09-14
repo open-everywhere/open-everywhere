@@ -61,6 +61,7 @@ import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake
 import type { WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { discordPostMessage } from "@open-everywhere/provider-discord/agent/channels/discord-post.js";
 import { platformFailureClass } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderContext, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "@open-everywhere/provider-discord/agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
@@ -1029,19 +1030,21 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     { senderType: "user" as const, senderId: "U_GUEST", ts: "102", text: "an unvouched stranger", trust: "unauth" as WakeTrust },
   ];
 
+  const blockOf = (ls: readonly ContextLine[]): string => renderContext(ls, "the channel") ?? "";
   const closed = discordSeatContextForWindow(lines, "the channel", grainFor(SEAT_KEY), SEAT_KEY, false);
-  ok(closed.context.length === 1, "a members-only seat still gets a context block for the lines it admits");
-  ok(!closed.context[0]!.includes("an unvouched stranger"), "🔴 OPE-1800: the EXCLUDED principal's line does NOT reach the seat's context — the defect, closed");
-  ok(closed.context[0]!.includes("a vouched colleague"), "…while the vouched colleague's line still does, so the policy is deciding per author");
+  ok(closed.lines.length === 1, "a members-only seat still gets the lines it admits");
+  ok(closed.source === "the channel", "…and the provenance label rides with them, for core to render");
+  ok(!blockOf(closed.lines).includes("an unvouched stranger"), "🔴 OPE-1800: the EXCLUDED principal's line does NOT reach the seat's context — the defect, closed");
+  ok(blockOf(closed.lines).includes("a vouched colleague"), "…while the vouched colleague's line still does, so the policy is deciding per author");
   ok(closed.ingestion.length === 1 && closed.ingestion[0]!.trust === "peer", "🔴 the taint join reads the ADMITTED set too: a refused line's bytes never reach the model, so it must not key taint either");
 
   const open = discordSeatContextForWindow(lines, "the channel", grainFor(OPEN_KEY), OPEN_KEY, false);
-  ok(open.context.length === 1 && open.context[0]!.includes("an unvouched stranger") && open.context[0]!.includes("a vouched colleague"), "negative control: a `wide` domain admits BOTH lines through the same seam");
+  ok(open.lines.length === 2 && blockOf(open.lines).includes("an unvouched stranger") && blockOf(open.lines).includes("a vouched colleague"), "negative control: a `wide` domain admits BOTH lines through the same seam");
   ok(open.ingestion.length === 2, "…and hands the join both sets of facts");
 
   const allRefused = discordSeatContextForWindow([lines[1]!], "the channel", grainFor(SEAT_KEY), SEAT_KEY, true);
-  ok(allRefused.context.length === 0 && allRefused.ingestion.length === 0, "🔴 nothing admitted ⇒ NO context block and no join facts, never an empty block");
-  ok(discordSeatContextForWindow(undefined, undefined, grainFor(SEAT_KEY), SEAT_KEY, false).context.length === 0, "an absent fetch yields the same empty shape and throws nothing");
+  ok(allRefused.lines.length === 0 && allRefused.ingestion.length === 0, "🔴 nothing admitted ⇒ NO lines and no join facts, so core renders no block");
+  ok(discordSeatContextForWindow(undefined, undefined, grainFor(SEAT_KEY), SEAT_KEY, false).lines.length === 0, "an absent fetch yields the same empty shape and throws nothing");
 
   const stoodDown = admitDiscordSeatLines(lines, grainFor(SEAT_KEY), SEAT_KEY, false);
   ok(stoodDown !== undefined && stoodDown.length === 1 && stoodDown[0]!.senderId === "U_MEMBER", "🔴 a STOOD-DOWN seat's native hydration is policed by the same rule as its window road");
