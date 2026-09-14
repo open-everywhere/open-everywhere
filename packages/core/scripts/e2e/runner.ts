@@ -40,7 +40,8 @@ import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
-import { emptySkipCounts, renderSkipBreakdown } from "./skip-summary.js";
+import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
+import { boardGaps, renderBoard, type BoardLeg } from "./board.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
@@ -213,8 +214,7 @@ async function main(): Promise<void> {
     console.error(`✗ E2E_SUITE="${suiteRaw}" is not one of: smoke, core, full`);
     process.exit(1);
   }
-  const suiteSel = suiteRaw || "core";
-  const effectiveIncludeOptional = report.includeOptional || suiteSel === "full";
+  const suiteSel = suiteRaw === "full" ? "core" : suiteRaw || "core";
   const surfaceFilter = new Set(
     (process.env.E2E_SURFACES ?? "")
       .split(",")
@@ -234,31 +234,49 @@ async function main(): Promise<void> {
   const includeExpensive = process.argv.includes("--include-expensive") || (process.env.E2E_INCLUDE_EXPENSIVE ?? "").trim() === "1";
   if (includeExpensive) console.log("expensive legs: included (--include-expensive / E2E_INCLUDE_EXPENSIVE=1)");
 
+  const board: BoardLeg[] = [];
+  const liveRun = report.available.size > 0;
+
   for (const scenario of SCENARIOS) {
     if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
       skipped++;
       skipCounts["filtered-only"]++;
+      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: "not named by --only / E2E_ONLY" });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (filtered by --only)`);
       continue;
     }
     if (suiteSel === "smoke" && scenario.smoke !== true) {
       skipped++;
       skipCounts["filtered-suite"]++;
+      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: "not in the E2E_SUITE=smoke set" });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (not in the E2E_SUITE=smoke set)`);
       continue;
     }
     if (surfaceFilter.size > 0 && !surfaceFilter.has(scenario.surface)) {
       skipped++;
       skipCounts["filtered-surface"]++;
+      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `surface ${scenario.surface} not in E2E_SURFACES` });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
       continue;
     }
     const explicitlyNamed = only.has(scenario.id.toUpperCase());
-    const category = skipCategory(scenario, report.available, effectiveIncludeOptional, explicitlyNamed, includeExpensive);
+    const category = skipCategory(scenario, report.available, explicitlyNamed, includeExpensive);
     if (category !== undefined) {
+      const reason = skipReason(scenario, report.available, report.missing, explicitlyNamed, includeExpensive)!;
+      if (isGapKind(category) && liveRun) {
+        failed++;
+        board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `cannot run — ${reason}` });
+        console.error(`✗ ${scenario.id} ${scenario.title}: CANNOT RUN — ${reason}`);
+        continue;
+      }
       skipped++;
       skipCounts[category]++;
-      const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional, explicitlyNamed, includeExpensive)!;
+      board.push({
+        id: scenario.id,
+        surface: scenario.surface,
+        status: category === "expensive-not-included" ? "DEFERRED" : "FILTERED",
+        reason,
+      });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (${reason})`);
       continue;
     }
@@ -372,24 +390,57 @@ async function main(): Promise<void> {
       passed++;
       const judgeTag = judgeBannerTag({ llm: judgedLlm, fallback: judgedFallback, reasons: [...fallbackReasons] });
       const reportTag = reported > 0 ? `, ${reported} judged-reported (${reportedRed} red, non-gating)` : "";
+      board.push({
+        id: scenario.id,
+        surface: scenario.surface,
+        status: "GREEN",
+        evidence: `${gates} gates, ${judgedCount} judged${reportTag}, ${secs()}`,
+      });
       console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
       if (err instanceof FixtureMissing) {
-        skipped++;
-        skipCounts["fixture-missing"]++;
-        console.log(`⚑ ${scenario.id} ${scenario.title}: FIXTURE MISSING — nothing was measured about the deployment (${err.message})`);
+        if (liveRun) {
+          failed++;
+          board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `RED-until-fixture — ${err.message}` });
+          console.error(`⚑ ${scenario.id} ${scenario.title}: RED-until-fixture — the harness's own test data is missing, so nothing about the deployment was measured (${err.message})`);
+        } else {
+          skipped++;
+          skipCounts["fixture-missing"]++;
+          board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `dry run — ${err.message}` });
+          console.log(`⚑ ${scenario.id} ${scenario.title}: FIXTURE MISSING — nothing was measured about the deployment (${err.message})`);
+        }
       } else if (err instanceof ScenarioSkip) {
-        skipped++;
-        skipCounts["scenario-self-skip"]++;
-        console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);
+        if (liveRun) {
+          failed++;
+          board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `cannot run — ${err.message}` });
+          console.error(`✗ ${scenario.id} ${scenario.title}: CANNOT RUN — ${err.message}`);
+        } else {
+          skipped++;
+          skipCounts["scenario-self-skip"]++;
+          board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `dry run — ${err.message}` });
+          console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);
+        }
       } else {
         failed++;
-        console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${String(err instanceof Error ? err.message : err)}`);
+        const message = String(err instanceof Error ? err.message : err);
+        board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: message, evidence: `failed after ${secs()}` });
+        console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${message}`);
       }
     }
   }
 
-  if (report.available.size === 0) {
+  const gaps = boardGaps(board);
+  for (const line of renderBoard(board)) console.log(line);
+  if (gaps.missing.length > 0 || gaps.unknown.length > 0) {
+    console.error(
+      `✗ e2e driver pack: the board does not match the roster — missing rows: ${gaps.missing.join(", ") || "none"}; ` +
+        `rows for unknown ids: ${gaps.unknown.join(", ") || "none"}. Every scenario must reach the board exactly once.`,
+    );
+    process.exit(1);
+  }
+  console.log("");
+
+  if (!liveRun) {
     console.log(`✓ e2e driver pack: skipped — no driver tokens (${skipped}/${SCENARIOS.length} scenarios dry-skipped)`);
     console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
     return;

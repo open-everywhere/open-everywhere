@@ -963,7 +963,7 @@ async function runProvisionNotionQueryPage(env: Env, dryRun: boolean): Promise<n
   console.log(`\n~ e2e:fixtures provision-notion-query-page: the page exists. Nothing was written to any env var — S24 finds it by SEARCH.`);
   console.log(`  Notion's search index lags a write by up to a few minutes. Confirm before you trust the leg:`);
   console.log(`    npm run e2e:fixtures -- inventory --partial     # the page is reachable at all`);
-  console.log(`  then run S24 itself: E2E_INCLUDE_OPTIONAL=1 E2E_ONLY=S24 npm run e2e:driver`);
+  console.log(`  then run S24 itself: E2E_ONLY=S24 npm run e2e:driver`);
   return 0;
 }
 

@@ -18,7 +18,6 @@ export const ENV = {
   org: "E2E_ORG",
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
-  includeOptional: "E2E_INCLUDE_OPTIONAL",
   auditSilences: "E2E_AUDIT_SILENCES",
   webhookSecret: "E2E_WEBHOOK_SECRET",
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
@@ -597,7 +596,6 @@ export function auditSilencesExpected(env: Env = process.env, targetUrl?: string
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
-  readonly includeOptional: boolean;
 }
 
 export interface TrackedRoomResolver {
@@ -732,6 +730,5 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
       engagedLinear: engagedLinear.ok ? [] : engagedLinear.missing,
       engagedNotion: engagedNotion.ok ? [] : engagedNotion.missing,
     },
-    includeOptional: env[ENV.includeOptional] === "1",
   };
 }

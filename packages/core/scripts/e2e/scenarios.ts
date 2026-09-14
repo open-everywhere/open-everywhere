@@ -88,7 +88,7 @@ import type { TimingsRecord } from "./timings-record.js";
 import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply } from "./read-channel-lib.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
@@ -182,7 +182,7 @@ export interface ScenarioContext {
 
 export type Surface = "slack" | "teams" | "discord" | "github" | "linear" | "notion" | "cross";
 
-export type Suite = "core" | "extended" | "security";
+export type Suite = "core" | "security";
 
 export interface Scenario {
   readonly id: string;
@@ -191,7 +191,6 @@ export interface Scenario {
   readonly surface: Surface;
   readonly suite: Suite;
   readonly smoke?: boolean;
-  readonly optional: boolean;
   readonly expensive?: boolean;
   readonly costReason?: string;
   readonly timeoutMs: number;
@@ -318,12 +317,10 @@ function factuality(expected: string, criteria: string, fallback: Rubric["fallba
 export function skipCategory(
   scenario: Scenario,
   available: ReadonlySet<Capability>,
-  includeOptional: boolean,
   explicitlyNamed = false,
   includeExpensive = false,
-): Extract<SkipKind, "missing-capability" | "optional-not-included" | "expensive-not-included"> | undefined {
+): Extract<SkipKind, "missing-capability" | "expensive-not-included"> | undefined {
   if (scenario.requires.some((c) => !available.has(c))) return "missing-capability";
-  if (scenario.optional && !includeOptional) return "optional-not-included";
   if (scenario.expensive && !explicitlyNamed && !includeExpensive) return "expensive-not-included";
   return undefined;
 }
@@ -332,22 +329,16 @@ export function skipReason(
   scenario: Scenario,
   available: ReadonlySet<Capability>,
   missing: Readonly<Record<Capability, readonly string[]>>,
-  includeOptional: boolean,
   explicitlyNamed = false,
   includeExpensive = false,
 ): string | undefined {
-  const category = skipCategory(scenario, available, includeOptional, explicitlyNamed, includeExpensive);
+  const category = skipCategory(scenario, available, explicitlyNamed, includeExpensive);
   if (category === "missing-capability") {
     const unmet = scenario.requires.filter((c) => !available.has(c));
     const vars = [...new Set(unmet.flatMap((c) => missing[c]))];
     const remedies = unmet.filter((c) => missing[c].length > 0).map((c) => CAPABILITY_REMEDY[c]).filter((r): r is string => r !== undefined);
     const tail = remedies.length > 0 ? ` — ${remedies.join("; ")}` : "";
     return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})${tail}`;
-  }
-  if (category === "optional-not-included") {
-    return explicitlyNamed
-      ? "optional/stretch — naming it directly is NOT enough (that consent works for the expensive gate, not this one): set E2E_INCLUDE_OPTIONAL=1 to run"
-      : "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
   }
   if (category === "expensive-not-included")
     return `expensive — ${scenario.costReason} (name it directly or set --include-expensive / E2E_INCLUDE_EXPENSIVE=1 to run)`;
@@ -360,6 +351,83 @@ export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive"
     return `${scenario.id} is flagged expensive but carries no costReason — state why it is expensive`;
   }
   return undefined;
+}
+
+async function gateDelegatedTurn(
+  ctx: ScenarioContext,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly timeoutMs: number;
+  },
+): Promise<void> {
+  const read = ctx.auditRead;
+  if (!read) {
+    ctx.skip(
+      `delegated turn on ${opts.platform}: the control-plane audit reader is unreachable, and every gate on this shape is an audit row (delegation.task_started/task_settled joined to reply.post). Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.`,
+    );
+    return;
+  }
+  const first = await awaitReplyPostRows(read, {
+    sinceIso: opts.sinceIso,
+    platform: opts.platform,
+    budget: { timeoutMs: AUDIT_ROW_WAIT, what: `delegated turn on ${opts.platform}: the turn's first ${REPLY_POST_ACTION} row` },
+  });
+  const anchor = (first ?? []).find((r) => typeof r.detail?.["sessionId"] === "string");
+  ctx.gate(
+    anchor !== undefined,
+    `🔴 (hard): the delegating turn filed a ${REPLY_POST_ACTION} row NAMING ITS SESSION on ${opts.platform} — without one there is no key to join the settlement to, and every gate below would be about some other turn (read ${(first ?? []).length} row(s))`,
+  );
+  const sessionId = String(anchor?.detail?.["sessionId"] ?? "");
+  const wakeId = String(anchor?.detail?.["wakeId"] ?? "");
+
+  const readTurnRows = async () => [
+    ...(await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION] })),
+    ...(await read({ sinceIso: opts.sinceIso, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] })),
+  ];
+  const outcome = await pollForFinalReply(
+    { now: () => Date.now(), sleep, fetchRows: readTurnRows },
+    wakeId,
+    sessionId,
+    opts.timeoutMs,
+    5_000,
+    30_000,
+  );
+  ctx.log(`delegated turn on ${opts.platform}: ${outcome.kind} — ${outcome.detail}`);
+
+  const rows = await readTurnRows();
+  const started = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION && String(r.detail?.["session"] ?? "") === sessionId);
+  const settled = rows.filter((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && String(r.detail?.["session"] ?? "") === sessionId);
+  ctx.gate(
+    started.length > 0,
+    `🔴 (hard): the ask DISPATCHED a background worker — a ${DELEGATION_TASK_STARTED_ACTION} row for session ${sessionId}. None means the seat answered in-seat, so this leg exercised no delegation road at all and its ask needs to be one the seat cannot answer alone (found ${started.length})`,
+  );
+  ctx.gate(
+    settled.length > 0,
+    `🔴 (hard): the worker SETTLED — a ${DELEGATION_TASK_SETTLED_ACTION} row for session ${sessionId}. A start with no settle is a worker that never reported back, which is the failure this shape exists to catch (found ${settled.length})`,
+  );
+  ctx.gate(
+    outcome.kind === "settled-relay",
+    `🔴 (hard, OPE-1856): the SUBSTANTIVE reply landed at or after the settlement — the worker's answer, never the interim ack. Got "${outcome.kind}": ${outcome.detail}`,
+  );
+}
+
+async function gateAmbientReplyRow(ctx: ScenarioContext, opts: { readonly sinceIso: string; readonly platform: string }): Promise<void> {
+  const read = ctx.auditRead;
+  if (!read) {
+    ctx.gate(false, `ambient: ctx.auditRead is unwired, so the deployment's own ${REPLY_POST_ACTION} row cannot be read — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. The reply seen in the room is not by itself evidence the deployment posted it`);
+    return;
+  }
+  const rows =
+    (await awaitReplyPostRows(read, {
+      sinceIso: opts.sinceIso,
+      platform: opts.platform,
+      budget: { timeoutMs: AUDIT_ROW_WAIT, what: `ambient: a ${REPLY_POST_ACTION} row on ${opts.platform}` },
+    })) ?? [];
+  ctx.gate(
+    rows.length > 0,
+    `🔴 (hard): the ambient answer is the DEPLOYMENT's — a ${REPLY_POST_ACTION} row on ${opts.platform} in this window. A reply visible in the room with no row behind it is a message from somewhere else (read ${rows.length} row(s))`,
+  );
 }
 
 const ENGAGED_STOP_ASK = "thanks, that's everything — please stop following this thread now";
@@ -456,8 +524,12 @@ async function gateOneSeatAcrossNameDrops(
     readonly container: string;
   },
 ): Promise<void> {
+  if (!ctx.auditRead) {
+    ctx.gate(false, `one-seat: ctx.auditRead is unwired, so neither the seat continuity nor the wake admission can be read — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. In the room the two shapes this gate tells apart look identical, so there is nothing else to assert on`);
+    return;
+  }
   const posts =
-    (await awaitReplyPostRows(ctx.auditRead!, {
+    (await awaitReplyPostRows(ctx.auditRead, {
       sinceIso: opts.sinceIso,
       platform: opts.platform,
       surface: opts.surface,
@@ -555,7 +627,6 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     smoke: true,
-    optional: false,
     timeoutMs: 1_500_000,
     judged: true,
     run: async (ctx) => {
@@ -657,7 +728,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackChannelB"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 3_000_000,
     judged: true,
     run: async (ctx) => {
@@ -757,8 +827,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Memory recall OPENS A FILE: asserted on reads + delegation evidence, not on reply text (OPE-121)",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 900_000,
     judged: false,
     run: async (ctx) => {
@@ -873,7 +942,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "slackUser2"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 2_400_000,
     judged: true,
     run: async (ctx) => {
@@ -978,7 +1046,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["synthetic"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 120_000,
     judged: false,
     run: async (ctx) => {
@@ -998,7 +1065,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["synthetic", "slack", "slackUnified"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 120_000,
     judged: false,
     run: async (ctx) => {
@@ -1039,7 +1105,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["discord"],
     surface: "discord",
     suite: "core",
-    optional: false,
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
@@ -1086,8 +1151,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Cross-platform recall Slack→Discord (stretch, config-dependent)",
     requires: ["slack", "discord"],
     surface: "cross",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
@@ -1120,8 +1184,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Name-drop wake + negative control (optional)",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 300_000,
     judged: true,
     run: async (ctx) => {
@@ -1153,8 +1216,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Spend-cap refusal = circuit breaker + the ingress DOOR it refused at (optional, fully deterministic)",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 660_000,
     judged: false,
     run: async (ctx) => {
@@ -1228,8 +1290,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "OPE-1862: a spend report asked in a DISCORD channel names the (dms) bucket and NEVER an individual's DM surface",
     requires: ["discord", "slack", "syntheticDm"],
     surface: "discord",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
@@ -1262,8 +1323,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "OPE-1860: a spend refusal in a DM names the layer that actually bit and the key that raises it — never 'your own usage' for a room's or the workspace's cap",
     requires: ["slack", "syntheticDm"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 660_000,
     judged: false,
     run: async (ctx) => {
@@ -1309,7 +1369,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackPrivate"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 600_000,
     judged: true,
     run: async (ctx) => {
@@ -1371,7 +1430,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 240_000,
     judged: true,
     run: async (ctx) => {
@@ -1395,7 +1453,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 1_800_000,
     judged: true,
     run: async (ctx) => {
@@ -1446,7 +1503,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm", "slackSecondary"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -1591,7 +1647,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 2_400_000,
     judged: true,
     run: async (ctx) => {
@@ -1811,7 +1866,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackMpim"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: REPLY_WAIT * 2,
     judged: true,
     run: async (ctx) => {
@@ -1860,7 +1914,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "webhook"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 240_000,
     judged: true,
     run: async (ctx) => {
@@ -1897,7 +1950,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 1_500_000,
     judged: true,
     run: async (ctx) => {
@@ -1959,8 +2011,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Notion connector: search/read via the bound connector (optional — needs E2E_NOTION_CHANNEL bound to a live Notion credential)",
     requires: ["slack", "notion"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 600_000,
     judged: true,
     run: async (ctx) => {
@@ -2070,7 +2121,6 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "teams",
     suite: "core",
     smoke: true,
-    optional: false,
     timeoutMs: REPLY_WAIT * 4,
     judged: true,
     run: async (ctx) => {
@@ -2181,7 +2231,6 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "teams",
     suite: "core",
     smoke: false,
-    optional: false,
     timeoutMs: REPLY_WAIT * 5 + SILENCE_WINDOW * 3 + AUDIT_ROW_WAIT * 2,
     judged: true,
     run: async (ctx) => {
@@ -2299,7 +2348,6 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "teams",
     suite: "core",
     smoke: false,
-    optional: false,
     timeoutMs: REPLY_WAIT * 2,
     judged: true,
     run: async (ctx) => {
@@ -2347,7 +2395,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["github"],
     surface: "github",
     suite: "core",
-    optional: false,
     timeoutMs: 1_500_000,
     judged: true,
     run: async (ctx) => {
@@ -2450,7 +2497,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["linear"],
     surface: "linear",
     suite: "core",
-    optional: false,
     timeoutMs: 1_500_000,
     judged: true,
     run: async (ctx) => {
@@ -2571,7 +2617,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["notionAmbient"],
     surface: "notion",
     suite: "core",
-    optional: false,
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -2702,7 +2747,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["notionAmbient"],
     surface: "notion",
     suite: "core",
-    optional: false,
     timeoutMs: 900_000,
     judged: false,
     run: async (ctx) => {
@@ -2822,7 +2866,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 3_900_000,
     judged: true,
     run: async (ctx) => {
@@ -2954,7 +2997,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 420_000,
     judged: true,
     run: async (ctx) => {
@@ -2984,7 +3026,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "security",
-    optional: false,
     timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
@@ -3050,7 +3091,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackSupervisor"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
@@ -3091,13 +3131,483 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-APPROVAL-COALESCED",
+    title:
+      "Coalesced-turn approval scope: two rooms, one turn, one approval — `approval.requested.scopeKey` names the ASKING room and the reply lands there (OPE-1756's live proof)",
+    requires: ["slack", "slackUnified"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const a = ctx.slackUnifiedA!;
+      const b = ctx.slackUnifiedB!;
+      const auditRead = ctx.auditRead;
+      if (!auditRead) {
+        ctx.skip(
+          "the control-plane audit reader is unreachable — every gate on this leg is an audit row (approval.requested.scopeKey, reply.post, turn.unaccounted_wakes), so there is nothing it could assert without one. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.",
+        );
+        return;
+      }
+      const { teamId } = await a.identity();
+      const askingKey = `slack/${teamId}/${a.channelId}`;
+      const otherKey = `slack/${teamId}/${b.channelId}`;
+      ctx.gate(askingKey !== otherKey, `precondition: the two unified containers are DIFFERENT rooms (${askingKey} vs ${otherKey}) — one room cannot demonstrate a wrong-room scope`);
+
+      type ProposeDetail = { readonly kind?: unknown; readonly scopeKey?: unknown; readonly id?: unknown };
+      type UnaccountedDetail = { readonly turnId?: unknown; readonly count?: unknown; readonly unaccounted?: readonly unknown[] };
+
+      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean }> => {
+        const sinceIso = new Date(Date.now() - 30_000).toISOString();
+        const marker = factToken(`coalesce${n}`);
+        const { ts: askTs } = await a.post(
+          `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`,
+        );
+        await b.post(`(aside, no reply needed) filing the ${marker} notes from the other room for later.`);
+        const reply = await pollOptional(
+          async () => {
+            try {
+              return await a.awaitAnyReply(askTs, { timeoutMs: 5_000, skip: (m) => isFillerAck(m.text) });
+            } catch {
+              return undefined;
+            }
+          },
+          { timeoutMs: UNIFIED_REPLY_WAIT, what: `a reply in the ASKING room (${a.channelId}) to attempt ${n}'s routine ask` },
+        );
+        return { sinceIso, replied: reply !== undefined };
+      };
+
+      const approvalRows = async (sinceIso: string) =>
+        pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso, actions: ["approval.requested"] });
+            const mine = rows.filter((e) => (e.detail as ProposeDetail | undefined)?.kind === "routine.create");
+            return mine.length > 0 ? mine : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: "the routine-create approval.requested row for this run's ask" },
+        );
+
+      const coalescedRows = async (sinceIso: string) =>
+        pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso, actions: ["turn.unaccounted_wakes"] });
+            const merged = rows.filter((e) => Number((e.detail as UnaccountedDetail | undefined)?.count ?? 0) > 0);
+            return merged.length > 0 ? merged : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: "a turn.unaccounted_wakes row proving one turn merged the other room's wake" },
+        );
+
+      let sinceIso: string | undefined;
+      let merged: Awaited<ReturnType<typeof coalescedRows>>;
+      let replied = false;
+      for (const n of [1, 2]) {
+        const run = await attempt(n);
+        sinceIso = run.sinceIso;
+        replied = replied || run.replied;
+        merged = await coalescedRows(run.sinceIso);
+        if (merged !== undefined) {
+          ctx.log(`attempt ${n}: the turn coalesced — ${merged.length} turn.unaccounted_wakes row(s)`);
+          break;
+        }
+        ctx.log(`attempt ${n}: the two posts ran as separate turns (no turn.unaccounted_wakes row) — retrying the interleave`);
+      }
+      ctx.gate(
+        replied,
+        `the ASKING room (${a.channelId}) got a reply to the routine ask — without one the turn never ran and nothing below could be scoped either way`,
+      );
+      ctx.gate(
+        merged !== undefined,
+        `🔴 (hard): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything`,
+      );
+
+      const rows = await approvalRows(sinceIso!);
+      ctx.gate(
+        rows !== undefined && rows.length > 0,
+        `🔴 (hard): the routine ask minted an approval.requested row (kind "routine.create") — no row means the ask never reached the approval plane, so the scope it would have carried is unobservable`,
+      );
+      const scopeKeys = (rows ?? []).map((e) => String((e.detail as ProposeDetail | undefined)?.scopeKey ?? ""));
+      ctx.gate(
+        scopeKeys.every((k) => k === askingKey),
+        `🔴 (hard, OPE-1756): EVERY approval.requested.scopeKey names the ASKING room ${askingKey} — a key naming ${otherKey} is the coalesced-turn defect, carding the ask against whichever delivery eve merged last (got ${JSON.stringify(scopeKeys)})`,
+      );
+      ctx.gate(
+        !scopeKeys.includes(otherKey),
+        `🔴 NEGATIVE CONTROL: no approval.requested row is scoped to the OTHER room ${otherKey} — stated separately from the gate above so an EMPTY scopeKey set cannot satisfy both by being vacuous`,
+      );
+
+      const posts = await pollOptional(
+        async () => {
+          const all = await auditRead({ sinceIso: sinceIso!, actions: ["reply.post"], platform: "slack" });
+          return all.length > 0 ? all : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: "this run's reply.post rows" },
+      );
+      ctx.gate(posts !== undefined && posts.length > 0, "reply.post rows for this run are readable — the reply-target gate below is not vacuous");
+      const askingPosts = (posts ?? []).filter((e) => e.surface === a.channelId);
+      ctx.gate(
+        askingPosts.length > 0,
+        `🔴 (hard): at least one reply.post row landed in the ASKING room (surface column "${a.channelId}", the BARE segment) — got surfaces ${JSON.stringify((posts ?? []).map((e) => e.surface))}`,
+      );
+      const otherPosts = (posts ?? []).filter((e) => e.surface === b.channelId);
+      ctx.gate(
+        otherPosts.length === 0,
+        `🔴 (hard): NO reply.post row landed in the room that only filed an aside (surface column "${b.channelId}") — a reply there is the same wrong-room derivation the scope gate catches, on the delivery plane (got ${otherPosts.length})`,
+      );
+    },
+  },
+  {
+    id: "S-DELEGATED-slack",
+    title: "Delegated turn on Slack: the ask dispatches a background worker and the SETTLEMENT posts the substantive reply, never the interim ack (OPE-1856)",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const marker = factToken("del-sl");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const { ts } = await slack.post(
+        slack.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
+      );
+      await slack.awaitThreadReply(ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) }).catch(() => undefined);
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "slack", timeoutMs: FILE_REPLY_WAIT });
+    },
+  },
+  {
+    id: "S-DELEGATED-discord",
+    title: "Delegated turn on Discord: the settlement posts the substantive reply (OPE-1856)",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const discord = ctx.discord!;
+      const marker = factToken("del-dc");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const msg = await discord.post(
+        discord.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
+      );
+      const threadId = await discord.awaitThread(msg.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      if (threadId) await discord.awaitReply(threadId, msg.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "discord", timeoutMs: FILE_REPLY_WAIT });
+    },
+  },
+  {
+    id: "S-DELEGATED-teams",
+    title: "Delegated turn on Teams: the settlement posts the substantive reply (OPE-1856)",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const marker = factToken("del-tm");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const root = await teams.postMention(
+        `ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`,
+      );
+      await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "teams", timeoutMs: FILE_REPLY_WAIT });
+    },
+  },
+  {
+    id: "S-DELEGATED-linear",
+    title: "Delegated turn on Linear: the settlement posts the substantive reply (OPE-1856)",
+    requires: ["linear"],
+    surface: "linear",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const linear = ctx.linear!;
+      const marker = factToken("del-ln");
+      const issue = await linear.createIssue(`e2e delegated turn ${marker}`);
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const commentId = await linear.comment(
+        issue.id,
+        linear.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
+      );
+      await linear.awaitAppReply(issue.id, new Set([commentId]), { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "linear", timeoutMs: FILE_REPLY_WAIT });
+      await linear.archive(issue.id).catch(() => undefined);
+    },
+  },
+  {
+    id: "S-DELEGATED-github",
+    title: "Delegated turn on GitHub: the settlement posts the substantive reply (OPE-1856)",
+    requires: ["github"],
+    surface: "github",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const github = ctx.github!;
+      const marker = factToken("del-gh");
+      const issueNumber = await github.createIssue(`e2e delegated turn ${marker}`, "Opened by the e2e pack; closed at the end of the leg.");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const commentId = await github.comment(
+        issueNumber,
+        github.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
+      );
+      await github.awaitBotReply(issueNumber, commentId, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "github", timeoutMs: FILE_REPLY_WAIT });
+      await github.closeIssue(issueNumber).catch(() => undefined);
+    },
+  },
+  {
+    id: "S-DELEGATED-notion",
+    title: "Delegated turn on Notion: the settlement posts the substantive reply (OPE-1856)",
+    requires: ["notionAmbient"],
+    surface: "notion",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const notion = ctx.notionAmbient!;
+      const marker = factToken("del-nt");
+      const blockId = await notion.appendParagraphBlock(`e2e delegated turn ${marker}`);
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      await notion.createBlockDiscussion(
+        blockId,
+        `ref ${marker} — ${ENGAGED_NAME}, look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`,
+      );
+      await gateDelegatedTurn(ctx, { sinceIso, platform: "notion", timeoutMs: FILE_REPLY_WAIT });
+      await notion.archiveBlock(blockId).catch(() => undefined);
+    },
+  },
+  {
+    id: "S-SUSPENDED-slack",
+    title: "Approval-SUSPENDED turn on Slack: a bridged eve approval parks the turn and a settlement resumes it (OPE-1856) — RED until a Slack-reachable connector grant exists",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: suspending a turn needs a connector op that parks on eve's tool-approval, and this pack has no consented personal connector grant reachable from a Slack seat — the only one it holds is the Notion grant S-EVE-BRIDGE drives (E2E_CONNECTOR_WRITE_*). Provision a Slack-reachable connector grant and this leg drives the same shape S-EVE-BRIDGE does: approval.eve_candidate → the card → the settlement → approval.eve_settled, with the resumed turn's reply.post after it.",
+      );
+    },
+  },
+  {
+    id: "S-SUSPENDED-discord",
+    title: "Approval-SUSPENDED turn on Discord (OPE-1856) — RED until a Discord-reachable connector grant exists",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: no consented personal connector grant is reachable from a Discord seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Discord.",
+      );
+    },
+  },
+  {
+    id: "S-SUSPENDED-teams",
+    title: "Approval-SUSPENDED turn on Teams (OPE-1856) — RED until a Teams-reachable connector grant exists",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: no consented personal connector grant is reachable from a Teams seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Teams.",
+      );
+    },
+  },
+  {
+    id: "S-SUSPENDED-linear",
+    title: "Approval-SUSPENDED turn on Linear (OPE-1856) — RED until a Linear-reachable connector grant exists",
+    requires: ["linear"],
+    surface: "linear",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: no consented personal connector grant is reachable from a Linear seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Linear.",
+      );
+    },
+  },
+  {
+    id: "S-SUSPENDED-github",
+    title: "Approval-SUSPENDED turn on GitHub (OPE-1856) — RED until a GitHub-reachable connector grant exists",
+    requires: ["github"],
+    surface: "github",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: no consented personal connector grant is reachable from a GitHub seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on GitHub.",
+      );
+    },
+  },
+
+  {
+    id: "S-AMBIENT-discord",
+    title: "Ambient intake on Discord: an UNADDRESSED message in the unified room draws an answer, and the deployment filed the reply row for it (OPE-1836)",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const discord = ctx.discord!;
+      const marker = factToken("amb-dc");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const msg = await discord.post(`we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
+      const reply = await discord.awaitReply(msg.channelId, msg.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      ctx.gate(reply !== undefined, `ambient: the unaddressed message drew an in-channel answer within ${REPLY_WAIT / 1000}s — an ambient supervisor is the only road that can deliver one here`);
+      ctx.gate((reply?.content ?? "").trim().length > 0, "ambient: the answer carries substance — an empty or components-only post satisfies the waiter and answers nobody");
+      await gateAmbientReplyRow(ctx, { sinceIso, platform: "discord" });
+    },
+  },
+  {
+    id: "S-AMBIENT-linear",
+    title: "Ambient intake on Linear: an UNADDRESSED comment draws an answer, and the deployment filed the reply row for it (OPE-1836)",
+    requires: ["linear"],
+    surface: "linear",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const linear = ctx.linear!;
+      const marker = factToken("amb-ln");
+      const issue = await linear.createIssue(`e2e ambient intake ${marker}`);
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const commentId = await linear.comment(issue.id, `we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
+      const reply = await linear.awaitAppReply(issue.id, new Set([commentId]), { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      ctx.gate(reply !== undefined, `ambient: the unaddressed comment drew an app-authored answer within ${REPLY_WAIT / 1000}s`);
+      ctx.gate((reply?.body ?? "").trim().length > 0, "ambient: the answer carries substance");
+      await gateAmbientReplyRow(ctx, { sinceIso, platform: "linear" });
+      await linear.archive(issue.id).catch(() => undefined);
+    },
+  },
+  {
+    id: "S-AMBIENT-teams",
+    title: "Ambient intake on Teams: an UNADDRESSED message draws an ANSWER, not only a dispatch row (OPE-1836)",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const marker = factToken("amb-tm");
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const root = await teams.postPlainRoot(`we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
+      const reply = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      ctx.gate(reply !== undefined, `ambient: the unaddressed message drew a REPLY in the channel within ${REPLY_WAIT / 1000}s — a dispatch row alone was the whole of this surface's ambient coverage before OPE-1836`);
+      ctx.gate((reply?.text ?? "").trim().length > 0, "ambient: the answer carries substance");
+      await gateAmbientReplyRow(ctx, { sinceIso, platform: "teams" });
+    },
+  },
+
+  {
+    id: "S-SIBLING-discord",
+    title: "Sibling wake on Discord: two addressed messages are admitted as their own wakes into ONE standing seat (OPE-1836) — RED until the Discord seat grain under mode:\"unified\" is measured",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-measured: the one-seat gate compares the reply.post surface column and the wake.ingress surfaceKey by exact equality, and the Discord seat grain under mode:\"unified\" is not settled — a mention re-keys the turn onto its auto-thread, while the unified divert puts the domain grain on the wake row. Read ONE live reply.post row's `surface` and one wake.ingress row's `detail.surfaceKey` for a mentioned Discord turn on this deployment (they are in the ship's own audit window), then scope this gate to that spelling. A gate scoped to the wrong one reds a healthy deployment, which is why this is declared rather than guessed.",
+      );
+    },
+  },
+  {
+    id: "S-SIBLING-teams",
+    title: "Sibling wake on Teams: two addressed messages are admitted as their own wakes into ONE standing seat (OPE-1836) — RED until the Teams seat grain is measured",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-measured: Teams binds the audit `surface` to the CONVERSATION id at the reply-chain grain (19:…@thread.tacv2;ni=<root>), not the bare channel id, so the one-seat gate's exact-equality filter reads nothing — and separately, two mentions open two reply chains, so 'one seat across both' may not be this surface's shape at all. Read one live reply.post row's `surface` for a mentioned Teams turn, and settle whether two reply chains share a seat, before scoping this gate. Guessing either would red a healthy deployment.",
+      );
+    },
+  },
+  {
+    id: "S-SIBLING-notion",
+    title: "Sibling wake on Notion: two name-drops are admitted as their own wakes into ONE standing seat (OPE-1836)",
+    requires: ["notionAmbient"],
+    surface: "notion",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const notion = ctx.notionAmbient!;
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const blockA = await notion.appendParagraphBlock("e2e sibling wake — first");
+      await notion.createBlockDiscussion(blockA, `${ENGAGED_NAME}, what's 12*12? reply with just the number.`);
+      const blockB = await notion.appendParagraphBlock("e2e sibling wake — second");
+      await notion.createBlockDiscussion(blockB, `separately, ${ENGAGED_NAME} — what's 13*13? reply with just the number.`);
+      await gateOneSeatAcrossNameDrops(ctx, { sinceIso, platform: "notion", surface: notion.pageId, container: notion.pageId });
+      await notion.archiveBlock(blockA).catch(() => undefined);
+      await notion.archiveBlock(blockB).catch(() => undefined);
+    },
+  },
+
+  {
+    id: "S-LINK-discord",
+    title: "Identity link on Discord: the proof-of-control loop across two REAL accounts (OPE-1836) — RED until a second Discord account exists",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: the link loop needs a genuinely SECOND Discord identity — link-store.ts refuses a self-claim, so one account cannot drive mint → claim → notice → ratify. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Discord pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
+      );
+    },
+  },
+  {
+    id: "S-LINK-teams",
+    title: "Identity link on Teams: the proof-of-control loop across two REAL accounts (OPE-1836) — RED until a second Teams account exists",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: the link loop needs a genuinely SECOND Teams identity — link-store.ts refuses a self-claim. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Teams pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
+      );
+    },
+  },
+
+  {
+    id: "S-HALT",
+    title: "Break-glass halt: the operator's stop button writes admin.halt.set and the halt is then CLEARED (OPE-1836) — RED until a clear road exists",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      ctx.skip(
+        "RED-until-fixture: driving the break-glass halt needs a CLEAR road, and clearing is control-plane only (admin.halt.cleared carries door \"control-mcp\"; no chat road writes it). The pack holds a control READ token (E2E_CONTROL_READ_TOKEN) and no write token, so a halt it set could never be lifted — it would halt a fixture room permanently. Provision a control-plane WRITE credential plus a dedicated halt fixture room, and this leg asks for the halt in chat, reads the admin.halt.set row with its scoped address, clears it over the control plane, and reads admin.halt.cleared back.",
+      );
+    },
+  },
+  {
     id: "J-UNIFIED",
     title:
       "Unified cross-surface supervisor, Slack-only live path: unified-audit route contract + flag detection, ONE domain session spanning two Slack containers (cross-container recall), per-wake reply-targeting, audited silence (research preview, flags default-OFF)",
     requires: ["slack", "slackUnified"],
     surface: "slack",
     suite: "core",
-    optional: false,
     timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
@@ -3221,8 +3731,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "Unified cross-surface MONEY-SHOT (runnable pending a live cross-surface fixture): a Slack decision recalled on a GitHub issue in the same domain, zero context re-entry",
     requires: ["slack", "slackUnified", "github"],
     surface: "cross",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
@@ -3322,7 +3831,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "pr"],
     surface: "cross",
     suite: "core",
-    optional: false,
     timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
@@ -3413,7 +3921,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "pr"],
     surface: "cross",
     suite: "core",
-    optional: false,
     timeoutMs: 1_200_000,
     judged: false,
     run: async (ctx) => {
@@ -3522,7 +4029,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "security",
-    optional: false,
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
@@ -3564,7 +4070,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "security",
-    optional: false,
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
@@ -3624,7 +4129,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "pr"],
     surface: "cross",
     suite: "core",
-    optional: false,
     timeoutMs: 2_700_000,
     judged: true,
     run: async (ctx) => {
@@ -3775,8 +4279,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Notion connector WRITE: create/update a page → the eve-native write approval gates (optional — needs the connector-write fixture ARMED)",
     requires: ["slack", "connectorWrite"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 240_000,
     judged: true,
     run: async (ctx) => {
@@ -3809,8 +4312,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Connector op tiering, live: a READ (notion__search) sails through with NO prompt while a WRITE (notion__create_page) prompts — classifyConnectorOp's split gates at runtime (optional — needs the connector-write fixture ARMED)",
     requires: ["slack", "connectorWrite"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 300_000,
     judged: true,
     run: async (ctx) => {
@@ -3859,8 +4361,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "DM personal-Notion journey: a real DM through the front door wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 420_000,
     judged: true,
     run: async (ctx) => {
@@ -3922,7 +4423,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "notion",
     suite: "core",
-    optional: false,
     timeoutMs: 1_200_000,
     judged: false,
     run: async (ctx) => {
@@ -4098,8 +4598,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "the bridged approval CARD, live (OPE-1056/OPE-1720): a DM connector WRITE parks on eve's `tool-approval`, the unified post arm renders it as an interactive card that is NOT OE's governance card, the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 2_400_000,
     judged: false,
     run: async (ctx) => {
@@ -4253,8 +4752,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified question bridge posts it as a readable request, a plain `Approve` reply carries eve's optionId back, and the SUSPENDED TURN RESUMES",
     requires: ["slack", "syntheticDm"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 2_400_000,
     judged: false,
     run: async (ctx) => {
@@ -4373,8 +4871,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "Channel connector card: (A) a 'connect notion here' ask posts a card that is now API-KEY ONLY — the 'Set API key' button is present, NO org (service-oauth) button (service-oauth removed as a dead end); (B) a forged admin service-oauth click against the ISOLATED e2e-intake fixture issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
     requires: ["slack", "synthetic"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 660_000,
     judged: false,
     run: async (ctx) => {
@@ -4430,8 +4927,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "API-key intake, live: under the db broker a 'connect notion with an API key' ask offers 'Set API key' → a forged admin oe_connect click opens the host intake → a forged view_submission stores a FAKE key (asserted via credential.intake_requested + credential.stored audit rows; the value is never read back and never appears in any audit row)",
     requires: ["slack", "synthetic", "connectorWrite"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 1_080_000,
     judged: true,
     run: async (ctx) => {
@@ -4559,8 +5055,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "Taint source-tier table, ENFORCED (OPE-324): drive the divergent read shapes and assert `taint.verdict` rows land, applied (opt-in — volume, not doubt)",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -4750,8 +5245,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "OPE-439/OPE-470/OPE-844: a REAL ingestion route (web_fetch, Notion, Linear, GitHub PR feedback) reaches the live approver chain and disclosure pair (`tainted`/`taintKinds`), and the `taint:ask` floor refuses a real config lowering — one chain, real turns, clean negative controls",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     expensive: true,
     costReason: "1246.8 s green on the 2026-09-10 full pack — ~20% of the pack's wall clock, five live arms with their own reply waits (OPE-1705)",
     timeoutMs: 1_500_000,
@@ -5155,8 +5649,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: "OPE-452: a REAL unattended routine fire tries a gated action ⇒ the OPE-273 presence fence refuses it before the approval plane, the fire still reports back, no card is ever minted",
     requires: ["slack"],
     surface: "slack",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 2_400_000,
     judged: false,
     run: async (ctx) => {
@@ -5264,8 +5757,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "OPE-1328: an unattended routine fire attempts a CONNECTOR WRITE ⇒ the unattended connector fence refuses it (connector.refused, ask-unattended); a routine that DECLARED that tool is lifted instead (connector.unattended_lift)",
     requires: ["slack", "connectorWrite"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 4_800_000,
     judged: false,
     run: async (ctx) => {
@@ -5426,8 +5918,7 @@ export const SCENARIOS: readonly Scenario[] = [
       "OPE-1310: a credential-grant ask raised to a DISCORD-owned account — the fixture the Discord grant-tap surface needs, plus the granted-call legs (grant.used / grant.notified) behind the operator's tap pin",
     requires: ["discord"],
     surface: "discord",
-    suite: "extended",
-    optional: true,
+    suite: "core",
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
@@ -5570,8 +6061,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "engagedSlack"],
     surface: "slack",
     suite: "core",
-    optional: false,
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
@@ -5603,6 +6093,21 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: afterStopTs } = await slack.post("and what's 5 plus 5?", rootTs);
       const during = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
       await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "slack", surface, observedSilent: during.length === 0 });
+
+      const idleMarker = factToken("sl-idle");
+      await slack.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, rootTs);
+      const catchUpFrom = new Date().toISOString();
+      const triggerMarker = factToken("sl-trig");
+      const { ts: triggerTs } = await slack.post(
+        slack.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`),
+        rootTs,
+      );
+      const caughtUp = await slack
+        .awaitThreadReply(rootTs, { afterTs: triggerTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) })
+        .catch(() => undefined);
+      ctx.gate(caughtUp !== undefined, "catch-up: the mention woke the thread again after the stand-down — the wake this leg reads the context of");
+      ctx.log(`catch-up: the reply ${caughtUp?.text.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
+      await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "slack", trigger: triggerMarker, caughtUp: idleMarker, stale: [batch] });
 
       const controlFrom = new Date().toISOString();
       const { ts: controlTs } = await slack.post("has anyone seen the release checklist?");
@@ -5657,7 +6162,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["discord", "engagedDiscord"],
     surface: "discord",
     suite: "core",
-    optional: false,
     timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
@@ -5731,7 +6235,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["github", "engagedGithub"],
     surface: "github",
     suite: "core",
-    optional: false,
     timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
@@ -5804,7 +6307,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["linear", "engagedLinear"],
     surface: "linear",
     suite: "core",
-    optional: false,
     timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
@@ -5863,7 +6365,6 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["notionAmbient", "engagedNotion"],
     surface: "notion",
     suite: "core",
-    optional: false,
     timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {

@@ -484,6 +484,39 @@ export interface EndpointFinding {
   readonly ok: boolean;
 }
 
+export interface AuditRowFinding {
+  readonly action: string;
+  readonly exercised: boolean;
+  readonly notExercised?: string;
+  readonly lastSeenIso?: string;
+  readonly ok: boolean;
+}
+
+export function judgeAuditRow(
+  declaration: { readonly action: string; readonly notExercised?: string },
+  lastSeenIso: string | undefined,
+): AuditRowFinding {
+  const exercised = lastSeenIso !== undefined;
+  const reason = (declaration.notExercised ?? "").trim();
+  const stated = reason.length > 0;
+  return {
+    action: declaration.action,
+    exercised,
+    ...(stated ? { notExercised: declaration.notExercised } : {}),
+    ...(lastSeenIso === undefined ? {} : { lastSeenIso }),
+    ok: exercised || stated,
+  };
+}
+
+export function auditRowProblems(findings: readonly AuditRowFinding[]): readonly string[] {
+  return findings
+    .filter((f) => !f.ok)
+    .map(
+      (f) =>
+        `audit row "${f.action}" is declared CONSEQUENTIAL but the pack emitted none — drive it from an e2e leg, or declare \`notExercised\` on it in packages/core/agent/audit/action-registry.ts with what is missing`,
+    );
+}
+
 export interface CensusResult {
   readonly ok: boolean;
   readonly target: string;
@@ -497,6 +530,7 @@ export interface CensusResult {
   readonly heartbeats: readonly HeartbeatFinding[];
   readonly runtimeSignal?: RuntimeSignalFinding;
   readonly credentialBrokerArmed?: CredentialBrokerArmedFinding;
+  readonly auditRows: readonly AuditRowFinding[];
   readonly limits: readonly string[];
 }
 
@@ -516,6 +550,7 @@ export function censusResult(input: {
   readonly heartbeats?: readonly HeartbeatFinding[];
   readonly runtimeSignal?: RuntimeSignalFinding;
   readonly credentialBrokerArmed?: CredentialBrokerArmedFinding;
+  readonly auditRows?: readonly AuditRowFinding[];
   readonly limits?: readonly string[];
 }): CensusResult {
   const present = new Set(input.presentRefs);
@@ -530,6 +565,7 @@ export function censusResult(input: {
   });
 
   const heartbeats = input.heartbeats ?? [];
+  const auditRows = input.auditRows ?? [];
   const ok =
     input.plan.problems.length === 0 &&
     credentials.every((c) => c.present) &&
@@ -537,7 +573,8 @@ export function censusResult(input: {
     (input.keyProof?.ok ?? true) &&
     heartbeats.every((h) => h.ok) &&
     (input.runtimeSignal?.ok ?? true) &&
-    (input.credentialBrokerArmed?.ok ?? true);
+    (input.credentialBrokerArmed?.ok ?? true) &&
+    auditRows.every((r) => r.ok);
   return {
     ok,
     target: input.target,
@@ -546,9 +583,10 @@ export function censusResult(input: {
     declared,
     endpoints,
     skipped: input.endpoints.skipped,
-    problems: input.plan.problems,
+    problems: [...input.plan.problems, ...auditRowProblems(auditRows)],
     ...(input.keyProof ? { keyProof: input.keyProof } : {}),
     heartbeats,
+    auditRows,
     ...(input.runtimeSignal ? { runtimeSignal: input.runtimeSignal } : {}),
     ...(input.credentialBrokerArmed ? { credentialBrokerArmed: input.credentialBrokerArmed } : {}),
     limits: input.limits ?? [],
@@ -625,6 +663,17 @@ export function renderCensusReport(result: CensusResult): string[] {
     lines.push("");
     lines.push(`  CONFIG PROBLEMS (${result.problems.length})`);
     for (const p of result.problems) lines.push(`    ✗ ${p}`);
+  }
+
+  if (result.auditRows.length > 0) {
+    const exercised = result.auditRows.filter((r) => r.exercised);
+    const stated = result.auditRows.filter((r) => !r.exercised && r.notExercised !== undefined);
+    const missing = result.auditRows.filter((r) => !r.ok);
+    lines.push("");
+    lines.push(`  AUDIT ROWS (${exercised.length}/${result.auditRows.length} exercised by the pack; ${stated.length} declared not-exercised)`);
+    for (const r of missing) lines.push(`    ✗ ${r.action} — declared consequential, NO row in this window and no stated reason`);
+    for (const r of stated) lines.push(`    – ${r.action} — not exercised: ${r.notExercised}`);
+    if (missing.length === 0 && stated.length === 0) lines.push("    ✓ every declared consequential row was emitted at least once");
   }
 
   if (result.limits.length > 0) {

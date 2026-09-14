@@ -108,7 +108,6 @@ const result = spawnSync(
       E2E_EXPECT_MODELS: allIds.join(","),
       E2E_EXPECT_MODELS_REQUIRED: requiredIds.join(","),
       E2E_JUDGE_MODEL: PINNED_JUDGE_MODEL,
-      E2E_INCLUDE_OPTIONAL: process.env["E2E_INCLUDE_OPTIONAL"] ?? "1",
     },
   },
 );

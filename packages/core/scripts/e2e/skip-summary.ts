@@ -3,7 +3,6 @@ export type SkipKind =
   | "filtered-suite"
   | "filtered-surface"
   | "missing-capability"
-  | "optional-not-included"
   | "expensive-not-included"
   | "fixture-missing"
   | "scenario-self-skip";
@@ -13,11 +12,16 @@ export const SKIP_KINDS: readonly SkipKind[] = [
   "filtered-suite",
   "filtered-surface",
   "missing-capability",
-  "optional-not-included",
   "expensive-not-included",
   "fixture-missing",
   "scenario-self-skip",
 ];
+
+export const GAP_SKIP_KINDS: readonly SkipKind[] = ["missing-capability", "fixture-missing", "scenario-self-skip"];
+
+export function isGapKind(kind: SkipKind): boolean {
+  return GAP_SKIP_KINDS.includes(kind);
+}
 
 export function emptySkipCounts(): Record<SkipKind, number> {
   const counts = {} as Record<SkipKind, number>;

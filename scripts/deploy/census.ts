@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   censusResult,
+  judgeAuditRow,
+  type AuditRowFinding,
   credentialBrokerArmedFinding,
   cronCeilingHours,
   channelCensusContributions,
@@ -26,6 +28,7 @@ import {
   type RuntimeSignalFinding,
 } from "../../packages/core/agent/ops/census.js";
 import { readAudit } from "../../packages/core/agent/audit/audit.js";
+import { consequentialAuditActions } from "../../packages/core/agent/audit/action-registry.js";
 import { decryptCredential } from "../../packages/core/agent/credentials/db-broker.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
 import { CONTROL_READ_RUNTIME_SIGNAL_PATH } from "../../packages/core/agent/control/read-route.js";
@@ -278,6 +281,20 @@ try {
     );
   }
 
+  const auditRowLimits: string[] = [];
+  let auditRows: AuditRowFinding[] = [];
+  if (!args.flags.has("no-audit-row-check")) {
+    for (const declaration of consequentialAuditActions()) {
+      const rows = await readAudit({ org, action: declaration.action, limit: 1 });
+      auditRows.push(judgeAuditRow(declaration, rows[0]?.ts));
+    }
+    auditRowLimits.push("the audit-row check reads ONE org — a pack driving another org's rooms looks unexercised here");
+    auditRowLimits.push("an audit row is 'exercised' if the log holds one at ANY age — this does not prove THIS ship's pack wrote it");
+  } else {
+    auditRows = [];
+    auditRowLimits.push("the audit-row check DID NOT RUN (--no-audit-row-check) — nothing here says whether the pack exercises the consequential rows the registry declares");
+  }
+
   const wantRuntimeSignal = !args.flags.has("no-runtime-signal-check");
   const wantCredentialBrokerArmed = !args.flags.has("no-credential-key-armed-check");
   let runtimeSignal: RuntimeSignalFinding | undefined;
@@ -319,9 +336,10 @@ try {
     observations,
     ...(keyProof ? { keyProof } : {}),
     heartbeats,
+    auditRows,
     ...(runtimeSignal ? { runtimeSignal } : {}),
     ...(credentialBrokerArmed ? { credentialBrokerArmed } : {}),
-    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...runtimeSignalLimits, ...credentialBrokerArmedLimits, ...STANDING_LIMITS],
+    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...auditRowLimits, ...runtimeSignalLimits, ...credentialBrokerArmedLimits, ...STANDING_LIMITS],
   });
 
   if (json) console.log(JSON.stringify(result, null, 2));

@@ -23,38 +23,38 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "discord-provider",
     globs: ["packages/providers/discord/**"],
-    scenarios: ["J-DISC", "S8", "S-DISCORD-GRANT"],
+    scenarios: ["J-DISC", "S8", "S-DISCORD-GRANT", "S-DELEGATED-discord", "S-AMBIENT-discord", "S-SIBLING-discord", "S-SUSPENDED-discord", "S-LINK-discord"],
     why: "J-DISC is surface: \"discord\"; S8 is the Slack→Discord cross-surface recall leg (surface: \"cross\"); S-DISCORD-GRANT drives the Discord grant-card door (access/discord-grant-click.ts) and the Discord DM arm the owner notice rides. (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams"],
+    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams"],
     why: "The three surface: \"teams\" scenarios — the channel, the 1:1 DM, and the ambient engagement seam (OPE-1500: @mention engages, a plain follow-up wakes, stand_down stops it). J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true); the other two are not — J-TEAMS-DM self-skips until the driver's Chat.* Graph scope is consented (OPE-972), and J-ENGAGED-teams self-skips when the tenant has not consented to the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the plain follow-up it asserts on.",
   },
   {
     area: "github-provider",
     globs: ["packages/providers/github/**"],
-    scenarios: ["J-GH", "J-ENGAGED-github", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X"],
+    scenarios: ["J-GH", "J-ENGAGED-github", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X", "S-DELEGATED-github", "S-SUSPENDED-github"],
     why: "J-GH and J-ENGAGED-github are surface: \"github\" — the second drives the ambient engagement seam (OPE-1501: an @mention engages the issue, a plain comment wakes, stand_down stops it), which no other GitHub scenario reads. The rest open, read status on, or subscribe to a real GitHub PR (open_pull_request's chain) and would break silently on a GitHub adapter regression even though they run through Slack.",
   },
   {
     area: "linear-provider",
     globs: ["packages/providers/linear/**"],
-    scenarios: ["J-LIN", "J-ENGAGED-linear"],
+    scenarios: ["J-LIN", "J-ENGAGED-linear", "S-DELEGATED-linear", "S-AMBIENT-linear", "S-SUSPENDED-linear"],
     why: "The two surface: \"linear\" scenarios. J-ENGAGED-linear drives the ambient engagement seam (OPE-1501), which no other Linear scenario reads — and it is the only leg that exercises Linear's plain-comment path as a FOLLOW-UP route, because the Agent Session ends on its own reply.",
   },
   {
     area: "notion-provider",
     globs: ["packages/providers/notion/**"],
-    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-OWN-ACCOUNT-NOTION"],
+    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-OWN-ACCOUNT-NOTION", "S-DELEGATED-notion", "S-SIBLING-notion"],
     why: "J-NOT and J-ENGAGED-notion are surface: \"notion\" — the second drives the ambient engagement seam (OPE-1501: a NAME-DROP engages the page, because Notion has no @mention of an integration) and is the only leg that reads the ingress's addressing-aware ambient gate. The rest all drive a live Notion connector (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE). S-OWN-ACCOUNT-NOTION (OPE-1599) is surface: \"notion\" as well, and it is the only leg that GATES on the `connector.acting_identity` row. J-NOT's ordinary reads run the same seam and write `install` rows, but assert nothing about them, so a gate regression that flips a refusal is visible only here. The dispatcher `channels/notion-acting-identity.ts` lives in THIS package and is the sole route to the own-account gate, so a change to it decides whether that row can be written at all.",
   },
 
   {
     area: "approvals",
     globs: ["packages/core/agent/approvals/**", "packages/core/agent/access/approver-chain.ts", "packages/core/agent/access/approval-*.ts", "packages/core/agent/access/pre-approval-rules.ts"],
-    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC"],
+    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC", "S-APPROVAL-COALESCED", "S-SUSPENDED-slack", "S-SUSPENDED-discord", "S-SUSPENDED-teams", "S-SUSPENDED-linear", "S-SUSPENDED-github"],
     why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056).",
   },
   {
@@ -76,7 +76,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "identity",
     globs: ["packages/core/agent/identity/**"],
-    scenarios: ["S-LINK-SLACK"],
+    scenarios: ["S-LINK-SLACK", "S-LINK-discord", "S-LINK-teams"],
     why: "S-LINK-SLACK is the only scenario asserting on `identity.link.*` audit rows (doctrine P1.4's worked example lives one layer below, in the derivation unit tests, not the live pack).",
   },
   {
@@ -150,7 +150,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "delegation-and-subagents",
     globs: ["packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/subagents/**"],
-    scenarios: ["J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
+    scenarios: ["J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X", "S-DELEGATED-slack", "S-DELEGATED-discord", "S-DELEGATED-teams", "S-DELEGATED-linear", "S-DELEGATED-github", "S-DELEGATED-notion"],
     why: "Each of these pays a delegation round-trip as part of its own proof (S-MEM-READ/S-DM-NOTION need the control-read creds reached only via delegation; J-SUP/J-UNI-X route through a spawned worker). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
   {
@@ -160,7 +160,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/access/dispatch-origin-signal.ts",
       "packages/core/agent/hooks/settlement-flush.ts",
     ],
-    scenarios: ["S-TAINT-ROUTE-LIVE", "J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
+    scenarios: ["S-TAINT-ROUTE-LIVE", "J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X", "S-DELEGATED-slack", "S-DELEGATED-discord", "S-DELEGATED-teams", "S-DELEGATED-linear", "S-DELEGATED-github", "S-DELEGATED-notion"],
     why: "All three files fire on every real worker dispatch and settlement, through the same hooks/spawn-taint.ts wiring that calls openTaskWake/installTaskWake (task-wake.ts), addressedWakeThisTurn/noteTaskDispatchedThisTurn (dispatch-origin-signal.ts), and flushDirtyTreeAtTurnEnd/flushSettledMemory/noteTaskDispatched/noteTaskSettled/noteTaskViews (settlement-flush.ts). S-TAINT-ROUTE-LIVE's single-delegated-task arm already drives a real delegated worker through that exact wiring (see its ARM A/D shape in scenarios.ts); J-SUP/S-DM-NOTION/S-MEM-READ/J-UNI-X pay the same delegation round-trip (the delegation-and-subagents area above). A regression in any of these three files breaks the delegated round-trip all five scenarios already require to pass.",
   },
   {
@@ -181,7 +181,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/channels/engagement.ts",
       "packages/core/agent/tools/stand_down.ts",
     ],
-    scenarios: ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion", "J1", "J-DISC"],
+    scenarios: ["J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion", "J1", "J-DISC", "S-AMBIENT-discord", "S-AMBIENT-linear", "S-AMBIENT-teams", "S-SIBLING-discord", "S-SIBLING-teams", "S-SIBLING-notion"],
     why: "The J-ENGAGED journeys drive the addressed-only posture, where the engagement registry is the ONLY thing that can deliver a plain follow-up — so they are the only scenarios that fail when it breaks. J-ENGAGED-teams (OPE-1500) belongs here for the sharpest reason of the six: its seam ships today and its journey is core, as are the GitHub, Linear and Notion three since OPE-1501 — so all six turn a regression in these two files RED. J1 and J-DISC ride along because both call `stand_down` on a windowed room and gate on its audit row, which is a second, weaker read of the same verb.",
   },
   {
@@ -190,7 +190,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/channels/seat-catch-up.ts",
       "packages/core/agent/channels/backscroll-window.ts",
     ],
-    scenarios: ["J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-discord", "J-ENGAGED-notion"],
+    scenarios: ["J-ENGAGED-teams", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-discord", "J-ENGAGED-notion", "J-ENGAGED-slack"],
     why: "Each of the five drives its own surface's catch-up end to end (OPE-1748, extended to Discord and Notion by OPE-1754): the stand-down makes an idle window, a plain message in it wakes nothing, and the seat's NEXT wake must carry that message and re-show nothing from before its last one. They are the only scenarios that can fail when the bound or the fetch regresses — every other e2e room is ambient or windowed, where a message said between wakes woke the seat anyway. FIVE, NOT SIX: J-ENGAGED-slack is out because Slack's catch-up shipped with OPE-1695 (b) and its journey drives the second name-drop instead. J-ENGAGED-discord and J-ENGAGED-notion drive the read as a BOT and as an INTEGRATION, which a seat's default `wide` admission drops before the envelope — and `wake.e2eDrivers` in `agent/settings/settings.ts` names both driver principals, so a red on either catch-up gate is a PRODUCT DEFECT in the catch-up read rather than a missing declaration. Delete either entry and that leg reds again. Each journey states the same rule at the point its leg sits, and AUDIT.md carries it too. The evidence is the seat's replayed transcript rather than a row, so `scripts/e2e-driver-test.ts` pins the reader (`seatCatchUpWake`) and these five legs prove it against a live deployment.",
   },
   {
@@ -242,7 +242,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
 
 export const ALWAYS_RELEVANT: readonly string[] = ["J1", "J-TEAMS"];
 
-export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [];
+export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [
+  {
+    id: "S-HALT",
+    why: "The break-glass halt is declared RED-until-fixture (OPE-1836): clearing a halt is control-plane only, so a pack holding a read token could never lift one it set. Mapping it to `agent/tools/halt.ts` would SELECT a leg that cannot run, which is the opposite of what this map is for — it would make every halt change look e2e-covered. It earns an area the day it has a clear road.",
+  },
+];
 
 export function relevantScenarios(changedPaths: readonly string[]): string[] {
   const ids = new Set<string>(ALWAYS_RELEVANT);

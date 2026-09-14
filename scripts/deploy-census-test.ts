@@ -20,7 +20,10 @@ import {
   ROUTE_ARMING,
   type ChannelArming,
   type MountedRoute,
+  judgeAuditRow,
+  auditRowProblems,
 } from "../packages/core/agent/ops/census.js";
+import { consequentialAuditActions, CONSEQUENTIAL_AUDIT_ACTIONS } from "../packages/core/agent/audit/action-registry.js";
 import { OAUTH_SIGNING_SECRET_ENV } from "../packages/core/agent/control/oauth-tokens.js";
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
 import type { ConnectorCredentials } from "../packages/core/agent/access/connector-credentials.js";
@@ -814,9 +817,60 @@ check("OPE-1731: the rendered discord.heartbeat red names the remedy AND the ing
   }
 }
 
+check("audit rows: a declared row with a row in the log is exercised and OK", () => {
+  const f = judgeAuditRow({ action: "reply.post" }, "2026-09-14T10:00:00.000Z");
+  assert.equal(f.exercised, true);
+  assert.equal(f.ok, true);
+  assert.equal(f.lastSeenIso, "2026-09-14T10:00:00.000Z");
+});
+check("audit rows: a declared row with NO row and NO stated reason is a RED", () => {
+  const f = judgeAuditRow({ action: "grant.card_click" }, undefined);
+  assert.equal(f.exercised, false);
+  assert.equal(f.ok, false, "a consequential row the pack never emitted, unexplained, must fail the census");
+});
+check("audit rows: a declared row with NO row but a stated reason is reported, never gated", () => {
+  const f = judgeAuditRow({ action: "admin.identity.revoke_link_set", notExercised: "no control-write fixture" }, undefined);
+  assert.equal(f.exercised, false);
+  assert.equal(f.ok, true, "a stated gap is a debt with a name on it, not a failure");
+  assert.equal(f.notExercised, "no control-write fixture");
+});
+check("audit rows: an EMPTY notExercised reads as ABSENT — fail closed", () => {
+  for (const blank of ["", "   ", "\n"]) {
+    const f = judgeAuditRow({ action: "a.blank", notExercised: blank }, undefined);
+    assert.equal(f.ok, false, `notExercised: ${JSON.stringify(blank)} must not satisfy the census`);
+    assert.equal(f.notExercised, undefined, "…and the finding must not report a reason it does not have");
+  }
+  assert.equal(judgeAuditRow({ action: "a.stated", notExercised: "no fixture" }, undefined).ok, true);
+});
+check("audit rows: an EXERCISED row is OK even when the registry also states a reason", () => {
+  const f = judgeAuditRow({ action: "docs.read", notExercised: "stale reason" }, "2026-09-14T10:00:00.000Z");
+  assert.equal(f.ok, true);
+  assert.equal(f.exercised, true);
+});
+check("audit rows: only the unexplained absences reach the problem list, and they name the registry", () => {
+  const problems = auditRowProblems([
+    judgeAuditRow({ action: "a.ok" }, "2026-09-14T10:00:00.000Z"),
+    judgeAuditRow({ action: "b.stated", notExercised: "no fixture" }, undefined),
+    judgeAuditRow({ action: "c.missing" }, undefined),
+  ]);
+  assert.equal(problems.length, 1, `exactly one problem, got ${JSON.stringify(problems)}`);
+  assert.ok(problems[0]?.includes("c.missing"), "the problem names the action");
+  assert.ok(problems[0]?.includes("action-registry.ts"), "…and where to fix it");
+});
+check("audit rows: an all-green set produces NO problems (negative control)", () => {
+  assert.equal(auditRowProblems([judgeAuditRow({ action: "a.ok" }, "2026-09-14T10:00:00.000Z")]).length, 0);
+});
+check("audit rows: the registry the census reads is non-empty and includes the templated families", () => {
+  const declared = consequentialAuditActions();
+  assert.ok(declared.length >= CONSEQUENTIAL_AUDIT_ACTIONS.length, "the census view is at least the plain consequential set");
+  assert.ok(declared.some((d) => d.action === "reply.post"), "it carries the post choke point");
+  assert.ok(declared.some((d) => d.action.endsWith(".post_file.attach")), "…and the expanded per-platform families, which are otherwise never asserted");
+  assert.ok(declared.length > 20, `the registry declares a plausible number of consequential rows (got ${declared.length})`);
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half, the OPE-641 credential-broker-armed half, the OPE-640 channel contributions, the OPE-775/OPE-785 relay heartbeat half now GATED — all offline)`);
+console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half, the OPE-641 credential-broker-armed half, the OPE-640 channel contributions, the OPE-775/OPE-785 relay heartbeat half now GATED, the OPE-1837 audit-row contract half — all offline)`);

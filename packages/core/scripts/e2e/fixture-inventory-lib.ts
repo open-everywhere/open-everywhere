@@ -128,7 +128,6 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_NOTION_WORKSPACE_ID: "identity",
   E2E_ORG: "identity",
 
-  E2E_INCLUDE_OPTIONAL: "knob",
   E2E_AUDIT_SILENCES: "knob",
   E2E_ACCESS_ALLOW_SEND: "knob",
   E2E_NOTION_QUERY: "knob",

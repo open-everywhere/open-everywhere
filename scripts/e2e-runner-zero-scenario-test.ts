@@ -43,11 +43,27 @@ function run(env: Record<string, string>): { code: number; out: string } {
     E2E_SLACK_BOT_USER_ID: "U000FAKE",
     E2E_SURFACES: "teams",
   });
-  ok(r.code !== 0, `a live capability configured but 0 scenarios ran (filtered to a surface with no capability) exits NON-zero — got ${r.code}. Output:\n${r.out}`);
+  ok(r.code !== 0, `a live capability configured with no teams driver exits NON-zero — got ${r.code}. Output:\n${r.out}`);
+  ok(!r.out.includes("dry mode"), "this is NOT the dry-mode path — capabilities were configured");
+  ok(r.out.includes("CANNOT RUN"), `each unrunnable teams leg reds by name rather than skipping — got:\n${r.out}`);
+  ok(r.out.includes("E2E_TEAMS_"), "…and the red names the variable that would arm it, so the reason is actionable");
+  ok(r.out.includes("## Ship legs"), "the board is printed — the ship report's table is the runner's own output");
+  ok(/\| J-TEAMS \| teams \| RED \|/.test(r.out), `…and J-TEAMS is a RED row on it — got:\n${r.out}`);
+}
+
+{
+  const r = run({
+    E2E_SLACK_USER_TOKEN: "xoxp-fake-e2e-guard-test",
+    E2E_SLACK_CHANNEL: "C000FAKE",
+    E2E_SLACK_BOT_USER_ID: "U000FAKE",
+    E2E_ONLY: "J1",
+    E2E_SURFACES: "teams",
+  });
+  ok(r.code !== 0, `--only naming a slack leg while E2E_SURFACES=teams exits NON-zero — got ${r.code}. Output:\n${r.out}`);
   ok(!r.out.includes("dry mode"), "this is NOT the dry-mode path — capabilities were configured");
   ok(r.out.includes("0 scenarios ran"), "the red names the zero-scenario condition, not a generic failure");
   ok(r.out.includes("skip breakdown:"), "the zero-scenario red carries a skip breakdown line");
-  ok(r.out.includes("filtered-surface"), `the breakdown names filtered-surface (E2E_SURFACES=teams filtered every non-teams scenario) — got:\n${r.out}`);
+  ok(r.out.includes("filtered-surface"), `the breakdown names filtered-surface — got:\n${r.out}`);
 }
 
 console.log(`✓ e2e-runner-zero-scenario-test: ${n} assertions passed (dry-mode pass preserved, filtered-to-nothing now reds)`);
