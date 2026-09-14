@@ -46,7 +46,7 @@ import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
 import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
-import { delegatingParentLink, settleDelegatedReads } from "../channels/delegated-provenance.js";
+import { delegatedSecondAddress, delegatingParentLink, settleDelegatedReads } from "../channels/delegated-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
 import { resolvePartition } from "../memory/partition.js";
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
@@ -621,11 +621,20 @@ export async function applyTaskSettlement(
       const reach = stampReadReach(bind, wakeTurnId, seatSurfaceKey);
       const wakeProvable = reach.proof !== "wake" || (install.wakeId !== null && reach.wakeId === install.wakeId);
       const provable = view.status === "completed" && wakeProvable;
+      const alsoWakeId =
+        provable && reach.proof === "wake"
+          ? await delegatedSecondAddress({
+              org: deploymentOrg(),
+              taskWakeId: install.wakeId,
+              inheritedWakeId,
+              outcome: install.outcome,
+            })
+          : undefined;
       const spend = await settleDelegatedReads({
         org: deploymentOrg(),
         childToken: link.childToken,
         turnId: wakeTurnId,
-        reach: provable ? reach : undefined,
+        reach: provable ? { ...reach, ...(alsoWakeId !== undefined ? { alsoWakeId } : {}) } : undefined,
       });
       if (spend.found > 0) {
         void appendAudit({

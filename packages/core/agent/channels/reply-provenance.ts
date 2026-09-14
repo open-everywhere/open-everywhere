@@ -15,6 +15,7 @@ export interface ConnectorRead {
   readonly op: string;
   readonly surfaceKey?: string;
   readonly wakeId?: string;
+  readonly alsoWakeId?: string;
   readonly record?: ConnectorReadRecord;
 }
 
@@ -63,7 +64,7 @@ function readState(v: unknown): ReplyProvenanceState {
   const reads = Array.isArray(s.reads)
     ? s.reads.flatMap((r): ConnectorRead[] => {
         if (typeof r !== "object" || r === null) return [];
-        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown; wakeId?: unknown; proof?: unknown; record?: unknown };
+        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown; wakeId?: unknown; alsoWakeId?: unknown; proof?: unknown; record?: unknown };
         if (typeof raw.connection !== "string" || raw.connection.length === 0) return [];
         if (typeof raw.op !== "string" || raw.op.length === 0) return [];
         const record = readRecord(raw.record);
@@ -75,6 +76,7 @@ function readState(v: unknown): ReplyProvenanceState {
             op: raw.op,
             ...(typeof raw.surfaceKey === "string" && raw.surfaceKey.length > 0 ? { surfaceKey: raw.surfaceKey } : {}),
             ...(typeof raw.wakeId === "string" && raw.wakeId.length > 0 ? { wakeId: raw.wakeId } : {}),
+            ...(typeof raw.wakeId === "string" && raw.wakeId.length > 0 && typeof raw.alsoWakeId === "string" && raw.alsoWakeId.length > 0 ? { alsoWakeId: raw.alsoWakeId } : {}),
           },
         ];
       })
@@ -91,6 +93,9 @@ export function noteConnectorRead(turnId: string | undefined, read: ConnectorRea
     op: read.op,
     ...(read.surfaceKey !== undefined && read.surfaceKey.length > 0 ? { surfaceKey: read.surfaceKey } : {}),
     ...(read.wakeId !== undefined && read.wakeId.length > 0 ? { wakeId: read.wakeId } : {}),
+    ...(read.proof === "wake" && read.wakeId !== undefined && read.wakeId.length > 0 && read.alsoWakeId !== undefined && read.alsoWakeId.length > 0 && read.alsoWakeId !== read.wakeId
+      ? { alsoWakeId: read.alsoWakeId }
+      : {}),
     ...(read.record !== undefined && read.record.kind.length > 0 && read.record.id.length > 0 ? { record: { kind: read.record.kind, id: read.record.id } } : {}),
   };
   const same = (a: ConnectorRead, b: ConnectorRead): boolean =>
@@ -99,6 +104,7 @@ export function noteConnectorRead(turnId: string | undefined, read: ConnectorRea
     a.proof === b.proof &&
     a.surfaceKey === b.surfaceKey &&
     a.wakeId === b.wakeId &&
+    a.alsoWakeId === b.alsoWakeId &&
     a.record?.kind === b.record?.kind &&
     a.record?.id === b.record?.id;
   try {
@@ -189,7 +195,8 @@ function provenanceForReply(
   for (const r of reads) {
     const visible =
       r.proof === "wake"
-        ? wakeKey !== undefined && r.wakeId === wakeKey
+        ?
+          wakeKey !== undefined && (r.wakeId === wakeKey || r.alsoWakeId === wakeKey)
         : r.proof === "surface"
           ? roomKey !== undefined && r.surfaceKey === roomKey
           : false;

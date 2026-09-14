@@ -26,9 +26,12 @@ const { registerPostArm } = await import("../agent/channels/post-arms.js");
 const { postReply, replyAuditFor } = await import("../agent/channels/reply-post.js");
 type ReplyTarget = import("../agent/channels/reply-post.js").ReplyTarget;
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION } = await import("../agent/channels/reply-provenance.js");
-const { delegatedProvenanceKey, delegatingParentLink } = await import("../agent/channels/delegated-provenance.js");
+const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress } = await import("../agent/channels/delegated-provenance.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { taskWakeKey } = await import("../agent/channels/task-wake.js");
+const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
+const { registerSlackFixtureCodec } = await import("./_slack-test-stubs.js");
+registerSlackFixtureCodec();
 const { noteTurnBoundary } = await import("../agent/access/task-wake-signal.js");
 const { applyTaskSettlement, noteTaskReceipt, DELEGATED_PROVENANCE_ACTION } = await import("../agent/hooks/spawn-taint.js");
 const connectorAudit = await import("../agent/hooks/connector-audit.js");
@@ -416,6 +419,135 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     | Record<string, unknown>
     | undefined;
   ok(deadRow?.outcome === "not-completed" && deadRow.found === 1 && deadRow.reads === 0, `§8: the withholding is countable and says why (saw ${JSON.stringify(deadRow)})`);
+}
+
+{
+  const store = getOperationalStore();
+  const TASK_WAKE = "wake-inherited-task";
+  const DELIVERED_WAKE = "wake-inherited-delivered";
+  const at = new Date().toISOString();
+  const origin = { platform: "slack", channelId: "C1", threadTs: "111.1" } as const;
+  await registerUnifiedWakeTarget(store, ORG, DELIVERED_WAKE, origin, at, "win-1");
+  await registerUnifiedWakeTarget(store, ORG, TASK_WAKE, origin, at, "win-1");
+  await store.putTaskResult(ORG, taskWakeKey("task_inherited"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
+
+  const uniCtx = (turnId: string): BindableContext =>
+    ({
+      channel: { kind: "channel:unified" },
+      session: {
+        id: SEAT_SESSION,
+        turn: { id: turnId, sequence: 3 },
+        auth: {
+          current: { attributes: { oe_platform: "slack", oe_ws: "T1", oe_sf: "C1", oe_mode: "channel", oe_wake_id: DELIVERED_WAKE }, principalId: "U1", principalType: "slack-user" },
+        },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    }) as unknown as BindableContext;
+
+  const inSeat = newSession(SEAT_SESSION);
+  let messageId = "";
+  await inSeat(async () => {
+    await noteTaskReceipt({ taskId: "task_inherited", callId: "call_inherited", agentId: null, tool: "agent" }, SEAT_SESSION);
+    const inWorker = newSession("worker-call_inherited");
+    await inWorker(async () => {
+      await hook(opResult("notion__get_page"), workerCtx("call_inherited", "worker_turn_1"));
+    });
+    await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_inherited`, 1);
+    noteTurnBoundary("inh_turn_0", "stamp-inh");
+    noteTurnBoundary("inh_turn_1", "stamp-inh");
+    await applyTaskSettlement(
+      [{ taskId: "task_inherited", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      uniCtx("inh_turn_1") as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    messageId = await postReply({ platform: "slack", channelId: "C1" }, `${ANSWER} (inherited)`, replyAuditFor(uniCtx("inh_turn_1"), "tool", DELIVERED_WAKE));
+  });
+  ok(
+    lastPosted() === `${ANSWER} (inherited)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    `🔴 §9: the room receives the footer for the worker's read even though the reply answers the DELIVERED wake while the carried read was stamped with the TASK wake. A live run posted this answer bare ` +
+      `(saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+  const rows = await provenanceRowsFor(messageId);
+  const detail = rows[0]?.detail ?? {};
+  ok(
+    rows.length === 1 && detail.named === 1 && detail.withheld === 0,
+    `🔴 §9: and the durable row says NAMED — \`named:0\` with a non-zero \`withheld\` beside a carried settlement is the exact a live run signature (saw ${JSON.stringify(detail)})`,
+  );
+}
+
+{
+  const store = getOperationalStore();
+  const TASK_WAKE = "wake-sibling-task";
+  const SIBLING_WAKE = "wake-sibling-delivered";
+  const at = new Date().toISOString();
+  await registerUnifiedWakeTarget(store, ORG, TASK_WAKE, { platform: "slack", channelId: "C1", threadTs: "222.2" }, at, "win-1");
+  await registerUnifiedWakeTarget(store, ORG, SIBLING_WAKE, { platform: "slack", channelId: "C-SIBLING", threadTs: "333.3" }, at, "win-1");
+  await store.putTaskResult(ORG, taskWakeKey("task_sibling"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
+
+  const uniCtx = (turnId: string): BindableContext =>
+    ({
+      channel: { kind: "channel:unified" },
+      session: {
+        id: SEAT_SESSION,
+        turn: { id: turnId, sequence: 4 },
+        auth: {
+          current: { attributes: { oe_platform: "slack", oe_ws: "T1", oe_sf: "C1", oe_mode: "channel", oe_wake_id: SIBLING_WAKE }, principalId: "U1", principalType: "slack-user" },
+        },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    }) as unknown as BindableContext;
+
+  const inSeat = newSession(SEAT_SESSION);
+  let messageId = "";
+  await inSeat(async () => {
+    await noteTaskReceipt({ taskId: "task_sibling", callId: "call_sibling", agentId: null, tool: "agent" }, SEAT_SESSION);
+    const inWorker = newSession("worker-call_sibling");
+    await inWorker(async () => {
+      await hook(opResult("notion__get_page"), workerCtx("call_sibling", "worker_turn_1"));
+    });
+    await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_sibling`, 1);
+    noteTurnBoundary("sib_turn_0", "stamp-sib");
+    noteTurnBoundary("sib_turn_1", "stamp-sib");
+    await applyTaskSettlement(
+      [{ taskId: "task_sibling", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      uniCtx("sib_turn_1") as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    messageId = await postReply({ platform: "slack", channelId: "C-SIBLING" }, `${ANSWER} (sibling)`, replyAuditFor(uniCtx("sib_turn_1"), "tool", SIBLING_WAKE));
+  });
+  ok(
+    !lastPosted().includes("notion") && lastPosted().startsWith(`${ANSWER} (sibling)`),
+    `🔴 §10: the reply into the SIBLING conversation never NAMES the source. The task's worker read Notion for another room, and §9's second address must not carry the name here — that is OPE-1713 ` +
+      `(saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+  const detail = (await provenanceRowsFor(messageId))[0]?.detail ?? {};
+  ok(
+    detail.named === 0 && detail.withheld === 1,
+    `🔴 §10: …and the durable row says so — nothing named, one connection withheld from this room (saw ${JSON.stringify(detail)})`,
+  );
+
+  const SAME_ROOM_WAKE = "wake-sibling-same-room";
+  await registerUnifiedWakeTarget(store, ORG, SAME_ROOM_WAKE, { platform: "slack", channelId: "C1", threadTs: "222.2" }, at, "win-1");
+  ok(
+    (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: SIBLING_WAKE, outcome: "installed" })) === undefined,
+    "🔴 §10: ARM 1 — two ids whose origins name DIFFERENT rooms are refused. This is the OPE-1713 arm, asserted on the rule rather than only on the footer above",
+  );
+  ok(
+    (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: SAME_ROOM_WAKE, outcome: "installed" })) === SAME_ROOM_WAKE,
+    "🔴 §10: POSITIVE CONTROL — the SAME two calls differing only in the inherited id's ROOM are admitted, so arm 1 refuses on the origin comparison and not on something incidental to the fixture",
+  );
+  ok(
+    (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: SAME_ROOM_WAKE, outcome: "already" })) === undefined,
+    "🔴 §10: ARM 2 — a same-room stamp is STILL refused on a non-`installed` outcome. `already` means a sibling task took the turn first, so this turn never adopted THIS task's wake",
+  );
+  ok(
+    (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: "wake-never-registered", outcome: "installed" })) === undefined,
+    "🔴 §10: ARM 3 — a stamp with NO wake row is refused. The proof fails closed on an unreadable origin rather than admitting an id it could not place",
+  );
+  ok(
+    (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: TASK_WAKE, outcome: "installed" })) === undefined,
+    "🔴 §10: ARM 4 — an inherited stamp EQUAL to the minted id widens nothing, so it is refused rather than written as a duplicate address",
+  );
 }
 
 rmSync(dir, { recursive: true, force: true });

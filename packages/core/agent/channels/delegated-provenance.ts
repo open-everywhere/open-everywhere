@@ -1,6 +1,8 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { noteConnectorRead, type ConnectorRead } from "./reply-provenance.js";
+import { resolveUnifiedWakeTarget, sameUnifiedConversation } from "./unified-window.js";
+import type { TaskWakeInstall } from "./task-wake.js";
 
 const DELEGATED_PROVENANCE_PREFIX = "oe-delegated-provenance:";
 
@@ -108,11 +110,36 @@ export interface DelegatedReadSettlement {
   readonly carried: number;
 }
 
+async function sameConversationAsTaskWake(org: string, taskWake: string, inherited: string): Promise<boolean> {
+  if (taskWake === inherited) return false;
+  try {
+    const store = getOperationalStore();
+    const [a, b] = await Promise.all([resolveUnifiedWakeTarget(store, org, taskWake), resolveUnifiedWakeTarget(store, org, inherited)]);
+    if (a === null || b === null) return false;
+    return sameUnifiedConversation(a, b);
+  } catch {
+    return false;
+  }
+}
+
+export async function delegatedSecondAddress(input: {
+  readonly org: string;
+  readonly taskWakeId: string | null;
+  readonly inheritedWakeId: string | undefined;
+  readonly outcome: TaskWakeInstall["outcome"];
+}): Promise<string | undefined> {
+  const { taskWakeId, inheritedWakeId } = input;
+  if (input.outcome !== "installed") return undefined;
+  if (taskWakeId === null || taskWakeId.length === 0) return undefined;
+  if (inheritedWakeId === undefined || inheritedWakeId.length === 0) return undefined;
+  return (await sameConversationAsTaskWake(input.org, taskWakeId, inheritedWakeId)) ? inheritedWakeId : undefined;
+}
+
 export async function settleDelegatedReads(input: {
   readonly org: string;
   readonly childToken: string;
   readonly turnId: string | undefined;
-  readonly reach: Pick<ConnectorRead, "proof" | "surfaceKey" | "wakeId"> | undefined;
+  readonly reach: Pick<ConnectorRead, "proof" | "surfaceKey" | "wakeId" | "alsoWakeId"> | undefined;
 }): Promise<DelegatedReadSettlement> {
   const none: DelegatedReadSettlement = { found: 0, carried: 0 };
   try {
