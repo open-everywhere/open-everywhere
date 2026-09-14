@@ -2096,7 +2096,6 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     catchUp: (req) =>
       seatCatchUp("slack", req, {
         trustFor: backscrollTrustResolver({ surfaceInternal: req.surfaceInternal === true, channelKey: req.channelKey }),
-        admit: seatAdmissionFor(req.channelKey),
       }),
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),

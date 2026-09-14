@@ -30,7 +30,7 @@ import { fetchSlackSeatCatchUp } from "@open-everywhere/provider-slack/agent/cha
 import { fetchDiscordSeatCatchUp } from "@open-everywhere/provider-discord/agent/channels/discord-backscroll.js";
 import { fetchGitHubCatchUpWindow } from "@open-everywhere/provider-github/agent/channels/github-catch-up.js";
 import { fetchLinearCatchUpWindow, linearOrgFromChannelKey } from "@open-everywhere/provider-linear/agent/channels/linear-catch-up.js";
-import { fetchNotionCatchUpWindow } from "@open-everywhere/provider-notion/agent/channels/notion-catch-up.js";
+import { fetchNotionCatchUpWindow, type NotionCatchUpDeps } from "@open-everywhere/provider-notion/agent/channels/notion-catch-up.js";
 import { readNotionComments } from "@open-everywhere/provider-notion/agent/channels/notion-api.js";
 import {
   TEAMS_CATCH_UP_ACTION,
@@ -589,6 +589,180 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
     }
     registerSeatCatchUp(u.platform, real!, { timestampPrecisionMs: u.ms });
   }
+}
+
+{
+  const BODY = "a member spoke while the seat was away";
+  const rows: AuditInput[] = [];
+  const audit = async (e: AuditInput) => {
+    rows.push(e);
+  };
+  const SINCE_FRESH = SINCE - 6 * 3600_000;
+  const admissionDrives: ReadonlyArray<{
+    readonly platform: string;
+    readonly req: SeatCatchUpRequest;
+    readonly member: SeatCatchUpFetch;
+    readonly machine?: SeatCatchUpFetch;
+  }> = [
+    {
+      platform: "slack",
+      req: { container: "C1", sinceMs: SINCE_FRESH, channelKey: "slack/T1/C1" },
+      member: (r) =>
+        fetchSlackSeatCatchUp(r, {
+          request: async () => ({ ok: true, messages: [{ ts: String((SINCE + 60_000) / 1000), user: "U1", text: BODY }] }),
+          identity: async () => ({ userId: "UBOT", botId: "BBOT" }),
+        }),
+      machine: (r) =>
+        fetchSlackSeatCatchUp(r, {
+          request: async () => ({ ok: true, messages: [{ ts: String((SINCE + 60_000) / 1000), bot_id: "B9", text: BODY }] }),
+          identity: async () => ({ userId: "UBOT", botId: "BBOT" }),
+        }),
+    },
+    {
+      platform: "discord",
+      req: { container: "CH", sinceMs: SINCE_FRESH, channelKey: "discord/G1/CH" },
+      member: (r) =>
+        fetchDiscordSeatCatchUp(r, {
+          request: async () => [{ id: "200", type: 0, timestamp: new Date(SINCE + 60_000).toISOString(), content: BODY, author: { id: "D1" } }],
+        }),
+      machine: (r) =>
+        fetchDiscordSeatCatchUp(r, {
+          request: async () => [{ id: "201", type: 0, timestamp: new Date(SINCE + 60_000).toISOString(), content: BODY, author: { id: "D9", bot: true } }],
+        }),
+    },
+    {
+      platform: "teams",
+      req: { container: "team-1/chan-1", sinceMs: SINCE_FRESH, channelKey: "teams/TEN-1/chan-1" },
+      member: (r) =>
+        fetchTeamsCatchUpWindow(r, {
+          request: async () => ({ value: [{ id: "m1", createdDateTime: AFTER, body: { content: BODY }, from: { user: { id: "E1" } } }] }),
+          audit: async () => {},
+        }),
+      machine: (r) =>
+        fetchTeamsCatchUpWindow(r, {
+          request: async () => ({ value: [{ id: "m9", createdDateTime: AFTER, body: { content: BODY }, from: { application: { id: "APP9" } } }] }),
+          audit: async () => {},
+        }),
+    },
+    {
+      platform: "github",
+      req: { container: "acme/web#42", sinceMs: SINCE_FRESH, channelKey: "github/acme/web-42" },
+      member: (r) =>
+        fetchGitHubCatchUpWindow(r, {
+          fetchFn: (async () => ({ ok: true, json: async () => [{ id: 11, created_at: AFTER, body: BODY, user: { login: "ada" } }] })) as never,
+          resolveToken: async () => "t",
+        }),
+      machine: (r) =>
+        fetchGitHubCatchUpWindow(r, {
+          fetchFn: (async () => ({ ok: true, json: async () => [{ id: 19, created_at: AFTER, body: BODY, user: { login: "robo", type: "Bot" } }] })) as never,
+          resolveToken: async () => "t",
+        }),
+    },
+    {
+      platform: "linear",
+      req: { container: "OPE-42", sinceMs: SINCE_FRESH, channelKey: "linear/org-b/OPE-42" },
+      member: (r) =>
+        fetchLinearCatchUpWindow(r, {
+          readIssue: (async () => ({ description: "", comments: [{ id: "c-new", authorId: "L1", createdAt: AFTER, text: BODY }], truncated: false })) as never,
+        }),
+    },
+    {
+      platform: "notion",
+      req: { container: "page-1", threadRoot: "D1", sinceMs: SINCE_FRESH, channelKey: "notion/ws-1/page-1" },
+      member: (r) =>
+        fetchNotionCatchUpWindow(r, {
+          readComments: (async () => ({
+            discussionCount: 1,
+            blocksScanned: 1,
+            truncated: false,
+            comments: [{ discussionId: "D1", authorId: "N1", createdTime: AFTER, text: BODY }],
+          })) as never,
+          resolveCredential: (async () => ({ apiKey: "k" })) as never,
+          domains: [],
+        }),
+      machine: (r) =>
+        fetchNotionCatchUpWindow(r, {
+          readComments: (async () => ({
+            discussionCount: 1,
+            blocksScanned: 1,
+            truncated: false,
+            comments: [{ discussionId: "D1", authorId: "N9", authorKind: "bot", createdTime: AFTER, text: BODY }],
+          })) as never,
+          resolveCredential: (async () => ({ apiKey: "k" })) as never,
+          domains: [],
+        }),
+    },
+  ];
+
+  ok(admissionDrives.length === 6, "🔴 OPE-1857: the admission road is asked of all SIX surfaces — a drive list short of one is a surface whose seat nobody checked");
+
+  for (const d of admissionDrives) {
+    const real = seatCatchUpFetchFor(d.platform);
+    const declared: { readonly timestampPrecisionMs: number } = { timestampPrecisionMs: seatCatchUpPrecisionFor(d.platform) };
+
+    rows.length = 0;
+    registerSeatCatchUp(d.platform, d.member, declared);
+    const got = await seatCatchUp(d.platform, d.req, { audit });
+    ok(
+      got.messages.length === 1 && got.messages[0]!.from === "human",
+      `🔴 ${d.platform}: an ordinary member's message whose bot signal the VENDOR OMITS reaches the seat as a PERSON — the live-run defect, asked of this surface`,
+    );
+    ok(
+      rows.length === 1 && rows[0]!.detail!["outcome"] === "read" && rows[0]!.detail!["kept"] === 1,
+      `🔴 ${d.platform}: …and its row reads \`read kept=1\`, not the \`empty raw=1 kept=0 admission-dropped-all\` a fail-open-to-bot normalizer writes`,
+    );
+
+    if (d.machine) {
+      rows.length = 0;
+      registerSeatCatchUp(d.platform, d.machine, declared);
+      const refused = await seatCatchUp(d.platform, d.req, { audit });
+      ok(
+        refused.messages.length === 0,
+        `🔴 ${d.platform}: a MACHINE author the vendor positively names is REFUSED with no \`admit\` passed — proof the shared road resolved the domain's policy itself, and the negative control that stops (a) passing on an unpoliced read`,
+      );
+      ok(
+        rows.length === 1 && rows[0]!.detail!["reason"] === "admission-dropped-all",
+        `${d.platform}: …and the row names the stage that emptied it, so the next red ship reads the policy off the row`,
+      );
+    }
+
+    registerSeatCatchUp(d.platform, real!, declared);
+    ok(seatCatchUpFetchFor(d.platform) === real && seatCatchUpPrecisionFor(d.platform) === declared.timestampPrecisionMs, `${d.platform}: the real fetch is back on the road under its own declared unit`);
+  }
+}
+
+{
+  const SELF = "00000000-0000-4000-8000-0000000005e1";
+  const asked: string[] = [];
+  const drive = (selfActorIdFor?: NotionCatchUpDeps["selfActorIdFor"]) =>
+    fetchNotionCatchUpWindow(
+      { container: "page-1", threadRoot: "D1", sinceMs: SINCE, channelKey: "notion/ws-1/page-1" },
+      {
+        readComments: (async () => ({
+          discussionCount: 1,
+          blocksScanned: 1,
+          truncated: false,
+          comments: [{ discussionId: "D1", authorId: SELF, createdTime: AFTER, text: "the seat's own previous reply" }],
+        })) as never,
+        resolveCredential: (async () => ({ apiKey: "k" })) as never,
+        domains: [],
+        ...(selfActorIdFor ? { selfActorIdFor } : {}),
+      },
+    );
+
+  const own = await drive(async (credentialId) => {
+    asked.push(credentialId);
+    return SELF;
+  });
+  ok(own.length === 1 && own[0]!.sender === "self", "🔴 OPE-1857: a comment authored by the DEPLOYMENT'S OWN integration normalizes as `self` — the seat meets its own prior reply as its own words, not as a person's");
+  ok(own[0]!.authorId === undefined, "OPE-1857: …and carries no author id, the shape every other surface's self post has");
+  ok(asked.length === 1 && asked[0] === "channel-key", "OPE-1857: the self id is resolved under the key the ORG DEFAULT integration is stored as, which is the same key the ingress road's own cache uses — one integration, one memoised answer");
+
+  const unresolved = await drive();
+  ok(unresolved.length === 1 && unresolved[0]!.sender === "human", "🔴 OPE-1857: NEGATIVE CONTROL — with no self resolver the identical comment reads as a PERSON, so the resolver is what does the work");
+
+  const src = readFileSync(fileURLToPath(new URL("../packages/providers/notion/agent/channels/notion-catch-up.ts", import.meta.url)), "utf-8");
+  ok(/const liveDeps[\s\S]{0,600}?selfActorIdFor:/u.test(src), "🔴 OPE-1857: the LIVE deps resolve the self actor id — an injected seam proven in a test and absent from `liveDeps` would leave the deployment with the defect the assertions above just ruled out");
 }
 
 console.log(`seat-catch-up parity: ${n} assertions passed`);

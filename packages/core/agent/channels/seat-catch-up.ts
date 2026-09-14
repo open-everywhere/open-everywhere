@@ -177,7 +177,7 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
     await record("empty", window.length, 0, { reason: "bounds-dropped-all" });
     return { messages: [] };
   }
-  const messages = fetchedBackscroll(bounded, opts.capTokens, opts.trustFor, opts.admit);
+  const messages = fetchedBackscroll(bounded, opts.capTokens, opts.trustFor, opts.admit ?? seatAdmissionFor(req.channelKey));
   if (messages.length === 0) {
     await record("empty", window.length, 0, { reason: "admission-dropped-all" });
     return { messages };

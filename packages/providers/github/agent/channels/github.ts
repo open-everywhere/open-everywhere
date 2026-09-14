@@ -272,7 +272,7 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
       };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
-    catchUp: (req) => seatCatchUp("github", req, { admit: seatAdmissionFor(req.channelKey) }),
+    catchUp: (req) => seatCatchUp("github", req),
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, githubGrainFor(surfaceKey).registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {

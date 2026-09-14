@@ -325,4 +325,61 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
   resetSettingsForTest();
 }
 
+{
+  const { catchUpSender } = await import("../agent/channels/backscroll-window.js");
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+
+  ok(catchUpSender({ self: true }) === "self", "OPE-1857: the deployment's OWN post is `self` — our own words are never a foreign bot");
+  ok(catchUpSender({ self: true, bot: true }) === "self", "OPE-1857: …and `self` WINS over a positive bot signal, which a deployment posting through its own app carries");
+  ok(catchUpSender({ self: false, bot: true }) === "bot", "OPE-1857: an author the vendor POSITIVELY calls a machine is `bot` — the attributable foreign bot the domain's policy then accepts or refuses");
+  ok(catchUpSender({ self: false, bot: false }) === "human", "OPE-1857: an author the vendor positively calls a person is `human`");
+  ok(catchUpSender({ self: false }) === "human", "🔴 OPE-1857: an ABSENT bot signal is a PERSON — the arm the whole class turns on. Read as `bot` it refuses every author under `wide`, which is what a Notion seat did on every wake");
+
+  const WIDE_ROOM = "fixture/WS/wide-room";
+  const MEMBERS_ROOM = "fixture/WS/members-room";
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [
+      defineDomain({ name: "ope1857-wide", reach: [WIDE_ROOM] }),
+      defineDomain({ name: "ope1857-members", reach: [MEMBERS_ROOM], admission: "members-only" }),
+    ],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const window: readonly NormalizedMessage[] = [
+    { id: "member", ms: T + 1000, authorId: "U-member", sender: catchUpSender({ self: false }), type: "channel", text: "a member spoke while the seat was away" },
+    { id: "machine", ms: T + 2000, authorId: "B-other", sender: catchUpSender({ self: false, bot: true }), type: "channel", text: "a foreign bot's chatter" },
+  ];
+  registerSeatCatchUp("fixture", async () => window);
+
+  const FRESH_SINCE = T - 6 * 3600_000;
+  for (const [label, sinceMs] of [["a freshly rotated generation's first read", FRESH_SINCE], ["an ongoing generation's read", T]] as const) {
+    const rows: AuditInput[] = [];
+    const audit = async (e: AuditInput) => {
+      rows.push(e);
+    };
+    const wide = await seatCatchUp("fixture", { container: "R", sinceMs, channelKey: WIDE_ROOM }, { audit });
+    ok(
+      wide.messages.length === 1 && wide.messages[0]!.id === "member" && wide.messages[0]!.from === "human",
+      `🔴 OPE-1857: on ${label}, the ORDINARY MEMBER is KEPT and the foreign bot is not — with NO \`admit\` passed, so the policy is the road's own`,
+    );
+    ok(
+      rows.length === 1 && rows[0]!.detail!["outcome"] === "read" && rows[0]!.detail!["raw"] === 2 && rows[0]!.detail!["kept"] === 1,
+      `OPE-1857: …and its row reads \`read raw=2 kept=1\` on ${label} — not the \`admission-dropped-all\` a live run wrote`,
+    );
+
+    rows.length = 0;
+    const membersOnly = await seatCatchUp("fixture", { container: "R", sinceMs, channelKey: MEMBERS_ROOM }, { audit });
+    ok(membersOnly.messages.length === 0, `🔴 OPE-1857: the SAME window in a \`members-only\` room keeps nothing on ${label} — the road read the domain's own declaration, not a constant`);
+    ok(rows.length === 1 && rows[0]!.detail!["reason"] === "admission-dropped-all", `OPE-1857: …and says so as \`admission-dropped-all\` on ${label}`);
+  }
+
+  _resetSeatCatchUp("fixture");
+}
+
 console.log(`seat-catch-up: ${n} assertions passed`);

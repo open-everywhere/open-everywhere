@@ -12,6 +12,11 @@ export interface NormalizedMessage {
   readonly text: string;
 }
 
+export function catchUpSender(f: { readonly self: boolean; readonly bot?: boolean }): NormalizedMessage["sender"] {
+  if (f.self) return "self";
+  return f.bot === true ? "bot" : "human";
+}
+
 const CHARS_PER_TOKEN = 4;
 
 const PER_MESSAGE_OVERHEAD_TOKENS = 110;

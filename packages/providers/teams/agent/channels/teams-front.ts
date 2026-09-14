@@ -85,7 +85,6 @@ import {
   receiptEventTime,
   spreadVendorTs,
   seatCatchUp,
-  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -338,7 +337,7 @@ export function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerAr
       };
     },
     touchSession: (_surfaceKey, atIso) => store.touchChannelSession(org, grain.registryKey, atIso),
-    catchUp: (req) => seatCatchUp("teams", req, { admit: seatAdmissionFor(req.channelKey) }),
+    catchUp: (req) => seatCatchUp("teams", req),
     recordWake: (entry, token) => recordWakeTail(org, grain.registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {

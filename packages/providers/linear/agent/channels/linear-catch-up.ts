@@ -1,4 +1,5 @@
 import { readLinearIssue } from "./linear-api.js";
+import { catchUpSender } from "@open-everywhere/core/agent/adapter-api.js";
 import type { NormalizedMessage, SeatCatchUpFetch } from "@open-everywhere/core/agent/adapter-api.js";
 
 const CATCH_UP_MAX_COMMENTS = 100;
@@ -28,7 +29,7 @@ export async function fetchLinearCatchUpWindow(
         id: c.id,
         ms,
         ...(isSelf ? {} : { authorId: c.authorId }),
-        sender: isSelf ? "self" : "human",
+        sender: catchUpSender({ self: isSelf }),
         ...(c.parentId ? { type: "thread" as const, threadId: c.parentId } : { type: "channel" as const }),
         text,
       });

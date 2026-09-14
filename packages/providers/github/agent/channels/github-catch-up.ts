@@ -1,4 +1,5 @@
 import {
+  catchUpSender,
   resolveConversationReadToken,
   type NormalizedMessage,
   type PrFetchFn,
@@ -30,7 +31,7 @@ function normalizeComment(c: RawTimelineComment, selfLogin: string | undefined):
     id: String(c.id ?? `${login}@${c.created_at ?? ms}`),
     ms,
     ...(isSelf ? {} : { authorId: login }),
-    sender: isSelf ? "self" : isBot ? "bot" : "human",
+    sender: catchUpSender({ self: isSelf, bot: isBot }),
     type: "channel",
     text,
   };

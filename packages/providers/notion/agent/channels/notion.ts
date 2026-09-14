@@ -43,7 +43,6 @@ import {
   QUESTION_ANSWERED_AUDIT_ACTION,
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
   seatCatchUp,
-  seatAdmissionFor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   forgetNotionQuestion,
@@ -52,8 +51,9 @@ import {
   type NotionInboundAnswer,
 } from "./notion-question-return.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
+import { resolveNotionBotUser } from "./notion-bot-user.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
-import { createCommentReply, resolveNotionCredential, retrieveBotUser, NOTION_INGRESS_RETRY, type ResolvedNotionCredential } from "./notion-api.js";
+import { createCommentReply, resolveNotionCredential, type ResolvedNotionCredential } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { notionTrustRoots } from "./notion-ancestry-trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
@@ -74,34 +74,7 @@ function log(msg: string): void {
   console.log(`[open-everywhere:notion] ${msg}`);
 }
 
-const botUserCache = new Map<string, Promise<{ id?: string; name?: string }>>();
-function resolveBotUser(
-  credentialId: string,
-  credential: () => Promise<ResolvedNotionCredential | undefined>,
-): () => Promise<{ id?: string; name?: string }> {
-  return () => {
-    const cached = botUserCache.get(credentialId);
-    if (cached) return cached;
-    const overrideId = process.env.NOTION_BOT_USER_ID;
-    const overrideName = process.env.NOTION_BOT_NAME;
-    const named = (u: { id?: string; name?: string }) => ({ id: u.id, name: overrideName && overrideName.length > 0 ? overrideName : u.name });
-    const resolved =
-      overrideId && overrideId.length > 0
-        ? Promise.resolve(named({ id: overrideId }))
-        : credential()
-            .then((cred) => (cred ? retrieveBotUser({ ...cred, retry: NOTION_INGRESS_RETRY }).then(named) : {}))
-            .catch((err) => {
-              log(`could not resolve bot user for credential "${credentialId}" (GET /v1/users/me failed): ${String(err)}`);
-              return {};
-            });
-    botUserCache.set(credentialId, resolved);
-    return resolved;
-  };
-}
-
-export function _resetNotionBotUserCache(): void {
-  botUserCache.clear();
-}
+export { _resetNotionBotUserCache } from "./notion-bot-user.js";
 
 function notionDomains(): readonly Domain[] {
   try {
@@ -184,7 +157,7 @@ export function liveNotionSupervisorDeps(
       return { token: existing.token, generation: existing.generation, freshGeneration: fresh, tail: [] as readonly WakeMessageInput[], ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, notionGrainFor(surfaceKey).registryKey, atIso),
-    catchUp: (req) => seatCatchUp("notion", req, { admit: seatAdmissionFor(req.channelKey) }),
+    catchUp: (req) => seatCatchUp("notion", req),
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, notionGrainFor(surfaceKey).registryKey, token, entry),
     memoryDelta: liveMemoryDeltaDep(org, surfaceKey),
     now: () => new Date().toISOString(),
@@ -337,7 +310,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         return resolved;
       };
       const botUserFor = (credentialId: string): Promise<{ id?: string; name?: string }> =>
-        resolveBotUser(credentialId, () => credentialFor(credentialId))();
+        resolveNotionBotUser(credentialId, () => credentialFor(credentialId))();
 
       const dispatch = async (d: NotionUntieredSupervisorDispatch): Promise<void> => {
         const grain = notionGrainFor(d.surfaceKey);

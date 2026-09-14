@@ -229,7 +229,8 @@ interface WakeCapture { token: string; message: string; context: readonly string
 {
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/github.ts", import.meta.url)), "utf8");
   ok(src.includes("admit: seatAdmissionFor(surfaceKey)"), "🔴 the live ambient leg passes the domain's admission policy into the supervisor dispatch");
-  ok(src.includes("admit: seatAdmissionFor(req.channelKey)") || src.includes("seatCatchUp(\"github\", req, { admit: seatAdmissionFor(req.channelKey) })"), "…and the catch-up read still resolves the SAME policy, so the seat's two reads cannot disagree");
+  ok(src.includes("catchUp: (req) => seatCatchUp(\"github\", req),"), "🔴 …and the catch-up read passes NO `admit`, so the policy is the shared road's own and the two reads cannot disagree");
+  ok(!/seatCatchUp\("github", req, \{[^}]*admit:/u.test(src), "NEGATIVE CONTROL: this leg does not smuggle its own admission policy back in past the shared road");
 }
 
 {

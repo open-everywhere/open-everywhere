@@ -1,5 +1,5 @@
 import { channelMessagesUrl, fetchGraphPages, liveTeamsGraphRequest, teamsTimedLinesFromRaw, threadRepliesUrl, type TeamsGraphRequester, type TeamsRenderedLine } from "./teams-read.js";
-import { appendAudit, deploymentOrg, type AuditInput, type NormalizedMessage, type SeatCatchUpFetch } from "@open-everywhere/core/agent/adapter-api.js";
+import { appendAudit, catchUpSender, deploymentOrg, type AuditInput, type NormalizedMessage, type SeatCatchUpFetch } from "@open-everywhere/core/agent/adapter-api.js";
 
 const CATCH_UP_LIMIT = 100;
 
@@ -25,7 +25,7 @@ function normalizeLine(
     id: l.ts,
     ms: l.createdMs,
     ...(isSelf || l.authorId === undefined ? {} : { authorId: l.authorId }),
-    sender: isSelf ? "self" : l.bot === true ? "bot" : "human",
+    sender: catchUpSender({ self: isSelf, bot: l.bot }),
     ...(threadRoot ? { type: "thread" as const, threadId: threadRoot } : { type: "channel" as const }),
     text,
   };

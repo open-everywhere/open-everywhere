@@ -1187,7 +1187,6 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
         },
         {
           trustFor: backscrollTrustResolver({ surfaceInternal: input.privacyOk, channelKey: domainKeyOf(input.partition) }),
-          admit: seatAdmissionFor(domainKeyOf(input.partition)),
         },
       );
   await doWake(session.token, session.generation, session.fresh ? session.tail : (catchUp?.messages ?? []), catchUp?.unavailable);

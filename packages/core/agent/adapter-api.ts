@@ -597,7 +597,7 @@ export type {
 
 export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope, hydrationSlices } from "./channels/context-render.js";
 export type { HydrationSlices } from "./channels/context-render.js";
-export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
+export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs, catchUpSender } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
 export {
   registerSeatCatchUp,
