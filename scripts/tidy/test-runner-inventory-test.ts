@@ -1,10 +1,17 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+import { REPO_ROOT } from "../chain/_legs.js";
 import {
   codeOnly,
   helperFamilies,
+  isRunnerFile,
+  NOT_RUNNERS,
   scanViews,
   signalsOf,
   spawnsChild,
   splitParams,
+  trackedRunnerFiles,
   withoutComments,
   type HelperFamily,
 } from "./test-runner-inventory.js";
@@ -268,4 +275,18 @@ function eq(actual: unknown, expected: unknown, label: string): void {
   eq(signalsOf(fixture).directAssertSites, 1, "🔴 the same fixture yields ONE `directAssertSites` — the wide count and the narrow count read different regexes");
 }
 
-console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families, direct-assert sites, assertion sites)\n`);
+{
+  eq(isRunnerFile("agent/model/ab-test.ts"), false, "🔴 this deployment's champion/challenger declaration is not a runner");
+  eq(isRunnerFile("packages/core/agent/model/ab-test.ts"), false, "🔴 the A/B mechanism it imports is not a runner either");
+  eq(isRunnerFile("scripts/deploy-merge-fence-test.ts"), true, "🔴 an ordinary runner is still a runner");
+  eq(isRunnerFile("packages/core/agent/model/policy.ts"), false, "a file that does not carry the suffix was never in the corpus");
+
+  const corpus = trackedRunnerFiles();
+  for (const path of NOT_RUNNERS) {
+    ok(!corpus.includes(path), `🔴 ${path} must not be in the runner corpus`);
+    ok(existsSync(join(REPO_ROOT, path)), `${path} is listed in NOT_RUNNERS but is not in the tree — the entry is stale`);
+  }
+  ok(corpus.includes("scripts/deploy-merge-fence-test.ts"), "the corpus still holds an ordinary runner — the positive control");
+}
+
+console.log(`\n✓ tidy runner inventory: ${passed} assertions passed (scanner views, emoji offsets, regex-after-keyword, nested templates, helper families, direct-assert sites, assertion sites, the NOT_RUNNERS exclusion)\n`);

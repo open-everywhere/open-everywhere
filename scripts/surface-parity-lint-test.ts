@@ -180,6 +180,18 @@ ok(
     ok(red.code === 1, `an edited generated table reds the gate (exit ${red.code})`);
     ok(red.out.includes("out of date with the provider"), "…and the message points at the declarations");
 
+    const renumbered = original.replace("### 7.4 The file-attach finding", "### 7.9 The file-attach finding");
+    ok(renumbered !== original, "the heading perturbation matched");
+    writeFileSync(copy, renumbered);
+    const dangling = gate("--check", "--contract", copy);
+    ok(dangling.code === 1, `a roster row pointing at a missing heading reds the gate (exit ${dangling.code})`);
+    ok(dangling.out.includes("post_file → §7.4"), "…and names the row and the section it cannot find");
+
+    writeFileSync(copy, original.replace("### 7.4 The file-attach finding", "### 7.4.1 The file-attach finding"));
+    const childOnly = gate("--check", "--contract", copy);
+    ok(childOnly.code === 1, "a child heading (§7.4.1) does not answer for §7.4");
+    ok(childOnly.out.includes("post_file → §7.4"), "…and reds for that row, not for some other cause");
+
     writeFileSync(copy, original.split("<!-- BEGIN GENERATED: surface-parity-verbs").join("<!-- gone "));
     const noMarker = gate("--check", "--contract", copy);
     ok(noMarker.code === 1, "a missing marker pair reds the gate");

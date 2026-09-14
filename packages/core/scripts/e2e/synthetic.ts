@@ -227,8 +227,8 @@ export class SyntheticSlack {
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }
 
-  async slash(text: string): Promise<SyntheticResult> {
-    const body = buildSlashCommandBody({ text, userId: this.cfg.adminUserId, channelId: this.cfg.channel });
+  async slash(text: string, channelId?: string): Promise<SyntheticResult> {
+    const body = buildSlashCommandBody({ text, userId: this.cfg.adminUserId, channelId: channelId ?? this.cfg.channel });
     return this.signedPost(SYNTHETIC_COMMANDS_ROUTE, body, "synthetic command");
   }
 

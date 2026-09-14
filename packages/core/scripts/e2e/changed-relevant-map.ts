@@ -203,6 +203,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-PROVENANCE-DM (OPE-1717) is the ONLY live leg that joins a deployment's own `reply.provenance` row to the bytes the room received, so it is the only scenario that reds when the two halves disagree. `reply-provenance.ts` holds the ledger and the footer text; `hooks/connector-audit.ts` holds the sole `noteConnectorRead` call that fills the ledger, and an unwired call there leaves the row empty while every offline assertion stays green — the defect class OPE-1713 found on the bridge route. The WITHHELD arm of the same rule needs one turn holding two conversations, which no connector on this deployment can reach, so it is proven offline in `packages/core/scripts/reply-provenance-test.ts` and by no live leg.",
   },
   {
+    area: "deploy-sanity-facts",
+    globs: ["packages/core/agent/commands/core.ts", "packages/core/agent/tools/agent_version.ts", "agent/agent.ts", "agent/model/stacks.ts"],
+    scenarios: ["S-OE-STATUS"],
+    why: "S-OE-STATUS (OPE-1818) is the only live leg that asserts what `/oe status` actually reports — the deployment sha, the eve pin and the context window with its compaction threshold. All FOUR globs are load-bearing, and the last two were the cold review's finding: `commands/core.ts` holds `renderStatus`, `tools/agent_version.ts` returns the SAME bag to the model (OPE-1634 is the measured case of those two disagreeing — the tool dropped two fields the command printed), `agent/agent.ts` is where `registerAppInfo` puts the window and the threshold INTO the bag, and `agent/model/stacks.ts` is the arithmetic behind the threshold. Without the last two, a pull request that repoints `models.stack` changes the window, changes the threshold, and selects no scenario — so the leg's pinned 525,000 would red the NEXT ship instead of that pull request. `agent/agent.ts` is deliberately shared with `core-agent-loop`: `relevantScenarios` unions every matching area, so a change there selects both sets. S6 drives the same command and cannot stand in for this leg — it gates only on a 200 with a non-empty body, which the renderer produces whatever the bag holds.",
+  },
+  {
     area: "core-agent-loop",
     globs: ["agent/agent.ts", "packages/core/agent/control/**"],
     scenarios: ["J1", "J2", "J3", "J4", "J-DISC", "J-GH", "J-LIN", "J-NOT"],

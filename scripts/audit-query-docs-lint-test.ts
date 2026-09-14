@@ -36,4 +36,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 ok(docFiles(root).length > 20, "docFiles finds the manual — an empty list would green the lint vacuously");
 ok(docFiles(root).every((f) => f.startsWith("docs/") && f.endsWith(".md")), "…and every entry is a repo-relative docs markdown path");
 
+ok(
+  docFiles(root).every((f) => !f.startsWith("docs/inventory/")),
+  "no page under docs/inventory/ is scanned — the manual is what an operator pastes from",
+);
+ok(
+  docFiles(root).some((f) => f.startsWith("docs/deploy/")),
+  "…and the compiled manual IS still scanned — the positive control for the filter",
+);
+
 console.log(`✓ audit-query-docs-lint-test: ${checks} assertions passed`);

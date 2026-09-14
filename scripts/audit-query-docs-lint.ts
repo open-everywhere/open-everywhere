@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isCompiledDoc } from "@open-everywhere/core/agent/docs/source-map.js";
 
 export const AUDIT_PATH = "/control/v1/audit?";
 
@@ -59,7 +60,7 @@ export function docFiles(root: string): string[] {
     }
   };
   walk(join(root, "docs"));
-  return out;
+  return out.filter(isCompiledDoc);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -100,6 +100,16 @@ export interface NotionReplyWaitOpts extends NotionReplyFilter {
   readonly timeoutMs: number;
 }
 
+export interface NotionReplyMiss {
+  readonly visible: number;
+  readonly inDiscussion: number;
+  readonly watermark: string;
+  readonly notBot: number;
+  readonly beforeWatermark: number;
+  readonly notThisDiscussion: number;
+  readonly otherDiscussions: readonly string[];
+}
+
 export function notionMinuteFloor(sinceIso: string): string {
   const t = Date.parse(sinceIso);
   if (Number.isNaN(t)) return sinceIso;
@@ -331,6 +341,27 @@ export class NotionDriver {
     if (c.createdTime < notionMinuteFloor(sinceTime)) return false;
     if (opts.seen?.has(c.id) === true) return false;
     return !(opts.skip?.(c) ?? false);
+  }
+
+  async explainReplyMiss(discussionId: string, sinceTime: string, blockId?: string): Promise<NotionReplyMiss | undefined> {
+    let comments: readonly NotionComment[];
+    try {
+      comments = blockId === undefined ? await this.allComments() : await this.blockComments(blockId);
+    } catch {
+      return undefined;
+    }
+    const floor = notionMinuteFloor(sinceTime);
+    const inDiscussion = comments.filter((c) => c.discussionId === discussionId);
+    const fresh = comments.filter((c) => c.createdTime >= floor);
+    return {
+      visible: comments.length,
+      inDiscussion: inDiscussion.length,
+      watermark: floor,
+      notBot: fresh.filter((c) => c.discussionId === discussionId && !this.isBotComment(c)).length,
+      beforeWatermark: inDiscussion.filter((c) => c.createdTime < floor).length,
+      notThisDiscussion: fresh.filter((c) => this.isBotComment(c) && c.discussionId !== discussionId).length,
+      otherDiscussions: [...new Set(fresh.filter((c) => this.isBotComment(c) && c.discussionId !== discussionId).map((c) => c.discussionId))].slice(0, 5),
+    };
   }
 
   async appendParagraphBlock(text: string): Promise<string> {

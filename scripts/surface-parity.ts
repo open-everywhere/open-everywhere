@@ -11,6 +11,7 @@ import { registerGithubProvider } from "@open-everywhere/provider-github/agent/r
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import {
+  SURFACE_CAPABILITIES,
   checkSurfaceParity,
   clearProviderSelection,
   registeredCapabilityManifestPlatforms,
@@ -192,6 +193,19 @@ const REGIONS: readonly Region[] = [
 const contractPath = resolve(root, CONTRACT);
 const original = readFileSync(contractPath, "utf8");
 let updated = original;
+
+{
+  const headings = new Set([...original.matchAll(/^#{1,6}\s+(\d+(?:\.\d+)*)\.?\s/gmu)].map((m) => m[1]!));
+  const dangling = SURFACE_CAPABILITIES.filter((c) => !headings.has(c.section.replace(/^§/u, "")));
+  if (dangling.length > 0) {
+    console.error(
+      `✗ surface-parity: ${dangling.length} roster row(s) point at a section ${CONTRACT} does not have:\n` +
+        dangling.map((c) => `  • ${c.id} → ${c.section}`).join("\n") +
+        `\n  Fix the \`section\` in packages/core/agent/identity/surface-parity.ts, or add the heading.`,
+    );
+    process.exit(1);
+  }
+}
 
 for (const region of REGIONS) {
   const begin = `<!-- BEGIN GENERATED: ${region.name} (scripts/surface-parity.ts) -->`;

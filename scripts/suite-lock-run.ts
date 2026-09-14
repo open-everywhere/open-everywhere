@@ -1,7 +1,10 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
+import { fmtBytes, samplePeakRss } from "./proc-rss.js";
 
 const DEFAULT_LOCK_DIR = "/tmp/oe-suite-locks/full-suite.lock";
 const DEFAULT_MAX_WAIT_MS = 30 * 60_000;
@@ -176,30 +179,76 @@ export function classifyExit(code: number | null, signal: NodeJS.Signals | null,
       `suite-lock-run: 🔴 KILLED (SIGKILL / exit ${SIGKILL_EXIT_CODE}) — \`${command}\` produced no verdict of its own. ` +
         "On a memory-capped box this is the kernel's OOM killer, not a product failure: the integration tier boots one " +
         "agent host per worker, and two hosts peak above a cloud sandbox's memory cgroup (OPE-1369). Do NOT hunt the " +
-        "last test that printed — it is simply the file that was running. Re-run at OE_IT_CI_MAX_WORKERS=1, or shard " +
-        "the files across several one-worker runs, and confirm with `dmesg | grep -i oom`.",
+        "last test that printed — it is simply the file that was running. Re-run at OE_IT_CI_MAX_WORKERS=1 and raise " +
+        "OE_IT_SHARDS so fewer files share one process (this wrapper shards by default in a sandbox — OPE-1814), and " +
+        "confirm with `dmesg | grep -i oom`.",
     );
     return SIGKILL_EXIT_CODE;
   }
   return code ?? (signal ? 1 : 0);
 }
 
+function spawnMeasured(cmd: string, args: readonly string[], label: string): Promise<{ exit: number; peakRssBytes: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, [...args], { stdio: "inherit", shell: process.platform === "win32" });
+    const sampler = child.pid === undefined ? undefined : samplePeakRss(child.pid);
+    child.on("error", (err) => {
+      sampler?.stop();
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      const peakRssBytes = sampler?.stop() ?? 0;
+      resolve({ exit: classifyExit(code, signal, label), peakRssBytes });
+    });
+  });
+}
+
+function headSha(): string | undefined {
+  try {
+    const out = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim().toLowerCase();
+    return /^[0-9a-f]{7,40}$/u.test(out) ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runLocked(
   cmd: string,
   args: string[],
-  options: { manual: boolean; lockDir: string; maxWaitMs: number },
+  options: { manual: boolean; lockDir: string; maxWaitMs: number; env?: NodeJS.ProcessEnv; emitProof?: boolean },
 ): Promise<number> {
+  const plan = planShards(cmd, args, itShardCount(options.env ?? process.env));
   let acquired = false;
   if (!options.manual) {
     await acquireLock(options.lockDir, options.maxWaitMs, { command: [cmd, ...args].join(" ") });
     acquired = true;
   }
   try {
-    return await new Promise<number>((resolve, reject) => {
-      const child = spawn(cmd, args, { stdio: "inherit", shell: process.platform === "win32" });
-      child.on("error", reject);
-      child.on("exit", (code, signal) => resolve(classifyExit(code, signal, [cmd, ...args].join(" "))));
-    });
+    if (plan.runs.length > 1) {
+      console.error(
+        `suite-lock-run: sharding the integration tier into ${plan.runs.length} sequential one-process passes (OE_IT_SHARDS). ` +
+          "A single process runs the whole tier past a cloud sandbox's memory cgroup even at one worker (OPE-1814).",
+      );
+    } else if (plan.reason !== undefined) {
+      console.error(`suite-lock-run: not sharding — ${plan.reason}.`);
+    }
+    const exits: number[] = [];
+    for (const run of plan.runs) {
+      const label = [cmd, ...run.args].join(" ");
+      const { exit, peakRssBytes } = await spawnMeasured(cmd, run.args, label);
+      exits.push(exit);
+      console.error(`suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)}`);
+    }
+    const exit = worstExit(exits);
+    if (options.emitProof === true && plan.wholeTier) {
+      const sha = headSha();
+      if (sha === undefined) {
+        console.error("suite-lock-run: no OE_PROOF line — `git rev-parse HEAD` answered nothing usable, and a line with no sha proves nothing.");
+      } else {
+        console.log(tierProofLine(sha, exit));
+      }
+    }
+    return exit;
   } finally {
     if (acquired) releaseLock(options.lockDir);
   }
@@ -217,7 +266,7 @@ async function main(): Promise<void> {
   const lockDir = process.env.OE_SUITE_LOCK_DIR ?? DEFAULT_LOCK_DIR;
   const maxWaitMs = process.env.OE_SUITE_LOCK_MAX_WAIT_MS ? Number(process.env.OE_SUITE_LOCK_MAX_WAIT_MS) : DEFAULT_MAX_WAIT_MS;
 
-  const exitCode = await runLocked(cmd, rest, { manual, lockDir, maxWaitMs });
+  const exitCode = await runLocked(cmd, rest, { manual, lockDir, maxWaitMs, emitProof: true });
   process.exit(exitCode);
 }
 

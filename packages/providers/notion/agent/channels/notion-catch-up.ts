@@ -14,6 +14,8 @@ const CATCH_UP_MAX_COMMENTS = 100;
 
 const CATCH_UP_MAX_BLOCK_SCANS = 80;
 
+const CATCH_UP_MAX_COMMENT_PAGES = 5;
+
 function normalizeComment(c: NotionCommentSummary, selfActorId: string | undefined): NormalizedMessage | undefined {
   const text = c.text.trim();
   if (text.length === 0 || !c.authorId || !c.discussionId) return undefined;
@@ -52,6 +54,8 @@ export async function fetchNotionCatchUpWindow(
       apiKey: cred.apiKey, endpoints: cred.endpoints,
       maxComments: CATCH_UP_MAX_COMMENTS,
       maxBlockScans: CATCH_UP_MAX_BLOCK_SCANS,
+      sinceMs: req.sinceMs,
+      maxCommentPages: CATCH_UP_MAX_COMMENT_PAGES,
     });
     const out: NormalizedMessage[] = [];
     for (const c of res.comments) {

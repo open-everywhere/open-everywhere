@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { seatCatchUpFetchFor, surfaceParityFor, type NormalizedMessage } from "@open-everywhere/core/agent/adapter-api.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  seatCatchUpFetchFor,
+  surfaceParityFor,
+  seatCatchUp,
+  registerSeatCatchUp,
+  _resetSeatCatchUp,
+  SEAT_CATCH_UP_ACTION,
+  type NormalizedMessage,
+  type SeatCatchUpFetch,
+  type SeatCatchUpRequest,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
@@ -11,6 +23,7 @@ import { fetchDiscordSeatCatchUp } from "@open-everywhere/provider-discord/agent
 import { fetchGitHubCatchUpWindow } from "@open-everywhere/provider-github/agent/channels/github-catch-up.js";
 import { fetchLinearCatchUpWindow, linearOrgFromChannelKey } from "@open-everywhere/provider-linear/agent/channels/linear-catch-up.js";
 import { fetchNotionCatchUpWindow } from "@open-everywhere/provider-notion/agent/channels/notion-catch-up.js";
+import { readNotionComments } from "@open-everywhere/provider-notion/agent/channels/notion-api.js";
 import {
   TEAMS_CATCH_UP_ACTION,
   fetchTeamsCatchUpWindow,
@@ -165,6 +178,91 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
 }
 
 {
+  const PAGE = "page-1";
+  const SAID_WHILE_AWAY = "said in the discussion while the seat was away";
+  const ancient = Array.from({ length: 100 }, (_, i) => ({
+    id: `old-${i}`,
+    discussion_id: "D1",
+    created_time: "2026-08-01T09:00:00.000Z",
+    created_by: { id: "N9", type: "person" },
+    rich_text: [{ plain_text: `an old comment ${i}` }],
+  }));
+  const recent = { id: "new-1", discussion_id: "D1", created_time: AFTER, created_by: { id: "N1", type: "person" }, rich_text: [{ plain_text: SAID_WHILE_AWAY }] };
+
+  const calls: string[] = [];
+  const fetchFn = (async (url: string) => {
+    calls.push(String(url));
+    const u = String(url);
+    if (u.includes("/v1/blocks/")) return new Response(JSON.stringify({ results: [], has_more: false }), { status: 200 });
+    const second = u.includes("start_cursor=cursor-2");
+    return new Response(
+      JSON.stringify(second ? { results: [recent], has_more: false, next_cursor: null } : { results: ancient, has_more: true, next_cursor: "cursor-2" }),
+      { status: 200 },
+    );
+  }) as never;
+
+  const deps = (over: Record<string, unknown> = {}) => ({
+    readComments: ((pageId: string, opts: Record<string, unknown>) => readNotionComments(pageId, { ...opts, ...over, fetch: fetchFn } as never)) as never,
+    resolveCredential: (async () => ({ apiKey: "k" })) as never,
+    domains: [],
+  });
+
+  calls.length = 0;
+  const out = await fetchNotionCatchUpWindow({ container: PAGE, threadRoot: "D1", sinceMs: SINCE }, deps());
+  ok(out.length === 1 && out[0]!.text === SAID_WHILE_AWAY, "🔴 notion/OPE-1831: a seat on a PAGE-ANCHORED discussion whose anchor has outgrown one page of comments STILL READS the comment said while it was away");
+  ok(calls.filter((c) => c.includes("/v1/comments")).length === 2, "🔴 notion/OPE-1831: …because the sweep FOLLOWED the anchor's next_cursor. One call is the oldest hundred, and on this page every one of them predates the seat's last wake");
+  ok(calls.some((c) => c.includes("start_cursor=cursor-2")), "notion/OPE-1831: the second call carries the cursor Notion handed back, so the pages are the same anchor's and not a repeat of the first");
+
+  calls.length = 0;
+  const unpaginated = await fetchNotionCatchUpWindow({ container: PAGE, threadRoot: "D1", sinceMs: SINCE }, deps({ maxCommentPages: 1 }));
+  ok(unpaginated.length === 0, "🔴 notion/OPE-1831 CONTROL: the SAME page read with ONE call carries nothing said in the window — a discussion that did carry the message reads as a quiet room, with no error anywhere");
+  ok(calls.filter((c) => c.includes("/v1/comments")).length === 1, "notion/OPE-1831 CONTROL: …and it really did make only the one call");
+
+  calls.length = 0;
+  const capEaten = await fetchNotionCatchUpWindow({ container: PAGE, threadRoot: "D1", sinceMs: SINCE }, deps({ sinceMs: undefined }));
+  ok(capEaten.length === 0, "🔴 notion/OPE-1831 CONTROL: with the time window NOT handed to the sweep, the oldest hundred comments eat `maxComments` and the seat reads nothing — so the window bound is load-bearing beside the pagination, not a tidy-up");
+  ok(calls.filter((c) => c.includes("/v1/comments")).length === 2, "notion/OPE-1831 CONTROL: …and the loss is the CAP's, not the fetch's — both pages were read, so the recent comment was in hand and was dropped");
+
+  calls.length = 0;
+  const small = (async (url: string) => {
+    calls.push(String(url));
+    return String(url).includes("/v1/blocks/")
+      ? new Response(JSON.stringify({ results: [], has_more: false }), { status: 200 })
+      : new Response(JSON.stringify({ results: [recent], has_more: false, next_cursor: null }), { status: 200 });
+  }) as never;
+  const quiet1 = await fetchNotionCatchUpWindow({ container: PAGE, threadRoot: "D1", sinceMs: SINCE }, {
+    readComments: ((pageId: string, opts: Record<string, unknown>) => readNotionComments(pageId, { ...opts, fetch: small } as never)) as never,
+    resolveCredential: (async () => ({ apiKey: "k" })) as never,
+    domains: [],
+  });
+  ok(quiet1.length === 1, "notion/OPE-1831: a page whose comments fit in one call reads exactly as before — the follow stops the moment Notion reports no more");
+  ok(calls.filter((c) => c.includes("/v1/comments")).length === 1, "🔴 notion/OPE-1831: …and costs exactly ONE call, so the fix buys the deep read without charging every ordinary page for it");
+
+  const overflowing = [...ancient, { ...ancient[0]!, id: "old-100" }];
+  const pageOnly = (async (url: string) => {
+    const u = String(url);
+    if (u.includes("/v1/blocks/")) return new Response(JSON.stringify({ results: [{ id: "blk-1", paragraph: {} }], has_more: false }), { status: 200 });
+    if (u.includes("block_id=blk-1")) return new Response(JSON.stringify({ results: [recent], has_more: false, next_cursor: null }), { status: 200 });
+    return new Response(JSON.stringify({ results: overflowing, has_more: false, next_cursor: null }), { status: 200 });
+  }) as never;
+  const starved = await readNotionComments(PAGE, { apiKey: "k", fetch: pageOnly, maxComments: 100, maxBlockScans: 80 } as never);
+  ok(starved.blocksScanned === 0 && starved.truncated, "🔴 notion/OPE-1831 CONTROL: a hundred ancient PAGE-level comments fill `maxComments` and the sweep stops with ZERO blocks scanned — the live-run shape, where the block walk that holds the seat's discussion never runs");
+  ok(!starved.comments.some((c) => c.text === SAID_WHILE_AWAY), "🔴 notion/OPE-1831 CONTROL: …so the block-anchored comment is absent from a read that reported no error at all");
+  const windowed = await readNotionComments(PAGE, { apiKey: "k", fetch: pageOnly, maxComments: 100, maxBlockScans: 80, sinceMs: SINCE } as never);
+  ok(windowed.blocksScanned === 1, "🔴 notion/OPE-1831: handing the sweep the WINDOW un-starves the block walk — the ancient page comments no longer charge the cap, so the blocks are scanned");
+  ok(windowed.comments.some((c) => c.text === SAID_WHILE_AWAY), "🔴 notion/OPE-1831: …and the BLOCK-anchored comment the seat was waiting for is in the read. This is the live-run fix, and the two lines above are its control");
+
+  const endless = (async (url: string) =>
+    String(url).includes("/v1/blocks/")
+      ? new Response(JSON.stringify({ results: [], has_more: false }), { status: 200 })
+      : new Response(JSON.stringify({ results: ancient, has_more: true, next_cursor: "more" }), { status: 200 })) as never;
+  const cut = await readNotionComments(PAGE, { apiKey: "k", fetch: endless, maxComments: 1000, maxBlockScans: 80, maxCommentPages: 2 } as never);
+  ok(cut.truncated, "🔴 notion/OPE-1831: an anchor the PAGE BOUND cut off reports `truncated` — a short list that looks complete is a false claim about what the sweep saw");
+  const whole = await readNotionComments(PAGE, { apiKey: "k", fetch: small, maxComments: 1000, maxBlockScans: 80, maxCommentPages: 2 } as never);
+  ok(!whole.truncated, "notion/OPE-1831: NEGATIVE CONTROL — an anchor Notion finished reports `truncated` false, so the bit above is driven and not a constant");
+}
+
+{
   const urls: string[] = [];
   const request = async (url: string) => {
     urls.push(url);
@@ -276,6 +374,136 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
       `${platform}: the ledger and the registry agree — a surface never claims a catch-up it cannot do, nor hides one it can`,
     );
   }
+}
+
+{
+  const BODY = "said while the seat was away";
+  const CALL_SITES: Readonly<Record<string, string>> = {
+    slack: "packages/providers/slack/agent/channels/slack-events.ts",
+    discord: "packages/providers/discord/agent/channels/discord-gateway.ts",
+    teams: "packages/providers/teams/agent/channels/teams-front.ts",
+    github: "packages/providers/github/agent/channels/github.ts",
+    linear: "packages/providers/linear/agent/channels/linear.ts",
+    notion: "packages/providers/notion/agent/channels/notion.ts",
+  };
+  const rows: AuditInput[] = [];
+  const audit = async (e: AuditInput) => {
+    rows.push(e);
+  };
+  const drives: ReadonlyArray<{
+    readonly platform: string;
+    readonly req: SeatCatchUpRequest;
+    readonly reads: SeatCatchUpFetch;
+    readonly empty: SeatCatchUpFetch;
+  }> = [
+    {
+      platform: "slack",
+      req: { container: "C1", sinceMs: SINCE, channelKey: "slack/T1/C1" },
+      reads: (r) =>
+        fetchSlackSeatCatchUp(r, {
+          request: async () => ({ ok: true, messages: [{ ts: String((SINCE + 60_000) / 1000), user: "U1", text: BODY }] }),
+          identity: async () => ({ userId: "UBOT", botId: "BBOT" }),
+        }),
+      empty: (r) => fetchSlackSeatCatchUp(r, { request: async () => ({ ok: true, messages: [] }), identity: async () => ({}) }),
+    },
+    {
+      platform: "discord",
+      req: { container: "CH", sinceMs: SINCE, channelKey: "discord/G1/CH" },
+      reads: (r) =>
+        fetchDiscordSeatCatchUp(r, {
+          request: async () => [{ id: "200", type: 0, timestamp: new Date(SINCE + 60_000).toISOString(), content: BODY, author: { id: "D1" } }],
+        }),
+      empty: (r) => fetchDiscordSeatCatchUp(r, { request: async () => [] }),
+    },
+    {
+      platform: "teams",
+      req: { container: "team-1/chan-1", sinceMs: SINCE, channelKey: "teams/TEN-1/chan-1" },
+      reads: (r) =>
+        fetchTeamsCatchUpWindow(r, {
+          request: async () => ({ value: [{ id: "m1", createdDateTime: AFTER, body: { content: BODY }, from: { user: { id: "E1" } } }] }),
+          audit: async () => {},
+        }),
+      empty: (r) => fetchTeamsCatchUpWindow(r, { request: async () => ({ value: [] }), audit: async () => {} }),
+    },
+    {
+      platform: "github",
+      req: { container: "acme/web#42", sinceMs: SINCE, channelKey: "github/acme/web-42" },
+      reads: (r) =>
+        fetchGitHubCatchUpWindow(r, {
+          fetchFn: (async () => ({ ok: true, json: async () => [{ id: 11, created_at: AFTER, body: BODY, user: { login: "ada" } }] })) as never,
+          resolveToken: async () => "t",
+        }),
+      empty: (r) => fetchGitHubCatchUpWindow(r, { fetchFn: (async () => ({ ok: true, json: async () => [] })) as never, resolveToken: async () => "t" }),
+    },
+    {
+      platform: "linear",
+      req: { container: "OPE-42", sinceMs: SINCE, channelKey: "linear/org-b/OPE-42" },
+      reads: (r) =>
+        fetchLinearCatchUpWindow(r, {
+          readIssue: (async () => ({ description: "", comments: [{ id: "c-new", authorId: "L1", createdAt: AFTER, text: BODY }], truncated: false })) as never,
+        }),
+      empty: (r) => fetchLinearCatchUpWindow(r, { readIssue: (async () => ({ description: "", comments: [], truncated: false })) as never }),
+    },
+    {
+      platform: "notion",
+      req: { container: "page-1", threadRoot: "D1", sinceMs: SINCE, channelKey: "notion/ws-1/page-1" },
+      reads: (r) =>
+        fetchNotionCatchUpWindow(r, {
+          readComments: (async () => ({
+            discussionCount: 1,
+            blocksScanned: 1,
+            truncated: false,
+            comments: [{ discussionId: "D1", authorId: "N1", authorKind: "person", createdTime: AFTER, text: BODY }],
+          })) as never,
+          resolveCredential: (async () => ({ apiKey: "k" })) as never,
+          domains: [],
+        }),
+      empty: (r) =>
+        fetchNotionCatchUpWindow(r, {
+          readComments: (async () => ({ discussionCount: 0, blocksScanned: 1, truncated: false, comments: [] })) as never,
+          resolveCredential: (async () => ({ apiKey: "k" })) as never,
+          domains: [],
+        }),
+    },
+  ];
+
+  ok(drives.length === 6, "OPE-1831: the row is asked of all SIX surfaces — a drive list short of one is a surface nobody checked");
+
+  for (const d of drives) {
+    const real = seatCatchUpFetchFor(d.platform);
+    ok(real !== undefined, `🔴 ${d.platform}: ON THE SHARED ROAD — its provider registers a catch-up fetch, so its reads go through \`seatCatchUp\` and get the row with them`);
+
+    const wiring = readFileSync(fileURLToPath(new URL(`../${CALL_SITES[d.platform]!}`, import.meta.url)), "utf-8");
+    ok(
+      new RegExp(`seatCatchUp\\(\\s*\\n?\\s*"${d.platform}"`).test(wiring),
+      `🔴 ${d.platform}: its wake path CALLS \`seatCatchUp("${d.platform}", …)\` — the registration proves the fetch exists, and only the call site proves the seam is reached at all (${CALL_SITES[d.platform]})`,
+    );
+
+    rows.length = 0;
+    registerSeatCatchUp(d.platform, d.reads);
+    const res = await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
+    ok(res.messages.length === 1, `${d.platform} PRECONDITION: the canned transport really did reach the seat — without this the row assertions below would pass on a fetch that read nothing`);
+    ok(rows.length === 1, `🔴 ${d.platform}: driving the catch-up writes EXACTLY ONE audit row — not zero, and not one per vendor call`);
+    ok(rows[0]!.action === SEAT_CATCH_UP_ACTION && rows[0]!.platform === d.platform, `${d.platform}: the row is the shared \`seat.catch_up\` action, stamped with this surface's own platform`);
+    ok(rows[0]!.detail!["outcome"] === "read", `🔴 ${d.platform}: …and it says \`read\` — the outcome this drive forced`);
+    ok(rows[0]!.detail!["raw"] === 1 && rows[0]!.detail!["kept"] === 1, `${d.platform}: the row carries the raw count beside the kept count`);
+    ok(rows[0]!.detail!["container"] === d.req.container, `${d.platform}: the row names the container the seat was asked to read`);
+    ok(!JSON.stringify(rows[0]).includes(BODY), `🔴 ${d.platform}: NEGATIVE CONTROL — the message body never reaches the row, on this surface as on every other`);
+
+    rows.length = 0;
+    registerSeatCatchUp(d.platform, d.empty);
+    await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
+    ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "empty", `🔴 ${d.platform}: a quiet room writes its own row, reading \`empty\` — an empty catch-up is now a RECORDED fact on every surface, not an absence`);
+
+    registerSeatCatchUp(d.platform, real!);
+    ok(seatCatchUpFetchFor(d.platform) === real, `${d.platform}: the real fetch is back on the road after the drive`);
+  }
+
+  rows.length = 0;
+  _resetSeatCatchUp("nosuchsurface");
+  const gone = await seatCatchUp("nosuchsurface", { container: "X", sinceMs: SINCE }, { audit });
+  ok(gone.unavailable !== undefined, "OPE-1831 PRECONDITION: an unregistered platform still answers with the unavailable note");
+  ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "unavailable", "🔴 OPE-1831: a surface OFF the road records `unavailable`, not `empty` — the fact a red ship needs and the one an empty message list destroyed");
 }
 
 console.log(`seat-catch-up parity: ${n} assertions passed`);

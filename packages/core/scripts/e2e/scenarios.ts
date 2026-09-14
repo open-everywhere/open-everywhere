@@ -201,6 +201,32 @@ const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const EDIT_SETTLE_WAIT = 45_000;
 const AUDIT_ROW_WAIT = 60_000;
+const OE_STATUS_COMPACTION_THRESHOLD_TOKENS = 525_000;
+
+export interface OeStatusFacts {
+  readonly deploymentSha?: string;
+  readonly evePin?: string;
+  readonly contextWindowTokens?: number;
+  readonly compactionThresholdTokens?: number;
+}
+
+export function parseOeStatusFacts(body: string): OeStatusFacts {
+  const sha = /^•\s*deployment sha:\s*`([^`]*)`/mu.exec(body)?.[1];
+  const evePin = /^•\s*eve:\s*`([^`]*)`/mu.exec(body)?.[1];
+  const window = /^•\s*context window:\s*`([\d,]+)`\s*tokens\s*—\s*compaction fires at\s*`([\d,]+)`/mu.exec(body);
+  const num = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const n = Number(raw.replaceAll(",", ""));
+    return Number.isInteger(n) ? n : undefined;
+  };
+  return {
+    ...(sha !== undefined ? { deploymentSha: sha } : {}),
+    ...(evePin !== undefined ? { evePin } : {}),
+    ...(num(window?.[1]) !== undefined ? { contextWindowTokens: num(window?.[1]) } : {}),
+    ...(num(window?.[2]) !== undefined ? { compactionThresholdTokens: num(window?.[2]) } : {}),
+  };
+}
+const PROVENANCE_DELEGATION_ACTIONS = ["delegation.task_started", "delegation.task_settled", "delegation.task_failed", "delegation.worker_turn_failed"] as const;
 const NOTION_CONNECTOR = "notion";
 function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
   return {
@@ -948,6 +974,47 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(res.status === 200, `/oe ${text} answers 200`);
         ctx.gate(res.body.trim().length > 0, `/oe ${text} returns a well-formed response body`);
       }
+    },
+  },
+  {
+    id: "S-OE-STATUS",
+    title:
+      "/oe status on the unified Slack seat answers the deploy-sanity FACT BAG (OPE-1818): a real deployment sha, a resolved eve pin, and the context window with the token count compaction fires at",
+    requires: ["synthetic", "slack", "slackUnified"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 120_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const res = await synthetic.slash("status", ctx.slackUnifiedA!.channelId);
+      ctx.log(`${res.label}: /oe status on the unified container → ${res.status}`);
+      ctx.gate(res.status === 200, `/oe status answers 200 on the unified seat (got ${res.status})`);
+      const facts = parseOeStatusFacts(res.body);
+
+      ctx.gate(facts.deploymentSha !== undefined, `status: a "deployment sha" line is present — reply head: "${res.body.slice(0, 200)}"`);
+      ctx.gate(facts.deploymentSha !== "unknown", 'status: the deployment sha is a real build identity, not the "unknown" the renderer prints when the platform exposes none');
+      ctx.gate(/^[0-9a-f]{7,40}$/u.test(facts.deploymentSha ?? ""), `status: the deployment sha is a commit sha (got "${facts.deploymentSha ?? "(no line)"}")`);
+      ctx.log(`status: deployment sha ${facts.deploymentSha}`);
+
+      ctx.gate(facts.evePin !== undefined, 'status: an "eve" line is present');
+      ctx.gate(/^\d+\.\d+\.\d+/u.test(facts.evePin ?? ""), `status: the eve pin resolves to a version, not "unknown" (got "${facts.evePin ?? "(no line)"}")`);
+      ctx.log(`status: eve ${facts.evePin}`);
+
+      ctx.gate(
+        facts.contextWindowTokens !== undefined && facts.compactionThresholdTokens !== undefined,
+        `status: a "context window … compaction fires at …" line is present — reply tail: "${res.body.slice(-240)}"`,
+      );
+      const windowTokens = facts.contextWindowTokens ?? 0;
+      const thresholdTokens = facts.compactionThresholdTokens ?? 0;
+      ctx.gate(windowTokens > 0, `status: the context window is a positive token count (got ${facts.contextWindowTokens ?? "(no line)"})`);
+      ctx.gate(
+        thresholdTokens === OE_STATUS_COMPACTION_THRESHOLD_TOKENS,
+        `status: compaction fires at ${OE_STATUS_COMPACTION_THRESHOLD_TOKENS} tokens (OPE-1634's registered value) — got ${facts.compactionThresholdTokens ?? "(no line)"}`,
+      );
+      ctx.gate(thresholdTokens < windowTokens, `status: the threshold sits below the window (${thresholdTokens} < ${windowTokens}) — a threshold at or above it would never fire`);
+      ctx.log(`status: context window ${windowTokens}, compaction at ${thresholdTokens}`);
     },
   },
   {
@@ -3758,20 +3825,20 @@ export const SCENARIOS: readonly Scenario[] = [
       "Reply provenance, live (OPE-1717): a DM turn that READS through the Notion connector posts a reply whose footer names that connection and NOTHING else, joined to the deployment's own reply.provenance row — plus a next-turn negative control that reads nothing and carries no footer",
     requires: ["slack", "syntheticDm"],
     surface: "notion",
-    suite: "extended",
-    optional: true,
+    suite: "core",
+    optional: false,
     timeoutMs: 1_200_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
       const synthetic = ctx.synthetic;
       const auditRead = ctx.auditRead;
-      if (!auditRead) {
-        ctx.skip(
-          "needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — this leg's whole subject is the JOIN between the deployment's reply.provenance row and the footer bytes, and half a join asserts nothing",
-        );
-        return;
-      }
+      ctx.gate(
+        auditRead !== undefined,
+        "needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. This leg's whole subject is the JOIN between the deployment's reply.provenance row and the footer bytes, and half a join asserts nothing — " +
+          "set both and re-run. This is a harness input, never a deployment fact, so it is a RED and not a skip.",
+      );
+      if (!auditRead) return;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const { userId, teamId } = await ctx.slack!.identity();
       const runStart = new Date(Date.now() - 60_000).toISOString();
@@ -3846,11 +3913,35 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for the DM answer ${answer.ts}` },
       );
       if (provRow === undefined) {
-        ctx.skip(
-          `a ${PROVENANCE_READ_TIER}-tier connector.op row exists and NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}. That is all this leg measured: the session that POSTED the answer ` +
-            "held an EMPTY ledger. Four things do that and nothing here separates them — the ledger seam itself being unwired (check `noteConnectorRead`'s call in hooks/connector-audit.ts, and check it FIRST: " +
-            "that is a regression, not a fixture fact); residual (2), the read happening in a worker session while the seat answered by itself; residual (3), a later turn's edit re-rendering the answer; " +
-            "and residual (4), a terminal reply whose channel state names no conversation (channels/reply-provenance.ts lists all four). Nothing is asserted about the footer either way.",
+        const delegated = await auditRead({ sinceIso: runStart, actions: [...PROVENANCE_DELEGATION_ACTIONS] });
+        if (delegated.length > 0) {
+          ctx.skip(
+            `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and the window carries ${delegated.length} delegation row(s) ` +
+              `(${[...new Set(delegated.map((r) => r.action))].join(", ")}). That is RESIDUAL (2), and it is the only one measured here: the connector read happened inside a worker session's turn while the ` +
+              "seat posted the answer from its own, so the turn-keyed provenance ledger the posting turn read was empty. It is a deployment fact this harness cannot create — whether the worker posts the " +
+              "final answer on this route is this leg's own open premise. Re-run against a deployment whose worker posts it. Nothing is asserted about the footer.",
+          );
+          return;
+        }
+        const edits = await auditRead({ sinceIso: runStart, actions: ["reply.edit"] });
+        const reRendered = edits.filter((r) => r.detail?.id === answer.ts);
+        if (reRendered.length > 0) {
+          ctx.skip(
+            `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and ${reRendered.length} reply.edit row(s) re-rendered that exact message. ` +
+              "That is RESIDUAL (3), and it is the only one measured here: a later turn rewrote the answer, so the bytes in the room belong to that turn's ledger and not to the reading turn's. A deployment " +
+              "fact this harness cannot create. Nothing is asserted about the footer.",
+          );
+          return;
+        }
+        ctx.gate(
+          false,
+          `🔴 REGRESSION: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and neither fixture route fired — ` +
+            "the window carries NO delegation row and NO edit of that message. So the turn that READ is the turn that POSTED, and its provenance ledger was still empty. Two causes remain, and NEITHER is one " +
+            "of the four empty-ledger routes `channels/reply-provenance.ts` lists as non-defects. FIRST, the LEDGER SEAM unwired — a fifth cause that file does not name, because it describes the routes a " +
+            "healthy build takes: `noteConnectorRead` is called at hooks/connector-audit.ts and at channels/read-reach.ts, so check BOTH reach the posting turn's ledger. SECOND, that file's route 4, the " +
+            "unidentifiable-state fallback posting through eve's raw primitive (channels/slack.ts). It calls that route a degenerate case rather than a defect IN GENERAL, and it is a defect HERE: this leg " +
+            "drives a DM whose partition the deployment resolves on every other turn, so a DM that reaches the fallback is itself the break. Its route 1, a BORROWED `grant__…` read, cannot reach this branch " +
+            "at all — hooks/connector-audit.ts returns on the reserved namespace BEFORE the connector.op row, and this branch already has one.",
         );
         return;
       }

@@ -595,7 +595,7 @@ export type {
 export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope } from "./channels/context-render.js";
 export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
-export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp } from "./channels/seat-catch-up.js";
+export { registerSeatCatchUp, seatCatchUp, seatCatchUpFetchFor, seatAdmissionFor, catchUpUnavailableReason, _resetSeatCatchUp, SEAT_CATCH_UP_ACTION } from "./channels/seat-catch-up.js";
 export type { SeatCatchUpFetch, SeatCatchUpRequest, SeatCatchUpResult, SeatCatchUpOpts } from "./channels/seat-catch-up.js";
 
 export { admissionFunction, admissionFunctionNames, isAdmissionFunctionName, admitToSeat, admitContextLines, DEFAULT_ADMISSION } from "./channels/seat-admission.js";

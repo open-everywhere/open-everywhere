@@ -117,8 +117,9 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned } =
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned, parseOeStatusFacts } =
   await import("../packages/core/scripts/e2e/scenarios.js");
+const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const {
   REPLY_POST_ACTION,
@@ -633,7 +634,9 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
-    "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
+    "J1", "J2", "S-MEM-READ", "J3", "J4", "S6",
+    "S-OE-STATUS",
+    "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S-LINK-SLACK", "J-MPIM", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION",
@@ -660,7 +663,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
     "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) PLUS S-EVE-CARD (OPE-1056: the first live drive of the EVE-MINTED approval card — it needs the same consented personal Notion grant the other connector legs need, and it publishes then archives a real page) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725). 🔴 NO J-ENGAGED JOURNEY IS OPTIONAL: all six are core, because every provider wires the §2.5 seam (OPE-1500 landed Teams, OPE-1501 the three ticketing surfaces). Each still self-skips until its own room is provisioned, which is a skip and never a green",
   );
 
@@ -688,7 +691,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -1462,6 +1465,67 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(
     !isPendingWorkHandoff("I couldn't find any recorded team mascot for `sprint-22088` in durable memory, so I don't know it."),
     "isPendingWorkHandoff: the live-run S11 clean decline is NOT a hand-off — it is exactly what the gate asks for",
+  );
+}
+
+{
+  const info = {
+    version: "0.4.0",
+    deploymentSha: "0123456789abcdef0123456789abcdef01234567",
+    evePin: "0.51.0",
+    primaryModel: "m-primary",
+    utilityModel: "m-utility",
+    contextWindowTokens: 750_000,
+    compactionThresholdTokens: 525_000,
+  };
+  const rendered = renderStatus(info, "sqlite", "on");
+  const facts = parseOeStatusFacts(rendered);
+  ok(facts.deploymentSha === info.deploymentSha, `the deployment sha is read off the real renderer — got ${facts.deploymentSha}, from:\n${rendered}`);
+  ok(facts.evePin === "0.51.0", `the eve pin is read off the real renderer — got ${facts.evePin}`);
+  ok(facts.contextWindowTokens === 750_000, `the context window survives the renderer's thousands separators — got ${facts.contextWindowTokens}`);
+  ok(facts.compactionThresholdTokens === 525_000, `…and so does the compaction threshold — got ${facts.compactionThresholdTokens}`);
+
+  const unknown = parseOeStatusFacts(renderStatus({ ...info, deploymentSha: "unknown", evePin: "unknown" }, "sqlite", "on"));
+  ok(unknown.deploymentSha === "unknown", 'a deployment that exposes no sha renders the literal "unknown" — the leg gates on that word, not merely on the line existing');
+  ok(unknown.evePin === "unknown", "…and the same for an unresolved eve pin");
+  const noWindow = parseOeStatusFacts(renderStatus({ ...info, contextWindowTokens: undefined, compactionThresholdTokens: undefined }, "sqlite", "on"));
+  ok(
+    noWindow.contextWindowTokens === undefined && noWindow.compactionThresholdTokens === undefined,
+    "a deployment that registered no window prints NO window line at all, and the parse answers undefined rather than 0 — which is what makes the leg's presence gate able to fail",
+  );
+  ok(noWindow.deploymentSha === info.deploymentSha, "…and the other facts still read, so a missing window line reds one gate rather than all of them");
+  ok(parseOeStatusFacts("").deploymentSha === undefined, "an empty body yields no facts — never a silently-matching default");
+}
+
+{
+  const MANDATORY_IDS = [
+    "S-OE-STATUS",
+    "S-PROVENANCE-DM",
+  ];
+  for (const id of MANDATORY_IDS) {
+    const s = SCENARIOS.find((x) => x.id === id);
+    ok(s !== undefined, `${id} is in the pack`);
+    ok(s?.optional === false, `🔴 ${id} is MANDATORY — \`optional: true\` means a default pass never runs it, and a leg nobody runs proves nothing`);
+    ok(s?.suite !== "extended", `🔴 ${id} is not in the extended lane — "extended" is exactly the optional set, so a mandatory leg there is a contradiction the planner would resolve the wrong way`);
+    ok(s?.expensive !== true, `${id} is not cost-gated either — an expensive leg is skipped by a default run just as an optional one is`);
+  }
+
+  const scenarioSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  const provStart = scenarioSrc.indexOf('id: "S-PROVENANCE-DM"');
+  const provEnd = scenarioSrc.indexOf('id: "S-EVE-CARD"', provStart);
+  ok(provStart !== -1 && provEnd > provStart, "S-PROVENANCE-DM's body is locatable in scenarios.ts (the scan below is meaningless otherwise)");
+  const provBody = scenarioSrc.slice(provStart, provEnd);
+  const skips = provBody.match(/ctx\.skip\(/g) ?? [];
+  ok(
+    skips.length === 3,
+    `🔴 S-PROVENANCE-DM must carry exactly 3 \`ctx.skip\` calls, each naming a deployment fact this harness cannot create. Found ${skips.length}. ` +
+      "A fourth skip means a measurable condition was turned back into a dry pass; one fewer means a fixture fact is now reported as a red.",
+  );
+  ok(/🔴 REGRESSION:/.test(provBody), "🔴 S-PROVENANCE-DM's empty-ledger fall-through is a RED naming the regression — residuals (1) and (4) are code defects, not fixture facts");
+  ok(!/^\s*optional:\s*true/mu.test(provBody), "S-PROVENANCE-DM declares no `optional: true` field");
+  ok(
+    /needs E2E_TARGET_URL \+ E2E_CONTROL_READ_TOKEN/.test(provBody) && !/ctx\.skip\(\s*\n?\s*"needs E2E_TARGET_URL/.test(provBody),
+    "🔴 the missing-credential branch is a GATE, not a skip — the control-read pair is a HARNESS input, so its absence is a run configured wrong and never a fact about the deployment",
   );
 }
 

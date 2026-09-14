@@ -222,14 +222,28 @@ export async function retrieveBotUser(opts: NotionCallOpts): Promise<{ id?: stri
   return (await res.json()) as { id?: string; type?: string; name?: string };
 }
 
-export async function listBlockComments(blockId: string, opts: NotionCallOpts): Promise<NotionComment[]> {
-  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments?block_id=${encodeURIComponent(blockId)}&page_size=100`, {
-    method: "GET",
-    headers: notionHeaders(opts),
-  }, opts);
-  if (!res.ok) throw new Error(`listBlockComments ${blockId} failed: ${res.status} ${await safeText(res)}`);
-  const body = (await res.json()) as { results?: NotionComment[] };
-  return Array.isArray(body.results) ? body.results : [];
+export async function listBlockComments(
+  blockId: string,
+  opts: NotionCallOpts & { readonly maxPages?: number; readonly onPageLimit?: () => void },
+): Promise<NotionComment[]> {
+  const maxPages = Math.max(1, Math.trunc(opts.maxPages ?? 1));
+  const out: NotionComment[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const qs = new URLSearchParams({ block_id: blockId, page_size: "100" });
+    if (cursor) qs.set("start_cursor", cursor);
+    const res = await notionFetch(`${NOTION_API_BASE}/v1/comments?${qs.toString()}`, {
+      method: "GET",
+      headers: notionHeaders(opts),
+    }, opts);
+    if (!res.ok) throw new Error(`listBlockComments ${blockId} failed: ${res.status} ${await safeText(res)}`);
+    const body = (await res.json()) as { results?: NotionComment[]; has_more?: boolean; next_cursor?: string | null };
+    if (Array.isArray(body.results)) out.push(...body.results);
+    cursor = body.has_more && body.next_cursor ? body.next_cursor : undefined;
+    if (!cursor) break;
+    if (page === maxPages - 1) opts.onPageLimit?.();
+  }
+  return out;
 }
 
 export interface NotionBlockParent {
@@ -342,7 +356,13 @@ export function toNotionCommentSummary(c: NotionComment, fallbackAnchor: string,
 
 export async function readNotionComments(
   pageId: string,
-  opts: NotionCallOpts & { readonly block?: string; readonly maxComments?: number; readonly maxBlockScans?: number },
+  opts: NotionCallOpts & {
+    readonly block?: string;
+    readonly maxComments?: number;
+    readonly maxBlockScans?: number;
+    readonly sinceMs?: number;
+    readonly maxCommentPages?: number;
+  },
 ): Promise<{ readonly comments: NotionCommentSummary[]; readonly discussionCount: number; readonly blocksScanned: number; readonly truncated: boolean }> {
   const maxComments = opts.maxComments ?? 100;
   const maxBlockScans = opts.maxBlockScans ?? 80;
@@ -350,9 +370,23 @@ export async function readNotionComments(
   const discussions = new Set<string>();
   let truncated = false;
   let blocksScanned = 0;
+  const listOpts = {
+    ...opts,
+    ...(opts.maxCommentPages === undefined ? {} : { maxPages: opts.maxCommentPages }),
+    onPageLimit: () => {
+      truncated = true;
+    },
+  };
+
+  const inWindow = (c: NotionComment): boolean => {
+    if (opts.sinceMs === undefined) return true;
+    const ms = Date.parse(c.created_time ?? "");
+    return Number.isFinite(ms) && ms >= opts.sinceMs;
+  };
 
   const take = (raw: NotionComment[], anchor: string, anchorText?: string): boolean => {
     for (const c of raw) {
+      if (!inWindow(c)) continue;
       if (comments.length >= maxComments) {
         truncated = true;
         return true;
@@ -364,11 +398,11 @@ export async function readNotionComments(
   };
 
   if (opts.block) {
-    take(await listBlockComments(opts.block, opts), opts.block);
+    take(await listBlockComments(opts.block, listOpts), opts.block);
     return { comments, discussionCount: discussions.size, blocksScanned: 1, truncated };
   }
 
-  if (take(await listBlockComments(pageId, opts), pageId)) {
+  if (take(await listBlockComments(pageId, listOpts), pageId)) {
     return { comments, discussionCount: discussions.size, blocksScanned, truncated };
   }
 
@@ -383,7 +417,7 @@ export async function readNotionComments(
       blocksScanned += 1;
       const id = typeof b.id === "string" ? b.id : undefined;
       if (!id) continue;
-      if (take(await listBlockComments(id, opts), id, blockPlainText(b))) break outer;
+      if (take(await listBlockComments(id, listOpts), id, blockPlainText(b))) break outer;
     }
     if (nextCursor && blocksScanned < maxBlockScans) {
       cursor = nextCursor;

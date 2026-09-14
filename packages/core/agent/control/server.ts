@@ -185,7 +185,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Unified cross-surface domain audit",
       description:
-        "For a unified cross-surface supervisor domain (research preview): which surfaces are in this one mind, what the agent itself can reach ACROSS all of them (unioned, flagging any container that widens the set), which mapped humans can read across which surfaces (the read-across exposure map), the domain admins, and the audited reply/silence record. Pure-read (restricts nothing) — the domain-grain answer no per-container access_preview can give. Scope-gated to org or domain:<name> role. sinceDays defaults to 30.",
+        "For a unified cross-surface supervisor domain (research preview): which surfaces are in this one mind, what the agent itself can reach ACROSS all of them (unioned, flagging any container that widens the set), which mapped humans can read across which surfaces (the read-across exposure map), the domain admins, and the audited reply/silence record. Pure-read (restricts nothing) — the domain-grain answer no per-container access_preview can give. Scope-gated on the domain: the org-wide \"admin\" role sees any domain, a \"domain:<name>\" role only its own. sinceDays defaults to 30.",
       inputSchema: {
         domain: z.string().min(1),
         org: z.string().optional(),

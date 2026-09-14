@@ -41,11 +41,20 @@ export interface RunnerRecord {
   };
 }
 
+export const NOT_RUNNERS: readonly string[] = [
+  "agent/model/ab-test.ts",
+  "packages/core/agent/model/ab-test.ts",
+];
+
+export function isRunnerFile(path: string): boolean {
+  return RUNNER_NAME.test(path) && !NOT_RUNNERS.includes(path);
+}
+
 export function trackedRunnerFiles(root: string = REPO_ROOT): string[] {
   const out = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   return out
     .split("\0")
-    .filter((p) => p.length > 0 && RUNNER_NAME.test(p))
+    .filter((p) => p.length > 0 && isRunnerFile(p))
     .sort();
 }
 

@@ -6,6 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
+import type { MemoryProbe } from "./ci-max-workers.js";
+import { LOCAL_SHARDS, SANDBOX_SHARDS, itShardCount, itShardsOverride, planShards, tierProofLine, worstExit } from "./it-shards.js";
+import { fmtBytes, ppidOf, rssBytesOf, treeRssBytes, type ProcProbe } from "./proc-rss.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
@@ -76,6 +79,20 @@ async function captureStderr(fn: () => Promise<void>): Promise<string[]> {
     await fn();
   } finally {
     console.error = original;
+  }
+  return lines;
+}
+
+async function captureStdout(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]): void => {
+    lines.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = original;
   }
   return lines;
 }
@@ -301,6 +318,156 @@ async function main(): Promise<void> {
     assert.equal(lines.filter((l) => l.includes("could NOT reclaim")).length, 1, `the failure must be announced once, got ${JSON.stringify(lines)}`);
     assert.ok(lines.some((l) => l.includes(`pid ${gonePid}`)), "the failure line names the dead holder it could not evict");
     assert.equal(lines.filter((l) => l.includes("reclaimed ")).length, 0, "a failed reclaim must never announce a reclaim");
+  });
+
+  await check("shard policy: OE_IT_SHARDS wins, then the box decides (4 in a sandbox, 1 uncapped)", () => {
+    const capped: MemoryProbe = { readFile: (p) => (p === "/proc/self/cgroup" ? "0::/x\n" : "1000"), totalMemoryBytes: () => 16_000_000_000 };
+    const uncapped: MemoryProbe = {
+      readFile: (p) => {
+        if (p === "/proc/self/cgroup") return "0::/x\n";
+        throw new Error("ENOENT");
+      },
+      totalMemoryBytes: () => 16_000_000_000,
+    };
+    assert.equal(itShardCount({ OE_IT_SHARDS: "7" }, capped), 7, "an explicit OE_IT_SHARDS is honoured over the box read");
+    assert.equal(itShardCount({ OE_IT_SHARDS: "1" }, capped), 1, "OE_IT_SHARDS=1 is how a caller forces the single-process tier back");
+    assert.equal(itShardCount({}, capped), SANDBOX_SHARDS, "a cgroup-capped process shards by default — this is the OOM the ticket measured");
+    assert.equal(itShardCount({}, uncapped), LOCAL_SHARDS, "NEGATIVE CONTROL: an uncapped box keeps today's single process");
+    assert.equal(itShardCount({ CI: "1" }, uncapped), SANDBOX_SHARDS, "a declared CI runner shards even where no cgroup cap is readable");
+    assert.equal(itShardCount({ CI: "false" }, uncapped), LOCAL_SHARDS, "NEGATIVE CONTROL: CI=false is not a CI runner");
+    for (const bad of ["", "   ", "0", "-2", "2.5", "nope", "3abc"]) {
+      assert.equal(itShardsOverride({ OE_IT_SHARDS: bad }), undefined, `a malformed OE_IT_SHARDS (${JSON.stringify(bad)}) says nothing, never NaN or 0`);
+    }
+  });
+
+  await check("shard plan: the unfiltered tier splits; a targeted leg and an unreadable call never do", () => {
+    const tier = planShards("vitest", ["run"], 4);
+    assert.equal(tier.wholeTier, true, "an unfiltered `vitest run` IS the tier, so it owes the tier proof line");
+    assert.deepEqual(
+      tier.runs.map((r) => r.args.join(" ")),
+      ["run --shard=1/4", "run --shard=2/4", "run --shard=3/4", "run --shard=4/4"],
+      "every shard of the series runs, and each names the same N",
+    );
+    assert.deepEqual(
+      tier.runs.map((r) => r.suite),
+      ["test:integration--shard=1/4", "test:integration--shard=2/4", "test:integration--shard=3/4", "test:integration--shard=4/4"],
+      "the per-shard suite names are exactly the shape collapseShardSeries parses",
+    );
+    const targeted = planShards("vitest", ["run", "tests/integration/memory/fence.test.ts"], 4);
+    assert.equal(targeted.runs.length, 1, "a file filter is a targeted leg and must run as one process");
+    assert.equal(targeted.wholeTier, false, "…and it must NEVER claim the tier's proof line");
+    assert.ok(/file filter/.test(targeted.reason ?? ""), "…and it says why, so a reader is not left guessing");
+    for (const filter of ["-t", "--testNamePattern=redelivery", "--project=core", "--dir=tests/integration/memory", "--changed", "--exclude=**/slow.test.ts", "--related"]) {
+      const flagged = planShards("vitest", ["run", filter], 4);
+      assert.equal(flagged.runs.length, 1, `\`${filter}\` narrows the tier, so it must run as ONE process`);
+      assert.equal(flagged.wholeTier, false, `🔴 …and \`${filter}\` must NEVER claim the tier's proof line — it ran a subset`);
+    }
+    const reporter = planShards("vitest", ["run", "--reporter=dot"], 4);
+    assert.equal(reporter.runs.length, 4, "a flag that narrows nothing (--reporter) leaves the tier shardable");
+    assert.equal(reporter.wholeTier, true, "…and it is still the tier");
+    const already = planShards("vitest", ["run", "--shard=2/3"], 4);
+    assert.equal(already.runs.length, 1, "a caller that already chose a --shard is left alone");
+    const notVitest = planShards("node", ["run"], 4);
+    assert.equal(notVitest.runs.length, 1, "a wrapped command that is not vitest is never sharded");
+    assert.equal(notVitest.wholeTier, false, "…and never claims the tier");
+    const single = planShards("vitest", ["run"], 1);
+    assert.deepEqual(single.runs.map((r) => r.args.join(" ")), ["run"], "OE_IT_SHARDS=1 runs the bare command, with no --shard at all");
+    assert.equal(single.wholeTier, true, "…and it is still the tier, so it still owes the one proof line");
+    assert.equal(planShards("/usr/x/node_modules/.bin/vitest", ["run"], 2).runs.length, 2, "vitest is recognised through an absolute path");
+  });
+
+  await check("shard exit: the tier reports the WORST shard, so a killed shard is never hidden", () => {
+    assert.equal(worstExit([0, 0, 0, 0]), 0, "four green shards are a green tier");
+    assert.equal(worstExit([0, SIGKILL_EXIT_CODE, 0, 0]), SIGKILL_EXIT_CODE, "one OOM-killed shard reds the tier, and keeps the 137 a reader acts on");
+    assert.equal(worstExit([1, 0, 0, 0]), 1, "a failing first shard is not erased by three green ones after it");
+    assert.equal(worstExit([]), 0, "no shards is a vacuous 0 — planShards never produces this, and it must not be NaN");
+    assert.equal(
+      tierProofLine("abc1234", 0),
+      "OE_PROOF sha=abc1234 suite=test:integration exit=0",
+      "the tier line is byte-exact to what cloud-proof-verify-lib.ts parses",
+    );
+  });
+
+  await check("runLocked: four shards run in order, one tier line is printed, and a red shard still lets the rest run", async () => {
+    const lockDir = join(scratch, "lock-shards");
+    const marks = join(scratch, "shard-marks.txt");
+    const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-"));
+    const fake = join(fakeDir, "vitest");
+    writeFileSync(
+      fake,
+      `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + "\\n");\n` +
+        `process.exit(process.argv.includes("--shard=2/4") ? 3 : 0);\n`,
+      { mode: 0o755 },
+    );
+    const out = await captureStdout(async () => {
+      const code = await runLocked(fake, ["run"], { manual: false, lockDir, maxWaitMs: 20_000, env: { OE_IT_SHARDS: "4" }, emitProof: true });
+      assert.equal(code, 3, "the tier takes the worst shard's code");
+    });
+    assert.deepEqual(
+      readFileSync(marks, "utf8").trim().split("\n"),
+      ["run --shard=1/4", "run --shard=2/4", "run --shard=3/4", "run --shard=4/4"],
+      "🔴 all four shards ran IN ORDER — the loop must not stop on the red, or the series is incomplete and proves nothing",
+    );
+    const proof = out.filter((l) => l.startsWith("OE_PROOF "));
+    assert.equal(proof.length, 1, `exactly ONE tier line, after every shard — got ${JSON.stringify(proof)}`);
+    assert.ok(/^OE_PROOF sha=[0-9a-f]{7,40} suite=test:integration exit=3$/.test(proof[0]!), `the tier line carries the worst exit — got ${proof[0]}`);
+    assert.equal(existsSync(lockDir), false, "the lock is released after a sharded run like any other");
+    rmSync(fakeDir, { recursive: true, force: true });
+  });
+
+  await check("runLocked: a targeted leg runs once and prints NO tier proof line", async () => {
+    const lockDir = join(scratch, "lock-targeted");
+    const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-t-"));
+    const fake = join(fakeDir, "vitest");
+    writeFileSync(fake, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o755 });
+    const out = await captureStdout(async () => {
+      const code = await runLocked(fake, ["run", "tests/integration/x.test.ts"], {
+        manual: false,
+        lockDir,
+        maxWaitMs: 20_000,
+        env: { OE_IT_SHARDS: "4" },
+        emitProof: true,
+      });
+      assert.equal(code, 0, "the targeted leg still reports its own code");
+    });
+    assert.deepEqual(out.filter((l) => l.startsWith("OE_PROOF ")), [], "🔴 a filtered run must print no tier evidence line at all");
+    rmSync(fakeDir, { recursive: true, force: true });
+  });
+
+  await check("proc-rss: a tree's peak sums the whole spawned tree, and a reaped pid costs nothing", () => {
+    const status = (ppid: number, rssKb: number | undefined) =>
+      `Name:\tnode\nPPid:\t${ppid}\n${rssKb === undefined ? "" : `VmRSS:\t${rssKb} kB\n`}VmSize:\t999 kB\n`;
+    const tree: Record<number, string> = {
+      100: status(1, 1024),
+      101: status(100, 2048),
+      102: status(101, 4096),
+      200: status(1, 8192),
+      300: status(100, undefined),
+    };
+    const probe: ProcProbe = {
+      listPids: () => Object.keys(tree).map(Number),
+      readStatus: (pid) => {
+        const s = tree[pid];
+        if (s === undefined) throw new Error("ESRCH");
+        return s;
+      },
+    };
+    assert.equal(treeRssBytes(100, probe), (1024 + 2048 + 4096) * 1024, "the sum covers children and grandchildren");
+    assert.equal(treeRssBytes(200, probe), 8192 * 1024, "NEGATIVE CONTROL: an unrelated tree contributes nothing to this one");
+    assert.equal(treeRssBytes(999, probe), 0, "a root that is not there reads 0, never a throw");
+    const racing: ProcProbe = {
+      listPids: () => [100, 101],
+      readStatus: (pid) => {
+        if (pid === 101) throw new Error("ESRCH");
+        return tree[100]!;
+      },
+    };
+    assert.equal(treeRssBytes(100, racing), 1024 * 1024, "a process that exits mid-sample is skipped, not fatal");
+    assert.equal(rssBytesOf("VmSize:\t10 kB\n"), undefined, "a status with no VmRSS answers undefined, never 0");
+    assert.equal(ppidOf("Name:\tx\n"), undefined, "a status with no PPid answers undefined");
+    assert.equal(fmtBytes(0), "not measured", "an unmeasured peak says so rather than printing 0 GB");
+    assert.equal(fmtBytes(12 * 1024 ** 3), "12.0 GB", "a gigabyte-scale peak reads in binary GB");
+    assert.equal(fmtBytes(300 * 1024), "300 KB", "🔴 a sub-megabyte peak must not round to `0 MB`, which reads as `not measured`");
   });
 
   rmSync(scratch, { recursive: true, force: true });

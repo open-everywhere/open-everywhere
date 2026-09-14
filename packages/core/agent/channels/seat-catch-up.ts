@@ -1,6 +1,8 @@
 import { fetchedBackscroll, type BackscrollTrustFor, type NormalizedMessage } from "./backscroll-window.js";
 import { admissionFunction, type SeatAdmissionFn } from "./seat-admission.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
+import { appendAudit, type AuditInput } from "../audit/audit.js";
+import { deploymentOrg } from "../identity/deployment-identity.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import { admissionNameFor, domainForChannel } from "../memory/domain.js";
@@ -76,19 +78,80 @@ export interface SeatCatchUpOpts {
   readonly trustFor?: BackscrollTrustFor;
   readonly admit?: SeatAdmissionFn;
   readonly capTokens?: number;
+  readonly audit?: (entry: AuditInput) => Promise<void>;
+}
+
+export const SEAT_CATCH_UP_ACTION = "seat.catch_up";
+
+export type SeatCatchUpOutcome = "read" | "empty" | "unavailable" | "failed";
+
+export function seatCatchUpScopeFromChannelKey(platform: string, channelKey: string | undefined): { workspace: string; surface: string } | undefined {
+  if (!channelKey) return undefined;
+  const parts = channelKey.split("/");
+  if (parts.length !== 3 || parts[0] !== platform || !parts[1] || !parts[2]) return undefined;
+  return { workspace: parts[1], surface: parts[2] };
+}
+
+function httpStatusOf(err: unknown): number | undefined {
+  const m = /\(HTTP (\d{3})\)/.exec(err instanceof Error ? err.message : String(err));
+  return m ? Number(m[1]) : undefined;
+}
+
+function errorNameOf(err: unknown): string {
+  return err instanceof Error && typeof err.name === "string" && err.name.length > 0 ? err.name : "unknown";
 }
 
 export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opts: SeatCatchUpOpts = {}): Promise<SeatCatchUpResult> {
+  const scope = seatCatchUpScopeFromChannelKey(platform, req.channelKey);
+  const record = async (outcome: SeatCatchUpOutcome, raw: number, kept: number, extra: Readonly<Record<string, unknown>> = {}): Promise<void> => {
+    try {
+      await (opts.audit ?? appendAudit)({
+        org: deploymentOrg(),
+        platform,
+        workspace: scope?.workspace ?? "unknown",
+        ...(scope ? { surface: scope.surface } : {}),
+        action: SEAT_CATCH_UP_ACTION,
+        detail: {
+          outcome,
+          raw,
+          kept,
+          container: req.container,
+          ...(req.threadRoot === undefined ? {} : { threadRoot: req.threadRoot }),
+          since: Number.isFinite(req.sinceMs) ? new Date(req.sinceMs).toISOString() : "unparsable",
+          ...extra,
+        },
+      });
+    } catch {
+    }
+  };
+
   const fetch = seatCatchUpFetchFor(platform);
-  if (!fetch) return { messages: [], unavailable: catchUpUnavailableReason(platform) };
+  if (!fetch) {
+    await record("unavailable", 0, 0, { reason: "no-registered-fetch" });
+    return { messages: [], unavailable: catchUpUnavailableReason(platform) };
+  }
   let window: readonly NormalizedMessage[];
   try {
     window = await fetch(req);
-  } catch {
+  } catch (err) {
+    const status = httpStatusOf(err);
+    await record("failed", 0, 0, { reason: "fetch-threw", errorName: errorNameOf(err), ...(status === undefined ? {} : { httpStatus: status }) });
     return { messages: [] };
   }
-  if (window.length === 0) return { messages: [] };
+  if (window.length === 0) {
+    await record("empty", 0, 0, { reason: "fetch-returned-none" });
+    return { messages: [] };
+  }
   const bounded = window.filter((m) => m.ms >= req.sinceMs && (req.untilMs === undefined || m.ms < req.untilMs) && m.id !== req.excludeId);
-  if (bounded.length === 0) return { messages: [] };
-  return { messages: fetchedBackscroll(bounded, opts.capTokens, opts.trustFor, opts.admit) };
+  if (bounded.length === 0) {
+    await record("empty", window.length, 0, { reason: "bounds-dropped-all" });
+    return { messages: [] };
+  }
+  const messages = fetchedBackscroll(bounded, opts.capTokens, opts.trustFor, opts.admit);
+  if (messages.length === 0) {
+    await record("empty", window.length, 0, { reason: "admission-dropped-all" });
+    return { messages };
+  }
+  await record("read", window.length, messages.length);
+  return { messages };
 }

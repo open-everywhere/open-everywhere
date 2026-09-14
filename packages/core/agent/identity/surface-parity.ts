@@ -22,7 +22,7 @@ export const SURFACE_CAPABILITIES = [
   { id: "wake-origin-codec", label: "Wake-origin codec", section: "§2.3", group: "seam" },
   { id: "read-adapter", label: "Read adapter", section: "§4.5", group: "seam" },
   { id: "reaction-feedback-ingest", label: "Reaction **feedback** ingest", section: "§4.9", group: "seam" },
-  { id: "ancillary-ops", label: "Ancillary ops (`SurfaceMessageOps`)", section: "§4.9", group: "seam" },
+  { id: "ancillary-ops", label: "Ancillary ops (`SurfaceMessageOps`)", section: "§5", group: "seam" },
   { id: "ambient-engagement-seam", label: "**Ambient engagement seam**", section: "§2.5", group: "seam" },
   { id: "engaged-row-promotion", label: "**Engaged wake row promotion** (`thread-follow`)", section: "§2.5", group: "seam" },
   { id: "owned-thread-ingress", label: "**Owned-thread ingress divert**", section: "§2.6", group: "seam" },
@@ -51,7 +51,7 @@ export const SURFACE_CAPABILITIES = [
   { id: "ack_stop_glyph", label: "`ack`: ✋ glyph", section: "§4.9", group: "verb" },
   { id: "ack_cancel_note", label: "`ack`: cancel note", section: "§4.9", group: "verb" },
   { id: "stand_down", label: "`stand_down`", section: "§4.10", group: "verb" },
-  { id: "post_file", label: "`post_file`", section: "§4.11", group: "verb" },
+  { id: "post_file", label: "`post_file`", section: "§7.4", group: "verb" },
 ] as const satisfies readonly SurfaceCapability[];
 
 export type SurfaceCapabilityId = (typeof SURFACE_CAPABILITIES)[number]["id"];
