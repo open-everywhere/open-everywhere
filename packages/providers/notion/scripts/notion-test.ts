@@ -30,8 +30,9 @@ import {
   clearNotionAncestryCache,
   prepareNotionTrustRoots,
 } from "../agent/channels/notion-ancestry-trust.js";
-import { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
+import { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type EngagementRow } from "@open-everywhere/core/agent/adapter-api.js";
 import type { NotionUntieredSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
+import type { NotionEngagementDeps } from "../agent/channels/notion-engagement.js";
 import { registerNotionProvider } from "../agent/register.js";
 
 registerNotionProvider();
@@ -163,7 +164,7 @@ function baseDeps(
     fetch: fetchImpl,
     dispatch,
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
-    engagement: { getEngagement: async () => null },
+    engagement: { getEngagement: async () => null, markEventSeen: async () => true },
     ...extra,
   };
   return { ...merged, domains: merged.domains ?? [] };
@@ -284,6 +285,95 @@ function baseDeps(
   let dispatched = false;
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatched = true; }, { resolveBotUserId: () => Promise.resolve(undefined) }));
   ok(out.action === "dropped" && !dispatched, "unresolved bot user id -> DROP, no dispatch (fail-closed loop guard — the critical hardening)");
+}
+
+{
+  const seen = new Set<string>();
+  const remembering: NotionEngagementDeps = {
+    getEngagement: async () => null,
+    markEventSeen: async (_org, key) => (seen.has(key) ? false : (seen.add(key), true)),
+  };
+  const raw = commentEvent();
+  let dispatches = 0;
+  const deps = baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatches++; }, { engagement: remembering });
+  const first = await handleNotionDelivery(raw, sign(raw), deps);
+  ok(first.action === "dispatched" && dispatches === 1, "first delivery of a comment -> dispatched");
+  const second = await handleNotionDelivery(raw, sign(raw), deps);
+  ok(second.action === "duplicate-delivery" && second.status === 200, "the SAME comment delivered again -> duplicate-delivery, acked 200");
+  ok(dispatches === 1, "…and it woke NO second turn (one comment, one wake — the live-run defect)");
+  const third = await handleNotionDelivery(raw, sign(raw), deps);
+  ok(dispatches === 1, "a third delivery is deduped too — the guard is not a one-shot");
+  ok(third.detail === COMMENT, "the duplicate outcome names the comment id it deduped");
+}
+
+{
+  const seen = new Set<string>();
+  const remembering: NotionEngagementDeps = {
+    getEngagement: async () => null,
+    markEventSeen: async (_org, key) => (seen.has(key) ? false : (seen.add(key), true)),
+  };
+  let dispatches = 0;
+  const fetchImpl = makeFetch({ comment: triggerNoMention });
+  const raw = commentEvent();
+  await handleNotionDelivery(raw, sign(raw), baseDeps(fetchImpl, async () => { dispatches++; }, { engagement: remembering }));
+  const otherRaw = JSON.stringify({
+    type: "comment.created",
+    workspace_id: WS,
+    entity: { id: "comment-two", type: "comment" },
+    data: { page_id: PAGE, parent: { id: PAGE, type: "page" } },
+    authors: [{ id: AUTHOR, type: "person" }],
+  });
+  const other = await handleNotionDelivery(
+    otherRaw,
+    sign(otherRaw),
+    baseDeps(makeFetch({ comment: { ...triggerNoMention, id: "comment-two" } }), async () => { dispatches++; }, { engagement: remembering }),
+  );
+  ok(other.action === "dispatched" && dispatches === 2, "a SECOND, different comment on the same page still dispatches (the guard keys on the comment, not the page)");
+}
+
+{
+  const seen = new Set<string>();
+  const remembering: NotionEngagementDeps = {
+    getEngagement: async () => null,
+    markEventSeen: async (_org, key) => (seen.has(key) ? false : (seen.add(key), true)),
+  };
+  const raw = commentEvent();
+  let dispatches = 0;
+  const off = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatches++; }, { ambientEnabled: () => false, engagement: remembering }));
+  ok(off.action === "ambient-disabled" && seen.size === 0, "an AMBIENT-DISABLED delivery spends no mark");
+  const stoppedRow: EngagementRow = {
+    org: "oe",
+    surfaceKey: `notion/${WS}/${PAGE}`,
+    threadTs: `${WS}/${PAGE}`,
+    engagedAt: "2026-04-22T06:00:00.000Z",
+    lastTurnAt: "2026-04-22T06:00:00.000Z",
+    participating: true,
+    silentStreak: 0,
+    stopped: true,
+    kind: "thread",
+  };
+  const stood = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatches++; }, {
+    engagement: { ...remembering, getEngagement: async () => stoppedRow },
+  }));
+  ok(stood.action === "stood-down" && seen.size === 0, "a STOOD-DOWN delivery spends no mark either");
+  const self = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerSelf }), async () => { dispatches++; }, { engagement: remembering }));
+  ok(self.action === "skipped-self" && seen.size === 0, "and our OWN comment spends no mark — the drop is free");
+  ok(dispatches === 0, "…none of the three woke a turn (the control for the three assertions above)");
+  const open = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatches++; }, { engagement: remembering }));
+  ok(open.action === "dispatched" && dispatches === 1 && seen.size === 1, "…and the SAME comment still wakes a turn once the gate opens — the refusals cost it nothing");
+}
+
+{
+  const raw = commentEvent();
+  let dispatched = false;
+  const out = await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatched = true; }, {
+      engagement: { getEngagement: async () => null, markEventSeen: async () => { throw new Error("store down"); } },
+    }),
+  );
+  ok(out.action === "dispatched" && dispatched, "an unreachable dedupe store still dispatches (fail-open)");
 }
 
 {

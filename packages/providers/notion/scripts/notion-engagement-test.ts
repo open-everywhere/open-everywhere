@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 registerNotionProvider();
 import {
+  firstNotionDispatchOfComment,
   markNotionEngaged,
   notionEngagementAnchor,
   notionSeamPartition,
@@ -186,6 +187,28 @@ ok(notionEngagementAnchor({ ...FACTS, workspaceId: undefined }) === undefined, "
   );
 }
 
+{
+  const deps = stubDeps(null);
+  ok(await firstNotionDispatchOfComment(FACTS, "cmt-1", deps), "6a: the FIRST sighting of a comment id admits the wake");
+  ok(!(await firstNotionDispatchOfComment(FACTS, "cmt-1", deps)), "🔴 6b: the SAME comment id, again, refuses it — one comment, one turn");
+  ok(await firstNotionDispatchOfComment(FACTS, "cmt-2", deps), "6c: NEGATIVE CONTROL — a DIFFERENT comment id still admits, so the guard is not a blanket refusal");
+  ok(deps.seen.includes("notion-dispatch:cmt-1"), "6d: the key is the COMMENT id under its own prefix — a globally-unique id needs no anchor");
+  ok(!deps.seen.includes("notion-engage:WS_N/PAGE_N:cmt-1"), "🔴 6e: …and it is NOT the engage mark's key, so the two guards cannot consume each other's mark");
+}
+{
+  const deps = stubDeps(null);
+  await markNotionEngaged(FACTS, "cmt-9", deps);
+  ok(await firstNotionDispatchOfComment(FACTS, "cmt-9", deps), "🔴 6f: a comment whose ENGAGE mark is already spent still wakes — the prefixes keep the two guards apart");
+}
+{
+  const deps = stubDeps(null);
+  ok(await firstNotionDispatchOfComment({ ...FACTS, workspaceId: undefined }, "cmt-3", deps), "6g: no resolvable partition -> admit (fail open, today's path)");
+  ok(await firstNotionDispatchOfComment(FACTS, undefined, deps), "6h: a delivery with no comment id -> admit (nothing to key on)");
+  ok(await firstNotionDispatchOfComment(FACTS, "", deps), "6i: an EMPTY comment id -> admit, never one shared key every delivery would collide on");
+  const throwing: NotionEngagementDeps = { markEventSeen: async () => { throw new Error("store down"); } };
+  ok(await firstNotionDispatchOfComment(FACTS, "cmt-4", throwing), "🔴 6j: an unreachable store -> admit (fail open) — a duplicate turn beats a deaf page");
+}
+
 console.log(
-  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard + the dispatch row's addressing and its domain origin)`,
+  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard + the dispatch row's addressing and its domain origin + the wake once-guard)`,
 );

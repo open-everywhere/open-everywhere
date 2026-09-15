@@ -59,6 +59,7 @@ async function deliver(rules: CredentialEndpointRules | undefined): Promise<{ ac
     ambientEnabled: () => true,
     fetch: fetchImpl,
     dispatch: async () => {},
+    engagement: { markEventSeen: async () => true },
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   return { action: out.action, detail: out.detail, fetchCalls };

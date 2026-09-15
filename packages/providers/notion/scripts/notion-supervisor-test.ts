@@ -109,6 +109,11 @@ ok(classifyNotionComment(base, undefined).addressing === "drop", "unresolved bot
 ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user", type: "person" } }, BOT).addressing === "drop", "self-authored -> DROP (our own reply)");
 ok(classifyNotionComment({ ...base, created_by: { id: "other-bot", object: "user", type: "bot" } }, BOT).addressing === "drop", "bot/integration-authored -> DROP (created_by.type != person)");
 ok(classifyNotionComment({ ...base, rich_text: mentionRT }, undefined).addressing === "drop", "@mention with unresolved bot id still DROPs (fail closed)");
+ok(classifyNotionComment({ ...base, created_by: { object: "user" } }, BOT).addressing === "drop", "author with NO created_by.id -> DROP (fail-closed loop guard)");
+ok(classifyNotionComment({ ...base, created_by: undefined }, BOT).addressing === "drop", "comment with NO created_by at all -> DROP (fail-closed loop guard)");
+ok(classifyNotionComment({ ...base, created_by: { object: "user" }, rich_text: nameDropRT }, BOT).addressing === "drop", "a NAME-DROP from an unidentified author still DROPs — the guard outranks the addressed path");
+ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, BOT).addressing === "channel-watch", "identified author with NO created_by.type -> channel-watch (the drop above is the missing id, not the missing type)");
+ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user" } }, BOT).addressing === "drop", "self-authored with NO created_by.type -> DROP (the id is what recognises our own words)");
 
 const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-03-24T18:51:00Z", text: "does section 2 still hold?", trust: "peer" };
 const siblings: NotionWakeMessage[] = [

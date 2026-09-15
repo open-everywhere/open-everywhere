@@ -59,7 +59,20 @@ function recordingDeps(): { deps: NotionStopDeps; calls: CancelAnchoredTurnInput
   ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), BOT), "a BOT/integration-authored comment never cancels");
   ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), undefined), "…and stays refused even with an unresolved bot id (both guards agree)");
 
+  ok(
+    !notionCommentIsStopDirective({ ...stopComment(), created_by: { object: "user" } }, BOT),
+    "🔴 an author with NO created_by.id never cancels — fail closed, the same posture as the classifier",
+  );
+  ok(
+    !notionCommentIsStopDirective({ ...stopComment(), created_by: undefined }, BOT),
+    "🔴 …and a comment with NO created_by at all never cancels either",
+  );
+
   ok(notionCommentIsStopDirective(stopComment({ authorId: "some-other-human" }), BOT), "negative control: a DIFFERENT resolved human's bare `stop` DOES pass");
+  ok(
+    notionCommentIsStopDirective({ ...stopComment(), created_by: { id: "some-other-human", object: "user" } }, BOT),
+    "negative control: an identified human with NO created_by.type still cancels — the drop above is the missing id",
+  );
 }
 
 {
@@ -132,6 +145,7 @@ function recordingDeps(): { deps: NotionStopDeps; calls: CancelAnchoredTurnInput
       ambientEnabled: () => true,
       fetch: fetchImpl,
       dispatch,
+      engagement: { markEventSeen: async () => true },
       attachSession: () => ({ cancel: async () => ({ status: "accepted" }) }),
       ...extra,
     };

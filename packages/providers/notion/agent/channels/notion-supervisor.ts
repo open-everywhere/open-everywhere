@@ -58,7 +58,8 @@ export function classifyNotionComment(comment: NotionComment, botUserId: string 
   if (!botUserId) return { addressing: "drop", reason: "unresolved bot user id — fail-closed loop guard" };
   const author = comment.created_by;
   if (author?.id === botUserId) return { addressing: "drop", reason: "self-authored comment (our own reply)" };
-  if (author?.type && author.type !== "person") return { addressing: "drop", reason: `bot/integration-authored (${author.type})` };
+  if (!author?.id) return { addressing: "drop", reason: "unidentified author (no created_by.id) — fail-closed loop guard" };
+  if (author.type && author.type !== "person") return { addressing: "drop", reason: `bot/integration-authored (${author.type})` };
   if (mentionsUser(comment.rich_text, botUserId)) return { addressing: "direct", reason: "structured bot @mention" };
   if (notionNameDrop(richTextToPlainText(comment.rich_text), botName)) {
     return { addressing: "direct", reason: "bot name-drop (synthetic mention — Notion has no @mention for integrations)" };

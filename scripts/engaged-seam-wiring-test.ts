@@ -500,6 +500,7 @@ const NOW = "2026-05-12T11:30:00.000Z";
       ingressMarks++;
       throw new Error("the Notion INGRESS must never mark — the write belongs below the external-author decision");
     },
+    markEventSeen: async () => true,
     now: () => NOW,
   });
   const engagedRow = (stopped: boolean): Row =>

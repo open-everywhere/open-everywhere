@@ -218,9 +218,11 @@ await inSession(async () => {
     { type: "mention", plain_text: "@OE", mention: { type: "user", user: { id: BOT } } },
     { type: "text", plain_text: " please summarise", text: { content: " please summarise" } },
   ];
+  let deliveryNo = 0;
+  let currentComment = "comment-0";
   const event = (ws: string, page: string): string =>
-    JSON.stringify({ type: "comment.created", workspace_id: ws, entity: { id: "comment-000", type: "comment" }, data: { page_id: page, parent: { id: page, type: "page" } }, authors: [{ id: AUTHOR, type: "person" }] });
-  const retrievedComment = (page: string) => ({ id: "comment-000", discussion_id: `disc-${page}`, parent: { type: "page", page_id: page }, created_by: { id: AUTHOR, object: "user" }, rich_text: mentionRT });
+    JSON.stringify({ type: "comment.created", workspace_id: ws, entity: { id: currentComment, type: "comment" }, data: { page_id: page, parent: { id: page, type: "page" } }, authors: [{ id: AUTHOR, type: "person" }] });
+  const retrievedComment = (page: string) => ({ id: currentComment, discussion_id: `disc-${page}`, parent: { type: "page", page_id: page }, created_by: { id: AUTHOR, object: "user" }, rich_text: mentionRT });
 
   const realFetch = globalThis.fetch;
   let posts: string[] = [];
@@ -244,7 +246,7 @@ await inSession(async () => {
     to: () => ({ send: async () => ({ id: "sess-1" }) }),
   });
   const drive = async (ws: string, page: string) => {
-    posts = []; sendCalled = false; currentPage = page;
+    posts = []; sendCalled = false; currentPage = page; currentComment = `comment-${++deliveryNo}`;
     let threw: unknown;
     try { await routeHandler(new Request("http://x/eve/v1/notion", { method: "POST", body: event(ws, page) }), args()); } catch (e) { threw = e; }
     return { posts, sendCalled, threw };

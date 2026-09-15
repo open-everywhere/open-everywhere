@@ -23,7 +23,7 @@ import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
 import { notionPageDomain, notionReachWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
-import { resolveNotionEngagement, type NotionEngagementDeps, type NotionSeamFacts } from "./notion-engagement.js";
+import { firstNotionDispatchOfComment, resolveNotionEngagement, type NotionEngagementDeps, type NotionSeamFacts } from "./notion-engagement.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type AttachSessionForCancel, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
@@ -79,6 +79,7 @@ export interface NotionDeliveryOutcome {
     | "stopped"
     | "stood-down"
     | "scope-refused"
+    | "duplicate-delivery"
     | "error";
   readonly detail?: string;
   readonly verified: boolean;
@@ -247,6 +248,10 @@ async function deliver(
     engagementTier = deps.engagementTier?.(surfaceKey);
   } catch {
     engagementTier = undefined;
+  }
+
+  if (!(await firstNotionDispatchOfComment(seamFacts, commentId, deps.engagement))) {
+    return { status: 200, body: "ok", action: "duplicate-delivery", detail: commentId, signed, credentialId };
   }
 
   await deps.dispatch({

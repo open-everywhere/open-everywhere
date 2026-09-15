@@ -27,6 +27,7 @@ import {
 import { notionReachWorkspace } from "../agent/channels/notion-scope.js";
 import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
+import type { NotionEngagementDeps } from "../agent/channels/notion-engagement.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
 import { registerNotionProvider } from "../agent/register.js";
 
@@ -132,6 +133,7 @@ const PAY_SECRET = "payments-verification-token";
 const sign = (secret: string, body: string): string => "sha256=" + createHmac("sha256", secret).update(body, "utf8").digest("hex");
 const commentEvent = (page: string, commentId = "cmt-1"): string =>
   JSON.stringify({ type: "comment.created", workspace_id: WS, entity: { id: commentId, type: "comment" }, data: { page_id: page } });
+const FIRST_SIGHTING: NotionEngagementDeps = { markEventSeen: async () => true };
 {
   const body = commentEvent(PAGE_PAY);
   const paySig = sign(PAY_SECRET, body);
@@ -235,6 +237,7 @@ async function deliverFor(
       return true;
     },
     fetch: recordingFetch(seen, parent, shape?.blockParents),
+    engagement: FIRST_SIGHTING,
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     dispatch: async (d) => {
       dispatched = d.credentialId;
@@ -375,6 +378,7 @@ async function deliverFor(
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: () => true,
     fetch: recordingFetch(seen),
+    engagement: FIRST_SIGHTING,
     attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     dispatch: async () => {
       throw new Error("a bound domain with no credential must never dispatch");
@@ -554,6 +558,7 @@ async function deliverFor(
         return true;
       },
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      engagement: FIRST_SIGHTING,
       attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;
@@ -666,6 +671,7 @@ async function deliverFor(
       resolveBotUserId: async () => "U_BOT",
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: PAGE_PAY }),
+      engagement: FIRST_SIGHTING,
       attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;
@@ -785,6 +791,7 @@ async function deliverFor(
       resolveBotUserId: async () => "U_BOT",
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      engagement: FIRST_SIGHTING,
       attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;

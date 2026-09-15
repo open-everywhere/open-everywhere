@@ -87,6 +87,23 @@ export async function markNotionEngaged(f: NotionSeamFacts, commentId: string | 
   return anchor;
 }
 
+export async function firstNotionDispatchOfComment(
+  f: NotionSeamFacts,
+  commentId: string | undefined,
+  deps: NotionEngagementDeps = {},
+): Promise<boolean> {
+  if (commentId === undefined || commentId.length === 0) return true;
+  const partition = notionSeamPartition(f);
+  if (!partition) return true;
+  const now = deps.now ?? (() => new Date().toISOString());
+  const seen = deps.markEventSeen ?? liveMarkDispatchSeen;
+  try {
+    return await seen(partition.org, `notion-dispatch:${commentId}`, now());
+  } catch {
+    return true;
+  }
+}
+
 export type NotionDispatchAddressing = "direct" | "channel-watch";
 
 export function notionWakeAddressing(
@@ -109,15 +126,29 @@ export function notionWakeAuditDetail(
   return { addressing: notionWakeAddressing(addressing, engagedFollowUp), via: via ?? "none" };
 }
 
-const ENGAGE_DEDUPE_TTL_MS = 10 * 60_000;
+const NOTION_DEDUPE_TTL_MS = 10 * 60_000;
+
 let warnedEngageDedupe = false;
 async function liveMarkEngageSeen(org: string, key: string, atIso: string): Promise<boolean> {
   try {
-    return await getOperationalStore().markEventSeen(org, key, atIso, ENGAGE_DEDUPE_TTL_MS);
+    return await getOperationalStore().markEventSeen(org, key, atIso, NOTION_DEDUPE_TTL_MS);
   } catch (err) {
     if (!warnedEngageDedupe) {
       warnedEngageDedupe = true;
       console.warn(`[open-everywhere:notion-engagement] engage dedupe unavailable — a redelivered name-drop may re-mark: ${String(err)}`);
+    }
+    return true;
+  }
+}
+
+let warnedDispatchDedupe = false;
+async function liveMarkDispatchSeen(org: string, key: string, atIso: string): Promise<boolean> {
+  try {
+    return await getOperationalStore().markEventSeen(org, key, atIso, NOTION_DEDUPE_TTL_MS);
+  } catch (err) {
+    if (!warnedDispatchDedupe) {
+      warnedDispatchDedupe = true;
+      console.warn(`[open-everywhere:notion-engagement] dispatch dedupe unavailable — a redelivered comment may wake a second turn: ${String(err)}`);
     }
     return true;
   }

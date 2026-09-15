@@ -14,7 +14,8 @@ export function notionCommentIsStopDirective(comment: NotionComment, botUserId: 
   if (!botUserId) return false;
   const author = comment.created_by;
   if (author?.id === botUserId) return false;
-  if (author?.type && author.type !== "person") return false;
+  if (!author?.id) return false;
+  if (author.type && author.type !== "person") return false;
   return true;
 }
 
