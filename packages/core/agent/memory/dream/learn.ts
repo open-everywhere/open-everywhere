@@ -1,7 +1,8 @@
 import { defangProposalField } from "./correction.js";
 import type { RecurrenceLedger } from "./recurrence.js";
 import { workflowSignature } from "./recurrence.js";
-import type { Proposal } from "./proposal.js";
+import { DREAM_ACTOR, type Proposal } from "./proposal.js";
+import { writeMemoryTier } from "../write-road.js";
 import type { DreamJudge, DistillInput, DistilledFact } from "./judge.js";
 import type { Partition } from "../partition.js";
 import type { Tier } from "../store.js";
@@ -117,5 +118,19 @@ export async function writeEnrichment(
   let recurring = files["RECURRING.md"] ?? seed;
   for (const b of bullets) recurring = upsertUnderSection(recurring, "Recurring", b);
   files["RECURRING.md"] = recurring;
-  return provider.writeTier(p, target.tier, files, `dream:learn recurrence enrich [${target.silo.name}]`, target.silo, target.access);
+  const { version } = await writeMemoryTier({
+    provider,
+    partition: p,
+    tier: target.tier,
+    files,
+    message: `dream:learn recurrence enrich [${target.silo.name}]`,
+    silo: target.silo,
+    access: target.access,
+    road: "dream-learn",
+    platform: "memory",
+    workspace: target.silo.name,
+    principalId: DREAM_ACTOR,
+    extra: { bullets: bullets.length },
+  });
+  return version;
 }

@@ -11,6 +11,7 @@ import {
 import { recordContainerAnswered } from "./answered-container-ledger.js";
 import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
+import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm, type DirectMessageAction, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
@@ -61,7 +62,8 @@ export async function postUnifiedReply(
   intent?: PostIntent,
   actions: readonly DirectMessageAction[] = [],
 ): Promise<string> {
-  const provenance = applyReplyProvenance(truncateMemoryCitationPaths(text), audit);
+  const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
+  const provenance = applyReplyProvenance(claimGuard.body, audit);
   const clean = provenance.body;
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -88,6 +90,7 @@ export async function postUnifiedReply(
       }
       await auditReplyPost(audit, realId, origin.platform, body.length);
       await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown);
+      await auditWithheldMemoryClaim(audit, origin.platform, claimGuard.withheld);
       await recordLandedPost({
         org: audit?.org,
         editLocus: unifiedEditLocus(origin),

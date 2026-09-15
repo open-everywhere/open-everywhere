@@ -1,6 +1,7 @@
 import { isPinnedStatusMessage } from "../status/status.js";
 import { SURFACE } from "../memory/store.js";
 import { getProvider } from "../memory/provider.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import type { Partition } from "../memory/partition.js";
 
 export const ONBOARDED_MARKER = "_onboarded";
@@ -15,7 +16,15 @@ export async function markSurfaceOnboarded(p: Partition): Promise<void> {
   const marker = await provider.ensureTier(p, SURFACE);
   if (marker[ONBOARDED_MARKER] !== undefined) return;
   marker[ONBOARDED_MARKER] = new Date().toISOString();
-  await provider.writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
+  await writeMemoryTier({
+    provider,
+    partition: p,
+    tier: SURFACE,
+    files: marker,
+    message: `onboarding ${p.surfaceKey}`,
+    road: "onboarding-marker",
+    kind: "operational",
+  });
 }
 
 export function extractPinnedInstructions(pinsList: unknown): string | null {

@@ -16,6 +16,7 @@ import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { modelPricing } from "../spend/pricing.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
 import { disarmApprovalJudge, rearmApprovalJudge } from "../approvals/judge-contradiction.js";
 import { orgWideWhere, whereFromScope } from "../approvals/actions.js";
@@ -888,8 +889,20 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         const access = siloAccess(silo.name, getConfig().loadDomains());
         const files = await provider.readTier(p, tier, silo, access);
         files[a.relPath] = stampHumanEdit(a.content);
-        const commit = await provider.writeTier(p, tier, files, `control-plane edit by ${actor}`, silo, access);
-        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.write", detail: { silo: a.silo, relPath: a.relPath, bytes: Buffer.byteLength(a.content, "utf-8"), commit } });
+        const { version: commit } = await writeMemoryTier({
+          provider,
+          partition: p,
+          tier,
+          files,
+          message: `control-plane edit by ${actor}`,
+          silo,
+          access,
+          road: "control-edit",
+          principalId: actor,
+          platform: "control",
+          workspace: "control",
+          extra: { relPath: a.relPath, bytes: Buffer.byteLength(a.content, "utf-8") },
+        });
         return jsonResult({ ok: true, org: a.org, silo: a.silo, relPath: a.relPath, commit });
       } catch (e) {
         return errorResult(`memory_write_file failed: ${e instanceof Error ? e.message : String(e)}`);

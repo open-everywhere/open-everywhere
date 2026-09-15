@@ -6,7 +6,7 @@ import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, OE_INPUT_CLICK_PREFI
 import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { handleDiscordGrantCardInteraction } from "../access/discord-grant-click.js";
 import { handleDiscordApprovalCardInteraction, type ApprovalRespondFn } from "./discord-approval-card.js";
-import { OE_COMMAND_NAME, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
+import { approvalCardRespondVia, OE_COMMAND_NAME, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -133,9 +133,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
     }
 
     if (decision.kind === "input-click") {
-      const respondToApproval: ApprovalRespondFn = async (bareToken, response) => {
-        await (args.from(bareToken) as unknown as { respond: (r: readonly unknown[], o: unknown) => Promise<unknown> }).respond([response], {});
-      };
+      const respondToApproval: ApprovalRespondFn = approvalCardRespondVia(args.attachSession);
       const response = await handleApprovalCard(decision.interaction, respondToApproval, { waitUntil: args.waitUntil });
       if (response) return interactionJson(response);
     }

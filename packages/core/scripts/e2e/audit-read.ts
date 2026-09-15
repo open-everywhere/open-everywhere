@@ -11,16 +11,19 @@ export interface AuditWireEntry {
 
 export interface AuditQueryOpts {
   readonly sinceIso: string;
+  readonly untilIso?: string;
   readonly actions?: readonly string[];
   readonly platform?: string;
   readonly workspace?: string;
   readonly surface?: string;
   readonly principalId?: string;
   readonly limit?: number;
+  readonly timeoutMs?: number;
 }
 
 export function buildAuditQuery(opts: AuditQueryOpts): string {
   const params = new URLSearchParams({ since: opts.sinceIso });
+  if (opts.untilIso) params.set("until", opts.untilIso);
   if (opts.actions && opts.actions.length > 0) params.set("actions", opts.actions.join(","));
   if (opts.platform) params.set("platform", opts.platform);
   if (opts.workspace) params.set("workspace", opts.workspace);
@@ -30,18 +33,37 @@ export function buildAuditQuery(opts: AuditQueryOpts): string {
   return params.toString();
 }
 
-export async function fetchAudit(targetUrl: string, readToken: string, opts: AuditQueryOpts): Promise<readonly AuditWireEntry[]> {
+export interface AuditWindowRead {
+  readonly entries: readonly AuditWireEntry[];
+  readonly capped: boolean;
+  readonly scanTruncated: boolean;
+  readonly scanned?: number;
+  readonly maxLimit?: number;
+}
+
+export async function fetchAuditWindow(targetUrl: string, readToken: string, opts: AuditQueryOpts): Promise<AuditWindowRead> {
   const base = targetUrl.replace(/\/+$/, "");
   const res = await fetch(`${base}/control/v1/audit?${buildAuditQuery(opts)}`, {
     headers: { authorization: `Bearer ${readToken}`, accept: "application/json" },
+    ...(opts.timeoutMs !== undefined ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
   });
   if (!res.ok) {
     const detail = (await res.text().catch(() => "")).slice(0, 200);
     throw new Error(`GET /control/v1/audit → ${res.status}${detail ? ` (${detail})` : ""}`);
   }
-  const parsed = (await res.json()) as { entries?: AuditWireEntry[] };
+  const parsed = (await res.json()) as { entries?: AuditWireEntry[]; capped?: boolean; scanTruncated?: boolean; scanned?: number; maxLimit?: number };
   if (!Array.isArray(parsed.entries)) throw new Error("GET /control/v1/audit returned no entries array (malformed response)");
-  return parsed.entries;
+  return {
+    entries: parsed.entries,
+    capped: parsed.capped === true,
+    scanTruncated: parsed.scanTruncated === true,
+    ...(typeof parsed.scanned === "number" ? { scanned: parsed.scanned } : {}),
+    ...(typeof parsed.maxLimit === "number" ? { maxLimit: parsed.maxLimit } : {}),
+  };
+}
+
+export async function fetchAudit(targetUrl: string, readToken: string, opts: AuditQueryOpts): Promise<readonly AuditWireEntry[]> {
+  return (await fetchAuditWindow(targetUrl, readToken, opts)).entries;
 }
 
 export function hasAuditRow(

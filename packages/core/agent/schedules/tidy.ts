@@ -9,6 +9,7 @@ import { tidySilo, tidySiloJudged, type TidyResult, type JudgeStats } from "../m
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { guardProvenanceMarks } from "../memory/provenance-mark.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import { appendAudit } from "../audit/audit.js";
 import { sweepExpiredPendings } from "../approvals/flow.js";
 import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
@@ -136,14 +137,20 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       }
       if (result.changed && changedAfterGuard) {
         try {
-          const sha = await providerById(silo.provider).writeTier(
-            p,
+          const { version: sha } = await writeMemoryTier({
+            provider: providerById(silo.provider),
+            partition: p,
             tier,
-            guarded.files,
-            `dream:tidy [${tierId(tier)}] ${result.applied.length} safe op(s)`,
+            files: guarded.files,
+            message: `dream:tidy [${tierId(tier)}] ${result.applied.length} safe op(s)`,
             silo,
-            siloAccess(silo.name, domains),
-          );
+            access: siloAccess(silo.name, domains),
+            road: "dream-tidy",
+            platform: "memory",
+            workspace: silo.name,
+            principalId: DREAM_ACTOR,
+            extra: { ops: result.applied.length },
+          });
           changed++;
           await appendAudit({
             org,

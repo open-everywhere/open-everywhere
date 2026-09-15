@@ -278,6 +278,45 @@ export const isFillerAck = (text: string): boolean => {
   );
 };
 
+const SEAT_FENCE_QUIET_MS = 20_000;
+const SEAT_FENCE_WAIT = 440_000;
+const SEAT_FENCE_OWED_GRACE_MS = 420_000;
+
+async function fenceDmSeat(ctx: ScenarioContext, legId: string): Promise<void> {
+  const dm = ctx.dm;
+  if (!dm) return;
+  const fence = await dm.awaitSeatQuiet({
+    quietMs: SEAT_FENCE_QUIET_MS,
+    timeoutMs: SEAT_FENCE_WAIT,
+    owedGraceMs: SEAT_FENCE_OWED_GRACE_MS,
+    isInterim: (m) => isFillerAck(m.text),
+  });
+  ctx.gate(
+    fence.quiet,
+    `seat: the standing DM seat ${dm.channelId} settled before ${legId} drove it (verdict "${fence.verdict}" after ${Math.round(fence.waitedMs / 1000)}s — a seat still ` +
+      "answering a PREVIOUS leg posts that answer after this leg's anchor, where `awaitAnyReply` reads it as this leg's reply)",
+  );
+  let generation: string;
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    generation = "standing (no DATABASE_URL — no rotate)";
+  } else {
+    try {
+      const store = await wireNeonOperationalStore(dbUrl);
+      const org = process.env[ENV.org]?.trim() || "default";
+      const { teamId } = await dm.identity();
+      const rot = await rotateUnifiedWindow(store, org, dmAnchorDomain(`slack/${teamId}/${dm.channelId}`));
+      generation = `g${rot.mintedGeneration} (rotated)`;
+    } catch (e) {
+      generation = `standing (rotate failed: ${String(e instanceof Error ? e.message : e)})`;
+    }
+  }
+  ctx.log(
+    `seat: ${legId} drives DM ${dm.channelId} — drained to ts ${fence.anchorTs ?? "(empty)"} in ${Math.round(fence.waitedMs / 1000)}s` +
+      `${fence.abandoned ? " (the seat DECLINED to answer that message — past the owed grace, so it blocks nothing)" : ""}, conversation ${generation}`,
+  );
+}
+
 export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean {
   const nativeStarted = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION);
   if (
@@ -1297,10 +1336,11 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["discord", "slack", "syntheticDm"],
     surface: "discord",
     suite: "core",
-    timeoutMs: 600_000,
+    timeoutMs: 1_050_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-SPEND-DM-MASK");
       const discord = ctx.discord!;
       const { ts: dmTs } = await dm.post("quick one — what's 7*6? reply with just the number");
       await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -1330,7 +1370,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 660_000,
+    timeoutMs: 1_110_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
@@ -1341,6 +1381,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         return;
       }
+      await fenceDmSeat(ctx, "S-SPEND-REFUSAL-KEYS");
       const { teamId } = await dm.identity();
       const workspaceKey = `slack/${teamId}`;
       for (let i = 0; i < 5; i++) {
@@ -1438,10 +1479,11 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 240_000,
+    timeoutMs: 690_000,
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S13");
       const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const text = "quick one — what's 9*9? reply with just the number";
       const { ts: anchorTs } = await dm.post(text);
@@ -1466,6 +1508,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S14");
       const pub = ctx.slack!;
       const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const cheese = factToken("wensleydale");
@@ -1519,7 +1562,6 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const secondaryId = ctx.slackSecondaryUserId!;
       const claimant = ctx.slackSecondary!.withChannel(slack.channelId);
-      const runStart = new Date(Date.now() - 60_000).toISOString();
       if (!ctx.auditRead) {
         ctx.skip(
           "identity-link outcomes are only assertable over the audit trail (identity.link.* rows) — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. " +
@@ -1536,6 +1578,8 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
 
+      await fenceDmSeat(ctx, "S-LINK-SLACK");
+      const runStart = new Date(Date.now() - 5_000).toISOString();
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
       const mintReply = await dm.awaitAnyReply(mintTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -1661,6 +1705,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "J4");
       const { teamId } = await slack.identity();
 
       let opStore: OperationalStore | undefined;
@@ -1675,12 +1720,6 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log(
             `J4: rotated the ${domain} window → fresh generation ${rot.mintedGeneration} (OPE-344 — this run starts with no widen-ask/reject footprint from prior runs)`,
           );
-          const dmChannelId = ctx.dm?.channelId;
-          if (dmChannelId) {
-            const dmSurfaceKey = `slack/${teamId}/${dmChannelId}`;
-            const dmRot = await rotateUnifiedWindow(store, org, dmAnchorDomain(dmSurfaceKey));
-            ctx.log(`J4: rotated the DM seat for ${dmSurfaceKey} → generation ${dmRot.mintedGeneration} (fresh seat for leg 2's DM ask)`);
-          }
         } catch (e) {
           ctx.log(
             `J4: could not rotate the e2e-unified window (${String(e instanceof Error ? e.message : e)}) — proceeding on whatever generation the standing window is already on, which risks OPE-344's harness-footprint misread`,
@@ -4380,12 +4419,13 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 420_000,
+    timeoutMs: 870_000,
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
       const synthetic = ctx.synthetic!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      await fenceDmSeat(ctx, "S-DM-NOTION");
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
       const sinceIso = new Date(Date.now() - 60_000).toISOString();
@@ -4455,6 +4495,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       if (!auditRead) return;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      await fenceDmSeat(ctx, "S-PROVENANCE-DM");
       const { userId, teamId } = await ctx.slack!.identity();
       const runStart = new Date(Date.now() - 60_000).toISOString();
 
@@ -4624,6 +4665,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const synthetic = ctx.synthetic!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      await fenceDmSeat(ctx, "S-EVE-CARD");
       const { userId, teamId } = await ctx.slack!.identity();
       const token = factToken("evecard");
       const pageTitle = `OE eve-card ${token}`;
@@ -4777,6 +4819,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const dm = ctx.dm!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
+      await fenceDmSeat(ctx, "S-EVE-BRIDGE");
       const token = factToken("evebridge");
       const pageTitle = `OE eve-bridge ${token}`;
       const sinceIso = new Date().toISOString();
@@ -6072,7 +6115,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_350_000,
     judged: false,
     run: async (ctx) => {
       if (!ctx.auditRead) {
@@ -6082,6 +6125,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       const auditRead = ctx.auditRead!;
       const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-DM-STOP-GRANT");
       const slack = ctx.slack!;
       const { userId } = await slack.identity();
       const token = factToken("dmstop");

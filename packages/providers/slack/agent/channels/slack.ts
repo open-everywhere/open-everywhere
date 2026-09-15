@@ -42,6 +42,7 @@ import {
   tierId,
   getProvider,
   providerById,
+  writeMemoryTier,
   surfaceProvider,
   upsertUnderSection,
   bindFrom,
@@ -295,14 +296,31 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
         const mem = await provider.ensureTier(p, target.tier, target.silo, target.access);
         const date = new Date().toISOString().slice(0, 10);
         mem["MEMORY.md"] = upsertUnderSection(mem["MEMORY.md"] ?? "", "Standing instructions", instructionBullet(instructions, date));
-        await provider.writeTier(p, target.tier, mem, `adopt pinned instructions [${tierId(target.tier)}]`, target.silo, target.access);
+        await writeMemoryTier({
+          provider,
+          partition: p,
+          tier: target.tier,
+          files: mem,
+          message: `adopt pinned instructions [${tierId(target.tier)}]`,
+          silo: target.silo,
+          access: target.access,
+          road: "pinned-instructions",
+        });
         adopted = true;
       }
     } catch {
     }
 
     marker[ONBOARDED_MARKER] = new Date().toISOString();
-    await getProvider().writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
+    await writeMemoryTier({
+      provider: getProvider(),
+      partition: p,
+      tier: SURFACE,
+      files: marker,
+      message: `onboarding ${p.surfaceKey}`,
+      road: "onboarding-marker",
+      kind: "operational",
+    });
     try {
       await ctx.thread.post(introMessage(adopted, await botDisplayName()));
     } catch {

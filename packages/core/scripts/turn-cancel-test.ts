@@ -970,12 +970,7 @@ const NO_REQUESTER_BASELINE =
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {
-  const HITL_CLIENTS = [
-    "core/agent/channels/unified.ts",
-    "providers/discord/agent/channels/discord-front.ts",
-    "providers/notion/agent/channels/notion.ts",
-    "providers/slack/agent/channels/slack-front.ts",
-  ];
+  const HITL_CLIENTS = ["core/agent/channels/approval-card.ts", "core/agent/channels/unified.ts", "providers/notion/agent/channels/notion.ts"];
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
   const found: string[] = [];
   const walk = (dir: URL): void => {
@@ -1002,13 +997,12 @@ const NO_REQUESTER_BASELINE =
   ok(/\.respond\(\[\{ requestId: /.test(client), "…and that client really builds an inputResponses entry keyed on the parent-visible requestId");
   const native = readFileSync(new URL("../../providers/notion/agent/channels/notion.ts", import.meta.url), "utf8");
   ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and so does the NATIVE client, so the allow-list cannot pass by a client quietly becoming inert");
-  const tap = readFileSync(new URL("../../providers/slack/agent/channels/slack-front.ts", import.meta.url), "utf8");
-  ok(/args\.from\(bareToken\)[\s\S]{0,240}?\.respond\(\[response\]/.test(tap), "…and so does the TAP client, which addresses eve at the ticket's own bareToken");
-  const discordTap = readFileSync(new URL("../../providers/discord/agent/channels/discord-front.ts", import.meta.url), "utf8");
-  ok(
-    /args\.from\(bareToken\)[\s\S]{0,240}?\.respond\(\[response\]/.test(discordTap),
-    "…and so does the SECOND TAP client, which addresses eve at the ticket's own bareToken exactly as the Slack one does",
-  );
+  const tap = readFileSync(new URL("../agent/channels/approval-card.ts", import.meta.url), "utf8");
+  ok(/attach\(sessionId\)\.respond\(\[response\], NO_AUTH_REWRITE\)/.test(tap), "…and so does the TAP client, which addresses eve at the ticket's own durable SESSION id");
+  for (const front of ["../../providers/slack/agent/channels/slack-front.ts", "../../providers/discord/agent/channels/discord-front.ts"]) {
+    const src = readFileSync(new URL(front, import.meta.url), "utf8");
+    ok(/approvalCardRespondVia\(args\.attachSession\)/.test(src), `🔴 …and ${front.slice(front.indexOf("providers/"))} binds the tap delivery through core's one road, never a \`from()\` of its own`);
+  }
   const tapGate = readFileSync(new URL("../../providers/slack/agent/channels/slack-approval-card.ts", import.meta.url), "utf8");
   ok(
     /stillOutstanding: async \(bareToken, requestId\)[\s\S]{0,400}?readBridgedQuestion\(store, org, bareToken\)/.test(tapGate),

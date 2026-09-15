@@ -533,9 +533,11 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "linear.stand_down_lifted",
   "linear.stand_down_suppressed",
   "memory.admin_read",
+  "memory.claim_withheld",
   "memory.index_change",
   "memory.learn",
   "memory.observation",
+  "memory.operational_write",
   "memory.proposal",
   "memory.provenance_marked",
   "memory.settlement_flush",
@@ -680,6 +682,11 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
     file: "packages/core/agent/channels/approval-card.ts",
     expression: "outcome.kind === \"settled\" ? APPROVAL_CARD_SETTLED_AUDIT_ACTION : APPROVAL_CARD_REFUSED_AUDIT_ACTION",
     emits: ["input_response.card_settled", "input_response.card_refused"],
+  },
+  {
+    file: "packages/core/agent/memory/write-road.ts",
+    expression: 'kind === "operational" ? MEMORY_OPERATIONAL_WRITE_ACTION : MEMORY_WRITE_ACTION',
+    emits: ["memory.write", "memory.operational_write"],
   },
   {
     file: "packages/core/agent/approvals/ticket-actions.ts",

@@ -2,6 +2,7 @@ import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
 import { siloAccess } from "../memory/resolve.js";
 import { redactedBulletLabel, removeBulletLinesBySha } from "../memory/purge-redaction.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import type { Tier } from "../memory/store.js";
@@ -86,13 +87,17 @@ const memoryPurge: ActionKind<MemoryPurgeArgs> = {
         changed = true;
       }
       if (!changed) continue;
-      const commit = await provider.writeTier(
-        args.partition,
+      const { version: commit } = await writeMemoryTier({
+        provider,
+        partition: args.partition,
         tier,
         files,
-        `purge [${loc.tierId}]: ${shas.length} line(s), ${redactedBulletLabel(shas[0] ?? "")}`,
+        message: `purge [${loc.tierId}]: ${shas.length} line(s), ${redactedBulletLabel(shas[0] ?? "")}`,
         silo,
-      );
+        road: "purge",
+        principalId: decidedBy,
+        extra: { purgedLines: shas.length },
+      });
       if (commit) commits.push(commit);
     }
 

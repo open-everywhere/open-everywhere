@@ -108,6 +108,7 @@ export interface AuditFilter {
   readonly action?: string;
   readonly principalId?: string;
   readonly since?: string;
+  readonly until?: string;
   readonly limit?: number;
 }
 

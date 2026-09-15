@@ -2,6 +2,7 @@ import { readAudit as defaultReadAudit } from "../audit/audit.js";
 import type { AuditEntry } from "../audit/audit.js";
 import { siloTier, type Tier } from "./store.js";
 import { tierSandboxDir } from "./sandbox-sync.js";
+import { MEMORY_WRITE_ACTION } from "./write-road.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel, criteriaDomain, memoryRefs, type Domain } from "./domain.js";
 import { windowTopologyEnabled } from "../access/capabilities.js";
@@ -87,7 +88,7 @@ export async function renderMemoryDelta(opts: RenderMemoryDeltaOpts): Promise<st
   if (opts.silos.length === 0) return null;
   try {
     const read = opts.readAudit ?? defaultReadAudit;
-    const rows = await read({ org: opts.org, action: "memory.write", since: opts.sinceIso });
+    const rows = await read({ org: opts.org, action: MEMORY_WRITE_ACTION, since: opts.sinceIso });
     return formatMemoryDelta(selectChangedSilos(rows, opts));
   } catch {
     return null;

@@ -2501,6 +2501,100 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(hasAuditRow(rows, "notion.no_reply"), "hasAuditRow finds an audited-silence row by action");
   ok(hasAuditRow(rows, "notion.replied", (e) => (e.detail as { discussionId?: string }).discussionId === "d2"), "hasAuditRow supports a predicate (right-discussion reply-target gate)");
   ok(!hasAuditRow(rows, "notion.replied", (e) => (e.detail as { discussionId?: string }).discussionId === "d1"), "hasAuditRow rejects when the predicate misses (wrong discussion)");
+  const bounded = new URLSearchParams(buildAuditQuery({ sinceIso: "2026-03-13T23:30:00.000Z", untilIso: "2026-03-14T00:05:00.000Z" }));
+  ok(bounded.get("until") === "2026-03-14T00:05:00.000Z", "audit query carries the until upper bound");
+  ok(!bare.has("until"), "audit query omits until when the caller passes none (an open-ended read is unchanged)");
+}
+
+{
+  const { classifyWakeRow, selectWakeEvidence, captureWakeEvidence, renderLegWakeEvidence, WAKE_FAILED_ACTION } = await import(
+    "../packages/core/scripts/e2e/wake-evidence.js"
+  );
+  const { declaredAuditActions } = await import("@open-everywhere/core/agent/audit/action-registry.js");
+  const { WAKE_TURN_START_ACTION } = await import("@open-everywhere/core/agent/channels/wake-timing.js");
+  const row = (ts: string, platform: string, action: string, detail: Record<string, unknown> = {}): AuditWireEntry => ({
+    ts,
+    org: "acme",
+    platform,
+    workspace: "w1",
+    action,
+    detail,
+  });
+
+  ok(classifyWakeRow(row("t", "control", "wake.ingress")) === "ingress", "wake.ingress classifies as ingress");
+  ok(classifyWakeRow(row("t", "slack", WAKE_TURN_START_ACTION)) === "turn-start", "wake.turn_start classifies as turn-start");
+  ok(classifyWakeRow(row("t", "linear", "linear.dispatched")) === "dispatched", "<surface>.dispatched classifies as dispatched");
+  ok(classifyWakeRow(row("t", "slack", "reply.post")) === "reply", "reply.post classifies as reply");
+  ok(classifyWakeRow(row("t", "slack", "reply.post.failed")) === "reply", "reply.post.failed classifies as reply (a post that never landed)");
+  ok(classifyWakeRow(row("t", "github", WAKE_FAILED_ACTION)) === "wake-failed", "surface.wake_failed classifies as wake-failed");
+  ok(classifyWakeRow(row("t", "slack", "reply.post.failed", { status: 429 })) === "rate-limited", "a detail.status 429 classifies as rate-limited, not as a plain reply");
+  ok(classifyWakeRow(row("t", "slack", "reply.post.failed", { status: 500 })) === "reply", "NEGATIVE: another failure status stays an ordinary reply row");
+  ok(classifyWakeRow(row("t", "discord", "discord.dispatched", { retryAfter: 4 })) === "dispatched", "NEGATIVE: a detail.retryAfter is NOT a rate-limit discriminator — no product row writes it");
+  ok(classifyWakeRow(row("t", "slack", "slack.replied")) === null, "a row outside the six decisive kinds is not kept");
+  ok(classifyWakeRow(row("t", "control", "control.service_call")) === null, "the harness's own read row is not kept (negative control)");
+  ok(!declaredAuditActions().includes("slack.dispatched"), "the product declares no slack.dispatched row — a Slack leg's evidence must not rest on one");
+  ok(declaredAuditActions().includes(WAKE_TURN_START_ACTION), "wake.turn_start IS a declared action — the cross-surface 'a turn began' row");
+  ok(declaredAuditActions().includes(WAKE_FAILED_ACTION), "the pack's surface.wake_failed spelling IS a declared product action");
+
+  const window = { sinceIso: "2026-05-19T18:51:00.000Z", untilIso: "2026-05-19T19:26:00.000Z" };
+  const spanning = [
+    row("2026-05-19T18:50:59.999Z", "control", "wake.ingress", { wakeId: "before" }),
+    row("2026-05-19T19:00:00.000Z", "control", "wake.ingress", { wakeId: "inside" }),
+    row("2026-05-19T19:26:00.001Z", "control", "wake.ingress", { wakeId: "nextLeg" }),
+  ];
+  const picked = selectWakeEvidence(spanning, window);
+  ok(picked.length === 1 && picked[0].ids.wakeId === "inside", "selectWakeEvidence keeps only the rows inside the leg's window — the next leg's row is excluded");
+  const onBounds = selectWakeEvidence([row(window.sinceIso, "control", "wake.ingress", { wakeId: "lo" }), row(window.untilIso, "control", "wake.ingress", { wakeId: "hi" })], window);
+  ok(onBounds.length === 2, "selectWakeEvidence treats both window bounds as inclusive");
+  const ordered = selectWakeEvidence(
+    [row("2026-05-19T19:10:00.000Z", "linear", "linear.dispatched"), row("2026-05-19T19:00:00.000Z", "control", "wake.ingress")],
+    window,
+  );
+  ok(ordered.length === 2 && ordered[0].action === "wake.ingress", "selectWakeEvidence returns the leg's rows oldest-first");
+  const tainted = selectWakeEvidence([row("2026-05-19T19:00:00.000Z", "slack", "reply.post", { wakeId: "w1", chars: 42, text: "the secret answer", nested: { wakeId: "no" } })], window);
+  ok(tainted[0].ids.wakeId === "w1" && tainted[0].ids.chars === "42", "a kept row carries its allowlisted ids and counts");
+  ok(tainted[0].ids.text === undefined && tainted[0].ids.nested === undefined, "a kept row carries NO free text and no nested object (taint floor)");
+  const ingress = selectWakeEvidence(
+    [row("2026-05-19T19:00:00.000Z", "slack", "wake.ingress", { wakeId: "w1", deliveryId: "d1", ingressTs: "2026-05-19T19:00:00.000Z", vendorTs: "2026-05-19T18:59:58.000Z", vendorTsSource: "event_ts", vendorToIngressMs: 2000 })],
+    window,
+  );
+  ok(ingress[0].ids.vendorToIngressMs === "2000" && ingress[0].ids.ingressTs === "2026-05-19T19:00:00.000Z", "a captured ingress row carries the vendor→ingress latency reading");
+  ok(ingress[0].ids.deliveryId === "d1" && ingress[0].ids.vendorTsSource === "event_ts", "a captured ingress row carries the delivery id and the vendor clock's source");
+
+  const leg = { legId: "S-LINK-SLACK", surface: "slack", ...window, status: "RED" };
+  const READ_OPTS = { limit: 1000, timeoutMs: 20_000 };
+  const complete = await captureWakeEvidence(async () => ({ entries: [], capped: false, scanTruncated: false }), leg, READ_OPTS);
+  ok(complete.incomplete === false && complete.rows.length === 0 && complete.error === undefined, "a complete read of an empty window reports incomplete:false");
+  const completeLine = renderLegWakeEvidence(complete).join(" ");
+  ok(completeLine.includes("no decisive row is logged INSIDE it"), "a complete empty window claims only about the window it read");
+  ok(!completeLine.includes("the deployment wrote none"), "a complete empty window never claims the deployment wrote nothing");
+  const cappedRead = await captureWakeEvidence(async () => ({ entries: [], capped: true, scanTruncated: false }), leg, READ_OPTS);
+  ok(cappedRead.incomplete === true, "a CAPPED read reports incomplete:true even though it returned no rows");
+  ok(renderLegWakeEvidence(cappedRead).join(" ").includes("NOT evidence"), "an incomplete empty window renders as NOT evidence of absence");
+  const truncatedRead = await captureWakeEvidence(async () => ({ entries: [], capped: false, scanTruncated: true }), leg, READ_OPTS);
+  ok(truncatedRead.incomplete === true, "a TRUNCATED scan reports incomplete:true");
+
+  const failed = await captureWakeEvidence(async () => {
+    throw new Error("401 bad bearer");
+  }, leg, READ_OPTS);
+  ok(failed.error === "401 bad bearer" && failed.rows.length === 0 && failed.incomplete === true, "a failed read is recorded as an error, never thrown at the leg");
+  ok(renderLegWakeEvidence(failed).join(" ").includes("NOT CAPTURED"), "a failed capture renders as NOT CAPTURED, never as an absence");
+  const noReader = await captureWakeEvidence(undefined, leg, READ_OPTS);
+  ok(noReader.error !== undefined && noReader.incomplete === true, "no audit reader is an error on the record, not a silent empty capture");
+
+  let asked: { sinceIso: string; untilIso: string; limit: number; timeoutMs: number } | undefined;
+  const captured = await captureWakeEvidence(
+    async (opts) => {
+      asked = opts;
+      return { entries: spanning, capped: false, scanTruncated: false };
+    },
+    leg,
+    READ_OPTS,
+  );
+  ok(asked?.sinceIso === window.sinceIso && asked?.untilIso === window.untilIso && asked?.limit === 1000, "captureWakeEvidence reads the leg's own bounded window");
+  ok(asked?.timeoutMs === 20_000, "captureWakeEvidence bounds its own HTTP call — a hung deployment cannot stall every leg of the board");
+  ok(captured.rows.length === 1 && captured.windowRows === 3, "a capture keeps the decisive rows and records how many the window held");
+  ok(captured.status === "RED" && captured.legId === "S-LINK-SLACK", "a capture carries the leg's id and verdict, so a RED leg's rows need no second join");
 }
 
 {
@@ -2783,6 +2877,63 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
   const ordered = mergeBotMessagesAfter([bot("1000.5", "later")], [bot("999.9", "earlier")], "100.0", isBot);
   ok(ordered.map((m) => m.text).join(",") === "earlier,later", `merge: results are oldest-first by numeric ts; got ${JSON.stringify(ordered.map((m) => m.text))}`);
+}
+
+{
+  const { seatFenceStep } = await import("../packages/core/scripts/e2e/slack-driver.js");
+  const QUIET = 20_000;
+  const GRACE = 420_000;
+  const T0 = 1_760_000_000_000;
+  const slackTs = (atMs: number): string => (atMs / 1000).toFixed(6);
+  const step = (prev: unknown, newest: { ts: string; settles: boolean } | undefined, nowMs: number) =>
+    seatFenceStep({ prev: prev as never, newest, nowMs, quietMs: QUIET, owedGraceMs: GRACE });
+
+  const settledTs = slackTs(T0 - 1_000);
+  const first = step(undefined, { ts: settledTs, settles: true }, T0);
+  ok(first.verdict === "settling", `fence: the first poll of a settled seat is "settling", never "quiet"; got ${first.verdict}`);
+
+  const nearly = step(first.state, { ts: settledTs, settles: true }, T0 + QUIET - 1);
+  ok(nearly.verdict === "settling", `fence: one millisecond short of the window is still "settling"; got ${nearly.verdict}`);
+  const quiet = step(nearly.state, { ts: settledTs, settles: true }, T0 + QUIET);
+  ok(quiet.verdict === "quiet", `fence: the window elapsed with the newest ts unchanged ⇒ "quiet"; got ${quiet.verdict}`);
+
+  const askTs = slackTs(T0);
+  let owed = step(undefined, { ts: askTs, settles: false }, T0);
+  ok(owed.verdict === "owed", `fence: an unsettled newest message reads "owed"; got ${owed.verdict}`);
+  owed = step(owed.state, { ts: askTs, settles: false }, T0 + QUIET * 10);
+  ok(owed.verdict === "owed", `fence: ten quiet windows later it is STILL "owed" — waiting cannot settle a seat that owes an answer; got ${owed.verdict}`);
+  ok(!owed.abandoned, "fence: inside the grace, an unanswered message is a RUNNING turn, never an abandoned one");
+  const answerTs = slackTs(T0 + QUIET * 10);
+  const answered = step(owed.state, { ts: answerTs, settles: true }, T0 + QUIET * 10);
+  ok(answered.verdict === "settling", `fence: the answer landing restarts the window rather than passing on the elapsed time; got ${answered.verdict}`);
+  ok(
+    step(answered.state, { ts: answerTs, settles: true }, T0 + QUIET * 11).verdict === "quiet",
+    "fence: a full window after the answer, the seat is quiet",
+  );
+
+  const twoPosts = step(quiet.state, { ts: slackTs(T0 + QUIET), settles: true }, T0 + QUIET + 1);
+  ok(twoPosts.verdict === "settling", `fence: a newer settled message restarts the quiet window; got ${twoPosts.verdict}`);
+
+  const foldTs = slackTs(T0);
+  const ack = step(undefined, { ts: foldTs, settles: false }, T0);
+  ok(ack.verdict === "owed", "fence (fold): the interim ack is owed");
+  const folded = step(ack.state, { ts: foldTs, settles: true }, T0 + QUIET * 5);
+  ok(folded.verdict === "settling", `fence (fold): the SAME ts turning settled RESTARTS the window — not quiet on the first poll that sees it; got ${folded.verdict}`);
+  ok(
+    step(folded.state, { ts: foldTs, settles: true }, T0 + QUIET * 6).verdict === "quiet",
+    "fence (fold): …and quiet one full window after the FLIP, never one window after the ack",
+  );
+
+  const staleTs = slackTs(T0 - GRACE - 1_000);
+  const stale = step(undefined, { ts: staleTs, settles: false }, T0);
+  ok(stale.verdict === "settling" && stale.abandoned, `fence: an unsettled message older than the grace is ABANDONED, not in flight; got ${stale.verdict}/${stale.abandoned}`);
+  ok(step(stale.state, { ts: staleTs, settles: false }, T0 + QUIET).verdict === "quiet", "fence: an abandoned message lets the seat go quiet one window later");
+  const justInside = step(undefined, { ts: slackTs(T0 - GRACE + 1_000), settles: false }, T0);
+  ok(justInside.verdict === "owed" && !justInside.abandoned, "fence: one second inside the grace is still owed — the age bound is an edge, not a blanket escape");
+
+  const empty = step(undefined, undefined, T0);
+  ok(empty.verdict === "settling" && empty.state.newestTs === undefined, "fence: an empty conversation starts the window with no anchor ts");
+  ok(step(empty.state, undefined, T0 + QUIET).verdict === "quiet", "fence: an empty conversation goes quiet once the window elapses");
 }
 
 {

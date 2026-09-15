@@ -344,7 +344,9 @@ export {
   APPROVAL_CARD_SETTLED_AUDIT_ACTION,
   APPROVAL_CARD_REFUSED_AUDIT_ACTION,
   auditApprovalCardTap,
+  approvalCardRespondVia,
 } from "./channels/approval-card.js";
+export type { ApprovalCardInputResponse, ApprovalCardRespondFn, AttachSessionForRespond } from "./channels/approval-card.js";
 export type { ApprovalCardTicket, ApprovalClickRouting, ApprovalClickRefusal, ApprovalClickDeps, ApprovalClickAuditReason, ApprovalCardTapOutcome } from "./channels/approval-card.js";
 export { bareTokenFromEveContext } from "./channels/window-key.js";
 
@@ -716,6 +718,7 @@ export type { ReactionState } from "./status/status.js";
 
 export { SURFACE, tierId } from "./memory/store.js";
 export { getProvider, providerById } from "./memory/provider.js";
+export { writeMemoryTier, type MemoryWriteRequest, type MemoryWriteResult, type MemoryWriteRoad, type MemoryWriteKind } from "./memory/write-road.js";
 export { upsertUnderSection } from "./memory/markdown.js";
 export { planFor, surfaceProvider } from "./memory/resolve.js";
 

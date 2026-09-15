@@ -76,6 +76,7 @@ import {
   recordWakeTail,
   tailAuthorGrain,
   dmWindowRegistryKey,
+  approvalCardRespondVia,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   renderWakeMessage,
@@ -1006,9 +1007,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "input-click", "front-interactivity-branch")) {
         return fencedAck(new Response(null, { status: 200 }));
       }
-      const respondToApproval: ApprovalRespondFn = async (bareToken, response) => {
-        await (args.from(bareToken) as unknown as { respond: (r: readonly unknown[], o: unknown) => Promise<unknown> }).respond([response], {});
-      };
+      const respondToApproval: ApprovalRespondFn = approvalCardRespondVia(args.attachSession);
       const tap = await handleApprovalCardClick(decision.payload, respondToApproval);
       console.log(`[open-everywhere:slack] oe_input: tap — ${tap.reason}`);
       if (!tap.handled) return forwardNative();

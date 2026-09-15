@@ -43,12 +43,17 @@ import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, ski
 import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
 import { boardGaps, isDeclaredGap, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
-import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
+import { callUnifiedAudit, fetchAudit, fetchAuditWindow } from "./audit-read.js";
+import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type LegWakeEvidence } from "./wake-evidence.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
 import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
+
+const WAKE_EVIDENCE_LIMIT = 1000;
+const WAKE_EVIDENCE_TIMEOUT_MS = 20_000;
+const WAKE_EVIDENCE_SETTLE_MS = 3_000;
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -116,6 +121,10 @@ async function main(): Promise<void> {
   const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
   const auditRead = auditTarget && auditToken ? (opts: Parameters<typeof fetchAudit>[2]) => fetchAudit(auditTarget, auditToken, opts) : undefined;
+  const wakeAuditRead =
+    auditTarget && auditToken
+      ? (opts: { sinceIso: string; untilIso: string; limit: number; timeoutMs: number }) => fetchAuditWindow(auditTarget, auditToken, opts)
+      : undefined;
   const unifiedAuditCall =
     auditTarget && auditToken ? (query: string, token?: string) => callUnifiedAudit(auditTarget, token ?? auditToken, query) : undefined;
   const transcriptRead =
@@ -252,6 +261,7 @@ async function main(): Promise<void> {
   if (includeExpensive) console.log("expensive legs: included (--include-expensive / E2E_INCLUDE_EXPENSIVE=1)");
 
   const board: BoardLeg[] = [];
+  const wakeEvidence: LegWakeEvidence[] = [];
   const liveRun = report.available.size > 0;
 
   for (const scenario of SCENARIOS) {
@@ -402,6 +412,8 @@ async function main(): Promise<void> {
 
     const startedAt = Date.now();
     const secs = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+    const legSinceIso = new Date().toISOString();
+    const boardRow = board.length;
     try {
       await withTimeout(scenario.run(ctx), scenario.timeoutMs);
       passed++;
@@ -449,6 +461,18 @@ async function main(): Promise<void> {
         console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${message}`);
       }
     }
+
+    if (liveRun) {
+      const legStatus = board[boardRow]?.status ?? "UNKNOWN";
+      if (legStatus === "RED") await new Promise((resolve) => setTimeout(resolve, WAKE_EVIDENCE_SETTLE_MS));
+      const captured = await captureWakeEvidence(
+        wakeAuditRead,
+        { legId: scenario.id, surface: scenario.surface, sinceIso: legSinceIso, untilIso: new Date().toISOString(), status: legStatus },
+        { limit: WAKE_EVIDENCE_LIMIT, timeoutMs: WAKE_EVIDENCE_TIMEOUT_MS },
+      );
+      wakeEvidence.push(captured);
+      if (captured.status === "RED") for (const line of renderLegWakeEvidence(captured)) console.error(`  ${line}`);
+    }
   }
 
   const gaps = boardGaps(board);
@@ -461,6 +485,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log("");
+
+  const redEvidence = wakeEvidence.filter((e) => e.status === "RED");
+  if (redEvidence.length > 0) {
+    console.log("## RED leg wake evidence");
+    console.log("");
+    for (const e of redEvidence) for (const line of renderLegWakeEvidence(e)) console.log(line);
+    console.log("");
+  }
+  try {
+    const path = writeWakeEvidence(wakeEvidence, { startedAt: runStartedIso, ...(auditTarget ? { target: auditTarget } : {}) });
+    if (path) console.log(`e2e wake evidence: ${wakeEvidence.length} leg(s) written to ${path}`);
+    else if (liveRun) console.log("e2e wake evidence: nothing captured — no leg ran");
+  } catch (err) {
+    console.log(`e2e wake evidence: not written (${String(err instanceof Error ? err.message : err)})`);
+  }
 
   if (!liveRun) {
     console.log(`✓ e2e driver pack: skipped — no driver tokens (${skipped}/${SCENARIOS.length} scenarios dry-skipped)`);

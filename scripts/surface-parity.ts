@@ -88,12 +88,13 @@ const OWNED_THREAD_INGRESS_CALL = /\bawait\s+divertInboundToUnifiedWindow\s*\(/s
 const APPROVAL_TAP_ROAD_IMPORT =
   /import\s*(?:type\s*)?\{[^}]*\bresolveApprovalCardClick\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
 const APPROVAL_TAP_ROAD_CALL = /\bawait\s+resolveApprovalCardClick\s*\(/su;
+const APPROVAL_TAP_DELIVERY_CALL = /\bapprovalCardRespondVia\s*\(/su;
 
 function approvalTapRoadPlatforms(): ReadonlySet<string> {
   const wired = new Set<string>();
   for (const platform of PLATFORMS) {
     const dir = join(root, "packages", "providers", platform, "agent");
-    if (sourcesReference(dir, APPROVAL_TAP_ROAD_IMPORT) && sourcesReference(dir, APPROVAL_TAP_ROAD_CALL)) wired.add(platform);
+    if (sourcesReference(dir, APPROVAL_TAP_ROAD_IMPORT) && sourcesReference(dir, APPROVAL_TAP_ROAD_CALL) && sourcesReference(dir, APPROVAL_TAP_DELIVERY_CALL)) wired.add(platform);
   }
   return wired;
 }

@@ -1844,6 +1844,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.since);
         where.push(`ts >= $${params.length}`);
       }
+      if (filter.until !== undefined) {
+        params.push(filter.until);
+        where.push(`ts <= $${params.length}`);
+      }
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
       let limitClause = "";
       if (filter.limit && filter.limit > 0) {

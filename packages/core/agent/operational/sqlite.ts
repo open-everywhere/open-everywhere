@@ -1423,6 +1423,10 @@ export const sqliteOperationalStore: OperationalStore = {
       where.push("ts >= ?");
       params.push(filter.since);
     }
+    if (filter.until !== undefined) {
+      where.push("ts <= ?");
+      params.push(filter.until);
+    }
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const limit = filter.limit && filter.limit > 0 ? filter.limit : -1;
     const rows = getDb()

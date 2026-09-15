@@ -32,6 +32,7 @@ const {
   CONTROL_READ_TRANSCRIPT_PATH,
   CONTROL_READ_RUNTIME_SIGNAL_PATH,
   CONTROL_READ_MODEL_CALL_SESSIONS_PATH,
+  AUDIT_MAX_LIMIT,
 } = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
@@ -281,6 +282,73 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(
     single.scanTruncated === undefined && single.entries.length > 0 && single.entries.every((e) => e.action === "notion.no_reply"),
     "audit actions=<one> still narrows at the store and finds its rows behind 1000 newer ones",
+  );
+
+  const legSince = new Date(Date.now() - 1_800_000).toISOString();
+  const legUntil = new Date(Date.now() - 1_700_000).toISOString();
+  await appendAudit({ org: "acme", platform: "control", workspace: "ws1", ts: new Date(Date.now() - 1_750_000).toISOString(), action: "oe1886.in_window", detail: { wakeId: "inside" } });
+  await appendAudit({ org: "acme", platform: "control", workspace: "ws1", ts: new Date(Date.now() - 1_600_000).toISOString(), action: "oe1886.after_window", detail: { wakeId: "nextLeg" } });
+  const markers = "actions=oe1886.in_window,oe1886.after_window";
+
+  ok((await getAudit(`${sinceQ}&until=not-a-date`, SECRET)).status === 400, "audit: unparseable until → 400");
+  ok(
+    (await getAudit(`?since=${encodeURIComponent(legUntil)}&until=${encodeURIComponent(legSince)}`, SECRET)).status === 400,
+    "audit: until BEFORE since → 400 (an inverted window would answer empty and read as 'nothing happened')",
+  );
+
+  const unbounded = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&${markers}`, SECRET)).json()) as {
+    entries: { action: string }[];
+    scanTruncated?: boolean;
+  };
+  ok(
+    unbounded.entries.length === 0 && unbounded.scanTruncated === true,
+    "audit since-only over a busy log cannot reach a CLOSED window's rows (the live-run shape) and reports the truncation",
+  );
+  const boundedBody = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&until=${encodeURIComponent(legUntil)}&${markers}`, SECRET)).json()) as {
+    entries: { action: string; detail?: { wakeId?: string } }[];
+    scanTruncated?: boolean;
+  };
+  ok(boundedBody.entries.length === 1, "audit since+until returns the closed window's rows however many newer rows exist");
+  ok(boundedBody.entries[0].action === "oe1886.in_window", "audit until EXCLUDES a row written after the window closed");
+  ok(boundedBody.scanTruncated === undefined, "a bounded window's scan is not truncated — the window IS the page");
+  const inclusive = (await (
+    await getAudit(`?since=${encodeURIComponent(legSince)}&until=${encodeURIComponent(new Date(Date.now() - 1_750_000).toISOString())}&${markers}`, SECRET)
+  ).json()) as { entries: unknown[] };
+  ok(inclusive.entries.length === 1, "audit until is INCLUSIVE — a row stamped exactly on the bound is inside the window");
+
+  const offsetUntil = new Date(Date.parse(legSince) + 3_600_000).toISOString().replace("Z", "+01:00");
+  const offsetBody = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&until=${encodeURIComponent(offsetUntil)}&${markers}`, SECRET)).json()) as {
+    entries: { action: string }[];
+  };
+  ok(
+    offsetBody.entries.length === 0,
+    "audit normalises an OFFSET-form until to UTC before the text compare — a +01:00 bound does not silently widen the window by an hour",
+  );
+  const secondTs = "2026-05-11T11:31:00.500Z";
+  await appendAudit({ org: "acme", platform: "control", workspace: "ws1", ts: secondTs, action: "oe1886.second_precision", detail: {} });
+  const secondBody = (await (
+    await getAudit(`?since=${encodeURIComponent("2026-05-11T11:31:00Z")}&until=${encodeURIComponent("2026-05-11T11:32:00Z")}&actions=oe1886.second_precision`, SECRET)
+  ).json()) as { entries: { action: string }[] };
+  ok(
+    secondBody.entries.length === 1,
+    "audit normalises a SECOND-PRECISION since — a row at .500 inside that second is inside the window, not behind the bound",
+  );
+
+  const capNamed = (await (await getAudit(`${sinceQ}&limit=1`, SECRET)).json()) as { capped: boolean; maxLimit?: number };
+  ok(capNamed.capped === true && capNamed.maxLimit === AUDIT_MAX_LIMIT, "audit reports its row ceiling as maxLimit beside capped (single-action arm)");
+  const capNamedMulti = (await (await getAudit(`${sinceQ}&${markers}`, SECRET)).json()) as { maxLimit?: number };
+  ok(capNamedMulti.maxLimit === AUDIT_MAX_LIMIT, "audit reports maxLimit on the multi-action arm too");
+
+  const ordered = (await (await getAudit(`${sinceQ}&limit=50`, SECRET)).json()) as { entries: { ts: string }[] };
+  ok(ordered.entries.length > 1, "ordering check has rows to order");
+  ok(
+    ordered.entries.every((e, i) => i === 0 || ordered.entries[i - 1].ts >= e.ts),
+    "audit still serves rows NEWEST-first (ordering contract — the until bound narrows, it never reorders)",
+  );
+  const boundedSvc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
+  ok(
+    boundedSvc.some((e) => (e.detail as { until?: string }).until === legUntil),
+    "a bounded audit read is self-audited with the until bound it used",
   );
 }
 

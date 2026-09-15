@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
@@ -328,7 +329,27 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
         }
       }
       const deleted = deletionDetail(hostCurrent, files);
-      const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo, rm.access);
+      const { version: sha } = await writeMemoryTier({
+        provider,
+        partition: p,
+        tier: rm.tier,
+        files,
+        message: `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`,
+        silo: rm.silo,
+        access: rm.access,
+        road: "session-persist",
+        principalId,
+        turnId: currentTurnId(ctx),
+        extra: {
+          outcome,
+          sessionId,
+          request,
+          ...(continuationToken ? { continuationToken } : {}),
+          ...(conflicts.length ? { conflicts } : {}),
+          ...(rejected.length ? { refused: rejected.map((r) => r.rel) } : {}),
+          ...(deleted ?? {}),
+        },
+      });
       persisted += Object.keys(files).length;
       if (sha) changed++;
       try {
@@ -341,17 +362,6 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
           `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}` +
           `${rejected.length ? ` (REFUSED ${rejected.length} destructive overwrite(s): ${rejected.map((r) => r.rel).join(", ")})` : ""}`,
       );
-      if (sha) {
-        await appendAudit({
-          org: p.org,
-          platform: p.platform,
-          workspace: p.workspace,
-          surface: p.surface,
-          principalId,
-          action: "memory.write",
-          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}), ...(rejected.length ? { refused: rejected.map((r) => r.rel) } : {}), ...(deleted ?? {}) },
-        });
-      }
     } catch (err) {
       failed.push(rm.silo.name);
       log(`PERSIST FAILED for ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider} (other silos unaffected): ${String(err)}`);
@@ -754,16 +764,33 @@ function sameBaseline(a: Record<string, readonly string[]>, b: Record<string, re
   return true;
 }
 
-async function persistEditedTreeAtTurnEnd(ctx: MemoryPersistContext, where: string, edited: readonly string[]): Promise<void> {
+const unflushedEdits = defineState<{ tiers: readonly string[] }>("open-everywhere.memory.unflushedEdits", () => ({ tiers: [] }));
+
+async function persistEditedTreeAtTurnEnd(ctx: MemoryPersistContext, where: string, editedThisTurn: readonly string[]): Promise<void> {
+  let carried: readonly string[] = [];
+  try {
+    carried = unflushedEdits.get().tiers;
+  } catch {
+  }
+  const edited = [...new Set([...carried, ...editedThisTurn])];
   if (edited.length === 0) return;
   try {
     if (skipAsSubagentChild(ctx as unknown as HookContext, where)) return;
     const live = liveTaskIds();
     if (live.length > 0) {
       log(`${where}: tree edit in ${edited.join(", ")} NOT persisted — ${live.length} delegated task(s) may be mid-write [${live.join(", ")}]`);
+      try {
+        unflushedEdits.update(() => ({ tiers: edited }));
+      } catch (err) {
+        log(`${where}: 🔴 the skipped edit in ${edited.join(", ")} could NOT be remembered — no later turn re-offers it: ${String(err)}`);
+      }
       return;
     }
     const flush = await persistMemoryNow(ctx, "edited");
+    try {
+      unflushedEdits.update(() => ({ tiers: [] }));
+    } catch {
+    }
     log(`${where}: persisted this session's OWN edit to ${edited.join(", ")} — ${flush.persisted} file(s) across ${flush.silos} silo(s), ${flush.changed} changed`);
     if (flush.failed > 0) {
       log(`${where}: 🔴 ${flush.failed} silo(s) FAILED this persist — those bytes stay in the sandbox and NO later turn re-reports this edit (see the residual note)`);

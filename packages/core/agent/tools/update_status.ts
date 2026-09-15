@@ -4,7 +4,8 @@ import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { SURFACE } from "../memory/store.js";
 import { surfaceProvider } from "../memory/resolve.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, currentTurnId } from "../identity/binding.js";
+import { writeMemoryTier } from "../memory/write-road.js";
 import { writeTierFile } from "../memory/sandbox-sync.js";
 import { withMemoryRootWritable } from "../memory/root-fence.js";
 import { statusItemLine, upsertStatusItem, statusSeed, type WorkState } from "../status/status.js";
@@ -34,7 +35,18 @@ export default defineTool({
 
     const sandbox = await ctx.getSandbox();
     await withMemoryRootWritable(sandbox, () => writeTierFile(sandbox, SURFACE, "STATUS.md", updated));
-    await provider.writeTier(p, SURFACE, { "STATUS.md": updated }, `status [${input.state}] ${sessionId}`);
+    await writeMemoryTier({
+      provider,
+      partition: p,
+      tier: SURFACE,
+      files: { "STATUS.md": updated },
+      message: `status [${input.state}] ${sessionId}`,
+      road: "status-board",
+      kind: "operational",
+      principalId: bindFrom(ctx).principalId,
+      turnId: currentTurnId(ctx),
+      extra: { state: input.state, sessionId },
+    });
 
     return { updated: true, state: input.state };
   },

@@ -1,5 +1,5 @@
 import type { SlackDriverConfig } from "./env.js";
-import { pollUntil, sleep } from "./poll.js";
+import { backoffDelayMs, pollUntil, sleep } from "./poll.js";
 
 export interface SlackMessageAction {
   readonly actionId: string;
@@ -128,6 +128,43 @@ export function mergeBotMessagesAfter(
   return [...byTs.values()].sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
 }
 
+export interface SeatFenceState {
+  readonly newestTs: string | undefined;
+  readonly settles: boolean;
+  readonly seenAtMs: number;
+}
+
+export type SeatFenceVerdict = "owed" | "settling" | "quiet";
+
+export function seatFenceStep(input: {
+  readonly prev: SeatFenceState | undefined;
+  readonly newest: { readonly ts: string; readonly settles: boolean } | undefined;
+  readonly nowMs: number;
+  readonly quietMs: number;
+  readonly owedGraceMs: number;
+}): { readonly state: SeatFenceState; readonly verdict: SeatFenceVerdict; readonly abandoned: boolean } {
+  const newestTs = input.newest?.ts;
+  const abandoned =
+    input.newest !== undefined &&
+    !input.newest.settles &&
+    input.nowMs - Number.parseFloat(input.newest.ts) * 1000 > input.owedGraceMs;
+  const settles = input.newest === undefined || input.newest.settles || abandoned;
+  const state: SeatFenceState =
+    input.prev !== undefined && input.prev.newestTs === newestTs && input.prev.settles === settles
+      ? input.prev
+      : { newestTs, settles, seenAtMs: input.nowMs };
+  if (!settles) return { state, verdict: "owed", abandoned };
+  return { state, verdict: input.nowMs - state.seenAtMs >= input.quietMs ? "quiet" : "settling", abandoned };
+}
+
+export interface SeatFenceResult {
+  readonly quiet: boolean;
+  readonly verdict: SeatFenceVerdict;
+  readonly anchorTs: string | undefined;
+  readonly abandoned: boolean;
+  readonly waitedMs: number;
+}
+
 export class SlackDriver {
   private identityCache?: { userId: string; teamId: string };
 
@@ -236,6 +273,43 @@ export class SlackDriver {
     const json = await this.api("conversations.replies", { channel: this.cfg.channel, ts: rootTs, limit: "50" });
     const msgs = Array.isArray(json.messages) ? (json.messages as SlackApiMessage[]) : [];
     return msgs.map(toMessage);
+  }
+
+  async latest(limit = 1): Promise<readonly SlackMessage[]> {
+    const json = await this.api("conversations.history", { channel: this.cfg.channel, limit: String(limit) });
+    const msgs = Array.isArray(json.messages) ? (json.messages as SlackApiMessage[]) : [];
+    return msgs.map(toMessage);
+  }
+
+  async awaitSeatQuiet(opts: {
+    readonly quietMs: number;
+    readonly timeoutMs: number;
+    readonly owedGraceMs: number;
+    readonly isInterim?: (m: SlackMessage) => boolean;
+  }): Promise<SeatFenceResult> {
+    const started = Date.now();
+    let state: SeatFenceState | undefined;
+    let verdict: SeatFenceVerdict = "settling";
+    let abandoned = false;
+    for (let attempt = 0; ; attempt++) {
+      const [newest] = await this.latest(1);
+      const step = seatFenceStep({
+        prev: state,
+        newest: newest
+          ? { ts: newest.ts, settles: this.isBotReply(newest) && !(opts.isInterim?.(newest) ?? false) }
+          : undefined,
+        nowMs: Date.now(),
+        quietMs: opts.quietMs,
+        owedGraceMs: opts.owedGraceMs,
+      });
+      state = step.state;
+      verdict = step.verdict;
+      abandoned = step.abandoned;
+      const elapsed = Date.now() - started;
+      if (verdict === "quiet") return { quiet: true, verdict, anchorTs: state.newestTs, abandoned, waitedMs: elapsed };
+      if (elapsed >= opts.timeoutMs) return { quiet: false, verdict, anchorTs: state.newestTs, abandoned, waitedMs: elapsed };
+      await sleep(Math.min(backoffDelayMs(attempt), opts.timeoutMs - elapsed));
+    }
   }
 
   async history(oldestTs: string): Promise<readonly SlackMessage[]> {

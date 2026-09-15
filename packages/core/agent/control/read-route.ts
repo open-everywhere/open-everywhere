@@ -16,7 +16,7 @@ export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/tran
 export const CONTROL_READ_RUNTIME_SIGNAL_PATH = "/control/v1/runtime-signal";
 export const CONTROL_READ_MODEL_CALLS_PATH = "/control/v1/session/:sessionId/model-calls";
 export const CONTROL_READ_MODEL_CALL_SESSIONS_PATH = "/control/v1/model-calls/sessions";
-const AUDIT_MAX_LIMIT = 1000;
+export const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
 const TRANSCRIPT_MAX_LIMIT = 10000;
@@ -83,6 +83,17 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
   if (Number.isNaN(Date.parse(since))) {
     return json(400, { error: `since "${since}" is not a parseable ISO-8601 timestamp (e.g. "2026-07-11T12:00:00Z")` });
   }
+  const until = p("until");
+  if (until !== undefined) {
+    if (Number.isNaN(Date.parse(until))) {
+      return json(400, { error: `until "${until}" is not a parseable ISO-8601 timestamp (e.g. "2026-07-11T12:00:00Z")` });
+    }
+    if (Date.parse(until) < Date.parse(since)) {
+      return json(400, { error: `until "${until}" is before since "${since}" — the window is empty (both bounds are inclusive)` });
+    }
+  }
+  const sinceIso = new Date(since).toISOString();
+  const untilIso = until === undefined ? undefined : new Date(until).toISOString();
   const limitRaw = p("limit");
   let limit = AUDIT_DEFAULT_LIMIT;
   if (limitRaw !== undefined) {
@@ -96,7 +107,8 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     .filter(Boolean);
   const base: AuditFilter = {
     org: deploymentOrg(),
-    since,
+    since: sinceIso,
+    ...(untilIso !== undefined ? { until: untilIso } : {}),
     ...(p("platform") ? { platform: p("platform") } : {}),
     ...(p("workspace") ? { workspace: p("workspace") } : {}),
     ...(p("surface") ? { surface: p("surface") } : {}),
@@ -109,13 +121,13 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     workspace: "control",
     principalId: identity.principalId,
     action: "control.service_call",
-    detail: { service: identity.principalId, view: "audit", since, actions: actions.join(","), platform: base.platform ?? "", limit },
+    detail: { service: identity.principalId, view: "audit", since: sinceIso, until: untilIso ?? "", actions: actions.join(","), platform: base.platform ?? "", limit },
   });
 
   try {
     if (actions.length <= 1) {
       const view = await auditView({ ...base, ...(actions.length === 1 ? { action: actions[0] } : {}), limit });
-      return json(200, view);
+      return json(200, { ...view, maxLimit: AUDIT_MAX_LIMIT });
     }
     const view = await auditView({ ...base, limit: AUDIT_MAX_LIMIT });
     const scanTruncated = view.entries.length >= AUDIT_MAX_LIMIT;
@@ -126,6 +138,7 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
       filter: { ...view.filter, limit },
       entries: filtered,
       capped: filtered.length === limit || scanTruncated,
+      maxLimit: AUDIT_MAX_LIMIT,
       ...(scanTruncated ? { scanTruncated: true, scanned: view.entries.length } : {}),
     });
   } catch (err) {

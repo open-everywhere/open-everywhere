@@ -632,7 +632,10 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             resolveOrigin: async () => (wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null),
             post: async (origin, text) => {
               const actions = canPostUnifiedActions(origin.platform) ? approvalCardActions(question, cardTicket) : [];
-              if (actions.length === 0 || bare === undefined) return postUnifiedReply(origin, text);
+              if (actions.length > 0 && sessionId === undefined) {
+                console.warn(`[open-everywhere:unified] question bridge: the turn names no session id — posting ${question.toolName} as TEXT, because a tap would have nowhere to deliver`);
+              }
+              if (actions.length === 0 || bare === undefined || sessionId === undefined) return postUnifiedReply(origin, text);
               let cardContainerKey: string | undefined;
               try {
                 cardContainerKey = unifiedThreadRef(origin).channelKey;
@@ -640,6 +643,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
                 cardContainerKey = undefined;
               }
               const stored = await rememberApprovalCardTicket(getOperationalStore(), org, cardTicket, {
+                sessionId,
                 bareToken: bare,
                 ...(cardContainerKey ? { containerKey: cardContainerKey } : {}),
                 requestId: question.requestId,
