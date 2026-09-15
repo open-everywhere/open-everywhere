@@ -1,5 +1,5 @@
 import { defineState } from "eve/context";
-import { isSubagentChildContext, isUnifiedWindowContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { currentWindowToken, isSubagentChildContext, isUnifiedWindowContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { isWakeEnvelopeShaped, triggerAuthors } from "../channels/wake-envelope.js";
 
 export const OE_REQUESTER_ATTR = "oe_requester";
@@ -121,6 +121,14 @@ export function requesterSeatOf(ctx: BindableContext): RequesterSeat {
     return grain === "task" || grain === "thread" ? "worker" : "room";
   } catch {
     return "open";
+  }
+}
+
+export function seatServesManyAskers(ctx: BindableContext): boolean {
+  try {
+    return requesterSeatOf(ctx) !== "open" || currentWindowToken(ctx) !== undefined;
+  } catch {
+    return true;
   }
 }
 

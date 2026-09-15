@@ -1,5 +1,5 @@
 import { actingPrincipalId, currentTurnId, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
-import { requesterThisTurn } from "./requester-identity.js";
+import { requesterThisTurn, seatServesManyAskers } from "./requester-identity.js";
 import { rosterHasPrincipal } from "../identity/principal-key.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
@@ -9,11 +9,18 @@ export type AdminSubject = { readonly ok: true; readonly principalId: string } |
 const ADMIN_NO_ACTING_MESSAGE =
   "No verified sender id on this turn — no acting principal resolved, so there is no caller to check admin standing for.";
 
-function adminUnverifiedMessage(reason: string): string {
+const ADMIN_NO_RECORD_REASON =
+  "nothing on this turn recorded who asked, and this seat can be woken by more than one person, so the only id left is whichever delivery's auth the turn happens to carry";
+
+const COALESCED_TAIL = "Ask again on its own — in a thread, or once the other work in this room has settled.";
+
+const NO_RECORD_TAIL = "Ask again in a fresh message. If it keeps happening, tell an operator — this one is the host's to fix, not yours.";
+
+function adminUnverifiedMessage(reason: string, tail: string = COALESCED_TAIL): string {
   return (
     `this action needs to know who asked, and this turn cannot say: ${reason}. ` +
     "Admin standing is checked against the person who asked, never against whoever else this session was serving, so it is refused rather than guessed. " +
-    "Ask again on its own — in a thread, or once the other work in this room has settled."
+    tail
   );
 }
 
@@ -21,12 +28,14 @@ export function adminStandingSubject(binding: SurfaceBinding, ctx?: BindableCont
   const acting = actingPrincipalId(binding);
   if (!acting) return { ok: false, message: ADMIN_NO_ACTING_MESSAGE };
   const requester = requesterThisTurn(ctx === undefined ? undefined : currentTurnId(ctx));
+  if (requester.kind === "requester") return { ok: true, principalId: requester.principalId };
   if (requester.kind === "unverified") {
     const shared = sharedOrgAdminSubject(binding, acting, requester.candidates);
     if (shared !== undefined) return { ok: true, principalId: shared };
     return { ok: false, message: adminUnverifiedMessage(requester.reason) };
   }
-  return { ok: true, principalId: requester.kind === "requester" ? requester.principalId : acting };
+  if (ctx !== undefined && seatServesManyAskers(ctx)) return { ok: false, message: adminUnverifiedMessage(ADMIN_NO_RECORD_REASON, NO_RECORD_TAIL) };
+  return { ok: true, principalId: acting };
 }
 
 export function sharedOrgAdminSubject(

@@ -1802,10 +1802,10 @@ export const SCENARIOS: readonly Scenario[] = [
       try {
         const EXTRA_METHODS = ["PUT", "PATCH", "DELETE"] as const;
         const extraMethod = EXTRA_METHODS[Date.now() % EXTRA_METHODS.length];
-        const runNonce = `req-${Date.now().toString(36)}`;
+        const runNonce = `e2e-run-${Date.now().toString(36)}`;
         const { ts: askTs } = await slack.post(
           slack.mention(
-            `this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST and ${extraMethod} (both methods, one widen-connection request; internal ref ${runNonce})`,
+            `this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST and ${extraMethod} (both methods, one widen-connection request; this ask is from test run ${runNonce})`,
           ),
         );
         const card = await awaitCard(slack, askTs, FILE_REPLY_WAIT);
@@ -1874,10 +1874,10 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const DM_METHODS = ["POST", "PUT", "PATCH"] as const;
       const dmMethod = DM_METHODS[Date.now() % DM_METHODS.length];
-      const dmNonce = `req-${Date.now().toString(36)}`;
+      const dmNonce = `e2e-run-${Date.now().toString(36)}`;
       const dmAsk =
         "request access for THIS CHANNEL — a channel-scope access request (target=channel) to widen the e2e-fixture " +
-        `connection so it also allows ${dmMethod} (internal ref ${dmNonce}). I do not mean my own personal DM access and I do not mean a group grant: ` +
+        `connection so it also allows ${dmMethod} (this ask is from test run ${dmNonce}). I do not mean my own personal DM access and I do not mean a group grant: ` +
         "I mean the channel's own access.";
       const dmSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: dmTs } = await dm.post(dmAsk);
@@ -1907,10 +1907,10 @@ export const SCENARIOS: readonly Scenario[] = [
         "S18: out-of-vocabulary refusal quality",
       );
 
-      const personalNonce = `req-${Date.now().toString(36)}`;
+      const personalNonce = `e2e-run-${Date.now().toString(36)}`;
       const personalAsk =
         "now something different: widen MY OWN personal access — a target=personal request, for me, in this DM only " +
-        `(not this or any channel's access, and not a group). Add POST to a connection I have here (internal ref ${personalNonce}).`;
+        `(not this or any channel's access, and not a group). Add POST to a connection I have here (this ask is from test run ${personalNonce}).`;
       const personalSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: personalTs } = await dm.post(personalAsk);
       const personalReply = await dm.awaitAnyReply(personalTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { assertDomainsValid, defineDomain, type Domain } from "../agent/memory/domain.js";
 import { roleForBinding, resolveRole, requireOrgAdmin, requireDomainAdminOrOrg, adminControlRoles } from "../agent/access/roles.js";
-import { sharedOrgAdminSubject } from "../agent/access/admin-standing.js";
+import { adminStandingSubject, sharedOrgAdminSubject } from "../agent/access/admin-standing.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
@@ -213,4 +213,52 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
   ok(sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 an org pseudo-domain with no admins roster refuses every candidate set");
 }
 
-console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + the all-candidates serve rule + throw-message wording)\n`);
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_ADMIN"] })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  } as never);
+
+  const token = (grain: "standing" | "task"): string =>
+    grain === "standing" ? "oe-dom:d:win:slack_T1_C1:oe-sup:g1" : "oe-dom:d:win:t/slack_T1_C1/thr:oe-sup:g1";
+  const auth = (principalId: string, grain: "standing" | "task", extra: Record<string, string>) => ({
+    auth: { current: { principalId, principalType: "slack-user", attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", is_private: "false", oe_grain: grain, ...extra } } },
+  });
+
+  const hookCtx = (grain: "standing" | "task", principalId: string): BindableContext =>
+    ({ channel: { kind: "unified", continuationToken: token(grain) }, session: auth(principalId, grain, {}) }) as unknown as BindableContext;
+
+  const executeCtx = (grain: "standing" | "task", principalId: string): BindableContext =>
+    ({ session: auth(principalId, grain, { oe_window_token: token(grain) }) }) as unknown as BindableContext;
+
+  for (const grain of ["standing", "task"] as const) {
+    const seatName = grain === "standing" ? "room" : "worker";
+    for (const [shape, ctxOf] of [
+      ["hook", hookCtx],
+      ["execute", executeCtx],
+    ] as const) {
+      const subject = adminStandingSubject(bind({ principalId: "U_ORG_ADMIN" }), ctxOf(grain, "U_ORG_ADMIN"));
+      ok(!subject.ok, `🔴 a ${seatName} seat with NO requester record REFUSES on an ${shape}-shaped ctx — it never borrows the turn's own auth`);
+      ok(subject.ok === false && subject.message.includes("nothing on this turn recorded who asked"), `…and the ${shape} refusal names the MISSING record, not a coalesced turn`);
+      ok(subject.ok === false && !/isn't listed|requires an org admin/.test(subject.message), `…and never tells the caller they lack standing (they may well hold it)`);
+      ok(subject.ok === false && subject.message.includes("tell an operator"), `…and points at the operator, never at waiting for a room that will never settle`);
+
+      ok(resolveRole(ctxOf(grain, "U_ORG_ADMIN")).unverified !== undefined, `🔴 resolveRole on an ${shape}-shaped ${seatName} seat with no record reports UNVERIFIED, not a plain member`);
+      throwsWith(() => requireOrgAdmin(ctxOf(grain, "U_ORG_ADMIN")), "nothing on this turn recorded who asked", `requireOrgAdmin refuses an ${shape}-shaped ${seatName} seat with no record, as unverifiable`);
+    }
+  }
+
+  const open = adminStandingSubject(bind({ principalId: "U_ORG_ADMIN" }), ctxFor("U_ORG_ADMIN", "C1"));
+  ok(open.ok && open.principalId === "U_ORG_ADMIN", "🔴 NEGATIVE CONTROL: an `open` seat with no record still serves the acting principal — the seat is what changed, not the record");
+  ok(resolveRole(ctxFor("U_ORG_ADMIN", "C1")).isOrgAdmin, "…so an ordinary per-surface admin ctx keeps its org-admin bits");
+
+  const nobody = adminStandingSubject(bind({ principalId: undefined }), executeCtx("standing", ""));
+  ok(nobody.ok === false && /No verified sender id/.test(nobody.message), "a window seat with no acting principal keeps the NO-ACTING sentence, not the no-record one");
+}
+
+console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + the all-candidates serve rule + the no-record seat fence + throw-message wording)\n`);

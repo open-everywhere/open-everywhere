@@ -268,6 +268,26 @@ const dmExtras = { ...extras, scopeKey: "slack/T1/D_ASK", channelId: "D_ASK" } a
     "target=personal",
     "personal: asking for a CHANNEL grant from a DM refuses and names the personal target",
   );
+  await rejectsWith(
+    () =>
+      planRequestAccess(
+        dmBinding({ mode: "mpim", surface: "G_ASK", target: { channelId: "G_ASK" } }),
+        planCtxFor("C1"),
+        { kind: "grant-connector", connector: "linear", credential: "k" },
+        dmExtras,
+      ),
+    "ask again from that channel",
+    "channel: a CHANNEL grant asked from a GROUP DM refuses too — the rule is the binding's mode, not the DM surface",
+  );
+  {
+    const planned = planRequestAccess(
+      slackBinding({ surface: "C1", target: { channelId: "C1" } }),
+      planCtxFor("C1"),
+      { kind: "grant-connector", connector: "linear", credential: "k" },
+      extras,
+    );
+    ok(planned.delta.scope.level === "surface", "🔴 NEGATIVE CONTROL: the same ask FROM the channel plans a surface-level delta — the venue is what refuses, not the ask");
+  }
 }
 
 function groupCtx(name: string): PlanContext {
