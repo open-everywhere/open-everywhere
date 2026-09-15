@@ -30,7 +30,7 @@ import {
   type SurfaceParityDeclaration,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
-import { hasApprovalCardPath } from "@open-everywhere/core/agent/approvals/flow.js";
+import { hasApprovalCardPath, hasJudgeLiftNoticePath } from "@open-everywhere/core/agent/approvals/flow.js";
 
 import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 
@@ -183,6 +183,7 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["engaged-row-promotion", engagedRowPromotionPlatforms()],
   ["seat-context-admission", contextAdmissionPlatforms()],
   ["approval-card", setOf(PLATFORMS.filter((p) => hasApprovalCardPath(p)))],
+  ["judge-lift-notice", setOf(PLATFORMS.filter((p) => hasJudgeLiftNoticePath(p)))],
   ["search", setOf(registeredSearchConnectors())],
 ]);
 
@@ -224,6 +225,24 @@ if (problems.length > 0) {
         `${[...new Set(unknown.map((d) => d.surface))].join(", ")}.\n` +
         `  A driver entry is matched on its surface WHOLE, so such an entry admits nobody while reading as a vouch.\n` +
         `  Valid surfaces: ${PLATFORMS.join(", ")}. Fix the entry in agent/settings/settings.ts.`,
+    );
+    process.exit(1);
+  }
+}
+
+{
+  const posters = registeredPostArmPlatforms();
+  const quiet = posters.filter((p) => !hasJudgeLiftNoticePath(p));
+  if (quiet.length === 0) {
+    console.log(`✓ surface-parity: a judge-lift notice renders on all ${posters.length} post-arm platform(s) — no room this deployment can post into stays silent on a lifted act.`);
+  }
+  if (quiet.length > 0) {
+    console.error(
+      `✗ surface-parity: ${quiet.join(", ")} register a post arm but NO judge-lift notice render.\n` +
+        `  The approver chain can lower a gated verb: the frozen args execute with no approval card, and the\n` +
+        `  notice is the room's only trace of an act nobody was asked about. Register a JudgeLiftNoticePoster\n` +
+        `  (the button arm) or a SurfaceMessageOps transport (the shared text arm) from that bundle's\n` +
+        `  register<X>Provider(), or the room stays silent.`,
     );
     process.exit(1);
   }

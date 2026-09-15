@@ -10,7 +10,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
-import { surfaceMessageOps } from "../channels/surface-message-ops.js";
+import { postSurfaceText, surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import {
@@ -29,7 +29,7 @@ import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
-import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, type RenderedCard } from "./card.js";
+import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { describeDeclaredPermissionKind, sessionGrantKind } from "./session-grant.js";
 import {
@@ -187,6 +187,39 @@ export function registerJudgeLiftNoticePoster(platform: string, poster: JudgeLif
 
 export function judgeLiftNoticePosterFor(platform: string | undefined): JudgeLiftNoticePoster | undefined {
   return platform === undefined ? undefined : JUDGE_LIFT_NOTICE_POSTERS.get(platform);
+}
+
+export type JudgeLiftNoticeRender = "poster" | "blocks" | "text" | "none";
+
+export function judgeLiftNoticeRenderFor(platform: string | undefined): JudgeLiftNoticeRender {
+  if (platform === undefined) return "none";
+  if (JUDGE_LIFT_NOTICE_POSTERS.has(platform)) return "poster";
+  if (platform === "slack") return "blocks";
+  return surfaceMessageOps(platform) !== undefined ? "text" : "none";
+}
+
+export function hasJudgeLiftNoticePath(platform: string): boolean {
+  return judgeLiftNoticeRenderFor(platform) !== "none";
+}
+
+async function postJudgeLiftNotice(
+  platform: string | undefined,
+  post: PostFn,
+  input: { readonly kind: string; readonly scopeKey: string; readonly channelId: string; readonly threadTs?: string | null },
+  row: PendingActionRow,
+  summarize: () => readonly string[],
+  outcomeLine: string,
+): Promise<void> {
+  const render = judgeLiftNoticeRenderFor(platform);
+  if (render === "none") return;
+  if (swallowRoomOp(`a judge-lift notice for "${input.kind}" (${input.scopeKey})`)) return;
+  try {
+    const noticeLines = summarize();
+    if (render === "poster") await judgeLiftNoticePosterFor(platform)!(row, noticeLines, outcomeLine);
+    else if (render === "blocks") await postRenderedCard(post, input.channelId, input.threadTs, judgeLiftNoticeBlocks(row, noticeLines, outcomeLine));
+    else await postSurfaceText(platform!, { channelId: input.channelId, text: judgeLiftNoticeText(row, noticeLines, outcomeLine), threadTs: input.threadTs });
+  } catch {
+  }
 }
 
 export interface AutoApprovedOutcome {
@@ -459,14 +492,8 @@ export async function requestApproval(
       const minted = await store.addPendingActionIfAbsent(row);
       const outcome = await kindDef.execute(input.args, decidedBy);
       const noticePlatform = resolution.resolvedBy === "judge" ? platformOfScopeKey(input.postedTo) : undefined;
-      const noticePoster = judgeLiftNoticePosterFor(noticePlatform);
-      if ((noticePlatform === "slack" || noticePoster) && !swallowRoomOp(`a judge-lift notice for "${input.kind}" (${input.scopeKey})`)) {
-        try {
-          const noticeLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
-          if (noticePoster) await noticePoster(row, noticeLines, outcome);
-          else await postRenderedCard(deps.post ?? bridgeSlackForm, input.channelId, input.threadTs, judgeLiftNoticeBlocks(row, noticeLines, outcome));
-        } catch {
-        }
+      if (noticePlatform !== undefined) {
+        await postJudgeLiftNotice(noticePlatform, deps.post ?? bridgeSlackForm, input, row, () => withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args), outcome);
       }
       await appendAudit({
         ...whereFromScope(input.org, input.scopeKey),
@@ -572,10 +599,16 @@ export async function requestApproval(
   const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
 
   let messageTs = swallowRoomPost(`an approval-card post for "${input.kind}" (${input.scopeKey})`, "card");
+  let postFailure: string | undefined;
   if (messageTs === undefined) {
-    messageTs = deps.postCard
-      ? await deps.postCard(row, summaryLines)
-      : await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
+    if (deps.postCard) {
+      messageTs = await deps.postCard(row, summaryLines);
+      if (!messageTs) postFailure = "the surface's own card post did not land and reported no reason";
+    } else {
+      const posted = await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
+      messageTs = posted.ts;
+      postFailure = posted.error;
+    }
   }
 
   if (!messageTs) {
@@ -584,10 +617,14 @@ export async function requestApproval(
       ...whereFromScope(input.org, input.scopeKey),
       principalId: input.requestedBy,
       action: "approval.expired",
-      detail: { id: row.id, kind: input.kind, cause: "card_post_failed" },
+      detail: { id: row.id, kind: input.kind, cause: "card_post_failed", ...(postFailure ? { reason: postFailure } : {}) },
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "failed" });
-    throw new Error(`requestApproval: failed to post the approval card for "${input.kind}" (${input.scopeKey}) — marked expired, nothing is awaiting a click.`);
+    const reason = postFailure ?? "the surface refused the post";
+    throw Object.assign(
+      new Error(`requestApproval: failed to post the approval card for "${input.kind}" (${input.scopeKey}) — ${reason}; marked expired, nothing is awaiting a click.`),
+      { [CARD_POST_REASON_KEY]: reason },
+    );
   }
 
   await store.setPendingActionMessage(input.org, row.id, messageTs);
@@ -808,14 +845,25 @@ async function updateCardText(post: PostFn, channelId: string, ts: string | unde
   await post("chat.update", body.toString());
 }
 
-async function postRenderedCard(post: PostFn, channelId: string, threadTs: string | null | undefined, card: RenderedCard): Promise<string | undefined> {
+async function postRenderedCard(post: PostFn, channelId: string, threadTs: string | null | undefined, card: RenderedCard): Promise<{ ts?: string; error?: string }> {
   const body = new URLSearchParams();
   body.set("channel", channelId);
   if (threadTs) body.set("thread_ts", threadTs);
   body.set("text", card.text);
   body.set("blocks", JSON.stringify(card.blocks));
   const res = await post("chat.postMessage", body.toString());
-  return res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
+  if (res?.ok === true && typeof res.ts === "string") return { ts: res.ts };
+  if (res && typeof res["error"] === "string") return { error: res["error"] as string };
+  if (!res) return { error: "no bot token is configured, or the request never reached the surface" };
+  return { error: "the surface accepted the post but named no message id" };
+}
+
+const CARD_POST_REASON_KEY = "oeCardPostReason";
+
+export function cardPostFailureReason(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const reason = (err as Record<string, unknown>)[CARD_POST_REASON_KEY];
+  return typeof reason === "string" ? reason : undefined;
 }
 
 async function postThreadNote(post: PostFn, channelId: string, threadTs: string | undefined, text: string): Promise<void> {

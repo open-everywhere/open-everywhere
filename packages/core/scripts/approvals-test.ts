@@ -21,7 +21,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { readAudit } = await import("../agent/audit/audit.js");
 const { SESSION_GRANT_RELEASED_ACTION } = await import("../agent/approvals/flow.js");
 const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings, MAX_SESSION_GRANT_RELEASES } = await import("../agent/approvals/flow.js");
-const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks } = await import("../agent/approvals/card.js");
+const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
@@ -141,6 +141,15 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(!noticeIds.some((i) => i.includes("approve") || i.includes("reject")), "🔴 the notice is a REVIEW surface, never a decision one — no approve/reject on an act that already ran");
   ok(JSON.stringify(notice.blocks).includes("already run"), "the notice says the action has already run — it never implies a click could undo it");
   ok(JSON.stringify(notice.blocks).includes("spend limit set"), "the notice relays the executor's own outcome line");
+
+  const noticeText = judgeLiftNoticeText({ ...r, status: "approved", decidedBy: "chain:judge" }, ["line one"], "spend limit set");
+  ok(noticeText.includes("Ran without asking: spend.set"), "judgeLiftNoticeText names the kind, as the Block Kit header does");
+  ok(noticeText.includes("line one"), "judgeLiftNoticeText carries the code-rendered summary");
+  ok(noticeText.includes("spend limit set"), "judgeLiftNoticeText relays the executor's own outcome line");
+  ok(noticeText.includes("already run"), "judgeLiftNoticeText says the action has already run");
+  ok(noticeText.includes("p-1"), "🔴 judgeLiftNoticeText quotes the wedge row id — the only handle its instruction can give a reviewer");
+  ok(/cannot carry the "This should not have run" button/.test(noticeText), "🔴 judgeLiftNoticeText spells the overrule out, because a tap cannot land here");
+  ok(!noticeText.includes(OE_APPROVAL_PREFIX), "🔴 judgeLiftNoticeText carries NO action_id — it must never imply a tap route this surface does not route");
 }
 
 {

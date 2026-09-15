@@ -26,7 +26,8 @@ const {
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
-const { requestApproval, resolveApprovalClick, registerJudgeLiftNoticePoster } = await import("../agent/approvals/flow.js");
+const { requestApproval, resolveApprovalClick, registerJudgeLiftNoticePoster, judgeLiftNoticeRenderFor, hasJudgeLiftNoticePath } = await import("../agent/approvals/flow.js");
+const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
 const { contradictJudgeAllow, disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { recordApprovalJudgeContradiction } = await import("../agent/access/approval-judge.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -765,7 +766,52 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     { post },
   );
   ok(unregistered.autoApproved?.resolvedBy === "judge", "router: the control lift happened too");
-  ok(posts.length === 0 && noticed2.length === 0, "router: an unregistered platform gets NO notice — never Slack's blocks on a foreign surface");
+  ok(posts.length === 0 && noticed2.length === 0, "router: a platform with NO poster and NO text transport gets nothing — never Slack's blocks on a foreign surface");
+
+  const textPosts: { channelId: string; text: string }[] = [];
+  registerSurfaceMessageOps({
+    platform: "textsurface",
+    postText: async (channelId, text) => {
+      textPosts.push({ channelId, text });
+      return "m-1";
+    },
+    editMessage: async () => undefined,
+  });
+  ok(judgeLiftNoticeRenderFor("textsurface") === "text", "text arm: a transport with no registered poster resolves the TEXT render");
+  ok(judgeLiftNoticeRenderFor("testsurface") === "poster", "text arm: a registered poster still outranks the text render");
+  ok(judgeLiftNoticeRenderFor("slack") === "blocks", "text arm: Slack still takes the built-in Block Kit render");
+  ok(judgeLiftNoticeRenderFor("nosuchsurface") === "none" && !hasJudgeLiftNoticePath("nosuchsurface"), "text arm: a surface with neither is `none` — the one silence left, and it is declarable");
+  posts.length = 0;
+  noticed2.length = 0;
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const texted = await requestApproval(
+    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 127_000 }, postedTo: "textsurface/W1/C_ROOM" },
+    { post },
+  );
+  ok(texted.autoApproved?.resolvedBy === "judge", "text arm: the judge lifted on the text-only surface too");
+  ok(textPosts.length === 1, "text arm: the shared road posts ONE notice through the surface's own text transport");
+  ok(textPosts[0]!.channelId === spendInput.channelId, "text arm: it lands in the room the card would have gone to, never a guessed one");
+  ok(textPosts[0]!.text.includes(`Ran without asking: ${spendInput.kind}`), "text arm: it says the act ran without asking, naming the kind");
+  ok(textPosts[0]!.text.includes("already run"), "text arm: it never implies the act is still pending");
+  ok(textPosts[0]!.text.includes(texted.id), "text arm: 🔴 it quotes THIS wedge row's id — the join a reviewer needs, and the contradict instruction's only handle");
+  ok(/cannot carry the "This should not have run" button/.test(textPosts[0]!.text), "text arm: 🔴 the overrule is spelled out in words, because no button can render here");
+  ok(!textPosts[0]!.text.includes("oe_approval:"), "text arm: it carries no action_id — a tap route that does not exist is never implied");
+  ok(posts.length === 0 && noticed2.length === 0, "text arm: neither the Slack blocks nor the registered poster also fired — ONE road, one render");
+
+  posts.length = 0;
+  textPosts.length = 0;
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: the judge wants a human — only CONFIG lifts this" });
+  const textConfigLift = await requestApproval(
+    { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: 128_000 }, postedTo: "textsurface/W1/C_ROOM" },
+    { post },
+  );
+  ok(textConfigLift.autoApproved?.resolvedBy === "registry", "text arm control: a CONFIG lift lowered the same verb through the same branch");
+  ok(textPosts.length === 0, "🔴 text arm control: it posts NOTHING — a judge notice for a lift no judge made would be a false attribution");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
 
   posts.length = 0;
   noticed2.length = 0;

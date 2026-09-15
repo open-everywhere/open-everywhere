@@ -158,10 +158,14 @@ const green = gate("--check");
 ok(green.code === 0, `the real gate passes on the tracked tree (exit ${green.code})\n${green.out}`);
 ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on a green run");
 ok(/\d+ capabilities × 6 surfaces/.test(green.out), "…with the cell count");
-ok(/10 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
+ok(/11 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
 ok(
   /5 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion, unified-action-plane, seat-context-admission\) against the bundle sources/.test(green.out),
   "…and names the five that read the bundle sources, not registries alone",
+);
+ok(
+  /judge-lift notice renders on all 6 post-arm platform\(s\)/.test(green.out),
+  "the gate states the judge-lift totality claim it checked, and over all six post-arm platforms",
 );
 
 {

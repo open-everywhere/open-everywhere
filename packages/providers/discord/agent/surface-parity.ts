@@ -22,6 +22,7 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-catch-up": "supported",
   "seat-context-admission": "supported",
   "approval-card": "supported",
+  "judge-lift-notice": "supported",
   "name-drop-mention": "supported",
   "message-edit-wake": { unsupported: "the gateway relay subscribes to MessageCreate only — an edit raises MessageUpdate, which nothing forwards" },
   threads: { supported: "a thread is itself a channel" },

@@ -44,6 +44,8 @@ const {
   sessionUsage,
   requireSessionContinuation,
   checkpointCardLines,
+  checkpointBlockMessage,
+  checkpointCardFailureClass,
 } = await import("../agent/spend/checkpoint.js");
 
 assertSpendCheckpointsValid({});
@@ -468,6 +470,94 @@ passed++;
     const sid = "sess-fire-gone";
     await seed(sid, 5000);
     await throws(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "purge_memory"), "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
+  }
+}
+
+{
+  const msgPosted = checkpointBlockMessage("crossed", "open_pull_request", "posted");
+  const msgAsked = checkpointBlockMessage("crossed", "open_pull_request", "already-asked");
+  const msgFailed = checkpointBlockMessage("crossed", "open_pull_request", "post-failed", "rate limited");
+  ok(msgPosted.includes("confirms on the card just posted"), "copy: a card that really posted still points at it (unchanged)");
+  ok(msgAsked.includes("confirms continuing") && !msgAsked.includes("card just posted"), "copy: a repeat block with a live ask marker still says 'confirms continuing' (unchanged)");
+  ok(!msgFailed.includes("card just posted"), "🔴 copy: a FAILED post never claims a card was posted");
+  ok(msgFailed.includes("could NOT be posted"), "copy: it says plainly that the card did not reach the room");
+  ok(msgFailed.includes("rate limited"), "copy: it names the reason CLASS it was handed");
+  ok(msgFailed.includes("confirm directly"), "copy: it tells the member how to confirm without a card");
+  ok(msgFailed.includes("posted again on the next consequential attempt"), "copy: …and that the agent retries, which is what the un-set ask marker really does");
+
+  ok(checkpointCardFailureClass(new Error("ratelimited")) === "rate limited", "class: a rate-limit refusal");
+  ok(checkpointCardFailureClass(new Error("invalid_auth")) === "the credential was refused", "class: a dead token");
+  ok(checkpointCardFailureClass(new Error("is_archived")) === "the room is unreachable", "class: an archived channel");
+  ok(
+    checkpointCardFailureClass(new Error("no bot token is configured, or the request never reached the surface")) === "no credential is configured, or the surface could not be reached",
+    "class: 🔴 the composite cause names BOTH — reading it as a dead token sends an operator to rotate a credential that is fine",
+  );
+  ok(checkpointCardFailureClass(new Error("something nobody has seen")) === "the surface reported no reason this deployment recognises", "class: an unrecognised reason says so, never guesses");
+
+  const roomNamed = new Error('requestApproval: failed to post the approval card for "session.checkpoint" (slack/T1/is_archived) — ratelimited; marked expired.');
+  (roomNamed as unknown as Record<string, unknown>).oeCardPostReason = "ratelimited";
+  ok(checkpointCardFailureClass(roomNamed) === "rate limited", "class: the attached reason wins over a scope key that reads like one");
+  const noReason = new Error("a throw from somewhere other than the card post");
+  ok(checkpointCardFailureClass(noReason) === "the surface reported no reason this deployment recognises", "class: an error carrying no attached reason degrades to the message, honestly");
+
+  const spoof = process.env.OE_EGRESS_SPOOF;
+  delete process.env.OE_EGRESS_SPOOF;
+  try {
+    const sid = "sess-card-post-failed";
+    await seed(sid, 2000);
+    const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
+    let thrown = "";
+    try {
+      await requireSessionContinuation(ctxFor(sid), "open_pull_request");
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    ok(thrown.length > 0, "failed post: the action is still held — a card that did not post never widens what may run");
+    ok(!thrown.includes("card just posted"), "🔴 failed post: the thrown message does NOT tell the member to approve a card that does not exist");
+    ok(thrown.includes("could NOT be posted"), "failed post: it says the card did not reach the room");
+    ok(thrown.includes("confirm directly"), "failed post: it tells the member how to confirm another way");
+    ok(thrown.includes("no credential is configured, or the surface could not be reached"), "failed post: it names the reason class the transport reported");
+
+    const trips = (await readAudit({ org: "default", limit: 1000 })).filter(
+      (a) => a.action === "checkpoint.trip" && (a.detail as { note?: unknown } | undefined)?.note === "card post failed",
+    );
+    ok(trips.length === 1, "failed post: the failure writes its own checkpoint.trip row");
+    const detail = trips[0]!.detail as { carded?: unknown; reasonClass?: unknown };
+    ok(detail.carded === false, "failed post: the row records carded:false, as it always did");
+    ok(detail.reasonClass === "no credential is configured, or the surface could not be reached", "🔴 failed post: the row carries the SAME reason class the sentence names — one answer, not two");
+
+    const asked = await store.getSessionApproval("default", sid, CHECKPOINT_ASK_MEMO, new Date().toISOString());
+    ok(asked === null, "failed post: no ask marker is written, so the card really is retried next time");
+    const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
+    ok(pendingAfter === pendingBefore, "failed post: the unseeable pending was expired rather than left awaiting a click");
+  } finally {
+    if (spoof !== undefined) process.env.OE_EGRESS_SPOOF = spoof;
+  }
+
+  {
+    const sid = "sess-marker-write-failed";
+    await seed(sid, 2000);
+    const realSet = store.setSessionApproval.bind(store);
+    (store as unknown as Record<string, unknown>).setSessionApproval = async () => {
+      throw new Error("the ask marker could not be written");
+    };
+    let thrown = "";
+    try {
+      await requireSessionContinuation(ctxFor(sid), "open_pull_request");
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    } finally {
+      (store as unknown as Record<string, unknown>).setSessionApproval = realSet;
+    }
+    ok(thrown.includes("confirms on the card just posted"), "🔴 marker write failed: the card DID land, so the message still points at it");
+    ok(!thrown.includes("could NOT be posted"), "marker write failed: it never calls a delivered card undelivered");
+    const rows = (await readAudit({ org: "default", limit: 1000 })).filter(
+      (a) => a.action === "checkpoint.trip" && (a.detail as { note?: unknown } | undefined)?.note === "ask marker not recorded",
+    );
+    ok(rows.length === 1, "marker write failed: it writes its own row, naming what was lost");
+    ok((rows[0]!.detail as { carded?: unknown }).carded === true, "marker write failed: the row says carded:true — the record agrees with the sentence");
+    const asked = await store.getSessionApproval("default", sid, CHECKPOINT_ASK_MEMO, new Date().toISOString());
+    ok(asked === null, "marker write failed: no marker exists, so the next attempt cards again — a duplicate card, never a missing one");
   }
 }
 

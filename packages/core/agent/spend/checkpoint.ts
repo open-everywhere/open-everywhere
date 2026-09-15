@@ -9,7 +9,7 @@ import { resolveAssumedModel, rowCostUsd } from "./reporting.js";
 import { getConfig } from "../access/config.js";
 import { domainNameForScope } from "./caps.js";
 import { auditToolAction } from "../audit/tool-action.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, cardPostFailureReason } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { approvalPostDeps, hasApprovalCardPath } from "../tools/set_spend_limit.js";
 import { routineMarker } from "../routines/routine.js";
@@ -244,13 +244,32 @@ export function checkpointCardLines(plan: Extract<CheckpointPlan, { decision: "b
   return lines;
 }
 
-function blockMessage(reason: string, toolName: string, carded: boolean): string {
-  return (
-    `Paused: ${reason}. Running \`${toolName}\` is a consequential action, so it's held until a member ` +
-    `${carded ? "confirms on the card just posted" : "confirms continuing"} for this session. You can still ` +
-    `read and reply in the meantime — do that, or tell the user you're waiting on a "keep going?" confirmation. ` +
-    `Do NOT retry \`${toolName}\` until someone approves.`
-  );
+export type CheckpointCardState =
+  | "posted"
+  | "post-failed"
+  | "already-asked";
+
+export function checkpointCardFailureClass(err: unknown): string {
+  const text = (cardPostFailureReason(err) ?? (err instanceof Error ? err.message : String(err))).toLowerCase();
+  if (/no bot token is configured/.test(text)) return "no credential is configured, or the surface could not be reached";
+  if (/rate.?limit|ratelimited|too many requests|slow down/.test(text)) return "rate limited";
+  if (/invalid_auth|not_authed|token_revoked|token_expired|account_inactive|unauthorized|forbidden/.test(text)) return "the credential was refused";
+  if (/channel_not_found|is_archived|not_in_channel|channel_is_archived|no surface message transport/.test(text)) return "the room is unreachable";
+  if (/named no message id/.test(text)) return "the surface accepted the post but named no card";
+  return "the surface reported no reason this deployment recognises";
+}
+
+export function checkpointBlockMessage(reason: string, toolName: string, card: CheckpointCardState, failureClass?: string): string {
+  const head = `Paused: ${reason}. Running \`${toolName}\` is a consequential action, so it's held until a member `;
+  const tail = `You can still read and reply in the meantime — do that, or tell the user you're waiting on a "keep going?" confirmation. Do NOT retry \`${toolName}\` until someone approves.`;
+  if (card === "post-failed") {
+    return (
+      `${head}confirms continuing for this session. The confirmation card could NOT be posted to this room ` +
+      `(${failureClass ?? "reason not reported by the surface"}), so nobody has been shown one — tell the user that, and ask them to ` +
+      `confirm directly instead of looking for a card. The card is posted again on the next consequential attempt. ${tail}`
+    );
+  }
+  return `${head}${card === "posted" ? "confirms on the card just posted" : "confirms continuing"} for this session. ${tail}`;
 }
 
 export async function requireSessionContinuation(ctx: BindableContext, toolName: string): Promise<void> {
@@ -286,6 +305,8 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
   const askedAfterApproval = askRow !== null && (plan.approvedAt === undefined || Date.parse(askRow.createdAt) > Date.parse(plan.approvedAt));
   const alreadyAsked = askedAfterApproval ? askRow : null;
   const scopeLabel = alreadyAsked ? undefined : await friendlyScopeLabel(plan.surfaceKey);
+  let cardState: CheckpointCardState = alreadyAsked ? "already-asked" : "post-failed";
+  let failureClass: string | undefined;
   if (!alreadyAsked) {
     try {
       await requestApproval(
@@ -303,12 +324,19 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
         },
         approvalPostDeps(binding.platform),
       );
+      cardState = "posted";
       await store.setSessionApproval({ org: plan.org, sessionId: plan.memoKey, kind: CHECKPOINT_ASK_MEMO, grantedBy: requestedBy!, createdAt: nowIso, expiresAt });
       await auditToolAction(ctx, "checkpoint.trip", { tool: toolName, carded: true, reason: plan.reason });
     } catch (err) {
-      console.warn(`[open-everywhere:checkpoint] could not post checkpoint card for "${toolName}": ${String(err)}`);
-      await auditToolAction(ctx, "checkpoint.trip", { tool: toolName, carded: false, reason: plan.reason, note: "card post failed" });
+      if (cardState === "posted") {
+        console.warn(`[open-everywhere:checkpoint] posted the checkpoint card for "${toolName}" but did not record the ask marker: ${String(err)}`);
+        await auditToolAction(ctx, "checkpoint.trip", { tool: toolName, carded: true, reason: plan.reason, note: "ask marker not recorded" });
+      } else {
+        failureClass = checkpointCardFailureClass(err);
+        console.warn(`[open-everywhere:checkpoint] could not post checkpoint card for "${toolName}": ${String(err)}`);
+        await auditToolAction(ctx, "checkpoint.trip", { tool: toolName, carded: false, reason: plan.reason, note: "card post failed", reasonClass: failureClass });
+      }
     }
   }
-  throw new Error(blockMessage(plan.reason, toolName, !alreadyAsked));
+  throw new Error(checkpointBlockMessage(plan.reason, toolName, cardState, failureClass));
 }

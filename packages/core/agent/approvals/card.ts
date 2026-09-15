@@ -83,6 +83,15 @@ export function judgeLiftNoticeBlocks(row: PendingActionRow, summaryLines: reado
   return { blocks, text: `Ran without asking: ${row.kind}\n${summaryLines.join(" · ")}\n${context}` };
 }
 
+export function judgeLiftNoticeText(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): string {
+  return [
+    `Ran without asking: ${row.kind}`,
+    ...summaryLines,
+    `⚡ Auto-approved by the approval judge — no card was posted and this has already run · ${outcomeLine}`,
+    `This surface cannot carry the "This should not have run" button, so there is nothing to tap here. If it should not have run, say so in this conversation and quote action ${row.id} — that is the id the act is recorded under in the audit trail. An operator stops the judge lifting further acts from the control plane.`,
+  ].join("\n");
+}
+
 export function decidedCardBlocks(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): RenderedCard {
   const decidedContext =
     row.status === "approved"

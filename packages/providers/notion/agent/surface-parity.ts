@@ -25,6 +25,7 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-catch-up": "supported",
   "seat-context-admission": { unsupported: "the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits" },
   "approval-card": { unsupported: "a page comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead" },
+  "judge-lift-notice": "supported",
   "name-drop-mention": "supported",
   "message-edit-wake": { unsupported: "the webhook admits `comment.created` only — `comment.updated` answers `ignored` at step 4" },
   threads: { supported: "thread-first — every wake arrives scoped to one discussion" },
