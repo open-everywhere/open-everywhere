@@ -126,5 +126,56 @@ for (const door of ["reply-post.ts", "unified-reply.ts", "reply-edit.ts"]) {
 const unguarded = doors.filter((n) => !readFileSync(join(chanDir, n), "utf-8").includes("guardMemoryClaims("));
 ok(unguarded.length === 0, `PARITY: every reply door that foots provenance also runs the claim guard — unguarded: ${unguarded.join(", ")}`);
 
+const MEASURED_Ra_CLAIM = "It's now in durable notes and the curated memory index.";
+
+const measuredRa = applyMemoryClaimGuard(MEASURED_Ra_CLAIM, false);
+ok(measuredRa.withheld.length === 1, `the live-run sentence IS detected as a claim (got ${measuredRa.withheld.length})`);
+ok(!measuredRa.body.includes("durable notes"), "the live-run sentence is STRUCK, not merely annotated");
+ok(!measuredRa.body.includes("curated memory index"), "and its index half goes with it — the strike is by sentence");
+ok(measuredRa.body.includes(WITHHELD_CLAIM_NOTE), "the host's own note stands in its place");
+
+const MEASURED_Ra_REPLY = `${MEASURED_Ra_CLAIM} ${WITHHELD_CLAIM_NOTE}`;
+const shipped = applyMemoryClaimGuard(MEASURED_Ra_REPLY, false);
+ok(!shipped.body.includes("durable notes"), "CONTRADICTION: the claim never survives beside the denial that answers it");
+ok(shipped.body.split(WITHHELD_CLAIM_NOTE).length === 2, "and the denial still appears exactly once");
+
+ok(applyMemoryClaimGuard(MEASURED_Ra_CLAIM, true).body === MEASURED_Ra_CLAIM, "a BACKED present-location claim passes through byte-identical");
+ok(applyMemoryClaimGuard(MEASURED_Ra_CLAIM, true).withheld.length === 0, "and nothing is audited as withheld for it");
+
+const PRESENT_LOCATION_INNOCENT = [
+  "Your notes file is in the team silo.",
+  "It is in durable notes from last week.",
+  "It's now in the release notes.",
+  "The thread is now in the channel, so the memory index will pick it up.",
+  "It will be in durable notes once the turn ends.",
+  "It's not in durable notes yet.",
+];
+for (const text of PRESENT_LOCATION_INNOCENT) {
+  const r = applyMemoryClaimGuard(text, false);
+  ok(r.body === text && r.withheld.length === 0, `the present-location shape leaves an honest sentence alone: "${text}"`);
+}
+ok(applyMemoryClaimGuard("It's now in durable notes.", false).withheld.length === 1, "`now` + a memory store IS the claim");
+
+const RECALL_WITH_CLAIM = "The OPE121 canary code is obsidian-30653, and it's now in durable notes.";
+const recall = applyMemoryClaimGuard(RECALL_WITH_CLAIM, false);
+ok(recall.body === RECALL_WITH_CLAIM, "a claim in a TRAILING CLAUSE stands — striking it would delete the answer the turn was asked for");
+ok(recall.body.includes("obsidian-30653"), "and the canary reaches the room");
+const SEMICOLON_CLAIM = "The on-call handle is ONCALL-6225; that's now in the team memory file.";
+ok(applyMemoryClaimGuard(SEMICOLON_CLAIM, false).body === SEMICOLON_CLAIM, "a semicolon is the same clause boundary as a comma");
+const CITED = "The file is now in /workspace/memory/soak-brain/standing.md.";
+ok(applyMemoryClaimGuard(CITED, false).body === CITED, "a sentence carrying a citation stands");
+
+ok(applyMemoryClaimGuard("The note is now in durable notes.", false).withheld.length === 1, "a claim that opens its sentence is STRUCK — a noun subject is no shield");
+ok(applyMemoryClaimGuard(MEASURED_Ra_CLAIM, false).withheld.length === 1, "and the live-run sentence is still struck after the carve-out");
+
+ok(applyMemoryClaimGuard("The durable notes were updated.", false).withheld.length === 1, "the mirror-order shape reads a PLURAL durable note");
+ok(applyMemoryClaimGuard("The durable note was updated.", false).withheld.length === 1, "and still reads the singular it always did");
+
+ok(applyMemoryClaimGuard("Recorded in the release notes on GitHub.", false).withheld.length === 0, "the bare-ack carve-out still sits on the LAST pattern");
+ok(
+  applyMemoryClaimGuard("The OPE121 canary code is obsidian-30653, recorded in the team memory file.", false).withheld.length === 0,
+  "the ack-before carve-out still sits on the FIRST pattern",
+);
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`memory claim guard: ${passed} assertions passed`);

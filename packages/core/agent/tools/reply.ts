@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentSessionId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+import { flushWriteIntentMemory, type MemoryPersistContext } from "../hooks/memory.js";
 import { isThreadStopped } from "../channels/engagement.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { durableTurnKey, noteStoppedAck, stoppedAckSpent } from "../model/turn-state.js";
@@ -274,6 +275,8 @@ export const unifiedReplyEntry = defineTool({
 
       const framed = withRunRefusalBlock(input.text, consumeRoutineRunPermissionRefusals());
 
+      await flushWriteIntentMemory(ctx as MemoryPersistContext);
+
       const id = await postUnifiedReply(
         origin,
         framed,
@@ -371,6 +374,7 @@ export const baseReplyEntry = defineTool({
               audit: replyAuditFor(bindBase, "tool"),
             });
           }
+          await flushWriteIntentMemory(ctx as MemoryPersistContext);
           const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
           markRepliedThisTurn(baseTurnId);
           if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId, "per-surface");

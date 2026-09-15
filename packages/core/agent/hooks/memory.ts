@@ -19,6 +19,7 @@ import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { lockMemoryRoot, memoryRootUnlockCommand } from "../memory/root-fence.js";
 import { removedLineDigests } from "../memory/purge-redaction.js";
+import { consumeWriteIntent, noteWriteIntent, writeIntentArmed } from "../memory/write-intent.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
 import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
@@ -233,13 +234,14 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
 
 type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
 
-export type MemoryPersistOutcome = "completed" | "failed" | "settled" | "edited";
+export type MemoryPersistOutcome = "completed" | "failed" | "settled" | "edited" | "write-intent";
 
 const PERSIST_WHERE: Record<MemoryPersistOutcome, string> = {
   completed: "session.completed",
   failed: "session.failed",
   settled: "delegation settlement",
   edited: "turn-end tree edit",
+  "write-intent": "in-turn remember-ask",
 };
 
 export type MemoryPersistContext = BindableContext & {
@@ -800,6 +802,27 @@ async function persistEditedTreeAtTurnEnd(ctx: MemoryPersistContext, where: stri
   }
 }
 
+export async function flushWriteIntentMemory(ctx: MemoryPersistContext): Promise<MemoryFlushSummary | null> {
+  if (!writeIntentArmed()) return null;
+  const live = liveTaskIds();
+  if (live.length > 0) {
+    log(`write-intent: NOT persisted before the reply — ${live.length} delegated task(s) may be mid-write [${live.join(", ")}]; the intent stays armed`);
+    return null;
+  }
+  try {
+    const flush = await persistMemoryNow(ctx, "write-intent");
+    if (flush.failed === 0) consumeWriteIntent();
+    log(
+      `write-intent: persisted before the reply — ${flush.persisted} file(s) across ${flush.silos} silo(s), ${flush.changed} changed, ${flush.failed} failed` +
+        `${flush.failed > 0 ? " — the intent STAYS ARMED, so the next reply re-offers the write" : ""}`,
+    );
+    return flush;
+  } catch (err) {
+    log(`write-intent: the in-turn persist failed (the turn-end backstop still persists this tree, and the reply will say the save is not recorded): ${String(err)}`);
+    return null;
+  }
+}
+
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
@@ -939,6 +962,7 @@ export default defineHook({
       if (!current.firstMessage && typeof event.data?.message === "string") {
         sessionLog.update((s) => ({ ...s, firstMessage: event.data.message }));
       }
+      noteWriteIntent(typeof event.data?.message === "string" ? event.data.message : undefined);
     },
 
     "turn.completed": async (_event, ctx) => {

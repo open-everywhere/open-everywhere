@@ -21,14 +21,22 @@ const CLAIM_PATTERNS: readonly { readonly shape: MemoryClaimShape; readonly re: 
   },
   {
     shape: "stored",
-    re: /\b(?:memory|silo|durable\s+note|memory\s+file|notes?\s+file)\b[^.!?\n]*\b(?:was|were|is|are|has been|have been|now)\b[^.!?\n]*\b(?:saved|stored|written|recorded|persisted|updated|committed)\b/i,
+    re: /\b(?:memory|silo|durable\s+notes?|memory\s+file|notes?\s+file)\b[^.!?\n]*\b(?:was|were|is|are|has been|have been|now)\b[^.!?\n]*\b(?:saved|stored|written|recorded|persisted|updated|committed)\b/i,
   },
   { shape: "remembered", re: /\b(?:have|has|i've|we've)\s+(?:now\s+)?remembered\b|\bis\s+now\s+remembered\b/i },
   { shape: "index-updated", re: /\b(?:curated\s+)?memory\s+index\b[^.!?\n]*\b(?:updated|refreshed|rebuilt|written)\b/i },
+  {
+    shape: "stored",
+    re: /\b(?:is|are|it's|that's|they're|we're)\s+now\s+(?:in|inside|within|part\s+of)\s+(?:the\s+|your\s+|our\s+|my\s+|team\s+)*[^.!?\n,]{0,12}?\b(?:durable\s+notes?|memory\s+index|memory\s+file|notes?\s+file|memory|silo)\b/i,
+  },
   { shape: "stored", re: /^[\s*_>\-#]*(?:recorded|saved|stored|persisted)\b/i },
 ];
 
 const BARE_ACK_PATTERN = CLAIM_PATTERNS[CLAIM_PATTERNS.length - 1]!;
+
+const PRESENT_LOCATION_PATTERN = CLAIM_PATTERNS[CLAIM_PATTERNS.length - 2]!;
+
+const TRAILING_CLAUSE = /[,;]/;
 
 const VERB_FIRST_PATTERN = CLAIM_PATTERNS[0]!;
 
@@ -76,6 +84,7 @@ export function detectDurabilityClaims(text: string): readonly MemoryClaim[] {
       if (MODAL_BEFORE.test(before) || MODAL_IN_SPAN.test(m[0])) continue;
       if (NEGATION_BEFORE.test(before) || NEGATION_IN_SPAN.test(m[0])) continue;
       if (p === BARE_ACK_PATTERN && (EXTERNAL_DESTINATION.test(s) || CITATION_IN_SENTENCE.test(s))) continue;
+      if (p === PRESENT_LOCATION_PATTERN && (TRAILING_CLAUSE.test(before) || CITATION_IN_SENTENCE.test(s))) continue;
       if (p === VERB_FIRST_PATTERN && !ACK_BEFORE.test(before)) continue;
       claims.push({ shape: p.shape, sentence: i });
       break;
