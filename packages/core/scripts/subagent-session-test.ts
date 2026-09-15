@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { classifySessionId, parseSubagentToken, isSubagentSessionToken, isSupervisorShapedToken, bareTokenFromEveContext, formatDmSeatToken, formatWindowToken } from "../agent/channels/window-key.js";
 import { subagentParentOf, turnKind } from "../agent/hooks/spend.js";

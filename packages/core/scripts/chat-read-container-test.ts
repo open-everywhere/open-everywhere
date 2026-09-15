@@ -1,4 +1,3 @@
-
 import assert from "node:assert";
 import { bindFrom, registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
 import { registerConfig } from "../agent/access/config.js";

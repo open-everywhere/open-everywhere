@@ -6,6 +6,7 @@ import { markNotApplied, platformFailureClass, platformFailureStatus, type Platf
 import { truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
+import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import type { ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
@@ -101,7 +102,8 @@ export async function editPostedMessage(
   ledgerDeps: OwnPostLedgerDeps = {},
 ): Promise<void> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
-  const provenance = applyReplyProvenance(claimGuard.body, audit);
+  const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
+  const provenance = applyReplyProvenance(approvalGuard.body, audit);
   text = provenance.body;
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
@@ -116,6 +118,7 @@ export async function editPostedMessage(
     await auditReplyEdit(audit, messageId, locus.platform, text.length);
     await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
     await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
+    await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
     return;
   }
   try {
@@ -127,4 +130,5 @@ export async function editPostedMessage(
   await auditReplyEdit(audit, messageId, locus.platform, text.length);
   await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
   await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
+  await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
 }

@@ -1,4 +1,3 @@
-
 import {
   parseWikiLinks,
   buildGraph,

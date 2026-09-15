@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider as __regSlack } from "@open-everywhere/provider-slack/agent/register.js";

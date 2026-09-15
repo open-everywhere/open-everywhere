@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { readFileSync } from "node:fs";

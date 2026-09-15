@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import {
   EXTERNAL_CLAIM_PREFIX,

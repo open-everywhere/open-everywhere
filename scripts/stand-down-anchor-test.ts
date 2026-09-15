@@ -1,4 +1,3 @@
-
 const sqlitePath = `${tmpdir()}/oe-stand-down-anchor-${process.pid}-${Date.now()}.sqlite3`;
 process.env.OE_SQLITE_PATH = sqlitePath;
 overrideSettingsForTest({ discord: { autoThread: false } });

@@ -1,4 +1,3 @@
-
 import "./_register-test-config.js";
 
 let passed = 0;

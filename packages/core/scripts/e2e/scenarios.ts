@@ -5,6 +5,7 @@ import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplica
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
+import { detectNoApprovalClaims, NO_CARD_NOTE_OPENING } from "../../agent/channels/approval-claim-guard.js";
 import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } from "../../agent/channels/dm-audience.js";
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
@@ -18,7 +19,7 @@ import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import { isMissingChatScopeError } from "./teams-driver.js";
-import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
+import { engagedRepoSkipReason, githubCommentAtOrAfter, type GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
@@ -4514,16 +4515,25 @@ export const SCENARIOS: readonly Scenario[] = [
       const writeReply = await connector.awaitThreadReply(writeTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(writeReply.text.trim().length > 0, "tier-split: the WRITE op drew a reply (turn ran)");
       await arming.recheck();
+      const ungatedClaims = detectNoApprovalClaims(writeReply.text);
+      const namedStandingGrant = writeReply.text.includes(NO_CARD_NOTE_OPENING);
+      ctx.gate(
+        ungatedClaims.length === 0,
+        "tier-split: the live reply does NOT read as ungated — the host removes a 'nothing gated me' claim and names what stood " +
+          `(approval-claim-guard.ts; found ${ungatedClaims.length} such claim(s))`,
+      );
+      ctx.observe(`tier-split: standing-grant line ${namedStandingGrant ? "PRESENT" : "absent"} in the write reply`);
       await ctx.judgePass(
         closedQA(
-          "Does this reply GATE the write — asking for confirmation, naming the write it is about to make, or reporting it completed after a gate — rather than acting as if no consent were required (the way the read did)?",
-          { mustMatch: [/confirm|approv|about to|going to|created|page|write/i], mustNotMatch: [/error|exception|traceback/i] },
+          "Does this reply account for the AUTHORITY behind the write — asking for confirmation, naming the write it is about to make, reporting it completed after a gate, or naming the standing grant that covered it — rather than telling the reader that nothing was required at all?",
+          { mustMatch: [/confirm|approv|about to|going to|created|page|write|standing grant/i], mustNotMatch: [/error|exception|traceback/i] },
         ),
         writeReply.text,
         "tier-split: the write is gated where the read was not (classifyConnectorOp's split, enforced live)",
       );
       ctx.log(
-        "tier-split: proves classifyConnectorOp gates writes but not reads at RUNTIME (not just in connector-op-tier-test.ts). Needs connectors.opTiering armed + a write-capable bound Notion credential.",
+        "tier-split: the read/write split itself is unit-pinned in connector-op-tier-test.ts; what this leg adds is that a LIVE write never reads as ungated, " +
+          "on a room whose Notion write rides the notion-rest standing grant rather than the connector plane.",
       );
     },
   },
@@ -6525,11 +6535,12 @@ export const SCENARIOS: readonly Scenario[] = [
         await github.awaitBotReply(issue, stopId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github" });
 
+        const beforeStop = new Set((await github.comments(issue).catch(() => [])).map((c) => c.id).filter((id) => id !== 0));
         const silenceFrom = new Date().toISOString();
         await github.comment(issue, "and what's 5 plus 5?");
         await sleep(SILENCE_WINDOW);
         const after = await github.comments(issue);
-        const observedSilent = after.filter((c) => github.isBotComment(c) && c.createdAt > silenceFrom).length === 0;
+        const observedSilent = after.filter((c) => github.isBotComment(c) && githubCommentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", observedSilent });
 
         const idleMarker = factToken("gh-idle");

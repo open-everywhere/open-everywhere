@@ -321,15 +321,32 @@ export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConf
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], adminUserId: values[2], channel: values[3], org } };
 }
 
+export function slackAddOnRoomCollapsed(env: Env, channel: string): boolean {
+  const base = env[ENV.slackChannel]?.trim();
+  return base !== undefined && base.length > 0 && base === channel;
+}
+
 export function resolveSlackPrivate(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
   const { values, missing } = need(env, [ENV.slackPrivateChannel]);
   if (missing.length > 0) return { ok: false, missing };
+  if (slackAddOnRoomCollapsed(env, values[0]))
+    return {
+      ok: false,
+      missing: [
+        `${ENV.slackPrivateChannel} to a channel other than ${ENV.slackChannel}'s — S9/S11 need a room no explicit domain claims, so it resolves through the org criteria domain, which arms nameDropWake and runs no ambient supervisor (OPE-1905)`,
+      ],
+    };
   return { ok: true, cfg: { channel: values[0] } };
 }
 
 export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
   const { values, missing } = need(env, [ENV.slackChannelB]);
   if (missing.length > 0) return { ok: false, missing };
+  if (slackAddOnRoomCollapsed(env, values[0]))
+    return {
+      ok: false,
+      missing: [`${ENV.slackChannelB} to a channel other than ${ENV.slackChannel}'s — S12 needs a SECOND silo to isolate from the first (OPE-1905)`],
+    };
   return { ok: true, cfg: { channel: values[0] } };
 }
 
@@ -345,6 +362,11 @@ export function resolveSlackMpim(
 export function resolveSlackCapFixture(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
   const { values, missing } = need(env, [ENV.slackCapChannel]);
   if (missing.length > 0) return { ok: false, missing };
+  if (slackAddOnRoomCollapsed(env, values[0]))
+    return {
+      ok: false,
+      missing: [`${ENV.slackCapChannel} to a channel other than ${ENV.slackChannel}'s — S10 needs a ledger the shared room cannot entangle (OPE-1905)`],
+    };
   return { ok: true, cfg: { channel: values[0] } };
 }
 

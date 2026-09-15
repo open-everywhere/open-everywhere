@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { sourcesForWindow, windowSourcesNeedConfig, encodeSources, decodeSources } from "../agent/channels/window-sources.js";
 import { dmAnchorDomain, taskWindowId } from "../agent/channels/window-key.js";

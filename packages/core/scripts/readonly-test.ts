@@ -1,4 +1,3 @@
-
 import { readOnlyBanner, hasReadOnlyBanner, isProjectedCache, isAppendOnlyBacking, lockCommand } from "../agent/memory/readonly.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 

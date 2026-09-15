@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { readGrantReach, grantDomainsExist, webhookReach, mergeReach } from "../agent/webhooks/achievability.js";

@@ -1,4 +1,3 @@
-
 import { readFileSync, mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";

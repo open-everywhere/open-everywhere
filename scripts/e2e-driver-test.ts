@@ -4354,6 +4354,74 @@ rmSync(dir, { recursive: true, force: true });
     }
 
     {
+      const { githubCommentAtOrAfter } = await import("../packages/core/scripts/e2e/github-driver.js");
+
+      const COMMENT_BOUND = "2026-05-20T11:57:28.900Z";
+      ok(
+        githubCommentAtOrAfter("2026-05-20T11:57:28Z", COMMENT_BOUND),
+        "OPE-1905: GitHub's second-grain stamp in the watermark's OWN second is INSIDE the window — the floor is what admits a real post stamped there",
+      );
+      ok(
+        !githubCommentAtOrAfter("2026-05-20T11:57:27Z", COMMENT_BOUND),
+        "🔴 NEGATIVE CONTROL: the second BEFORE the watermark's is still outside — the widening is one second, not unbounded",
+      );
+      ok(
+        githubCommentAtOrAfter("2026-05-20T11:57:35Z", COMMENT_BOUND),
+        "OPE-1905: a genuine post-stop reply seconds later still counts — the fix must not blind the gate it repairs",
+      );
+      ok(
+        !githubCommentAtOrAfter("2026-05-20T02:15:10Z", "2026-05-20T02:15:13.100Z"),
+        "OPE-1905: a live run's acknowledgement, three seconds before its probe, was outside the window — which is the only reason that ship read GREEN",
+      );
+      ok(
+        githubCommentAtOrAfter("not-a-time", COMMENT_BOUND) && githubCommentAtOrAfter("2026-05-20T11:57:35Z", "not-a-time"),
+        "🔴 an UNREADABLE stamp on EITHER side counts as inside — a silence gate must red on a page it cannot read, never report a silence nobody measured",
+      );
+      ok(
+        githubCommentAtOrAfter("1969-12-31T23:59:58Z", "1969-12-31T23:59:58.500Z"),
+        "🔴 the floor uses Math.floor, not a remainder: JS keeps the sign of the dividend, so a remainder pre-epoch rounds the bound UP to a NEWER instant and drops this real post",
+      );
+
+      ok(
+        !/github\.isBotComment\(c\) && c\.createdAt > silenceFrom/.test(gatesSrc),
+        "🔴 OPE-1905: no millisecond-vs-second `c.createdAt > silenceFrom` compare survives in J-ENGAGED-github's silence read",
+      );
+      ok(
+        gatesSrc.includes("githubCommentAtOrAfter(c.createdAt, silenceFrom)"),
+        "OPE-1905: J-ENGAGED-github's audited-silence read takes the shared second-grain predicate",
+      );
+      ok(
+        gatesSrc.includes("const beforeStop = new Set((await github.comments(issue).catch(() => [])).map((c) => c.id).filter((id) => id !== 0));"),
+        "🔴 OPE-1905: …and the ID SNAPSHOT rides beside it, over READABLE ids only — flooring alone widens the window back onto the acknowledgement the leg legitimately drew, and a snapshot holding the id-0 placeholder would exclude a real post-stop reply whose entry is equally unreadable",
+      );
+
+      const { slackAddOnRoomCollapsed, resolveSlackPrivate, resolveSlackChannelB, resolveSlackCapFixture, ENV: E } = await import(
+        "../packages/core/scripts/e2e/env.js"
+      );
+      const BASE = "C_BASE_ROOM";
+      ok(slackAddOnRoomCollapsed({ [E.slackChannel]: BASE }, BASE), "OPE-1905: an add-on room equal to the base channel is a COLLAPSE");
+      ok(!slackAddOnRoomCollapsed({ [E.slackChannel]: BASE }, "C_OTHER_ROOM"), "NEGATIVE CONTROL: a genuinely different room is not");
+      ok(!slackAddOnRoomCollapsed({}, BASE), "🔴 NEGATIVE CONTROL: an UNSET base channel collapses nothing — the guard must not skip a leg over a variable that is simply absent");
+      ok(!slackAddOnRoomCollapsed({ [E.slackChannel]: " " }, ""), "🔴 NEGATIVE CONTROL: a base channel that trims to nothing collapses nothing either — `base.length > 0` is what stops two empties matching");
+
+      const collapsed = { [E.slackChannel]: BASE, [E.slackPrivateChannel]: BASE, [E.slackChannelB]: BASE, [E.slackCapChannel]: BASE };
+      const distinct = { [E.slackChannel]: BASE, [E.slackPrivateChannel]: "C1", [E.slackChannelB]: "C2", [E.slackCapChannel]: "C3" };
+      for (const [name, resolve, varName] of [
+        ["slackPrivate", resolveSlackPrivate, E.slackPrivateChannel],
+        ["slackChannelB", resolveSlackChannelB, E.slackChannelB],
+        ["slackCapFixture", resolveSlackCapFixture, E.slackCapChannel],
+      ] as const) {
+        const bad = resolve(collapsed);
+        ok(
+          !bad.ok && bad.missing.some((m) => m.startsWith(`${varName} to a channel other than `)),
+          `🔴 OPE-1905: ${name} REFUSES a room that is the base channel, and its refusal reads as an instruction — "set ${varName} to a channel other than …" — not as a bare name`,
+        );
+        const good = resolve(distinct);
+        ok(good.ok, `NEGATIVE CONTROL: ${name} still resolves a distinct room`);
+      }
+    }
+
+    {
       const liveMpimRow = {
         ts: "2026-05-14T17:41:16.130Z",
         org: "default",

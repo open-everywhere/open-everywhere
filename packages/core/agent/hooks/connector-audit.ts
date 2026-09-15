@@ -7,6 +7,7 @@ import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/co
 import { noteConnectorRead, PROVENANCE_READ_TIER } from "../channels/reply-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
 import { noteDelegatedRead } from "../channels/delegated-provenance.js";
+import { noteGatedConnectorWrite } from "../channels/standing-authority.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -50,6 +51,10 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       const turnId = currentTurnId(bind);
       noteConnectorRead(turnId, { ...stampReadReach(bind, turnId, surfaceKey), connection, op });
       noteDelegatedRead(bind, connection, op);
+    }
+
+    if (!result.isError && status !== "error" && (tiers.tier === "write" || tiers.tier === "destructive")) {
+      noteGatedConnectorWrite(currentTurnId(ctx as unknown as BindableContext), { connection, op, tier: tiers.tier });
     }
 
     await appendAudit({

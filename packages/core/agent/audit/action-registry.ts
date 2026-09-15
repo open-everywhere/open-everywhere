@@ -458,6 +458,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "agent.create.pr_opened",
   "analytics.query",
   "analytics.refused",
+  "approval.claim_withheld",
   "approval.failed",
   "approval.judge.contradicted",
   "approval.judge.shadow",

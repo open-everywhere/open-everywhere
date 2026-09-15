@@ -4,6 +4,7 @@ import { defineState } from "eve/context";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { resolveAccessFor } from "../access/request.js";
 import { compileNetworkPolicy, openWriteHosts, writeHostsAuditFields } from "../access/egress.js";
+import { noteStandingWriteGrants } from "../channels/standing-authority.js";
 import { browserEgressHosts } from "../access/browser-hosts.js";
 import type { EffectiveAccess, ReachableHost } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
@@ -227,6 +228,8 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
       return { phase, applied: false, reason: "policy-changed", fingerprint, abortError: failure };
     }
   }
+
+  noteStandingWriteGrants(writeHosts);
 
   const { reapply, reason } = planEgressApply({ phase, fingerprint, lastApplied: deps.lastApplied() });
 

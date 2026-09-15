@@ -55,7 +55,7 @@ const NEGATION_IN_SPAN = /\b(?:not|never|nothing|none|cannot|unable)\b|n't\b/i;
 
 const ACK_BEFORE = /(?:^[\s*_>\-#]*|\b(?:i|we|it|that|this|which|they|has|have|had|is|are|was|were|been|now|already|just|i've|we've)\s+(?:\w+\s+){0,1})$/i;
 
-function sentencesOf(text: string): readonly { readonly text: string; readonly start: number; readonly end: number }[] {
+export function replySentences(text: string): readonly { readonly text: string; readonly start: number; readonly end: number }[] {
   const out: { text: string; start: number; end: number }[] = [];
   let start = 0;
   for (let i = 0; i < text.length; i++) {
@@ -74,7 +74,7 @@ function sentencesOf(text: string): readonly { readonly text: string; readonly s
 
 export function detectDurabilityClaims(text: string): readonly MemoryClaim[] {
   const claims: MemoryClaim[] = [];
-  const sentences = sentencesOf(text);
+  const sentences = replySentences(text);
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i]!.text;
     for (const p of CLAIM_PATTERNS) {
@@ -105,7 +105,7 @@ export function applyMemoryClaimGuard(text: string, stored: boolean): MemoryClai
   const claims = detectDurabilityClaims(bare);
   if (claims.length === 0) return { body: hadNote ? `${bare}\n\n${WITHHELD_CLAIM_NOTE}` : bare, withheld: [] };
   const struck = new Set(claims.map((c) => c.sentence));
-  const sentences = sentencesOf(bare);
+  const sentences = replySentences(bare);
   const kept = sentences.filter((_, i) => !struck.has(i)).map((s) => s.text);
   const body = `${kept.join("").trimEnd()}\n\n${WITHHELD_CLAIM_NOTE}`.trimStart();
   return { body, withheld: claims };
