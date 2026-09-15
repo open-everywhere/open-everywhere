@@ -1,4 +1,5 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
+import { capFixtureFor } from "./fixture-inventory-lib.js";
 import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
@@ -1330,10 +1331,23 @@ export const SCENARIOS: readonly Scenario[] = [
           return;
         }
       }
-      if (process.env.E2E_SPEND_CAP_FIXTURE === "1") {
-        ctx.gate(false, "cap fixture declared (E2E_SPEND_CAP_FIXTURE=1) but the refusal never posted in 5 turns — spend-cap enforcement regression");
+      const capFixture = capFixtureFor("channel");
+      const droveTheFixture = capFixture?.surfaceKey.endsWith(`/${channel}`) === true;
+      if (droveTheFixture && ctx.slackSecondary) {
+        ctx.gate(
+          false,
+          `the declared channel cap fixture (${capFixture!.surfaceKey}, fixture-inventory-lib.ts CAP_FIXTURES) refused nothing in 5 turns, driven by a non-admin identity — spend-cap enforcement regression`,
+        );
       }
-      ctx.skip("cap never tripped within the 5-turn budget — fixture cap not declared/low enough (set E2E_SPEND_CAP_FIXTURE=1 once the tiny-cap channel is provisioned to make this a hard failure)");
+      ctx.skip(
+        `cap never tripped within the 5-turn budget — ` +
+          (droveTheFixture
+            ? "the drive ran as the ADMIN driver (E2E_SLACK_SECONDARY_TOKEN unset), and spend/bypass.ts admits an org admin past every cap with a warning, so no refusal can post here; " +
+              "set the non-admin secondary identity to make this a hard failure"
+            : `this drive ran against ${channel}, which ` +
+              (capFixture ? `is not the room the declared cap fixture names (${capFixture.surfaceKey})` : "no declared cap fixture names (fixture-inventory-lib.ts CAP_FIXTURES)") +
+              ", so there is no cap here to trip"),
+      );
     },
   },
   {
@@ -1380,13 +1394,20 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
-      if (process.env.E2E_SPEND_CAP_FIXTURE !== "1") {
-        ctx.skip(
-          "E2E_SPEND_CAP_FIXTURE is not 1 — no cap is declared as provisioned, so a DM turn is expected to be admitted and there is no refusal to read. " +
-            "Provision a cap that covers the DM (a workspace-level budget, or a perSurface cap on the DM's own key) and set the pin to arm this leg.",
+      const capFixture = capFixtureFor("dm");
+      if (!capFixture) {
+        const channelFixture = capFixtureFor("channel");
+        return ctx.skip(
+          "no DM-scoped cap fixture is declared (fixture-inventory-lib.ts CAP_FIXTURES" +
+            (channelFixture ? `; the declared fixture is CHANNEL-scoped, on ${channelFixture.surfaceKey}` : "") +
+            "), so a DM turn is admitted and there is no refusal to read. 🔴 A CAP ALONE IS NOT THE FIXTURE: " +
+            "spend/bypass.ts admits an ORG ADMIN past every cap with a warning, and spend/ingress-gate.ts treats a refusal " +
+            "read by an admin as unreachable-by-construction. This pack's DM belongs to the driver identity, which is an org " +
+            "admin, so a cap declared on it is dead config for a refusal. The fixture this leg needs is a DM owned by a " +
+            "NON-ADMIN the pack can drive, plus a cap covering that DM.",
         );
-        return;
       }
+      const runStart = new Date(Date.now() - 60_000).toISOString();
       await fenceDmSeat(ctx, "S-SPEND-REFUSAL-KEYS");
       const { teamId } = await dm.identity();
       const workspaceKey = `slack/${teamId}`;
@@ -1410,9 +1431,26 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log(`S-SPEND-REFUSAL-KEYS: refusal read on turn ${i + 1} — "${reply.text.slice(0, 200)}"`);
         return;
       }
-      ctx.skip(
-        "no refusal posted in the DM within the 5-turn budget — E2E_SPEND_CAP_FIXTURE declares a CHANNEL cap, which never bites in a DM. " +
-          "This leg needs a cap whose scope covers the DM (workspace-level, or a perSurface cap on the DM key).",
+      if (!ctx.auditRead) {
+        return ctx.skip(
+          `no refusal posted in the DM within the 5-turn budget, and the audit read is not wired, so the declared cap fixture ` +
+            `(${capFixture.surfaceKey}) cannot be attributed — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to tell an admin ` +
+            `bypass (a fixture state) from a cap that never bit (a regression).`,
+        );
+      }
+      const bypassed = await ctx.auditRead({ sinceIso: runStart, actions: ["spend.cap_bypassed"], surface: dm.channelId, limit: 50 });
+      if (bypassed.length > 0) {
+        return ctx.skip(
+          `no refusal posted in the DM within the 5-turn budget — the cap BIT and ${bypassed.length} spend.cap_bypassed row(s) show the driver ` +
+            `was admitted past it as an org admin (spend/bypass.ts's audited sudo). A refusal in a DM is only ever read by a NON-ADMIN, so this ` +
+            `leg needs a DM owned by a non-admin identity the pack can drive; the declared fixture (${capFixture.surfaceKey}) is not that room.`,
+        );
+      }
+      ctx.gate(
+        false,
+        `the declared DM cap fixture (${capFixture.surfaceKey}, fixture-inventory-lib.ts CAP_FIXTURES) refused nothing in 5 turns, and no ` +
+          `spend.cap_bypassed row for this DM is visible in the window — either nothing consulted the cap (a spend-cap enforcement ` +
+          `regression) or the fixture's cap is not low enough to bite inside the budget`,
       );
     },
   },

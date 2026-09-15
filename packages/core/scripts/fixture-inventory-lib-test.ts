@@ -1,6 +1,7 @@
 import { ENGAGED_ROOM_VARS, ENV, S24_DEFAULT_QUERY, TRACKED_ROOM_RESOLVERS } from "./e2e/env.js";
 import { notionBlockPhrases } from "./e2e/egress-evidence.js";
 import {
+  CAP_FIXTURES,
   NON_ROOM_ENV,
   PROVISION_PLAN,
   ROOM_VARS,
@@ -8,6 +9,7 @@ import {
   TRACKED_ROOM_IDS,
   buildInventory,
   canonicalId,
+  capFixtureFor,
   teamsSegment,
   collectDeclaredRooms,
   compareInventory,
@@ -31,6 +33,7 @@ import {
   surfaceOfKey,
   trackedRoomId,
   type BindingLike,
+  type CapFixture,
   type DomainLike,
   type ParsedRow,
   type Resolution,
@@ -570,6 +573,37 @@ for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
   );
   ok(body.some((line) => line.includes(S24_DEFAULT_QUERY)), "the body names the query, so a reader opening the page knows which leg it serves");
   ok(new Set(body).size === body.length, "the seeded lines are distinct — a duplicate would de-duplicate inside the pin and shrink the phrase set silently");
+}
+
+{
+  const CHANNEL_ONLY: readonly CapFixture[] = [{ roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel", surfaceKey: "slack/T1/C1" }];
+  const BOTH: readonly CapFixture[] = [...CHANNEL_ONLY, { roomVar: "E2E_SLACK_DM_CHANNEL", scope: "dm", surfaceKey: "slack/T1/D1" }];
+
+  ok(capFixtureFor("channel", CHANNEL_ONLY)?.surfaceKey === "slack/T1/C1", "a channel-scoped ask reads the channel fixture");
+  ok(
+    capFixtureFor("dm", CHANNEL_ONLY) === undefined,
+    "🔴 a CHANNEL-scoped fixture never answers a DM ask — the cap it declares is keyed on a channel and is never consulted for a DM's surface key",
+  );
+  ok(capFixtureFor("dm", BOTH)?.surfaceKey === "slack/T1/D1", "POSITIVE CONTROL: the same ask reads a real DM fixture when one is declared, so the arm above is not vacuous");
+  ok(capFixtureFor("channel", BOTH)?.surfaceKey === "slack/T1/C1", "…and the channel ask still reads the channel row rather than the first row of the table");
+  ok(capFixtureFor("dm", []) === undefined, "an empty table answers no ask at all — 'no such fixture' is what keeps a leg's skip honest");
+
+  const scopes = CAP_FIXTURES.map((f) => f.scope);
+  ok(new Set(scopes).size === scopes.length, "no two shipped cap fixtures share a scope — `capFixtureFor` reads the first match, so a duplicate would be dead config");
+  for (const f of CAP_FIXTURES) {
+    const spec = ROOM_VARS.find((r) => r.envVar === f.roomVar);
+    ok(spec !== undefined, `the cap fixture's room var ${f.roomVar} is a ROOM_VARS row — a cap fixture names a room the pack drives, never a knob`);
+    ok(
+      surfaceOfKey(f.surfaceKey) === spec!.surface,
+      `the cap fixture's surface key ${f.surfaceKey} names the same surface as its room var (${spec!.surface}) — a key on one platform and a room on another would cap nothing`,
+    );
+    const rungs = f.surfaceKey.split("/");
+    ok(
+      rungs.length === 3 && rungs.every((rung) => rung.length > 0),
+      `the cap fixture's surface key ${f.surfaceKey} carries all three rungs — the grain agent/spend/budgets.ts declares a perSurface cap on`,
+    );
+  }
+  ok(surfaceOfKey("slack/T1/C1") === "slack" && surfaceOfKey("nowhere/T1/C1") === null, "NEGATIVE CONTROL: surfaceOfKey really refuses an unknown surface, so the join above can fail");
 }
 
 console.log(`✓ fixture-inventory-lib: ${passed} assertions passed`);

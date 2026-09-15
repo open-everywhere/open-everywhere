@@ -136,7 +136,6 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_SOAK_DOMAIN: "knob",
   E2E_EXPECT_UNIFIED: "knob",
   E2E_UNIX_ARMED: "knob",
-  E2E_SPEND_CAP_FIXTURE: "knob",
   E2E_SPEND_GATE_DOOR: "knob",
   E2E_ACCESS_PERSONAL_FIXTURE: "knob",
   E2E_ROUTINE_CONNECTOR_FIXTURE: "knob",
@@ -166,6 +165,22 @@ export const TRACKED_ROOM_IDS: Readonly<Record<string, string>> = {
 
   E2E_ADDRESSED_GITHUB_REPO: "example-owner/oe-e2e-addressed-github",
 };
+
+export type CapFixtureScope = "channel" | "dm";
+
+export interface CapFixture {
+  readonly roomVar: string;
+  readonly scope: CapFixtureScope;
+  readonly surfaceKey: string;
+}
+
+export const CAP_FIXTURES: readonly CapFixture[] = [
+  { roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel", surfaceKey: "slack/T0EXAMPLE/C0EXCHAN007" },
+];
+
+export function capFixtureFor(scope: CapFixtureScope, fixtures: readonly CapFixture[] = CAP_FIXTURES): CapFixture | undefined {
+  return fixtures.find((f) => f.scope === scope);
+}
 
 export function trackedRoomId(envVar: string, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): string | undefined {
   return tracked[envVar]?.trim() || undefined;
