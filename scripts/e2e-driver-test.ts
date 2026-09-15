@@ -139,6 +139,7 @@ const {
   seatContinuity,
   standDownAttemptedButUnmarked,
   standDownMarked,
+  standDownReachedRegistry,
   standDownRows,
   wakeIngressIds,
   WAKE_INGRESS_ACTION,
@@ -3997,7 +3998,17 @@ rmSync(dir, { recursive: true, force: true });
   const standDown = (marked: unknown) => row(STOOD_DOWN_ACTION, { surfaceKey: KEY, anchor: "1700.0001", marked, reason: null }, KEY);
   const marked = standDown(true);
   const unmarked = standDown(false);
+  const refusedRow = row(STOOD_DOWN_ACTION, { surfaceKey: KEY, anchor: null, refused: "dm", reason: null }, KEY);
+  ok(standDownReachedRegistry(marked), "standDownReachedRegistry accepts a marked:true row — the verb reached the registry and the registry answered");
+  ok(standDownReachedRegistry(unmarked), "🔴 …and a marked:false row too: the verb REACHED the registry and was told there was no conversation there, which is a different fact from a refusal");
+  ok(!standDownReachedRegistry(refusedRow), "🔴 NEGATIVE: a REFUSAL row is rejected — it carries `refused` and no `marked`, so the verb never reached the registry at all");
+  ok(
+    !standDownReachedRegistry(row(STOOD_DOWN_ACTION, { surfaceKey: KEY, anchor: "1700.0001", marked: "true" }, KEY)),
+    "NEGATIVE: a STRING \"true\" is not the boolean the tool writes, so it proves no registry answer either",
+  );
   ok(standDownMarked([marked]), "standDownMarked reads marked:true — the registry really held a row, which is what makes the plain follow-up an ENGAGED wake");
+  ok(!standDownMarked([refusedRow]), "🔴 NEGATIVE: a REFUSAL row is not a stand-down that took — the exact-boolean test keeps it out with no filter needed");
+  ok(!standDownAttemptedButUnmarked([refusedRow]), "🔴 NEGATIVE: …and it is not the enrolment negative control either, which is why a refusal row carries NO `marked` field");
   ok(!standDownMarked([unmarked]), "NEGATIVE: marked:false is NOT a stand-down that took — the tool writes the row then refuses, and reading it as success would report a stop that never happened");
   ok(!standDownMarked([row(STOOD_DOWN_ACTION, { anchor: "1700.0001" })]), "NEGATIVE: an absent `marked` field is not evidence of the effect");
   ok(!standDownMarked([row(STOOD_DOWN_ACTION, { anchor: "1700.0001", marked: "true" })]), "NEGATIVE: a STRING \"true\" is not the boolean the tool writes — a row that cannot state the effect is not evidence of it");

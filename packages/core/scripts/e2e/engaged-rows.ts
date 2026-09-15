@@ -32,6 +32,10 @@ export function standDownRows(
   );
 }
 
+export function standDownReachedRegistry(row: AuditWireEntry): boolean {
+  return typeof detail(row)["marked"] === "boolean";
+}
+
 export function standDownMarked(
   rows: readonly AuditWireEntry[],
   opts: { readonly surface?: string; readonly anchor?: string } = {},

@@ -71,6 +71,7 @@ import {
   seatContinuity,
   standDownAttemptedButUnmarked,
   standDownMarked,
+  standDownReachedRegistry,
   wakeIngressIds,
   WAKE_INGRESS_ACTION,
 } from "./engaged-rows.js";
@@ -737,7 +738,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "stand down: the reply accepts the ask to stop",
       );
       if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso: standDownFrom, platform: "slack", actions: [STOOD_DOWN_ACTION] });
+        const rows = (await ctx.auditRead({ sinceIso: standDownFrom, platform: "slack", actions: [STOOD_DOWN_ACTION] })).filter(standDownReachedRegistry);
         ctx.gate(rows.length > 0, `stand down: an ${STOOD_DOWN_ACTION} audit row exists (found ${rows.length}) — the verb ran, the ack is not just words`);
       } else {
         ctx.log(`stand-down effect check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to assert the ${STOOD_DOWN_ACTION} audit row`);
@@ -1171,7 +1172,9 @@ export const SCENARIOS: readonly Scenario[] = [
         "stand down: the reply accepts the ask to stop",
       );
       if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso: discordStandDownFrom, platform: "discord", actions: [STOOD_DOWN_ACTION] });
+        const rows = (await ctx.auditRead({ sinceIso: discordStandDownFrom, platform: "discord", actions: [STOOD_DOWN_ACTION] })).filter(
+          standDownReachedRegistry,
+        );
         ctx.gate(rows.length > 0, `stand down: an ${STOOD_DOWN_ACTION} audit row exists (found ${rows.length}) — the verb ran`);
       } else {
         ctx.log(`stand-down effect check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to assert the ${STOOD_DOWN_ACTION} audit row`);
@@ -2334,9 +2337,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const stoodRows =
         (await pollOptional(
           async () => {
-            const rows = (await auditRead({ sinceIso: standDownFrom, platform: "teams", actions: [STOOD_DOWN_ACTION] })).filter((r) =>
-              String((r.detail as { anchor?: unknown } | undefined)?.anchor ?? "").includes(root.id),
-            );
+            const rows = (await auditRead({ sinceIso: standDownFrom, platform: "teams", actions: [STOOD_DOWN_ACTION] }))
+              .filter(standDownReachedRegistry)
+              .filter((r) => String((r.detail as { anchor?: unknown } | undefined)?.anchor ?? "").includes(root.id));
             return rows.length > 0 ? rows : undefined;
           },
           { timeoutMs: AUDIT_ROW_WAIT, what: `J-ENGAGED-teams: an ${STOOD_DOWN_ACTION} row whose anchor names chain ${root.id}` },

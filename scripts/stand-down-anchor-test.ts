@@ -27,7 +27,7 @@ import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/se
 import { getThreadEngagement, markThreadEngaged, roomEngagementAddress, shouldDeliverReply } from "@open-everywhere/core/agent/channels/engagement.js";
 import { bindFrom } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
-import standDown, { STAND_DOWN_ACTION, DM_REFUSAL, GROUP_REFUSAL } from "@open-everywhere/core/agent/tools/stand_down.js";
+import standDown, { STAND_DOWN_ACTION, STAND_DOWN_REFUSALS, DM_REFUSAL, GROUP_REFUSAL } from "@open-everywhere/core/agent/tools/stand_down.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import {
   dispatchTurn,
@@ -165,16 +165,18 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
 }
 
 {
-  const dmCtx = windowCtx("discord", { channel_id: "DM1", channel_type: "1", user_id: "U1" }, "U1");
-  ok(bindFrom(dmCtx).engagementKey === undefined, "a Discord DM carries NO engagement anchor — a mark there would suppress nothing");
+  const rootCtx = windowCtx("slack", { team_id: "T_A", channel_id: "C_A", channel_type: "channel", user_id: "U1" }, "U1");
+  ok(bindFrom(rootCtx).mode === "channel", "precondition: a Slack channel root is NOT a DM, so the 1:1 guard above cannot answer for this leg");
+  ok(bindFrom(rootCtx).engagementKey === undefined && bindFrom(rootCtx).threadTs === undefined, "a Slack channel root carries NO engagement anchor — a mark there would suppress nothing");
 
   let message = "";
   try {
-    await runStandDown(dmCtx);
+    await runStandDown(rootCtx);
     ok(false, "stand_down must refuse a turn with no conversation anchor");
   } catch (err) {
     message = (err as Error).message;
   }
+  ok(message.includes("no conversation anchor"), "🔴 …with the ANCHORLESS sentence, not the 1:1 one — the two refusals name different causes");
   ok(message.includes("nothing was marked"), "the anchorless error states that nothing was marked");
   ok(message.includes("could NOT stop following"), "🔴 the anchorless error tells the model to say it COULD NOT stop following");
   ok(!/say so in a reply/i.test(message), "🔴 NEGATIVE CONTROL: the old copy is gone — it steered the model into announcing a stop that never happened");
@@ -583,6 +585,60 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok(slackRow !== null && slackRow.stopped === false, "🔴 OPE-1527 NEGATIVE CONTROL: a promotion with NO id clears the stop exactly as before — no surface that opted out changed");
 }
 
+{
+  const rowsFor = async (p: { org: string; surfaceKey: string }, anchor: string | null) =>
+    (await readAudit({ org: p.org, action: STAND_DOWN_ACTION })).filter((r) => {
+      const d = r.detail as Record<string, unknown> | undefined;
+      return (d?.anchor ?? null) === anchor && d?.surfaceKey === p.surfaceKey;
+    });
+
+  const dmCtx = windowCtx("slack", { team_id: "T_EV", channel_id: "D_EV", channel_type: "im", thread_ts: "3100.1", user_id: "u_ev" }, "u_ev");
+  const dmP = resolvePartition(dmCtx);
+  await assert.rejects(runStandDown(dmCtx, "asked me to stop following"), /direct message cannot be stood down/);
+  const dmRows = await rowsFor(dmP, "3100.1");
+  ok(dmRows.length === 1, "🔴 OPE-1885: a 1:1 refusal writes ONE audit row — before this, the DM arm left the trail empty and unreadable");
+  const dmDetail = dmRows[0]!.detail as Record<string, unknown>;
+  ok(dmDetail.refused === STAND_DOWN_REFUSALS.dm, "…stamped with the `dm` refusal code, so the trail names WHICH shape refused");
+  ok(!("marked" in dmDetail), "🔴 OPE-1885: …and carries NO `marked` field — this path never reached the registry, and `marked: false` here would falsify another journey's enrolment negative control");
+  ok(dmDetail.surfaceKey === dmP.surfaceKey, "…scoped to the conversation's own qualified surface key, the shape the e2e reader joins on");
+  ok(dmDetail.reason === "asked me to stop following", "…and it carries the model's short reason phrase, exactly as a marked row does");
+
+  const mpimCtx = windowCtx("slack", { team_id: "T_EV", channel_id: "G_EV", channel_type: "mpim", thread_ts: "3200.1", user_id: "u_ev" }, "u_ev");
+  const mpimP = resolvePartition(mpimCtx);
+  await assert.rejects(runStandDown(mpimCtx), /answers every message in a group conversation/);
+  const mpimRows = await rowsFor(mpimP, "3200.1");
+  ok(mpimRows.length === 1, "🔴 OPE-1885: a GROUP refusal writes its own row too");
+  ok((mpimRows[0]!.detail as Record<string, unknown>).refused === STAND_DOWN_REFUSALS.group, "…with the GROUP code, not the 1:1 one — two refusals, two codes, matching the two refusal sentences");
+
+  const anchorlessCtx = windowCtx("slack", { team_id: "T_EV", channel_id: "C_EV", channel_type: "channel", user_id: "u_ev" }, "u_ev");
+  const anchorlessP = resolvePartition(anchorlessCtx);
+  ok(bindFrom(anchorlessCtx).mode === "channel", "precondition: a Slack channel root is not a DM, so this leg measures the anchorless arm and not the one above it");
+  ok(bindFrom(anchorlessCtx).engagementKey === undefined && bindFrom(anchorlessCtx).threadTs === undefined, "precondition: …and it publishes no anchor");
+  await assert.rejects(runStandDown(anchorlessCtx), /no conversation anchor/);
+  const nullRows = await rowsFor(anchorlessP, null);
+  ok(nullRows.length === 1, "🔴 OPE-1885: the ANCHORLESS refusal writes a row as well — the third and last arm that used to leave nothing");
+  ok((nullRows[0]!.detail as Record<string, unknown>).refused === STAND_DOWN_REFUSALS.anchorless, "…with the anchorless code");
+  ok((nullRows[0]!.detail as Record<string, unknown>).anchor === null, "…and `anchor: null`, which states that the turn carried no conversation key rather than leaving the field off");
+
+  const notionCtx = windowCtx("notion", { workspace_id: "WS_EV", page_id: "PAGE_EV", discussion_id: "DISC_EV", user_id: "u_ev" }, "u_ev");
+  const notionP = resolvePartition(notionCtx);
+  ok(bindFrom(notionCtx).engagementKey === "WS_EV/PAGE_EV", "precondition: the Notion binding publishes `<workspace>/<page>`, so a Notion stop is never the anchorless case");
+  await store.markEngaged(notionP.org, notionP.surfaceKey, "WS_EV/PAGE_EV", "2026-09-14T10:00:00Z", { participating: true });
+  ok((await runStandDown(notionCtx, "asked me to stop following")).standingDown === true, "🔴 OPE-1885: a stop in an ENGAGED Notion conversation still marks that conversation");
+  const notionRows = await rowsFor(notionP, "WS_EV/PAGE_EV");
+  ok(notionRows.length === 1, "…writing exactly one `engagement.stood_down` row for THAT conversation");
+  const notionDetail = notionRows[0]!.detail as Record<string, unknown>;
+  ok(notionDetail.marked === true, "…carrying `marked: true`, the registry's own answer");
+  ok(!("refused" in notionDetail), "🔴 NEGATIVE CONTROL: a row that reached the registry carries NO `refused` code — `marked` and `refused` are exclusive, which is what lets a reader tell the two roads apart");
+
+  const unenrolledCtx = windowCtx("notion", { workspace_id: "WS_EV", page_id: "PAGE_NONE", discussion_id: "DISC_EV", user_id: "u_ev" }, "u_ev");
+  const unenrolledP = resolvePartition(unenrolledCtx);
+  await assert.rejects(runStandDown(unenrolledCtx), /nothing was marked/);
+  const unenrolledRows = await rowsFor(unenrolledP, "WS_EV/PAGE_NONE");
+  ok(unenrolledRows.length === 1, "🔴 OPE-1885: an UNENROLLED Notion page leaves a row too");
+  ok((unenrolledRows[0]!.detail as Record<string, unknown>).marked === false, "🔴 OPE-1885: …stamped `marked: false` — so a registry miss is a ROW, and an EMPTY window can only mean the verb was never called or its best-effort write was dropped");
+}
+
 for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${sqlitePath}${suffix}`, { force: true });
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the promoter list's bound and its legacy bare-id row on the sqlite statements + the GitHub/Linear/Notion anchors and their own seams' round trips)`);
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the promoter list's bound and its legacy bare-id row on the sqlite statements + the GitHub/Linear/Notion anchors and their own seams' round trips + every refusal's own audit row)`);

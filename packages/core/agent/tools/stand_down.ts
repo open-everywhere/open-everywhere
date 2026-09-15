@@ -9,6 +9,12 @@ import { appendAudit } from "../audit/audit.js";
 
 export const STAND_DOWN_ACTION = "engagement.stood_down";
 
+export const STAND_DOWN_REFUSALS = {
+  dm: "dm",
+  group: "group-wake-ignores-registry",
+  anchorless: "no-conversation-anchor",
+} as const;
+
 export const DM_REFUSAL =
   "stand_down: a direct message cannot be stood down, so nothing was marked — reply that you could NOT stop following here, because a DM has no @mention to bring you back.";
 
@@ -49,15 +55,38 @@ export default defineTool({
   async execute(input, ctx) {
     const c = ctx as BindableContext;
     const binding = bindFrom(c);
-    if (binding.mode === "dm") throw new Error(DM_REFUSAL);
-    if (binding.mode === "mpim" && !binding.engagementKey) throw new Error(GROUP_REFUSAL);
+    const partition = resolvePartition(c);
+    const auditRefusal = async (refused: string): Promise<void> => {
+      const carried = binding.engagementKey ?? binding.threadTs;
+      await appendAudit({
+        org: partition.org,
+        platform: partition.platform,
+        workspace: partition.workspace,
+        surface: partition.surfaceKey,
+        action: STAND_DOWN_ACTION,
+        detail: {
+          surfaceKey: partition.surfaceKey,
+          anchor: carried && carried.length > 0 ? carried : null,
+          refused,
+          reason: input.reason ?? null,
+        },
+      }).catch(() => undefined);
+    };
+    if (binding.mode === "dm") {
+      await auditRefusal(STAND_DOWN_REFUSALS.dm);
+      throw new Error(DM_REFUSAL);
+    }
+    if (binding.mode === "mpim" && !binding.engagementKey) {
+      await auditRefusal(STAND_DOWN_REFUSALS.group);
+      throw new Error(GROUP_REFUSAL);
+    }
     const anchor = binding.engagementKey ?? binding.threadTs;
     if (!anchor) {
+      await auditRefusal(STAND_DOWN_REFUSALS.anchorless);
       throw new Error(
         "stand_down: this turn carries no conversation anchor, so nothing was marked — reply that you could NOT stop following here, and that someone must ask again in the conversation or ask an admin.",
       );
     }
-    const partition = resolvePartition(c);
     let marked = await markThreadStopped(partition, anchor);
     const room = binding.roomEngagementKey === undefined ? null : roomEngagementAddress(partition);
     let stoppedRoom = false;
