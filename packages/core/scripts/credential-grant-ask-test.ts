@@ -30,7 +30,13 @@ import { WORKER_ONLY_TOOLS_STANDING } from "../agent/access/worker-capability-in
 import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { credentialGrantConnectors } from "../agent/access/credential-grant.js";
 import { classifyConnectorOpTier } from "../agent/access/consequence.js";
-import { defaultGrantTool, requestCredentialGrantEntry } from "../agent/tools/request_credential_grant.js";
+import {
+  _grantMountAuditSettled,
+  _resetGrantMountAuditForTest,
+  defaultGrantTool,
+  requestCredentialGrantEntry,
+  requestCredentialGrantMount,
+} from "../agent/tools/request_credential_grant.js";
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -792,6 +798,138 @@ console.log("9. an ask composes with no vendor tool name to look up:");
     ok(dmed[0]?.text.includes("read a Notion page") === false, "control — …so the two tools do not render the same card");
     ok(dmed[0]?.text.includes("no plain description") === true, "control — …and the owner is warned that this deployment cannot describe it, and steered to decline");
     ok(dmed[0]?.text.includes(OTHER_TOOL) === false && dmed[0]?.text.includes(VENDOR_TOOL) === false, "control — and NEITHER vendor id appears");
+  }
+}
+
+console.log("10. a refused grant road leaves a row naming the floor that refused it:");
+{
+  const mountRows = async (): Promise<readonly { readonly detail?: unknown }[]> =>
+    (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.mount_refused");
+  const reasonsOf = (rows: readonly { readonly detail?: unknown }[]): readonly unknown[] => rows.map((r) => (r.detail as { reason?: unknown } | undefined)?.reason);
+  const ctxOf = (sessionId: string, grain: string): BindableContext =>
+    ({ session: { auth: { current: { attributes: { oe_grain: grain } } }, id: sessionId } }) as unknown as BindableContext;
+  const FIXTURE_SURFACE = resolvePartition(ctxOf("sess-1916-probe", "standing")).surfaceKey;
+  const useDomains = (domains: ReturnType<typeof defineDomain>[]): void => {
+    registerConfig({
+      loadBundles: () => [],
+      loadBindings: () => [],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains: () => domains,
+      loadSilos: () => [],
+      domainsForSurface: () => domains.map((d) => d.name),
+    });
+  };
+  const GRANTING = defineDomain({ name: "grant-1916-granting", reach: [FIXTURE_SURFACE], credentialGrants: ["notion"] });
+  const SILENT = defineDomain({ name: "grant-1916-silent", reach: [FIXTURE_SURFACE] });
+
+  _resetGrantMountAuditForTest();
+
+  useDomains([GRANTING]);
+  {
+    const before = (await mountRows()).length;
+    eq(requestCredentialGrantMount(ctxOf("sess-1916-grain", "task")), false, "a non-conversational grain does NOT mount the ask verb");
+    await _grantMountAuditSettled();
+    const rows = await mountRows();
+    eq(rows.length, before + 1, "…and writes exactly one grant.mount_refused row");
+    eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "grain", "🔴 …naming the GRAIN floor — the cause an operator would otherwise have to guess");
+    eq((rows[0]?.detail as { grain?: unknown } | undefined)?.grain, "task", "…and carrying the grain it read, so the row says which seat was refused");
+    eq((rows[0]?.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey, FIXTURE_SURFACE, "…and the surface key, so the row joins to a room");
+  }
+
+  {
+    useDomains([]);
+    const before = (await mountRows()).length;
+    eq(requestCredentialGrantMount(ctxOf("sess-1916-nodomain", "standing")), false, "a surface in NO domain does not mount the ask verb");
+    await _grantMountAuditSettled();
+    const rows = await mountRows();
+    eq(rows.length, before + 1, "…and writes exactly one row");
+    eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "no-domain", "🔴 …naming the NO-DOMAIN floor, which is a config gap rather than a seat shape");
+  }
+
+  {
+    useDomains([SILENT]);
+    const before = (await mountRows()).length;
+    eq(requestCredentialGrantMount(ctxOf("sess-1916-nodecl", "standing")), false, "a domain that declares NO credential grant does not mount the ask verb");
+    await _grantMountAuditSettled();
+    const rows = await mountRows();
+    eq(rows.length, before + 1, "…and writes exactly one row");
+    eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "no-declaration", "🔴 …naming the DECLARATION floor — the domain is reachable, the operator just never declared the grant");
+  }
+
+  {
+    const last3 = (await mountRows()).slice(0, 3);
+    eq([...new Set(reasonsOf(last3))].sort(), ["grain", "no-declaration", "no-domain"], "🔴 the three causes write three DIFFERENT reasons");
+  }
+
+  {
+    useDomains([GRANTING]);
+    const before = (await mountRows()).length;
+    eq(requestCredentialGrantMount(ctxOf("sess-1916-ok", "standing")), true, "control — the identical seat in a DECLARING domain DOES mount the ask verb");
+    await _grantMountAuditSettled();
+    eq((await mountRows()).length, before, "🔴 control — and writes NO grant.mount_refused row");
+  }
+
+  {
+    useDomains([SILENT]);
+    const before = (await mountRows()).length;
+    const ctx = ctxOf("sess-1916-dedupe", "standing");
+    eq(requestCredentialGrantMount(ctx), false, "the first resolution of a refused session is refused");
+    await _grantMountAuditSettled();
+    eq(requestCredentialGrantMount(ctx), false, "…and so is the second");
+    await _grantMountAuditSettled();
+    eq((await mountRows()).length, before + 1, "🔴 …but the log carries ONE row for the two — the dedupe auditGateOnce uses, for the same reason");
+    _resetGrantMountAuditForTest();
+    eq(requestCredentialGrantMount(ctx), false, "control — the same session refused again after the dedupe is reset");
+    await _grantMountAuditSettled();
+    eq((await mountRows()).length, before + 2, "control — writes a SECOND row, so the dedupe above measured the dedupe and not a dead road");
+  }
+
+  const refusedRows = async (): Promise<readonly { readonly detail?: unknown }[]> =>
+    (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.refused");
+  const gateOf = (rows: readonly { readonly detail?: unknown }[]): unknown => (rows[0]?.detail as { gate?: unknown } | undefined)?.gate;
+  const ENVELOPE_1916 = '<message trigger="true" from="human" author-id="U-req">read the launch page</message>';
+  const driveVerb = async (ctx: BindableContext, over: Record<string, unknown>): Promise<{ asked: boolean; message: string }> =>
+    await inEveContext(new FakeEveContext(), async () => {
+      recordRequesterIdentity(ctx, undefined, ENVELOPE_1916);
+      return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+        { connector: "notion", owner: OWNER, purpose: "read the launch page", requested_mode: "once", target_label: "OPE-1916 page", ...over },
+        ctx,
+      )) as { asked: boolean; message: string };
+    });
+
+  useDomains([GRANTING]);
+
+  {
+    const before = (await refusedRows()).length;
+    const noSession = { session: { auth: { current: { attributes: { oe_grain: "standing" } } } } } as unknown as BindableContext;
+    const out = await driveVerb(noSession, {});
+    eq(out.asked, false, "a conversation with NO session id is refused");
+    ok(out.message.includes("no session id"), "…by that name");
+    const rows = await refusedRows();
+    eq(rows.length, before + 1, "🔴 …and the refusal now leaves a grant.refused row");
+    eq(gateOf(rows), "no_scope_key", "🔴 …naming its own gate, distinct from every other refusal on this plane");
+  }
+
+  {
+    const before = (await refusedRows()).length;
+    dmed.length = 0;
+    const out = await driveVerb(ctxOf("sess-1916-badowner", "standing"), { owner: "slack/U-owner" });
+    eq(out.asked, false, "an owner string that names NOBODY is refused");
+    eq(dmed.length, 0, "…and no card reaches anyone — a refusal here must not guess at a person");
+    const rows = await refusedRows();
+    eq(rows.length, before + 1, "🔴 …and the refusal leaves a grant.refused row");
+    eq(gateOf(rows), "owner_unresolved", "🔴 …naming its own gate");
+    eq((rows[0]?.detail as { owner?: unknown } | undefined)?.owner, undefined, "🔴 …and NOT the unresolved owner string, which is model-authored and names nobody");
+  }
+
+  {
+    const before = (await refusedRows()).length;
+    dmed.length = 0;
+    const out = await driveVerb(ctxOf("sess-1916-control", "standing"), { target_label: "OPE-1916 control page" });
+    eq(out.asked, true, "🔴 control — the identical ask with a session and a resolvable owner IS raised");
+    eq(dmed.length, 1, "control — and one card reaches the owner's DM");
+    eq((await refusedRows()).length, before, "control — and writes NO grant.refused row, so the two arms above measured their own gates");
   }
 }
 

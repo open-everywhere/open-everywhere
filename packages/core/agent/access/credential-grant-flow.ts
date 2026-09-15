@@ -454,7 +454,8 @@ export async function auditGrant(
     | "grant.refused"
     | "grant.revoked"
     | "grant.notified"
-    | "grant.undisclosed",
+    | "grant.undisclosed"
+    | "grant.mount_refused",
   principalId: string | undefined,
   detail: Readonly<Record<string, unknown>>,
 ): Promise<void> {

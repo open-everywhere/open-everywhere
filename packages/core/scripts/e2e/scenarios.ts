@@ -1,5 +1,5 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
-import { capFixtureFor } from "./fixture-inventory-lib.js";
+import { capFixtureFor, roomIdFor } from "./fixture-inventory-lib.js";
 import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
@@ -137,6 +137,27 @@ export class GateFailure extends Error {
     super(`gate failed: ${label}`);
     this.name = "GateFailure";
   }
+}
+
+function grantAskPageId(): string | undefined {
+  return roomIdFor(ENV.notionAmbientPageId, process.env);
+}
+
+function grantAskText(ownerMention: string, pageId: string, purpose: string): string {
+  return (
+    `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask ${ownerMention} to lend this ` +
+    `conversation ONE Notion tool — a page-read of the Notion page with id ${pageId} — so we can check the borrow path end to end. ` +
+    `Fix that page id as the grant's argument; do not ask me which page, it is named here. Use the credential-grant ask for it. ` +
+    `The purpose is: "${purpose}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`
+  );
+}
+
+function grantAskPageSkipReason(): string {
+  return (
+    `${ENV.notionAmbientPageId} is not set — a credential-grant ask PINS the arguments the owner approves, so an ask with no page names ` +
+    "nothing the owner can judge and the seat asks a clarifying question instead of calling the verb (measured in a live run). Set it to " +
+    "the e2e Notion fixture page id."
+  );
 }
 
 export interface ScenarioContext {
@@ -6082,6 +6103,8 @@ export const SCENARIOS: readonly Scenario[] = [
           `${ENV.discordGrantOwner} not set — an ask needs a named owner who can actually receive a DM from the OE bot, and inventing one would mint a row addressed to nobody. Set it to the Discord user id (or full \`discord/<id>\` principal key) of a real person in the e2e guild.`,
         );
       }
+      const grantPageId = grantAskPageId();
+      if (grantPageId === undefined) ctx.skip(grantAskPageSkipReason());
       const auditRead = ctx.auditRead!;
       const discord = ctx.discord!;
       const ownerId = ownerRaw!.includes("/") ? ownerRaw!.slice(ownerRaw!.lastIndexOf("/") + 1) : ownerRaw!;
@@ -6090,11 +6113,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const token = factToken("dgrant");
       const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
-      const asked = await discord.post(
-        discord.mention(
-          `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask <@${ownerId}> to lend this conversation ONE Notion tool — a page-read — so we can check the borrow path end to end. Use the credential-grant ask for it. The purpose is: "e2e grant-tap fixture, ref ${token}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`,
-        ),
-      );
+      const asked = await discord.post(discord.mention(grantAskText(`<@${ownerId}>`, grantPageId!, `e2e grant-tap fixture, ref ${token}`)));
       const threadId = await discord.awaitThread(asked.id, { timeoutMs: 300_000 });
       const reply = await discord.awaitReply(threadId, asked.id, { timeoutMs: 300_000 });
       ctx.gate(reply.content.trim().length > 0, "S-DISCORD-GRANT: the grant ask drew a bot reply (the turn ran end-to-end)");
@@ -6219,6 +6238,8 @@ export const SCENARIOS: readonly Scenario[] = [
           "the refusal is assertable only over the audit trail — the grant card lands in the OWNER's private DM, which the driver bot cannot read, so a room reply cannot tell a refused ask from a sent one. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
         );
       }
+      const grantPageId = grantAskPageId();
+      if (grantPageId === undefined) ctx.skip(grantAskPageSkipReason());
       const auditRead = ctx.auditRead!;
       const dm = ctx.dm!;
       await fenceDmSeat(ctx, "S-DM-STOP-GRANT");
@@ -6243,11 +6264,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const stopRow = await awaitRow(DM_STOP_ACTION, `the stop: a ${DM_STOP_ACTION} audit row for ${adminAddress}`, (d) => d.address === adminAddress);
         ctx.gate(stopRow !== undefined, `stop: the seat really called the verb — a ${DM_STOP_ACTION} row, written from the person's own words rather than a button`);
 
-        const asked = await slack.post(
-          slack.mention(
-            `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask <@${userId}> to lend this conversation ONE Notion tool — a page-read — so we can check the borrow path end to end. Use the credential-grant ask for it. The purpose is: "e2e stop-then-grant fixture, ref ${token}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`,
-          ),
-        );
+        const asked = await slack.post(slack.mention(grantAskText(`<@${userId}>`, grantPageId!, `e2e stop-then-grant fixture, ref ${token}`)));
         const reply = await slack.awaitThreadReply(asked.ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
 
         const refused = await awaitRow(

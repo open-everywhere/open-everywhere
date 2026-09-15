@@ -4,7 +4,7 @@ import { getConfig } from "../access/config.js";
 import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { credentialGrantRefusalNote, resolveGrantOwner } from "../access/credential-grant-ask.js";
 import type { GrantAskWorkerOrigin } from "../access/credential-grant-card.js";
-import { askForCredentialGrant } from "../access/credential-grant-flow.js";
+import { askForCredentialGrant, auditGrant, type GrantAuditStamps } from "../access/credential-grant-flow.js";
 import { resolveRequesterLabel } from "../access/credential-grant-notice.js";
 import { credentialGrantConnectors, domainsAdmitCredentialGrant } from "../access/credential-grant.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
@@ -47,14 +47,76 @@ function domainsForCtx(ctx: BindableContext): readonly Domain[] {
 
 export function requestCredentialGrantMount(ctx: BindableContext): boolean {
   try {
-    if (!mayRaiseGrantAsk(ctx)) return false;
+    if (!mayRaiseGrantAsk(ctx)) {
+      noteMountRefused(ctx, "grain");
+      return false;
+    }
   } catch {
+    noteMountRefused(ctx, "grain");
     return false;
   }
   const domains = domainsForCtx(ctx);
-  if (domains.length === 0) return false;
+  if (domains.length === 0) {
+    noteMountRefused(ctx, "no-domain");
+    return false;
+  }
   for (const connector of credentialGrantConnectors()) if (domainsAdmitCredentialGrant(domains, connector)) return true;
+  noteMountRefused(ctx, "no-declaration");
   return false;
+}
+
+type GrantMountRefusal = "grain" | "no-domain" | "no-declaration";
+
+const auditedMountRefusals = new Set<string>();
+
+export function _resetGrantMountAuditForTest(): void {
+  auditedMountRefusals.clear();
+}
+
+let lastMountAudit: Promise<void> = Promise.resolve();
+
+export function _grantMountAuditSettled(): Promise<void> {
+  return lastMountAudit;
+}
+
+function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal): void {
+  try {
+    const p = safePartitionOf(ctx);
+    if (p === undefined) return;
+    const sessionId = ctx.session?.id ?? p.surfaceKey;
+    const key = `${sessionId}|${reason}`;
+    if (auditedMountRefusals.has(key)) return;
+    auditedMountRefusals.add(key);
+    let grain = "unknown";
+    try {
+      grain = windowGrainOf(ctx);
+    } catch {
+    }
+    lastMountAudit = auditGrant(stampsOf(p), "grant.mount_refused", undefined, { grain, reason, surfaceKey: p.surfaceKey }).catch(() => {
+    });
+  } catch {
+  }
+}
+
+function safePartitionOf(ctx: BindableContext): ReturnType<typeof resolvePartition> | undefined {
+  try {
+    return resolvePartition(ctx);
+  } catch {
+    return undefined;
+  }
+}
+
+function stampsOf(p: ReturnType<typeof resolvePartition>): GrantAuditStamps {
+  return { org: p.org, platform: p.platform, workspace: p.workspace, ...(p.surface === undefined ? {} : { surface: p.surface }) };
+}
+
+async function auditVerbRefusal(ctx: BindableContext, gate: string, detail: Readonly<Record<string, unknown>>, principalId?: string): Promise<void> {
+  const p = safePartitionOf(ctx);
+  if (p === undefined) return;
+  try {
+    await auditGrant(stampsOf(p), "grant.refused", principalId, { gate, ...detail });
+  } catch {
+  }
 }
 
 export function mayRaiseGrantAsk(ctx: BindableContext): boolean {
@@ -160,6 +222,7 @@ export const requestCredentialGrantEntry = defineTool({
     }
     const mcpTool = input.tool?.trim() || defaultGrantTool(input.connector);
     if (mcpTool === undefined) {
+      await auditVerbRefusal(c, "no_default_tool", { connector: input.connector });
       return {
         asked: false,
         message:
@@ -183,6 +246,7 @@ export const requestCredentialGrantEntry = defineTool({
     const domains = domainsForCtx(c);
     const scopeKey = grantScopeKey(c);
     if (scopeKey.length === 0) {
+      await auditVerbRefusal(c, "no_scope_key", { connector: input.connector });
       return { asked: false, message: "Refused: this conversation has no session id, so there is no chat for a grant to be scoped to." };
     }
     const rootSessionId = delegationRootSessionId(c);
@@ -192,7 +256,10 @@ export const requestCredentialGrantEntry = defineTool({
     const requesterPrincipalId = verdict.kind === "requester" ? tryPrincipalKey(p.platform, p.workspace, verdict.principalId) : undefined;
 
     const owner = await resolveGrantOwner(input.owner, p.platform, p.workspace);
-    if ("refusal" in owner) return { asked: false, message: owner.refusal };
+    if ("refusal" in owner) {
+      await auditVerbRefusal(c, "owner_unresolved", { connector: input.connector }, requesterPrincipalId);
+      return { asked: false, message: owner.refusal };
+    }
 
     const requesterLabel = requesterPrincipalId === undefined ? "an unverified caller" : ((await resolveRequesterLabel(requesterPrincipalId).catch(() => undefined)) ?? "");
     const requesterTarget = replyTargetJson(c);

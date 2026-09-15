@@ -51,7 +51,6 @@ export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
   "packages/core/agent/routines/match-stamp.ts::MATCH_STAMP_WINDOW_MS",
   "packages/core/agent/scm/repo-skills.ts::repoSkillsState",
   "packages/core/agent/stall/guard.ts::reduceResult",
-  "packages/core/agent/tools/request_credential_grant.ts::requestCredentialGrantMount",
   "packages/core/agent/tools/set_dm_delivery.ts::isOneToOneDm",
   "packages/providers/github/agent/channels/github-reaction-scope.ts::GITHUB_REACTION_POLL_HOURLY_BUDGET",
   "packages/providers/linear/agent/channels/linear-graphql.ts::LINEAR_SURFACE",

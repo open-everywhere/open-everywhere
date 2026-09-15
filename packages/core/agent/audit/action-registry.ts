@@ -546,6 +546,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "governance.floor_breach",
   "governance.narrowed",
   "governance.redirected",
+  "grant.mount_refused",
   "input_response.card_refused",
   "input_response.card_settled",
   "input_response.dropped",
@@ -788,7 +789,7 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
   {
     file: "packages/core/agent/access/credential-grant-flow.ts",
     expression: "the shorthand `action` forwarded from the grant lifecycle step",
-    emits: ["grant.asked", "grant.granted", "grant.declined", "grant.expired", "grant.revoked", "grant.refused"],
+    emits: ["grant.asked", "grant.granted", "grant.declined", "grant.expired", "grant.revoked", "grant.refused", "grant.mount_refused"],
   },
   {
     file: "packages/core/agent/control/oauth-route.ts",
