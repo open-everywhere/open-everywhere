@@ -8,6 +8,7 @@ _setDeploymentIdentityForTest({ org: undefined });
 
 import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { registerSettings } from "../agent/settings/settings.js";
+import { RateLimitExhaustedError } from "../agent/channels/rate-limit-retry.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, OE_DELIVERY_ID_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
@@ -40,10 +41,16 @@ const SURFACE_KEY = "slack/T1/C1";
 interface ReceivedWake { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }
 const received: ReceivedWake[] = [];
 let failOnToken: string | undefined;
+let rateLimitOnToken: string | undefined;
 const captureReceive = ((_ch: unknown, rawTarget: unknown) => ({
   async send(message: string, options: { auth: unknown }) {
     const target = rawTarget as UnifiedReceiveTarget;
     if (failOnToken !== undefined && target.token === failOnToken) throw new Error("injected owner-delivery failure");
+    if (rateLimitOnToken !== undefined && target.token === rateLimitOnToken) {
+      const err = new Error("Too many requests — please retry later");
+      err.name = "TooManyRequestsError";
+      throw err;
+    }
     received.push({ message, target, auth: options.auth as ReceivedWake["auth"] });
     return undefined as never;
   },
@@ -235,5 +242,33 @@ console.log("10. isThreadScopedWakeOrigin predicate:");
   eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1", threadTs: "170.5" }), true, "slack: threadTs present ⇒ thread-scoped");
   eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1" }), false, "slack: no threadTs ⇒ top-level (standing's domain)");
 }
+
+console.log("11. a rate-limited owner divert does not spend a second budget:");
+await withFlag(true, async () => {
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  const ingressBefore = (await readAudit({ org: ORG, action: "wake.ingress" })).length;
+  rateLimitOnToken = SEAT;
+  const wakeId = mintWakeId();
+  let threw: unknown;
+  try {
+    await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  } catch (err) {
+    threw = err;
+  }
+  rateLimitOnToken = undefined;
+
+  ok(threw instanceof RateLimitExhaustedError, "🔴 11: an exhausted owner divert RETHROWS to the surface's loud catch — it does not fall back");
+  eq(received.length, 0, "🔴 11: …and no second, standing delivery was attempted against the same refusing queue");
+  const rows = await ingressAudit();
+  eq(rows.length, before + 1, "11: the decision is audited exactly once");
+  const detail = rows[0].detail as Record<string, unknown>;
+  eq(detail.reason, "owner-divert-rate-limited", "11: audit: the reason names the rate limit, not a generic owner failure");
+  eq(detail.routed, "none", "🔴 11: audit: routed=none — the wake reached NEITHER seat, which is what an operator must see");
+  ok(typeof detail.attempts === "number" && (detail.attempts as number) > 1, "11: audit: the attempts spent ride the row");
+  eq((await readAudit({ org: ORG, action: "wake.ingress" })).length, ingressBefore + 1, "🔴 11: exactly ONE wake.ingress row for this wake — a fallback would have written a second");
+  await clearThreadOwner(store, ORG, REF);
+  received.length = 0;
+});
 
 console.log(`s2-ingress-test: ${n} assertions passed`);

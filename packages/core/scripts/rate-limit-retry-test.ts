@@ -4,9 +4,11 @@ import {
   DEFAULT_FALLBACK_MS,
   RateLimitExhaustedError,
   isRateLimitedForbidden,
+  isRateLimitThrow,
   parseRetryAfterMs,
   withRetryAfter,
   withRetryAfterLoose,
+  withRetryAfterThrown,
 } from "../agent/channels/rate-limit-retry.js";
 
 let n = 0;
@@ -419,4 +421,184 @@ function forbidden(retryAfter?: string): Response {
   ok(!isRateLimitedForbidden(new Response("{}", { status: 500, headers: new Headers({ "retry-after": "5" }) }), at), "🔴 403 10h: nor is a 500 bearing Retry-After");
 }
 
-console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter, the retryAfterMs body override, the per-seam 403 opt-in)`);
+{
+  const thrown = (retryAfter?: number): Error => {
+    const err = new Error("Too many requests — please retry later");
+    err.name = "TooManyRequestsError";
+    if (retryAfter !== undefined) Object.assign(err, { retryAfter });
+    return err;
+  };
+
+  ok(isRateLimitThrow(thrown()), "11a: eve's TooManyRequestsError name IS a rate-limit refusal");
+  ok(isRateLimitThrow(Object.assign(new Error("nope"), { status: 429 })), "11a: …and so is a numeric status of 429, whatever the class is called");
+  ok(isRateLimitThrow(new Error("wrapped", { cause: thrown() })), "11a: …through a `cause` chain, because a re-wrap keeps the class only there");
+  ok(!isRateLimitThrow(new Error("socket hang up")), "🔴 11a: a transport throw is NOT — retrying an unanswered request could double a post");
+  ok(!isRateLimitThrow(Object.assign(new Error("denied"), { status: 403 })), "🔴 11a: nor is a permission denial");
+  ok(!isRateLimitThrow(Object.assign(new Error("boom"), { status: 500 })), "🔴 11a: nor is a 5xx");
+  ok(!isRateLimitThrow(Object.assign(new Error("odd"), { status: "429" })), "🔴 11a: nor is a STRING status — only a numeric one is a signal");
+  ok(!isRateLimitThrow(undefined) && !isRateLimitThrow(null) && !isRateLimitThrow("429"), "🔴 11a: nor is a non-object throw");
+
+  {
+    const clock = recorder();
+    let calls = 0;
+    const got = await withRetryAfterThrown(
+      async () => {
+        calls += 1;
+        if (calls === 1) throw thrown(3);
+        return { delivered: true };
+      },
+      { surface: "slack", operation: "wake.dispatch", sleep: clock.sleep, fallbackMs: 1_000 },
+    );
+    eq(got, { delivered: true }, "🔴 11b: the refused call is REPEATED and its value returned — the wake is not dropped");
+    eq(calls, 2, "11b: exactly two attempts — the refusal and the one that settled");
+    eq(clock.slept, [3_000], "🔴 11b: the honoured delay is the SECONDS the error named, in ms — not the fallback");
+  }
+
+  {
+    const clock = recorder();
+    let calls = 0;
+    await withRetryAfterThrown(
+      async () => {
+        calls += 1;
+        if (calls === 1) throw thrown();
+        return "ok";
+      },
+      { surface: "slack", operation: "wake.dispatch", sleep: clock.sleep, fallbackMs: 2_000 },
+    );
+    eq(clock.slept, [2_000], "11c: a refusal naming no delay waits the caller's fallback");
+  }
+
+  {
+    const clock = recorder();
+    let calls = 0;
+    const original = new Error("socket hang up");
+    let caught: unknown;
+    try {
+      await withRetryAfterThrown(
+        async () => {
+          calls += 1;
+          throw original;
+        },
+        { surface: "slack", operation: "wake.dispatch", sleep: clock.sleep },
+      );
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught === original, "🔴 11d: a transport throw propagates as the SAME error object — not re-wrapped, not classified");
+    eq(calls, 1, "🔴 11d: …on ONE attempt");
+    eq(clock.slept, [], "🔴 11d: …and ZERO sleeps");
+  }
+
+  {
+    const clock = recorder();
+    let calls = 0;
+    let caught: unknown;
+    try {
+      await withRetryAfterThrown(
+        async () => {
+          calls += 1;
+          throw thrown(1);
+        },
+        { surface: "slack", operation: "wake.dispatch", sleep: clock.sleep, maxAttempts: 3 },
+      );
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught instanceof RateLimitExhaustedError, "11e: an exhausted thrown retry throws the SAME named failure a response-shaped one does");
+    eq((caught as RateLimitExhaustedError).attempts, 3, "11e: …naming the attempts it made");
+    eq((caught as RateLimitExhaustedError).status, 429, "11e: …and classifying as 429, so platform-failure reads it AMBIGUOUS");
+    eq(calls, 3, "11e: the attempt bound is real — three calls, not more");
+    eq(clock.slept, [1_000, 1_000], "11e: …with two waits between them");
+  }
+
+  {
+    const clock = recorder();
+    let caught: unknown;
+    try {
+      await withRetryAfterThrown(async () => { throw thrown(10); }, {
+        surface: "slack",
+        operation: "wake.dispatch",
+        sleep: clock.sleep,
+        maxAttempts: 9,
+        totalBudgetMs: 15_000,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught instanceof RateLimitExhaustedError, "11f: the budget ends the thrown road with the named failure");
+    eq(clock.slept, [10_000], "🔴 11f: ONE wait of 10 s — the second would have overrun 15 s, so it is refused before it is slept");
+  }
+}
+
+{
+  {
+    const clock = recorder();
+    const seen: string[] = [];
+    const err = new Error("Too many requests");
+    err.name = "TooManyRequestsError";
+    Object.assign(err, { retryAfter: 2 });
+    await withRetryAfterThrown(
+      (() => {
+        let calls = 0;
+        return async () => {
+          calls += 1;
+          if (calls <= 2) throw err;
+          return "ok";
+        };
+      })(),
+      {
+        surface: "slack",
+        operation: "wake.dispatch",
+        sleep: clock.sleep,
+        onRefusal: (r) => void seen.push(`${r.attempt}/${r.outcome}/${r.delayMs}/${r.waitedMs}/${r.refusalStatus}`),
+      },
+    );
+    eq(seen, ["1/retrying/2000/0/429", "2/retrying/2000/2000/429"], "🔴 12a: one report per refusal, with the attempt, the wait about to happen and the time already waited");
+  }
+
+  {
+    const clock = recorder();
+    const seen: string[] = [];
+    await withRetryAfter(scripted([rateLimited("1"), rateLimited("1")]).send, {
+      surface: "slack",
+      operation: "chat.postMessage",
+      sleep: clock.sleep,
+      maxAttempts: 2,
+      onRefusal: (r) => void seen.push(`${r.attempt}/${r.outcome}/${r.delayMs}`),
+    }).catch(() => undefined);
+    eq(seen, ["1/retrying/1000", "2/exhausted/0"], "🔴 12b: the last refusal is reported as `exhausted` with no wait — so a reader can tell a lost call from a retried one");
+  }
+
+  {
+    const seen: number[] = [];
+    await withRetryAfter(scripted([new Response("{}", { status: 200 })]).send, {
+      surface: "slack",
+      operation: "chat.postMessage",
+      onRefusal: (r) => void seen.push(r.attempt),
+    });
+    eq(seen, [], "🔴 12c: a call that was never refused writes no retry row");
+  }
+
+  {
+    const clock = recorder();
+    let calls = 0;
+    const got = await withRetryAfterThrown(
+      async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("429"), { status: 429 });
+        return "delivered";
+      },
+      {
+        surface: "slack",
+        operation: "wake.dispatch",
+        sleep: clock.sleep,
+        onRefusal: () => {
+          throw new Error("the audit store is down");
+        },
+      },
+    );
+    eq(got, "delivered", "🔴 12d: an observer that throws never fails the call it observes");
+  }
+}
+
+console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter, the retryAfterMs body override, the per-seam 403 opt-in, the thrown-shape adapter, the refusal observer)`);

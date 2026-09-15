@@ -54,6 +54,16 @@ export interface RetryableResponse {
   readonly body?: { cancel(): Promise<unknown> } | null;
 }
 
+export interface RateLimitRefusal {
+  readonly surface: string;
+  readonly operation: string;
+  readonly attempt: number;
+  readonly refusalStatus: number;
+  readonly delayMs: number;
+  readonly waitedMs: number;
+  readonly outcome: "retrying" | "exhausted";
+}
+
 export interface RateLimitRetryOptions {
   readonly surface: string;
   readonly operation: string;
@@ -65,6 +75,7 @@ export interface RateLimitRetryOptions {
   readonly now?: () => number;
   readonly retryAfterMs?: (res: RetryableResponse) => number | undefined | Promise<number | undefined>;
   readonly retryForbiddenWithRetryAfter?: boolean;
+  readonly onRefusal?: (refusal: RateLimitRefusal) => void | Promise<void>;
 }
 
 export type RetryPolicy = Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
@@ -93,7 +104,22 @@ export async function withRetryAfter<T extends RetryableResponse>(send: () => Pr
     }
     void res.body?.cancel().catch(() => undefined);
     const delayMs = Math.min(capMs, named ?? fallbackMs);
-    if (attempt >= maxAttempts || waitedMs + delayMs > totalBudgetMs) {
+    const exhausted = attempt >= maxAttempts || waitedMs + delayMs > totalBudgetMs;
+    if (opts.onRefusal) {
+      try {
+        await opts.onRefusal({
+          surface: opts.surface,
+          operation: opts.operation,
+          attempt,
+          refusalStatus: res.status,
+          delayMs: exhausted ? 0 : delayMs,
+          waitedMs,
+          outcome: exhausted ? "exhausted" : "retrying",
+        });
+      } catch {
+      }
+    }
+    if (exhausted) {
       throw new RateLimitExhaustedError({
         surface: opts.surface,
         operation: opts.operation,
@@ -127,4 +153,54 @@ export function withRetryAfterLoose<T extends { readonly status: number }>(
     });
     return withHeaders as T & RetryableResponse;
   }, opts);
+}
+
+const RATE_LIMIT_THROW_NAME = "TooManyRequestsError";
+
+const MAX_CAUSE_DEPTH = 5;
+
+function rateLimitThrowLink(err: unknown): { readonly retryAfterMs?: number } | undefined {
+  let node: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && node !== null && typeof node === "object"; depth += 1) {
+    const e = node as { status?: unknown; name?: unknown; retryAfter?: unknown; cause?: unknown };
+    if (e.status === RATE_LIMITED_STATUS || e.name === RATE_LIMIT_THROW_NAME) {
+      const secs = e.retryAfter;
+      return typeof secs === "number" && Number.isFinite(secs) && secs >= 0 ? { retryAfterMs: secs * 1000 } : {};
+    }
+    node = e.cause;
+  }
+  return undefined;
+}
+
+export function isRateLimitThrow(err: unknown): boolean {
+  return rateLimitThrowLink(err) !== undefined;
+}
+
+interface ThrownAttempt<T> extends RetryableResponse {
+  readonly settled?: readonly [T];
+  readonly retryAfterMs?: number;
+}
+
+const SETTLED_STATUS = 200;
+
+const NO_HEADERS: { get(name: string): string | null } = { get: () => null };
+
+export async function withRetryAfterThrown<T>(run: () => Promise<T>, opts: RateLimitRetryOptions): Promise<T> {
+  const attempt = async (): Promise<ThrownAttempt<T>> => {
+    try {
+      return { status: SETTLED_STATUS, headers: NO_HEADERS, settled: [await run()] };
+    } catch (err) {
+      const refusal = rateLimitThrowLink(err);
+      if (refusal === undefined) throw err;
+      return { status: RATE_LIMITED_STATUS, headers: NO_HEADERS, ...refusal };
+    }
+  };
+  const res = await withRetryAfter<ThrownAttempt<T>>(attempt, {
+    ...opts,
+    retryAfterMs: (r) => (r as ThrownAttempt<T>).retryAfterMs,
+  });
+  if (res.settled === undefined) {
+    throw new RateLimitExhaustedError({ surface: opts.surface, operation: opts.operation, attempts: 0, waitedMs: 0 });
+  }
+  return res.settled[0];
 }

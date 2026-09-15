@@ -7,7 +7,15 @@ import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
-import { WAKE_INGRESS_ACTION, wakeIngressDetail } from "./wake-timing.js";
+import {
+  WAKE_INGRESS_ACTION,
+  wakeIngressDetail,
+  WAKE_RETRY_ACTION,
+  wakeRetryDetail,
+  WAKE_DISPATCH_RETRY_POLICY,
+  WAKE_DISPATCH_OPERATION,
+} from "./wake-timing.js";
+import { withRetryAfterThrown, isRateLimitThrow, RateLimitExhaustedError } from "./rate-limit-retry.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { canPostUnifiedActions } from "./post-arms.js";
 import { approvalCardActions, mintApprovalCardTicket, rememberApprovalCardTicket } from "./approval-card.js";
@@ -404,6 +412,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         }).catch(() => undefined);
         return session;
       } catch (err) {
+        if (isRateLimitThrow(err)) throw err;
         const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
         console.warn(`[open-everywhere:unified] answer ${t.answer.requestId} could NOT be delivered (${error}) — falling back to an ordinary wake, the question stays open`);
         await appendAudit({
@@ -780,7 +789,29 @@ export async function divertToUnifiedWindow(
   const message = input.message;
   const deliveredAuth = auth;
   try {
-    await receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) });
+    await withRetryAfterThrown(() => receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) }), {
+      surface: input.window.origin.platform,
+      operation: WAKE_DISPATCH_OPERATION,
+      ...WAKE_DISPATCH_RETRY_POLICY,
+      onRefusal: (refusal) =>
+        appendAudit({
+          org: deploymentOrg(),
+          platform: input.window.origin.platform,
+          workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
+          surface: input.surfaceKey,
+          action: WAKE_RETRY_ACTION,
+          detail: wakeRetryDetail({
+            wakeId: input.window.wakeId,
+            deliveryId,
+            surfaceKey: input.surfaceKey,
+            attempt: refusal.attempt,
+            delayMs: refusal.delayMs,
+            waitedMs: refusal.waitedMs,
+            outcome: refusal.outcome,
+            refusalStatus: refusal.refusalStatus,
+          }),
+        }).catch(() => undefined),
+    });
   } catch (err) {
     await healPrunedDeploymentStrand({
       token: bareToken,
@@ -836,6 +867,10 @@ export async function divertInboundToUnifiedWindow(
   try {
     await divertToUnifiedWindow(receive, { ...input, token: route.token, auth: { ...input.auth, attributes } });
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      await audit({ routed: "none", reason: "owner-divert-rate-limited", ownerId: route.token, grain: route.grain, attempts: err.attempts, waitedMs: err.waitedMs });
+      throw err;
+    }
     const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
     await audit({ routed: "standing", reason: "owner-divert-failed", ownerId: route.token, grain: route.grain, error: errMsg });
     return divertToUnifiedWindow(receive, input);

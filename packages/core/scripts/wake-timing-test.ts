@@ -21,6 +21,9 @@ import {
   splitWakeLatency,
   renderWakeSplit,
   WAKE_TURN_START_ACTION,
+  WAKE_RETRY_ACTION,
+  WAKE_DISPATCH_RETRY_POLICY,
+  wakeRetryDetail,
 } from "../agent/channels/wake-timing.js";
 import { readWakeSplits, summariseWakeSplits } from "./e2e/wake-split.js";
 import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
@@ -229,5 +232,30 @@ eq(await readWakeSplits(async () => { throw new Error("audit plane down"); }, { 
 ok(summariseWakeSplits([]).includes("no wake was measurable"), "the summary says plainly when nothing was measured");
 ok(summariseWakeSplits(joined).includes("2 wake(s) measured"), "the summary counts what it measured");
 ok(summariseWakeSplits(joined).includes("ENVIRONMENTAL"), "the summary repeats that the pre-turn segments are never a verdict on the tree");
+
+{
+  eq(WAKE_RETRY_ACTION, "surface.wake_retry", "the retry row's action is the stable string the control plane queries");
+  const full = wakeRetryDetail({
+    wakeId: "w-1",
+    deliveryId: "d-1",
+    surfaceKey: "slack/T1/C1",
+    attempt: 2,
+    delayMs: 2_000,
+    waitedMs: 2_000,
+    outcome: "retrying",
+    refusalStatus: 429,
+  });
+  eq(full, { wakeId: "w-1", deliveryId: "d-1", surfaceKey: "slack/T1/C1", attempt: 2, delayMs: 2_000, waitedMs: 2_000, outcome: "retrying", refusalStatus: 429 }, "the retry row carries the wake id, the attempt, the two durations and the outcome — and nothing else");
+  ok(!Object.keys(full).some((k) => k === "message" || k === "text"), "🔴 the retry row carries NO message text — ids, counts and durations only");
+  const bare = wakeRetryDetail({ wakeId: "w-2", surfaceKey: "slack/T1/C1", attempt: 1, delayMs: 0, waitedMs: 0, outcome: "exhausted", refusalStatus: 429 });
+  ok(!("deliveryId" in bare), "🔴 an absent deliveryId is ABSENT, never present-and-undefined — the same rule the ingress row's vendor reading follows");
+  eq(bare.outcome, "exhausted", "the exhausted row says so, so a reader can tell a retried wake from a lost one");
+
+  const p = WAKE_DISPATCH_RETRY_POLICY;
+  ok(p.maxAttempts >= 2, "🔴 the wake dispatch retries at least once — never dropping on the first 429 is the whole acceptance");
+  ok(p.totalBudgetMs < (p.maxAttempts - 1) * p.capMs, "🔴 the TOTAL budget, not the attempt count, is what bounds this path's latency");
+  ok(p.fallbackMs > 0, "🔴 the fallback is a real wait: eve's queue error names no Retry-After, so every wait on this road uses it");
+  ok(p.fallbackMs * (p.maxAttempts - 1) <= p.totalBudgetMs, "the fallback path can spend its attempts without being cut short by the budget");
+}
 
 console.log(`wake-timing: ${n} assertions passed`);

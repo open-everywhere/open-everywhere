@@ -591,6 +591,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "surface.quiet_fail",
   "surface.wake_dropped",
   "surface.wake_failed",
+  "surface.wake_retry",
   "taint.forward",
   "taint.mode",
   "taint.verdict",

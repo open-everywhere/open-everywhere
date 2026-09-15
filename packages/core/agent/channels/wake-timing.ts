@@ -54,6 +54,50 @@ export const WAKE_INGRESS_ACTION = "wake.ingress";
 
 export const WAKE_TURN_START_ACTION = "wake.turn_start";
 
+export const WAKE_RETRY_ACTION = "surface.wake_retry";
+
+export const WAKE_DISPATCH_RETRY_POLICY: { readonly maxAttempts: number; readonly capMs: number; readonly fallbackMs: number; readonly totalBudgetMs: number } = {
+  maxAttempts: 4,
+  capMs: 10_000,
+  fallbackMs: 2_000,
+  totalBudgetMs: 20_000,
+};
+
+export const WAKE_DISPATCH_OPERATION = "wake.dispatch";
+
+export type WakeRetryDetail = {
+  readonly wakeId: string;
+  readonly deliveryId?: string;
+  readonly surfaceKey: string;
+  readonly attempt: number;
+  readonly delayMs: number;
+  readonly waitedMs: number;
+  readonly outcome: "retrying" | "exhausted";
+  readonly refusalStatus: number;
+};
+
+export function wakeRetryDetail(input: {
+  readonly wakeId: string;
+  readonly deliveryId?: string;
+  readonly surfaceKey: string;
+  readonly attempt: number;
+  readonly delayMs: number;
+  readonly waitedMs: number;
+  readonly outcome: "retrying" | "exhausted";
+  readonly refusalStatus: number;
+}): WakeRetryDetail {
+  return {
+    wakeId: input.wakeId,
+    ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
+    surfaceKey: input.surfaceKey,
+    attempt: input.attempt,
+    delayMs: input.delayMs,
+    waitedMs: input.waitedMs,
+    outcome: input.outcome,
+    refusalStatus: input.refusalStatus,
+  };
+}
+
 export type WakeIngressDetail = {
   readonly wakeId: string;
   readonly deliveryId?: string;
