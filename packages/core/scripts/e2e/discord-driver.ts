@@ -51,6 +51,10 @@ function idAfter(id: string, floor: string): boolean {
 export class DiscordDriver {
   constructor(private readonly cfg: DiscordDriverConfig) {}
 
+  get channelId(): string {
+    return this.cfg.channel;
+  }
+
   mention(text: string): string {
     return `<@${this.cfg.botUserId}> ${text}`;
   }

@@ -108,6 +108,10 @@ export class TeamsDriver {
     this.currentRefreshToken = readRefreshSidecar(cfg.refreshTokenFile) ?? cfg.refreshToken;
   }
 
+  get channelId(): string {
+    return this.cfg.channelId;
+  }
+
   private cached?: { token: string; expiresAt: number };
 
   private async accessToken(): Promise<string> {

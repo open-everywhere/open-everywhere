@@ -311,6 +311,10 @@ export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig
 
 export const DEFAULT_TEAMS_REFRESH_SINK = ".env.e2e.teams-refresh";
 
+export const PACING_CHANNEL_FLOOR_MS = 10_000;
+
+export const PACING_MAX_CONCURRENT_PER_SURFACE = 2;
+
 export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel]);
   if (missing.length > 0) return { ok: false, missing };

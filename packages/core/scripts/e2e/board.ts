@@ -1,6 +1,14 @@
 import { SCENARIOS, type Scenario } from "./scenarios.js";
 
-export type LegStatus = "GREEN" | "RED" | "DEFERRED" | "FILTERED";
+export type LegStatus = "GREEN" | "RED" | "DEFERRED" | "FILTERED" | "GAP";
+
+export const LAUNCH_SURFACES: readonly string[] = ["slack", "notion", "github"];
+
+export const DECLARED_GAP_SURFACES: readonly string[] = ["discord", "teams"];
+
+export function isDeclaredGap(surface: string, reason: string | undefined): boolean {
+  return DECLARED_GAP_SURFACES.includes(surface) && (reason ?? "").trim().length > 0;
+}
 
 export interface BoardLeg {
   readonly id: string;
@@ -15,12 +23,20 @@ export interface BoardTotals {
   readonly red: number;
   readonly deferred: number;
   readonly filtered: number;
+  readonly gap: number;
   readonly total: number;
 }
 
 export function boardTotals(legs: readonly BoardLeg[]): BoardTotals {
   const count = (s: LegStatus): number => legs.filter((l) => l.status === s).length;
-  return { green: count("GREEN"), red: count("RED"), deferred: count("DEFERRED"), filtered: count("FILTERED"), total: legs.length };
+  return {
+    green: count("GREEN"),
+    red: count("RED"),
+    deferred: count("DEFERRED"),
+    filtered: count("FILTERED"),
+    gap: count("GAP"),
+    total: legs.length,
+  };
 }
 
 export function rosterIds(scenarios: readonly Pick<Scenario, "id">[] = SCENARIOS): readonly string[] {
@@ -52,7 +68,15 @@ export function renderBoard(legs: readonly BoardLeg[], ids: readonly string[] = 
   const out: string[] = [];
   out.push("## Ship legs");
   out.push("");
-  out.push(`${totals.total} legs — ${totals.green} GREEN, ${totals.red} RED, ${totals.deferred} DEFERRED, ${totals.filtered} FILTERED.`);
+  const scored = totals.total - totals.gap;
+  out.push(`${scored} legs scored — ${totals.green} GREEN, ${totals.red} RED, ${totals.deferred} DEFERRED, ${totals.filtered} FILTERED.`);
+  if (totals.gap > 0) {
+    const gapIds = legs.filter((l) => l.status === "GAP").map((l) => `${l.id} (${l.surface})`);
+    out.push(
+      `${totals.gap} DECLARED GAP(S) on ${DECLARED_GAP_SURFACES.join(" / ")}, outside the ${LAUNCH_SURFACES.join(" / ")} launch set — ` +
+        `each names the fixture it waits on: ${gapIds.join(", ")}.`,
+    );
+  }
   out.push("");
   out.push("| Leg | Surface | Status | Evidence / reason |");
   out.push("| --- | --- | --- | --- |");

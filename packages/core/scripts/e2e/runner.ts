@@ -41,11 +41,12 @@ import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
 import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
-import { boardGaps, renderBoard, type BoardLeg } from "./board.js";
+import { boardGaps, isDeclaredGap, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
+import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
 
@@ -136,13 +137,14 @@ async function main(): Promise<void> {
         }
       : undefined;
 
-  const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
-  const githubDriver = github.ok ? new GithubDriver(github.cfg) : undefined;
-  const linearDriver = linear.ok ? new LinearDriver(linear.cfg) : undefined;
-  const notionAmbientDriver = notionAmbient.ok ? new NotionDriver(notionAmbient.cfg) : undefined;
+  const pacing = createPacingGate();
+  const slackDriver = paceMaybe(slack.ok ? new SlackDriver(slack.cfg) : undefined, "slack", pacing);
+  const githubDriver = paceMaybe(github.ok ? new GithubDriver(github.cfg) : undefined, "github", pacing);
+  const linearDriver = paceMaybe(linear.ok ? new LinearDriver(linear.cfg) : undefined, "linear", pacing);
+  const notionAmbientDriver = paceMaybe(notionAmbient.ok ? new NotionDriver(notionAmbient.cfg) : undefined, "notion", pacing);
   const prApiDriver = pr.ok ? new PrApi(pr.cfg) : undefined;
-  const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
-  const teamsDriver = teams.ok ? new TeamsDriver(teams.cfg) : undefined;
+  const discordDriver = paceMaybe(discord.ok ? new DiscordDriver(discord.cfg) : undefined, "discord", pacing);
+  const teamsDriver = paceMaybe(teams.ok ? new TeamsDriver(teams.cfg) : undefined, "teams", pacing);
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
@@ -155,10 +157,14 @@ async function main(): Promise<void> {
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
-  const discordEngagedDriver = discord.ok && engagedDiscord.ok ? new DiscordDriver({ ...discord.cfg, channel: engagedDiscord.cfg.id }) : undefined;
-  const teamsEngagedDriver = teams.ok && engagedTeams.ok ? new TeamsDriver({ ...teams.cfg, channelId: engagedTeams.cfg.id }) : undefined;
-  const githubEngagedDriver = github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined;
-  const linearEngagedDriver =
+  const discordEngagedDriver = paceMaybe(
+    discord.ok && engagedDiscord.ok ? new DiscordDriver({ ...discord.cfg, channel: engagedDiscord.cfg.id }) : undefined,
+    "discord",
+    pacing,
+  );
+  const teamsEngagedDriver = paceMaybe(teams.ok && engagedTeams.ok ? new TeamsDriver({ ...teams.cfg, channelId: engagedTeams.cfg.id }) : undefined, "teams", pacing);
+  const githubEngagedDriver = paceMaybe(github.ok && engagedGithub.ok ? new GithubDriver({ ...github.cfg, repo: engagedGithub.cfg.id }) : undefined, "github", pacing);
+  const linearEngagedDriver = paceMaybe(
     linear.ok && engagedLinear.ok
       ? new LinearDriver({
           ...linear.cfg,
@@ -166,11 +172,20 @@ async function main(): Promise<void> {
           apiKey: engagedLinearApiKey(process.env, linear.cfg.apiKey),
           ...engagedLinearIdentity(process.env, { appUserId: linear.cfg.appUserId, agentHandle: linear.cfg.agentHandle }),
         })
-      : undefined;
-  const notionEngagedDriver =
-    notionAmbient.ok && engagedNotion.ok ? new NotionDriver({ ...notionAmbient.cfg, pageId: engagedNotion.cfg.id }) : undefined;
-  const slackSecondaryDriver =
-    slack.ok && slackSecondary.ok ? new SlackDriver({ token: slackSecondary.cfg.token, channel: slack.cfg.channel, botUserId: slack.cfg.botUserId }) : undefined;
+      : undefined,
+    "linear",
+    pacing,
+  );
+  const notionEngagedDriver = paceMaybe(
+    notionAmbient.ok && engagedNotion.ok ? new NotionDriver({ ...notionAmbient.cfg, pageId: engagedNotion.cfg.id }) : undefined,
+    "notion",
+    pacing,
+  );
+  const slackSecondaryDriver = paceMaybe(
+    slack.ok && slackSecondary.ok ? new SlackDriver({ token: slackSecondary.cfg.token, channel: slack.cfg.channel, botUserId: slack.cfg.botUserId }) : undefined,
+    "slack",
+    pacing,
+  );
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
@@ -180,6 +195,8 @@ async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  let declaredGaps = 0;
+  const fixtureRedsToProvision: string[] = [];
   const skipCounts = emptySkipCounts();
   const reportedJudgeReds: string[] = [];
   let reportedJudgeTotal = 0;
@@ -399,8 +416,13 @@ async function main(): Promise<void> {
       console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
       if (err instanceof FixtureMissing) {
-        if (liveRun) {
+        if (liveRun && isDeclaredGap(scenario.surface, err.message)) {
+          declaredGaps++;
+          board.push({ id: scenario.id, surface: scenario.surface, status: "GAP", reason: `declared gap — ${err.message}` });
+          console.log(`◌ ${scenario.id} ${scenario.title}: DECLARED GAP — ${err.message}`);
+        } else if (liveRun) {
           failed++;
+          fixtureRedsToProvision.push(`${scenario.id} (${scenario.surface}) — ${err.message}`);
           board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `RED-until-fixture — ${err.message}` });
           console.error(`⚑ ${scenario.id} ${scenario.title}: RED-until-fixture — the harness's own test data is missing, so nothing about the deployment was measured (${err.message})`);
         } else {
@@ -448,7 +470,7 @@ async function main(): Promise<void> {
 
   if (passed === 0 && failed === 0) {
     console.error(
-      `✗ e2e driver pack: 0 scenarios ran (${skipped}/${SCENARIOS.length} skipped) even though live capabilities ` +
+      `✗ e2e driver pack: 0 scenarios ran (${skipped}/${SCENARIOS.length} skipped, ${declaredGaps} declared gap(s)) even though live capabilities ` +
         `are configured (${[...report.available].join(", ")}) — check --only / E2E_SUITE / E2E_SURFACES for a filter ` +
         `matching nothing, or a capability gap against what the roster actually requires.`,
     );
@@ -537,7 +559,18 @@ async function main(): Promise<void> {
   const observationSummary = renderObservationSummary(observations);
   for (const line of observationSummary.lines) (observationSummary.stream === "stderr" ? console.error : console.log)(line);
 
-  const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
+  console.log(renderPacingLine(pacing.stats()));
+
+  if (fixtureRedsToProvision.length > 0) {
+    console.error(
+      `fixtures to provision (RED, not a declared gap — ${LAUNCH_SURFACES.join(" / ")} and any surface no ruling exempts): ${fixtureRedsToProvision.length}`,
+    );
+    for (const line of fixtureRedsToProvision) console.error(`  ⚑ ${line}`);
+  }
+
+  const summary =
+    `${passed} passed, ${failed} failed, ${skipped} skipped` +
+    `${declaredGaps > 0 ? `, ${declaredGaps} declared gap(s)` : ""} of ${SCENARIOS.length}`;
   if (skipped > 0) console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
   if (failed > 0 || modelRoutingFailed) {
     console.error(`✗ e2e driver pack: ${summary}`);

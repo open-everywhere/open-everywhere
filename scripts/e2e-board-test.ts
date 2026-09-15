@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { boardGaps, boardTotals, renderBoard, rosterIds, type BoardLeg } from "../packages/core/scripts/e2e/board.js";
+import {
+  DECLARED_GAP_SURFACES,
+  LAUNCH_SURFACES,
+  boardGaps,
+  boardTotals,
+  isDeclaredGap,
+  renderBoard,
+  rosterIds,
+  type BoardLeg,
+} from "../packages/core/scripts/e2e/board.js";
 import { SCENARIOS } from "../packages/core/scripts/e2e/scenarios.js";
 
 let n = 0;
@@ -57,6 +66,42 @@ const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {
   const rows = renderBoard([leg("known", "GREEN"), leg("stray", "RED")], ["known"]).filter((l) => l.startsWith("| ") && !l.startsWith("| Leg") && !l.startsWith("| ---"));
   ok(rows.length === 2, "a row for an unknown id is still rendered, after the roster rows");
   ok(rows[1]?.startsWith("| stray |") === true, "…and it comes last, so the roster block stays stable");
+}
+
+{
+  ok(isDeclaredGap("discord", "needs a second Discord identity"), "a reasoned Discord fixture gap IS a declared gap");
+  ok(isDeclaredGap("teams", "needs a second Teams identity"), "…and so is a Teams one");
+  ok(!isDeclaredGap("slack", "needs a Slack-reachable connector grant"), "🔴 a LAUNCH surface's missing fixture stays RED — the launch gates on it");
+  ok(!isDeclaredGap("notion", "needs a fixture"), "…Notion too");
+  ok(!isDeclaredGap("github", "needs a fixture"), "…and GitHub");
+  ok(
+    !isDeclaredGap("linear", "needs a fixture") && !isDeclaredGap("cross", "needs a fixture"),
+    "🔴 a surface in NEITHER list stays RED — the gap set is an explicit ruling, never 'anything that is not a launch surface'",
+  );
+  ok(!isDeclaredGap("discord", ""), "🔴 an EMPTY reason is not a declared gap — the sentence naming the fixture is the whole of what a gap buys over a red");
+  ok(!isDeclaredGap("discord", "   "), "…and whitespace does not count as a reason either");
+  ok(!isDeclaredGap("discord", undefined), "…nor does an absent one");
+  ok(
+    LAUNCH_SURFACES.every((s) => !DECLARED_GAP_SURFACES.includes(s)),
+    "no surface is both a launch surface and a declared-gap surface — the two rulings would contradict",
+  );
+}
+
+{
+  const legs = [leg("a", "GREEN"), leg("b", "RED"), leg("c", "GAP", { surface: "discord", reason: "needs a second identity" })];
+  const t = boardTotals(legs);
+  ok(t.gap === 1 && t.green === 1 && t.red === 1 && t.total === 3, "a GAP is counted in its own bucket and still counts toward the roster total");
+
+  const lines = renderBoard(legs, ["a", "b", "c"]);
+  ok(
+    lines.some((l) => l.includes("2 legs scored") && l.includes("1 GREEN, 1 RED")),
+    "🔴 the headline counts only the SCORED legs — a gap is not a verdict about this ship, so it must not move the number a shipper reads",
+  );
+  ok(lines.some((l) => l.includes("1 DECLARED GAP(S)") && l.includes("c (discord)")), "the gaps get their own line, and it NAMES them — an unnamed gap is one nobody provisions");
+  ok(
+    renderBoard([leg("a", "GREEN")], ["a"]).every((l) => !l.includes("DECLARED GAP")),
+    "🔴 a board with no gaps prints no gap line at all, rather than a '0 declared gaps' line nobody needs",
+  );
 }
 
 {

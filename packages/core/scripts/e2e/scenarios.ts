@@ -196,6 +196,7 @@ export interface Scenario {
   readonly costReason?: string;
   readonly timeoutMs: number;
   readonly judged: boolean;
+  readonly proves?: readonly string[];
   readonly run: (ctx: ScenarioContext) => Promise<void>;
 }
 
@@ -623,6 +624,7 @@ function requireAuditRead(ctx: ScenarioContext): void {
 export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J1",
+    proves: ["PAR-addressed-leg", "PAR-reply", "PAR-react", "PAR-no_reply", "PAR-stop", "REPLY-02", "REPLY-38", "REPLY-39", "REPLY-52", "REPLY-54"],
     title: "Slack core journey: wake+continuity, reply tool post, react, no_reply silence+revive, stop (absorbs S1/S2/S3/S21/S22)",
     requires: ["slack"],
     surface: "slack",
@@ -725,6 +727,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J2",
+    proves: ["MEM-41", "MEM-42", "MEM-43"],
     title: "Slack memory journey: teach→fresh-thread recall, cross-domain silo isolation, purge decide (absorbs S4/S12)",
     requires: ["slack", "slackChannelB"],
     surface: "slack",
@@ -1102,6 +1105,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-DISC",
+    proves: ["PAR-threads", "PAR-reply", "PAR-post_file"],
     title: "Discord journey: mention → auto-thread → continuity → stop → post_file → card-shape (absorbs S7)",
     requires: ["discord"],
     surface: "discord",
@@ -1182,6 +1186,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S9",
+    proves: ["PAR-name-drop-mention"],
     title: "Name-drop wake + negative control (optional)",
     requires: ["slack"],
     surface: "slack",
@@ -1366,6 +1371,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S11",
+    proves: ["MEM-04"],
     title: "Private channel: engagement + memory never feeds the shared tier",
     requires: ["slack", "slackPrivate"],
     surface: "slack",
@@ -1427,6 +1433,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S13",
+    proves: ["PAR-dm"],
     title: "Real Slack DM: a genuine chat.postMessage through the driver's own token wakes the agent (OPE-1036 — no forged envelope)",
     requires: ["slack", "syntheticDm"],
     surface: "slack",
@@ -1450,6 +1457,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S14",
+    proves: ["MEM-02"],
     title: "DM personal memory: DM recall hits, channel recall misses",
     requires: ["slack", "syntheticDm"],
     surface: "slack",
@@ -1862,6 +1870,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-MPIM",
+    proves: ["PAR-mpim"],
     title:
       "Slack GROUP DM (mpim): a plain message in a group DM wakes the agent through the mpim door and is answered in that room — the live proof of the group-DM author leg (OPE-1509)",
     requires: ["slack", "slackMpim"],
@@ -1911,6 +1920,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S20",
+    proves: ["ROUT-64", "ROUT-78"],
     title: "Inbound webhook: a signed POST wakes a quoted reply; an unsigned POST is rejected and posts nothing (reply quality is REPORTED, not gated)",
     requires: ["slack", "webhook"],
     surface: "slack",
@@ -1947,11 +1957,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S23",
-    title: "One-shot routine: create_routine(\"once\") acks now; the live fire is opt-in (dispatcher ticks every ~10 min)",
+    proves: ["ROUT-30"],
+    title: "One-shot routine: create_routine(\"once\") acks now, and the routine then actually FIRES (dispatcher ticks every ~10 min)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -1993,12 +2004,6 @@ export const SCENARIOS: readonly Scenario[] = [
         ack.text,
         "one-shot routine creation ack",
       );
-      if (process.env.E2E_ROUTINES_ALLOW_WAIT !== "1") {
-        ctx.log(
-          "E2E_ROUTINES_ALLOW_WAIT not set — creation-ack-only run; the live fire (needs a ~10min dispatcher tick) is skipped by default, see AUDIT.md",
-        );
-        return;
-      }
       const fired = await slack.awaitThreadMessage(
         askTs,
         { timeoutMs: 720_000, what: `the one-shot routine's fired post quoting "${note}" in thread ${askTs}` },
@@ -2009,6 +2014,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S24",
+    proves: ["PAR-read_channel", "MEM-22"],
     title: "Notion connector: search/read via the bound connector (optional — needs E2E_NOTION_CHANNEL bound to a live Notion credential)",
     requires: ["slack", "notion"],
     surface: "slack",
@@ -2117,6 +2123,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-TEAMS",
+    proves: ["PAR-ambient-leg", "PAR-reply"],
     title: "Teams reply chain: @mention wake + relevant reply, non-mention admission asserted on the dispatch rows (mention gate OR single-window Leg A), token-anchored re-mention continuity (absorbs ST1)",
     requires: ["teams"],
     surface: "teams",
@@ -2227,6 +2234,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-teams",
+    proves: ["PAR-ambient-engagement-seam"],
     title: "Teams engaged seam (OPE-1500): an @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, the next plain follow-up wakes nothing, and the wake after that catches up",
     requires: ["teams", "engagedTeams"],
     surface: "teams",
@@ -2344,6 +2352,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-TEAMS-DM",
+    proves: ["PAR-dm"],
     title: "Teams 1:1 DM: a personal-scope Graph message wakes the bot and gets a reply — the DM plane's first live leg (OPE-972)",
     requires: ["teams"],
     surface: "teams",
@@ -2392,6 +2401,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-GH",
+    proves: ["PAR-addressed-leg", "PAR-reply"],
     title: "GitHub ambient: @mention reply + eyes + mention-gate + resume + reply-targeting across two issues + forge (TODO(github-ambient-e2e))",
     requires: ["github"],
     surface: "github",
@@ -2494,6 +2504,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-LIN",
+    proves: ["PAR-addressed-leg", "PAR-reply"],
     title: "Linear ambient: @mention reply w/ self-attribution + literal-mention, self-loop, assign wake, reply-targeting across two issues, forge (TODO(linear-ambient-e2e))",
     requires: ["linear"],
     surface: "linear",
@@ -2614,6 +2625,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-NOT",
+    proves: ["PAR-reply"],
     title: "Notion ambient: forge-replay on-topic anchor → reply; reply-targeting across two discussions; off-topic → audited silence; self-loop; webhook gates (TODO(notion-ambient-e2e))",
     requires: ["notionAmbient"],
     surface: "notion",
@@ -2863,6 +2875,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "F-ART",
+    proves: ["PAR-post_file"],
     title: "Artifacts: post_file PNG + HTML-attach fallback + describe_image (attachment trusted fetch, sec-15 live twin)",
     requires: ["slack"],
     surface: "slack",
@@ -2994,6 +3007,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "F-EDIT",
+    proves: ["PAR-message-edit-wake"],
     title: "Message-EDIT wake (<previous-body>): an xoxp edit of an engaged message wakes an edit-aware reply (live primary-model wake-envelope probe)",
     requires: ["slack"],
     surface: "slack",
@@ -3088,6 +3102,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-SUP",
+    proves: ["PAR-ambient-leg"],
     title: "Ambient supervisor smoke: plain non-mention → in-channel reply; no self-loop; off-topic → silence (THE pending live-smoke gate)",
     requires: ["slack", "slackSupervisor"],
     surface: "slack",
@@ -3388,8 +3403,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: suspending a turn needs a connector op that parks on eve's tool-approval, and this pack has no consented personal connector grant reachable from a Slack seat — the only one it holds is the Notion grant S-EVE-BRIDGE drives (E2E_CONNECTOR_WRITE_*). Provision a Slack-reachable connector grant and this leg drives the same shape S-EVE-BRIDGE does: approval.eve_candidate → the card → the settlement → approval.eve_settled, with the resumed turn's reply.post after it.",
+      ctx.fixtureMissing(
+        "suspending a turn needs a connector op that parks on eve's tool-approval, and this pack has no consented personal connector grant reachable from a Slack seat — the only one it holds is the Notion grant S-EVE-BRIDGE drives (E2E_CONNECTOR_WRITE_*). Provision a Slack-reachable connector grant and this leg drives the same shape S-EVE-BRIDGE does: approval.eve_candidate → the card → the settlement → approval.eve_settled, with the resumed turn's reply.post after it.",
       );
     },
   },
@@ -3402,8 +3417,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: no consented personal connector grant is reachable from a Discord seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Discord.",
+      ctx.fixtureMissing(
+        "no consented personal connector grant is reachable from a Discord seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Discord.",
       );
     },
   },
@@ -3416,8 +3431,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: no consented personal connector grant is reachable from a Teams seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Teams.",
+      ctx.fixtureMissing(
+        "no consented personal connector grant is reachable from a Teams seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Teams.",
       );
     },
   },
@@ -3430,8 +3445,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: no consented personal connector grant is reachable from a Linear seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Linear.",
+      ctx.fixtureMissing(
+        "no consented personal connector grant is reachable from a Linear seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Linear.",
       );
     },
   },
@@ -3444,8 +3459,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: no consented personal connector grant is reachable from a GitHub seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on GitHub.",
+      ctx.fixtureMissing(
+        "no consented personal connector grant is reachable from a GitHub seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on GitHub.",
       );
     },
   },
@@ -3561,15 +3576,15 @@ export const SCENARIOS: readonly Scenario[] = [
 
   {
     id: "S-LINK-discord",
-    title: "Identity link on Discord: the proof-of-control loop across two REAL accounts (OPE-1836) — RED until a second Discord account exists",
+    title: "Identity link on Discord: the proof-of-control loop across two REAL accounts (OPE-1836) — RED until a Discord DM from a DRIVER can wake the agent",
     requires: ["discord"],
     surface: "discord",
     suite: "core",
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: the link loop needs a genuinely SECOND Discord identity — link-store.ts refuses a self-claim, so one account cannot drive mint → claim → notice → ratify. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Discord pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
+      ctx.fixtureMissing(
+        "a Discord DM from a DRIVER cannot wake this deployment, so the link loop has no transport (a HUMAN's Discord DM wakes it normally — that is the shipped DM seat). The claim must be in a DM: claimVenueRefusal refuses a room claim on a DM-capable surface, and Discord declares deliverDirectMessage. Every Discord driver is a bot, and authForRelayMessage drops a bot author in a DM because isAllowedDriver is guild-pinned and a DM has no guild. A SECOND driver bot does not change this — the blocker is the transport, not the identity. Needs either a human Discord account driving by hand, or a reviewed DM-admission seam on the Discord ingress. OPE-1883 carries the three roads.",
       );
     },
   },
@@ -3582,8 +3597,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: the link loop needs a genuinely SECOND Teams identity — link-store.ts refuses a self-claim. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Teams pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
+      ctx.fixtureMissing(
+        "the link loop needs a genuinely SECOND Teams identity — link-store.ts refuses a self-claim. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Teams pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
       );
     },
   },
@@ -3597,13 +3612,14 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-fixture: driving the break-glass halt needs a CLEAR road, and clearing is control-plane only (admin.halt.cleared carries door \"control-mcp\"; no chat road writes it). The pack holds a control READ token (E2E_CONTROL_READ_TOKEN) and no write token, so a halt it set could never be lifted — it would halt a fixture room permanently. Provision a control-plane WRITE credential plus a dedicated halt fixture room, and this leg asks for the halt in chat, reads the admin.halt.set row with its scoped address, clears it over the control plane, and reads admin.halt.cleared back.",
+      ctx.fixtureMissing(
+        "driving the break-glass halt needs a CLEAR road, and clearing is control-plane only (admin.halt.cleared carries door \"control-mcp\"; no chat road writes it). The pack holds a control READ token (E2E_CONTROL_READ_TOKEN) and no write token, so a halt it set could never be lifted — it would halt a fixture room permanently. Provision a control-plane WRITE credential plus a dedicated halt fixture room, and this leg asks for the halt in chat, reads the admin.halt.set row with its scoped address, clears it over the control plane, and reads admin.halt.cleared back.",
       );
     },
   },
   {
     id: "J-UNIFIED",
+    proves: ["REPLY-02"],
     title:
       "Unified cross-surface supervisor, Slack-only live path: unified-audit route contract + flag detection, ONE domain session spanning two Slack containers (cross-container recall), per-wake reply-targeting, audited silence (research preview, flags default-OFF)",
     requires: ["slack", "slackUnified"],
@@ -4358,6 +4374,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-DM-NOTION",
+    proves: ["MEM-02"],
     title:
       "DM personal-Notion journey: a real DM through the front door wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
     requires: ["slack", "syntheticDm", "synthetic"],
@@ -4419,6 +4436,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-PROVENANCE-DM",
+    proves: ["REPLY-50", "REPLY-51"],
     title:
       "Reply provenance, live (OPE-1717): a DM turn that READS through the Notion connector posts a reply whose footer names that connection and NOTHING else, joined to the deployment's own reply.provenance row — plus a next-turn negative control that reads nothing and carries no footer",
     requires: ["slack", "syntheticDm"],
@@ -5053,16 +5071,13 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-TAINT-DRYRUN",
-    title: "Taint source-tier table, ENFORCED (OPE-324): drive the divergent read shapes and assert `taint.verdict` rows land, applied (opt-in — volume, not doubt)",
+    title: "Taint source-tier table, ENFORCED (OPE-324): drive the divergent read shapes and assert `taint.verdict` rows land, applied",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
     timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
-      if (process.env.E2E_TAINT_DRYRUN !== "1") {
-        ctx.skip("E2E_TAINT_DRYRUN not set — the dry-run volume leg is opt-in (it drives read tools across up to four surfaces purely to populate the §C log). Set E2E_TAINT_DRYRUN=1 to run it.");
-      }
       if (!ctx.auditRead) {
         ctx.skip(
           "taint.verdict rows are ONLY assertable over the audit trail — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. Without it a run cannot tell a missing row " +
@@ -5659,9 +5674,6 @@ export const SCENARIOS: readonly Scenario[] = [
           "the unattended deny is ONLY assertable over the audit trail — a denied propose mints NO card, so there is nothing in-channel to poll for the verdict. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
         );
       }
-      if (process.env.E2E_ROUTINES_ALLOW_WAIT !== "1") {
-        ctx.skip("E2E_ROUTINES_ALLOW_WAIT not set — this leg needs a real dispatcher tick (~10 min) to fire the routine unattended; opt in explicitly (same switch as S23).");
-      }
       const auditRead = ctx.auditRead!;
       const slack = ctx.slack!;
       const note = factToken("taintdeny");
@@ -5766,9 +5778,6 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.skip(
           "the fence is ONLY assertable over the audit trail — it mints no card and its refusal reaches the model, not the channel. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
         );
-      }
-      if (process.env.E2E_ROUTINES_ALLOW_WAIT !== "1") {
-        ctx.skip("E2E_ROUTINES_ALLOW_WAIT not set — each arm needs a real dispatcher tick (~10 min) to fire its routine unattended; opt in explicitly (same switch as S23).");
       }
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const auditRead = ctx.auditRead!;
@@ -6139,6 +6148,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-slack",
+    proves: ["PAR-ambient-engagement-seam", "PAR-stand_down", "SEAT-03", "SEAT-07", "SEAT-11", "REPLY-40"],
     title: "Slack ADDRESSED-ONLY journey: mention → plain follow-up wakes → stand_down marks the row → audited silence (+ two name-drops, one seat)",
     requires: ["slack", "engagedSlack"],
     surface: "slack",
@@ -6240,6 +6250,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-discord",
+    proves: ["PAR-ambient-engagement-seam", "PAR-stand_down", "SEAT-07", "REPLY-40"],
     title: "Discord ADDRESSED-ONLY journey: mention → auto-thread → plain follow-up wakes → stand_down marks the row → audited silence → the next wake catches up",
     requires: ["discord", "engagedDiscord"],
     surface: "discord",
@@ -6313,6 +6324,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-github",
+    proves: ["PAR-stand_down", "SEAT-03", "REPLY-40"],
     title: "GitHub ADDRESSED-ONLY journey — mention engages the issue, a plain follow-up wakes, stand_down stops it, the next wake catches up",
     requires: ["github", "engagedGithub"],
     surface: "github",
@@ -6385,6 +6397,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-linear",
+    proves: ["PAR-stand_down", "SEAT-03", "REPLY-40"],
     title: "Linear ADDRESSED-ONLY journey — the mention engages the issue, the plain-comment path carries the follow-up, the next wake catches up",
     requires: ["linear", "engagedLinear"],
     surface: "linear",
@@ -6443,6 +6456,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-ENGAGED-notion",
+    proves: ["PAR-name-drop-mention", "PAR-stand_down", "REPLY-40"],
     title: "Notion ADDRESSED-ONLY journey — the name-drop is the address, it engages the page, and the next wake catches up",
     requires: ["notionAmbient", "engagedNotion"],
     surface: "notion",
