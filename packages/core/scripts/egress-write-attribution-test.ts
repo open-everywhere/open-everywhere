@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { compileNetworkPolicy, openWriteHosts, type OpenWriteHost } from "../agent/access/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";

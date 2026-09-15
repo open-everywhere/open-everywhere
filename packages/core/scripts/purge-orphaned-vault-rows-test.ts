@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 
 import { rawVaultSubject, RAW_VAULT_SUBJECT_PREFIX, sharedVaultSubject } from "../agent/identity/oauth-vault-share.js";

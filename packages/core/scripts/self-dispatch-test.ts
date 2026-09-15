@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 
 const __slackStubs = await import("./_slack-test-stubs.js");

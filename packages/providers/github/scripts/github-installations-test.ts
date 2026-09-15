@@ -1,4 +1,3 @@
-
 import {
   extractGitHubInstallationEvent,
   handleGitHubInstallationDelivery,

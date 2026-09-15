@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { readAudit, deploymentOrg, platformFailureClass, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/adapter-api.js";

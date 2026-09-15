@@ -1,4 +1,3 @@
-
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";

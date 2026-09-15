@@ -1,4 +1,3 @@
-
 import {
   isDenialTag,
   normaliseDenialHost,

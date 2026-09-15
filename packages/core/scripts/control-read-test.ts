@@ -1,4 +1,3 @@
-
 import type { AttachSessionFn } from "eve/channels";
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";

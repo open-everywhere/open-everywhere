@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync, readFileSync } from "node:fs";

@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { tmpdir } from "node:os";

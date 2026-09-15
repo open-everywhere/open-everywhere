@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { compileNetworkPolicy, openWriteHosts } from "../agent/access/egress.js";
 import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";

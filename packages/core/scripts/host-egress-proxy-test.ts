@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { Agent, ProxyAgent } from "undici";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";

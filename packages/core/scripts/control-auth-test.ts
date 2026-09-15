@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
 import { routeAuth } from "eve/channels/auth";

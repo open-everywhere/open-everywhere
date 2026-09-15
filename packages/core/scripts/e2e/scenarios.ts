@@ -4904,6 +4904,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-EVE-BRIDGE",
+    proves: ["input_response.routed"],
     title:
       "a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified question bridge posts it as a readable request, a plain `Approve` reply carries eve's optionId back, and the SUSPENDED TURN RESUMES",
     requires: ["slack", "syntheticDm"],

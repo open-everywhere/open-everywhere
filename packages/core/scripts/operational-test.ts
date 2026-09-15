@@ -1,4 +1,3 @@
-
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
