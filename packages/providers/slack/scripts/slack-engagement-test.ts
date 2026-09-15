@@ -69,6 +69,7 @@ import {
   supervisorRotateTokenBudget,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { EXTERNAL_MENTION_ACK, owesSuppressedMentionAck, suppressionRendering, silentRoomNotice } from "@open-everywhere/core/agent/adapter-api.js";
+import { NAME_DROP_WOKE_ACTION, NAME_DROP_SILENT_ACTION } from "@open-everywhere/core/agent/adapter-api.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, mentionSiblingSuppressed, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
@@ -100,6 +101,9 @@ const standDownDropRows = async (): Promise<readonly { readonly detail?: Record<
   }[]).filter((r) => r.detail?.["reason"] === STOOD_DOWN_DROP_REASON);
 
 const settleAudit = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
+
+const nameDropRows = async (action: string): Promise<readonly { readonly detail?: Record<string, unknown> | null }[]> =>
+  (await getOperationalStore().readAudit({ org: "default", action })) as readonly { readonly detail?: Record<string, unknown> | null }[];
 
 registerConfig({
   loadBundles: () => [],
@@ -1269,6 +1273,46 @@ registerConfig({
     });
     ok(!refusedOut.woke && refusedOut.reason === "spend cap declined", "a seat road that refuses reports ITS decision verbatim");
     ok(calls.length === 0, "…and the native wake is never a fallback for a refused seat wake");
+    calls.length = 0;
+    latched.length = 0;
+    infoCalls = 0;
+
+    calls.length = 0;
+    await settleAudit();
+    const beforeWoke = (await nameDropRows(NAME_DROP_WOKE_ACTION)).length;
+    const beforeSilent = (await nameDropRows(NAME_DROP_SILENT_ACTION)).length;
+
+    const admitted = await routeNameDropEvent(topLevel(), deps(true, true));
+    await settleAudit();
+    const wokeRows = await nameDropRows(NAME_DROP_WOKE_ACTION);
+    ok(admitted.woke, "OPE-1899: the admitted name-drop woke (the precondition the row is about)");
+    ok(wokeRows.length === beforeWoke + 1, "OPE-1899: an ADMITTED name-drop writes exactly ONE surface.name_drop_woke row");
+    {
+      const d = wokeRows[wokeRows.length - 1]!.detail ?? {};
+      ok(d["container"] === "C_TXN" && d["ts"] === "42.1", "OPE-1899: …naming the room and the triggering message");
+      ok(d["road"] === "native" && d["via"] === "built-in", "OPE-1899: …and stating WHICH session took the wake and WHO decided");
+    }
+
+    calls.length = 0;
+    const unnamed = await routeNameDropEvent(topLevel({ text: "thoughts on the deploy?" }), deps(true, true));
+    await settleAudit();
+    ok(!unnamed.woke, "OPE-1899 control: a message naming nobody does not wake");
+    ok((await nameDropRows(NAME_DROP_WOKE_ACTION)).length === beforeWoke + 1, "🔴 OPE-1899: …and writes NO surface.name_drop_woke row");
+    ok(
+      (await nameDropRows(NAME_DROP_SILENT_ACTION)).length === beforeSilent,
+      "🔴 OPE-1899: …and NO surface.name_drop_silent row either — ordinary room chatter must leave this road rowless, or the trail drowns",
+    );
+
+    calls.length = 0;
+    const refusedByDomain = await routeNameDropEvent(topLevel(), deps(false, true));
+    await settleAudit();
+    const silentRows = await nameDropRows(NAME_DROP_SILENT_ACTION);
+    ok(!refusedByDomain.woke, "OPE-1899: a named message in a domain with nameDropWake off does not wake");
+    ok(silentRows.length === beforeSilent + 1, "OPE-1899: …and writes ONE surface.name_drop_silent row");
+    ok(
+      silentRows[silentRows.length - 1]!.detail?.["reason"] === refusedByDomain.reason,
+      "OPE-1899: …carrying the REFUSING GATE's own reason, so an operator reads which gate refused rather than that one did",
+    );
     calls.length = 0;
     latched.length = 0;
     infoCalls = 0;

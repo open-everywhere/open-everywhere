@@ -79,6 +79,7 @@ import {
   wakeIngressIds,
   WAKE_INGRESS_ACTION,
 } from "./engaged-rows.js";
+import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
@@ -1234,23 +1235,47 @@ export const SCENARIOS: readonly Scenario[] = [
     id: "S9",
     proves: ["PAR-name-drop-mention"],
     title: "Name-drop wake + negative control (optional)",
-    requires: ["slack"],
+    requires: ["slack", "slackPrivate"],
     surface: "slack",
     suite: "core",
     timeoutMs: 300_000,
     judged: true,
     run: async (ctx) => {
-      const slack = ctx.slack!;
+      const slack = ctx.slackPrivate!;
+      const sinceIso = new Date(Date.now() - 5_000).toISOString();
       const { ts: controlTs } = await slack.post("has anyone seen the release checklist?");
       const { ts: dropTs } = await slack.post("has anyone asked Open Everywhere about the release?");
       await sleep(SILENCE_WINDOW);
       const afterControl = (await slack.replies(controlTs)).filter((m) => slack.isBotReply(m));
       ctx.gate(afterControl.length === 0, "control message (no name) produced NO reply — hard gate");
+      const wakeRows = ctx.auditRead
+        ? (await ctx.auditRead({ sinceIso, platform: "slack", actions: [NAME_DROP_WOKE_ACTION] })).filter((r) => r.detail?.ts === dropTs)
+        : undefined;
       const afterDrop = (await slack.replies(dropTs)).filter((m) => slack.isBotReply(m));
-      if (afterDrop.length === 0) {
+      if (wakeRows === undefined) {
         ctx.skip(
-          "name-drop leg unobservable: clean silence — cannot distinguish a judged NO_REPLY from a dead nameDropWake " +
-            "(slack chat-silence audit removed 2026-07-11, no positive wake observable); only the negative control was asserted",
+          "name-drop leg unobservable: ctx.auditRead is unwired, so the positive `" +
+            NAME_DROP_WOKE_ACTION +
+            "` row cannot be read and a judged NO_REPLY still looks like a dead nameDropWake — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN",
+        );
+      }
+      ctx.gate(
+        (wakeRows?.length ?? 0) >= 1,
+        `🔴 name-drop: the road ADMITTED the name-drop — ${wakeRows?.length ?? 0} \`${NAME_DROP_WOKE_ACTION}\` row(s) naming ts ${dropTs}. ` +
+          "Zero means nameDropWake never woke a seat at all, which is the dead-road shape this leg exists to refuse; a judged NO_REPLY still writes this row",
+      );
+      const controlRows = ctx.auditRead
+        ? (await ctx.auditRead({ sinceIso, platform: "slack", actions: [NAME_DROP_WOKE_ACTION] })).filter((r) => r.detail?.ts === controlTs)
+        : [];
+      ctx.gate(
+        controlRows.length === 0,
+        `name-drop: the CONTROL message (no name) admitted NO wake — ${controlRows.length} \`${NAME_DROP_WOKE_ACTION}\` row(s) naming ts ${controlTs}. ` +
+          "A row there would mean the gate above proves nothing, because the road admits everything",
+      );
+      if (afterDrop.length === 0) {
+        ctx.log(
+          `name-drop: the road woke the seat (${wakeRows?.length ?? 0} \`${NAME_DROP_WOKE_ACTION}\` row(s)) and the turn judged NO_REPLY — ` +
+            "a judged silence, not a dead nameDropWake; the positive row is what tells them apart",
         );
       } else {
         await ctx.judgePass3(

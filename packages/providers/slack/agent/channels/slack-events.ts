@@ -124,6 +124,9 @@ import {
   admittedTenantsFromConfig,
   unadmittedTenantLog,
   UNADMITTED_TENANT_DROP_REASON,
+  auditNameDropWoke,
+  auditNameDropSilent,
+  type NameDropAuditKey,
   type FinalMessageAction,
   type ReactionSinkDeps,
   type ReactionIngestOutcome,
@@ -1121,8 +1124,21 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   }
 
   const p = resolvePartition(bindableFor(ev));
+  const auditKey: NameDropAuditKey = {
+    org: p.org,
+    platform: p.platform,
+    workspace: p.workspace,
+    ...(p.surface ? { surface: p.surface } : {}),
+    ...(ev.userId ? { principalId: ev.userId } : {}),
+    container: ev.channelId,
+    ts: ev.ts,
+  };
   const enabled = deps.enabledFor(p.surfaceKey);
-  if (!enabled) return { ...shouldNameDropWake({ ...base, domainEnabled: false, channelConfirmedInternal: true }), woke: false };
+  if (!enabled) {
+    const off = shouldNameDropWake({ ...base, domainEnabled: false, channelConfirmedInternal: true });
+    if (base.textMatchesName) void holdRouteWork(auditNameDropSilent(auditKey, off.reason));
+    return { ...off, woke: false };
+  }
 
   const internal = await deps.confirmInternal(ev.channelId);
   const resolved = { ...base, domainEnabled: true, channelConfirmedInternal: internal };
@@ -1135,10 +1151,16 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     { wakes: decision.deliver, abstained },
     { surface: "slack", text: ev.authoredText, channelId: ev.channelId, authorId: ev.userId },
   );
-  if (!wake) return { ...decision, woke: false };
+  if (!wake) {
+    if (base.textMatchesName) void holdRouteWork(auditNameDropSilent(auditKey, decision.reason));
+    return { ...decision, woke: false };
+  }
   const outcome: ReplyDecision = decision.deliver
     ? decision
     : { deliver: true, reason: "wake arm added a wake where the name-drop abstained" };
+  void holdRouteWork(
+    auditNameDropWoke(auditKey, outcome.reason, { road: deps.seatRoute ? "seat" : "native", via: decision.deliver ? "built-in" : "arm" }),
+  );
 
   const hydrateContext: NameDropContextHydrator = async () => {
     const threadAdmissionSlice = deps.seatRoute !== undefined && ev.threadTs !== undefined;

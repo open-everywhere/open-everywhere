@@ -71,6 +71,7 @@ import {
   type UnifiedWakeOrigin,
   type UnifiedWindowWake,
   type Partition,
+  type NameDropAuditKey,
   type ContextLine,
   type BindableContext,
   carryTailForward,
@@ -89,6 +90,8 @@ import {
   disengageThread,
   getThreadEngagement,
   markThreadEngaged,
+  auditNameDropWoke,
+  auditNameDropSilent,
   WARM_SILENT_LIMIT,
   ingressSpendGate,
   type SpendGateDoor,
@@ -433,6 +436,21 @@ export function nameDropEligible(input: {
   if (t !== "0" && t !== "5" && t !== "10" && t !== "11" && t !== "12") return false;
   if (!input.botName) return false;
   return wakeNameDropTokens(input.botName).some((token) => nameDropPattern(token).test(input.content));
+}
+
+function nameDropAuditKey(
+  partition: Partition,
+  msg: { readonly channelId: string; readonly id: string; readonly author: { readonly id: string } },
+): NameDropAuditKey {
+  return {
+    org: partition.org,
+    platform: partition.platform,
+    workspace: partition.workspace,
+    surface: partition.surfaceKey,
+    principalId: msg.author.id,
+    container: msg.channelId,
+    ts: msg.id,
+  };
 }
 
 function botAuthHeaders(token: string): Record<string, string> {
@@ -1280,23 +1298,30 @@ export async function dispatchTurn(
 
   let nameDrop = false;
   if (!shouldDispatchDiscord({ mentionsBot: msg.mentionsBot, isEngaged: engaged, isDm })) {
-    nameDrop =
-      nameDropEligible({
-        mentionsBot: msg.mentionsBot,
-        isDm,
-        isEngaged: engaged,
-        authorIsBot: msg.author.bot && !isAllowedDriver(msg.guildId, msg.author.id),
-        channelType: msg.channelType,
-        content: msg.content,
-        botName: msg.botName,
-      }) && nameDropWakeEnabled(domainKeyOf(partition), getConfig().loadDomains());
+    const eligible = nameDropEligible({
+      mentionsBot: msg.mentionsBot,
+      isDm,
+      isEngaged: engaged,
+      authorIsBot: msg.author.bot && !isAllowedDriver(msg.guildId, msg.author.id),
+      channelType: msg.channelType,
+      content: msg.content,
+      botName: msg.botName,
+    });
+    nameDrop = eligible && nameDropWakeEnabled(domainKeyOf(partition), getConfig().loadDomains());
     if (!nameDrop) {
+      if (eligible) {
+        await auditNameDropSilent(nameDropAuditKey(partition, msg), "nameDropWake not enabled for this channel's domain");
+      }
       log(`drop ${partition.surfaceKey}: non-mention in a channel the agent isn't following`);
       return;
     }
     if (isThreadChannelType(msg.channelType)) {
       await markThreadEngaged(partition, key, new Date().toISOString());
     }
+    await auditNameDropWoke(nameDropAuditKey(partition, msg), "name-dropped in an enabled guild surface — judged wake", {
+      road: "native",
+      via: "built-in",
+    });
     log(`name-drop wake on ${partition.surfaceKey} ("${msg.botName}")`);
   }
 

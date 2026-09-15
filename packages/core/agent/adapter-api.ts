@@ -377,6 +377,8 @@ export { renderWake, mkMessageTrigger } from "./channels/normalized-wake.js";
 export type { NormalizedWake, WakeEngagementTier } from "./channels/normalized-wake.js";
 export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-envelope.js";
 export { engagedFollowUpContract, ENGAGED_FOLLOW_UP_CONTEXT } from "./channels/engaged-wake.js";
+export { auditNameDropWoke, auditNameDropSilent, NAME_DROP_WOKE_ACTION, NAME_DROP_SILENT_ACTION } from "./channels/name-drop-wake-audit.js";
+export type { NameDropRoad, NameDropVia, NameDropAuditKey } from "./channels/name-drop-wake-audit.js";
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
 

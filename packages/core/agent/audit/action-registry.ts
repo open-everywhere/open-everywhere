@@ -254,6 +254,19 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
    },
   { action: "wake.ingress", fields: ["wakeId"], proves: "a wake entered the deployment, before anything decided what to do with it" },
   {
+    action: "surface.name_drop_woke",
+    fields: ["reason", "container", "ts", "road", "via"],
+    proves:
+      "the name-drop road ADMITTED a message — the built-in name match, or a wake arm filling its abstention — and which session it handed the wake to; the positive observable that tells a judged NO_REPLY apart from a dead `nameDropWake`",
+  },
+  {
+    action: "surface.name_drop_silent",
+    fields: ["reason", "container", "ts"],
+    proves: "somebody NAMED the agent and the name-drop road refused to wake, and which gate refused",
+    notExercised:
+      "the pack's name-drop legs drive the ADMIT side; refusing a real candidate needs a fixture room with `nameDropWake` off (or an unconfirmable channel), which no scenario provisions today.",
+  },
+  {
     action: "turn.unaccounted_wakes",
     fields: ["turnId", "turnWake", "unaccounted", "count", "addressedCount", "ambientCount", "capped"],
     proves: "a coalesced turn swallowed wakes it never answered, and how many of those were addressed to the agent",
