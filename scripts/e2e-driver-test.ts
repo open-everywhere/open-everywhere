@@ -4417,11 +4417,15 @@ rmSync(dir, { recursive: true, force: true });
     HUMAN_ACTING_IDENTITY,
     installReads,
     INSTALL_IDENTITY,
+    ownAccountAskRows,
     ownAccountRefusals,
     renderActingIdentityRead,
+    renderOwnAccountAskRows,
+    CONNECTOR_OWN_ACCOUNT_ASK_ACTION,
   } = await import("../packages/core/scripts/e2e/own-account-rows.js");
 
   ok(CONNECTOR_ACTING_IDENTITY_ACTION === "connector.acting_identity", "the action key is the writer's own, imported rather than re-typed");
+  ok(CONNECTOR_OWN_ACCOUNT_ASK_ACTION === "connector.own_account_ask", "the DECISION-POINT action key is the writer's own too (OPE-1900)");
   ok(INSTALL_IDENTITY === "install" && HUMAN_ACTING_IDENTITY === "human-acting", "the two identities are the ratified CredentialGrantFamily members");
 
   const aiRow = (detail: Record<string, unknown>, over: Partial<AuditWireEntry> = {}): AuditWireEntry => ({
@@ -4480,6 +4484,48 @@ rmSync(dir, { recursive: true, force: true });
 
   ok(renderActingIdentityRead(actingIdentityRead([{ ...ordinary, action: "notion.dispatched" }], "notion")).includes("notion.dispatched"), "an empty read names the actions the window DID hold, so a red says what it saw");
   ok(renderActingIdentityRead(both).includes("refused=true") && renderActingIdentityRead(both).includes("read_notion_page"), "the read-out names each row's verdict and tool — printed on a pass too, so a green does not read as bare success");
+
+  const askRow = (detail: Record<string, unknown>, over: Partial<AuditWireEntry> = {}): AuditWireEntry => ({
+    ts: "2026-05-13T23:30:00.000Z",
+    org: "o",
+    platform: "notion",
+    workspace: "w",
+    surface: "page-1",
+    action: CONNECTOR_OWN_ACCOUNT_ASK_ACTION,
+    detail,
+    ...over,
+  });
+  const recognised = askRow({ askRecognised: true, connector: "notion", outcome: "refuse-unless-grant-held", requiredIdentity: "human-acting", stamped: true });
+  const ambiguous = askRow({ askRecognised: true, connector: "notion", outcome: "refuse-ambiguous", requiredIdentity: "human-acting", stamped: false });
+
+  ok(ownAccountAskRows([recognised, ambiguous], "notion").length === 2, "both emitted shapes decode — the ambiguous arm and the ordinary own-account arm");
+  ok(ownAccountAskRows([recognised], "notion")[0].stamped && !ownAccountAskRows([ambiguous], "notion")[0].stamped, "`stamped` is carried through, so a read-out can say whether a delegated worker would inherit the ask");
+  ok(
+    ownAccountAskRows([recognised, ordinary, refusal], "notion").length === 1,
+    "the acting-identity rows on the same window are NOT decision-point rows — the two actions are read apart",
+  );
+  ok(ownAccountAskRows([recognised], "linear").length === 0, "NEGATIVE: the connector is MATCHED — a Linear ask never answers a question about Notion");
+  ok(
+    ownAccountAskRows([askRow({ askRecognised: true, connector: "notion", outcome: "refuse-unless-grant-held", requiredIdentity: "human-acting", stamped: true }, { action: "connector.acting_identity" })], "notion").length === 0,
+    "NEGATIVE: a row under a different ACTION is not a decision-point row however its detail reads",
+  );
+  ok(
+    ownAccountAskRows([askRow({ askRecognised: false, connector: "notion", outcome: "refuse-unless-grant-held", requiredIdentity: "human-acting", stamped: true })], "notion").length === 0,
+    "NEGATIVE: askRecognised=false is not this row — the row exists only where an ask WAS recognised, and accepting it would let arm 2 score on nothing",
+  );
+  ok(
+    ownAccountAskRows([askRow({ askRecognised: true, connector: "notion", outcome: "refuse-unless-grant-held", requiredIdentity: "human-acting", stamped: "yes" })], "notion").length === 0,
+    "NEGATIVE: a row whose `stamped` is not a boolean does not decode — the shape change most likely to make the new gate vacuous",
+  );
+  ok(
+    ownAccountAskRows([askRow({ askRecognised: true, connector: "notion", requiredIdentity: "human-acting", stamped: true })], "notion").length === 0,
+    "NEGATIVE: a row with no `outcome` does not decode — the field that makes the row scoreable on its own",
+  );
+  ok(renderOwnAccountAskRows([]).includes("no connector.own_account_ask row"), "an empty read-out says the row was absent, which is what a red on the new gate means");
+  ok(
+    renderOwnAccountAskRows(ownAccountAskRows([recognised], "notion")).includes("refuse-unless-grant-held"),
+    "the read-out names the outcome — printed on a pass too, so a green does not read as bare success",
+  );
 }
 
 {

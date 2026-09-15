@@ -10,6 +10,11 @@ import {
   declaredAuditActions,
   expandTemplate,
 } from "../packages/core/agent/audit/action-registry.js";
+import {
+  CONNECTOR_OWN_ACCOUNT_ASK_ACTION,
+  actingIdentityAuditDetail,
+  ownAccountAskAuditDetail,
+} from "../packages/core/agent/connections/own-account-ask.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -83,10 +88,67 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
   for (const d of CONSEQUENTIAL_AUDIT_ACTIONS) {
     ok(d.proves.trim().length > 0, `${d.action} says what a reader learns from it`);
   }
+
+  const FIELDLESS_CONSEQUENTIAL_DEBT: readonly string[] = [
+    "identity.link.confirmed",
+    "identity.link.denied",
+    "identity.link.set_created",
+    "identity.link.unlinked",
+    "identity.link.revoked",
+    "identity.link.credentials_purged",
+    "identity.link.suggested",
+    "identity.link.claim_unaddressed",
+    "identity.link.code_back_undeliverable",
+    "identity.link.notice_undeliverable",
+    "grant.refused",
+    "grant.used",
+    "grant.undisclosed",
+    "grant.notified",
+    "approval.session_granted",
+    "approval.session_grant_released",
+    "approval.autoapproved",
+    "approval.decision_wake",
+    "approval.eve_candidate",
+    "approval.eve_settled",
+    "delegation.provenance_carried",
+    "reply.provenance",
+    "memory.purge",
+    "webhook.secret_revealed",
+  ];
+  const fieldless = CONSEQUENTIAL_AUDIT_ACTIONS.filter((d) => d.fields.length === 0).map((d) => d.action);
+  const undeclaredEmpty = fieldless.filter((a) => !FIELDLESS_CONSEQUENTIAL_DEBT.includes(a));
+  ok(
+    undeclaredEmpty.length === 0,
+    `every CONSEQUENTIAL action declares the detail fields its row carries — new empty declaration(s): ${undeclaredEmpty.join(", ")}. ` +
+      `Read the emission site and write the field list; do not add the name to FIELDLESS_CONSEQUENTIAL_DEBT.`,
+  );
+  const paidOff = FIELDLESS_CONSEQUENTIAL_DEBT.filter((a) => !fieldless.includes(a));
+  ok(paidOff.length === 0, `the fieldless-debt list names only actions that are still fieldless — now declared, so delete from the list: ${paidOff.join(", ")}`);
+  ok(!fieldless.includes("engagement.stood_down") && !fieldless.includes("reply.post"), "the ratchet reads real field lists — a row that DOES declare fields is never counted fieldless");
+  ok(FIELDLESS_CONSEQUENTIAL_DEBT.length === 0 || fieldless.length > 0, "…and while the debt list names rows, the filter finds them — the ratchet is not matching on nothing");
   for (const d of CONSEQUENTIAL_AUDIT_ACTIONS) {
     if (d.notExercised === undefined) continue;
     ok(d.notExercised.trim().length > 20, `${d.action}'s notExercised reason states what is missing (got: "${d.notExercised}")`);
   }
+
+  const declaredFields = (action: string): readonly string[] => {
+    const d = CONSEQUENTIAL_AUDIT_ACTIONS.find((x) => x.action === action);
+    assert.ok(d !== undefined, `${action} is declared consequential`);
+    return [...d.fields].sort();
+  };
+  const askKeys = Object.keys(ownAccountAskAuditDetail({ ambiguous: false, connector: "notion" }, true)).sort();
+  ok(
+    askKeys.join(",") === declaredFields(CONNECTOR_OWN_ACCOUNT_ASK_ACTION).join(","),
+    `${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} declares exactly the keys its emitter writes (emitter: ${askKeys.join(", ")}; declared: ${declaredFields(CONNECTOR_OWN_ACCOUNT_ASK_ACTION).join(", ")})`,
+  );
+  const grantedKeys = Object.keys(actingIdentityAuditDetail({ askRecognised: false, identity: "install", reason: "no-own-account-ask", requiredIdentity: "install" }, "notion", "read_notion_page"));
+  const refusedKeys = Object.keys(actingIdentityAuditDetail({ askRecognised: true, reason: "own-account-ask-no-grant", refusal: "no", requiredIdentity: "human-acting" }, "notion", "read_notion_page"));
+  const identityKeys = [...new Set([...grantedKeys, ...refusedKeys])].sort();
+  ok(
+    identityKeys.join(",") === declaredFields("connector.acting_identity").join(","),
+    `connector.acting_identity declares exactly the keys its emitter writes across both arms (emitter: ${identityKeys.join(", ")}; declared: ${declaredFields("connector.acting_identity").join(", ")})`,
+  );
+  ok(grantedKeys.includes("identity") && !refusedKeys.includes("identity"), "the acting-identity builder omits `identity` on a refusal — the conditional key the union covers");
 
   ok(expandTemplate({ template: "<platform>.x", platforms: ["a", "b"], fields: [], proves: "p", consequential: false }).join(",") === "a.x,b.x",
     "expandTemplate substitutes the platform into each name");

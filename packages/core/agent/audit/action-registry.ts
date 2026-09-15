@@ -231,6 +231,17 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
    },
   { action: "grant.notified", fields: [], proves: "the grant's owner was told their credential was used" },
 
+  {
+    action: "connector.own_account_ask",
+    fields: ["askRecognised", "connector", "outcome", "requiredIdentity", "stamped"],
+    proves: "a member asked the agent to act with their OWN account, recorded where the ask was recognised — so a turn that honestly refuses without reading still leaves a row",
+  },
+  {
+    action: "connector.acting_identity",
+    fields: ["askRecognised", "connector", "identity", "reason", "refused", "requiredIdentity", "tool"],
+    proves: "which credential identity one gated connector read acted under, and — on `refused: true` — that an own-account ask was not silently answered on the team integration",
+  },
+
   { action: "docs.read", fields: ["path"], proves: "which document the agent actually read", notExercised: "RED-until-leg: lane A run 2 — a read_docs cell. No leg asks the agent to read the deployment's own manual, so none of the three docs.* rows is exercised." },
   { action: "docs.index", fields: ["count"], proves: "the agent listed the doc index, and how large it was", notExercised: "RED-until-leg: lane A run 2 — the read_docs cell's index arm." },
   { action: "docs.refused", fields: ["requested"], proves: "a doc read was refused, naming what was asked for", notExercised: "RED-until-leg: lane A run 2 — the read_docs cell's refusal arm." },
@@ -304,8 +315,9 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   { action: "reply.forced", fields: ["reason"], proves: "a reply was posted past a guard that would have withheld it", notExercised: "a reply posted PAST a guard that would have withheld it; no e2e fixture arms that path." },
   {
     action: "engagement.stood_down",
-    fields: [],
-    proves: "the agent was asked to stop following a conversation and MARKED the engagement row — the retroactive proof the thread was enrolled",
+    fields: ["surfaceKey", "anchor", "marked", "refused", "reason", "roomAnchor", "roomStop"],
+    proves:
+      "the agent was asked to stop following a conversation, and either MARKED the engagement row (`marked` — the retroactive proof the thread was enrolled) or REFUSED to (`refused`, naming which path); `roomAnchor`/`roomStop` say whether the mark landed on the room grain instead",
   },
 
   {
@@ -469,7 +481,6 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "chat.post_refused",
   "checkpoint.continue",
   "checkpoint.trip",
-  "connector.acting_identity",
   "connector.card_posted",
   "connector.consent_detour",
   "connector.consent_resume",

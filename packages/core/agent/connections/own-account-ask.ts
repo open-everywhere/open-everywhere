@@ -151,6 +151,20 @@ export function personalRouteRefusal(connector: string): string {
   );
 }
 
+export const CONNECTOR_OWN_ACCOUNT_ASK_ACTION = "connector.own_account_ask";
+
+const OWN_ACCOUNT_REQUIRED_IDENTITY: CredentialGrantFamily = "human-acting";
+
+export function ownAccountAskAuditDetail(ask: OwnAccountAsk, stamped: boolean): Record<string, unknown> {
+  return {
+    askRecognised: true,
+    connector: ask.connector,
+    outcome: ask.ambiguous ? "refuse-ambiguous" : "refuse-unless-grant-held",
+    requiredIdentity: OWN_ACCOUNT_REQUIRED_IDENTITY,
+    stamped,
+  };
+}
+
 export function actingIdentityAuditDetail(verdict: ActingIdentityVerdict, connector: string, tool: string): Record<string, unknown> {
   return {
     askRecognised: verdict.askRecognised,

@@ -1,8 +1,9 @@
 import type { CredentialGrantFamily } from "../../agent/access/connector-credentials.js";
+import { CONNECTOR_OWN_ACCOUNT_ASK_ACTION } from "../../agent/connections/own-account-ask.js";
 import { CONNECTOR_ACTING_IDENTITY_ACTION } from "../../agent/connections/own-account-gate.js";
 import type { AuditWireEntry } from "./audit-read.js";
 
-export { CONNECTOR_ACTING_IDENTITY_ACTION };
+export { CONNECTOR_ACTING_IDENTITY_ACTION, CONNECTOR_OWN_ACCOUNT_ASK_ACTION };
 
 export const INSTALL_IDENTITY: CredentialGrantFamily = "install";
 export const HUMAN_ACTING_IDENTITY: CredentialGrantFamily = "human-acting";
@@ -80,6 +81,46 @@ export function installReads(read: ActingIdentityRead): readonly ActingIdentityR
 
 export function allOrdinaryInstallReads(read: ActingIdentityRead): boolean {
   return read.rows.length > 0 && read.undecodable === 0 && read.rows.every(isOrdinaryInstallRead);
+}
+
+export interface OwnAccountAskRow {
+  readonly ts: string;
+  readonly platform: string;
+  readonly surface?: string;
+  readonly connector: string;
+  readonly outcome: string;
+  readonly requiredIdentity: string;
+  readonly stamped: boolean;
+}
+
+export function ownAccountAskRows(rows: readonly AuditWireEntry[], connector: string): readonly OwnAccountAskRow[] {
+  const out: OwnAccountAskRow[] = [];
+  for (const entry of rows) {
+    if (entry.action !== CONNECTOR_OWN_ACCOUNT_ASK_ACTION) continue;
+    const d = entry.detail;
+    if (d === undefined) continue;
+    if (str(d.connector) !== connector) continue;
+    const outcome = str(d.outcome);
+    const requiredIdentity = str(d.requiredIdentity);
+    if (outcome === undefined || requiredIdentity === undefined) continue;
+    if (d.askRecognised !== true) continue;
+    if (typeof d.stamped !== "boolean") continue;
+    out.push({
+      connector,
+      outcome,
+      platform: entry.platform,
+      requiredIdentity,
+      stamped: d.stamped,
+      ts: entry.ts,
+      ...(entry.surface === undefined ? {} : { surface: entry.surface }),
+    });
+  }
+  return out;
+}
+
+export function renderOwnAccountAskRows(rows: readonly OwnAccountAskRow[]): string {
+  if (rows.length === 0) return `no ${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} row`;
+  return `${rows.length} row(s) — ${rows.map((r) => `outcome=${r.outcome} required=${r.requiredIdentity} stamped=${r.stamped}`).join("; ")}`;
 }
 
 export function renderActingIdentityRead(read: ActingIdentityRead): string {

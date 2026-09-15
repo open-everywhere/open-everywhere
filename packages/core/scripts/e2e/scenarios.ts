@@ -49,11 +49,14 @@ import {
   actingIdentityRead,
   allOrdinaryInstallReads,
   CONNECTOR_ACTING_IDENTITY_ACTION,
+  CONNECTOR_OWN_ACCOUNT_ASK_ACTION,
   HUMAN_ACTING_IDENTITY,
   installReads,
   INSTALL_IDENTITY,
+  ownAccountAskRows,
   ownAccountRefusals,
   renderActingIdentityRead,
+  renderOwnAccountAskRows,
 } from "./own-account-rows.js";
 import {
   REPLY_POST_ACTION,
@@ -2889,27 +2892,53 @@ export const SCENARIOS: readonly Scenario[] = [
           )) ?? (await readWindow(sinceOwn));
         const refusals = ownAccountRefusals(ownRead);
         const leaked = installReads(ownRead);
+        const askRows =
+          (await pollOptional(
+            async () => {
+              const rows = ownAccountAskRows(await auditRead({ sinceIso: sinceOwn, limit: 1000, platform: "notion" }), NOTION_CONNECTOR);
+              return rows.length > 0 ? rows : undefined;
+            },
+            { timeoutMs: SILENCE_WINDOW, what: `a ${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} row for the own-account ask` },
+          )) ?? [];
         ctx.log(
           `S-OWN-ACCOUNT-NOTION arm 2 (own-account ask) — ${renderActingIdentityRead(ownRead)}. ` +
+            `Decision point: ${renderOwnAccountAskRows(askRows)}. ` +
             `Reply (REPORTED, never scored): ${replyOwn ? JSON.stringify(replyOwn.text.slice(0, 400)) : "none inside the wait"}. ` +
             `Team-identity reads on this window: ${leaked.length} — REPORTED, not gated: arm 1's worker can settle after this window opens, and a ` +
             `late row of its own carries detail identical to one of arm 2's, so a gate here would red on a correct system.`,
         );
-        if (refusals.length === 0 && ownRead.rows.length === 0 && ownRead.undecodable === 0)
-          ctx.skip(
-            `the own-account ask was answered without reaching a gated Notion read — no ${CONNECTOR_ACTING_IDENTITY_ACTION} row on this arm's window at ` +
-              `all, so nothing chose a credential and there is no substitution to report. Arm 1 proved the path exists on this deployment; it cannot ` +
-              `prove this turn took it, and a seat that says "I cannot act as you" without reading is a correct outcome this leg cannot observe. ` +
-              `${await diagnose(sinceOwn)}.`,
-          );
+        const askDiagnosis = askRows.length > 0 ? "" : ` ${await diagnose(sinceOwn)}`;
         ctx.gate(
-          refusals.length > 0,
-          `THE LEG: the ask "read this Notion page using my own Notion account" was REFUSED at the credential choice — ` +
-            `${refusals.length} ${CONNECTOR_ACTING_IDENTITY_ACTION} row(s) with refused=true, requiredIdentity=${HUMAN_ACTING_IDENTITY} and askRecognised=true ` +
-            `(tools: ${[...new Set(refusals.map((r) => r.tool))].sort().join(", ") || "none"}). A red means a gated Notion read DID choose a credential on ` +
-            `this turn and the gate did not refuse it — a member asked to act as themselves and the deployment answered on the team integration anyway, ` +
-            `which is OPE-1525 live. Saw: ${renderActingIdentityRead(ownRead)}`,
+          askRows.length > 0,
+          `THE DECISION POINT: the ask "read this Notion page using my own Notion account" was RECOGNISED as an own-account ask — ` +
+            `${askRows.length} ${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} row(s) for ${NOTION_CONNECTOR} on this window ` +
+            `(${renderOwnAccountAskRows(askRows)}). A red has TWO readings, not one: nothing on this turn recognised the ask — and then neither the ` +
+            `seat path nor the stamped worker path could refuse it, whatever the reply said — OR the row was written and DROPPED, because it is ` +
+            `best-effort (\`appendAudit\` retries once, then warns and discards, and the hook swallows besides). Read the deployment's warn log before ` +
+            `calling the grammar broken.${askDiagnosis}`,
         );
+        if (ownRead.rows.length === 0 && ownRead.undecodable === 0) {
+          ctx.gate(
+            replyOwn !== undefined,
+            `arm 2 answered at all: a reply arrived inside the wait. Without this, a turn that CRASHED before reaching a gated read would score as a ` +
+              `refusal — the rows are identical in both cases. The reply's TEXT is still not graded (this room carries this leg's own history).`,
+          );
+          ctx.log(
+            `S-OWN-ACCOUNT-NOTION arm 2 SCORED on the decision-point row: the ask was recognised, a reply arrived, and NO gated Notion read chose a ` +
+              `credential on this turn. That is consistent with a refusal WITHOUT reading (OPE-1549, the correct outcome) and is NOT distinguishable ` +
+              `here from an answer taken through the ungated sandbox route this leg does not observe. The substitution gate has nothing to grade ` +
+              `because nothing substituted.`,
+          );
+        } else {
+          ctx.gate(
+            refusals.length > 0,
+            `THE LEG: the ask "read this Notion page using my own Notion account" was REFUSED at the credential choice — ` +
+              `${refusals.length} ${CONNECTOR_ACTING_IDENTITY_ACTION} row(s) with refused=true, requiredIdentity=${HUMAN_ACTING_IDENTITY} and askRecognised=true ` +
+              `(tools: ${[...new Set(refusals.map((r) => r.tool))].sort().join(", ") || "none"}). A red means a gated Notion read DID choose a credential on ` +
+              `this turn and the gate did not refuse it — a member asked to act as themselves and the deployment answered on the team integration anyway, ` +
+              `which is OPE-1525 live. Saw: ${renderActingIdentityRead(ownRead)}`,
+          );
+        }
       } finally {
         await archiveAnchors();
       }
