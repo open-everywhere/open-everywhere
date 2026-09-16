@@ -40,11 +40,10 @@ export const AMBIENT_READ_MANIFEST: ReadonlyMap<string, DeclaredRead> = new Map(
     {
       klass: "deliberate",
       why:
-        "the host's real environment IS the subject: the suite proves no secret-shaped value from " +
-        "THIS shell reaches the config snapshot that gets posted on a pull request. A pinned " +
-        "environment would prove nothing — the assertion needs values a developer machine really " +
-        "carries. It reads keys and values to search for them, and asserts nothing about which " +
-        "names are present.",
+        "the host's real environment remains part of the subject: the suite proves no secret-shaped " +
+        "value from THIS shell reaches the config snapshot that gets posted on a pull request. The " +
+        "suite also injects one owned probe so a scrubbed runner exercises the assertion, while this " +
+        "whole-environment read keeps values a developer machine really carries in the scan.",
     },
   ],
   [
@@ -78,16 +77,6 @@ export const AMBIENT_READ_MANIFEST: ReadonlyMap<string, DeclaredRead> = new Map(
         "`entrypoint.sh` does, and drops `OE_EGRESS_PROXY_TOKEN` on the way so the operator's real " +
         "token is never inherited. It is the pass-through shape written as a loop rather than a " +
         "spread, and it asserts nothing about what the host carries.",
-    },
-  ],
-  [
-    declarationKey("scripts/config-diff-test.ts", "CI"),
-    {
-      klass: "deliberate",
-      why:
-        "the coverage guard for the leak check beside it: `secretish.length > 0 || CI !== undefined` " +
-        "says the search had something to find, unless the run is on a secret-free runner. Pinning " +
-        "CI would disable the very guard the line exists to be.",
     },
   ],
 ]);

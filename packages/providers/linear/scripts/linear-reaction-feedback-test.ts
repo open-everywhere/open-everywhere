@@ -137,10 +137,14 @@ function deps(over: Partial<LinearReactionFeedbackDeps> = {}): { deps: LinearRea
 {
   const saved = {
     secret: process.env.LINEAR_WEBHOOK_SECRET,
+    token: process.env.LINEAR_AGENT_ACCESS_TOKEN,
+    org: process.env.LINEAR_ORGANIZATION_ID,
     appUser: process.env.LINEAR_APP_USER_ID,
     appName: process.env.LINEAR_APP_NAME,
   };
   process.env.LINEAR_WEBHOOK_SECRET = "test-linear-secret";
+  process.env.LINEAR_AGENT_ACCESS_TOKEN = "test-linear-token";
+  process.env.LINEAR_ORGANIZATION_ID = "org-1";
   process.env.LINEAR_APP_USER_ID = APP_USER;
   process.env.LINEAR_APP_NAME = "Test App";
   const realFetch = globalThis.fetch;
@@ -198,6 +202,10 @@ function deps(over: Partial<LinearReactionFeedbackDeps> = {}): { deps: LinearRea
     globalThis.fetch = realFetch;
     if (saved.secret === undefined) delete process.env.LINEAR_WEBHOOK_SECRET;
     else process.env.LINEAR_WEBHOOK_SECRET = saved.secret;
+    if (saved.token === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
+    else process.env.LINEAR_AGENT_ACCESS_TOKEN = saved.token;
+    if (saved.org === undefined) delete process.env.LINEAR_ORGANIZATION_ID;
+    else process.env.LINEAR_ORGANIZATION_ID = saved.org;
     if (saved.appUser === undefined) delete process.env.LINEAR_APP_USER_ID;
     else process.env.LINEAR_APP_USER_ID = saved.appUser;
     if (saved.appName === undefined) delete process.env.LINEAR_APP_NAME;

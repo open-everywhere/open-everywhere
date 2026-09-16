@@ -229,7 +229,7 @@ function main(): void {
   }
 
   {
-    ok(AMBIENT_READ_MANIFEST.size === 5, `the manifest holds 5 declared read(s) (found ${AMBIENT_READ_MANIFEST.size})`);
+    ok(AMBIENT_READ_MANIFEST.size === 4, `the manifest holds 4 declared read(s) (found ${AMBIENT_READ_MANIFEST.size})`);
     ok(PASS_THROUGH.size === 2, `PASS_THROUGH holds 2 name(s) (found ${PASS_THROUGH.size})`);
 
     const unticketed = [...AMBIENT_READ_MANIFEST].filter(([, e]) => e.klass === "pending-fix" && !/OPE-\d+/.test(e.why));
@@ -246,7 +246,7 @@ function main(): void {
     }
     ok(
       [...AMBIENT_READ_MANIFEST.keys()].filter((k) => k.endsWith(` ${WHOLE_ENV}`)).length === 4,
-      "4 of the 5 declarations are whole-environment reads — if you meant to change this, say so here",
+      "all 4 declarations are whole-environment reads — if you meant to change this, say so here",
     );
   }
 }

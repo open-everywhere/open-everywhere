@@ -214,11 +214,21 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
 }
 
 {
-  const live = buildConfigSnapshot();
+  const ownedSecretProbe = "oe-config-diff-owned-secret-probe";
+  const savedOwnedSecretProbe = process.env.OE_CONFIG_DIFF_TEST_SECRET;
+  process.env.OE_CONFIG_DIFF_TEST_SECRET = ownedSecretProbe;
+  const [live, rebuilt] = (() => {
+    try {
+      return [buildConfigSnapshot(), buildConfigSnapshot()] as const;
+    } finally {
+      if (savedOwnedSecretProbe === undefined) delete process.env.OE_CONFIG_DIFF_TEST_SECRET;
+      else process.env.OE_CONFIG_DIFF_TEST_SECRET = savedOwnedSecretProbe;
+    }
+  })();
   ok(live.formatVersion === SNAPSHOT_FORMAT_VERSION, "the live snapshot stamps the current format version");
   ok(live.rows.length > 100, `the live snapshot is substantial (${live.rows.length} rows)`);
 
-  ok(JSON.stringify(live) === JSON.stringify(buildConfigSnapshot()), "two builds of the same tree are byte-identical (no clock, no random, no key-order drift)");
+  ok(JSON.stringify(live) === JSON.stringify(rebuilt), "two builds of the same tree are byte-identical (no clock, no random, no key-order drift)");
 
   const keys = live.rows.map((r) => `${r.section}\u0000${r.key}`);
   ok(new Set(keys).size === keys.length, "every (section,key) is unique — no row shadows another");
@@ -244,13 +254,13 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
 
   ok(live.rows.some((r) => r.section === "access" && r.key.includes(" · hosts")), "access rows carry the ` · <facet>` key grammar the finding parses");
 
-  const secretish = Object.entries(process.env).filter(
+  const ambientSecretish = Object.entries(process.env).filter(
     ([k, v]) => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL/i.test(k) && typeof v === "string" && v.length >= 12,
   );
+  const secretish = [...ambientSecretish, ["OE_CONFIG_DIFF_TEST_SECRET", ownedSecretProbe] as const];
   const serialised = JSON.stringify(live);
   const leaked = secretish.filter(([, v]) => serialised.includes(v!));
   ok(leaked.length === 0, `no secret-shaped env value appears in the snapshot (would have leaked: ${leaked.map(([k]) => k).join(", ")})`);
-  ok(secretish.length > 0 || process.env.CI !== undefined, "the leak check had something to look for (or is running in secret-free CI)");
 
   const selfDiff = diffConfigSnapshots(live, live);
   ok(selfDiff.sections.length === live.sections.length, "self-diff renders every declared section");
