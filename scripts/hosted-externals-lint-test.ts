@@ -140,6 +140,46 @@ try {
   ok(!isGeneratedDocsPage("agent/docs/generated.ts"), "(7) nor a FILE called generated.ts");
   ok(!isGeneratedDocsPage("agent/generated/docs/x.ts"), "(7) nor docs/ inside generated/");
 
+  {
+    const builtins = [
+      "path",
+      "fs",
+      "os",
+      "stream",
+      "zlib",
+      "stream/promises",
+      "fs/promises",
+      "url",
+      "module",
+    ];
+    const entry = builtins.map((specifier) => `import ${JSON.stringify(specifier)};`).join("\n");
+    const valid = runLint(
+      scratchTree({ ".vercel/output/functions/__server.func/index.mjs": `${entry}\n` }),
+    );
+    ok(valid.code === 0, "(8) unprefixed Node built-ins need no bundled npm package");
+    ok(
+      !valid.stderr.includes("cold-start crash"),
+      "(8) unprefixed Node built-ins produce no missing-external finding",
+    );
+
+    const missing = runLint(
+      scratchTree({
+        ".vercel/output/functions/__server.func/index.mjs": `${entry}\nimport "actual-missing-external";\n`,
+      }),
+    );
+    ok(missing.code === 1, "(8) a real missing npm external still exits 1");
+    ok(
+      missing.stderr.includes('"actual-missing-external" is imported but not present'),
+      "(8) the output pass still names the real missing npm external",
+    );
+    for (const specifier of builtins) {
+      ok(
+        !missing.stderr.includes(`"${specifier}" is imported but not present`),
+        `(8) ${specifier} is not reported beside a real missing package`,
+      );
+    }
+  }
+
   console.log(`✓ hosted-externals source pass: ${passed} assertions`);
 } finally {
   for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true });

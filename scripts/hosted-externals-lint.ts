@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { join } from "node:path";
 
 import { computedImportFailures } from "./hosted-externals-source-scan.js";
@@ -61,6 +62,7 @@ for (const dir of functionDirs) {
 
   for (const spec of bareImportsOf(readFileSync(entry, "utf8"))) {
     checkedImports += 1;
+    if (isBuiltin(spec)) continue;
     if (existsSync(join(funcDir, "node_modules", packageNameOf(spec)))) continue;
     failures.push(
       `${dir}: "${spec}" is imported but not present in ${dir}/node_modules — cold-start crash.`,
