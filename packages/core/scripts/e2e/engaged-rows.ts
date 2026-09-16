@@ -140,12 +140,19 @@ export type EngagedWaitBudget = Pick<PollOpts, "timeoutMs" | "what" | "initialDe
 
 export async function awaitReplyPostRows(
   read: EngagedAuditRead,
-  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly budget: EngagedWaitBudget },
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface?: string;
+    readonly minRows?: number;
+    readonly budget: EngagedWaitBudget;
+  },
 ): Promise<readonly AuditWireEntry[] | undefined> {
   const scope = opts.surface === undefined ? {} : { surface: opts.surface };
+  const minRows = opts.minRows ?? 1;
   return pollOptional(async () => {
     const rows = await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
-    return replyPostCount(rows, scope) > 0 ? rows : undefined;
+    return replyPostCount(rows, scope) >= minRows ? rows : undefined;
   }, opts.budget);
 }
 

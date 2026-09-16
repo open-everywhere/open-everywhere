@@ -4319,6 +4319,45 @@ rmSync(dir, { recursive: true, force: true });
 
     {
       let calls = 0;
+      const first = postRow("C1");
+      const second = postRow("C1");
+      const read = async () => {
+        calls += 1;
+        return calls >= 2 ? [first, second] : [first];
+      };
+      const found = await awaitReplyPostRows(read, {
+        sinceIso: "2026-05-20T14:30:40.219Z",
+        platform: "notion",
+        surface: "C1",
+        minRows: 2,
+        budget: fast(2_000, "two reply.post rows for two name-drops"),
+      });
+      ok(found?.length === 2, "🔴 OPE-1895: awaitReplyPostRows waits past the first existing reply until the second name-drop's second scoped reply row lands");
+      ok(calls === 2, `…and the staged reader exposed one row before two (${calls} reads)`);
+    }
+
+    {
+      const observations = [
+        { elapsedMs: 0, rows: [] },
+        { elapsedMs: 60_001, rows: [] },
+        { elapsedMs: 127_000, rows: [postRow("C1"), postRow("C1")] },
+      ] as const;
+      let calls = 0;
+      const read = async () => observations[Math.min(calls++, observations.length - 1)]!.rows;
+      const found = await awaitReplyPostRows(read, {
+        sinceIso: "2026-05-20T14:30:40.219Z",
+        platform: "notion",
+        surface: "C1",
+        minRows: 2,
+        budget: fast(2_000, "two delayed reply.post rows for two name-drops"),
+      });
+      ok(found?.length === 2, "🔴 OPE-1895: the two-row waiter survives the ticket-linked zero → zero → two observation sequence");
+      const matchedAt = observations[calls - 1]!.elapsedMs;
+      ok(matchedAt > 60_000 && matchedAt < 180_000, `…and the matching observation records why 60s expires while 180s covers it (${matchedAt} ms)`);
+    }
+
+    {
+      let calls = 0;
       const read = async () => {
         calls += 1;
         return [];
@@ -4380,6 +4419,17 @@ rmSync(dir, { recursive: true, force: true });
     const gatesSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
     ok(gatesSrc.includes("awaitReplyPostRows(ctx.auditRead!"), "🔴 OPE-1711: gateEngagedWake — the reply gate every J-ENGAGED leg calls — takes the waiter, not a single read");
     ok(gatesSrc.includes("awaitStandDownVerdict(ctx.auditRead!"), "🔴 OPE-1711: gateStandDownMarked takes the waiter too");
+    const oneSeatStart = gatesSrc.indexOf("async function gateOneSeatAcrossNameDrops(");
+    const oneSeatEnd = gatesSrc.indexOf("async function gateSeatCatchUp(", oneSeatStart);
+    const oneSeatBody = gatesSrc.slice(oneSeatStart, oneSeatEnd);
+    ok(
+      oneSeatStart >= 0 && oneSeatEnd > oneSeatStart && /awaitReplyPostRows\([\s\S]*?minRows:\s*2/.test(oneSeatBody),
+      "🔴 OPE-1895: gateOneSeatAcrossNameDrops asks the shared waiter for TWO scoped rows — the helper's safe one-row default cannot return on the first name-drop",
+    );
+    ok(
+      /awaitReplyPostRows\([\s\S]*?timeoutMs:\s*REPLY_WAIT/.test(oneSeatBody),
+      "🔴 OPE-1895: gateOneSeatAcrossNameDrops gives the two-reply poll the 180-second REPLY_WAIT budget — A live run's first and second rows landed after the 60-second audit-only budget",
+    );
     ok(
       (gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length === 1,
       `OPE-1711: exactly ONE single-read reply.post gate remains IN THE ENGAGED HELPERS — the audited-SILENCE gate, which must not poll (found ${(gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length}; this counts the REPLY_POST_ACTION spelling those helpers use, not every "reply.post" read in the file)`,

@@ -604,12 +604,13 @@ async function gateOneSeatAcrossNameDrops(
       sinceIso: opts.sinceIso,
       platform: opts.platform,
       surface: opts.surface,
-      budget: { timeoutMs: AUDIT_ROW_WAIT, what: `second name-drop: two ${REPLY_POST_ACTION} rows on ${opts.surface}` },
+      minRows: 2,
+      budget: { timeoutMs: REPLY_WAIT, what: `second name-drop: two ${REPLY_POST_ACTION} rows on ${opts.surface}` },
     })) ?? [];
   const seat = seatContinuity(posts, { surface: opts.surface });
   ctx.gate(
     seat.replies >= 2,
-    `second name-drop: BOTH name-drops were answered — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first one. Fewer than two and the continuity gate below has nothing to be about`,
+    `second name-drop: two scoped replies landed before continuity was evaluated — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first ask. Fewer than two and the continuity gate below has nothing to be about`,
   );
   ctx.gate(
     seat.unattributed === 0,
