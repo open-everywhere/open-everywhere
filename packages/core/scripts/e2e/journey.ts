@@ -34,6 +34,67 @@ export function eveRequestApprovalButtons(
   return deny ? { approve, deny } : { approve };
 }
 
+export const APPROVAL_REQUEST_PROVENANCE_ACTIONS = ["wake.ingress", "turn.question_bridged"] as const;
+
+function slackMessageTimestampIso(ts: string): string | undefined {
+  const match = /^(\d+)\.(\d{1,6})$/.exec(ts);
+  if (!match) return undefined;
+  const seconds = Number(match[1]);
+  const fraction = Number(`0.${match[2]}`);
+  if (!Number.isFinite(seconds) || !Number.isFinite(fraction)) return undefined;
+  const ms = Math.round(seconds * 1000 + fraction * 1000);
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+export function approvalRequestForSlackAsk<T>(input: {
+  readonly messages: readonly SlackMessage[];
+  readonly auditRows: readonly AuditWireEntry[];
+  readonly anchorTs: string;
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly decode: (message: SlackMessage) => T | undefined;
+}): { readonly message: SlackMessage; readonly decoded: T } | undefined {
+  const anchorIso = slackMessageTimestampIso(input.anchorTs);
+  if (anchorIso === undefined) return undefined;
+  const surfaceKey = `slack/${input.teamId}/${input.channelId}`;
+
+  const wakeIds = new Set<string>();
+  for (const row of input.auditRows) {
+    if (
+      row.action !== APPROVAL_REQUEST_PROVENANCE_ACTIONS[0] ||
+      row.platform !== "slack" ||
+      row.detail?.surfaceKey !== surfaceKey ||
+      row.detail.vendorTs !== anchorIso
+    ) continue;
+    const wakeId = row.detail.wakeId;
+    if (typeof wakeId === "string" && wakeId.length > 0) wakeIds.add(wakeId);
+  }
+  if (wakeIds.size === 0) return undefined;
+
+  const messageIds = new Set<string>();
+  for (const row of input.auditRows) {
+    if (
+      row.action !== APPROVAL_REQUEST_PROVENANCE_ACTIONS[1] ||
+      row.platform !== "unified" ||
+      row.workspace !== input.teamId ||
+      row.detail?.platform !== "slack" ||
+      row.detail.containerKey !== `slack/${input.channelId}`
+    ) continue;
+    const wakeId = row.detail?.wakeId;
+    const id = row.detail?.id;
+    if (typeof wakeId === "string" && wakeIds.has(wakeId) && typeof id === "string" && id.length > 0) messageIds.add(id);
+  }
+
+  let latest: { readonly message: SlackMessage; readonly decoded: T } | undefined;
+  for (const message of input.messages) {
+    if (!messageIds.has(message.ts)) continue;
+    const decoded = input.decode(message);
+    if (decoded !== undefined && (latest === undefined || message.ts > latest.message.ts)) latest = { message, decoded };
+  }
+  return latest;
+}
+
 export type GateFn = (cond: boolean, label: string) => void;
 
 export function legGate(gate: GateFn, leg: string): GateFn {

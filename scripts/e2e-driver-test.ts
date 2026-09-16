@@ -1184,7 +1184,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const { factToken, approveButton, legGate } = await import("../packages/core/scripts/e2e/journey.js");
+  const { approvalRequestForSlackAsk, factToken, approveButton, legGate } = await import("../packages/core/scripts/e2e/journey.js");
   ok(/^falcon-\d{1,5}$/.test(factToken("falcon")), "factToken appends a run-unique numeric suffix to the stem");
   ok(factToken("x") !== factToken("x") || true, "factToken is stem-scoped (suffix derives from the clock)");
   const card = { ts: "1.1", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default" }] };
@@ -1224,6 +1224,73 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(
     approveOnly?.approve.actionId === "b3" && approveOnly.deny === undefined,
     "an approve-only card still DECODES, with no deny side — rather than mis-reading the approve button as both, or answering undefined",
+  );
+
+  const anchorTs = "1780494320.100000";
+  const anchorIso = "2026-06-03T13:45:20.100Z";
+  const teamId = "T-current";
+  const channelId = "D-current";
+  const oldApproval = { ts: "1790559801.100000", text: "Approve tool call: notion__create\n\nReply with one of those words to answer — anything else leaves this waiting." };
+  const currentApproval = { ts: "1790559820.100000", text: oldApproval.text };
+  const otherChannelApproval = { ts: "1790559810.100000", text: oldApproval.text };
+  const wrongWorkspaceApproval = { ts: "1790559811.100000", text: oldApproval.text };
+  const wrongPlatformApproval = { ts: "1790559812.100000", text: oldApproval.text };
+  const wrongContainerApproval = { ts: "1790559813.100000", text: oldApproval.text };
+  const wrongBridgePlaneApproval = { ts: "1790559814.100000", text: oldApproval.text };
+  const provenanceRows: AuditWireEntry[] = [
+    { ts: "2026-09-28T01:43:19.000Z", org: "o", platform: "slack", workspace: "w", action: "wake.ingress", detail: { wakeId: "wake-old", surfaceKey: `slack/${teamId}/${channelId}`, vendorTs: "2026-09-28T01:43:00.000Z" } },
+    { ts: "2026-09-28T01:43:21.000Z", org: "o", platform: "unified", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-old", id: oldApproval.ts, platform: "slack", containerKey: `slack/${channelId}` } },
+    { ts: "2026-06-03T13:45:20.100Z", org: "o", platform: "slack", workspace: "w", action: "wake.ingress", detail: { wakeId: "wake-other-channel", surfaceKey: `slack/${teamId}/D-other`, vendorTs: anchorIso } },
+    { ts: "2026-09-28T01:43:30.100Z", org: "o", platform: "unified", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-other-channel", id: otherChannelApproval.ts, platform: "slack", containerKey: "slack/D-other" } },
+    { ts: "2026-06-03T13:45:20.100Z", org: "o", platform: "slack", workspace: "w", action: "wake.ingress", detail: { wakeId: "wake-current", surfaceKey: `slack/${teamId}/${channelId}`, vendorTs: anchorIso } },
+    { ts: "2026-09-28T01:43:31.100Z", org: "o", platform: "unified", workspace: "T-other", action: "turn.question_bridged", detail: { wakeId: "wake-current", id: wrongWorkspaceApproval.ts, platform: "slack", containerKey: `slack/${channelId}` } },
+    { ts: "2026-09-28T01:43:32.100Z", org: "o", platform: "unified", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-current", id: wrongPlatformApproval.ts, platform: "notion", containerKey: `slack/${channelId}` } },
+    { ts: "2026-09-28T01:43:33.100Z", org: "o", platform: "unified", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-current", id: wrongContainerApproval.ts, platform: "slack", containerKey: "slack/D-other" } },
+    { ts: "2026-09-28T01:43:34.100Z", org: "o", platform: "slack", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-current", id: wrongBridgePlaneApproval.ts, platform: "slack", containerKey: `slack/${channelId}` } },
+    { ts: "2026-09-28T01:43:40.100Z", org: "o", platform: "unified", workspace: teamId, action: "turn.question_bridged", detail: { wakeId: "wake-current", id: currentApproval.ts, platform: "slack", containerKey: `slack/${channelId}` } },
+  ];
+  const decodeBridged = (message: { readonly text: string }): true | undefined => message.text.includes("Reply with one of those words") ? true : undefined;
+  ok(
+    approvalRequestForSlackAsk({ messages: [oldApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: a delayed approval from an older wake does not satisfy the current ask while its own approval has not arrived",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [oldApproval, otherChannelApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: another Slack channel with the same timestamp cannot contribute the current ask's wake id",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [wrongWorkspaceApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: a bridge row in another workspace cannot contribute a message id to this DM",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [wrongPlatformApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: a bridge row whose origin platform is not Slack cannot contribute a message id",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [wrongContainerApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: a bridge row for another Slack container cannot contribute a message id to this DM",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [wrongBridgePlaneApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: a row outside the unified bridge audit partition cannot contribute a message id",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [oldApproval, otherChannelApproval, currentApproval], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: decodeBridged })?.message.ts === currentApproval.ts,
+    "OPE-1919: the current wake's bridged row selects its approval after the unrelated delayed card",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [currentApproval], auditRows: provenanceRows, anchorTs: "999999999999999999.1", teamId, channelId, decode: decodeBridged }) === undefined,
+    "OPE-1919: an out-of-range Slack timestamp is refused instead of throwing during ISO conversion",
+  );
+  const oldCard = { ...oldApproval, actions: [{ actionId: "oe_input:tool-approval:old:button:0", value: "approve", text: "Approve" }] };
+  const currentCard = { ...currentApproval, actions: [{ actionId: "oe_input:tool-approval:current:button:0", value: "approve", text: "Approve" }] };
+  ok(
+    approvalRequestForSlackAsk({ messages: [oldCard], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: eveRequestApprovalButtons }) === undefined,
+    "OPE-1919: S-EVE-CARD also refuses an older wake's delayed approval card",
+  );
+  ok(
+    approvalRequestForSlackAsk({ messages: [oldCard, currentCard], auditRows: provenanceRows, anchorTs, teamId, channelId, decode: eveRequestApprovalButtons })?.decoded.approve.actionId === "oe_input:tool-approval:current:button:0",
+    "OPE-1919: S-EVE-CARD decodes the current wake's approval card after the delayed card",
   );
 
   const seen: string[] = [];

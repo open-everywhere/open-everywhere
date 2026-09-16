@@ -101,7 +101,9 @@ import type { ReplyJudge, Rubric } from "./judge.js";
 import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
+  APPROVAL_REQUEST_PROVENANCE_ACTIONS,
   approveButton,
+  approvalRequestForSlackAsk,
   assertAuditedSilence,
   awaitCard,
   awaitDecided,
@@ -4802,12 +4804,19 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const card = await pollUntil(
         async () => {
-          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
-          for (const m of msgs) {
-            const buttons = eveRequestApprovalButtons(m);
-            if (buttons) return { message: m, buttons };
-          }
-          return undefined;
+          const [messages, auditRows] = await Promise.all([
+            dm.collectBotMessagesAfter(anchorTs, anchorTs),
+            ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
+          ]);
+          const selected = approvalRequestForSlackAsk({
+            messages,
+            auditRows,
+            anchorTs,
+            teamId,
+            channelId: dm.channelId,
+            decode: eveRequestApprovalButtons,
+          });
+          return selected ? { message: selected.message, buttons: selected.decoded } : undefined;
         },
         { timeoutMs: FILE_REPLY_WAIT, what: "the eve-native approval card on the DM connector write" },
       ).catch(async (e: unknown) => {
@@ -4896,18 +4905,28 @@ export const SCENARIOS: readonly Scenario[] = [
         const teardownClicked = new Set<string>();
         const done = await pollUntil(
           async () => {
-            const msgs = await dm.collectBotMessagesAfter(teardownTs, teardownTs);
+            const [msgs, auditRows] = await Promise.all([
+              dm.collectBotMessagesAfter(teardownTs, teardownTs),
+              ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
+            ]);
             let answer: SlackMessage | undefined;
+            const selected = approvalRequestForSlackAsk({
+              messages: msgs,
+              auditRows,
+              anchorTs: teardownTs,
+              teamId,
+              channelId: dm.channelId,
+              decode: eveRequestApprovalButtons,
+            });
             for (const m of msgs) {
               if (teardownClicked.has(m.ts)) continue;
-              const buttons = eveRequestApprovalButtons(m);
-              if (buttons) {
+              if (selected?.message.ts === m.ts) {
                 teardownClicked.add(m.ts);
                 const res = await synthetic.clickBlockAction({
-                  actionId: buttons.approve.actionId,
-                  blockId: buttons.approve.blockId,
-                  value: buttons.approve.value,
-                  buttonText: buttons.approve.text,
+                  actionId: selected.decoded.approve.actionId,
+                  blockId: selected.decoded.approve.blockId,
+                  value: selected.decoded.approve.value,
+                  buttonText: selected.decoded.approve.text,
                   userId,
                   teamId,
                   channelId: dm.channelId,
@@ -4917,6 +4936,7 @@ export const SCENARIOS: readonly Scenario[] = [
                 ctx.log(`teardown: Approve on the archive card ${m.ts} → ${res.status}`);
                 continue;
               }
+              if (eveRequestApprovalButtons(m)) continue;
               const text = m.text.trim();
               if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
             }
@@ -4947,6 +4967,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       await fenceDmSeat(ctx, "S-EVE-BRIDGE");
+      const { teamId } = await ctx.slack!.identity();
       const token = factToken("evebridge");
       const pageTitle = `OE eve-bridge ${token}`;
       const sinceIso = new Date().toISOString();
@@ -4956,10 +4977,18 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const asked = await pollUntil(
         async () => {
-          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
-          let latest: SlackMessage | undefined;
-          for (const m of msgs) if (m.text.includes(APPROVAL_ANSWER_HINT)) latest = m;
-          return latest;
+          const [messages, auditRows] = await Promise.all([
+            dm.collectBotMessagesAfter(anchorTs, anchorTs),
+            ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
+          ]);
+          return approvalRequestForSlackAsk({
+            messages,
+            auditRows,
+            anchorTs,
+            teamId,
+            channelId: dm.channelId,
+            decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
+          })?.message;
         },
         { timeoutMs: FILE_REPLY_WAIT, what: "the BRIDGED approval request, readable in the DM (the host answer line)" },
       ).catch(async (e: unknown) => {
@@ -5027,10 +5056,21 @@ export const SCENARIOS: readonly Scenario[] = [
         const answered = new Set<string>();
         const done = await pollUntil(
           async () => {
-            const msgs = await dm.collectBotMessagesAfter(teardownTs, teardownTs);
+            const [msgs, auditRows] = await Promise.all([
+              dm.collectBotMessagesAfter(teardownTs, teardownTs),
+              ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
+            ]);
             let answer: SlackMessage | undefined;
+            const selected = approvalRequestForSlackAsk({
+              messages: msgs,
+              auditRows,
+              anchorTs: teardownTs,
+              teamId,
+              channelId: dm.channelId,
+              decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
+            });
             for (const m of msgs) {
-              if (m.text.includes(APPROVAL_ANSWER_HINT)) {
+              if (selected?.message.ts === m.ts) {
                 if (!answered.has(m.ts)) {
                   answered.add(m.ts);
                   await dm.post("Approve");
@@ -5038,6 +5078,7 @@ export const SCENARIOS: readonly Scenario[] = [
                 }
                 continue;
               }
+              if (m.text.includes(APPROVAL_ANSWER_HINT)) continue;
               const text = m.text.trim();
               if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
             }
