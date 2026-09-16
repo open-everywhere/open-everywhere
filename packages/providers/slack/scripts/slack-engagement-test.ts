@@ -2345,6 +2345,12 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   ok(wakes2[0]?.message.includes("earlier chatter"), "…and what it read renders into the wake as context");
   ok(!wakes2[0]?.message.includes("<system-note>Catch"), "a surface that CAN catch up renders no unavailable note");
 
+  catchUpCalls.length = 0;
+  wakes2.length = 0;
+  out2 = await routeSupervisorEvent(supEv({ thread_ts: "44.4" }), supDepsFresh(false), { nameDrop: true });
+  ok(out2.woke && catchUpCalls.length === 1, "OPE-1920: a threaded ongoing-seat wake still takes the shared catch-up road");
+  ok(catchUpCalls[0]?.threadRoot === "44.4", "🔴 …and forwards the ACTUAL thread root, so Slack can read replies when the root is older than the catch-up window");
+
   {
     const latches: Array<{ threadTs: string; participating?: boolean }> = [];
     const seatWakes: Array<{ token: string; message: string }> = [];

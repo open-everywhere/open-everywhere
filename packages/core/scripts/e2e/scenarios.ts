@@ -674,7 +674,7 @@ async function gateSeatCatchUp(
   ctx.log(`catch-up: read the envelope at event ${verdict.wakeIndex} of seat ${picked.sessionId} (${picked.events.length} event(s) replayed, ${tried.length} session(s) offered)`);
   ctx.gate(
     verdict.carriedCatchUp,
-    `🔴 catch-up: the wake CARRIED the message said while the seat was idle (\`${opts.caughtUp}\`, envelope at event ${verdict.wakeIndex}). It drew no wake of its own — the audited-silence gate above proves that — so the ONLY path into this envelope is the seat's since-last-wake read. A red here is either a seat road that never ran on this surface, or a catch-up read that returned nothing for it`,
+    `🔴 catch-up: the wake DID NOT CARRY the message said while the seat was idle (\`${opts.caughtUp}\`, envelope at event ${verdict.wakeIndex}). It drew no wake of its own — the audited-silence gate above proves that — so the ONLY path into this envelope is the seat's since-last-wake read. A red here is either a seat road that never ran on this surface, or a catch-up read that returned nothing for it`,
   );
   ctx.gate(
     verdict.staleCarried.length === 0,

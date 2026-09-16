@@ -153,6 +153,7 @@ export function isBackscrollVisible(line: ContextLine): boolean {
 export interface WakeEnvelopeBackscrollInput {
   readonly channelId: string;
   readonly ts: string;
+  readonly threadRoot?: string;
   readonly reachbackHours?: number;
   readonly sinceMs?: number;
 }
@@ -211,6 +212,25 @@ async function fetchThreadReplies(
   return out;
 }
 
+async function fetchKnownThreadReplies(
+  request: SlackRequester,
+  channelId: string,
+  threadRoot: string,
+  oldest: string,
+  latest: string,
+): Promise<Array<{ root: string; msgs: Array<Record<string, unknown>> }>> {
+  const res = await request("conversations.replies", {
+    channel: channelId,
+    ts: threadRoot,
+    oldest,
+    latest,
+    inclusive: "true",
+    limit: String(THREAD_REPLIES_LIMIT),
+  });
+  const msgs = extractMessages(res);
+  return msgs ? [{ root: threadRoot, msgs }] : [];
+}
+
 function normalizeOne(
   m: Record<string, unknown>,
   ids: WakeBotIdentity,
@@ -247,9 +267,12 @@ export async function fetchSlackBackscrollWindow(
     const oldestSeconds = sinceSeconds !== undefined ? Math.max(floorSeconds, sinceSeconds) : floorSeconds;
     const oldest = String(oldestSeconds);
 
-    const channelMsgs = await fetchChannelWindow(deps.request, input.channelId, input.ts, oldest);
-    if (channelMsgs.length === 0) return [];
-    const threadGroups = await fetchThreadReplies(deps.request, input.channelId, channelMsgs);
+    const channelMsgs = input.threadRoot === undefined ? await fetchChannelWindow(deps.request, input.channelId, input.ts, oldest) : [];
+    const threadGroups =
+      input.threadRoot === undefined
+        ? await fetchThreadReplies(deps.request, input.channelId, channelMsgs)
+        : await fetchKnownThreadReplies(deps.request, input.channelId, input.threadRoot, oldest, input.ts);
+    if (channelMsgs.length === 0 && threadGroups.length === 0) return [];
 
     const seen = new Set<string>();
     const out: NormalizedMessage[] = [];
@@ -263,9 +286,10 @@ export async function fetchSlackBackscrollWindow(
     for (const g of threadGroups) {
       for (const m of g.msgs) {
         const ts = typeof m.ts === "string" ? m.ts : "";
-        if (ts === g.root || ts === input.ts) continue;
+        if ((input.threadRoot === undefined && ts === g.root) || ts === input.ts) continue;
         const secs = Number.parseFloat(ts);
         if (Number.isFinite(secs) && secs < oldestSeconds) continue;
+        if (input.threadRoot !== undefined && Number.isFinite(secs) && secs > latestSeconds) continue;
         add(normalizeOne(m, ids, "thread", g.root));
       }
     }
@@ -277,7 +301,10 @@ export async function fetchSlackBackscrollWindow(
 
 export async function fetchSlackSeatCatchUp(req: SeatCatchUpRequest, deps: WakeBackscrollDeps = liveDeps): Promise<readonly NormalizedMessage[]> {
   const latestTs = req.excludeId ?? (req.untilMs !== undefined ? String(req.untilMs / 1000) : String(Date.now() / 1000));
-  return fetchSlackBackscrollWindow({ channelId: req.container, ts: latestTs, sinceMs: req.sinceMs }, deps);
+  return fetchSlackBackscrollWindow(
+    { channelId: req.container, ts: latestTs, sinceMs: req.sinceMs, ...(req.threadRoot ? { threadRoot: req.threadRoot } : {}) },
+    deps,
+  );
 }
 
 export const SLACK_TIMESTAMP_PRECISION_MS = 1;

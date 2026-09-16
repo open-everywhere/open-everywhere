@@ -1962,6 +1962,7 @@ export async function routeSupervisorEvent(
     const res = await deps
       .catchUp({
         container: ev.channelId,
+        ...(ev.threadTs ? { threadRoot: ev.threadTs } : {}),
         sinceMs: catchUpSinceMs,
         ...(Number.isFinite(Number.parseFloat(ev.ts)) ? { untilMs: Number.parseFloat(ev.ts) * 1000 } : {}),
         excludeId: ev.ts,

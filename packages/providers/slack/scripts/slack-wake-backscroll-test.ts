@@ -4,6 +4,7 @@ import {
   fetchWakeBackscrollLines,
   fetchWakeEnvelopeBackscroll,
   fetchSlackBackscrollWindow,
+  fetchSlackSeatCatchUp,
   isBackscrollVisible,
   RAW_FETCH_REACHBACK_HOURS,
   WAKE_BACKSCROLL_MAX,
@@ -267,6 +268,47 @@ const routing = (
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => ({ ok: false, error: "not_in_channel" })))).length === 0, "a not-ok response → empty");
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => undefined))).length === 0, "undefined response (no token) → empty");
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "not-a-number" }, deps(routing([{ ts: "1.0", user: "UA", text: "hi" }])))).length === 0, "an unparseable trigger ts → empty (fail-soft)");
+}
+
+{
+  const rootTs = "100.000001";
+  const idleTs = "166.000001";
+  const triggerTs = "176.000001";
+  const rec = { calls: [] as Array<{ method: string; params: Record<string, string> }> };
+  const window = await fetchSlackSeatCatchUp(
+    {
+      container: "C",
+      threadRoot: rootTs,
+      sinceMs: 150_000,
+      untilMs: 176_001,
+      excludeId: triggerTs,
+    },
+    deps(
+      routing(
+        [],
+        {
+          [rootTs]: [
+            { ts: rootTs, user: "UA", text: "old thread root", thread_ts: rootTs },
+            { ts: idleTs, user: "UB", text: "said while the seat was idle", thread_ts: rootTs },
+            { ts: triggerTs, user: "UC", text: "the trigger", thread_ts: rootTs },
+            { ts: "177.000001", user: "UD", text: "after the trigger", thread_ts: rootTs },
+          ],
+        },
+        rec,
+      ),
+    ),
+  );
+  ok(
+    rec.calls.length === 1 &&
+      rec.calls[0]?.method === "conversations.replies" &&
+      rec.calls[0]?.params.ts === rootTs &&
+      rec.calls[0]?.params.oldest === "150" &&
+      rec.calls[0]?.params.latest === triggerTs &&
+      rec.calls[0]?.params.inclusive === "true",
+    "🔴 OPE-1920: a catch-up bound to a KNOWN thread reads that thread directly — its root may predate the since bound and be absent from channel history",
+  );
+  ok(window.length === 1 && window[0]?.id === idleTs && window[0]?.threadId === rootTs, "…keeps the in-bound idle reply with its thread root");
+  ok(!window.some((message) => message.id === rootTs || message.id === triggerTs || message.id === "177.000001"), "…while the lower/upper bounds and exact trigger exclusion still hold");
 }
 
 console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + the thread leg's bounded admission slice + subtype/empty skip + untrusted wrap + fail-soft + supervisor bootstrap adapter: visibility gate + thread enrichment + flat capped output)`);
