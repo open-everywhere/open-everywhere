@@ -47,7 +47,6 @@ const REQUIRED_IDS = [
   "S-DELEGATED-notion",
   "S-GITHUB-NOTION-REST",
   "S-SUSPENDED-slack",
-  "S-SUSPENDED-github",
   "S-SIBLING-notion",
   "S-HALT",
   "J-UNIFIED",
@@ -76,6 +75,12 @@ const REQUIRED_IDS = [
 ] as const;
 
 const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
+  {
+    id: "S-SUSPENDED-github",
+    requirement: "NON_LAUNCH",
+    reason:
+      "Known unsupported pilot capability: this deployment exposes no GitHub-reachable Eve-native tool-approval operation, so the static GAP cannot produce live pause/answer/resume/reply evidence. S-GITHUB-NOTION-REST remains REQUIRED but proves a standing shared REST write with no per-write approval and is not an equivalent. Reclassify this row when a GitHub-reachable Eve-native approval raiser ships.",
+  },
   { id: "J-DISC", requirement: "NON_LAUNCH", reason: "Discord-only confidence is deferred for this release." },
   {
     id: "S8",

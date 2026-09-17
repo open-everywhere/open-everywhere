@@ -48,6 +48,35 @@ const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {
 
   const index = releaseScopeIndex();
   ok(index.get("S-SPEND-DM-MASK")?.requirement === "REQUIRED", "a shared security row stays REQUIRED even though its current live vehicle is Discord");
+  const suspendedGithub = index.get("S-SUSPENDED-github");
+  ok(
+    suspendedGithub?.requirement === "NON_LAUNCH" &&
+      suspendedGithub.equivalents === undefined &&
+      suspendedGithub.reason.includes("no GitHub-reachable Eve-native tool-approval operation") &&
+      suspendedGithub.reason.includes("S-GITHUB-NOTION-REST remains REQUIRED") &&
+      suspendedGithub.reason.includes("is not an equivalent"),
+    "the pilot visibly defers only the unsupported GitHub Eve-native suspension GAP and claims no shared-REST equivalence",
+  );
+  const stillRequired = [
+    "J-GH",
+    "J-ENGAGED-github",
+    "S-DELEGATED-github",
+    "J-UNI-X",
+    "S-GITHUB-NOTION-REST",
+    "J-PR",
+    "S-PR-SESSION",
+    "S-PR-BOUNDARY",
+    "J-WORKFLOW",
+    "F-SEC",
+    "S-APPROVAL-COALESCED",
+    "S-TAINT-DRYRUN",
+    "S-TAINT-ROUTE-LIVE",
+    "S-TAINT-UNATTENDED-DENY",
+  ];
+  ok(
+    stillRequired.every((id) => index.get(id)?.requirement === "REQUIRED"),
+    "all executable GitHub routing/PR/permission legs and shared security invariants remain REQUIRED",
+  );
   ok(
     index.get("S8")?.requirement === "NON_LAUNCH" && index.get("S8")?.equivalents?.join(",") === "J2,J-UNI-X",
     "S8 is deferred only with both required launch-surface memory/isolation equivalents named",
