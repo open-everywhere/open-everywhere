@@ -4,6 +4,7 @@ import {
   isUnifiedWakeOrigin,
   resolveUnifiedWakeAuthority,
   wakeBindingMatchesOrigin,
+  wakeBindingMatchesSurfaceKey,
   type UnifiedWakeOrigin,
 } from "../channels/unified-window.js";
 import { resolveDelegatedTaskAuthority } from "../channels/task-wake.js";
@@ -51,8 +52,7 @@ export async function captureApprovalDecisionAuthority(ctx: BindableContext): Pr
     throw new Error("approval decision authority: the proposing wake has no complete frozen binding");
   }
   const { binding, origin, surfaceKey, requester, nonMemberWake } = authority;
-  const bindingKey = `${binding.platform}/${binding.workspace}/${binding.surface}`;
-  if (bindingKey !== surfaceKey || !wakeBindingMatchesOrigin(binding, origin)) {
+  if (!wakeBindingMatchesSurfaceKey(binding, surfaceKey) || !wakeBindingMatchesOrigin(binding, origin)) {
     throw new Error("approval decision authority: the proposing wake binding does not match its durable origin");
   }
   return {
@@ -71,7 +71,7 @@ function isAuthority(value: unknown): value is ApprovalDecisionAuthority {
   if (!isFrozenSurfaceBinding(row.binding) || !isUnifiedWakeOrigin(row.origin) || !isRequesterVerdict(row.requester)) return false;
   if (typeof row.surfaceKey !== "string" || row.surfaceKey.length === 0 || typeof row.nonMemberWake !== "boolean") return false;
   const binding = row.binding;
-  return row.surfaceKey === `${binding.platform}/${binding.workspace}/${binding.surface}` && wakeBindingMatchesOrigin(binding, row.origin);
+  return wakeBindingMatchesSurfaceKey(binding, row.surfaceKey) && wakeBindingMatchesOrigin(binding, row.origin);
 }
 
 export async function rememberApprovalDecisionAuthority(org: string, id: string, expiresAt: string, authority: ApprovalDecisionAuthority): Promise<void> {

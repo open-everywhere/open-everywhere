@@ -7,7 +7,7 @@ import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../ident
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, wakeBindingMatchesSurfaceKey, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import {
   WAKE_INGRESS_ACTION,
   wakeIngressDetail,
@@ -772,11 +772,10 @@ export async function divertToUnifiedWindow(
     return;
   }
   if (input.binding !== undefined) {
-    const bindingKey = `${input.binding.platform}/${input.binding.workspace}/${input.binding.surface}`;
     if (
       !isFrozenSurfaceBinding(input.binding) ||
       input.binding.org !== deploymentOrg() ||
-      bindingKey !== input.surfaceKey ||
+      !wakeBindingMatchesSurfaceKey(input.binding, input.surfaceKey) ||
       !wakeBindingMatchesOrigin(input.binding, input.window.origin)
     ) {
       throw new Error("unified continuation binding does not match its durable origin");
@@ -1030,7 +1029,7 @@ async function dispatchAmbientSeatWake(input: {
 }): Promise<boolean> {
   if (!crossProcessDispatchAvailable()) return false;
   const surfaceKey = input.binding
-    ? `${input.binding.platform}/${input.binding.workspace}/${input.binding.surface}`
+    ? `${input.binding.platform}/${input.binding.workspace}/${input.binding.domainSurface ?? input.binding.surface}`
     : pickRedriveSurfaceKey(input.domain, input.origin.platform, parseWindowToken(input.token)?.windowId);
   if (!surfaceKey) return false;
   try {

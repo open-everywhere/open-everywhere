@@ -42,6 +42,7 @@ import {
   OE_WAKE_ID_ATTR,
   OE_ADDRESSING_ATTR,
   OE_SOURCES_ATTR,
+  type UnifiedWakeAuthority,
   type UnifiedWakeOrigin,
 } from "@open-everywhere/core/agent/channels/unified-window.js";
 import { decodeSources } from "@open-everywhere/core/agent/channels/window-sources.js";
@@ -50,7 +51,7 @@ import { REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/
 import { WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { TASK_WAKE_UNREAD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/task-wake.js";
 import { DELEGATION_PENDING_REFUSAL_REASON } from "@open-everywhere/core/agent/access/pending-delegation-signal.js";
-import unifiedChannel, { divertToUnifiedWindow, answeredSameContainerThisTurn, answeredContainerVia, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import unifiedChannel, { divertToUnifiedWindow, dispatchApprovalDecisionWake, answeredSameContainerThisTurn, answeredContainerVia, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { markWakeRepliedThisTurn } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
@@ -193,7 +194,7 @@ const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
 const DISCORD_KEY = "discord/G_WIN/CH_WIN";
-const TEAMS_KEY = "teams/TEN_WIN/19-winchan.tacv2";
+const TEAMS_KEY = "teams/TEN_WIN/19-winchan-thread.tacv2";
 const TEAMS_WS_KEY = "teams/TEN_WIN";
 const winDomain = defineDomain({
   name: "payments",
@@ -212,7 +213,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, org],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan-thread.tacv2"].includes(surface) ? ["payments"] : []),
 });
 
 const crossSurfaceOn = (key: string, ds: readonly Domain[]): boolean =>
@@ -796,7 +797,7 @@ await handleTeamsSingleWindowDispatch(
   vouch(TEAMS_WS_KEY);
   ok(isVouchedInternal(TEAMS_WS_KEY, TEAMS_KEY), "teams vouch: a tenant-wide vouch satisfies isVouchedInternal (the any-grain check)");
   ok(isVouchedSurface(TEAMS_KEY), "🔴 teams vouch: a TENANT-wide vouch now satisfies isVouchedSurface too — so teams-front ADMITS the channel on the tenant line alone (OPE-1521)");
-  ok(!isVouchedSurface("teams/TEN_OTHER/19-winchan.tacv2"), "🔴 teams vouch NEGATIVE CONTROL: the same channel id under an UNDECLARED tenant is still refused — the walk never reaches across tenants");
+  ok(!isVouchedSurface("teams/TEN_OTHER/19-winchan-thread.tacv2"), "🔴 teams vouch NEGATIVE CONTROL: the same channel id under an UNDECLARED tenant is still refused — the walk never reaches across tenants");
   ok(teamsSingleWindowPrivacyOk(f({ vouched: isVouchedSurface(TEAMS_KEY) })), "teams floor: the tenant-line vouch carries through the floor the front reads");
   ok(!teamsSingleWindowPrivacyOk(f({ vouched: isVouchedSurface(TEAMS_KEY), membershipType: "shared" })), "🔴 teams floor: a positively SHARED channel is refused even on the tenant line — the platform signal still demotes");
   _resetSurfacesForTest();
@@ -947,6 +948,146 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
   ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Discord wake delivers under the SAME raw token (same session)");
   const disRegistered = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
   ok(disRegistered !== null && disRegistered.platform === "discord", "receive: the Discord origin round-trips from the real store");
+
+  await withGate(true, async () => {
+    await unifiedChannel.receive!({ message: received[7].message, target: received[7].target, auth: received[7].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
+  });
+  const discordThreadAuthority = await resolveUnifiedWakeAuthority(store, "default", received[7].target.wakeId);
+  ok(
+    sent.length === 6 &&
+      discordThreadAuthority?.binding.surface === "TH_WIN" &&
+      discordThreadAuthority.binding.domainSurface === "CH_WIN" &&
+      discordThreadAuthority.surfaceKey === DISCORD_KEY,
+    "receive: a Discord thread preserves its exact reply surface while registering under its exact parent domain surface",
+  );
+
+  await withGate(true, async () => {
+    await unifiedChannel.receive!({ message: received[teamsIdx].message, target: received[teamsIdx].target, auth: received[teamsIdx].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
+  });
+  const teamsThreadAuthority = await resolveUnifiedWakeAuthority(store, "default", received[teamsIdx].target.wakeId);
+  ok(
+    sent.length === 7 &&
+      teamsThreadAuthority?.binding.surface === "19-winchan.tacv2-messageid-170001" &&
+      teamsThreadAuthority.binding.domainSurface === "19-winchan-thread.tacv2" &&
+      teamsThreadAuthority.surfaceKey === TEAMS_KEY,
+    "receive: a Teams reply chain preserves its exact conversation while registering under its exact channel domain surface",
+  );
+
+  const relationNegatives = [
+    {
+      name: "Discord",
+      authority: discordThreadAuthority!,
+      wrongParent: "discord/G_WIN/CH_SIBLING",
+      siblingOrigin: { ...discordThreadAuthority!.origin, channelId: "TH_SIBLING" } as UnifiedWakeOrigin,
+      wrongTenantOrigin: { ...discordThreadAuthority!.origin, guildId: "G_OTHER" } as UnifiedWakeOrigin,
+    },
+    {
+      name: "Teams",
+      authority: teamsThreadAuthority!,
+      wrongParent: "teams/TEN_WIN/19-sibling-thread.tacv2",
+      siblingOrigin: { ...teamsThreadAuthority!.origin, conversationId: "19:sibling.tacv2;messageid=170001" } as UnifiedWakeOrigin,
+      wrongTenantOrigin: { ...teamsThreadAuthority!.origin, tenantId: "TEN_OTHER" } as UnifiedWakeOrigin,
+    },
+  ] as const;
+  for (const fixture of relationNegatives) {
+    const authority: UnifiedWakeAuthority = {
+      binding: fixture.authority.binding,
+      requester: fixture.authority.requester,
+      nonMemberWake: fixture.authority.nonMemberWake,
+    };
+    const register = (suffix: string, origin: UnifiedWakeOrigin, surfaceKey: string) =>
+      registerUnifiedWakeTarget(
+        store,
+        "default",
+        `authority-${fixture.name.toLowerCase()}-${suffix}`,
+        origin,
+        new Date().toISOString(),
+        RAW_TOKEN,
+        true,
+        undefined,
+        surfaceKey,
+        authority.binding,
+        authority,
+      );
+    const conversationalKey = `${authority.binding.platform}/${authority.binding.workspace}/${authority.binding.surface}`;
+    await assert.doesNotReject(
+      () => register("domain-grain", fixture.authority.origin, fixture.authority.surfaceKey),
+      `receive authority: ${fixture.name} admits its own parent domain surface key`,
+    );
+    await assert.doesNotReject(
+      () => register("conversational-grain", fixture.authority.origin, conversationalKey),
+      `receive authority: ${fixture.name} admits its own exact conversational surface key`,
+    );
+    await assert.rejects(
+      () => register("wrong-parent", fixture.authority.origin, fixture.wrongParent),
+      /binding does not match its durable origin/,
+      `receive authority: ${fixture.name} refuses a sibling parent domain surface`,
+    );
+    await assert.rejects(
+      () => register("sibling-thread", fixture.siblingOrigin, fixture.authority.surfaceKey),
+      /binding does not match its durable origin/,
+      `receive authority: ${fixture.name} refuses a sibling conversational surface`,
+    );
+    await assert.rejects(
+      () => register("wrong-tenant", fixture.wrongTenantOrigin, fixture.authority.surfaceKey),
+      /binding does not match its durable origin/,
+      `receive authority: ${fixture.name} refuses a mismatched tenant`,
+    );
+    n += 5;
+  }
+
+  type ResolvedWakeAuthority = NonNullable<Awaited<ReturnType<typeof resolveUnifiedWakeAuthority>>>;
+  const decisionDispatchKey = async (authority: ResolvedWakeAuthority): Promise<string> => {
+    const before = received.length;
+    const woke = await withGate(true, () =>
+      dispatchApprovalDecisionWake({
+        token: RAW_TOKEN,
+        origin: authority.origin,
+        wakeId: mintWakeId(),
+        message: "decision recorded — the grant was approved",
+        domain: "payments",
+        binding: authority.binding,
+        requester: authority.requester,
+        nonMemberWake: authority.nonMemberWake,
+      }),
+    );
+    ok(woke === true && received.length === before + 1, "decision wake: the ambient decision delivery reaches the unified divert exactly once");
+    return received[received.length - 1]!.target.surfaceKey;
+  };
+
+  const discordDecisionKey = await decisionDispatchKey(discordThreadAuthority!);
+  ok(
+    discordDecisionKey === DISCORD_KEY && discordThreadAuthority!.binding.surface === "TH_WIN",
+    "🔴 decision wake: a Discord THREAD binding dispatches under its PARENT channel key — the grain a domain reach lists, not the thread id no reach can name",
+  );
+  const decisionWakeRow = received[received.length - 1]!;
+  await withGate(true, async () => {
+    await unifiedChannel.receive!(
+      { message: decisionWakeRow.message, target: decisionWakeRow.target, auth: decisionWakeRow.auth as never },
+      { from: fakeFrom, resolveSession: (async () => undefined) as never },
+    );
+  });
+  const decisionRegistered = await resolveUnifiedWakeAuthority(store, "default", decisionWakeRow.target.wakeId);
+  ok(
+    decisionRegistered !== undefined && decisionRegistered.surfaceKey === DISCORD_KEY && decisionRegistered.binding.surface === "TH_WIN",
+    "🔴 decision wake: the Discord thread decision wake PASSES the receive gate and registers under the parent key — the seat resumes after the click, and its reply still targets the thread",
+  );
+
+  const teamsDecisionKey = await decisionDispatchKey(teamsThreadAuthority!);
+  ok(
+    teamsDecisionKey === TEAMS_KEY && teamsThreadAuthority!.binding.surface === "19-winchan.tacv2-messageid-170001",
+    "🔴 decision wake: a Teams reply-chain binding dispatches under its CHANNEL key, never the per-reply-chain conversation id",
+  );
+
+  const discordChannelAuthority = await resolveUnifiedWakeAuthority(store, "default", received[4].target.wakeId);
+  ok(
+    discordChannelAuthority !== undefined && discordChannelAuthority.binding.domainSurface === undefined,
+    "decision wake control: the Discord BASE-channel binding carries no domainSurface (its two grains are one string)",
+  );
+  ok(
+    (await decisionDispatchKey(discordChannelAuthority!)) === `discord/${discordChannelAuthority!.binding.workspace}/${discordChannelAuthority!.binding.surface}`,
+    "decision wake control: with no domainSurface the dispatched key is the conversational key, byte-identical to before",
+  );
 
   {
     const since = new Date(Date.now() - 60_000).toISOString();
@@ -1730,12 +1871,12 @@ overrideSettingsForTest({ window: { topology: false } });
     resolvePartition({ channel: { kind: s.platform }, session: { auth: { current: s.auth } } } as unknown as BindableContext);
   const capKeyFor = (s: (typeof surfaces)[number]): string => domainKeyOf(partitionFor(s));
   for (const s of surfaces) {
-    if (s.platform === "teams") {
-      ok(capKeyFor(s) !== partitionFor(s).surfaceKey, "spend gate: the teams divert caps the CHANNEL grain (domainKeyOf), NOT the per-reply-chain surface key — the grain a cap is declared on");
-      continue;
-    }
     ok(capKeyFor(s) === s.key, `spend gate: the ${s.platform} divert caps the fixture's domain-grain key (${s.key}) — the key a cap is declared on`);
   }
+  ok(
+    capKeyFor(surfaces[5]) !== partitionFor(surfaces[5]).surfaceKey,
+    "spend gate: the teams divert caps the CHANNEL grain (domainKeyOf), NOT the per-reply-chain surface key — the grain a cap is declared on",
+  );
 
   const refusals: Array<{ platform: string; text: string }> = [];
   const liveArms = surfaces.map((s) => postArm(s.platform)!);
@@ -1757,7 +1898,7 @@ overrideSettingsForTest({ window: { topology: false } });
     skillContent: {},
     loadDomains: () => [winDomain, org],
     loadSilos: () => [],
-    domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
+    domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan-thread.tacv2"].includes(surface) ? ["payments"] : []),
     loadSpendBudgets: () => ({ perSurface: Object.fromEntries(surfaces.map((s) => [capKeyFor(s), { surfaceMonthlyTokens: 1 }])) }),
   });
   const nowIso = new Date().toISOString();
@@ -1812,7 +1953,7 @@ overrideSettingsForTest({ window: { topology: false } });
       skillContent: {},
       loadDomains: () => [winDomain, org],
       loadSilos: () => [],
-      domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
+      domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan-thread.tacv2"].includes(surface) ? ["payments"] : []),
       loadSpendBudgets: () => ({}),
     });
     const before = received.length;
