@@ -102,7 +102,7 @@ export const assignEntry = defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `assign ${ref.platform} ${ref.id} to ${input.assignee}`;

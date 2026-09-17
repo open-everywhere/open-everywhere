@@ -2,7 +2,10 @@ import { connectorGrantCredential, connectorGrantName, egressHostsOverlap, norma
 import { GIT_BROKER_HOSTS, RESERVED_BROKER_HOST_REASON } from "./reserved-hosts.js";
 import { isLinkSetRef } from "../identity/link-set-ref.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
-import { domainContainers, type Domain } from "../memory/domain.js";
+import { resolveAccess, type EffectiveAccess } from "./resolver.js";
+import type { PluginRegistry } from "../plugins/types.js";
+import { parseSurfaceKeyEntry, surfaceKeyEntryContains } from "../identity/surface-key-grammar.js";
+import { domainContainers, resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 
 export const GROUP_BROAD_MEMBERS = 8;
@@ -292,6 +295,190 @@ export function lintReservedBrokerHosts(bundles: readonly Bundle[]): string[] {
   return problems;
 }
 
+function domainMemberTenants(
+  domain: Domain,
+  domains: readonly Domain[],
+): Map<string, { future: boolean }> {
+  const tenants = new Map<string, { future: boolean }>();
+  for (const entry of domain.reach ?? []) {
+    const parsed = parseSurfaceKeyEntry(entry);
+    if (!parsed || parsed.kind === "group") continue;
+    const tenant = `${parsed.platform}/${parsed.tenant}`;
+    if (parsed.kind === "surface" && !parsed.glob) {
+      if (resolveDomainForChannel(entry, domains).domain?.name !== domain.name) continue;
+      if (!tenants.has(tenant)) tenants.set(tenant, { future: false });
+      continue;
+    }
+    const fullyExcluded = (domain.exclude ?? []).some((raw) => {
+      const excluded = parseSurfaceKeyEntry(raw);
+      return excluded !== undefined && surfaceKeyEntryContains(excluded, parsed);
+    });
+    if (fullyExcluded) continue;
+    tenants.set(tenant, { future: true });
+  }
+  return tenants;
+}
+
+function approverIdentity(approverIds: Map<Function, number>, fn: Function): number {
+  const found = approverIds.get(fn);
+  if (found !== undefined) return found;
+  const id = approverIds.size + 1;
+  approverIds.set(fn, id);
+  return id;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Readonly<Record<string, unknown>>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function unordered(values: readonly unknown[]): readonly string[] {
+  return values.map(stableJson).sort();
+}
+
+function connectionFact(connection: EffectiveAccess["connections"][number]): unknown {
+  return {
+    ...connection,
+    allowedWebsites: [...connection.allowedWebsites].sort(),
+    ...(connection.pathPrefixes === undefined ? {} : { pathPrefixes: [...connection.pathPrefixes].sort() }),
+    ...(connection.methods === undefined ? {} : { methods: [...connection.methods].sort() }),
+  };
+}
+
+function reachableHostFact(host: EffectiveAccess["reachableHosts"][number]): unknown {
+  return {
+    ...host,
+    ...(host.pathPrefixes === undefined ? {} : { pathPrefixes: [...host.pathPrefixes].sort() }),
+    ...(host.methods === undefined ? {} : { methods: [...host.methods].sort() }),
+  };
+}
+
+function setValuedRecord(record: Readonly<Record<string, readonly unknown[]>>): Readonly<Record<string, readonly string[]>> {
+  return Object.fromEntries(
+    Object.entries(record).sort(([a], [b]) => a.localeCompare(b)).map(([key, values]) => [key, unordered(values)]),
+  );
+}
+
+function connectorCredentialFacts(access: EffectiveAccess): unknown {
+  return Object.fromEntries(
+    Object.entries(access.connectorCredentials).sort(([a], [b]) => a.localeCompare(b)).map(([key, credential]) => [
+      key,
+      {
+        ...credential,
+        ...(credential.endpoints === undefined
+          ? {}
+          : {
+              endpoints: {
+                ...credential.endpoints,
+                hosts: [...credential.endpoints.hosts].sort(),
+                ...(credential.endpoints.pathPrefixes === undefined ? {} : { pathPrefixes: [...credential.endpoints.pathPrefixes].sort() }),
+                ...(credential.endpoints.methods === undefined ? {} : { methods: [...credential.endpoints.methods].sort() }),
+              },
+            }),
+      },
+    ]),
+  );
+}
+
+function staticCapabilityFingerprint(
+  access: EffectiveAccess,
+  approverIds: Map<Function, number>,
+): string {
+  const scopeRung = (source: string): string => source.split(":", 1)[0] ?? source;
+  return stableJson({
+    connections: unordered(access.connections.map(connectionFact)),
+    reachableHosts: unordered(access.reachableHosts.map(reachableHostFact)),
+    repos: access.repos,
+    repoCapabilities: setValuedRecord(access.repoCapabilities),
+    resourceCapabilities: setValuedRecord(access.resourceCapabilities),
+    awsRoles: unordered(access.awsRoles.map((role) => ({ ...role, allow: [...role.allow].sort() }))),
+    approvers: access.approvers.map((a) => ({
+      name: a.name,
+      source: a.source,
+      mayAllow: a.mayAllow,
+      approve: approverIdentity(approverIds, a.approve),
+    })),
+    plugins: access.plugins,
+    skills: access.skills,
+    subagents: access.subagents,
+    connectors: access.connectors,
+    connectorContentOrigin: access.connectorContentOrigin,
+    connectorCredentials: connectorCredentialFacts(access),
+    instructionStack: access.instructionStack.map((layer) => ({ scope: scopeRung(layer.source), text: layer.text })),
+    preApprovalRules: access.preApprovalRules.map((rule) => ({ scope: scopeRung(rule.scope), id: rule.id, rule: rule.rule })),
+  });
+}
+
+export function lintDomainCapabilityConsistency(
+  bundles: readonly Bundle[],
+  bindings: readonly Binding[],
+  domains: readonly Domain[] = [],
+  registry: PluginRegistry = {},
+  connectorCredentials: readonly ConnectorCredentials[] = [],
+): string[] {
+  const problems: string[] = [];
+
+  for (const binding of bindings) {
+    if (binding.scope.level !== "surface" || binding.scope.surface === undefined) continue;
+    const owner = resolveDomainForChannel(binding.scope.surface, domains).domain;
+    if (!owner) continue;
+    problems.push(
+      `direct surface binding: surface "${binding.scope.surface}" belongs to domain "${owner.name}", but bundle "${binding.bundle}" is bound directly to that surface. ` +
+        `A domain is one capability boundary even when its sessions are separate: move this grant to { level: "domain", domain: "${owner.name}" }, or remove the surface from that domain before binding it directly.`,
+    );
+  }
+
+  const staticBindings = bindings.filter((binding) => binding.scope.level !== "surface");
+  const approverIds = new Map<Function, number>();
+  for (const domain of domains) {
+    if (!domain.reach) continue;
+    const tenants = domainMemberTenants(domain, domains);
+    if (tenants.size < 2) continue;
+
+    const byFingerprint = new Map<string, string[]>();
+    for (const tenant of [...tenants.keys()].sort()) {
+      const parsed = parseSurfaceKeyEntry(tenant);
+      if (!parsed || parsed.kind !== "tenant") continue;
+      const access = resolveAccess(
+        {
+          mode: "channel",
+          platform: parsed.platform,
+          workspace: parsed.tenant,
+          channel: "__domain_capability_consistency__",
+          domains: [domain.name],
+        },
+        bundles,
+        staticBindings,
+        registry,
+        connectorCredentials,
+      );
+      const fingerprint = staticCapabilityFingerprint(access, approverIds);
+      const group = byFingerprint.get(fingerprint) ?? [];
+      group.push(tenant);
+      byFingerprint.set(fingerprint, group);
+    }
+    if (byFingerprint.size < 2) continue;
+
+    const facts = [...byFingerprint.values()]
+      .map((group) => group.join(", "))
+      .sort()
+      .map((group, index) => `capability set ${index + 1}: ${group}`)
+      .join("; ");
+    const future = [...tenants.entries()].filter(([, detail]) => detail.future).map(([tenant]) => tenant).sort();
+    problems.push(
+      `domain "${domain.name}" resolves different static capabilities for its member tenants (${facts}). ` +
+        `${future.length > 0 ? `Its container reach includes future surfaces under ${future.join(", ")}. ` : ""}` +
+        `Move tenant-only capability bindings to { level: "domain", domain: "${domain.name}" }, split the domain, or remove the broader grant; every member of one domain must receive the same static capability facts.`,
+    );
+  }
+
+  return problems;
+}
+
 export function ownAccountWithholdingProblems(
   connectors: readonly string[],
   catalogues: readonly ConnectorCredentials[],
@@ -343,9 +530,12 @@ export function lintAccessConfig(
   bindings: readonly Binding[],
   domains: readonly Domain[] = [],
   groups: readonly Group[] = [],
+  registry: PluginRegistry = {},
+  connectorCredentials: readonly ConnectorCredentials[] = [],
 ): string[] {
   return [
     ...lintBroadGrants(bundles, bindings, domains, groups),
+    ...lintDomainCapabilityConsistency(bundles, bindings, domains, registry, connectorCredentials),
     ...lintMethodNarrowing(bundles),
     ...lintCredentialCollisions(bundles, bindings),
     ...lintEgressHostCollisions(bundles, bindings),

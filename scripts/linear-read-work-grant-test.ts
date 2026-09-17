@@ -1,5 +1,10 @@
+import { assertPackageDistFresh } from "./core-dist-freshness.js";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
+  bindFrom,
   registerConfig,
   registerIdentityMapper,
   defineDomain,
@@ -8,8 +13,9 @@ import {
   type BindableContext,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { registerLinearProvider } from "../agent/register.js";
-import readLinearIssueDefault, { readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
+import { adoptDelegatedAuthority } from "@open-everywhere/core/agent/identity/delegated-binding.js";
+import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
+import readLinearIssueDefault, { readLinearIssueEntry } from "@open-everywhere/provider-linear/agent/tools/read_linear_issue.js";
 
 registerLinearProvider();
 
@@ -17,6 +23,9 @@ registerIdentityMapper("slack", (ctx) => {
   const a = (ctx as BindableContext).session?.auth?.current?.attributes as Record<string, string> | undefined;
   return { workspace: a?.["team_id"], surface: a?.["channel_id"], mode: "channel", visibility: "public", trust: "internal", principalId: a?.["user_id"] };
 });
+
+assertPackageDistFresh("packages/core", "@open-everywhere/core");
+assertPackageDistFresh("packages/providers/linear", "@open-everywhere/provider-linear");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -109,6 +118,25 @@ function slackWorkerCtx(channelId: string): BindableContext {
   } as unknown as BindableContext;
 }
 
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+  ContextContainer: new () => unknown;
+  contextStorage: { run<T>(store: unknown, fn: () => T): T };
+};
+async function withWorkerAuthority<T>(parent: BindableContext, principalId: string, fn: () => T | Promise<T>): Promise<T> {
+  return contextStorage.run(new ContextContainer(), async () => {
+    assert.ok(
+      adoptDelegatedAuthority(
+        { binding: bindFrom(parent), requester: { kind: "requester", principalId }, nonMemberWake: false },
+        "turn_0",
+      ),
+      "fixture must install the host-captured child dispatch authority",
+    );
+    return fn();
+  });
+}
+
 type MountHandler = (event: unknown, ctx: unknown) => unknown;
 async function mount(ctx: BindableContext): Promise<unknown> {
   const handler = (readLinearIssueDefault as unknown as { events: Record<string, MountHandler> }).events["session.started"];
@@ -164,15 +192,18 @@ try {
       "🔴 NEGATIVE CONTROL: a CONVERSATIONAL Linear-origin session does NOT mount it with no grant — the chat plane speaks generic verbs",
     );
     ok(
-      (await mount(linearWorkerCtx(TEAM_PAY, ISSUE_PAY))) !== null,
+      await withWorkerAuthority(linearCtx(TEAM_PAY, ISSUE_PAY), "U_LINEAR", async () => (await mount(linearWorkerCtx(TEAM_PAY, ISSUE_PAY))) !== null),
       "🔴 THE CHAT ARM: a DELEGATED WORKER from that same Linear conversation DOES mount it with no grant — its only container read on an UNGRANTED domain",
     );
     ok(
-      (await mount(slackWorkerCtx("CPAY"))) === null,
+      await withWorkerAuthority(slackCtx("CPAY"), "U_SLACK", async () => (await mount(slackWorkerCtx("CPAY"))) === null),
       "🔴 NEGATIVE CONTROL: a worker delegated from an UNGRANTED Slack conversation mounts nothing — the worker grain is not a grant",
     );
     withDomains(GRANTED_DOMAINS);
-    ok((await mount(slackWorkerCtx("CPAY"))) !== null, "the WORK arm is grain-blind — a granted Slack-delegated worker mounts it too");
+    ok(
+      await withWorkerAuthority(slackCtx("CPAY"), "U_SLACK", async () => (await mount(slackWorkerCtx("CPAY"))) !== null),
+      "the WORK arm is grain-blind — a granted Slack-delegated worker mounts it too",
+    );
   }
 
   {

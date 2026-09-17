@@ -119,7 +119,7 @@ const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
 
 const NOTION_WEBHOOK_SECRET = randomBytes(32).toString("hex");
 
-const CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+export const CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const DISCORD_APP_KEYS = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -153,6 +153,7 @@ function bootedBuildDir(): string {
 export interface BootOptions {
   readonly sharedSqlite?: boolean;
   readonly selfBaseUrl?: boolean;
+  readonly stubbedProviderTransport?: boolean;
 }
 
 function guardProcess(): void {
@@ -215,7 +216,8 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
 
   const state = createStateDir();
   process.env.OE_SCRIPTED_MODEL = "1";
-  process.env.OE_EGRESS_SPOOF = "1";
+  if (opts.stubbedProviderTransport === true) delete process.env.OE_EGRESS_SPOOF;
+  else process.env.OE_EGRESS_SPOOF = "1";
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;

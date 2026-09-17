@@ -59,7 +59,7 @@ function comment(input: { id: string; authorId: string; authorType?: string; tex
 }
 
 test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-authored one does not", async () => {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   await seedNotionChannelKey();
   const warnings: string[] = [];
   const warnSpy = vi.spyOn(console, "warn").mockImplementation((msg?: unknown) => {

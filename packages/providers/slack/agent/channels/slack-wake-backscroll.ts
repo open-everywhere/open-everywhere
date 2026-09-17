@@ -256,6 +256,7 @@ function normalizeOne(
 export async function fetchSlackBackscrollWindow(
   input: WakeEnvelopeBackscrollInput,
   deps: WakeBackscrollDeps = liveDeps,
+  failureMode: "soft" | "throw" = "soft",
 ): Promise<NormalizedMessage[]> {
   try {
     const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
@@ -294,16 +295,28 @@ export async function fetchSlackBackscrollWindow(
       }
     }
     return out;
-  } catch {
+  } catch (err) {
+    if (failureMode === "throw") throw err;
     return [];
   }
 }
 
 export async function fetchSlackSeatCatchUp(req: SeatCatchUpRequest, deps: WakeBackscrollDeps = liveDeps): Promise<readonly NormalizedMessage[]> {
   const latestTs = req.excludeId ?? (req.untilMs !== undefined ? String(req.untilMs / 1000) : String(Date.now() / 1000));
+  const strictDeps: WakeBackscrollDeps = {
+    ...deps,
+    request: async (method, params) => {
+      const res = await deps.request(method, params);
+      if (!res || res.ok !== true || !Array.isArray(res.messages)) {
+        throw new Error(`Slack catch-up ${method} failed`);
+      }
+      return res;
+    },
+  };
   return fetchSlackBackscrollWindow(
     { channelId: req.container, ts: latestTs, sinceMs: req.sinceMs, ...(req.threadRoot ? { threadRoot: req.threadRoot } : {}) },
-    deps,
+    strictDeps,
+    "throw",
   );
 }
 

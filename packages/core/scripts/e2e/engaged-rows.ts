@@ -94,11 +94,12 @@ export function replyPostCount(rows: readonly AuditWireEntry[], opts: { readonly
 
 export interface SeatContinuity {
   readonly replies: number;
+  readonly answeredWakeIds: readonly string[];
   readonly sessionIds: readonly string[];
   readonly unattributed: number;
 }
 
-export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly surface?: string } = {}): SeatContinuity {
+export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly surface?: string; readonly admittedWakeIds?: readonly string[] } = {}): SeatContinuity {
   const posts = rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface));
   const sessionIds: string[] = [];
   let unattributed = 0;
@@ -110,7 +111,10 @@ export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly
     }
     if (!sessionIds.includes(id)) sessionIds.push(id);
   }
-  return { replies: posts.length, sessionIds, unattributed };
+  const answeredWakeIds = [...new Set(posts.map((r) => detailString(r, "wakeId")).filter(
+    (id): id is string => id !== undefined && id.length > 0 && (opts.admittedWakeIds === undefined || opts.admittedWakeIds.includes(id)),
+  ))];
+  return { replies: posts.length, sessionIds, unattributed, answeredWakeIds };
 }
 
 export function wakeIngressIds(rows: readonly AuditWireEntry[], opts: { readonly container?: string } = {}): readonly string[] {
@@ -145,6 +149,7 @@ export async function awaitReplyPostRows(
     readonly platform: string;
     readonly surface?: string;
     readonly minRows?: number;
+    readonly minDistinctWakes?: number;
     readonly budget: EngagedWaitBudget;
   },
 ): Promise<readonly AuditWireEntry[] | undefined> {
@@ -152,7 +157,30 @@ export async function awaitReplyPostRows(
   const minRows = opts.minRows ?? 1;
   return pollOptional(async () => {
     const rows = await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
-    return replyPostCount(rows, scope) >= minRows ? rows : undefined;
+    return replyPostCount(rows, scope) >= minRows && seatContinuity(rows, scope).answeredWakeIds.length >= (opts.minDistinctWakes ?? 0) ? rows : undefined;
+  }, opts.budget);
+}
+
+export async function awaitRepliesForAdmittedWakes(
+  read: EngagedAuditRead,
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface: string;
+    readonly container: string;
+    readonly minWakes: number;
+    readonly budget: EngagedWaitBudget;
+  },
+): Promise<{ posts: readonly AuditWireEntry[]; wakeIds: readonly string[] } | undefined> {
+  return pollOptional(async () => {
+    const query = { sinceIso: opts.sinceIso, platform: opts.platform };
+    const [posts, admissions] = await Promise.all([
+      read({ ...query, surface: opts.surface, actions: [REPLY_POST_ACTION] }),
+      read({ ...query, actions: [WAKE_INGRESS_ACTION] }),
+    ]);
+    const wakeIds = wakeIngressIds(admissions, { container: opts.container });
+    const answered = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakeIds });
+    return answered.answeredWakeIds.length >= opts.minWakes ? { posts, wakeIds } : undefined;
   }, opts.budget);
 }
 

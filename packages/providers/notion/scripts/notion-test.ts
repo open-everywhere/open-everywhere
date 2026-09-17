@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -22,7 +23,8 @@ import {
   type NotionComment,
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
-import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import { handleAcceptedNotionDelivery, handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import { createNotionWebhookTiming, runNotionWebhookTimed } from "../agent/channels/notion-webhook-timing.js";
 
 const AUDIT_ORG = "default";
 import {
@@ -171,6 +173,167 @@ function baseDeps(
 }
 
 {
+  let at = 0;
+  const timing = createNotionWebhookTiming(() => at);
+  const advance = async <T>(ms: number, value: T): Promise<T> => {
+    at += ms;
+    return value;
+  };
+  const timedFetch: FetchLike = async (input: string) => {
+    if (/\/v1\/comments\/[^?]+$/.test(input)) {
+      return advance(5, new Response(JSON.stringify(triggerMention), { status: 200 }));
+    }
+    if (input.includes("/v1/comments?block_id=")) {
+      return advance(7, new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    }
+    return new Response("unexpected", { status: 500 });
+  };
+  const raw = commentEvent();
+  const out = await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(timedFetch, async () => advance(13, undefined), {
+      timing,
+      credentialFor: async () => advance(2, { apiKey: "not-a-real-key" }),
+      resolveBotUserId: async () => advance(3, BOT),
+      engagement: {
+        getEngagement: async () => null,
+        markEventSeen: async () => advance(11, true),
+      },
+    }),
+  );
+  assert.deepStrictEqual(
+    timing.detail(out.action),
+    {
+      outcome: "dispatched",
+      hmacCredentialMs: 2,
+      botTriggerPageMs: 8,
+      ancestorSiblingTrustMs: 7,
+      engagementStoreDedupeMs: 11,
+      dispatchPreflightCatchUpMs: 13,
+      totalMs: 41,
+    },
+    "OPE-1929: the real delivery core attributes each injected wait to one content-free ACK phase",
+  );
+  passed++;
+}
+
+{
+  const raw = commentEvent();
+  const guardCalls: string[] = [];
+  let dispatches = 0;
+  const out = await handleAcceptedNotionDelivery(
+    raw,
+    "channel-key",
+    baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatches++; }, {
+      dispatchGuard: {
+        claim: async (commentId) => { guardCalls.push(`claim:${commentId}`); return true; },
+        complete: async (commentId) => { guardCalls.push(`complete:${commentId}`); },
+      },
+      engagement: {
+        getEngagement: async () => null,
+        markEventSeen: async () => { throw new Error("legacy mark-before-send guard must not run"); },
+      },
+    }),
+  );
+  ok(out.action === "dispatched" && out.verified && out.signerCredentialId === "channel-key", "accepted row processes under its frozen verified signer");
+  ok(dispatches === 1, "accepted row reaches the real comment dispatch seam once");
+  ok(guardCalls.join(",") === `claim:${COMMENT},complete:${COMMENT}`, "dispatch lease completes only after Eve dispatch returns");
+
+  let duplicateDispatches = 0;
+  const duplicate = await handleAcceptedNotionDelivery(
+    raw,
+    "channel-key",
+    baseDeps(makeFetch({ comment: triggerMention }), async () => { duplicateDispatches++; }, {
+      dispatchGuard: { claim: async () => false, complete: async () => { throw new Error("duplicate must not complete another worker's lease"); } },
+    }),
+  );
+  ok(duplicate.action === "duplicate-delivery" && duplicateDispatches === 0, "non-claimable comment lease never starts a second wake");
+
+  const removed = await handleAcceptedNotionDelivery(
+    raw,
+    "removed-integration",
+    baseDeps(async () => { throw new Error("removed signer must perform no Notion read"); }, async () => {}),
+  );
+  ok(removed.action === "no-api-key" && removed.signerCredentialId === "removed-integration", "deleted signer fails closed without retargeting the accepted row");
+}
+
+{
+  let at = 0;
+  const timing = createNotionWebhookTiming(() => at);
+  for (const phase of ["credential", "botTriggerPage", "ancestorSiblingTrust", "engagementDedupe"] as const) {
+    await timing.measure(phase, async () => undefined);
+  }
+  await timing.measure("dispatch", async () => {
+    at += 13;
+    await timing.measure("eveSend", async () => { at += 17; });
+    at += 19;
+    await timing.measure("finalAudit", async () => { at += 23; });
+    at += 29;
+  });
+  const detail = timing.detail("dispatched");
+  assert.deepStrictEqual(
+    detail,
+    {
+      outcome: "dispatched",
+      hmacCredentialMs: 0,
+      botTriggerPageMs: 0,
+      ancestorSiblingTrustMs: 0,
+      engagementStoreDedupeMs: 0,
+      dispatchPreflightCatchUpMs: 61,
+      eveSendMs: 17,
+      finalAuditMs: 23,
+      totalMs: 101,
+    },
+    "OPE-1929: nested Eve/audit waits are subtracted from the dispatch preflight bucket",
+  );
+  assert.deepStrictEqual(
+    Object.keys(detail).sort(),
+    [
+      "ancestorSiblingTrustMs",
+      "botTriggerPageMs",
+      "dispatchPreflightCatchUpMs",
+      "engagementStoreDedupeMs",
+      "eveSendMs",
+      "finalAuditMs",
+      "hmacCredentialMs",
+      "outcome",
+      "totalMs",
+    ],
+    "OPE-1929: timing detail has no secret/content/identifier field",
+  );
+  passed++;
+
+  const early = createNotionWebhookTiming(() => at);
+  const earlyRows: unknown[] = [];
+  await assert.rejects(
+    () => runNotionWebhookTimed(early, (row) => earlyRows.push(row), async () =>
+      early.measure("credential", async () => { at += 5; throw new Error("secret store unavailable"); })),
+    /secret store unavailable/,
+  );
+  assert.deepStrictEqual(
+    earlyRows,
+    [{ outcome: "threw", failedPhase: "credential", hmacCredentialMs: 5, totalMs: 5 }],
+    "OPE-1929: an early credential throw emits once, names the failed phase, omits unreached phases, and rethrows",
+  );
+  passed++;
+
+  const late = createNotionWebhookTiming(() => at);
+  const lateRows: unknown[] = [];
+  await assert.rejects(
+    () => runNotionWebhookTimed(late, (row) => lateRows.push(row), async () =>
+      late.measure("finalAudit", async () => { at += 7; throw new Error("audit unavailable"); })),
+    /audit unavailable/,
+  );
+  assert.deepStrictEqual(
+    lateRows,
+    [{ outcome: "threw", failedPhase: "finalAudit", finalAuditMs: 7, totalMs: 7 }],
+    "OPE-1929: a late final-audit throw also emits once and preserves the original failure",
+  );
+  passed++;
+}
+
+{
   let token: string | undefined;
   const raw = JSON.stringify({ verification_token: "handshake-tok" });
   const out = await handleNotionDelivery(raw, null, baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { onHandshakeToken: (t) => (token = t) }));
@@ -195,14 +358,44 @@ function baseDeps(
 {
   const raw = commentEvent();
   let captured: NotionUntieredSupervisorDispatch | undefined;
-  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention, listResults: [priorComment, triggerNoMention] }), async (d) => { captured = d; }));
+  const pageAnchors: string[] = [];
+  const pageBaseFetch = makeFetch({ comment: triggerNoMention, listResults: [priorComment, triggerNoMention] });
+  const pageFetch: FetchLike = async (input, init) => {
+    const url = new URL(input);
+    if (url.pathname === "/v1/comments") pageAnchors.push(url.searchParams.get("block_id") ?? "");
+    return pageBaseFetch(input, init);
+  };
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(pageFetch, async (d) => { captured = d; }));
   ok(out.action === "dispatched" && captured?.addressing === "channel-watch", "plain comment -> dispatched as a JUDGED channel-watch wake (ambient)");
   ok(captured!.surfaceKey === `notion/${WS}/${PAGE}`, "dispatch carries the notion/<ws>/<page> surfaceKey (session + gate key)");
   ok(captured!.pageId === PAGE && captured!.discussionId === DISCUSSION && captured!.workspaceId === WS, "dispatch carries page + discussion + workspace");
   ok(captured!.auth.authenticator === "notion" && captured!.auth.principalId === AUTHOR, "auth carries notion + the author principal (unchanged — invariant 1)");
   ok(captured!.trigger.text === "just a normal comment" && captured!.trigger.from === "human", "the triggering comment is the trigger message");
   ok(captured!.threadComments.length === 1 && captured!.threadComments[0].text === "an earlier note in this thread", "the OTHER discussion comments become backscroll siblings (trigger excluded)");
+  ok(pageAnchors.includes(PAGE), "page-level comment siblings preserve the page anchor");
   ok(captured!.auth.attributes[OE_ADDRESSED_ATTR] === undefined, "ambient/channel-watch: NO oe_addressed stamp — link claims stay whole-message strict (F1 path unchanged)");
+}
+
+{
+  const INLINE_BLOCK = "block-after-oldest-80";
+  const inlineTrigger: NotionComment = { ...triggerNoMention, parent: { type: "block", block_id: INLINE_BLOCK } };
+  const anchors: string[] = [];
+  const baseFetch = makeFetch({ comment: inlineTrigger, listResults: [priorComment, inlineTrigger] });
+  const fetchImpl: FetchLike = async (input, init) => {
+    const url = new URL(input);
+    if ((init?.method ?? "GET").toUpperCase() === "GET" && url.pathname === `/v1/blocks/${INLINE_BLOCK}`) {
+      return new Response(JSON.stringify({ parent: { type: "page_id", page_id: PAGE } }), { status: 200 });
+    }
+    if (url.pathname === "/v1/comments") anchors.push(url.searchParams.get("block_id") ?? "");
+    return baseFetch(input, init);
+  };
+  let captured: NotionUntieredSupervisorDispatch | undefined;
+  const raw = commentEvent();
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(fetchImpl, async (d) => { captured = d; }));
+  ok(out.action === "dispatched", "OPE-1843 PRECONDITION: an authenticated inline comment dispatches");
+  ok(captured?.trigger.anchorId === INLINE_BLOCK, "🔴 OPE-1843: the authenticated parent block rides on the trigger for later catch-up");
+  ok(anchors.includes(INLINE_BLOCK), "🔴 OPE-1843: initial siblings are read from the inline block itself, not from a bounded page sweep");
+  ok(captured?.threadComments.some((m) => m.id === priorComment.id) === true, "OPE-1843: the inline block read hydrates the earlier discussion sibling");
 }
 
 {

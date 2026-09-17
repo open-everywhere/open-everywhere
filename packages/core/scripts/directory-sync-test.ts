@@ -35,12 +35,28 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import confirmLinkTool from "../agent/tools/confirm_link.js";
 import linkIdentityTool from "../agent/tools/link_identity.js";
 import { observeLinkClaim } from "../agent/hooks/link-claim.js";
-import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { registerConfig } from "../agent/access/config.js";
 import { tryLinkTenantOf } from "../agent/identity/link-tenant.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
 registerSlackFixtureMapper();
+const privateLinkPosts: Array<{ channelId: string; text: string }> = [];
+registerSlackTestBridge({
+  form: async (operation, body) => {
+    if (operation !== "chat.postMessage") return undefined;
+    const form = new URLSearchParams(body);
+    privateLinkPosts.push({ channelId: form.get("channel") ?? "", text: form.get("text") ?? "" });
+    return { ok: true, ts: `fixture-${privateLinkPosts.length}` };
+  },
+});
+
+function privateLinkCode(channelId: string): string {
+  const post = [...privateLinkPosts].reverse().find((candidate) => candidate.channelId === channelId);
+  const code = post && /link ([A-Z0-9]{8})/u.exec(post.text)?.[1];
+  if (!code) throw new Error(`fixture captured no private link code for ${channelId}`);
+  return code;
+}
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -271,12 +287,13 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 {
   const dmAda = ctxFor({ channelId: "D-ADA", channelType: "im", principalId: "U-ADA" });
   const issued = await linkIdentity.execute({}, dmAda);
+  ok(!/link [A-Z0-9]{8}/u.test(String(issued.instructions)), "challenge path: the model-visible result contains no live link code");
   await observeLinkClaim({
     org: ORG,
     platform: "github",
     authorId: "gh-ada",
     addressed: true,
-    text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`,
+    text: `link ${privateLinkCode("D-ADA")}`,
     trust: "peer",
   });
   const adaPeek = (await confirmLink.execute({ decision: "confirm" }, dmAda)) as { challengeId?: string };
@@ -538,7 +555,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const dmDan = ctxFor({ channelId: "D-DAN", channelType: "im", principalId: "U-DAN" });
   const issued = await linkIdentity.execute({}, dmDan);
-  await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-dan", addressed: true, text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`, trust: "peer" });
+  ok(!/link [A-Z0-9]{8}/u.test(String(issued.instructions)), "precedence path: the model-visible result contains no live link code");
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-dan", addressed: true, text: `link ${privateLinkCode("D-DAN")}`, trust: "peer" });
 
   const peeked = await confirmLink.execute({ decision: "confirm" }, dmDan);
   ok(peeked.decided === "awaiting_acknowledgement" && peeked.claimant === "github/gh-dan" && peeked.accounts === undefined, "OPE-618: the PEEK also takes the challenge path over the standing directory suggestions");

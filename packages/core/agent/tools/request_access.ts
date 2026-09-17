@@ -5,14 +5,14 @@ import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/bi
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
-import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
+import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
-import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext, type RequestingScope } from "../access/delta.js";
+import { planAccessDelta, grantSentence, HTTP_METHODS, sameScope, type AccessDelta, type PlanContext, type RequestingScope } from "../access/delta.js";
 import { roleForBinding } from "../access/roles.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 import type { Binding, Bundle } from "../access/bundle.js";
-import { domainForChannel, type Domain } from "../memory/domain.js";
+import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
@@ -76,10 +76,13 @@ export function requestingScopeFor(
   binding: SurfaceBinding,
   surfaceKey: string,
   input: Pick<RequestAccessInput, "group">,
+  domains: readonly Domain[] = [],
 ): RequestingScope {
   switch (target) {
-    case "channel":
-      return { level: "surface", surface: surfaceKey };
+    case "channel": {
+      const domain = resolveDomainForChannel(surfaceKey, domains).domain;
+      return domain ? { level: "domain", domain: domain.name } : { level: "surface", surface: surfaceKey };
+    }
     case "personal":
       return { level: "principal", principal: tryPrincipalKey(binding.platform, binding.workspace, actingPrincipalId(binding) ?? "") ?? "" };
     case "group":
@@ -105,6 +108,9 @@ export function groupEffectiveAccess(
 }
 
 function universeNote(scope: RequestingScope, groups: readonly Group[]): string | undefined {
+  if (scope.level === "domain") {
+    return `Domain grant for "${scope.domain}" — applies to every current and future room admitted by that domain's reach rules, across every platform and workspace it spans.`;
+  }
   if (scope.level === "principal") return `Personal DM grant for \`${scope.principal}\` — resolves in that person's DM and nowhere else.`;
   if (scope.level !== "group") return undefined;
   const g = groups.find((x) => x.name === scope.group);
@@ -145,9 +151,14 @@ export function planRequestAccess(
     throw new Error("request_access needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not ask for its own channel to be widened in that person's name. Ask someone in this channel to request it.");
   }
 
-  const expectedLevel = target === "channel" ? "surface" : target === "personal" ? "principal" : "group";
-  if (planCtx.scope.level !== expectedLevel) {
-    throw new Error(`request_access wiring bug: target "${target}" addresses a ${expectedLevel}-level scope but was handed a ${planCtx.scope.level}-level one.`);
+  const expectedScope = requestingScopeFor(target, binding, extras.scopeKey, input, extras.domains ?? []);
+  const expectedLevel = target === "channel" ? expectedScope.level : target === "personal" ? "principal" : "group";
+  const scopeAgrees = target === "channel" ? sameScope(planCtx.scope, expectedScope) : planCtx.scope.level === expectedLevel;
+  if (!scopeAgrees) {
+    throw new Error(
+      `request_access wiring bug: target "${target}" addresses ${expectedScope.level}:${expectedScope.level === "surface" ? expectedScope.surface : expectedScope.level === "domain" ? expectedScope.domain : expectedScope.level === "principal" ? expectedScope.principal : expectedScope.group} ` +
+        `but was handed ${planCtx.scope.level}:${planCtx.scope.level === "surface" ? planCtx.scope.surface : planCtx.scope.level === "domain" ? planCtx.scope.domain : planCtx.scope.level === "principal" ? planCtx.scope.principal : planCtx.scope.group}.`,
+    );
   }
 
   if (planCtx.scope.level === "principal") {
@@ -206,14 +217,14 @@ export function planRequestAccess(
 
 const requestAccessEntry = defineTool({
         description:
-          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have, naming in `credential` which configured identity it is reached as). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default, THIS room — must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
+          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have, naming in `credential` which configured identity it is reached as). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default — the channel's ENTIRE canonical domain when it belongs to one, otherwise this standalone room; must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
         inputSchema: z.object({
           kind: z.enum(["widen-connection", "grant-connector"]).describe("Which of the two request shapes this ask maps to."),
           target: z
             .enum(["channel", "personal", "group"])
             .optional()
             .describe(
-              'Which universe to widen: "channel" (default — this room), "personal" (the asker\'s own DM access; DM-only and self-only), "group" (a declared person-group, every member\'s DM; org admins only).',
+              'Which universe to widen: "channel" (default — the channel\'s entire canonical domain when assigned, otherwise this standalone room), "personal" (the asker\'s own DM access; DM-only and self-only), "group" (a declared person-group, every member\'s DM; org admins only).',
             ),
           group: z.string().optional().describe("target=group: the declared person-group name to grant (as listed in this deployment's groups)."),
           connection: z.string().optional().describe("widen-connection: the id of the existing connection to widen (as listed in the target's access)."),
@@ -229,7 +240,7 @@ const requestAccessEntry = defineTool({
           reason: z
             .string()
             .optional()
-            .describe("Why this access is needed — shown on the card and in the PR. REQUIRED for a broad person-group (many members, or link-set members): it is recorded on the binding as the reviewed `allowBroad` acknowledgement."),
+            .describe("Why this access is needed — shown on the card and in the PR. REQUIRED for a broad domain (workspace or wildcard reach) or broad person-group (many members, or link-set members): it is recorded on the binding as the reviewed `allowBroad` acknowledgement."),
         }),
         outputSchema: z.object({
           requested: z.boolean(),
@@ -261,7 +272,9 @@ const requestAccessEntry = defineTool({
           const req = buildResolveRequest(ctx);
           const target = requestTargetOf(input);
           const groups = cfg.loadGroups?.() ?? [];
-          const scope = requestingScopeFor(target, binding, surfaceKeyOf(req), input);
+          const loadedDomains = cfg.loadDomains();
+          const requestingSurfaceKey = await proposalScopeKey(ctx, partition);
+          const scope = requestingScopeFor(target, binding, requestingSurfaceKey, input, loadedDomains);
           const planCtx: PlanContext = {
             scope,
             access:
@@ -271,6 +284,7 @@ const requestAccessEntry = defineTool({
             bundles: cfg.loadBundles(),
             connectorCredentials: cfg.loadConnectorCredentials?.() ?? [],
             groups,
+            domains: loadedDomains,
           };
 
           const permalink = binding.threadTs
@@ -283,19 +297,19 @@ const requestAccessEntry = defineTool({
             : undefined;
 
           const planned = planRequestAccess(binding, planCtx, input, {
-            scopeKey: await proposalScopeKey(ctx, partition),
+            scopeKey: requestingSurfaceKey,
             channelId,
             configRepo: ar.configRepo,
             permalink,
-            domains: cfg.loadDomains(),
+            domains: loadedDomains,
           });
 
-          const memoryDomain = domainForChannel(domainKeyOf(partition), cfg.loadDomains())?.name ?? null;
+          const memoryDomain = resolveDomainForChannel(domainKeyOf(partition), loadedDomains).domain?.name ?? null;
           const exposure = await domainExposureLines({
             org: planned.org,
             domain: memoryDomain,
             subject: wideningSubject(planned.delta),
-            landsOnARoom: planned.delta.scope.level === "surface",
+            landsOnARoom: planned.delta.scope.level === "surface" || planned.delta.scope.level === "domain",
           });
           const args: RequestAccessArgs = { ...planned, exposure };
 
@@ -318,7 +332,7 @@ const requestAccessEntry = defineTool({
               postedTo: venue.surfaceKey,
               chain: { unattended: unattendedOf(ctx) },
             },
-            approvalPostDeps(venue.platform),
+            approvalPostDeps(venue.platform, ctx),
           );
 
           if (posted.autoApproved) {

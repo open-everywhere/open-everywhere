@@ -122,7 +122,7 @@ const postJobKickoff = async (_channelId: string, _text: string): Promise<string
   kickoffCalls++;
   return KICKOFF_TS;
 };
-const fires: { target: Record<string, unknown>; message: string; markerId?: string; jobFire: boolean }[] = [];
+const fires: { target: Record<string, unknown>; message: string; markerId?: string; jobFire: boolean; authThreadTs?: string }[] = [];
 const receive = ((_channel: unknown, target: Record<string, unknown> | undefined) => ({
   send: (message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
     const mk = routineMarker(opts.auth?.attributes as never);
@@ -131,6 +131,7 @@ const receive = ((_channel: unknown, target: Record<string, unknown> | undefined
       message: message ?? "",
       markerId: mk?.id,
       jobFire: jobFireStamped(opts.auth?.attributes as never),
+      authThreadTs: typeof opts.auth?.attributes?.["thread_ts"] === "string" ? opts.auth.attributes["thread_ts"] : undefined,
     });
     return Promise.resolve();
   },
@@ -153,6 +154,7 @@ await tick(at);
 ok(kickoffCalls === 1, "first job fire host-posts a kickoff message (once)");
 ok(fires.length === 1 && fires[0].markerId === "r-job1", "first job fire dispatched with the routine marker");
 ok(fires[0].target.threadTs === KICKOFF_TS, "first job fire pins target.threadTs to the kickoff anchor (the session join)");
+ok(fires[0].authThreadTs === KICKOFF_TS, "first job fire binds to the SAME kickoff thread as its delivery target");
 ok((await store.getRoutine("default", "slack/T1/C1", "r-job1"))?.jobSessionAnchor === KICKOFF_TS, "the anchor is persisted on the routine");
 ok(fires[0].message.includes("DURABLE JOB"), "first job fire receives the job protocol message");
 ok(fires[0].jobFire, "a job fire carries the OPE-111 autonomous-fire stamp (⇒ restricted toolset for that wake)");
@@ -161,6 +163,7 @@ const tokenFire1 = slackContinuationToken("C1", String(fires[0].target.threadTs)
 await tick(new Date(at.getTime() + 61 * 60_000));
 ok(kickoffCalls === 1, "re-fire does NOT post another kickoff — it reuses the stored anchor");
 ok(fires.length === 2 && fires[1].target.threadTs === KICKOFF_TS, "re-fire pins the SAME anchor");
+ok(fires[1].authThreadTs === KICKOFF_TS, "re-fire keeps the binding snapshot aligned with the reused kickoff thread");
 const tokenFire2 = slackContinuationToken("C1", String(fires[1].target.threadTs));
 ok(tokenFire1 === tokenFire2, "both fires resolve to the SAME continuation token ⇒ eve resumes ONE durable session (the JOIN)");
 
@@ -198,10 +201,12 @@ const compAgain = (await completeJobTool.execute({ reason: "again" }, jobMarkerC
 ok(compAgain.completed === true && compAgain.note.includes("already"), "complete_job is idempotent on an already-done job");
 
 const firesBefore = fires.length;
+await store.addRoutine({} as never, { ...basePlain });
 await tick(new Date(at.getTime() + 200 * 60_000));
 ok(fires.length === firesBefore || !fires.slice(firesBefore).some((f) => f.markerId === "r-job1"), "a completed job never fires again");
+const plainFire = fires.slice(firesBefore).find((f) => f.markerId === "r-plain1");
+ok(plainFire !== undefined && plainFire.authThreadTs === undefined, "a plain routine does not inherit a durable-job thread binding");
 
-await store.addRoutine({} as never, { ...basePlain });
 await throwsAsync(
   async () => completeJobTool.execute({ reason: "x" }, jobMarkerCtx("r-plain1") as never),
   "complete_job on a NON-job routine throws (structured not-a-job error)",

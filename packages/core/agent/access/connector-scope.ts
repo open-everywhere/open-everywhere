@@ -11,6 +11,7 @@ import { appendAudit } from "../audit/audit.js";
 import { haltAuditDetail, haltRefusalMessage, haltScopeForCtx, resolveHalt } from "./halt.js";
 import { getSettings } from "../settings/settings.js";
 import { connectorOpTieringEnabled } from "../connections/connector-flags.js";
+import { delegatedBindingAdopted } from "../identity/delegated-binding.js";
 
 export class ConnectorScopeError extends Error {}
 
@@ -121,7 +122,7 @@ export async function surfaceContextFromAuth(auth: SessionAuth): Promise<Bindabl
     logOnce("resolver ctx carried no auth identity (current/initiator both null) — fail closed");
     return null;
   }
-  const kind = await readChannelKind();
+  const kind = delegatedBindingAdopted() ? "subagent" : await readChannelKind();
   type SessionAuthShape = NonNullable<NonNullable<BindableContext["session"]>["auth"]>;
   return {
     session: { auth: { current, initiator } as SessionAuthShape },

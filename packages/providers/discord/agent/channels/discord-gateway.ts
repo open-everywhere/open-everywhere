@@ -82,6 +82,7 @@ import {
   auditSupervisorFailure,
   healPrunedDeploymentStrand,
   engagedFollowUpContract,
+  dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -1486,17 +1487,21 @@ export async function dispatchTurn(
   );
 
   try {
-    await send(
-      rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
-      {
-        auth: stampNonMemberChatAuth(
-          surface.auth,
-          [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(nativeContextLines ?? []).map(contextLineIngestion)],
-          isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
+    await dispatchNativeWakeWithRetry(
+      () =>
+        send(
+          rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
+          {
+            auth: stampNonMemberChatAuth(
+              surface.auth,
+              [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(nativeContextLines ?? []).map(contextLineIngestion)],
+              isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
+            ),
+            continuationToken: surface.continuationToken,
+            state: turnState,
+          },
         ),
-        continuationToken: surface.continuationToken,
-        state: turnState,
-      },
+      { platform: "discord", workspace: dispatchPartition.workspace, surfaceKey: dispatchPartition.surfaceKey },
     );
   } catch (err) {
     await healPrunedDeploymentStrand({

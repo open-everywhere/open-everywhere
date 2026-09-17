@@ -91,20 +91,19 @@ console.log("1. every surface reaches the shared dispatch:");
 }
 
 {
-  const NATIVE_SENDS: ReadonlyArray<{ readonly platform: string; readonly file: string; readonly marker: string }> = [
-    { platform: "slack", file: "packages/providers/slack/agent/channels/slack-front.ts", marker: "if (!input.window) {" },
-    { platform: "github", file: "packages/providers/github/agent/channels/github.ts", marker: "NATIVE (flag-off) send has no window and no divert" },
-    { platform: "linear", file: "packages/providers/linear/agent/channels/linear.ts", marker: "NATIVE (flag-off) send has no window and no divert" },
-    { platform: "notion", file: "packages/providers/notion/agent/channels/notion.ts", marker: "NATIVE (flag-off) send has no window and no divert" },
-    { platform: "discord", file: "packages/providers/discord/agent/channels/discord-gateway.ts", marker: "discordNativeWake({" },
+  const NATIVE_SENDS: ReadonlyArray<{ readonly platform: string; readonly file: string; readonly launches: number }> = [
+    { platform: "slack", file: "packages/providers/slack/agent/channels/slack-events.ts", launches: 3 },
+    { platform: "github", file: "packages/providers/github/agent/channels/github.ts", launches: 1 },
+    { platform: "linear", file: "packages/providers/linear/agent/channels/linear.ts", launches: 1 },
+    { platform: "notion", file: "packages/providers/notion/agent/channels/notion.ts", launches: 1 },
+    { platform: "discord", file: "packages/providers/discord/agent/channels/discord-gateway.ts", launches: 1 },
   ];
   for (const e of NATIVE_SENDS) {
-    ok(
-      readFileSync(join(root, e.file), "utf8").includes(e.marker),
-      `🔴 §1b ${e.platform}: its native (topology-off) send is still where the exemption says it is — if this is RED the branch moved, and docs/extending/provider-rate-limits.md's table is now wrong`,
-    );
+    const src = readFileSync(join(root, e.file), "utf8");
+    const launches = src.match(/\bdispatchNativeWakeWithRetry\s*\(/g)?.length ?? 0;
+    eq(launches, e.launches, `🔴 §1b ${e.platform}: every native launch closure uses the ONE shared native retry road`);
   }
-  eq(NATIVE_SENDS.length, 5, "🔴 §1b: FIVE surfaces have a native send outside this road — a sixth means a surface silently left the covered set");
+  eq(NATIVE_SENDS.length, 5, "🔴 §1b: exactly FIVE surfaces have a native road; Teams has none");
 
   const teams = readFileSync(join(root, "packages/providers/teams/agent/channels/teams-front.ts"), "utf8");
   ok(
@@ -183,5 +182,5 @@ for (const s of SURFACES) {
 }
 
 console.log(
-  `✓ wake-retry-parity: ${n} assertions passed across ${SURFACES.length} surfaces (every front door reaches the funnel and only those six call it, the five native topology-off sends are pinned as a named exemption with Teams as the positive control, the retry works per surface and audits as itself, and no surface retries a transport throw)`,
+  `✓ wake-retry-parity: ${n} assertions passed across ${SURFACES.length} surfaces (every windowed front door reaches the funnel, all five native topology-off launch modules use the shared native retry road with Teams as the positive control, the retry works per surface and audits as itself, and no surface retries a transport throw)`,
 );

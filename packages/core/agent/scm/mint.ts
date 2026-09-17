@@ -14,6 +14,11 @@ export const READ_PERMISSIONS: MintPermissions = {
   metadata: "read",
 };
 
+export const MEMORY_WRITE_PERMISSIONS: MintPermissions = {
+  contents: "write",
+  metadata: "read",
+};
+
 export const PR_READ_PERMISSIONS: MintPermissions = {
   contents: "read",
   pull_requests: "read",
@@ -97,7 +102,7 @@ export async function signAppJwt(key: KeyObject, issuer: string, nowSeconds: num
 
 export function buildMintBody(
   repoNames: readonly string[],
-  permissions: MintPermissions = DEFAULT_PERMISSIONS,
+  permissions: MintPermissions,
 ): { repositories: string[]; permissions: MintPermissions } {
   return { repositories: [...new Set(repoNames)].slice(0, 500), permissions };
 }
@@ -132,7 +137,7 @@ export async function mintInstallationToken(opts: {
       "x-github-api-version": "2022-11-28",
       "content-type": "application/json",
     },
-    body: JSON.stringify(buildMintBody(opts.repoNames, opts.permissions)),
+    body: JSON.stringify(buildMintBody(opts.repoNames, opts.permissions ?? DEFAULT_PERMISSIONS)),
   });
   if (!res.ok) {
     throw new Error(`installation token mint failed: ${res.status} ${await res.text()}`);

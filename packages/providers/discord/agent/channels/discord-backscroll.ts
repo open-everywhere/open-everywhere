@@ -227,6 +227,7 @@ export interface DiscordBackscrollWindowInput {
 export async function fetchDiscordBackscrollWindow(
   input: DiscordBackscrollWindowInput,
   deps: DiscordBackscrollDeps = liveDeps,
+  failureMode: "soft" | "throw" = "soft",
 ): Promise<NormalizedMessage[]> {
   try {
     const triggerMs = snowflakeToMs(input.triggerMessageId);
@@ -251,7 +252,8 @@ export async function fetchDiscordBackscrollWindow(
       out.push(n);
     }
     return out;
-  } catch {
+  } catch (err) {
+    if (failureMode === "throw") throw err;
     return [];
   }
 }
@@ -274,7 +276,14 @@ export async function fetchDiscordSeatCatchUp(req: SeatCatchUpRequest, deps: Dis
   const isThread = req.threadRoot !== undefined;
   const anchor = req.threadRoot ?? req.container;
   const triggerMessageId = req.excludeId ?? msToSnowflake(req.untilMs ?? Date.now());
-  return fetchDiscordBackscrollWindow({ channelId: anchor, triggerMessageId, isThread, sinceMs: req.sinceMs }, deps);
+  const strictDeps: DiscordBackscrollDeps = {
+    request: async (channelId, query) => {
+      const res = await deps.request(channelId, query);
+      if (!Array.isArray(res)) throw new Error("Discord catch-up request failed");
+      return res;
+    },
+  };
+  return fetchDiscordBackscrollWindow({ channelId: anchor, triggerMessageId, isThread, sinceMs: req.sinceMs }, strictDeps, "throw");
 }
 
 export const DISCORD_TIMESTAMP_PRECISION_MS = 1;

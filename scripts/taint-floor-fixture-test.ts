@@ -1,4 +1,5 @@
 import { loadBundles, loadBindings } from "../agent/access/bundles.js";
+import { loadDomains } from "../agent/memory/config/domains.js";
 import { resolveApproverChain, taintToleranceOf, type ApprovalChainRequest } from "@open-everywhere/core/agent/access/approver-chain.js";
 
 let passed = 0;
@@ -40,12 +41,13 @@ if (bundle !== undefined) {
 const fixtureBindings = loadBindings().filter((b) => b.bundle === FIXTURE_BUNDLE);
 ok(fixtureBindings.length === 1, `\`${FIXTURE_BUNDLE}\` is bound exactly ONCE (got ${fixtureBindings.length}) — a second binding is a second lowered surface`);
 ok(
-  fixtureBindings.every((b) => b.scope.level === "surface"),
-  `…at SURFACE scope only (got ${fixtureBindings.map((b) => b.scope.level).join(", ")}) — an org/tenant/domain binding would lower a gate-tier sink across every channel beneath it`,
+  fixtureBindings.every((b) => b.scope.level === "domain" && b.scope.domain === "e2e-connector"),
+  `…at the e2e-connector DOMAIN only (got ${fixtureBindings.map((b) => `${b.scope.level}:${b.scope.domain ?? ""}`).join(", ")})`,
 );
+const fixtureDomain = loadDomains().find((domain) => domain.name === "e2e-connector");
 ok(
-  fixtureBindings.every((b) => b.scope.surface === "slack/T0EXAMPLE/C0EXCHAN003"),
-  `…and to the ONE e2e channel (got ${fixtureBindings.map((b) => b.scope.surface).join(", ")}) — level+count alone would stay green if the binding were repointed at a real room, and the lowering would follow it`,
+  fixtureDomain?.reach?.length === 1 && fixtureDomain.reach[0] === "slack/T0EXAMPLE/C0EXGENRL",
+  `…whose reach is exactly the ONE fixture channel (got ${JSON.stringify(fixtureDomain?.reach)}) — a second member would widen the lowering`,
 );
 
 ok(taintToleranceOf(LOWERED_TOOL) === "gate", `\`${LOWERED_TOOL}\` is a \`taint: "gate"\` sink — the arrow's \`fires\` predicate reads exactly this, so a registry change that dropped the column would make the fixture inert`);
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(
-    `✓ taint-floor-fixture: ${passed} assertions — the deployment's ONE gate-sink lowering (\`${FIXTURE_BUNDLE}\`) is narrow and surface-bound, it genuinely lands on a clean turn, the \`taint:ask\` floor refuses it on a tainted one (allow → ask, reason taint-ask), and an unattended tainted run denies. This is the offline half of S-TAINT-ROUTE-LIVE's ARM E (OPE-470 item 3).`,
+    `✓ taint-floor-fixture: ${passed} assertions — the deployment's ONE gate-sink lowering (\`${FIXTURE_BUNDLE}\`) is bound to a one-surface domain, it genuinely lands on a clean turn, the \`taint:ask\` floor refuses it on a tainted one (allow → ask, reason taint-ask), and an unattended tainted run denies. This is the offline half of S-TAINT-ROUTE-LIVE's ARM E (OPE-470 item 3).`,
   );
 }
 

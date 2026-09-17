@@ -97,7 +97,7 @@ export const setStateEntry = defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `set ${ref.platform} ${ref.id} state to "${input.state}"`;

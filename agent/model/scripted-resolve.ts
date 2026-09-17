@@ -12,6 +12,7 @@ import {
   fillWakePlaceholder,
   incompleteParentTurnFor,
   noteStaleHoldExpiry,
+  nextScriptedRequestSequence,
   scriptedModelArmed,
   scriptedRegistrationSeq,
   scriptedStore,
@@ -112,6 +113,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
         provider: "open-everywhere-scripted",
         respond: async (request) => {
           entry.requests.push({
+            sequence: nextScriptedRequestSequence(),
             role,
             sessionId,
             turnId,
@@ -262,6 +264,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
       observation.fault = fault;
 
       target.requests.push({
+        sequence: nextScriptedRequestSequence(),
         role: observation.role,
         sessionId: observation.sessionId,
         turnId: observation.turnId,

@@ -3,6 +3,7 @@ import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
 import { UNAUTH_SYSTEM_NOTE, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
+import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 
 export const MAX_MESSAGES = 10;
 export const MAX_CHARS = 12_000;
@@ -65,7 +66,7 @@ export function renderContext(
   let hasUnauth = false;
   for (let i = lines.length - 1; i >= 0 && kept.length < MAX_MESSAGES; i--) {
     const l = lines[i];
-    const text = l.text.trim();
+    const text = (l.senderType === "user" ? l.text : redactMachineLinkCodes(l.text)).trim();
     if (!text) continue;
     const rendered = `${attribution(l)} ${text}`;
     if (chars + rendered.length > MAX_CHARS && kept.length > 0) break;

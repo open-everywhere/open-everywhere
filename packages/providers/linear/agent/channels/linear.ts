@@ -89,6 +89,7 @@ import {
   seatCatchUp,
   seatAdmissionFor,
   OE_ADDRESSED_ATTR,
+  dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
@@ -553,9 +554,13 @@ export function liveLinearSupervisorDeps(
       }
       const unified = linearGrainFor(surfaceKey).unified;
       try {
-        await send(
-          { message, context: [...context] },
-          { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
+        await dispatchNativeWakeWithRetry(
+          () =>
+            send(
+              { message, context: [...context] },
+              { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
+            ),
+          { platform: "linear", workspace: organizationId, surfaceKey },
         );
       } catch (err) {
         await healPrunedDeploymentStrand({ token, registryKey: surfaceKey, surfaceKey, workspace: organizationId, platform: "linear", atIso: new Date().toISOString(), err });

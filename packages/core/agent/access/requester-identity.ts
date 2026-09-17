@@ -1,6 +1,8 @@
 import { defineState } from "eve/context";
 import { currentWindowToken, isSubagentChildContext, isUnifiedWindowContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { isWakeEnvelopeShaped, triggerAuthors } from "../channels/wake-envelope.js";
+import { delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
+import { frozenSurfaceBindingFrom } from "../identity/frozen-surface-binding.internal.js";
 
 export const OE_REQUESTER_ATTR = "oe_requester";
 
@@ -11,6 +13,7 @@ export const OE_REQUESTER_CANDIDATES_ATTR = "oe_requester_candidates";
 export type RequesterSeat =
   | "child"
   | "worker"
+  | "continuation"
   | "room"
   | "open";
 
@@ -20,6 +23,18 @@ export type RequesterVerdict =
   | { readonly kind: "none" };
 
 const NONE: RequesterVerdict = { kind: "none" };
+
+export function isRequesterVerdict(value: unknown): value is RequesterVerdict {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const verdict = value as Record<string, unknown>;
+  if (verdict.kind === "none") return Object.keys(verdict).length === 1;
+  if (verdict.kind === "requester") {
+    return Object.keys(verdict).every((key) => key === "kind" || key === "principalId") && typeof verdict.principalId === "string" && verdict.principalId.length > 0;
+  }
+  if (verdict.kind !== "unverified" || typeof verdict.reason !== "string" || verdict.reason.length === 0) return false;
+  if (!Object.keys(verdict).every((key) => key === "kind" || key === "reason" || key === "candidates")) return false;
+  return verdict.candidates === undefined || (Array.isArray(verdict.candidates) && verdict.candidates.length >= 2 && verdict.candidates.every((id) => typeof id === "string" && id.length > 0));
+}
 
 interface RequesterIdentityState {
   readonly turn?: string;
@@ -102,7 +117,7 @@ export function requesterVerdictFor(input: {
   if (input.seat === "child") {
     return stamped ?? { kind: "unverified", reason: NO_CARRIAGE };
   }
-  if (input.seat === "worker") {
+  if (input.seat === "worker" || input.seat === "continuation") {
     return stamped ?? verdictFromEnvelope(input.text) ?? { kind: "unverified", reason: NO_CARRIAGE };
   }
   const fromText = verdictFromEnvelope(input.text);
@@ -117,6 +132,7 @@ export function requesterSeatOf(ctx: BindableContext): RequesterSeat {
   try {
     if (isSubagentChildContext(ctx)) return "child";
     if (!isUnifiedWindowContext(ctx)) return "open";
+    if (frozenSurfaceBindingFrom(ctx) !== undefined) return "continuation";
     const grain = windowGrainOf(ctx);
     return grain === "task" || grain === "thread" ? "worker" : "room";
   } catch {
@@ -147,6 +163,11 @@ export function requesterCandidatesStampForDispatch(turnId?: string): string | u
 
 export function recordRequesterIdentity(ctx: BindableContext, turnId: string | undefined, text: string | undefined): RequesterVerdict {
   try {
+    const delegated = isSubagentChildContext(ctx) ? delegatedRequesterThisTurn(turnId) : undefined;
+    if (delegated !== undefined) {
+      slot.update(() => (turnId !== undefined ? { turn: turnId, verdict: delegated } : { verdict: delegated }));
+      return delegated;
+    }
     const attrs = writableAuthAttrs(ctx);
     const inherited = readAttr(attrs?.[OE_REQUESTER_ATTR]);
     const inheritedCandidates = readAttr(attrs?.[OE_REQUESTER_CANDIDATES_ATTR]);

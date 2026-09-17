@@ -3,6 +3,7 @@ import { resolveAccess } from "../agent/access/resolver.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { lintBroadGrants } from "../agent/access/lint.js";
 import { groupsForPrincipal, type Group } from "../agent/identity/groups.js";
+import type { Domain } from "../agent/memory/domain.js";
 import {
   ALLOW_BROAD_REASON_MAX,
   grantSentence,
@@ -66,6 +67,8 @@ const codeBindings: Binding[] = [
 ];
 
 const scope = { level: "surface", surface: "slack/T1/C1" } as const;
+const domainScope = { level: "domain", domain: "payments" } as const;
+const rosterDomain: Domain = { name: "payments", reach: ["slack/T1/C1", "teams/W1/CH1"] };
 const principalScope = { level: "principal", principal: "slack/T1/U_ME" } as const;
 const groupScope = { level: "group", group: "payments-team" } as const;
 
@@ -164,6 +167,50 @@ throwsWith(
 }
 
 {
+  const planned = planAccessDelta(
+    { kind: "grant-connector", connector: "linear", credential: "k" },
+    { ...ctxFor("T1", "C1"), scope: domainScope, domains: [rosterDomain] },
+  );
+  ok(
+    grantSentence(planned) === 'Grant connector "linear" (as credential "k") to domain "payments" (every room it admits)',
+    "domain: the grant sentence discloses the whole domain rather than the asking room",
+  );
+  const applied = applyDelta(emptyGrantsFile(), planned);
+  ok(applied.bundleName === "grants:domain:payments", "domain: the overlay bundle namespace is level-tagged");
+  ok(
+    applied.grants.bindings.length === 1 &&
+      applied.grants.bindings[0]?.scope.level === "domain" &&
+      applied.grants.bindings[0]?.scope.domain === "payments",
+    "domain: request delta emits a domain binding",
+  );
+  ok(
+    parseGrantsModule(emitGrantsModule(applied.grants)).bindings[0]?.scope.level === "domain",
+    "domain: the generated binding survives the strict overlay round trip",
+  );
+}
+
+{
+  const broadDomain: Domain = { name: "payments", reach: ["slack/T1/proj-*"] };
+  const broadCtx: PlanContext = { ...ctxFor("T1", "C1"), scope: domainScope, domains: [broadDomain] };
+  throwsWith(
+    () => planAccessDelta({ kind: "grant-connector", connector: "linear", credential: "k" }, broadCtx),
+    "BROAD grant",
+    "domain broad: a container-backed domain without a reason refuses before generating an unlandable PR",
+  );
+  const acknowledged = planAccessDelta(
+    { kind: "grant-connector", connector: "linear", credential: "k", reason: "  every project room uses the shared Linear workspace  " },
+    broadCtx,
+  );
+  ok(acknowledged.allowBroad === "every project room uses the shared Linear workspace", "domain broad: the reviewed reason becomes the binding acknowledgement");
+  const generated = applyDelta(emptyGrantsFile(), acknowledged).grants;
+  ok(generated.bindings[0]?.allowBroad === acknowledged.allowBroad, "domain broad: the acknowledgement lands on the generated binding");
+  ok(
+    lintBroadGrants(generated.bundles, generated.bindings, [broadDomain]).length === 0,
+    "domain broad: the generated request passes the existing broad-grant lint",
+  );
+}
+
+{
   const good = parseGrantsFile(JSON.parse('{ "bundles": [], "bindings": [] }'));
   ok(good.bundles.length === 0 && good.bindings.length === 0, "parse: empty grants file parses");
   const withComment = parseGrantsFile({ $comment: "docs", bundles: [], bindings: [] });
@@ -178,7 +225,7 @@ throwsWith(
   );
   throwsWith(
     () => parseGrantsFile({ bundles: [], bindings: [{ bundle: "grants:slack/T1/C1", scope: { level: "tenant", tenant: "slack/T1" } }] }),
-    "must be surface-, principal- or group-scoped",
+    "must be domain-, surface-, principal- or group-scoped",
     "parse: a tenant-scoped overlay binding refuses (the overlay never binds wider than one room, person or group)",
   );
   throwsWith(

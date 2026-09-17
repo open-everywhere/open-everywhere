@@ -130,6 +130,15 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
     if (d.notExercised === undefined) continue;
     ok(d.notExercised.trim().length > 20, `${d.action}'s notExercised reason states what is missing (got: "${d.notExercised}")`);
   }
+  const eveCandidate = CONSEQUENTIAL_AUDIT_ACTIONS.find((d) => d.action === "approval.eve_candidate");
+  ok(
+    eveCandidate?.proves.includes("rejected") === true,
+    "approval.eve_candidate says what it actually proves: a terminal candidate outcome, not that a native approval was raised",
+  );
+  ok(
+    eveCandidate?.notExercised?.includes("response-policy") === true && eveCandidate.notExercised.includes("request-only") === true,
+    "approval.eve_candidate names the missing live response-policy fixture and distinguishes it from request-only S-EVE-CARD/S-EVE-BRIDGE",
+  );
 
   const declaredFields = (action: string): readonly string[] => {
     const d = CONSEQUENTIAL_AUDIT_ACTIONS.find((x) => x.action === action);

@@ -511,6 +511,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 {
   const { registerSlackFixturePostArm } = await import("./_slack-test-stubs.js");
   const { OE_WAKE_ID_ATTR, shouldBridgeAddressedProse } = await import("../agent/channels/unified-window.js");
+  const { wakeIdsFromEnvelope } = await import("../agent/channels/wake-envelope.js");
   const { replayStepNames } = await import("../agent/access/window-gated.js");
 
   const posted: { channel: string; text: string }[] = [];
@@ -524,8 +525,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   });
   registerSlackFixturePostArm();
 
-  const wakeIdInMessage = (message: string): string | undefined =>
-    /`wake-id` for this fire is `([^`]+)`/.exec(message)?.[1];
+  const wakeIdInMessage = (message: string): string | undefined => wakeIdsFromEnvelope(message)[0];
 
   overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-speak", prompt: "Post the deploy digest." }));
@@ -574,12 +574,13 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   await tick(NOW, to);
   ok(seen.length === 1 && seen[0].unified, "silent: a silent routine still joins the window (it has work to do, it just says nothing)");
   ok(seen[0].attrs[ROUTINE_MARKER.silent] === "true", "silent: the host-set silent stamp rides the divert — the gate's unforgeable input");
-  ok(!seen[0].message.includes("wake-id"), "silent/OPE-149 PRESERVED: a silent routine is NOT told a wake-id — the disclosure must not become the way a silent routine starts talking");
+  ok(seen[0].message.includes("wake-id"), "silent/DELEGATION: a silent routine still carries its exact host wake marker so worker work remains addressable");
   ok(!seen[0].message.includes("<system-reminder>"), "silent: its message carries no reply mandate at all");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-silent");
 
-  ok(fireWindow.renderFireWindowMessage("body", "w-1", { [ROUTINE_MARKER.silent]: "true" }) === "body", "silent/pure: renderFireWindowMessage returns the message UNTOUCHED for a silent fire");
-  ok(fireWindow.renderFireWindowMessage("body", "w-1", {}).includes("w-1"), "silent/pure: and discloses the id for every other fire");
+  ok(fireWindow.renderFireWindowMessage("body", "w-1", { [ROUTINE_MARKER.silent]: "true" }) === '<wake wake-id="w-1"></wake>\n\nbody', "silent/pure: only the host marker is added; no conversational mandate is present");
+  ok(fireWindow.renderFireWindowMessage("body", "w-1", {}).includes("w-1"), "silent/pure: every fire carries the structured id");
+  ok(fireWindow.fireWakeMarker('w<&"\'') === '<wake wake-id="w&lt;&amp;&quot;&apos;"></wake>', "marker/pure: fixture values cannot break out of the host marker attribute");
   ok(fireWindow.fireReplyMandate("w-1").includes(NO_REPLY_SENTINEL), "mandate: the silence exit is stated — a fire that judges silence warranted still has a cheap way to take it");
 }
 

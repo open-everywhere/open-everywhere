@@ -8,5 +8,7 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "notion_search", module: "agent/tools/notion_search.js", summary: "Search the domain's Notion workspace for pages and databases — the WORK-plane read, mounted only under a domain work grant." },
 
     { kind: "channel", name: "notion", module: "agent/channels/notion.js", summary: "The Notion comment surface — an AMBIENT-JUDGED conversational channel." },
+
+    { kind: "schedule", name: "notion-ingress", module: "agent/schedules/notion-ingress.js", summary: "Recover committed Notion deliveries whose immediate authenticated drain did not finish." },
   ],
 } as const;

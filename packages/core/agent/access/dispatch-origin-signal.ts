@@ -1,4 +1,5 @@
 import { defineState } from "eve/context";
+import { wakeIdsFromEnvelope } from "../channels/wake-envelope.js";
 
 export interface DispatchedTaskWake {
   readonly taskId: string;
@@ -9,6 +10,7 @@ interface DispatchOriginState {
   readonly turn?: string;
   readonly addressed?: string;
   readonly tasks?: readonly DispatchedTaskWake[];
+  readonly deliveredWakes?: readonly string[];
 }
 
 const slot = defineState<DispatchOriginState>("open-everywhere.dispatch-origin", () => ({}));
@@ -17,7 +19,7 @@ const MAX_TASKS = 16;
 
 function readState(v: unknown): DispatchOriginState {
   if (v === null || typeof v !== "object") return {};
-  const s = v as { turn?: unknown; addressed?: unknown; tasks?: unknown };
+  const s = v as { turn?: unknown; addressed?: unknown; tasks?: unknown; deliveredWakes?: unknown };
   if (typeof s.turn !== "string" || s.turn.length === 0) return {};
   const tasks = Array.isArray(s.tasks)
     ? s.tasks.filter(
@@ -34,7 +36,36 @@ function readState(v: unknown): DispatchOriginState {
     turn: s.turn,
     ...(typeof s.addressed === "string" && s.addressed.length > 0 ? { addressed: s.addressed } : {}),
     tasks,
+    deliveredWakes: Array.isArray(s.deliveredWakes)
+      ? [...new Set(s.deliveredWakes.filter((wake): wake is string => typeof wake === "string" && wake.length > 0))].slice(0, 2)
+      : [],
   };
+}
+
+export function recordDeliveredWakes(turnId: string | undefined, message: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0 || message === undefined) return;
+  const incoming = wakeIdsFromEnvelope(message);
+  if (incoming.length === 0) return;
+  try {
+    slot.update((cur) => {
+      const state = readState(cur);
+      const prior = state.turn === turnId ? (state.deliveredWakes ?? []) : [];
+      const deliveredWakes = [...new Set([...prior, ...incoming])].slice(0, 2);
+      return state.turn === turnId ? { ...state, deliveredWakes } : { turn: turnId, deliveredWakes, tasks: [] };
+    });
+  } catch {
+  }
+}
+
+export function exactDispatchWakeThisTurn(turnId: string | undefined): string | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  try {
+    const state = readState(slot.get());
+    if (state.turn !== turnId || state.deliveredWakes?.length !== 1) return undefined;
+    return state.deliveredWakes[0];
+  } catch {
+    return undefined;
+  }
 }
 
 export function addressedWakeThisTurn(turnId: string | undefined): string | undefined {

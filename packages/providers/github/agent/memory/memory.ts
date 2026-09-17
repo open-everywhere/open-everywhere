@@ -16,6 +16,7 @@ import {
   GitHubContents,
   type CommitId,
   getGitHubApp,
+  MEMORY_WRITE_PERMISSIONS,
   warmCredential,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -134,8 +135,16 @@ export function githubMemoryContainerProblem(silo: MemorySilo, grants: DomainMem
   );
 }
 
-export function registerGitHubMemory(): boolean {
-  const app = getGitHubApp();
+type GitHubMemoryApp = Pick<NonNullable<ReturnType<typeof getGitHubApp>>, "tokensForRepos" | "committer">;
+
+export interface GitHubMemoryRegistrationDeps {
+  readonly app?: GitHubMemoryApp;
+  readonly contents?: GitHubContents;
+  readonly register?: typeof registerProvider;
+}
+
+export function registerGitHubMemory(deps: GitHubMemoryRegistrationDeps = {}): boolean {
+  const app = deps.app ?? getGitHubApp();
   if (!app) return false;
   const memoryToken = warmCredential<string>({
     name: "github.memory-installation-token",
@@ -146,7 +155,7 @@ export function registerGitHubMemory(): boolean {
     fallbackTtlSeconds: 3600,
     key: (repo) => repo,
     mint: async (repo) => {
-      const out = await app.tokensForRepos([repo]);
+      const out = await app.tokensForRepos([repo], MEMORY_WRITE_PERMISSIONS);
       const owner = repo.slice(0, repo.indexOf("/"));
       const minted = out.tokens.get(owner);
       if (!minted) {
@@ -157,11 +166,11 @@ export function registerGitHubMemory(): boolean {
     },
   });
   const provider = makeGitHubProvider({
-    contents: new GitHubContents(),
+    contents: deps.contents ?? new GitHubContents(),
     committer: () => app.committer(),
     mintToken: (repo: string) => memoryToken.get(repo),
   });
-  registerProvider(provider);
+  (deps.register ?? registerProvider)(provider);
   declareGitHubMemoryCapability();
   return true;
 }

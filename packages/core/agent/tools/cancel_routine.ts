@@ -66,7 +66,7 @@ export default defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;

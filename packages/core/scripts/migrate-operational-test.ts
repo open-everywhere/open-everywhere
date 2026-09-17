@@ -92,6 +92,13 @@ function roSqlite(path: string): DatabaseSync {
     await s.setSpendLimit("acme", "payments", "domain", { monthlyUsd: 10 }, { reason: "domain bridge", setBy: "U1" });
     await s.setSpendLimit("acme", "user:slack/T1/U0EXOWNER", "user", { monthlyUsd: 7.5, monthlyTokens: 900 }, { reason: "per-person bridge", setBy: "U1", expiresAt: 4_102_444_800_000 });
     await s.setMeta("telemetry_instance_id", "inst-abc-123");
+    await s.enqueueIngressDelivery("acme", {
+      source: "notion",
+      authorityId: "notion-default",
+      deliveryId: "evt-migrate",
+      payloadJson: JSON.stringify({ schemaVersion: 1, rawBody: "fixture" }),
+      receivedAt: "2026-07-01T09:30:00Z",
+    });
     await s.putUnifiedWakeTarget("acme", "w-pending", JSON.stringify({ platform: "slack", channelId: "C_MIG" }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
     await s.putUnifiedWakeTarget("acme", "w-answered", JSON.stringify({ platform: "github", owner: "o", repo: "r", issueNumber: 3 }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
     await s.markUnifiedWakeAnswered("acme", "w-answered", "2026-07-01T10:30:00Z", "turn-mig");
@@ -120,6 +127,14 @@ function roSqlite(path: string): DatabaseSync {
   ok((await store.listRoutines("acme", "slack/T1/C1")).length === 1, "full: routine copied");
   ok((await store.usageForSession("acme", "sess-1")).length === 1, "full: usage_events copied (identity re-assigned)");
   ok((await store.getMeta("telemetry_instance_id")) === "inst-abc-123", "full: instance_meta copied");
+  const migratedIngress = await store.claimIngressDelivery(
+    "acme",
+    { source: "notion", authorityId: "notion-default", deliveryId: "evt-migrate" },
+    "claim-after-migrate",
+    "2026-07-01T10:00:00Z",
+    "2026-07-01T09:00:00Z",
+  );
+  ok(migratedIngress?.payloadJson === JSON.stringify({ schemaVersion: 1, rawBody: "fixture" }), "full: pending ingress payload + frozen signer identity migrate and remain claimable");
 
   const migratedLimits = await store.spendLimits("acme");
   ok(sortedEq(migratedLimits.map((l) => l.level), ["surface", "workspace", "domain", "user"]), "OPE-274: spend_limit rows migrate at all FOUR CapLevels — `level` is free-text on both engines, so no enum migration exists to forget");

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
-import { lintBroadGrants, lintEgressHostCollisions, lintMethodNarrowing, lintAccessConfig, lintReservedBrokerHosts, ownAccountWithholdingProblems } from "../agent/access/lint.js";
+import {
+  lintBroadGrants,
+  lintDomainCapabilityConsistency,
+  lintEgressHostCollisions,
+  lintMethodNarrowing,
+  lintAccessConfig,
+  lintReservedBrokerHosts,
+  ownAccountWithholdingProblems,
+} from "../agent/access/lint.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import type { Group } from "../agent/identity/groups.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
@@ -71,6 +79,129 @@ const rosterDomain = defineDomain({ name: "eng", reach: ["slack/T1/C1", "github/
 const claimDomain = defineDomain({ name: "eng", reach: ["github/acme"] });
 const bothDomain = defineDomain({ name: "eng", reach: ["slack/T1/C1", "github/acme"] });
 const otherClaimDomain = defineDomain({ name: "ops", reach: ["github/other"] });
+
+{
+  const exact = defineDomain({ name: "team", reach: ["slack/T1/C1", "github/acme/repo"] });
+  const direct = defineBinding({ bundle: "safe", scope: { level: "surface", surface: "slack/T1/C1" } });
+  const directProblems = lintDomainCapabilityConsistency([credentialless], [direct], [exact]);
+  ok(directProblems.length === 1, `a direct surface binding on a domain member fails (got ${directProblems.length})`);
+  ok(
+    directProblems[0]!.includes('surface "slack/T1/C1" belongs to domain "team"') &&
+      directProblems[0]!.includes('level: "domain", domain: "team"'),
+    "…and the diagnostic names the resolved owner and the exact move-to-domain remedy",
+  );
+
+  const standalone = defineBinding({ bundle: "safe", scope: { level: "surface", surface: "slack/T1/C2" } });
+  ok(lintDomainCapabilityConsistency([credentialless], [standalone], [exact]).length === 0, "a standalone surface may still receive a direct binding");
+
+  const excluded = defineDomain({ name: "broad", reach: ["slack/T1"], exclude: ["slack/T1/C2"] });
+  ok(
+    lintDomainCapabilityConsistency([credentialless], [standalone], [excluded]).length === 0,
+    "a surface excluded from a broad domain is standalone and may receive a direct binding",
+  );
+
+  const broad = defineDomain({ name: "broad", reach: ["slack/T1"] });
+  const narrow = defineDomain({ name: "narrow", reach: ["slack/T1/C1"] });
+  const precedence = lintDomainCapabilityConsistency([credentialless], [direct], [broad, narrow]);
+  ok(
+    precedence.length === 1 && precedence[0]!.includes('domain "narrow"') && !precedence[0]!.includes('domain "broad"'),
+    "a surface claimed by a narrower domain is diagnosed against its actual resolved owner",
+  );
+
+  const wildcard = defineDomain({ name: "wild", reach: ["github/acme/project-*"] });
+  const wildSurface = defineBinding({ bundle: "safe", scope: { level: "surface", surface: "github/acme/project-one" } });
+  ok(lintDomainCapabilityConsistency([credentialless], [wildSurface], [wildcard]).length === 1, "a direct binding matched through a domain wildcard fails too");
+
+  const spanning = defineDomain({ name: "spanning", reach: ["slack/T1/C1", "github/acme/project-*"] });
+  const onlySlack = defineBinding({ bundle: "safe", scope: { level: "tenant", tenant: "slack/T1" } });
+  const cancelled = defineDomain({ name: "cancelled", reach: ["github/acme/project-*"], exclude: ["github/acme/project-*"] });
+  ok(
+    lintDomainCapabilityConsistency([credentialless], [onlySlack], [cancelled]).length === 0,
+    "a fully cancelled container contributes no invented member tenant (domain validation separately rejects this dead config)",
+  );
+  const carved = defineDomain({
+    name: "carved",
+    reach: ["slack/T1/C1", "github/acme/project-*"],
+    exclude: ["github/acme/project-secret-*"],
+  });
+  ok(
+    lintDomainCapabilityConsistency([credentialless], [onlySlack], [carved]).length === 1,
+    "a narrower exclusion does not hide the wildcard's remaining and future domain members",
+  );
+  const split = lintDomainCapabilityConsistency([credentialless], [onlySlack], [spanning]);
+  ok(split.length === 1, `a tenant-only contribution that splits a domain fails (got ${split.length})`);
+  ok(
+    split[0]!.includes('domain "spanning"') && split[0]!.includes("slack/T1") && split[0]!.includes("github/acme") && split[0]!.includes("future surfaces"),
+    "…and the diagnostic names both tenant facts plus wildcard/future membership",
+  );
+
+  const sameA = defineBundle({ name: "same-a", domains: ["api.example.com"], instructions: "same rule" });
+  const sameB = defineBundle({ name: "same-b", domains: ["api.example.com"], instructions: "same rule" });
+  const sameFacts = [
+    defineBinding({ bundle: "same-a", scope: { level: "tenant", tenant: "slack/T1" } }),
+    defineBinding({ bundle: "same-b", scope: { level: "tenant", tenant: "github/acme" } }),
+  ];
+  ok(
+    lintDomainCapabilityConsistency([sameA, sameB], sameFacts, [spanning]).length === 0,
+    "different bundle NAMES with the same resolved capability facts are consistent",
+  );
+
+  const orderedA = defineBundle({ name: "ordered-a", connections: [conn({ methods: ["GET", "HEAD"], allowedWebsites: ["api.example.com", "cdn.example.com"] })] });
+  const orderedB = defineBundle({ name: "ordered-b", connections: [conn({ methods: ["HEAD", "GET"], allowedWebsites: ["cdn.example.com", "api.example.com"] })] });
+  const orderedFacts = [
+    defineBinding({ bundle: "ordered-a", scope: { level: "tenant", tenant: "slack/T1" } }),
+    defineBinding({ bundle: "ordered-b", scope: { level: "tenant", tenant: "github/acme" } }),
+  ];
+  ok(
+    lintDomainCapabilityConsistency([orderedA, orderedB], orderedFacts, [spanning]).length === 0,
+    "unordered capability lists do not manufacture a tenant difference when declarations only reorder the same facts",
+  );
+
+  const opaqueA = defineBundle({
+    name: "opaque-a",
+    connections: [conn({ authorizationDetails: [{ type: "broker-specific", stages: ["first", "second"] }] })],
+  });
+  const opaqueB = defineBundle({
+    name: "opaque-b",
+    connections: [conn({ authorizationDetails: [{ type: "broker-specific", stages: ["second", "first"] }] })],
+  });
+  const opaqueFacts = [
+    defineBinding({ bundle: "opaque-a", scope: { level: "tenant", tenant: "slack/T1" } }),
+    defineBinding({ bundle: "opaque-b", scope: { level: "tenant", tenant: "github/acme" } }),
+  ];
+  ok(
+    lintDomainCapabilityConsistency([opaqueA, opaqueB], opaqueFacts, [spanning]).length === 1,
+    "opaque broker payload arrays retain order, so reversing an authorization sequence is a real capability difference",
+  );
+
+  const changedB = defineBundle({ name: "same-b", domains: ["different.example.com"], instructions: "different rule" });
+  ok(
+    lintDomainCapabilityConsistency([sameA, changedB], sameFacts, [spanning]).length === 1,
+    "the same binding shape with different resolved capability facts fails",
+  );
+
+  const opA = defineBundle({ name: "op-a", connectorOps: [{ connector: "notion", gated: ["Create-Page"] }] });
+  const opB = defineBundle({ name: "op-b", connectorOps: [{ connector: "notion", destructive: ["create_page"] }] });
+  const opBindings = [
+    defineBinding({ bundle: "op-a", scope: { level: "tenant", tenant: "slack/T1" } }),
+    defineBinding({ bundle: "op-b", scope: { level: "tenant", tenant: "github/acme" } }),
+  ];
+  ok(
+    lintDomainCapabilityConsistency([opA, opB], opBindings, [spanning]).length === 0,
+    "connector-operation raises do not create a tenant split: runtime joins Bundle.connectorOps deployment-wide, independently of bindings",
+  );
+
+  const oneTenant = defineDomain({ name: "one-tenant", reach: ["slack/T1/C1", "slack/T1/C2"] });
+  ok(
+    lintDomainCapabilityConsistency([credentialless], [onlySlack], [oneTenant]).length === 0,
+    "a tenant contribution covering every member of a one-tenant domain is consistent",
+  );
+
+  ok(
+    lintAccessConfig([credentialless], [direct], [exact]).some((p) => p.includes("direct surface binding")),
+    "the consistency rule reaches lintAccessConfig, the production gate's entry point",
+  );
+}
 
 ok(
   lintBroadGrants([credentialed], [at("creds", "domain")], [rosterDomain]).length === 0,

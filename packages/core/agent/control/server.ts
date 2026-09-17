@@ -205,7 +205,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "overrides_list",
     {
       title: "List runtime overrides (drift view)",
-      description: "The reconcile worklist: every live override overlaying config-as-code for an org — spend caps (with configCap, divergesFromConfig, expired) and connector revokes (sticky) — each with reason/setBy. Overrides are temporary bridges; this shows which need PR'ing into config or clearing. Read-only. Org-wide (every scopeKey in the org) — requires org-admin; a domain-scoped role can't cover an unscoped org-wide listing.",
+      description: "The reconcile worklist: every live override overlaying config-as-code for an org — spend caps (with configCap, divergesFromConfig, expired), connector revokes (sticky), and active break-glass halts with their exact address/setAt/setBy ownership facts. Overrides are temporary bridges; this shows which need PR'ing into config or clearing. Read-only. Org-wide (every scopeKey in the org) — requires org-admin; a domain-scoped role can't cover an unscoped org-wide listing.",
       inputSchema: { org: z.string().min(1) },
     },
     (args) =>

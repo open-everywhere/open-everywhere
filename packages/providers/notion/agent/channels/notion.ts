@@ -43,6 +43,8 @@ import {
   QUESTION_ANSWERED_AUDIT_ACTION,
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
   seatCatchUp,
+  dispatchNativeWakeWithRetry,
+  readCappedBody,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   forgetNotionQuestion,
@@ -56,7 +58,25 @@ import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict }
 import { createCommentReply, resolveNotionCredential, type ResolvedNotionCredential } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { notionTrustRoots } from "./notion-ancestry-trust.js";
-import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
+import { handleAcceptedNotionDelivery, handleNotionDelivery, type NotionDeliveryOutcome, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
+import { acknowledgeNotionIngress, NOTION_INGRESS_MAX_BODY_BYTES } from "./notion-ingress.js";
+import {
+  acceptNotionIngressDrainRequest,
+  createNotionCommentDispatchGuard,
+  notionIngressDrainAvailable,
+  NOTION_INGRESS_DRAIN_PATH,
+  postNotionIngressDrain,
+  settleNotionIngressDrain,
+  type AcceptedNotionIngressDrain,
+  type NotionIngressDisposition,
+} from "./notion-ingress-drain.js";
+import {
+  createNotionWebhookTiming,
+  NOTION_WEBHOOK_TIMING_ACTION,
+  runNotionWebhookTimed,
+  type NotionWebhookTimingDetail,
+  type NotionWebhookTimingRecorder,
+} from "./notion-webhook-timing.js";
 import {
   handleNotionSupervisorDispatch,
   notionSupervisorToken,
@@ -134,6 +154,7 @@ export function liveNotionSupervisorDeps(
   surfaceKey: string,
   to?: RouteHandlerArgs["to"],
   respond?: RespondFn,
+  timing?: NotionWebhookTimingRecorder,
 ): NotionSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -164,22 +185,35 @@ export function liveNotionSupervisorDeps(
     async wake({ token, auth, message, context, state, window }) {
       if (window) {
         if (!to) throw new Error("notion single-window wake has no cross-channel dispatch — refusing (would post an unregistered wake-id)");
-        await divertInboundToUnifiedWindow(to, {
-          message,
-          context: [...context],
-          token,
-          window,
-          surfaceKey,
-          auth: auth as unknown as { attributes?: Record<string, unknown> },
-        });
+        const divert = async () => {
+          await divertInboundToUnifiedWindow(to, {
+            message,
+            context: [...context],
+            token,
+            window,
+            surfaceKey,
+            auth: auth as unknown as { attributes?: Record<string, unknown> },
+          });
+        };
+        if (timing) await timing.measure("eveSend", divert);
+        else await divert();
         return;
       }
       if (respond !== undefined) {
         const answer = await resolveNotionInboundAnswer({ org, bareToken: token, auth });
-        if (answer && (await deliverNotionAnswer({ answerOrg: org, token, auth, message, context, answer, respond, surfaceKey }))) return;
+        if (answer) {
+          const deliverAnswer = () => deliverNotionAnswer({ answerOrg: org, token, auth, message, context, answer, respond, surfaceKey });
+          if (timing ? await timing.measure("eveSend", deliverAnswer) : await deliverAnswer()) return;
+        }
       }
       try {
-        await send({ message, context: [...context] }, { auth, continuationToken: token, state });
+        const workspace = surfaceKey.split("/")[1] ?? "unknown";
+        const dispatchWake = () => dispatchNativeWakeWithRetry(
+          () => send({ message, context: [...context] }, { auth, continuationToken: token, state }),
+          { platform: "notion", workspace, surfaceKey },
+        );
+        if (timing) await timing.measure("eveSend", dispatchWake);
+        else await dispatchWake();
       } catch (err) {
         await healPrunedDeploymentStrand({
           token,
@@ -222,6 +256,37 @@ function notionRespondFrom(from: RouteHandlerArgs<NotionState>["from"]): Respond
         ...(opts.context && opts.context.length > 0 ? { context: [...opts.context] } : {}),
       },
     );
+  };
+}
+
+type NotionWebhookRouteArgs = Pick<RouteHandlerArgs<NotionState>, "from" | "waitUntil" | "to" | "attachSession">;
+
+function timedNotionWebhookRoute(
+  handler: (
+    req: Request,
+    args: NotionWebhookRouteArgs,
+    timing: NotionWebhookTimingRecorder,
+    finishTiming: (outcome: string) => void,
+  ) => Promise<Response>,
+): (req: Request, args: NotionWebhookRouteArgs) => Promise<Response> {
+  return async (req, args) => {
+    const timing = createNotionWebhookTiming();
+    const emit = (detail: NotionWebhookTimingDetail): void => {
+      try {
+        args.waitUntil(
+          appendAudit({
+            org: deploymentOrg(),
+            platform: "notion",
+            workspace: "unknown",
+            surface: "unknown",
+            action: NOTION_WEBHOOK_TIMING_ACTION,
+            detail,
+          }).catch(() => undefined),
+        );
+      } catch {
+      }
+    };
+    return runNotionWebhookTimed(timing, emit, (finish) => handler(req, args, timing, finish));
   };
 }
 
@@ -276,19 +341,52 @@ async function deliverNotionAnswer(input: {
   return true;
 }
 
-export default defineChannel<NotionState, { state: NotionState }>({
-  kindHint: "notion",
-  turnPolicy: "queue",
-  state: { discussionId: null, pageId: null, workspaceId: null },
-  context(state) {
-    return { state };
-  },
-  routes: [
-    POST(ROUTE, async (req, { from, waitUntil, to, attachSession }) => {
+function notionIngressDisposition(outcome: NotionDeliveryOutcome, eventPlaneRefused: boolean): NotionIngressDisposition {
+  if (outcome.action === "no-api-key" || outcome.action === "error") return "retry";
+  if (
+    eventPlaneRefused ||
+    outcome.action === "ambient-disabled" ||
+    outcome.action === "skipped-self" ||
+    outcome.action === "skipped-bot" ||
+    outcome.action === "dropped" ||
+    outcome.action === "unresolved-page" ||
+    outcome.action === "stood-down" ||
+    outcome.action === "scope-refused"
+  ) {
+    return "discard";
+  }
+  return "complete";
+}
+
+const notionWebhookRouteHandler = timedNotionWebhookRoute(
+  async (req, { from, waitUntil, to, attachSession }, timing, finishTiming) => {
       const send = notionSendFrom(from);
       const respond = notionRespondFrom(from);
-      const rawBody = await req.text();
-      const signature = req.headers.get("x-notion-signature");
+      const internalDrain = new URL(req.url).pathname === NOTION_INGRESS_DRAIN_PATH;
+      let acceptedIngress: AcceptedNotionIngressDrain | undefined;
+      let rawBody: string;
+      let signature: string | null;
+      if (internalDrain) {
+        const admitted = await acceptNotionIngressDrainRequest(req, {
+          org: deploymentOrg(),
+          store: getOperationalStore(),
+        });
+        if ("response" in admitted) {
+          finishTiming(admitted.response.ok ? "drain-idle" : "drain-refused");
+          return admitted.response;
+        }
+        acceptedIngress = admitted.accepted;
+        rawBody = acceptedIngress.rawBody;
+        signature = null;
+      } else {
+        const read = await timing.measure("credential", () => readCappedBody(req, NOTION_INGRESS_MAX_BODY_BYTES));
+        if ("tooLarge" in read) {
+          finishTiming("accept-refused");
+          return new Response("payload too large", { status: 413 });
+        }
+        rawBody = read.body;
+        signature = req.headers.get("x-notion-signature");
+      }
       const integrations = notionIntegrations(notionDomains());
       const secrets = new Map<string, Promise<string | undefined>>();
       const inboundSecretFor = (name: string): Promise<string | undefined> => {
@@ -298,9 +396,25 @@ export default defineChannel<NotionState, { state: NotionState }>({
         secrets.set(name, resolved);
         return resolved;
       };
-      const signingKeys = await Promise.all(
+      const signingKeys = await timing.measure("credential", () => Promise.all(
         integrations.map(async (i) => ({ credentialId: i.credentialId, secret: await inboundSecretFor(i.inboundSecret) })),
-      );
+      ));
+
+      if (!internalDrain) {
+        const admission = await acknowledgeNotionIngress(rawBody, signature, {
+          org: deploymentOrg(),
+          signingKeys,
+          allowUnverified: getSettings().webhooks.allowUnverifiedNotion,
+          drainAvailable: notionIngressDrainAvailable(),
+          enqueue: (org, write) => getOperationalStore().enqueueIngressDelivery(org, write),
+          drain: (key) => postNotionIngressDrain(key),
+          waitUntil,
+        });
+        if (admission.headers.get("x-oe-notion-ingress") !== "synchronous") {
+          finishTiming(admission.ok ? "accepted" : "accept-refused");
+          return admission;
+        }
+      }
       const credentials = new Map<string, Promise<ResolvedNotionCredential | undefined>>();
       const credentialFor = (credentialId: string): Promise<ResolvedNotionCredential | undefined> => {
         const hit = credentials.get(credentialId);
@@ -355,14 +469,14 @@ export default defineChannel<NotionState, { state: NotionState }>({
             threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
             externalPolicy: resolveExternalPolicy(externalPolicyOverrideFor(d.surfaceKey, getConfig().loadDomains())),
           },
-          liveNotionSupervisorDeps(send, d.surfaceKey, to, respond),
+          liveNotionSupervisorDeps(send, d.surfaceKey, to, respond, timing),
         );
         if (d.trust?.unreachableRoots && d.trust.unreachableRoots.length > 0) {
           console.warn(
             `[open-everywhere:notion] declared trust root(s) ${d.trust.unreachableRoots.join(", ")} resolve as neither a page nor a block under integration "${d.credentialId}" — such a root can never match, so it grants nothing. If it is a TEAMSPACE id, declare the top PAGE of the teamspace instead.`,
           );
         }
-        await appendAudit({
+        await timing.measure("finalAudit", () => appendAudit({
           org: deploymentOrg(),
           platform: "notion",
           workspace: d.workspaceId ?? "unknown",
@@ -385,10 +499,10 @@ export default defineChannel<NotionState, { state: NotionState }>({
                 }
               : {}),
           },
-        });
+        }));
       };
 
-      const outcome = await handleNotionDelivery(rawBody, signature, {
+      const deliveryDeps = {
         signingKeys,
         allowUnverified: getSettings().webhooks.allowUnverifiedNotion,
         credentialFor,
@@ -399,33 +513,66 @@ export default defineChannel<NotionState, { state: NotionState }>({
         resolveBotName: async (credentialId) => (await botUserFor(credentialId)).name,
         ambientEnabled: notionAmbientEnabled,
         engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
+        timing,
         dispatch,
+        ...(acceptedIngress
+          ? {
+              dispatchGuard: createNotionCommentDispatchGuard({
+                org: deploymentOrg(),
+                store: getOperationalStore(),
+              }),
+            }
+          : {}),
         attachSession,
-      });
+      } satisfies Parameters<typeof handleNotionDelivery>[2];
+      let outcome: NotionDeliveryOutcome;
+      try {
+        outcome = acceptedIngress
+          ? await handleAcceptedNotionDelivery(rawBody, acceptedIngress.signerCredentialId, deliveryDeps)
+          : await handleNotionDelivery(rawBody, signature, deliveryDeps);
+      } catch (err) {
+        if (acceptedIngress) {
+          await settleNotionIngressDrain(acceptedIngress, "retry", {
+            org: deploymentOrg(),
+            store: getOperationalStore(),
+          });
+        }
+        throw err;
+      }
 
+      let eventPlaneRefused = false;
       if (outcome.verified) {
         const fence = notionTriggerScopeVerdict(rawBody, outcome.signerCredentialId, notionDomains());
         if (!fence.ok) {
+          eventPlaneRefused = true;
           log(`event plane: delivery refused — ${fence.reason}`);
         } else {
           const deliveryId = notionEventDeliveryId(rawBody);
-          waitUntil(
-            admitTrigger(
-              {
-                source: NOTION_EVENT_SOURCE,
-                headers: {},
-                body: rawBody,
-                receivedAt: new Date().toISOString(),
-                ...(deliveryId ? { deliveryId } : {}),
-              },
-              { to },
-            ).then(
-              (report) => {
-                if (report.matched > 0) log(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);
-              },
-              (err) => log(`event plane: admitTrigger threw (routing lost for this delivery): ${String(err)}`),
-            ),
-          );
+          const eventPlane = admitTrigger(
+            {
+              source: NOTION_EVENT_SOURCE,
+              headers: {},
+              body: rawBody,
+              receivedAt: new Date().toISOString(),
+              ...(deliveryId ? { deliveryId } : {}),
+            },
+            { to },
+          ).then((report) => {
+            if (report.matched > 0) log(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);
+          });
+          if (acceptedIngress) {
+            try {
+              await eventPlane;
+            } catch (err) {
+              await settleNotionIngressDrain(acceptedIngress, "retry", {
+                org: deploymentOrg(),
+                store: getOperationalStore(),
+              });
+              throw err;
+            }
+          } else {
+            waitUntil(eventPlane.catch((err) => log(`event plane: admitTrigger threw (routing lost for this delivery): ${String(err)}`)));
+          }
         }
       }
 
@@ -478,8 +625,28 @@ export default defineChannel<NotionState, { state: NotionState }>({
         log(`delivery ${outcome.action}${outcome.detail ? ` (${outcome.detail})` : ""}`);
       }
 
-      return new Response(outcome.body, { status: outcome.status });
-    }),
+      if (acceptedIngress) {
+        await settleNotionIngressDrain(acceptedIngress, notionIngressDisposition(outcome, eventPlaneRefused), {
+          org: deploymentOrg(),
+          store: getOperationalStore(),
+        });
+      }
+      const response = new Response(outcome.body, { status: outcome.status });
+      finishTiming(outcome.action);
+      return response;
+  },
+);
+
+export default defineChannel<NotionState, { state: NotionState }>({
+  kindHint: "notion",
+  turnPolicy: "queue",
+  state: { discussionId: null, pageId: null, workspaceId: null },
+  context(state) {
+    return { state };
+  },
+  routes: [
+    POST(ROUTE, notionWebhookRouteHandler),
+    POST(NOTION_INGRESS_DRAIN_PATH, notionWebhookRouteHandler),
   ],
   events: {
     "turn.started"(_data, channel, ctx) {

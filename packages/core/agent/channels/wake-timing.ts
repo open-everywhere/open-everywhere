@@ -65,9 +65,11 @@ export const WAKE_DISPATCH_RETRY_POLICY: { readonly maxAttempts: number; readonl
 
 export const WAKE_DISPATCH_OPERATION = "wake.dispatch";
 
-export type WakeRetryDetail = {
-  readonly wakeId: string;
-  readonly deliveryId?: string;
+type WakeRetryIdentity =
+  | { readonly wakeId: string; readonly deliveryId?: string }
+  | { readonly wakeId?: undefined; readonly deliveryId: string };
+
+export type WakeRetryDetail = WakeRetryIdentity & {
   readonly surfaceKey: string;
   readonly attempt: number;
   readonly delayMs: number;
@@ -76,9 +78,7 @@ export type WakeRetryDetail = {
   readonly refusalStatus: number;
 };
 
-export function wakeRetryDetail(input: {
-  readonly wakeId: string;
-  readonly deliveryId?: string;
+export function wakeRetryDetail(input: WakeRetryIdentity & {
   readonly surfaceKey: string;
   readonly attempt: number;
   readonly delayMs: number;
@@ -86,9 +86,12 @@ export function wakeRetryDetail(input: {
   readonly outcome: "retrying" | "exhausted";
   readonly refusalStatus: number;
 }): WakeRetryDetail {
+  const identity: WakeRetryIdentity =
+    input.wakeId === undefined
+      ? { deliveryId: input.deliveryId }
+      : { wakeId: input.wakeId, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}) };
   return {
-    wakeId: input.wakeId,
-    ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
+    ...identity,
     surfaceKey: input.surfaceKey,
     attempt: input.attempt,
     delayMs: input.delayMs,

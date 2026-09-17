@@ -49,31 +49,28 @@ const liveDeps: NotionCatchUpDeps = {
 };
 
 export async function fetchNotionCatchUpWindow(
-  req: { container: string; threadRoot?: string; sinceMs: number; channelKey?: string },
+  req: { container: string; threadRoot?: string; threadAnchor?: string; sinceMs: number; channelKey?: string },
   deps: NotionCatchUpDeps = liveDeps,
 ): Promise<readonly NormalizedMessage[]> {
-  try {
-    const credentialId = req.channelKey ? notionChannelCredentialForSurface(req.channelKey, deps.domains ?? safeDomains()) : undefined;
-    const cred = await deps.resolveCredential(credentialId);
-    if (!cred) return [];
-    const selfActorId = deps.selfActorId ?? (await deps.selfActorIdFor?.(credentialId ?? NOTION_CHANNEL_CREDENTIAL, cred));
-    const res = await deps.readComments(req.container, {
-      apiKey: cred.apiKey, endpoints: cred.endpoints,
-      maxComments: CATCH_UP_MAX_COMMENTS,
-      maxBlockScans: CATCH_UP_MAX_BLOCK_SCANS,
-      sinceMs: req.sinceMs,
-      maxCommentPages: CATCH_UP_MAX_COMMENT_PAGES,
-    });
-    const out: NormalizedMessage[] = [];
-    for (const c of res.comments) {
-      if (req.threadRoot !== undefined && c.discussionId !== req.threadRoot) continue;
-      const n = normalizeComment(c, selfActorId);
-      if (n && n.ms >= req.sinceMs) out.push(n);
-    }
-    return out;
-  } catch {
-    return [];
+  const credentialId = req.channelKey ? notionChannelCredentialForSurface(req.channelKey, deps.domains ?? safeDomains()) : undefined;
+  const cred = await deps.resolveCredential(credentialId);
+  if (!cred) return [];
+  const selfActorId = deps.selfActorId ?? (await deps.selfActorIdFor?.(credentialId ?? NOTION_CHANNEL_CREDENTIAL, cred));
+  const res = await deps.readComments(req.container, {
+    apiKey: cred.apiKey, endpoints: cred.endpoints,
+    maxComments: CATCH_UP_MAX_COMMENTS,
+    maxBlockScans: CATCH_UP_MAX_BLOCK_SCANS,
+    sinceMs: req.sinceMs,
+    maxCommentPages: CATCH_UP_MAX_COMMENT_PAGES,
+    ...(req.threadAnchor ? { block: req.threadAnchor } : {}),
+  });
+  const out: NormalizedMessage[] = [];
+  for (const c of res.comments) {
+    if (req.threadRoot !== undefined && c.discussionId !== req.threadRoot) continue;
+    const n = normalizeComment(c, selfActorId);
+    if (n && n.ms >= req.sinceMs) out.push(n);
   }
+  return out;
 }
 
 export const NOTION_TIMESTAMP_PRECISION_MS = 60_000;
@@ -82,6 +79,7 @@ export const notionSeatCatchUpFetch: SeatCatchUpFetch = (req) =>
   fetchNotionCatchUpWindow({
     container: req.container,
     ...(req.threadRoot ? { threadRoot: req.threadRoot } : {}),
+    ...(req.threadAnchor ? { threadAnchor: req.threadAnchor } : {}),
     sinceMs: req.sinceMs,
     ...(req.channelKey ? { channelKey: req.channelKey } : {}),
   });

@@ -12,6 +12,11 @@ import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.j
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { postSurfaceText, surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
+import {
+  captureApprovalDecisionAuthority,
+  readApprovalDecisionAuthority,
+  rememberApprovalDecisionAuthority,
+} from "./decision-authority.internal.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import {
   approvalModeForDomain,
@@ -42,6 +47,7 @@ import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
+import type { BindableContext } from "../identity/binding.js";
 import "./memory-purge.js";
 import "./access-request.js";
 import "./skill-create.js";
@@ -205,13 +211,14 @@ export function hasJudgeLiftNoticePath(platform: string): boolean {
 async function postJudgeLiftNotice(
   platform: string | undefined,
   post: PostFn,
-  input: { readonly kind: string; readonly scopeKey: string; readonly channelId: string; readonly threadTs?: string | null },
+  input: { readonly kind: string; readonly scopeKey: string; readonly channelId: string; readonly threadTs?: string | null; readonly postedTo?: string | null },
   row: PendingActionRow,
   summarize: () => readonly string[],
   outcomeLine: string,
 ): Promise<void> {
   const render = judgeLiftNoticeRenderFor(platform);
   if (render === "none") return;
+  if (input.postedTo && !(await checkCardDisclosure(input.postedTo)).ok) return;
   if (swallowRoomOp(`a judge-lift notice for "${input.kind}" (${input.scopeKey})`)) return;
   try {
     const noticeLines = summarize();
@@ -298,6 +305,7 @@ export function autoApprovedNote(what: string, autoApproved: AutoApprovedOutcome
 export interface RequestApprovalDeps {
   readonly post?: PostFn;
   readonly postCard?: CardPoster;
+  readonly authorityContext?: BindableContext;
 }
 
 export async function requestApproval(
@@ -550,6 +558,8 @@ export async function requestApproval(
     return { id: dup.id, expiresAt: dup.expiresAt, deduped: true };
   }
 
+  const decisionAuthority = deps.authorityContext === undefined ? undefined : await captureApprovalDecisionAuthority(deps.authorityContext);
+
   let id: string = randomUUID();
   const redeliveryId = redeliveryActionId(kindDef, input);
   if (redeliveryId !== undefined) {
@@ -594,6 +604,21 @@ export async function requestApproval(
     }
   } else {
     await store.addPendingAction(row);
+  }
+
+  if (decisionAuthority !== undefined) {
+    try {
+      await rememberApprovalDecisionAuthority(row.org, row.id, row.expiresAt, decisionAuthority);
+    } catch (err) {
+      await store.decidePendingAction(row.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
+      await appendAudit({
+        ...whereFromScope(row.org, row.scopeKey),
+        principalId: row.requestedBy,
+        action: "approval.expired",
+        detail: { id: row.id, kind: row.kind, cause: "decision_authority_store_failed" },
+      }).catch(() => undefined);
+      throw new Error(`requestApproval: could not freeze the proposing seat authority; marked expired and did not post a card: ${String(err)}`);
+    }
   }
 
   const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
@@ -766,9 +791,12 @@ async function settleRoutineCardWait(
   return { clause: (routineCardKeepsStateClause(outcome) ? cardClause : "") + waitClause, waited: true };
 }
 
-export function approvalPostDeps(platform: string): RequestApprovalDeps {
+export function approvalPostDeps(platform: string, authorityContext?: BindableContext): RequestApprovalDeps {
   const poster = cardPosterFor(platform);
-  return poster ? { postCard: poster } : {};
+  return {
+    ...(poster ? { postCard: poster } : {}),
+    ...(authorityContext ? { authorityContext } : {}),
+  };
 }
 
 export function hasApprovalCardPath(platform: string): boolean {
@@ -1291,10 +1319,14 @@ export async function wakeWindowOnDecision(
   const mint = deps.mintWakeId ?? mintWakeId;
   const nowIso = (deps.now ?? (() => new Date().toISOString()))();
 
+  const authority = await readApprovalDecisionAuthority(input.row.org, input.row.id);
+  const surfaceKey = authority?.surfaceKey ?? input.surfaceKey;
+  const origin = authority?.origin ?? input.origin;
+
   let domainName: string;
   let registryKey: string;
   try {
-    const grain = supervisorGrainFor(input.surfaceKey, getConfig().loadDomains());
+    const grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
     if (!grainUsesUnifiedWindow(grain) || grain.domainName === undefined) return false;
     domainName = grain.domainName;
     registryKey = grain.registryKey;
@@ -1309,7 +1341,7 @@ export async function wakeWindowOnDecision(
   const wakeId = mint();
   const message = renderApprovalDecisionMessage(
     {
-      origin: input.origin,
+      origin,
       wakeId,
       summaryLine: input.summaryLine,
       outcome: input.outcome,
@@ -1319,7 +1351,20 @@ export async function wakeWindowOnDecision(
     },
     nowIso,
   );
-  const delivered = await dispatch({ token: session.token, origin: input.origin, wakeId, message, domain: domainName }).catch(() => false);
+  const delivered = await dispatch({
+    token: session.token,
+    origin,
+    wakeId,
+    message,
+    domain: domainName,
+    ...(authority
+      ? {
+          binding: authority.binding,
+          requester: authority.requester,
+          nonMemberWake: authority.nonMemberWake,
+        }
+      : {}),
+  }).catch(() => false);
 
   await appendAudit({
     ...whereFromScope(input.row.org, input.row.scopeKey),

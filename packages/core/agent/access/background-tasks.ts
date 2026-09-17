@@ -131,6 +131,10 @@ export type TaskNotification = {
 
 const TASK_NOTIFICATION_RE =
   /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/m;
+const TASK_NOTIFICATION_START_RE =
+  /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/;
+const TASK_NOTIFICATION_GLOBAL_RE =
+  /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/gm;
 
 const TASK_ID_RE = /^task_[A-Za-z0-9_-]{8,}$/;
 
@@ -145,6 +149,35 @@ export function readTaskNotification(message: unknown): TaskNotification | null 
     return { taskId, status };
   } catch {
     return null;
+  }
+}
+
+export function readTaskNotifications(message: unknown): readonly TaskNotification[] {
+  try {
+    if (typeof message !== "string" || message.length === 0) return [];
+    const out: TaskNotification[] = [];
+    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
+    for (const match of message.trimStart().matchAll(TASK_NOTIFICATION_GLOBAL_RE)) {
+      const taskId = match[1] ?? "";
+      if (!TASK_ID_RE.test(taskId)) continue;
+      out.push({ taskId, status: match[2] ?? "input_required" });
+    }
+    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
+    return out;
+  } catch {
+    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
+    return [];
+  }
+}
+
+export function taskNotificationStartsWithTerminal(message: unknown): boolean {
+  try {
+    if (typeof message !== "string" || message.length === 0) return false;
+    const match = TASK_NOTIFICATION_START_RE.exec(message.trimStart());
+    if (match === null || !TASK_ID_RE.test(match[1] ?? "")) return false;
+    return TERMINAL_TASK_STATUSES.includes(match[2] ?? "input_required");
+  } catch {
+    return false;
   }
 }
 
@@ -206,8 +239,11 @@ function splitFailurePayload(payload: string): TaskNotificationFailure {
 }
 
 export function terminalTaskNotification(message: unknown): TaskSummary | null {
-  const note = readTaskNotification(message);
-  if (note === null) return null;
-  if (!TERMINAL_TASK_STATUSES.includes(note.status)) return null;
-  return { taskId: note.taskId, status: note.status, agentId: null };
+  return terminalTaskNotifications(message)[0] ?? null;
+}
+
+export function terminalTaskNotifications(message: unknown): readonly TaskSummary[] {
+  return readTaskNotifications(message)
+    .filter((note) => TERMINAL_TASK_STATUSES.includes(note.status))
+    .map((note) => ({ taskId: note.taskId, status: note.status, agentId: null }));
 }

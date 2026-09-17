@@ -503,6 +503,33 @@ const store = makeOperationalPostgresStore(client);
   ok(await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyUsd: 0 }).then(() => false, () => true), "setSpendLimit rejects a non-positive USD limit");
   ok((await store.clearSpendLimit("default", "slack/T1/C1", "surface")) === true && (await store.spendLimits("default")).length === 1, "clearSpendLimit removes one");
 
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  for (const [engine, conditional] of [["postgres", store], ["sqlite", sqliteOperationalStore]] as const) {
+    const key = `slack/T-CAS/C-${engine}`;
+    await conditional.clearSpendLimit("default", key, "surface");
+    const owned = { monthlyTokens: 1, expiresAt: 4_102_444_800_000, reason: `fixture-${engine}`, setBy: "local-operator" };
+    ok(
+      (await conditional.setSpendLimit("default", key, "surface", { monthlyTokens: owned.monthlyTokens }, owned, { ifAbsent: true })) === true,
+      `conditional spend/${engine}: an absent address is inserted`,
+    );
+    ok(
+      (await conditional.setSpendLimit("default", key, "surface", { monthlyTokens: 99 }, { reason: "operator", setBy: "somebody" }, { ifAbsent: true })) === false,
+      `conditional spend/${engine}: insert-if-absent cannot replace an existing override`,
+    );
+    ok(
+      (await conditional.spendLimits("default")).find((r) => r.scopeKey === key)?.monthlyTokens === 1,
+      `conditional spend/${engine}: the refused insert preserves the original override`,
+    );
+    ok(
+      (await conditional.clearSpendLimit("default", key, "surface", { ...owned, reason: "wrong owner" })) === false,
+      `conditional spend/${engine}: an inexact ownership handle cannot delete`,
+    );
+    ok(
+      (await conditional.clearSpendLimit("default", key, "surface", owned)) === true,
+      `conditional spend/${engine}: the exact ownership handle deletes its own unchanged override`,
+    );
+  }
+
   await store.setSpendLimit("default", "eng", "domain", { monthlyTokens: 4000 });
   const domainLimits = await store.spendLimits("default");
   const domainRow = domainLimits.find((l) => l.scopeKey === "eng" && l.level === "domain");
@@ -1587,6 +1614,137 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.claimStoredCredential("default", REF, "claim-D", "2026-07-22T00:05:00Z", "2026-07-22T00:04:00Z")) === true, "claim: an expired lease (claimed_at <= staleBefore) is stolen by a fresh claim");
   ok((await store.claimStoredCredential("acme", REF, "claim-X", "2026-07-22T00:06:00Z", "2026-07-22T00:00:00Z")) === false, "claim: another org can't claim (row is org-scoped)");
   ok((await store.getStoredCredential("default", REF))?.ciphertext === "ENVELOPE-OPAQUE", "claim: claim/release never mutate the ciphertext payload");
+}
+
+{
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  const adapters = [
+    {
+      name: "postgres",
+      inbox: store,
+      async raw(key: { source: string; authorityId: string; deliveryId: string }) {
+        const { rows } = await client.query(
+          `SELECT payload_json, completed_at, retain_until FROM ingress_delivery
+            WHERE org_id = $1 AND source = $2 AND authority_id = $3 AND delivery_id = $4`,
+          ["inbox-parity", key.source, key.authorityId, key.deliveryId],
+        );
+        return (rows as Array<{ payload_json: string | null; completed_at: string | null; retain_until: string | null }>)[0];
+      },
+    },
+    {
+      name: "sqlite",
+      inbox: sqliteOperationalStore,
+      async raw(key: { source: string; authorityId: string; deliveryId: string }) {
+        const db = new DatabaseSync(pinnedSuiteStorePath(), { readOnly: true });
+        try {
+          return db
+            .prepare(
+              `SELECT payload_json, completed_at, retain_until FROM ingress_delivery
+                WHERE org_id = ? AND source = ? AND authority_id = ? AND delivery_id = ?`,
+            )
+            .get("inbox-parity", key.source, key.authorityId, key.deliveryId) as
+            | { payload_json: string | null; completed_at: string | null; retain_until: string | null }
+            | undefined;
+        } finally {
+          db.close();
+        }
+      },
+    },
+  ] as const;
+
+  for (const adapter of adapters) {
+    const s = adapter.inbox;
+    const label = `ingress inbox (${adapter.name})`;
+    const source = `notion-${adapter.name}`;
+    const key = { source, authorityId: "notion-domain-a", deliveryId: "event-1" };
+    const firstPayload = JSON.stringify({ schemaVersion: 1, body: "first" });
+    const secondPayload = JSON.stringify({ schemaVersion: 1, body: "replacement-must-lose" });
+
+    ok(await s.enqueueIngressDelivery("inbox-parity", { ...key, payloadJson: firstPayload, receivedAt: "2026-09-17T00:00:00.000Z" }), `${label}: first enqueue inserts`);
+    ok(!(await s.enqueueIngressDelivery("inbox-parity", { ...key, payloadJson: secondPayload, receivedAt: "2026-09-17T00:00:01.000Z" })), `${label}: duplicate enqueue cannot replace the frozen payload`);
+
+    const raceKey = { source, authorityId: "notion-domain-a", deliveryId: "event-race" };
+    const enqueueRace = await Promise.all([
+      s.enqueueIngressDelivery("inbox-parity", { ...raceKey, payloadJson: firstPayload, receivedAt: "2026-09-17T00:00:02.000Z" }),
+      s.enqueueIngressDelivery("inbox-parity", { ...raceKey, payloadJson: secondPayload, receivedAt: "2026-09-17T00:00:02.000Z" }),
+    ]);
+    ok(enqueueRace.filter(Boolean).length === 1, `${label}: racing enqueues have exactly one winner`);
+
+    const due = await s.listDueIngressDeliveries("inbox-parity", source, "2026-09-17T00:00:03.000Z", "2026-09-16T23:59:00.000Z", 10);
+    const dueKey = due.find((row) => row.deliveryId === key.deliveryId);
+    ok(dueKey?.authorityId === key.authorityId && !("payloadJson" in (dueKey ?? {})), `${label}: due scan is keyed metadata only, never payload`);
+
+    ok(
+      (await s.claimIngressDelivery(
+        "inbox-parity",
+        { ...key, authorityId: "notion-domain-wrong" },
+        "claim-wrong-authority",
+        "2026-09-17T00:00:03.000Z",
+        "2026-09-16T23:59:00.000Z",
+      )) === null,
+      `${label}: exact claim cannot cross the frozen signer authority`,
+    );
+    ok(
+      (await s.claimIngressDelivery(
+        "inbox-parity-wrong-org",
+        key,
+        "claim-wrong-org",
+        "2026-09-17T00:00:03.000Z",
+        "2026-09-16T23:59:00.000Z",
+      )) === null,
+      `${label}: exact claim cannot cross the org partition`,
+    );
+
+    const claims = await Promise.all([
+      s.claimIngressDelivery("inbox-parity", key, "claim-a", "2026-09-17T00:00:04.000Z", "2026-09-16T23:59:00.000Z"),
+      s.claimIngressDelivery("inbox-parity", key, "claim-b", "2026-09-17T00:00:04.000Z", "2026-09-16T23:59:00.000Z"),
+    ]);
+    const firstClaim = claims.find((claim) => claim !== null);
+    ok(claims.filter((claim) => claim !== null).length === 1, `${label}: racing exact claims have exactly one winner`);
+    ok(firstClaim?.payloadJson === firstPayload, `${label}: after wrong-org and wrong-authority attempts, the correct claim still returns the original frozen payload`);
+    ok((await s.listDueIngressDeliveries("inbox-parity", source, "2026-09-17T00:00:05.000Z", "2026-09-17T00:00:03.999Z", 10)).every((row) => row.deliveryId !== key.deliveryId), `${label}: an active lease is absent from recovery scans`);
+
+    const stolen = await s.claimIngressDelivery("inbox-parity", key, "claim-stolen", "2026-09-17T00:10:00.000Z", "2026-09-17T00:00:04.000Z");
+    ok(stolen?.claimId === "claim-stolen", `${label}: an expired crash lease is atomically stolen`);
+    ok(!(await s.releaseIngressDelivery("inbox-parity", key, firstClaim!.claimId, "2026-09-17T00:11:00.000Z")), `${label}: stale holder cannot release the stolen lease`);
+    ok(!(await s.completeIngressDelivery("inbox-parity", key, firstClaim!.claimId, "2026-09-17T00:10:01.000Z", "2026-09-17T00:20:01.000Z")), `${label}: stale holder cannot complete the stolen lease`);
+    ok(!(await s.discardIngressDelivery("inbox-parity", key, firstClaim!.claimId)), `${label}: stale holder cannot discard the stolen lease`);
+
+    ok(await s.releaseIngressDelivery("inbox-parity", key, "claim-stolen", "2026-09-17T00:20:00.000Z"), `${label}: current holder can release for retry`);
+    ok((await s.listDueIngressDeliveries("inbox-parity", source, "2026-09-17T00:19:59.999Z", "2026-09-17T00:19:00.000Z", 10)).every((row) => row.deliveryId !== key.deliveryId), `${label}: released work is hidden until availableAt`);
+    ok((await s.listDueIngressDeliveries("inbox-parity", source, "2026-09-17T00:20:00.000Z", "2026-09-17T00:19:00.000Z", 10)).some((row) => row.deliveryId === key.deliveryId), `${label}: released work becomes due at availableAt`);
+    const retry = await s.claimIngressDelivery("inbox-parity", key, "claim-retry", "2026-09-17T00:20:00.000Z", "2026-09-17T00:19:00.000Z");
+    ok(retry?.payloadJson === firstPayload, `${label}: retry claim recovers the same payload after a crash/release cycle`);
+
+    let retentionRefused = false;
+    try {
+      await s.completeIngressDelivery("inbox-parity", key, "claim-retry", "2026-09-17T00:20:01.000Z", "2026-09-18T00:20:01.001Z");
+    } catch {
+      retentionRefused = true;
+    }
+    ok(retentionRefused, `${label}: completion refuses a tombstone beyond the fixed 24h ceiling`);
+    ok(await s.completeIngressDelivery("inbox-parity", key, "claim-retry", "2026-09-17T00:20:01.000Z", "2026-09-17T00:30:01.000Z"), `${label}: current holder completes with a bounded tombstone`);
+    const completed = await adapter.raw(key);
+    ok(completed?.payload_json === null && completed.completed_at === "2026-09-17T00:20:01.000Z" && completed.retain_until === "2026-09-17T00:30:01.000Z", `${label}: completion atomically erases payload and keeps only lifecycle metadata`);
+    ok(!(await s.enqueueIngressDelivery("inbox-parity", { ...key, payloadJson: secondPayload, receivedAt: "2026-09-17T00:29:59.000Z" })), `${label}: completed duplicate stays suppressed during tombstone retention`);
+    ok((await s.claimIngressDelivery("inbox-parity", key, "claim-after-complete", "2026-09-17T00:30:00.000Z", "2026-09-17T00:29:00.000Z")) === null, `${label}: completed tombstone is never claimable`);
+    ok(await s.enqueueIngressDelivery("inbox-parity", { ...key, payloadJson: secondPayload, receivedAt: "2026-09-17T00:30:01.000Z" }), `${label}: elapsed tombstone prunes on enqueue and the vendor identity becomes eligible again`);
+
+    const refusedKey = { source, authorityId: "notion-domain-a", deliveryId: "event-refused" };
+    await s.enqueueIngressDelivery("inbox-parity", { ...refusedKey, payloadJson: firstPayload, receivedAt: "2026-09-17T00:40:00.000Z" });
+    await s.claimIngressDelivery("inbox-parity", refusedKey, "claim-refused", "2026-09-17T00:40:01.000Z", "2026-09-17T00:39:00.000Z");
+    ok(!(await s.discardIngressDelivery("inbox-parity", refusedKey, "wrong-claim")), `${label}: wrong holder cannot discard a refusal`);
+    ok(await s.discardIngressDelivery("inbox-parity", refusedKey, "claim-refused"), `${label}: definite pre-dispatch refusal gives its claimed row back`);
+    ok(await s.enqueueIngressDelivery("inbox-parity", { ...refusedKey, payloadJson: firstPayload, receivedAt: "2026-09-17T00:40:02.000Z" }), `${label}: vendor redelivery can enqueue after guarded refusal discard`);
+
+    const oldPending = { source, authorityId: "notion-domain-a", deliveryId: "event-old-pending" };
+    await s.enqueueIngressDelivery("inbox-parity", { ...oldPending, payloadJson: firstPayload, receivedAt: "2020-01-01T00:00:00.000Z" });
+    await s.enqueueIngressDelivery("inbox-parity", { source, authorityId: "notion-domain-a", deliveryId: "event-new", payloadJson: firstPayload, receivedAt: "2030-01-01T00:00:00.000Z" });
+    ok((await s.claimIngressDelivery("inbox-parity", oldPending, "claim-old", "2030-01-01T00:00:01.000Z", "2029-12-31T00:00:00.000Z")) !== null, `${label}: accepted pending work never expires during a long outage`);
+
+    ok(await s.enqueueIngressDelivery("inbox-parity", { source, authorityId: "notion-domain-b", deliveryId: key.deliveryId, payloadJson: firstPayload, receivedAt: "2026-09-17T00:50:00.000Z" }), `${label}: signer identity is part of the immutable delivery key`);
+    ok((await s.listDueIngressDeliveries("another-org", source, "2030-01-01T00:00:00.000Z", "2030-01-01T00:00:00.000Z", 10)).length === 0, `${label}: recovery scan is org-isolated`);
+  }
 }
 
 {

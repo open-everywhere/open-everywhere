@@ -11,6 +11,12 @@ export interface FenceRowDetail {
   readonly ownerPlatform?: unknown;
   readonly grantId?: unknown;
   readonly askId?: unknown;
+  readonly scopeKey?: unknown;
+  readonly wakeId?: unknown;
+  readonly sessionId?: unknown;
+  readonly vendorTs?: unknown;
+  readonly vendorTsSource?: unknown;
+  readonly surfaceKey?: unknown;
   readonly expiresAt?: unknown;
   readonly outcome?: unknown;
   readonly gate?: unknown;
@@ -68,6 +74,49 @@ export function discordOwnedAsks(rows: readonly AuditWireEntry[]): readonly Audi
   return rows.filter((e) => e.action === "grant.asked" && ownerPlatformOf(e) === "discord");
 }
 
+export function discordWakeSessionIds(rows: readonly AuditWireEntry[], messageId: string, channelId: string): readonly string[] {
+  if (channelId.length === 0) return [];
+  if (!/^[0-9]+$/.test(messageId)) return [];
+  let vendorTs: string;
+  try {
+    const snowflake = BigInt(messageId);
+    if (snowflake <= 0n) return [];
+    const ms = Number((snowflake >> 22n) + 1_420_070_400_000n);
+    if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) return [];
+    vendorTs = new Date(ms).toISOString();
+  } catch {
+    return [];
+  }
+  const wakeIds = new Set(
+    rows
+      .filter(
+        (e) =>
+          e.action === "wake.ingress" &&
+          e.platform === "discord" &&
+          (surfaceNamesChannel(e.surface, channelId) ||
+            (typeof detailOf(e).surfaceKey === "string" && surfaceNamesChannel(detailOf(e).surfaceKey as string, channelId))) &&
+          detailOf(e).vendorTs === vendorTs &&
+          detailOf(e).vendorTsSource === "discord-snowflake",
+      )
+      .map((e) => detailOf(e).wakeId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
+  if (wakeIds.size !== 1) return [];
+  return [
+    ...new Set(
+      rows
+        .filter((e) => e.action === "wake.turn_start" && typeof detailOf(e).wakeId === "string" && wakeIds.has(detailOf(e).wakeId as string))
+        .map((e) => detailOf(e).sessionId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+}
+
+export function exactDiscordOwnedAsks(rows: readonly AuditWireEntry[], askId: string, scopeKey: string): readonly AuditWireEntry[] {
+  if (askId.length === 0 || scopeKey.length === 0) return [];
+  return discordOwnedAsks(rows).filter((e) => detailOf(e).askId === askId && detailOf(e).scopeKey === scopeKey);
+}
+
 export function noticesForGrant(rows: readonly AuditWireEntry[], grantId: string): readonly AuditWireEntry[] {
   return rows.filter((e) => e.action === "grant.notified" && detailOf(e).grantId === grantId);
 }
@@ -90,6 +139,11 @@ export function grantsForAsks(rows: readonly AuditWireEntry[], askIds: readonly 
   return rows.filter((e) => e.action === "grant.granted" && typeof detailOf(e).askId === "string" && wanted.has(detailOf(e).askId as string));
 }
 
+export function grantsForExactAsk(rows: readonly AuditWireEntry[], askId: string, scopeKey: string): readonly AuditWireEntry[] {
+  if (askId.length === 0 || scopeKey.length === 0) return [];
+  return rows.filter((e) => e.action === "grant.granted" && detailOf(e).askId === askId && detailOf(e).scopeKey === scopeKey);
+}
+
 export function grantIdsOf(rows: readonly AuditWireEntry[]): readonly string[] {
   return rows.map((e) => detailOf(e).grantId).filter((id): id is string => typeof id === "string" && id.length > 0);
 }
@@ -97,9 +151,9 @@ export function grantIdsOf(rows: readonly AuditWireEntry[]): readonly string[] {
 export function unexpiredGrants(rows: readonly AuditWireEntry[], nowMs: number): readonly AuditWireEntry[] {
   return rows.filter((e) => {
     const expiresAt = detailOf(e).expiresAt;
-    if (typeof expiresAt !== "string") return true;
+    if (typeof expiresAt !== "string") return false;
     const ms = Date.parse(expiresAt);
-    return !Number.isFinite(ms) || ms > nowMs;
+    return Number.isFinite(ms) && ms > nowMs;
   });
 }
 

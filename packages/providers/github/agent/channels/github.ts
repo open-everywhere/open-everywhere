@@ -79,6 +79,7 @@ import {
   seatAdmissionFor,
   ENGAGED_FOLLOW_UP_CONTEXT,
   OE_ADDRESSED_ATTR,
+  dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -299,9 +300,13 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
       }
       const unified = githubGrainFor(surfaceKey).unified;
       try {
-        await send(
-          { message, context: [...context] },
-          { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(ev, unified) },
+        await dispatchNativeWakeWithRetry(
+          () =>
+            send(
+              { message, context: [...context] },
+              { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(ev, unified) },
+            ),
+          { platform: "github", workspace: ev.owner, surfaceKey },
         );
       } catch (err) {
         await healPrunedDeploymentStrand({ token, registryKey: surfaceKey, surfaceKey, workspace: ev.owner, platform: "github", atIso: new Date().toISOString(), err });

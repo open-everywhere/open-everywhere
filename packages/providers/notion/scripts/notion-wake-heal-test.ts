@@ -11,6 +11,7 @@ delete process.env.OE_PLATFORM;
 const { registerNotionProvider } = await import("../agent/register.js");
 registerNotionProvider();
 const { liveNotionSupervisorDeps } = await import("../agent/channels/notion.js");
+const { createNotionWebhookTiming } = await import("../agent/channels/notion-webhook-timing.js");
 const { getOperationalStore, deploymentOrg, RUN_KEY_FETCH_MARKER, HTTP_404_MARKER, PRUNED_DEPLOYMENT_AUDIT_ACTION } = await import(
   "@open-everywhere/core/agent/adapter-api.js"
 );
@@ -91,4 +92,52 @@ const STATE = { discussionId: null, pageId: null, workspaceId: null } as const;
   eq(strandRows.length, 0, "…and writes no strand audit row either");
 }
 
-console.log(`✓ notion-wake-heal: ${n} assertions passed (OPE-971 native flag-off pruned-deployment heal + negative control)`);
+{
+  let calls = 0;
+  const retryingSend = (async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+    return {};
+  }) as unknown as Parameters<typeof liveNotionSupervisorDeps>[0];
+  const deps = liveNotionSupervisorDeps(retryingSend, SURFACE, undefined);
+  await deps.wake({ token: "native-retry-tok", auth: { attributes: {} } as never, message: "<wake>retry</wake>", context: [], state: STATE });
+  eq(calls, 2, "🔴 OPE-1881: Notion's real native launch retries one proven 429 and delivers");
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_retry" })).filter((row) => row.surface === SURFACE);
+  eq(rows.length, 1, "🔴 OPE-1881: Notion records the native refusal under the real page surface");
+  ok(!("wakeId" in ((rows[0]?.detail ?? {}) as Record<string, unknown>)), "🔴 the native Notion row does not fabricate a wakeId");
+}
+
+{
+  let calls = 0;
+  const refusingSend = (async () => {
+    calls += 1;
+    throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  }) as unknown as Parameters<typeof liveNotionSupervisorDeps>[0];
+  const deps = liveNotionSupervisorDeps(refusingSend, SURFACE, undefined);
+  let threw: unknown;
+  try {
+    await deps.wake({ token: "exhaust-tok", auth: { attributes: {} } as never, message: "<wake>retry</wake>", context: [], state: STATE });
+  } catch (err) {
+    threw = err;
+  }
+  eq(calls, 4, "🔴 Notion's native adapter stops at the shared four-attempt bound");
+  ok(threw instanceof Error && threw.name === "RateLimitExhaustedError", "🔴 Notion propagates named retry exhaustion through its existing strand-heal catch");
+}
+
+{
+  let at = 0;
+  let calls = 0;
+  const timing = createNotionWebhookTiming(() => at);
+  const send = (async () => {
+    calls += 1;
+    at += 17;
+  }) as unknown as Parameters<typeof liveNotionSupervisorDeps>[0];
+  const deps = liveNotionSupervisorDeps(send, SURFACE, undefined, undefined, timing);
+  await deps.wake({ token: "timed-tok", auth: { attributes: {} } as never, message: "<wake>timed</wake>", context: [], state: STATE });
+  const detail = timing.detail("dispatched");
+  eq(calls, 1, "OPE-1929: the timing drive reached the live native send exactly once");
+  eq(detail.eveSendMs, 17, "🔴 OPE-1929: the live adapter attributes the injected native send delay to Eve delivery");
+  eq(detail.dispatchPreflightCatchUpMs, undefined, "OPE-1929: the nested adapter measure does not manufacture an outer dispatch span");
+}
+
+console.log(`✓ notion-wake-heal: ${n} assertions passed (OPE-971 heal + native 429 retry + control)`);

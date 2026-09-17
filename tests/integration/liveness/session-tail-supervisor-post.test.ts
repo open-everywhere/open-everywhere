@@ -76,7 +76,7 @@ afterAll(async () => {
 });
 
 async function armSeams(): Promise<void> {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ approvals: { judgeMode: "off" }, window: { topology: false } });
   expect(settings.getSettings().window.topology).toBe(false);

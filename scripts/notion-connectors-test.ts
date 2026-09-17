@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
+import { domainsForSurface, loadDomains } from "../agent/memory/config/domains.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { SKILL_CONTENT, NOTION_SCRIPT_SOURCE } from "../agent/plugins/skill-content.js";
@@ -27,9 +28,16 @@ function ok(cond: boolean, label: string): void {
 const bundles = loadBundles();
 const bindings = loadBindings();
 const catalogues = loadConnectorCredentials();
+const domains = loadDomains();
 
 function resolveFor(workspace: string, channel: string) {
-  const req: ResolveRequest = { mode: "channel", platform: "slack", workspace, channel };
+  const req: ResolveRequest = {
+    mode: "channel",
+    platform: "slack",
+    workspace,
+    channel,
+    domains: domainsForSurface({ workspaceKey: `slack/${workspace}`, surface: channel }, domains),
+  };
   return resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, catalogues);
 }
 

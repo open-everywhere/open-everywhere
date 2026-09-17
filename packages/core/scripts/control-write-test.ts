@@ -75,6 +75,41 @@ await client.connect(clientT);
 }
 
 {
+  const scopeKey = "slack/T1/C-OWNED";
+  const reason = "e2e-run-owned";
+  const first = await callJson(client, "set_spend_limit", {
+    org: "default", scopeKey, level: "surface", monthlyTokens: 1, ttlSeconds: 1800, reason, ifAbsent: true,
+  });
+  ok("conditional spend set creates an absent row", first.created === true && first.setBy === "admin@example.com" && typeof first.expiresAt === "number");
+  const conflict = await callJson(client, "set_spend_limit", {
+    org: "default", scopeKey, level: "surface", monthlyTokens: 99, ttlSeconds: 1800, reason: "somebody-else", ifAbsent: true,
+  });
+  ok("conditional spend set reports the occupied address without replacing it", conflict.created === false);
+  ok("the conflicting conditional set preserved the owned row", (await getOperationalStore().spendLimits("default")).find((r) => r.scopeKey === scopeKey)?.monthlyTokens === 1);
+
+  const expected = { monthlyTokens: 1, expiresAt: first.expiresAt, reason, setBy: first.setBy };
+  const wrong = await callJson(client, "clear_spend_limit", { org: "default", scopeKey, level: "surface", expected: { ...expected, reason: "wrong" } });
+  ok("conditional spend clear refuses a changed ownership handle", wrong.cleared === false);
+  ok("the refused conditional clear leaves the row", (await getOperationalStore().spendLimits("default")).some((r) => r.scopeKey === scopeKey));
+  const exact = await callJson(client, "clear_spend_limit", { org: "default", scopeKey, level: "surface", expected });
+  ok("conditional spend clear removes its exact unchanged row", exact.cleared === true);
+}
+
+{
+  const scopeKey = "slack/T1/C-HALT-OWNED";
+  const address = { orgWide: false as const, level: "surface" as const, scopeKey };
+  await getOperationalStore().setHalt("default", address, { setBy: "U-driver" });
+  const drift = await callJson(client, "overrides_list", { org: "default" });
+  const owned = drift.halts.find((h: { scopeKey?: string }) => h.scopeKey === scopeKey);
+  ok("overrides_list exposes the exact active halt ownership facts", owned?.setBy === "U-driver" && typeof owned?.setAt === "string");
+  const wrong = await callJson(client, "resume", { org: "default", level: "surface", scopeKey, expected: { setAt: owned.setAt, setBy: "not-the-driver" } });
+  ok("conditional resume refuses a changed halt owner", wrong.cleared === false);
+  ok("the refused conditional resume leaves the halt active", (await getOperationalStore().activeHalts("default")).some((h) => !h.address.orgWide && h.address.scopeKey === scopeKey));
+  const exact = await callJson(client, "resume", { org: "default", level: "surface", scopeKey, expected: { setAt: owned.setAt, setBy: owned.setBy } });
+  ok("conditional resume clears its exact unchanged halt", exact.cleared === true);
+}
+
+{
   await callJson(client, "revoke_connector", { org: "default", surfaceKey: "slack/T1/C1", connector: "notion" });
   let ov = await getOperationalStore().connectorOverrides("default", "slack/T1/C1");
   ok("revoke_connector persists a denied override", ov.some((o) => o.connector === "notion" && o.granted === false));

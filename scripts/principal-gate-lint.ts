@@ -3,6 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ATTENDEDNESS_DERIVATION,
+  checkApprovalAuthoritySites,
   checkAttendednessSites,
   checkPrincipalGates,
   checkUnattendedDispatch,
@@ -62,6 +63,7 @@ if (files.length === 0) {
 const gates: PrincipalGate[] = files.flatMap((f) => findPrincipalGates(relative(root, f), readFileSync(f, "utf8")));
 const sites: UnattendedDispatchSite[] = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
 const attended: AttendednessSite[] = files.flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8")));
+const approvalAuthority = attended.filter((site) => site.shape === "propose");
 
 if (listOnly) {
   for (const g of [...gates].sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)))) {
@@ -81,11 +83,14 @@ if (listOnly) {
         : a.expr ?? "MISSING";
     console.log(`${(a.exempt ? "EXEMPT" : "ATTENDEDNESS").padEnd(15)} ${a.file}:${a.line}  ${a.shape.padEnd(13)} ${value}`);
   }
-  console.log(`\n${gates.length} principal refusal gate(s) + ${sites.length} service-principal dispatch site(s) + ${attended.length} attendedness site(s) over ${files.length} source file(s).`);
+  for (const a of [...approvalAuthority].sort((x, y) => (x.file === y.file ? x.line - y.line : x.file.localeCompare(y.file)))) {
+    console.log(`${(a.authorityExempt ? "HEADLESS" : "AUTHORITY-CTX").padEnd(15)} ${a.file}:${a.line}  ${a.authorityContext ?? a.authorityExemptReason ?? "MISSING"}`);
+  }
+  console.log(`\n${gates.length} principal refusal gate(s) + ${sites.length} service-principal dispatch site(s) + ${attended.length} attendedness site(s) + ${approvalAuthority.length} approval-authority site(s) over ${files.length} source file(s).`);
   process.exit(0);
 }
 
-const defects = [...checkPrincipalGates(gates), ...checkUnattendedDispatch(sites), ...checkAttendednessSites(attended)];
+const defects = [...checkPrincipalGates(gates), ...checkUnattendedDispatch(sites), ...checkAttendednessSites(attended), ...checkApprovalAuthoritySites(approvalAuthority)];
 if (defects.length > 0) {
   console.error(`✗ principal-gate-lint: ${defects.length} problem(s) — an undeclared or contradictory principal gate, an unattended origin with no marker, or an attendedness signal that is not derived:`);
   for (const d of defects) console.error(`  - [${d.rule}] ${d.file}:${d.line} — ${d.message}`);
@@ -100,11 +105,13 @@ if (defects.length > 0) {
 const presence = gates.filter((g) => g.intent === "presence").length;
 const exempt = attended.filter((a) => a.exempt).length;
 const eve = attended.filter((a) => a.shape === "eve-approval" && !a.exempt).length;
+const headlessAuthority = approvalAuthority.filter((a) => a.authorityExempt).length;
 console.log(
   `✓ principal-gate-lint: ${gates.length} principal refusal gate(s), every one declaring its intent and reading an accessor that can deliver it ` +
     `(${presence} presence — refuse an unattended fire; ${gates.length - presence} accountability — somebody nameable must exist); ` +
     `${sites.length} service-principal dispatch site(s), every one building its bag through fire-auth (OPE-278); ` +
     `${attended.length - exempt - eve} attendedness site(s) deriving through unattendedOf(ctx); ` +
     `${eve} eve ApprovalPolicy site(s) whose FILE derives it (OPE-1273 — the grain is the file, not the site); ` +
-    `and ${exempt} exempt with a stated reason (OPE-440).`,
+    `${exempt} attendedness-exempt with a stated reason (OPE-440); ` +
+    `${approvalAuthority.length - headlessAuthority} approval proposal site(s) carrying exact wake authority and ${headlessAuthority} headless exemption(s).`,
 );

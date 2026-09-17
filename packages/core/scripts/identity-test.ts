@@ -11,6 +11,7 @@ import {
   UNNAMED_TENANT,
 } from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
+import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
 import { carriesPlatformIdentity, healDeliveryIdentity, refreshBindingStamp, subagentBindingLost } from "../agent/identity/binding.js";
 import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
@@ -349,6 +350,7 @@ ok(
     Object.fromEntries(Object.entries(ctx.session?.auth?.current?.attributes ?? {}).map(([k, v]) => [k, String(v)]));
 
   let healedBagOut: Record<string, string> = {};
+  let dispatchBindingOut: ReturnType<typeof bindFrom> | undefined;
   await inSession(async () => {
     const deliveryA = makeDeliveryA();
     const internalWakeA = makeInternalWakeA();
@@ -365,19 +367,29 @@ ok(
     ok(healedBag["oe_window_token"] === "oe-domain::d:oe-sup:g1", "🔴 OPE-681 §5: …and its own window token too");
 
     healedBagOut = healedBag;
+    dispatchBindingOut = bindFrom(deliveryA);
   });
 
   await inSession(() => {
-    ok(readBindingBridge() === null, "OPE-681 §5: the child's own session starts with an EMPTY stamp slot — the bag is all it has");
+    ok(readBindingBridge() === null, "OPE-681 §5: the child's own session starts with an EMPTY bridge slot");
     const child = makeChild(healedBagOut);
-    ok(scopeKeyOf(child) === "ope603a/W_A/S_A", "🔴 OPE-681 §5: a native child inheriting the HEALED bag binds the PARENT'S surface");
-    ok(bindFrom(child).principalId === "P_A", "🔴 OPE-681 §5: …with the parent's acting principal");
-    ok(bindFrom(child).mode === "channel", "🔴 OPE-681 §5: …and the parent's MODE, which a surface-only carriage would still get wrong");
-    ok(subagentBindingLost(child) === false, "🔴 OPE-681 §5 negative control: …and the fail-closed backstop reads FALSE for it");
+    ok(scopeKeyOf(child) === "subagent/dev/unresolved", "🔴 OPE-681 §5: a raw inherited bag is not child authority before the dispatch snapshot is adopted");
+    ok(
+      dispatchBindingOut !== undefined &&
+        adoptDelegatedAuthority(
+          { binding: dispatchBindingOut, requester: { kind: "requester", principalId: "P_A" }, nonMemberWake: false },
+          undefined,
+        ),
+      "OPE-681 §5: the child adopts the host-captured dispatch authority",
+    );
+    ok(scopeKeyOf(child) === "ope603a/W_A/S_A", "🔴 OPE-681 §5: the adopted child binds the DISPATCH surface");
+    ok(bindFrom(child).principalId === "P_A", "🔴 OPE-681 §5: …with the dispatch-time acting principal");
+    ok(bindFrom(child).mode === "channel", "🔴 OPE-681 §5: …and the dispatch-time mode");
+  });
 
+  await inSession(() => {
     const lost = makeChild(copyOfBag(makeInternalWakeA()));
-    ok(scopeKeyOf(lost) === "ope603a/dev/default", "🔴 OPE-681 §5: a child inheriting the UNHEALED bag binds the env stand-in");
-    ok(subagentBindingLost(lost) === true, "🔴 OPE-681 §5: …and the backstop refuses it");
+    ok(scopeKeyOf(lost) === "subagent/dev/unresolved", "🔴 OPE-681 §5: a child with no dispatch snapshot fails closed to the unresolved child sentinel");
   });
 
   let crossBagOut: Record<string, string> = {};
@@ -395,7 +407,7 @@ ok(
     ok(copyOfBag(deliveryB)["ws"] === "W_B", "🔴 OPE-681 §6②: …and keeps its own workspace, never the established one");
   });
   await inSession(() => {
-    ok(scopeKeyOf(makeChild(crossBagOut)) === "ope603b/dev/default", "🔴 OPE-681 §6①: …so its child fails closed rather than binding the neighbour's surface");
+    ok(scopeKeyOf(makeChild(crossBagOut)) === "subagent/dev/unresolved", "🔴 OPE-681 §6①: …so its child fails closed rather than binding the neighbour's surface");
   });
 
   let lostBagOut: Record<string, string> = {};
@@ -429,16 +441,21 @@ ok(
       threw = err instanceof Error ? err.message : String(err);
     }
     ok(threw !== undefined && threw.includes("subagent child binding LOST"), "🔴 OPE-681 §9: the binding-bridge hook FAILS a lost child at session.started");
-    ok(threw !== undefined && threw.includes("ope603a/dev/default"), "🔴 OPE-681 §9: …and the message names the stand-in scope key it refused to run on");
+    ok(threw !== undefined && threw.includes("subagent/dev/unresolved"), "🔴 OPE-681 §9: …and the message names the unresolved child scope key it refused to run on");
   });
   await inSession(async () => {
     let threw: string | undefined;
     try {
+      if (dispatchBindingOut === undefined) throw new Error("missing dispatch binding fixture");
+      adoptDelegatedAuthority(
+        { binding: dispatchBindingOut, requester: { kind: "requester", principalId: "P_A" }, nonMemberWake: false },
+        undefined,
+      );
       await sessionStarted(makeChild(healedBagOut));
     } catch (err) {
       threw = err instanceof Error ? err.message : String(err);
     }
-    ok(threw === undefined, "🔴 OPE-681 §9 negative control: a child of a HEALED turn is NOT refused — the hook lets correct work through");
+    ok(threw === undefined, "🔴 OPE-681 §9 negative control: a child with adopted dispatch authority is NOT refused — the hook lets correct work through");
   });
 }
 

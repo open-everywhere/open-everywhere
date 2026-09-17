@@ -92,6 +92,7 @@ import {
   type WakeEngagementTier,
   dmTrustTtlMs,
   engagedFollowUpContract,
+  dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   slackMode,
@@ -970,9 +971,19 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     resolveProfile: liveResolveProfile,
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     async wake({ channelId, threadTs, auth, message, state }) {
-      await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
+      await dispatchNativeWakeWithRetry(
+        () => send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state }),
+        slackNativeWakeAttribution(auth, channelId),
+      );
     },
   };
+}
+
+function slackNativeWakeAttribution(auth: unknown, channelId: string) {
+  const attrs = auth !== null && typeof auth === "object" ? (auth as { attributes?: Record<string, unknown> }).attributes : undefined;
+  const raw = attrs?.["team_id"];
+  const workspace = typeof raw === "string" && raw.length > 0 ? raw : "unknown";
+  return { platform: "slack", workspace, surfaceKey: `slack/${workspace}/${channelId}` };
 }
 
 function authForEvent(ev: ParsedMessageEvent, facts?: ChannelFacts): OpenEverywhereSlackAuth {
@@ -1792,7 +1803,10 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, opts),
     backscroll: (input) => fetchWakeBackscrollLines(input),
     async wake({ channelId, threadTs, auth, message, context, state }) {
-      await send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
+      await dispatchNativeWakeWithRetry(
+        () => send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state }),
+        slackNativeWakeAttribution(auth, channelId),
+      );
     },
   };
 }
@@ -2126,7 +2140,12 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, { participating: opts?.participating ?? true }),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, state }) {
-      await send({ message, context }, { auth, continuationToken: token, state });
+      const attrs = auth !== null && typeof auth === "object" ? (auth as { attributes?: Record<string, unknown> }).attributes : undefined;
+      const channelId = typeof attrs?.["channel_id"] === "string" ? attrs["channel_id"] : "unknown";
+      await dispatchNativeWakeWithRetry(
+        () => send({ message, context }, { auth, continuationToken: token, state }),
+        slackNativeWakeAttribution(auth, channelId),
+      );
     },
   };
 }

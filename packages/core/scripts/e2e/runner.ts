@@ -18,6 +18,7 @@ import {
   resolveSlack,
   resolveSlackCapFixture,
   resolveSlackChannelB,
+  resolveSlackHalt,
   resolveSlackMpim,
   resolveSlackPrivate,
   resolveSlackSecondary,
@@ -28,6 +29,7 @@ import {
   resolveSyntheticDm,
   resolveTeams,
   resolveWebhook,
+  resolveControlWrite,
 } from "./env.js";
 import { SlackDriver } from "./slack-driver.js";
 import { DiscordDriver } from "./discord-driver.js";
@@ -39,9 +41,17 @@ import { PrApi } from "./pr-api.js";
 import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
-import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
+import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type Scenario, type ScenarioContext } from "./scenarios.js";
 import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
-import { boardGaps, isDeclaredGap, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
+import { boardGaps, isDeclaredGap, releaseBoardProblems, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
+import {
+  RELEASE_SCOPE_NAMES,
+  releasePhaseProblem,
+  releaseScopeIndex,
+  releaseScopeProblems,
+  releaseScopeRows,
+  type ReleaseScopeName,
+} from "./release-scope.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit, fetchAuditWindow } from "./audit-read.js";
 import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type LegWakeEvidence } from "./wake-evidence.js";
@@ -99,6 +109,8 @@ async function main(): Promise<void> {
   const slackChannelB = resolveSlackChannelB();
   const slackMpim = resolveSlackMpim();
   const slackCapFixture = resolveSlackCapFixture();
+  const slackHalt = resolveSlackHalt();
+  const controlWrite = resolveControlWrite();
   const slackSupervisor = resolveSlackSupervisor();
   const syntheticDm = resolveSyntheticDm();
   const slackUser2 = resolveSlackUser2();
@@ -159,6 +171,7 @@ async function main(): Promise<void> {
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
   const slackMpimDriver = slackDriver && slackMpim.ok ? slackDriver.withChannel(slackMpim.cfg.channel) : undefined;
   const slackCapFixtureDriver = slackDriver && slackCapFixture.ok ? slackDriver.withChannel(slackCapFixture.cfg.channel) : undefined;
+  const slackHaltDriver = slackDriver && slackHalt.ok ? slackDriver.withChannel(slackHalt.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
   const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
@@ -197,7 +210,7 @@ async function main(): Promise<void> {
   );
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
-    report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
+    report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode only when no canonical release scope is armed)"
   }; judge: ${judge.name}`);
   console.log(`seat lock: /tmp/oe-e2e-locks/domain-${process.env.E2E_UNIFIED_DOMAIN?.trim() || "e2e-unified"}.lock — hold it for the whole live drive; never run a second driver against any surface of this domain`);
 
@@ -205,6 +218,7 @@ async function main(): Promise<void> {
   let failed = 0;
   let skipped = 0;
   let declaredGaps = 0;
+  let notRun = 0;
   const fixtureRedsToProvision: string[] = [];
   const skipCounts = emptySkipCounts();
   const reportedJudgeReds: string[] = [];
@@ -224,6 +238,55 @@ async function main(): Promise<void> {
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean),
   );
+
+  const releaseIdx = process.argv.findIndex((a) => a === "--release-scope" || a.startsWith("--release-scope="));
+  const releaseRaw = (
+    releaseIdx === -1
+      ? process.env.E2E_RELEASE_SCOPE
+      : process.argv[releaseIdx]!.includes("=")
+        ? process.argv[releaseIdx]!.split("=")[1]
+        : process.argv[releaseIdx + 1]
+  )
+    ?.trim()
+    .toLowerCase();
+  if (releaseIdx !== -1 && !releaseRaw) {
+    console.error(`✗ --release-scope needs one of: ${RELEASE_SCOPE_NAMES.join(", ")}`);
+    process.exit(1);
+  }
+  if (releaseRaw && !RELEASE_SCOPE_NAMES.includes(releaseRaw as ReleaseScopeName)) {
+    console.error(`✗ release scope "${releaseRaw}" is not one of: ${RELEASE_SCOPE_NAMES.join(", ")}`);
+    process.exit(1);
+  }
+  const releaseScope = releaseRaw as ReleaseScopeName | undefined;
+  const releaseRows = releaseScope ? releaseScopeRows(releaseScope) : undefined;
+  const releaseIndex = releaseRows ? releaseScopeIndex(releaseRows) : undefined;
+  if (releaseRows) {
+    const problems = releaseScopeProblems(releaseRows);
+    if (
+      problems.missing.length ||
+      problems.unknown.length ||
+      problems.duplicate.length ||
+      problems.invalidEquivalent.length ||
+      problems.invalidReason.length ||
+      problems.invalidPhase.length
+    ) {
+      console.error(
+        `✗ E2E_RELEASE_SCOPE=${releaseScope} does not classify the scenario roster exactly once — ` +
+          `missing=${problems.missing.join(",") || "none"}; unknown=${problems.unknown.join(",") || "none"}; ` +
+          `duplicate=${problems.duplicate.join(",") || "none"}; invalid-equivalent=${problems.invalidEquivalent.join(",") || "none"}; ` +
+          `invalid-reason=${problems.invalidReason.join(",") || "none"}; invalid-phase=${problems.invalidPhase.join(",") || "none"}`,
+      );
+      process.exit(1);
+    }
+    if (only.size > 0 || (process.env.E2E_SURFACES ?? "").trim() || !["", "core", "full"].includes((process.env.E2E_SUITE ?? "").trim().toLowerCase())) {
+      console.error(
+        `✗ E2E_RELEASE_SCOPE=${releaseScope} cannot be combined with --only/E2E_ONLY, E2E_SURFACES, or a non-core E2E_SUITE; ` +
+          "the reviewed scope itself is the complete selector.",
+      );
+      process.exit(1);
+    }
+    console.log(`release scope=${releaseScope}: ${releaseRows.filter((row) => row.requirement === "REQUIRED").length} REQUIRED, ${releaseRows.filter((row) => row.requirement === "NON_LAUNCH").length} NON_LAUNCH`);
+  }
   if (only.size > 0) {
     const known = new Set(SCENARIOS.map((s) => s.id.toUpperCase()));
     const unknown = [...only].filter((id) => !known.has(id));
@@ -261,46 +324,67 @@ async function main(): Promise<void> {
   if (includeExpensive) console.log("expensive legs: included (--include-expensive / E2E_INCLUDE_EXPENSIVE=1)");
 
   const board: BoardLeg[] = [];
+  const recordBoard = (scenario: Scenario, row: Omit<BoardLeg, "id" | "surface" | "requirement" | "equivalents">): void => {
+    const releaseRow = releaseIndex?.get(scenario.id);
+    board.push({
+      id: scenario.id,
+      surface: scenario.surface,
+      ...row,
+      ...(releaseRow ? { requirement: releaseRow.requirement, ...(releaseRow.equivalents ? { equivalents: releaseRow.equivalents } : {}) } : {}),
+    });
+  };
   const wakeEvidence: LegWakeEvidence[] = [];
-  const liveRun = report.available.size > 0;
+  const liveRun = report.available.size > 0 || releaseScope !== undefined;
 
   for (const scenario of SCENARIOS) {
+    const releaseRow = releaseIndex?.get(scenario.id);
+    if (releaseRow?.requirement === "NON_LAUNCH") {
+      notRun++;
+      recordBoard(scenario, { status: "NOT_RUN", reason: releaseRow.reason });
+      console.log(`○ ${scenario.id} ${scenario.title}: NOT RUN — ${releaseRow.reason}`);
+      continue;
+    }
+    const phaseProblem = releaseRow ? releasePhaseProblem(releaseRow, process.env) : undefined;
+    if (phaseProblem !== undefined) {
+      failed++;
+      recordBoard(scenario, { status: "RED", reason: `required phase unavailable — ${phaseProblem}` });
+      console.error(`✗ ${scenario.id} ${scenario.title}: REQUIRED PHASE UNAVAILABLE — ${phaseProblem}`);
+      continue;
+    }
     if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
       skipped++;
       skipCounts["filtered-only"]++;
-      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: "not named by --only / E2E_ONLY" });
+      recordBoard(scenario, { status: "FILTERED", reason: "not named by --only / E2E_ONLY" });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (filtered by --only)`);
       continue;
     }
     if (suiteSel === "smoke" && scenario.smoke !== true) {
       skipped++;
       skipCounts["filtered-suite"]++;
-      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: "not in the E2E_SUITE=smoke set" });
+      recordBoard(scenario, { status: "FILTERED", reason: "not in the E2E_SUITE=smoke set" });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (not in the E2E_SUITE=smoke set)`);
       continue;
     }
     if (surfaceFilter.size > 0 && !surfaceFilter.has(scenario.surface)) {
       skipped++;
       skipCounts["filtered-surface"]++;
-      board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `surface ${scenario.surface} not in E2E_SURFACES` });
+      recordBoard(scenario, { status: "FILTERED", reason: `surface ${scenario.surface} not in E2E_SURFACES` });
       console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
       continue;
     }
-    const explicitlyNamed = only.has(scenario.id.toUpperCase());
+    const explicitlyNamed = releaseRow?.requirement === "REQUIRED" || only.has(scenario.id.toUpperCase());
     const category = skipCategory(scenario, report.available, explicitlyNamed, includeExpensive);
     if (category !== undefined) {
       const reason = skipReason(scenario, report.available, report.missing, explicitlyNamed, includeExpensive)!;
       if (isGapKind(category) && liveRun) {
         failed++;
-        board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `cannot run — ${reason}` });
+        recordBoard(scenario, { status: "RED", reason: `cannot run — ${reason}` });
         console.error(`✗ ${scenario.id} ${scenario.title}: CANNOT RUN — ${reason}`);
         continue;
       }
       skipped++;
       skipCounts[category]++;
-      board.push({
-        id: scenario.id,
-        surface: scenario.surface,
+      recordBoard(scenario, {
         status: category === "expensive-not-included" ? "DEFERRED" : "FILTERED",
         reason,
       });
@@ -338,6 +422,8 @@ async function main(): Promise<void> {
       linearEngaged: linearEngagedDriver,
       notionEngaged: notionEngagedDriver,
       slackCapFixture: slackCapFixtureDriver,
+      slackHalt: slackHaltDriver,
+      controlWriteConfig: controlWrite.ok ? controlWrite.cfg : undefined,
       slackSupervisor: slackSupervisorDriver,
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
@@ -419,45 +505,43 @@ async function main(): Promise<void> {
       passed++;
       const judgeTag = judgeBannerTag({ llm: judgedLlm, fallback: judgedFallback, reasons: [...fallbackReasons] });
       const reportTag = reported > 0 ? `, ${reported} judged-reported (${reportedRed} red, non-gating)` : "";
-      board.push({
-        id: scenario.id,
-        surface: scenario.surface,
+      recordBoard(scenario, {
         status: "GREEN",
         evidence: `${gates} gates, ${judgedCount} judged${reportTag}, ${secs()}`,
       });
       console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
       if (err instanceof FixtureMissing) {
-        if (liveRun && isDeclaredGap(scenario.surface, err.message)) {
+        if (liveRun && releaseRow?.requirement !== "REQUIRED" && isDeclaredGap(scenario.surface, err.message)) {
           declaredGaps++;
-          board.push({ id: scenario.id, surface: scenario.surface, status: "GAP", reason: `declared gap — ${err.message}` });
+          recordBoard(scenario, { status: "GAP", reason: `declared gap — ${err.message}` });
           console.log(`◌ ${scenario.id} ${scenario.title}: DECLARED GAP — ${err.message}`);
         } else if (liveRun) {
           failed++;
           fixtureRedsToProvision.push(`${scenario.id} (${scenario.surface}) — ${err.message}`);
-          board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `RED-until-fixture — ${err.message}` });
+          recordBoard(scenario, { status: "RED", reason: `RED-until-fixture — ${err.message}` });
           console.error(`⚑ ${scenario.id} ${scenario.title}: RED-until-fixture — the harness's own test data is missing, so nothing about the deployment was measured (${err.message})`);
         } else {
           skipped++;
           skipCounts["fixture-missing"]++;
-          board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `dry run — ${err.message}` });
+          recordBoard(scenario, { status: "FILTERED", reason: `dry run — ${err.message}` });
           console.log(`⚑ ${scenario.id} ${scenario.title}: FIXTURE MISSING — nothing was measured about the deployment (${err.message})`);
         }
       } else if (err instanceof ScenarioSkip) {
         if (liveRun) {
           failed++;
-          board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: `cannot run — ${err.message}` });
+          recordBoard(scenario, { status: "RED", reason: `cannot run — ${err.message}` });
           console.error(`✗ ${scenario.id} ${scenario.title}: CANNOT RUN — ${err.message}`);
         } else {
           skipped++;
           skipCounts["scenario-self-skip"]++;
-          board.push({ id: scenario.id, surface: scenario.surface, status: "FILTERED", reason: `dry run — ${err.message}` });
+          recordBoard(scenario, { status: "FILTERED", reason: `dry run — ${err.message}` });
           console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);
         }
       } else {
         failed++;
         const message = String(err instanceof Error ? err.message : err);
-        board.push({ id: scenario.id, surface: scenario.surface, status: "RED", reason: message, evidence: `failed after ${secs()}` });
+        recordBoard(scenario, { status: "RED", reason: message, evidence: `failed after ${secs()}` });
         console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${message}`);
       }
     }
@@ -483,6 +567,20 @@ async function main(): Promise<void> {
         `rows for unknown ids: ${gaps.unknown.join(", ") || "none"}. Every scenario must reach the board exactly once.`,
     );
     process.exit(1);
+  }
+  let releaseScopeFailed = false;
+  if (releaseScope) {
+    const problems = releaseBoardProblems(board);
+    if (problems.requiredNotGreen.length || problems.nonLaunchNotNotRun.length || problems.unearnedEquivalent.length || problems.unclassified.length) {
+      releaseScopeFailed = true;
+      console.error(
+        `✗ release scope=${releaseScope} is incomplete — required-not-green=${problems.requiredNotGreen.join(",") || "none"}; ` +
+          `non-launch-not-NOT_RUN=${problems.nonLaunchNotNotRun.join(",") || "none"}; ` +
+          `unearned-equivalent=${problems.unearnedEquivalent.join(",") || "none"}; unclassified=${problems.unclassified.join(",") || "none"}`,
+      );
+    } else {
+      console.log(`✓ release scope=${releaseScope}: every REQUIRED leg is GREEN; every NON_LAUNCH leg is visible as NOT_RUN`);
+    }
   }
   console.log("");
 
@@ -609,9 +707,10 @@ async function main(): Promise<void> {
 
   const summary =
     `${passed} passed, ${failed} failed, ${skipped} skipped` +
+    `${notRun > 0 ? `, ${notRun} non-launch not run` : ""}` +
     `${declaredGaps > 0 ? `, ${declaredGaps} declared gap(s)` : ""} of ${SCENARIOS.length}`;
   if (skipped > 0) console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
-  if (failed > 0 || modelRoutingFailed) {
+  if (failed > 0 || modelRoutingFailed || releaseScopeFailed) {
     console.error(`✗ e2e driver pack: ${summary}`);
     process.exit(1);
   }

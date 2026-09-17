@@ -9,10 +9,13 @@ import {
   allNoticesDelivered,
   pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
+  discordWakeSessionIds,
+  exactDiscordOwnedAsks,
   askIdsOf,
   discordOwnedAsksInChannel,
   grantIdsOf,
   grantsForAsks,
+  grantsForExactAsk,
   surfaceNamesChannel,
   unexpiredGrants,
   usesOfGrants,
@@ -25,6 +28,12 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
+import {
+  approvedSuspendedReply,
+  approvedSuspendedContinuation,
+  suspendedApprovalRequest,
+} from "../packages/core/scripts/e2e/suspended-approval.js";
+import type { HaltOwnershipHandle } from "../packages/core/scripts/e2e/control-write-driver.js";
 import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
@@ -59,6 +68,8 @@ const {
   resolveSlackMpim,
   resolveEngagedGithub,
   resolveSlackCapFixture,
+  resolveSlackHalt,
+  resolveControlWrite,
   resolveSyntheticDm,
   resolveSlackUser2,
   resolveSlackSecondary,
@@ -118,15 +129,19 @@ const {
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
 const {
-  SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
+  SCENARIOS, skipCategory, skipReason, ScenarioSkip, FixtureMissing, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
+  haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
 } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
+const { spendRefusalDmPreflight } = await import("../packages/core/scripts/e2e/spend-refusal-dm.js");
+const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
 const {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   awaitReplyPostRows,
+  awaitRepliesForAdmittedWakes,
   awaitStandDownVerdict,
   dispatchAddressings,
   isAmbientLegAddressing,
@@ -163,6 +178,176 @@ const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
 const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
+
+{
+  const primary = { userId: "U_ADMIN", teamId: "T_FIXTURE" };
+  const secondary = { userId: "U_MEMBER", teamId: "T_FIXTURE" };
+  const orgAdmin = defineDomain({ name: "org", match: "org", admins: ["slack/T_FIXTURE/U_ADMIN"] });
+  const valid = spendRefusalDmPreflight({
+    primary,
+    secondary,
+    expectedSecondaryUserId: "U_MEMBER",
+    dmChannelId: "D0MEMBERBOT",
+    domains: [orgAdmin],
+  });
+  ok(valid.ok && valid.surfaceKey === "slack/T_FIXTURE/D0MEMBERBOT", "the spend-refusal preflight derives the cap key from the secondary token's real workspace and opened DM");
+
+  const blankIdentity = spendRefusalDmPreflight({
+    primary,
+    secondary: { userId: "", teamId: "T_FIXTURE" },
+    expectedSecondaryUserId: "U_MEMBER",
+    dmChannelId: "D0MEMBERBOT",
+    domains: [],
+  });
+  ok(!blankIdentity.ok && blankIdentity.reason.includes("complete user/workspace identity"), "an incomplete live auth.test identity refuses before opening or capping a scope");
+
+  const wrongDeclared = spendRefusalDmPreflight({
+    primary,
+    secondary,
+    expectedSecondaryUserId: "U_SOMEONE_ELSE",
+    dmChannelId: "D0MEMBERBOT",
+    domains: [],
+  });
+  ok(!wrongDeclared.ok && wrongDeclared.reason.includes("not the declared secondary user"), "a token/user-id mismatch refuses before the leg can post");
+
+  const reusedPrimary = spendRefusalDmPreflight({
+    primary,
+    secondary: primary,
+    expectedSecondaryUserId: primary.userId,
+    dmChannelId: "D0ADMINBOT",
+    domains: [],
+  });
+  ok(!reusedPrimary.ok && reusedPrimary.reason.includes("primary driver user"), "the primary admin token cannot masquerade as the secondary fixture");
+
+  const foreignWorkspace = spendRefusalDmPreflight({
+    primary,
+    secondary: { ...secondary, teamId: "T_OTHER" },
+    expectedSecondaryUserId: secondary.userId,
+    dmChannelId: "D0MEMBERBOT",
+    domains: [],
+  });
+  ok(!foreignWorkspace.ok && foreignWorkspace.reason.includes("not the primary fixture workspace"), "a secondary identity from another Slack workspace is refused before deriving a cap key");
+
+  const notDm = spendRefusalDmPreflight({ primary, secondary, expectedSecondaryUserId: secondary.userId, dmChannelId: "C_PUBLIC", domains: [] });
+  ok(!notDm.ok && notDm.reason.includes("not a Slack DM id"), "a channel returned in place of the secondary DM cannot be temporarily capped");
+
+  const adminSecondary = spendRefusalDmPreflight({
+    primary,
+    secondary,
+    expectedSecondaryUserId: secondary.userId,
+    dmChannelId: "D0MEMBERBOT",
+    domains: [defineDomain({ name: "org", match: "org", admins: ["slack/T_FIXTURE/U_MEMBER"] })],
+  });
+  ok(!adminSecondary.ok && adminSecondary.reason.includes("admin standing"), "a real secondary identity that is now an org admin is refused before the cap or any message is written");
+
+  const domainAdminSecondary = spendRefusalDmPreflight({
+    primary,
+    secondary,
+    expectedSecondaryUserId: secondary.userId,
+    dmChannelId: "D0MEMBERBOT",
+    domains: [defineDomain({ name: "private-support", reach: ["slack/T_FIXTURE/D0MEMBERBOT"], admins: ["slack/T_FIXTURE/U_MEMBER"] })],
+  });
+  ok(!domainAdminSecondary.ok && domainAdminSecondary.reason.includes("admin standing"), "an admin of the explicit domain covering this exact DM is refused too — the same scope-aware bypass rule the product uses");
+
+  const sameIdOtherWorkspace = spendRefusalDmPreflight({
+    primary: { userId: "U_ADMIN", teamId: "T_OTHER" },
+    secondary: { userId: "U_MEMBER", teamId: "T_OTHER" },
+    expectedSecondaryUserId: "U_MEMBER",
+    dmChannelId: "D0MEMBERBOT",
+    domains: [defineDomain({ name: "org", match: "org", admins: ["slack/T_FIXTURE/U_MEMBER"] })],
+  });
+  ok(sameIdOtherWorkspace.ok, "the non-admin check is workspace-qualified — the same Slack-local user id in another tenant does not inherit admin standing");
+}
+
+{
+  const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-REFUSAL-KEYS")!;
+  const { sqliteOperationalStore } = await import("../packages/core/agent/operational/sqlite.js");
+  const org = "spend-refusal-driver-test";
+  const teamId = "T0EXAMPLE";
+  const primaryUserId = "U0EXOWNER";
+  const secondaryUserId = "U0SPENDMEMBER";
+  const dmChannelId = "D0SPENDMEMBER";
+  const surfaceKey = `slack/${teamId}/${dmChannelId}`;
+  const events: string[] = [];
+  let gates = 0;
+
+  const dm = {
+    channelId: dmChannelId,
+    async identity() {
+      events.push("dm.identity");
+      return { userId: secondaryUserId, teamId };
+    },
+    async awaitSeatQuiet() {
+      events.push("dm.fence");
+      const before = (await sqliteOperationalStore.spendLimits(org)).find((row) => row.scopeKey === surfaceKey && row.level === "surface");
+      ok(before === undefined, "the dynamic secondary-DM fence runs before the temporary cap is inserted");
+      return { quiet: true, anchorTs: "100.000001", abandoned: false, waitedMs: 0, verdict: "settled" };
+    },
+    async post() {
+      events.push("dm.post");
+      const armed = (await sqliteOperationalStore.spendLimits(org)).find((row) => row.scopeKey === surfaceKey && row.level === "surface");
+      ok(armed?.monthlyTokens === 1 && armed.reason?.startsWith("e2e:S-SPEND-REFUSAL-KEYS:") === true, "the real stdio writer stored the exact one-token DM cap before the first post");
+      return { ts: "101.000001" };
+    },
+    async awaitAnyReply() {
+      events.push("dm.reply");
+      return {
+        ts: "101.000002",
+        text: `⛔ I'm holding off — the per-conversation cap (1 tokens/month) is exceeded. Ask an admin to raise the cap for this conversation. Scope keys for the override: conversation = \`${surfaceKey}\`.`,
+      };
+    },
+  };
+  const secondary = {
+    async identity() {
+      events.push("secondary.identity");
+      return { userId: secondaryUserId, teamId };
+    },
+    async openDirectMessage(userId: string) {
+      events.push(`secondary.open:${userId}`);
+      return dmChannelId;
+    },
+    withChannel(channelId: string) {
+      ok(channelId === dmChannelId, "the secondary token is rebound to the DM conversations.open returned");
+      return dm;
+    },
+  };
+  const primary = {
+    botUserId: "U0OPENEVERYWHERE",
+    async identity() {
+      events.push("primary.identity");
+      return { userId: primaryUserId, teamId };
+    },
+  };
+  const logs: string[] = [];
+  await scenario.run({
+    slack: primary,
+    slackSecondary: secondary,
+    slackSecondaryUserId: secondaryUserId,
+    controlWriteConfig: { org, storeEnv: { OE_OPERATIONAL_PROVIDER: "sqlite", OE_SQLITE_PATH: process.env.OE_SQLITE_PATH! } },
+    async auditRead(opts: { actions?: readonly string[] }) {
+      events.push("audit.read");
+      return opts.actions?.includes("spend.gate")
+        ? [{ ts: new Date().toISOString(), org, platform: "slack", workspace: teamId, surface: dmChannelId, action: "spend.gate", detail: { key: surfaceKey, mode: "dm", door: "mention", over: true } }]
+        : [];
+    },
+    gate(pass: boolean, label: string) {
+      if (!pass) throw new Error(`GATE ${label}`);
+      gates++;
+    },
+    skip(reason: string): never {
+      throw new ScenarioSkip(reason);
+    },
+    log(line: string) {
+      logs.push(line);
+    },
+  } as never);
+  ok(events.indexOf("secondary.identity") < events.indexOf("secondary.open:U0OPENEVERYWHERE"), "the real secondary identity is resolved before its DM is opened");
+  ok(events.indexOf("dm.fence") < events.indexOf("dm.post"), "the secondary DM seat is fenced before the capped refusal drive posts");
+  ok(events.includes("audit.read"), "the refusal is joined to the deployment's exact spend.gate row instead of trusting reply text alone");
+  ok(gates >= 5, "the live leg exercised identity, stored-cap, refusal-copy and audit gates");
+  ok((await sqliteOperationalStore.spendLimits(org)).every((row) => row.scopeKey !== surfaceKey), "the exact unchanged temporary cap is removed after the refusal succeeds");
+  ok(logs.some((line) => line.includes("temporary spend cap cleared")), "the run log records successful owned-row cleanup");
+}
 
 {
   const exampleText = readFileSync(fileURLToPath(new URL("../.env.e2e.example", import.meta.url)), "utf-8");
@@ -216,6 +401,32 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(!slackB.ok && slackB.missing.join(",") === ENV.slackChannelB, "channel-B add-on misses exactly E2E_SLACK_CHANNEL_B");
   const slackCap = resolveSlackCapFixture(empty);
   ok(!slackCap.ok && slackCap.missing.join(",") === ENV.slackCapChannel, "S10 cap-fixture add-on misses exactly E2E_SLACK_CAP_CHANNEL");
+  const haltTracked = { [ENV.slackHaltChannel]: "C0HALT" };
+  const slackHalt = resolveSlackHalt(empty, haltTracked);
+  ok(slackHalt.ok && slackHalt.cfg.channel === "C0HALT", "S-HALT resolves its dedicated tracked room without copying the id into env");
+  for (const [label, envVar] of [
+    ["base", ENV.slackChannel],
+    ["private", ENV.slackPrivateChannel],
+    ["channel B", ENV.slackChannelB],
+    ["DM", ENV.slackDmChannel],
+    ["supervisor", ENV.slackSupervisorChannel],
+    ["cap", ENV.slackCapChannel],
+    ["connector", ENV.notionChannel],
+    ["unified A", ENV.slackUnifiedChannelA],
+    ["unified B", ENV.slackUnifiedChannelB],
+  ] as const) {
+    const collided = resolveSlackHalt({ [envVar]: "C0HALT" }, haltTracked);
+    ok(!collided.ok && collided.missing.some((m) => m.includes(envVar)), `S-HALT refuses a ${label} fixture collision and names its owner`);
+  }
+  const controlMissing = resolveControlWrite(empty);
+  ok(!controlMissing.ok && controlMissing.missing.length === 4, "local control write stays dark unless explicitly armed with org + Postgres store");
+  const controlResolved = resolveControlWrite({
+    [ENV.controlLocalWrite]: "1",
+    [ENV.org]: "fixture-org",
+    OE_OPERATIONAL_PROVIDER: "postgres",
+    DATABASE_URL: "postgresql://secret.invalid/db",
+  });
+  ok(controlResolved.ok && controlResolved.cfg.org === "fixture-org" && controlResolved.cfg.storeEnv.DATABASE_URL === "postgresql://secret.invalid/db", "local control write pins the exact org/store without exposing a remote write token");
   const synDm = resolveSyntheticDm(empty);
   ok(
     !synDm.ok && synDm.missing.join(",") === ENV.slackDmChannel,
@@ -677,7 +888,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
     `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on; S-APPROVAL-COALESCED (OPE-1859) is the live two-room coalesced-turn approval scope PR #839 declared MANDATORY and never wrote — it drives the UNIFIED domain rather than the addressed-only one that declaration named, because a domain with no shared window cannot coalesce two rooms into one turn at all;)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackHalt", "controlWrite", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
     "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"]);
   for (const s of SCENARIOS) {
     okShape(s.title.trim().length > 0, `${s.id} has a title`);
@@ -728,8 +939,12 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
   ok(req("S13") === "slack+syntheticDm" && req("S14") === "slack+syntheticDm", "S13/S14 require slack + syntheticDm");
+  ok(
+    req("S-SUSPENDED-slack") === "slack+syntheticDm",
+    "S-SUSPENDED-slack drives the real Slack DM door that can legally use the consented personal connector",
+  );
   ok(req("J3") === "slack+synthetic+slackUser2", "J3 (governance journey) requires slack + synthetic + slackUser2 (union of S5/S19 synthetic + S15/S16 non-admin identity)");
-  ok(req("J4") === "slack+syntheticDm", "J4 (access journey) requires slack + syntheticDm (the always-run propose + out-of-vocab + DM legs; the opt-in member tap guards on synthetic/slackUser2 at runtime)");
+  ok(req("J4") === "slack+syntheticDm+notion", "J4 (access journey) requires slack + syntheticDm + notion (channel legs run in the one-member e2e-connector domain; DM legs keep their own driver)");
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
   ok(
     req("J-MPIM") === "slack+slackMpim",
@@ -758,6 +973,25 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       "room cannot produce the connector.acting_identity row at all (neither Notion read tool mounts there), which is why the leg drives a NOTION-origin turn",
   );
 
+  const suspendedGithub = SCENARIOS.find((scenario) => scenario.id === "S-SUSPENDED-github")!;
+  let githubGap = "";
+  const forbiddenDriver = new Proxy({}, { get: () => { throw new Error("GitHub driver was touched before fixture preflight"); } });
+  try {
+    await suspendedGithub.run({
+      github: forbiddenDriver,
+      fixtureMissing: (reason: string): never => {
+        throw new FixtureMissing(reason);
+      },
+    } as Parameters<typeof suspendedGithub.run>[0]);
+  } catch (error) {
+    if (error instanceof FixtureMissing) githubGap = error.message;
+    else throw error;
+  }
+  ok(
+    githubGap.includes("GAP (no live call was made)") && githubGap.includes("no GitHub-reachable eve-HITL operation"),
+    "S-SUSPENDED-github fails as a named static capability/fixture GAP without driving GitHub",
+  );
+
   ok(req("J-ENGAGED-slack") === "slack+engagedSlack", "J-ENGAGED-slack requires slack + engagedSlack (the base xoxp driver, rebound onto the addressed-only channel)");
   ok(req("J-ENGAGED-discord") === "discord+engagedDiscord", "J-ENGAGED-discord requires discord + engagedDiscord");
   ok(req("J-ENGAGED-teams") === "teams+engagedTeams", "J-ENGAGED-teams requires teams + engagedTeams (OPE-1531 — its own fixture channel, never J-TEAMS’s E2E_TEAMS_CHANNEL_ID)");
@@ -781,7 +1015,86 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite" | "engagedSlack" | "engagedDiscord" | "engagedTeams" | "engagedGithub" | "engagedLinear" | "engagedNotion">();
+  const key = { surfaceKey: "slack/T1/C-HALT", channelId: "C-HALT", workspaceId: "T1", driverUserId: "U-DRIVER", runStart: "2026-05-26T05:32:00.000Z" };
+  const anchorTs = "1779773520.123456";
+  const wakeId = "wake-1";
+  const ingressRow = {
+    ts: "2026-05-26T05:32:00.200Z", org: "default", platform: "slack", workspace: "T1", surface: "C-HALT",
+    action: "wake.ingress", detail: { surfaceKey: key.surfaceKey, vendorTs: "2026-05-26T05:32:00.123Z", wakeId },
+  };
+  const setRow = {
+    ts: "2026-05-26T05:32:01.000Z", org: "default", platform: "slack", workspace: "T1", surface: "C-HALT", principalId: "U-DRIVER",
+    action: "admin.halt.set", detail: { door: "chat", level: "surface", scopeKey: key.surfaceKey, announced: true, wakeId, sessionId: "wrun-1", setAt: "2026-05-26T05:32:00.500Z" },
+  };
+  ok(haltWakeForSlackAnchor([ingressRow], key, anchorTs) === wakeId, "S-HALT resolves the exact posted Slack timestamp to its host wake");
+  ok(haltWakeForSlackAnchor([{ ...ingressRow, workspace: "T2" }], key, anchorTs) === undefined, "S-HALT rejects an identical vendor timestamp from another workspace");
+  ok(haltWakeForSlackAnchor([ingressRow, { ...ingressRow, detail: { ...ingressRow.detail, wakeId: "wake-2" } }], key, anchorTs) === undefined, "S-HALT fails closed when one anchor appears to name multiple wakes");
+  ok(haltSetEvidence(setRow, key, wakeId), "S-HALT accepts the exact announced chat row joined to the anchor's wake + session + stored timestamp");
+  for (const [label, row] of [
+    ["wrong room", { ...setRow, surface: "C-OTHER" }],
+    ["wrong requester", { ...setRow, principalId: "U-OTHER" }],
+    ["old row", { ...setRow, ts: "2026-05-26T05:31:59.000Z" }],
+    ["silent halt", { ...setRow, detail: { ...setRow.detail, announced: false } }],
+    ["missing wake", { ...setRow, detail: { ...setRow.detail, wakeId: "" } }],
+    ["missing session", { ...setRow, detail: { ...setRow.detail, sessionId: "" } }],
+    ["wrong wake", { ...setRow, detail: { ...setRow.detail, wakeId: "wake-2" } }],
+    ["missing set timestamp", { ...setRow, detail: { ...setRow.detail, setAt: "" } }],
+  ] as const) ok(!haltSetEvidence(row, key, wakeId), `S-HALT rejects ${label} evidence`);
+
+  const clearRow = { ...setRow, principalId: "local-operator", action: "admin.halt.cleared", detail: { door: "control-mcp", level: "surface", scopeKey: key.surfaceKey, cleared: true } };
+  ok(haltClearEvidence(clearRow, key), "S-HALT accepts the exact local control-plane clear row");
+  ok(!haltClearEvidence({ ...clearRow, principalId: "U-DRIVER" }, key), "S-HALT rejects a clear not attributed to the local operator");
+  ok(!haltClearEvidence({ ...clearRow, detail: { ...clearRow.detail, scopeKey: "slack/T1/C-OTHER" } }, key), "S-HALT rejects a different clear address");
+
+  const handle = { orgWide: false as const, level: "surface" as const, scopeKey: key.surfaceKey, setAt: String(setRow.detail.setAt), setBy: key.driverUserId, setRef: wakeId };
+  ok(haltOwnedBySet(handle, setRow, key, wakeId), "S-HALT adopts the exact audited set row for cleanup");
+  ok(haltOwnedByWake(handle, key, wakeId), "S-HALT can recover its own wake-stamped row even if the later set audit read fails");
+  ok(!haltOwnedByWake({ ...handle, setRef: "wake-2" }, key, wakeId), "S-HALT never adopts another wake's halt from the same driver");
+  ok(!haltOwnedBySet({ ...handle, setAt: "2026-05-26T05:32:00.600Z" }, setRow, key, wakeId), "S-HALT never adopts a row whose store timestamp differs from the audited set event");
+  ok(!haltOwnedByWake({ ...handle, setAt: "2026-05-26T05:31:59.000Z" }, key, wakeId), "S-HALT never adopts a pre-run halt");
+  ok(!haltOwnedByWake({ ...handle, setBy: "operator" }, key, wakeId), "S-HALT never adopts another actor's halt");
+
+  const scenario = SCENARIOS.find((s) => s.id === "S-HALT")!;
+  ok(scenario.requires.join(",") === "slack,slackHalt,controlWrite", "S-HALT cannot run without the dedicated room and guarded local cleanup road");
+
+  const clears: HaltOwnershipHandle[] = [];
+  let replyError = "";
+  let cleanupStatus = "";
+  try {
+    await Promise.reject(new Error("reply read failed"));
+  } catch (err) {
+    replyError = err instanceof Error ? err.message : String(err);
+  } finally {
+    const cleanup = await cleanupExactHalt({
+      key,
+      anchorTs,
+      alreadyCleared: false,
+      auditRead: async () => [ingressRow],
+      inspectHalt: async () => handle,
+      clearOwnedHalt: async (candidate) => {
+        clears.push(candidate);
+        return "cleared";
+      },
+    });
+    cleanupStatus = cleanup.status;
+  }
+  ok(replyError === "reply read failed", "S-HALT preserves the reply-read failure as the scenario red");
+  ok(cleanupStatus === "cleared" && clears.length === 1 && clears[0] === handle, "S-HALT still clears the exact wake-owned halt when reply polling fails after the post");
+
+  let foreignClears = 0;
+  const foreignCleanup = await cleanupExactHalt({
+    key,
+    anchorTs,
+    alreadyCleared: false,
+    auditRead: async () => [ingressRow],
+    inspectHalt: async () => ({ ...handle, setRef: "wake-foreign" }),
+    clearOwnedHalt: async () => { foreignClears++; return "cleared"; },
+  });
+  ok(foreignCleanup.status === "residue" && foreignCleanup.reason === "halt-not-owned" && foreignClears === 0, "S-HALT reply-failure cleanup leaves a foreign same-scope halt untouched");
+}
+
+{
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackMpim" | "slackCapFixture" | "slackHalt" | "controlWrite" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite" | "engagedSlack" | "engagedDiscord" | "engagedTeams" | "engagedGithub" | "engagedLinear" | "engagedNotion">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -790,6 +1103,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     slackChannelB: [ENV.slackChannelB],
     slackMpim: [ENV.slackMpimChannel],
     slackCapFixture: [ENV.slackCapChannel],
+    slackHalt: [ENV.slackHaltChannel],
+    controlWrite: ["E2E_CONTROL_LOCAL_WRITE=1", ENV.org, 'OE_OPERATIONAL_PROVIDER="postgres"', "DATABASE_URL"],
     slackSupervisor: [ENV.slackSupervisorChannel],
     syntheticDm: [ENV.slackDmChannel],
     slackUser2: [ENV.slackUser2Id],
@@ -818,7 +1133,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackHalt", "controlWrite", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -827,6 +1142,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     slackChannelB: [],
     slackMpim: [],
     slackCapFixture: [],
+    slackHalt: [],
+    controlWrite: [],
     slackSupervisor: [],
     syntheticDm: [],
     slackUser2: [],
@@ -1297,6 +1614,230 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const wrapped = legGate((cond, label) => seen.push(`${cond}|${label}`), "teardown");
   wrapped(true, "cleared the override");
   ok(seen[0] === "true|teardown: cleared the override", "legGate prefixes the gate label with the leg name");
+}
+
+{
+  const row = (
+    ts: string,
+    action: string,
+    detail: Record<string, unknown>,
+    platform = "unified",
+    workspace = "T1",
+  ): AuditWireEntry => ({ ts, org: "default", platform, workspace, surface: "C1", action, detail });
+  const rows: AuditWireEntry[] = [
+    row("2026-05-26T06:32:00.000Z", "wake.ingress", { surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:00.000Z", wakeId: "wake-ask" }, "slack", "oe-dm/slack/T1/C1"),
+    row("2026-05-26T06:32:01.000Z", "turn.question_bridged", {
+      wakeId: "wake-ask",
+      requestId: "request-1",
+      sessionId: "session-1",
+      kind: "tool-approval",
+      platform: "slack",
+      containerKey: "slack/C1",
+      id: "approval-message",
+    }),
+    row("2026-05-26T06:32:02.000Z", "wake.ingress", { surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z", wakeId: "wake-answer" }, "slack", "oe-dm/slack/T1/C1"),
+    row("2026-05-26T06:32:03.000Z", "input_response.routed", { requestId: "request-1", optionId: "approve", wakeId: "wake-answer" }),
+    row("2026-05-26T06:32:03.500Z", "approval.eve_settled", { requestId: "request-1", outcome: "approved" }),
+    row("2026-09-18T21:30:04.000Z", "reply.post", { id: "resumed-message", wakeId: "wake-answer", sessionId: "session-1" }, "slack"),
+  ];
+  const request = suspendedApprovalRequest(rows, {
+    anchor: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:00.000Z" },
+    destinationPlatform: "slack",
+    destinationWorkspace: "T1",
+    containerKey: "slack/C1",
+  });
+  ok(request?.requestId === "request-1" && request.sessionId === "session-1", "a suspended request is joined from the exact vendor ask through its wake into one bridged request/session");
+  const lifecycle = request && approvedSuspendedContinuation(rows, {
+    request,
+    answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+    replyPlatform: "slack",
+    replyId: "resumed-message",
+  });
+  ok(lifecycle?.answerWakeId === "wake-answer", "the exact human answer wake approves the bridged request and the same session posts the observed resumed reply");
+  const delegatedRows = [
+    ...rows.map((r) => {
+      if (r.action === "turn.question_bridged") return { ...r, detail: { ...r.detail, requestId: "task_1:request-child" } };
+      if (r.action === "input_response.routed") return { ...r, detail: { ...r.detail, requestId: "task_1:request-child", taskId: "task_1" } };
+      if (r.action === "approval.eve_settled") return { ...r, detail: { ...r.detail, requestId: "request-child" } };
+      return r.action === "reply.post" ? { ...r, detail: { ...r.detail, wakeId: "wake-task" } } : r;
+    }),
+    row("2026-09-18T21:30:03.750Z", "unified.task_wake", {
+      task: "task_1",
+      outcome: "installed",
+      wakeId: "wake-task",
+      sessionId: "session-1",
+    }),
+  ];
+  const delegatedRequest = suspendedApprovalRequest(delegatedRows, {
+    anchor: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:00.000Z" },
+    destinationPlatform: "slack",
+    destinationWorkspace: "T1",
+    containerKey: "slack/C1",
+  });
+  const delegatedLifecycle = delegatedRequest && approvedSuspendedContinuation(delegatedRows, {
+    request: delegatedRequest,
+    answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+    replyPlatform: "slack",
+    replyId: "resumed-message",
+  });
+  ok(
+    delegatedLifecycle?.answerWakeId === "wake-answer",
+    "a delegated worker's parent may post under the exact installed task wake joined from the routed answer's task id",
+  );
+  const repeatedTaskWake = delegatedRows.map((r) =>
+    r.action === "unified.task_wake" ? { ...r, detail: { ...r.detail, outcome: "already" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(repeatedTaskWake, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    })?.reply.detail?.wakeId === "wake-task",
+    "an exact repeated settlement row with outcome already retains the same joined task wake",
+  );
+  const wrongTaskWake = delegatedRows.map((r) =>
+    r.action === "unified.task_wake" ? { ...r, detail: { ...r.detail, task: "task_other" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(wrongTaskWake, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: another task's installed wake cannot authorize this delegated continuation reply",
+  );
+  const wrongTaskSession = delegatedRows.map((r) =>
+    r.action === "unified.task_wake" ? { ...r, detail: { ...r.detail, sessionId: "session-other" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(wrongTaskSession, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: an installed task wake for another parent session cannot authorize this reply",
+  );
+  const coincidentalChildSuffix = delegatedRows.map((r) =>
+    r.action === "approval.eve_settled" ? { ...r, detail: { ...r.detail, requestId: "other-task_1:request-child" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(coincidentalChildSuffix, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: a settlement id that merely ends with the child id cannot satisfy the exact task proxy mapping",
+  );
+  const wrongChildSettlement = delegatedRows.map((r) =>
+    r.action === "approval.eve_settled" ? { ...r, detail: { ...r.detail, requestId: "request-other" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(wrongChildSettlement, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: another child request in the same task cannot satisfy the proxied settlement join",
+  );
+  const wrongProxyTask = delegatedRows.map((r) =>
+    r.action === "input_response.routed" ? { ...r, detail: { ...r.detail, taskId: "task_other" } } : r,
+  );
+  ok(
+    delegatedRequest !== undefined && approvedSuspendedContinuation(wrongProxyTask, {
+      request: delegatedRequest,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: a routed task id that is not the proxy request's exact prefix cannot decode a child settlement id",
+  );
+  const originalAskRows = rows.map((r) => (r.action === "reply.post" ? { ...r, detail: { ...r.detail, wakeId: "wake-ask" } } : r));
+  ok(
+    request !== undefined && approvedSuspendedContinuation(originalAskRows, {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    })?.reply.detail?.wakeId === "wake-ask",
+    "a framework continuation that retains the exact original ask wake is admitted without widening to another wake",
+  );
+  const selected = request && approvedSuspendedReply(rows, {
+    request,
+    answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+    replyPlatform: "slack",
+    candidates: [
+      { id: "planning-message", text: "I will create the requested run token" },
+      { id: "resumed-message", text: "Created the requested run token" },
+    ],
+    beforeAnswer: new Map([["planning-message", "I will create the requested run token"]]),
+  });
+  ok(
+    selected?.candidate.id === "resumed-message",
+    "a pre-approval planning reply containing the token cannot freeze selection ahead of the new exact reply.post continuation",
+  );
+
+  const replace = (action: string, detail: Record<string, unknown>): AuditWireEntry[] =>
+    rows.map((r) => (r.action === action ? { ...r, detail: { ...r.detail, ...detail } } : r));
+  ok(
+    suspendedApprovalRequest(replace("turn.question_bridged", { kind: "ask_question" }), {
+      anchor: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:00.000Z" },
+      destinationPlatform: "slack",
+      destinationWorkspace: "T1",
+      containerKey: "slack/C1",
+    }) === undefined,
+    "negative: a bridged ordinary question is not evidence that an approval suspended the turn",
+  );
+  ok(
+    request !== undefined && approvedSuspendedContinuation(replace("input_response.routed", { requestId: "other-request" }), {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: a nearby routed answer for another request cannot settle this request",
+  );
+  ok(
+    request !== undefined && approvedSuspendedContinuation(replace("approval.eve_settled", { outcome: "rejected" }), {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: a rejected settlement is not human-approved continuation",
+  );
+  ok(
+    request !== undefined && approvedSuspendedContinuation(replace("reply.post", { sessionId: "other-session" }), {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: the same message id on another session cannot prove this suspended session resumed",
+  );
+  ok(
+    request !== undefined && approvedSuspendedContinuation(replace("reply.post", { wakeId: "neighbour-wake" }), {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: a reply from a neighbouring wake cannot prove the answer wake continued",
+  );
+  const beforeSettlement = rows.map((r) => (r.action === "reply.post" ? { ...r, ts: "2026-09-18T21:30:03.250Z" } : r));
+  ok(
+    request !== undefined && approvedSuspendedContinuation(beforeSettlement, {
+      request,
+      answer: { platform: "slack", surfaceKey: "slack/T1/C1", vendorTs: "2026-05-26T06:32:02.000Z" },
+      replyPlatform: "slack",
+      replyId: "resumed-message",
+    }) === undefined,
+    "negative: an exact-session reply before approval.eve_settled cannot prove the approved continuation",
+  );
 }
 
 {
@@ -1815,8 +2356,15 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     resolverBindings.length === 1,
     `OPE-1483: S-DISCORD-GRANT resolves its re-entry thread exactly once, through \`resolveGrantThread\` (found ${resolverBindings.length})`,
   );
+  const exactAliases = new Set(
+    [...grantBody.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\.kind\s*===\s*["']record["']\s*\?\s*\2\s*:/g)]
+      .filter((m) => resolverBindings.includes(m[2]!))
+      .map((m) => m[1]!),
+  );
   const resolved = new Set(
-    [...grantBody.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;]*?\b([A-Za-z_$][\w$]*)\.threadId\b/g)].filter((m) => resolverBindings.includes(m[2]!)).map((m) => m[1]!),
+    [...grantBody.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;]*?\b([A-Za-z_$][\w$]*)\.threadId\b/g)]
+      .filter((m) => resolverBindings.includes(m[2]!) || exactAliases.has(m[2]!))
+      .map((m) => m[1]!),
   );
   const targetedPosts = [...postBindings(grantBody)].filter(([, channel]) => channel.length > 0);
   ok(
@@ -1839,13 +2387,16 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "OPE-1590: the no-row skip is no longer reached on `askedRows.length === 0` ALONE — that unguarded arm is what exited 1 on a tapped run",
   );
   ok(
-    noFreshAskInit.includes("surfaceNamesChannel(e.surface,threadId)"),
-    `OPE-1590: the refusal is joined to the thread THIS run raised in — \`surfaceNamesChannel(e.surface, threadId)\`, the same join phase 2 uses. A platform-only scope (\`e.platform==="discord"\`) matches another conversation's refusal (got: ${JSON.stringify(noFreshAskInit)})`,
+    noFreshAskInit.includes('reentry.kind==="record"') && noFreshAskInit.includes("reentry.scopeKey===currentSessionId"),
+    `OPE-1590: the fall-through requires the exact saved scope to equal THIS run's current session before it accepts an already-live refusal (got: ${JSON.stringify(noFreshAskInit)})`,
   );
   ok(
-    !noFreshAskInit.includes('e.platform==="discord"'),
-    "🔴 OPE-1590: NEGATIVE — the platform-only scope is gone; it was the wider predicate this join replaced",
+    !noFreshAskInit.includes("surfaceNamesChannel") && !noFreshAskInit.includes('e.platform==="discord"'),
+    "🔴 OPE-1590: NEGATIVE — neither the stale thread-surface heuristic nor a platform-only scope can open the fall-through",
   );
+  const sessionCheck = grantBodyTight.indexOf("reentry.scopeKey!==currentSessionId");
+  const grantedPost = grantBodyTight.indexOf("discord.post(discord.mention(`NowusetheNotiontool");
+  ok(sessionCheck >= 0 && grantedPost > sessionCheck, "OPE-1483: the saved-scope/current-session refusal occurs before the one grant-consuming Discord post");
   ok(
     (grantBodyTight.match(/!noFreshAsk/g) ?? []).length >= 2,
     `OPE-1590: the predicate guards BOTH sites — the phase-1 skips and the two Discord-owned hard gates, which assert over the \`askedRows\` that is empty on exactly this path. ` +
@@ -2029,7 +2580,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
   const baseOnly = new Set(["slack"] as const);
   const cwMissing = {
-    slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackSupervisor: [],
+    slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackHalt: [], controlWrite: [], slackSupervisor: [],
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
     notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel], slackMpim: [],
     soakSlack: [], soakNotion: [], soakLinear: [],
@@ -3920,13 +4471,81 @@ rmSync(dir, { recursive: true, force: true });
   ok(discordOwnedAsks([slackAsk]).length === 0, "NEGATIVE: a Slack-owned ask alone does not satisfy the Discord fixture gate");
   ok(discordOwnedAsks([discordGrant]).length === 0, "NEGATIVE: the reader is pinned to grant.asked — a granted row is a different event and must not stand in for the ask");
 
+  const discordMessageId = "1300000000000000101";
+  const discordVendorTs = "2024-10-27T07:35:52.832Z";
+  const ingress = {
+    ...grantRow("wake.ingress", {
+      wakeId: "wake-current",
+      surfaceKey: "discord/guild/base-channel",
+      vendorTs: discordVendorTs,
+      vendorTsSource: "discord-snowflake",
+    }),
+    platform: "discord",
+    surface: "base-channel",
+  };
+  const turn = grantRow("wake.turn_start", { wakeId: "wake-current", sessionId: "wrun-current" });
+  ok(
+    discordWakeSessionIds([ingress, turn], discordMessageId, "base-channel").join(",") === "wrun-current",
+    "discordWakeSessionIds joins the unique Discord platform/surface/time ingress through its wake id to the turn session",
+  );
+  ok(
+    discordWakeSessionIds(
+      [
+        { ...ingress, detail: { ...ingress.detail, vendorTsSource: "vendor-time" } },
+        turn,
+      ],
+      discordMessageId,
+      "base-channel",
+    ).length === 0,
+    "NEGATIVE: a same-time non-Discord ingress cannot claim the driven Discord message",
+  );
+  ok(
+    discordWakeSessionIds([ingress, grantRow("wake.turn_start", { wakeId: "wake-other", sessionId: "wrun-current" })], discordMessageId, "base-channel").length === 0,
+    "NEGATIVE: a turn on another wake id does not establish this message's session",
+  );
+  ok(
+    discordWakeSessionIds([ingress, grantRow("wake.turn_start", { wakeId: "wake-current" })], discordMessageId, "base-channel").length === 0,
+    "NEGATIVE: an unattributed turn never becomes a guessed session",
+  );
+  ok(discordWakeSessionIds([ingress, turn], "not-a-snowflake", "base-channel").length === 0, "NEGATIVE: an invalid Discord message id joins to no session");
+  ok(
+    discordWakeSessionIds([{ ...ingress, platform: "slack" }, turn], discordMessageId, "base-channel").length === 0,
+    "NEGATIVE: the same millisecond on another platform does not match",
+  );
+  ok(
+    discordWakeSessionIds([{ ...ingress, surface: "other-channel", detail: { ...ingress.detail, surfaceKey: "discord/guild/other-channel" } }, turn], discordMessageId, "base-channel").length === 0,
+    "NEGATIVE: the same Discord millisecond on another surface does not match",
+  );
+  const secondIngress = { ...ingress, detail: { ...ingress.detail, wakeId: "wake-second" } };
+  const secondTurnSameSession = grantRow("wake.turn_start", { wakeId: "wake-second", sessionId: "wrun-current" });
+  ok(
+    discordWakeSessionIds([ingress, secondIngress, turn, secondTurnSameSession], discordMessageId, "base-channel").length === 0,
+    "🔴 NEGATIVE: two same-time wake ids remain ambiguous even when both turns coalesce into one session",
+  );
+
+  const exactAskA = grantRow("grant.asked", {
+    askId: "ask_a",
+    connector: "notion",
+    owner: "discord/900000000000000001",
+    scopeKey: "wrun-current",
+  });
+  const exactAskWrongScope = grantRow("grant.asked", {
+    askId: "ask_a",
+    connector: "notion",
+    owner: "discord/900000000000000001",
+    scopeKey: "wrun-old",
+  });
+  ok(exactDiscordOwnedAsks([exactAskA, exactAskWrongScope], "ask_a", "wrun-current").length === 1, "exactDiscordOwnedAsks requires BOTH the persisted ask id and scope key");
+  ok(exactDiscordOwnedAsks([exactAskWrongScope], "ask_a", "wrun-current").length === 0, "🔴 NEGATIVE: the same ask id on an old session cannot authorise the new session");
+  ok(exactDiscordOwnedAsks([slackAsk], "ask_2", "slack/T1/C1").length === 0, "NEGATIVE: an exact Slack-owned ask is still not this Discord fixture");
+
   const inThread = (surface: string, detail: Record<string, unknown>): AuditWireEntry => ({ ...grantRow("grant.asked", detail), surface });
   const askInA = inThread("111000111", { askId: "ask_a", connector: "notion", owner: "discord/900000000000000001" });
   const askInB = inThread("222000222", { askId: "ask_b", connector: "notion", owner: "discord/900000000000000001" });
   const askKeyedInA = inThread("discord/g1/111000111", { askId: "ask_k", connector: "notion", owner: "discord/900000000000000001" });
   ok(surfaceNamesChannel("111000111", "111000111"), "surfaceNamesChannel accepts the BARE surface the grant flow stamps (`p.surface`)");
   ok(surfaceNamesChannel("discord/g1/111000111", "111000111"), "…and the full surfaceKey spelling other audit call sites stamp — no live grant.asked row has settled which one this path writes, so both are read");
-  ok(!surfaceNamesChannel("discord/g1/222000222", "111000111"), "NEGATIVE: a key naming ANOTHER thread does not match — the join is what stops a fortnight-old tap answering for this run");
+  ok(!surfaceNamesChannel("discord/g1/222000222", "111000111"), "NEGATIVE: a key naming ANOTHER channel does not match the current-wake surface anchor");
   ok(!surfaceNamesChannel("xx111000111", "111000111"), "NEGATIVE: the `/` is load-bearing — a surface merely ENDING in the digits is not that channel");
   ok(!surfaceNamesChannel(undefined, "111000111"), "NEGATIVE: a row with no surface joins to nothing, rather than to everything");
   ok(!surfaceNamesChannel("discord/g1/111000111", ""), "VACUITY: an empty channel id matches nothing — an unresolved thread must not select every row");
@@ -3943,6 +4562,10 @@ rmSync(dir, { recursive: true, force: true });
   ok(grantsForAsks([discordAsk], ["ask_1"]).length === 0, "NEGATIVE: an ASK is not a tap, however its ask id matches — the pin must not be satisfied by the row an untapped run already wrote");
   ok(grantsForAsks([tapOfA], []).length === 0, "VACUITY: no ask ids select no taps");
   ok(grantIdsOf([tapOfA, tapOfB]).join(",") === "g_a,g_b", "grantIdsOf reads the ids the use and notice gates are keyed on");
+  const exactTap = grantRow("grant.granted", { askId: "ask_a", scopeKey: "wrun-current", grantId: "g_exact" });
+  const wrongScopeTap = grantRow("grant.granted", { askId: "ask_a", scopeKey: "wrun-old", grantId: "g_old" });
+  ok(grantsForExactAsk([exactTap, wrongScopeTap], "ask_a", "wrun-current").length === 1, "grantsForExactAsk keeps the tap on the persisted ask AND session scope");
+  ok(grantsForExactAsk([wrongScopeTap], "ask_a", "wrun-current").length === 0, "🔴 NEGATIVE: a tap for the ask id on another session cannot be spent here");
 
   const NOW = Date.parse("2026-05-12T11:30:00.000Z");
   const live = grantRow("grant.granted", { askId: "ask_a", expiresAt: "2026-05-12T22:30:00.000Z", grantId: "g_live", owner: "discord/900000000000000001" });
@@ -3950,8 +4573,8 @@ rmSync(dir, { recursive: true, force: true });
   ok(unexpiredGrants([live, lapsed], NOW).length === 1, "unexpiredGrants keeps the grant that can still be spent");
   ok(unexpiredGrants([lapsed], NOW).length === 0, "🔴 NEGATIVE: a lapsed grant is not spendable — driving a call on it would red the use gate over a fixture that timed out");
   ok(unexpiredGrants([live], NOW).length === 1, "NEGATIVE CONTROL: the reader is reading the clock, not answering `expired` to everything");
-  ok(unexpiredGrants([grantRow("grant.granted", { grantId: "g_x" })], NOW).length === 1, "🔴 an UNREADABLE expiry counts as LIVE — treating a field the leg failed to read as expiry is how a real failure gets filed away as a fixture problem");
-  ok(unexpiredGrants([grantRow("grant.granted", { expiresAt: "whenever", grantId: "g_y" })], NOW).length === 1, "…and so does an unparseable one, for the same reason");
+  ok(unexpiredGrants([grantRow("grant.granted", { grantId: "g_x" })], NOW).length === 0, "🔴 NEGATIVE: a missing expiry cannot authorise a real credentialed call; phase 2 fails closed before posting");
+  ok(unexpiredGrants([grantRow("grant.granted", { expiresAt: "whenever", grantId: "g_y" })], NOW).length === 0, "🔴 NEGATIVE: an unparseable expiry is equally unauthoritative");
 
   const useOfA = grantRow("grant.used", { connector: "notion", grantId: "g_a", tier: "read" });
   const useOfB = grantRow("grant.used", { connector: "notion", grantId: "g_b", tier: "read" });
@@ -3999,50 +4622,59 @@ rmSync(dir, { recursive: true, force: true });
 }
 
 {
-  const { GRANT_THREAD_RECORD_MAX_AGE_MS, parseGrantThreadRecord, readGrantThreadRecord, resolveGrantThread, serializeGrantThreadRecord, writeGrantThreadRecord } = await import(
+  const { GRANT_RECORD_FUTURE_TOLERANCE_MS, isExactGrantThreadRecord, parseGrantThreadRecord, readGrantThreadRecord, resolveGrantThread, serializeGrantThreadRecord, writeGrantThreadRecord } = await import(
     "../packages/core/scripts/e2e/grant-thread-record.js"
   );
   const raisedAt = "2026-05-12T08:30:00.000Z";
   const at = (ms: number): number => Date.parse(raisedAt) + ms;
-  const record = { threadId: "1234567890", raisedAt };
+  const record = { threadId: "1234567890", raisedAt, askId: "ask-exact", scopeKey: "wrun-exact" };
+  const legacy = { threadId: "1234567890", raisedAt };
 
-  const { GRANT_ASK_TTL_MS, GRANT_SESSION_TTL_MS } = await import("../packages/core/agent/access/credential-grant.js");
-  ok(
-    GRANT_THREAD_RECORD_MAX_AGE_MS === GRANT_ASK_TTL_MS + GRANT_SESSION_TTL_MS,
-    `OPE-1483: the record's max age IS the product's ask TTL plus its session-grant TTL (${GRANT_THREAD_RECORD_MAX_AGE_MS} vs ${GRANT_ASK_TTL_MS + GRANT_SESSION_TTL_MS})`,
-  );
-
-  ok(parseGrantThreadRecord(serializeGrantThreadRecord(record))?.threadId === "1234567890", "OPE-1483: a written record reads back as itself");
-  ok(parseGrantThreadRecord(serializeGrantThreadRecord(record))?.raisedAt === raisedAt, "OPE-1483: the raise time round-trips — it is what makes the record expirable");
+  const roundTrip = parseGrantThreadRecord(serializeGrantThreadRecord(record));
+  ok(isExactGrantThreadRecord(roundTrip) && roundTrip.threadId === "1234567890", "OPE-1483: a written exact record reads back as itself");
+  ok(isExactGrantThreadRecord(roundTrip) && roundTrip.raisedAt === raisedAt, "OPE-1483: the exact ask's raise time round-trips for diagnosis");
+  ok(isExactGrantThreadRecord(roundTrip) && roundTrip.askId === "ask-exact", "OPE-1483: the exact ask id round-trips — phase 2 never searches by thread and guesses a card");
+  ok(isExactGrantThreadRecord(roundTrip) && roundTrip.scopeKey === "wrun-exact", "OPE-1483: the exact scope key round-trips — phase 2 can refuse a rotated session before spending");
   ok(parseGrantThreadRecord("not json") === undefined, "NEGATIVE: unparseable text is no record");
   ok(parseGrantThreadRecord('["1234567890"]') === undefined, "NEGATIVE: an array is no record — a JSON.parse that merely succeeded is not enough");
   ok(parseGrantThreadRecord(JSON.stringify({ raisedAt })) === undefined, "NEGATIVE: a record with no threadId is no record");
   ok(parseGrantThreadRecord(JSON.stringify({ threadId: "   ", raisedAt })) === undefined, "NEGATIVE: a BLANK threadId is rejected — it would post to `/channels//messages`");
   ok(parseGrantThreadRecord(JSON.stringify({ threadId: "1", raisedAt: "whenever" })) === undefined, "NEGATIVE: an unparseable raise time is no record — an un-ageable record is exactly the stale one this expiry exists to catch");
   ok(parseGrantThreadRecord(JSON.stringify({ threadId: "1" })) === undefined, "NEGATIVE: a record with no raise time is no record, for the same reason");
+  const parsedLegacy = parseGrantThreadRecord(JSON.stringify(legacy));
+  ok(parsedLegacy !== undefined && !isExactGrantThreadRecord(parsedLegacy), "BACKWARD COMPATIBILITY: the old two-field sidecar still parses so phase 2 can name it as ambiguous rather than pretending it never existed");
+  ok(!isExactGrantThreadRecord(parseGrantThreadRecord(JSON.stringify({ ...legacy, askId: "ask-only" }))), "NEGATIVE: one identity field without the other is legacy/ambiguous, never half-authoritative");
 
-  const pinned = resolveGrantThread({ pin: " 999 ", record: { threadId: "111", raisedAt: new Date(at(0)).toISOString() }, nowMs: at(0) });
-  ok(pinned.kind === "pin" && pinned.threadId === "999", `OPE-1483: the operator's pin wins over the sidecar and is trimmed (read ${JSON.stringify(pinned)})`);
+  const pinned = resolveGrantThread({ pin: " 1234567890 ", record, nowMs: at(60_000) });
+  ok(pinned.kind === "record" && pinned.source === "pin-confirmed", `OPE-1483: a matching operator pin confirms the exact record (read ${JSON.stringify(pinned)})`);
   const empty = resolveGrantThread({ pin: "  ", record, nowMs: at(60_000) });
-  ok(empty.kind === "record" && empty.threadId === "1234567890", "OPE-1483: a blank pin is not a pin — an exported-but-empty shell variable falls through to the sidecar");
-  ok(resolveGrantThread({ record, nowMs: at(60_000) }).kind === "record", "OPE-1483: with no pin the sidecar carries the thread — the same-machine re-run needs no hand-copied id");
+  ok(empty.kind === "record" && empty.threadId === "1234567890", "OPE-1483: a blank pin falls through to the exact sidecar");
+  ok(resolveGrantThread({ record, nowMs: at(60_000) }).kind === "record", "OPE-1483: with no pin the exact sidecar carries all four join fields");
+  const pinOnly = resolveGrantThread({ pin: "999", nowMs: at(0) });
+  ok(pinOnly.kind === "ambiguous" && pinOnly.reason === "pin-only", "🔴 NEGATIVE: a thread-only pin cannot select a grant; the old harness guessed from every ask in that thread");
+  const legacyOnly = resolveGrantThread({ record: legacy, nowMs: at(0) });
+  ok(legacyOnly.kind === "ambiguous" && legacyOnly.reason === "legacy-record", "BACKWARD COMPATIBILITY: an old two-field record yields a named GAP, never a guessed grant");
+  const mismatch = resolveGrantThread({ pin: "999", record, nowMs: at(0) });
+  ok(mismatch.kind === "ambiguous" && mismatch.reason === "pin-record-mismatch", "🔴 NEGATIVE: a pin naming another thread cannot override an exact ask/scope record");
+  const futureRecord = { ...record, raisedAt: new Date(at(GRANT_RECORD_FUTURE_TOLERANCE_MS + 1)).toISOString() };
+  const future = resolveGrantThread({ record: futureRecord, nowMs: at(0) });
+  ok(future.kind === "ambiguous" && future.reason === "future-record", "🔴 NEGATIVE: an implausibly future raisedAt cannot widen the exact audit query or authorise phase 2");
+  const skewedRecord = { ...record, raisedAt: new Date(at(GRANT_RECORD_FUTURE_TOLERANCE_MS)).toISOString() };
+  ok(resolveGrantThread({ record: skewedRecord, nowMs: at(0) }).kind === "record", "NEGATIVE CONTROL: the bounded clock-skew edge remains usable");
   ok(resolveGrantThread({ nowMs: at(0) }).kind === "absent", "OPE-1483: neither carrier is `absent` — phase 2 skips with the remedy rather than driving a call into a session it guessed");
 
-  const fresh = resolveGrantThread({ record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS) });
-  ok(fresh.kind === "record", "OPE-1483: a record exactly AT the ceiling is still usable — the bound is the last moment a grant can live, not the first moment it cannot");
-  const stale = resolveGrantThread({ record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS + 1) });
-  ok(stale.kind === "expired" && stale.threadId === "1234567890", `OPE-1483: one millisecond past the ceiling the record is EXPIRED (read ${JSON.stringify(stale)})`);
-  ok(stale.kind === "expired" && stale.ageMs === GRANT_THREAD_RECORD_MAX_AGE_MS + 1, "OPE-1483: the expired arm carries the AGE — the skip has to say how stale, or the operator cannot tell a wrong path from a lapsed tap");
-  ok(resolveGrantThread({ record, nowMs: at(0) }).kind === "record", "OPE-1483: NEGATIVE CONTROL — a record raised this instant is NOT expired, so the arm above reads the clock rather than answering unconditionally");
-  ok(resolveGrantThread({ pin: "999", record, nowMs: at(GRANT_THREAD_RECORD_MAX_AGE_MS * 10) }).kind === "pin", "OPE-1483: a pin is never aged — the harness never saw that raise, and the operator is asserting a live tap");
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+  const oldExact = resolveGrantThread({ record, nowMs: at(thirtyDays - 1) });
+  ok(oldExact.kind === "record" && oldExact.ageMs === thirtyDays - 1, "OPE-1483: an exact record remains resolvable for a standing grant; record age is diagnostic, not authority expiry");
 
   const sinkDir = mkdtempSync(join(tmpdir(), "oe-grant-thread-"));
   const sink = join(sinkDir, "record.json");
   ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a missing sidecar reads as no record, never a throw — the first raising run on a machine has none");
-  ok(writeGrantThreadRecord(sink, record), "OPE-1483: the raising run persists its thread id");
-  ok(readGrantThreadRecord(sink)?.threadId === "1234567890", "OPE-1483: and the next run reads it back off disk");
+  ok(writeGrantThreadRecord(sink, record), "OPE-1483: the raising run persists its exact ask/scope/thread tuple");
+  const fromDisk = readGrantThreadRecord(sink);
+  ok(isExactGrantThreadRecord(fromDisk) && fromDisk.askId === "ask-exact" && fromDisk.scopeKey === "wrun-exact", "OPE-1483: and the next run reads the exact authority tuple back off disk");
   writeFileSync(sink, "{ half-writ");
-  ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a corrupt sidecar degrades to no record — the operator's pin is the carrier that matters, and a live run must not die on scratch state");
+  ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a corrupt sidecar degrades to no record — a live run must not die on scratch state or guess authority from a thread pin");
   ok(!writeGrantThreadRecord(join(sinkDir, "no-such-dir", "record.json"), record), "OPE-1483: an unwritable path reports FALSE rather than throwing — the run has already earned phase 1's gates and must keep them");
   rmSync(sinkDir, { recursive: true, force: true });
 }
@@ -4194,6 +4826,13 @@ rmSync(dir, { recursive: true, force: true });
   ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
   ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
 
+  const joinedReply = (wakeId: unknown, surface = "C1") => row(REPLY_POST_ACTION, { sessionId: "seat", wakeId }, surface);
+  const answered = (posts: readonly AuditWireEntry[]) => seatContinuity(posts, { surface: "C1", admittedWakeIds: ["w1", "w2"] }).answeredWakeIds;
+  ok(JSON.stringify(answered([joinedReply("w1"), joinedReply("w1")])) === JSON.stringify(["w1"]), "duplicate posts do not prove a second answered wake");
+  ok(JSON.stringify(answered([joinedReply("w1"), joinedReply("unrelated")])) === JSON.stringify(["w1"]), "a reply outside the admitted wake set cannot satisfy continuity");
+  ok(JSON.stringify(answered([joinedReply("w1"), joinedReply("w2")])) === JSON.stringify(["w1", "w2"]), "two admitted wakes have joined replies");
+  ok(JSON.stringify(answered([joinedReply("w1"), joinedReply("w2", "OTHER"), joinedReply(undefined)])) === JSON.stringify(["w1"]), "other-room and unattributed replies do not supply wake evidence");
+
   const seatPost = (sessionId: unknown, surface = "C1") =>
     row(REPLY_POST_ACTION, { chars: 12, ...(sessionId === undefined ? {} : { sessionId }) }, surface);
   const SEAT = "wrun_seat_one";
@@ -4319,6 +4958,33 @@ rmSync(dir, { recursive: true, force: true });
 
     {
       let calls = 0;
+      const first = row(REPLY_POST_ACTION, { sessionId: "seat", wakeId: "first" }, "C1");
+      const second = row(REPLY_POST_ACTION, { sessionId: "seat", wakeId: "second" }, "C1");
+      const found = await awaitReplyPostRows(async () => {
+        calls += 1;
+        return calls >= 3 ? [first, first, second] : [first, first];
+      }, {
+        sinceIso: "2026-05-20T23:30:00Z", platform: "notion", surface: "C1",
+        minRows: 2, minDistinctWakes: 2, budget: fast(2_000, "two answered wakes"),
+      });
+      ok(calls === 3 && found?.length === 3, "two-wake waiter keeps polling past duplicate posts until the other wake replies");
+    }
+
+    {
+      let admissionReads = 0;
+      const posts = ["first", "second"].map((wakeId) => row(REPLY_POST_ACTION, { sessionId: "seat", wakeId }, "C1"));
+      const evidence = await awaitRepliesForAdmittedWakes(async (query) => {
+        if (query.actions?.includes(REPLY_POST_ACTION)) return posts;
+        admissionReads += 1;
+        return (admissionReads >= 3 ? ["first", "second"] : ["first", "unrelated"]).map(
+          (wakeId) => row(WAKE_INGRESS_ACTION, { wakeId, surfaceKey: "notion/workspace/C1" }),
+        );
+      }, { sinceIso: "2026-05-20T23:30:00Z", platform: "notion", surface: "C1", container: "C1", minWakes: 2, budget: fast(2_000, "joined replies and admissions") });
+      ok(admissionReads === 3 && evidence?.wakeIds.includes("second") === true, "joined waiter waits through unrelated admissions and audit visibility skew");
+    }
+
+    {
+      let calls = 0;
       const first = postRow("C1");
       const second = postRow("C1");
       const read = async () => {
@@ -4423,11 +5089,11 @@ rmSync(dir, { recursive: true, force: true });
     const oneSeatEnd = gatesSrc.indexOf("async function gateSeatCatchUp(", oneSeatStart);
     const oneSeatBody = gatesSrc.slice(oneSeatStart, oneSeatEnd);
     ok(
-      oneSeatStart >= 0 && oneSeatEnd > oneSeatStart && /awaitReplyPostRows\([\s\S]*?minRows:\s*2/.test(oneSeatBody),
+      oneSeatStart >= 0 && oneSeatEnd > oneSeatStart && /awaitRepliesForAdmittedWakes\([\s\S]*?minWakes:\s*2/.test(oneSeatBody),
       "🔴 OPE-1895: gateOneSeatAcrossNameDrops asks the shared waiter for TWO scoped rows — the helper's safe one-row default cannot return on the first name-drop",
     );
     ok(
-      /awaitReplyPostRows\([\s\S]*?timeoutMs:\s*REPLY_WAIT/.test(oneSeatBody),
+      /awaitRepliesForAdmittedWakes\([\s\S]*?timeoutMs:\s*REPLY_WAIT/.test(oneSeatBody),
       "🔴 OPE-1895: gateOneSeatAcrossNameDrops gives the two-reply poll the 180-second REPLY_WAIT budget — A live run's first and second rows landed after the 60-second audit-only budget",
     );
     ok(

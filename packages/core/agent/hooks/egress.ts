@@ -27,6 +27,7 @@ import {
 } from "../access/egress-status.js";
 import { rememberEgressAttribution, type EgressAttribution } from "../access/egress-denial-poller.js";
 import { getSettings } from "../settings/settings.js";
+import { DelegatedTaskBindingUnavailableError, ensureDelegatedTaskBinding } from "../channels/task-wake.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
@@ -412,16 +413,18 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
+      await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
       const result = await enforceEgress("session.started", liveDeps(ctx));
       if (result.abortError) throw result.abortError;
     },
 
     "turn.started": async (_event, ctx) => {
       try {
+        await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
         const result = await enforceEgress("turn.started", liveDeps(ctx));
         if (result.abortError) throw result.abortError;
       } catch (err) {
-        if (err instanceof Error && err.message.includes("identical-binding invariant VIOLATED")) throw err;
+        if (err instanceof DelegatedTaskBindingUnavailableError || (err instanceof Error && err.message.includes("identical-binding invariant VIOLATED"))) throw err;
         log(`turn.started re-apply skipped (session-start policy still in force): ${String(err)}`);
       }
     },

@@ -208,7 +208,7 @@ export default windowGated("open_pull_request", defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""}`;

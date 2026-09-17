@@ -10,7 +10,7 @@ import {
   type MemorySilo,
   type DomainMemoryGrants,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { makeGitHubProvider, githubMemoryContainerProblem, declareGitHubMemoryCapability } from "../agent/memory/memory.js";
+import { makeGitHubProvider, githubMemoryContainerProblem, declareGitHubMemoryCapability, registerGitHubMemory } from "../agent/memory/memory.js";
 
 type HttpFetch = NonNullable<ConstructorParameters<typeof GitHubContents>[0]>;
 
@@ -241,6 +241,36 @@ try {
     return null;
   });
   ok(true, "config load: a first-party (postgres) silo is skipped — the deployment IS the credential holder");
+}
+
+{
+  let permissions: Record<string, unknown> | undefined;
+  let registered: ReturnType<typeof makeGitHubProvider> | undefined;
+  const app = {
+    async tokensForRepos(_repos: readonly string[], requested?: Record<string, unknown>) {
+      permissions = requested;
+      return {
+        tokens: new Map([
+          ["acme", { token: "memory-scoped-token", expiresAt: new Date(Date.now() + 3_600_000).toISOString(), repositories: ["acme/brain"] }],
+        ]),
+        ungranted: [],
+      };
+    },
+    committer: () => ({ name: "open-everywhere[bot]", email: "bot@users.noreply.github.com" }),
+  };
+  ok(
+    registerGitHubMemory({
+      app,
+      contents: new GitHubContents(fakeFetch, "https://api.github.com"),
+      register: (candidate) => {
+        registered = candidate;
+      },
+    }),
+    "registration: a configured App registers the GitHub memory provider",
+  );
+  await registered!.tierVersion!(p, tier, silo);
+  ok(permissions?.contents === "write" && permissions?.metadata === "read", "registration mint: the actual warm-token closure asks for contents:write + metadata:read");
+  ok(permissions?.pull_requests === undefined && permissions?.issues === undefined, "registration mint: 🔴 the actual warm-token closure asks for NO pull-request or issue authority");
 }
 
 console.log(`✓ github-memory: ${passed} assertions passed (Contents API client + github backing + the OPE-390 prefetch invariant, offline fake)`);

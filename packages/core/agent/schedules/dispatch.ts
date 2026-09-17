@@ -257,6 +257,7 @@ export async function dispatchTick(
         attributes: {
           ...appAuth.attributes,
           ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal, fireWakeId),
+          ...(firePlatform === "slack" && isJobRoutine(r) && jobAnchor ? { thread_ts: jobAnchor } : {}),
           ...taintedFireAttrs(pre.tainted),
         },
       };

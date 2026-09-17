@@ -301,7 +301,13 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "an act skipped its card on a standing grant — the row that makes an unasked approval auditable",
   },
   { action: "approval.decision_wake", fields: [], proves: "a decision woke the turn that was waiting on it", notExercised: "RED-until-leg: J3 — the wake a decision causes. The leg observes the reply that follows a decision and never the row that says the decision woke the turn." },
-  { action: "approval.eve_candidate", fields: [], proves: "the framework raised a native approval the bridge had to settle" },
+  {
+    action: "approval.eve_candidate",
+    fields: [],
+    proves: "the framework terminally rejected, failed, timed out or marked stale a native approval candidate",
+    notExercised:
+      "RED-until-fixture: S-EVE-CARD and S-EVE-BRIDGE exercise request-only connector approvals; the only shipped response-policy site is post_file HTML publishing, which this deployment disables, so the pack has no live candidate it can legitimately reject.",
+  },
   {
     action: "approval.eve_settled",
     fields: [],
@@ -579,6 +585,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "notion.rejected",
   "notion.replied",
   "notion.scope_refused",
+  "notion.webhook_timing",
   "permission.fit_report",
   "pr.open",
   "pr.update",

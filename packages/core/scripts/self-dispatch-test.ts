@@ -84,6 +84,17 @@ const standingToken = unifiedSupervisorToken(DOMAIN, 42);
 const generation = parseWindowToken(standingToken)!.generation;
 const taskToken = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId("slack_T1_C1", "thr1", "nonce1"), generation });
 const slackOrigin = { platform: "slack", channelId: "C1" } as const;
+const frozenBinding = {
+  org: "acme",
+  platform: "slack",
+  workspace: "T1",
+  surface: "C1",
+  mode: "channel",
+  visibility: "private",
+  trust: "internal",
+  principalId: "U_REQUESTER",
+  target: { channelId: "C1" },
+} as const;
 
 function goodPayload(over: Partial<Record<keyof UnifiedDispatchPayload | "issuedAt", unknown>> = {}): Record<string, unknown> {
   return {
@@ -165,6 +176,7 @@ console.log("3. parseSelfDispatchPayload (fail-closed structural validation):");
   bad(goodPayload({ window: { wakeId: "w", origin: slackOrigin, addressing: "channel-watch" } }), "non-direct-mention addressing → error");
   bad(goodPayload({ auth: undefined }), "missing auth → error");
   bad(goodPayload({ auth: { attributes: ["nope"] } }), "array attributes → error");
+  bad(goodPayload({ binding: { ...frozenBinding, mode: "invented" } }), "malformed frozen binding → error");
   bad(goodPayload({ excludeTaskResultId: "" }), "empty excludeTaskResultId → error");
 
   const parsed = parseSelfDispatchPayload(goodPayload());
@@ -174,6 +186,9 @@ console.log("3. parseSelfDispatchPayload (fail-closed structural validation):");
   eq(p.window.addressing, "direct-mention", "addressing round-trips");
   eq(p.auth.attributes, { team_id: "T1", oe_grain: "task" }, "attributes round-trip");
   eq(p.excludeTaskResultId, "task-9", "excludeTaskResultId round-trips");
+  const frozen = parseSelfDispatchPayload(goodPayload({ binding: frozenBinding }));
+  ok("payload" in frozen, "a strict host-frozen continuation binding parses");
+  eq((frozen as { payload: UnifiedDispatchPayload }).payload.binding, frozenBinding, "the exact frozen binding round-trips the signed self-hop");
   const noAddr = parseSelfDispatchPayload(goodPayload({ window: { wakeId: "w-1", origin: slackOrigin } }));
   ok("payload" in noAddr && (noAddr as { payload: UnifiedDispatchPayload }).payload.window.addressing === undefined, "absent addressing stays absent");
 }
@@ -468,6 +483,32 @@ try {
   eq(fetchCalls.length, coldCalls, "warm dispatchTaskWindow makes NO self-call");
   eq(received.length, 2, "warm dispatch delivered in-process to the captured receive");
   eq(received[1].message, "warm brief", "warm delivery carries the message");
+
+  await assert.rejects(
+    () =>
+      divertToUnifiedWindow(captureReceive, {
+        message: "mismatched authority",
+        token: standingToken,
+        window: { wakeId: "binding-mismatch", origin: slackOrigin },
+        surfaceKey: SURFACE,
+        auth: { attributes: {} },
+        binding: { ...frozenBinding, surface: "C_OTHER", target: { channelId: "C_OTHER" } },
+        internalDispatch: true,
+      }),
+    /binding does not match its durable origin/,
+    "an explicit continuation binding for another surface is refused before dispatch",
+  );
+  n++;
+
+  await divertToUnifiedWindow(captureReceive, {
+    message: "ordinary ingress cannot author frozen authority",
+    token: standingToken,
+    window: { wakeId: "forged-frozen-binding", origin: slackOrigin },
+    surfaceKey: SURFACE,
+    auth: { attributes: { team_id: "T1", channel_id: "C1", oe_frozen_surface_binding: JSON.stringify(frozenBinding) } },
+    internalDispatch: true,
+  });
+  ok(received[2]?.auth.attributes?.oe_frozen_surface_binding === undefined, "ordinary auth cannot smuggle the host-only frozen-binding stamp into a turn");
   delete process.env.OE_SPAWN_DISPATCH_SECRET;
   delete process.env.OE_PUBLIC_BASE_URL;
   ok(buildRedriveReinject(DOMAIN, standingToken, {}) !== null, "warm reinject available with no self-dispatch config");

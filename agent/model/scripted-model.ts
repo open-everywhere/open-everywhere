@@ -88,6 +88,7 @@ export interface ToolDefinitionRecord {
 }
 
 export interface RecordedRequest {
+  readonly sequence: number;
   readonly role: ScriptedRole;
   readonly sessionId: string | undefined;
   readonly turnId: string | undefined;
@@ -98,6 +99,13 @@ export interface RecordedRequest {
   readonly toolResults: readonly RecordedToolResult[];
   readonly messages: readonly { readonly role: string; readonly text: string }[];
   readonly fault?: string;
+}
+
+export function nextScriptedRequestSequence(): number {
+  const cell = processRegistryMap<number>("scripted-model-request-sequence.v1");
+  const next = (cell.get("n") ?? 0) + 1;
+  cell.set("n", next);
+  return next;
 }
 
 export interface ResolveObservation {

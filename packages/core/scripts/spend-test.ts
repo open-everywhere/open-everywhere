@@ -370,6 +370,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 {
   const spendHook = (await import("../agent/hooks/spend.js")).default;
   const { stampModelCall } = await import("../agent/model/model-stamp.js");
+  const { adoptDelegatedAuthority } = await import("../agent/identity/delegated-binding.js");
   const usageEvents = await import("../agent/spend/usage-events.js");
 
   const hookCtx = (sessionId: string) => ({
@@ -385,6 +386,29 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const eveRoot = dirname(require.resolve("eve/package.json"));
   const abs = (rel: string) => pathToFileURL(pathJoin(eveRoot, rel)).href;
   const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+  const adoptSlackWorkerAuthority = (channelId: string): void => {
+    ok(
+      adoptDelegatedAuthority(
+        {
+          binding: {
+            org: "default",
+            platform: "slack",
+            workspace: "T1",
+            surface: channelId,
+            mode: "channel",
+            visibility: "private",
+            trust: "external",
+            principalId: "U1",
+            target: { channelId },
+          },
+          requester: { kind: "requester", principalId: "U1" },
+          nonMemberWake: false,
+        },
+        "turn-depth2",
+      ),
+      "fixture: delegated spend call adopts its host-captured dispatch binding",
+    );
+  };
 
   await contextStorage.run(new ContextContainer(), async () => {
     stampModelCall("anthropic/claude-sonnet-5");
@@ -427,6 +451,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     const delegatedUsage = stepEvent(1_286_000, 152_000);
 
     await contextStorage.run(new ContextContainer(), async () => {
+      adoptSlackWorkerAuthority("C_DEPTH2");
       await spendHook.events!["step.started"]!(startedEvent(PRICED_MODEL) as never, delegatedCtx("C_DEPTH2") as never);
       await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2") as never);
     });
@@ -443,6 +468,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(depth2Ledger[0].usdMicros > 0, "…and it is rate-priced, where the unknown-model sentinel priced the same tokens at $0");
 
     await contextStorage.run(new ContextContainer(), async () => {
+      adoptSlackWorkerAuthority("C_DEPTH2_UNSEEN");
       await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_UNSEEN") as never);
     });
     const unseenLedger = await ledgerFor("slack/T1/C_DEPTH2_UNSEEN");
@@ -450,6 +476,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(unseenLedger[0].usdMicros === 0, "…and is still unpriced, so the evidence rule the sentinel enforces is intact");
 
     await contextStorage.run(new ContextContainer(), async () => {
+      adoptSlackWorkerAuthority("C_DEPTH2_BOTH");
       await spendHook.events!["step.started"]!(startedEvent("some-other/model") as never, delegatedCtx("C_DEPTH2_BOTH") as never);
       stampModelCall(PRICED_MODEL);
       await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_BOTH") as never);
@@ -546,6 +573,41 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const usageEvents = await import("../agent/spend/usage-events.js");
   const { attestSubagentRuns, subagentRunOf } = await import("../agent/spend/subagent-runs.js");
   const { turnKind } = await import("../agent/hooks/spend.js");
+  const { adoptDelegatedAuthority } = await import("../agent/identity/delegated-binding.js");
+  const { createRequire } = await import("node:module");
+  const { dirname, join: pathJoin } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = await import(pathToFileURL(pathJoin(eveRoot, "dist/src/context/container.js")).href);
+
+  const withWorkerAuthority = <T>(channelId: string, principalId: string, fn: () => T | Promise<T>): Promise<T> =>
+    Promise.resolve(
+      contextStorage.run(new ContextContainer(), async () => {
+        ok(
+          adoptDelegatedAuthority(
+            {
+              binding: {
+                org: "default",
+                platform: "slack",
+                workspace: "T1",
+                surface: channelId,
+                mode: "channel",
+                visibility: "private",
+                trust: "external",
+                principalId,
+                target: { channelId },
+              },
+              requester: { kind: "requester", principalId },
+              nonMemberWake: false,
+            },
+            "turn_0",
+          ),
+          "fixture: delegated spend call adopts its host-captured dispatch binding",
+        );
+        return fn();
+      }),
+    );
 
   const CHILD_ATTRS = { team_id: "T1", channel_id: "C_DELEG", oe_platform: "slack" } as const;
   const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string; rootSessionId?: string }; token?: string } = {}) => {
@@ -562,8 +624,12 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const step = (i: number, o: number) => ({ data: { usage: { inputTokens: i, outputTokens: o } } });
 
   await spendHook.events!["step.completed"]!(step(100, 10) as never, runCtx("sess-deleg-parent") as never);
-  await spendHook.events!["step.completed"]!(step(7, 3) as never, runCtx("sess-deleg-child-a", { parent: { sessionId: "sess-deleg-parent", callId: "call_7" } }) as never);
-  await spendHook.events!["step.completed"]!(step(5, 2) as never, runCtx("sess-deleg-child-b", { token: "subagent:sess-deleg-parent:call_9" }) as never);
+  await withWorkerAuthority("C_DELEG", "U1", () =>
+    spendHook.events!["step.completed"]!(step(7, 3) as never, runCtx("sess-deleg-child-a", { parent: { sessionId: "sess-deleg-parent", callId: "call_7" } }) as never),
+  );
+  await withWorkerAuthority("C_DELEG", "U1", () =>
+    spendHook.events!["step.completed"]!(step(5, 2) as never, runCtx("sess-deleg-child-b", { token: "subagent:sess-deleg-parent:call_9" }) as never),
+  );
 
   const parentRows = await usageEvents.usageForSession("default", "sess-deleg-parent");
   ok(parentRows.length === 3, `🔴 a delegated child's row files under the PARENT's session id — the parent's own turn plus both children (got ${parentRows.length})`);
@@ -619,9 +685,11 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     const tokenChildRow = parentRows.find((r) => subagentRunOf(r)?.sessionId === "sess-deleg-child-b")!;
     ok(tokenChildRow.delegationDepth === 1 && tokenChildRow.rootSessionId === "sess-deleg-parent", "a child recognised through the CONTINUATION TOKEN alone (no root in the token) still reports depth 1 with the parent as the deepest visible ancestor");
 
-    await spendHook.events!["step.completed"]!(
-      step(3, 1) as never,
-      runCtx("sess-deleg-grandchild", { parent: { sessionId: "sess-deleg-child-a", callId: "call_11", rootSessionId: "sess-deleg-parent" } }) as never,
+    await withWorkerAuthority("C_DELEG", "U1", () =>
+      spendHook.events!["step.completed"]!(
+        step(3, 1) as never,
+        runCtx("sess-deleg-grandchild", { parent: { sessionId: "sess-deleg-child-a", callId: "call_11", rootSessionId: "sess-deleg-parent" } }) as never,
+      ),
     );
     const childFiled = await usageEvents.usageForSession("default", "sess-deleg-child-a");
     ok(childFiled.length === 1, "the grandchild still files under its IMMEDIATE parent — OPE-263's attestation semantics are untouched by this ticket");
@@ -660,20 +728,20 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     };
 
     const unstampedBinding = bindFrom(unstamped394 as never);
-    ok(unstampedBinding.platform === "subagent", `🔴 OPE-394 RED: with no inherited oe_platform a child still binds platform "subagent" (got "${unstampedBinding.platform}") — fail-closed to the env partition, exactly as any unknown kind does`);
+    ok(unstampedBinding.platform === "subagent", `🔴 OPE-394 RED: a child with no dispatch snapshot binds platform "subagent" (got "${unstampedBinding.platform}")`);
     ok(unstampedBinding.principalId === undefined || unstampedBinding.principalId === "", "…with no principal, so its rows are unattributed as well as mis-partitioned");
     ok(unstampedBinding.surface !== "C_394", "…and NOT on the parent's surface — which is the whole defect: those tokens escape the parent surface's cap");
 
-    const childBinding = bindFrom(child394 as never);
+    const childBinding = await withWorkerAuthority("C_394", "U394", () => bindFrom(child394 as never));
     const parentBinding = bindFrom(parent394 as never);
     eq(
       { platform: childBinding.platform, workspace: childBinding.workspace, surface: childBinding.surface, mode: childBinding.mode, visibility: childBinding.visibility, trust: childBinding.trust, principalId: childBinding.principalId },
       { platform: parentBinding.platform, workspace: parentBinding.workspace, surface: parentBinding.surface, mode: parentBinding.mode, visibility: parentBinding.visibility, trust: parentBinding.trust, principalId: parentBinding.principalId },
-      "🔴 OPE-393: a subagent child binds IDENTICALLY to its parent — the channelPlatform origin-hop reads the inherited oe_platform stamp, so the parent's real mapper runs against the parent's real attributes",
+      "🔴 OPE-393: a subagent child binds IDENTICALLY to its dispatch parent through the validated snapshot",
     );
 
     await spendHook.events!["step.completed"]!(step(50, 5) as never, parent394 as never);
-    await spendHook.events!["step.completed"]!(step(11, 4) as never, child394 as never);
+    await withWorkerAuthority("C_394", "U394", () => spendHook.events!["step.completed"]!(step(11, 4) as never, child394 as never));
 
     const totals394 = await spendTotals("default", { surfaceKey: "slack/T1/C_394", period: period394 });
     ok(

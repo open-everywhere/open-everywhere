@@ -24,6 +24,8 @@ import { notionPageDomain, notionReachWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
 import { firstNotionDispatchOfComment, resolveNotionEngagement, type NotionEngagementDeps, type NotionSeamFacts } from "./notion-engagement.js";
+import type { NotionWebhookTimingRecorder } from "./notion-webhook-timing.js";
+import type { NotionCommentDispatchGuard } from "./notion-ingress-drain.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type AttachSessionForCancel, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
@@ -53,9 +55,11 @@ export interface HandleNotionDeliveryDeps {
   readonly ambientEnabled: (surfaceKey: string) => boolean;
   readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
   readonly engagement?: NotionEngagementDeps;
+  readonly dispatchGuard?: NotionCommentDispatchGuard;
   readonly fetch?: FetchLike;
   readonly version?: string;
   readonly retry?: NotionCallOpts["retry"];
+  readonly timing?: NotionWebhookTimingRecorder;
   readonly dispatch: (d: NotionUntieredSupervisorDispatch) => Promise<void>;
   readonly onHandshakeToken?: (token: string) => void;
   readonly attachSession: AttachSessionForCancel;
@@ -102,6 +106,27 @@ export async function handleNotionDelivery(
   return { ...out, verified, ...(verified && signer.credentialId ? { signerCredentialId: signer.credentialId } : {}) };
 }
 
+export async function handleAcceptedNotionDelivery(
+  rawBody: string,
+  signerCredentialId: string,
+  deps: HandleNotionDeliveryDeps,
+): Promise<NotionDeliveryOutcome> {
+  if (!deps.signingKeys.some((key) => key.credentialId === signerCredentialId)) {
+    return {
+      status: 200,
+      body: "ok",
+      action: "no-api-key",
+      detail: "the verified Notion integration is no longer configured",
+      verified: true,
+      signerCredentialId,
+      credentialId: signerCredentialId,
+    };
+  }
+  const signer = { credentialId: signerCredentialId };
+  const { signed: _signed, ...out } = await deliver(rawBody, null, deps, signer, signerCredentialId);
+  return { ...out, verified: true, signerCredentialId };
+}
+
 type DeliverOutcome = Omit<NotionDeliveryOutcome, "verified"> & { readonly signed?: boolean };
 
 async function deliver(
@@ -109,15 +134,22 @@ async function deliver(
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
   signer: { credentialId?: string },
+  acceptedSignerCredentialId?: string,
 ): Promise<DeliverOutcome> {
-  const handshake = parseVerificationHandshake(rawBody);
+  const handshake = acceptedSignerCredentialId === undefined ? parseVerificationHandshake(rawBody) : undefined;
   if (handshake) {
     deps.onHandshakeToken?.(handshake);
     return { status: 200, body: "ok", action: "handshake" };
   }
 
-  const gate = gateNotionDeliveryAcross(deps.signingKeys, rawBody, signatureHeader, deps.allowUnverified);
-  if (gate.rejection) return { status: 401, body: gate.rejection, action: "rejected", detail: gate.rejection };
+  const gate = acceptedSignerCredentialId !== undefined
+    ? { verified: true as const, credentialId: acceptedSignerCredentialId }
+    : deps.timing
+      ? deps.timing.measureSync("credential", () => gateNotionDeliveryAcross(deps.signingKeys, rawBody, signatureHeader, deps.allowUnverified))
+      : gateNotionDeliveryAcross(deps.signingKeys, rawBody, signatureHeader, deps.allowUnverified);
+  if ("rejection" in gate && gate.rejection) {
+    return { status: 401, body: gate.rejection, action: "rejected", detail: gate.rejection };
+  }
   const signed = gate.verified;
   if (gate.credentialId) signer.credentialId = gate.credentialId;
 
@@ -138,22 +170,34 @@ async function deliver(
   const credentialId = gate.credentialId ?? deps.credentialForPage(ev.workspace_id, eventPageId) ?? deps.signingKeys[0]?.credentialId;
   if (!credentialId) return { status: 200, body: "ok", action: "no-api-key", detail: "no Notion integration is configured", signed };
 
-  const cred = await deps.credentialFor(credentialId);
+  const cred = deps.timing
+    ? await deps.timing.measure("credential", () => deps.credentialFor(credentialId))
+    : await deps.credentialFor(credentialId);
   if (!cred) {
     return { status: 200, body: "ok", action: "no-api-key", detail: `no value stored for notion credential "${credentialId}"`, signed, credentialId };
   }
 
-  const botUserId = await deps.resolveBotUserId(credentialId);
-  const botName = deps.resolveBotName ? await deps.resolveBotName(credentialId) : undefined;
+  const botUserId = deps.timing
+    ? await deps.timing.measure("botTriggerPage", () => deps.resolveBotUserId(credentialId))
+    : await deps.resolveBotUserId(credentialId);
+  const botName = deps.resolveBotName
+    ? deps.timing
+      ? await deps.timing.measure("botTriggerPage", () => deps.resolveBotName!(credentialId))
+      : await deps.resolveBotName(credentialId)
+    : undefined;
 
   let comment: NotionComment;
   try {
-    comment = await retrieveComment(commentId, ingressCallOpts(cred, deps));
+    comment = deps.timing
+      ? await deps.timing.measure("botTriggerPage", () => retrieveComment(commentId, ingressCallOpts(cred, deps)))
+      : await retrieveComment(commentId, ingressCallOpts(cred, deps));
   } catch (err) {
     return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}`, signed, credentialId };
   }
 
-  const resolvedPage = await resolveDeliveryPage(comment, ingressCallOpts(cred, deps));
+  const resolvedPage = deps.timing
+    ? await deps.timing.measure("botTriggerPage", () => resolveDeliveryPage(comment, ingressCallOpts(cred, deps)))
+    : await resolveDeliveryPage(comment, ingressCallOpts(cred, deps));
   if (!resolvedPage.pageId) {
     return { status: 200, body: "ok", action: "unresolved-page", detail: resolvedPage.reason, signed, credentialId };
   }
@@ -171,16 +215,11 @@ async function deliver(
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 
   if (notionCommentIsStopDirective(comment, botUserId)) {
-    const result = await routeNotionStopComment(
-      {
-        workspaceId,
-        pageId,
-        discussionId: discussionId || undefined,
-        credentialId,
-        requesterId: comment.created_by?.id,
-      },
+    const stop = () => routeNotionStopComment(
+      { workspaceId, pageId, discussionId: discussionId || undefined, credentialId, requesterId: comment.created_by?.id },
       { attachSession: deps.attachSession },
     );
+    const result = deps.timing ? await deps.timing.measure("engagementDedupe", stop) : await stop();
     return {
       status: 200,
       body: "ok",
@@ -198,7 +237,11 @@ async function deliver(
     ...(comment.created_by?.id ? { principalId: comment.created_by.id } : {}),
     ...(credentialId ? { credentialId } : {}),
   };
-  const seam = classification.addressing === "channel-watch" ? await resolveNotionEngagement(seamFacts, false, deps.engagement) : undefined;
+  const seam = classification.addressing === "channel-watch"
+    ? deps.timing
+      ? await deps.timing.measure("engagementDedupe", () => resolveNotionEngagement(seamFacts, false, deps.engagement))
+      : await resolveNotionEngagement(seamFacts, false, deps.engagement)
+    : undefined;
 
   const pageDomain = notionPageDomain(workspaceId, pageId, deps.domains);
   const addressedInDeclaredDomain = classification.addressing === "direct" && pageDomain.via !== "none";
@@ -211,14 +254,16 @@ async function deliver(
     const action = reason.startsWith("self") ? "skipped-self" : reason.startsWith("bot") ? "skipped-bot" : "dropped";
     return { status: 200, body: "ok", action, detail: reason, signed, credentialId };
   }
+  const addressing = classification.addressing;
 
   if (classification.addressing !== "direct" && seam?.kind === "hold" && seam.stopped) {
     return { status: 200, body: "ok", action: "stood-down", detail: seam.anchor, signed, credentialId };
   }
 
-  const trust = await resolveNotionDeliveryTrust(pageId, workspaceId ?? "", deps.trustRoots, {
+  const resolveTrust = () => resolveNotionDeliveryTrust(pageId, workspaceId ?? "", deps.trustRoots, {
     parentOf: (id) => notionParentLink(id, ingressCallOpts(cred, deps)),
   });
+  const trust = deps.timing ? await deps.timing.measure("ancestorSiblingTrust", resolveTrust) : await resolveTrust();
 
   const triggerText = richTextToPlainText(comment.rich_text);
   const trigger: NotionUntieredWakeMessage = {
@@ -227,8 +272,12 @@ async function deliver(
     authorId: comment.created_by?.id,
     sentAt: comment.created_time ?? new Date().toISOString(),
     text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",
+    ...(comment.parent?.block_id ? { anchorId: comment.parent.block_id } : {}),
   };
-  const threadComments = await loadThreadSiblings(comment, pageId, discussionId, botUserId, ingressCallOpts(cred, deps));
+  const loadSiblings = () => loadThreadSiblings(comment, pageId, discussionId, botUserId, ingressCallOpts(cred, deps));
+  const threadComments = deps.timing
+    ? await deps.timing.measure("ancestorSiblingTrust", loadSiblings)
+    : await loadSiblings();
   const auth = buildNotionAuth({
     workspaceId,
     pageId,
@@ -250,14 +299,18 @@ async function deliver(
     engagementTier = undefined;
   }
 
-  if (!(await firstNotionDispatchOfComment(seamFacts, commentId, deps.engagement))) {
+  const firstDispatch = () => deps.dispatchGuard
+    ? deps.dispatchGuard.claim(commentId)
+    : firstNotionDispatchOfComment(seamFacts, commentId, deps.engagement);
+  const first = deps.timing ? await deps.timing.measure("engagementDedupe", firstDispatch) : await firstDispatch();
+  if (!first) {
     return { status: 200, body: "ok", action: "duplicate-delivery", detail: commentId, signed, credentialId };
   }
 
-  await deps.dispatch({
+  const dispatch = () => deps.dispatch({
     surfaceKey,
     credentialId,
-    addressing: classification.addressing,
+    addressing,
     pageId,
     discussionId,
     workspaceId: workspaceId ?? null,
@@ -269,6 +322,9 @@ async function deliver(
     domainVia: pageDomain.via,
     ...(trust.reason === "no-roots" ? {} : { trust }),
   });
+  if (deps.timing) await deps.timing.measure("dispatch", dispatch);
+  else await dispatch();
+  if (deps.dispatchGuard) await deps.dispatchGuard.complete(commentId);
 
   return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing, signed, credentialId };
 }
@@ -299,7 +355,7 @@ async function loadThreadSiblings(
   opts: NotionCallOpts,
 ): Promise<NotionUntieredWakeMessage[]> {
   try {
-    const all = await listBlockComments(pageId, opts);
+    const all = await listBlockComments(trigger.parent?.block_id ?? pageId, opts);
     return all
       .filter((c) => c.id !== trigger.id && (discussionId ? c.discussion_id === discussionId : true))
       .map((c) => {

@@ -12,6 +12,8 @@ import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
+import { delegatedBindingAdopted, delegatedBindingThisTurn } from "./delegated-binding.js";
+import { frozenSurfaceBindingFrom } from "./frozen-surface-binding.internal.js";
 
 export type Visibility = "public" | "private";
 
@@ -236,6 +238,8 @@ export function isSubagentChildContext(ctx: BindableContext): boolean {
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   if (platformFromKind(ctx.channel?.kind) === SUBAGENT_CHANNEL_KIND) {
+    const delegated = delegatedBindingThisTurn(currentTurnId(ctx));
+    if (delegated !== undefined) return normalizePlatform(delegated.platform);
     const inherited = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
     return inherited ? normalizePlatform(inherited) : SUBAGENT_CHANNEL_KIND;
   }
@@ -476,6 +480,7 @@ export function healDeliveryIdentity(ctx: BindableContext): DeliveryHealOutcome 
 export function subagentBindingLost(ctx: BindableContext): boolean {
   try {
     if (!isSubagentChildContext(ctx)) return false;
+    if (delegatedBindingThisTurn(currentTurnId(ctx)) !== undefined) return false;
     if (MAPPERS.get(seg(channelPlatform(ctx), "local")) === undefined) return false;
     if (carriesPlatformIdentity(ctx)) return false;
     const bridged = readBindingBridge();
@@ -486,6 +491,25 @@ export function subagentBindingLost(ctx: BindableContext): boolean {
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
+  if (isUnifiedWindowContext(ctx)) {
+    const frozen = frozenSurfaceBindingFrom(ctx);
+    if (frozen !== undefined && frozen.org === deploymentOrg() && normalizePlatform(frozen.platform) === channelPlatform(ctx)) return frozen;
+  }
+  if (isSubagentChildContext(ctx)) {
+    const delegated = delegatedBindingThisTurn(currentTurnId(ctx));
+    if (delegated !== undefined) return delegated;
+    if (!delegatedBindingAdopted()) {
+      return {
+        org: deploymentOrg(),
+        platform: "subagent",
+        workspace: UNNAMED_TENANT,
+        surface: "unresolved",
+        mode: "channel",
+        visibility: "private",
+        trust: "external",
+      };
+    }
+  }
   let { platform, raw } = rawIdentityFrom(ctx);
   let fire = attestedFirePrincipal(ctx);
   let unattended = unattendedDelivery(ctx);

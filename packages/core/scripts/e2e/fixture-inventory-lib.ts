@@ -40,6 +40,7 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   },
   { surface: "slack", envVar: "E2E_SLACK_SUPERVISOR_CHANNEL", what: "J-SUP's ambient-supervisor channel" },
   { surface: "slack", envVar: "E2E_SLACK_CAP_CHANNEL", what: "S10's throwaway spend-cap scope" },
+  { surface: "slack", envVar: "E2E_SLACK_HALT_CHANNEL", what: "S-HALT's dedicated reversible break-glass scope" },
   { surface: "slack", envVar: "E2E_NOTION_CHANNEL", what: "S24's Notion-connector-bound channel" },
   { surface: "slack", envVar: "E2E_SLACK_UNIFIED_CHANNEL_A", what: "J-UNIFIED container A" },
   { surface: "slack", envVar: "E2E_SLACK_UNIFIED_CHANNEL_B", what: "J-UNIFIED container B" },
@@ -129,6 +130,7 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_ORG: "identity",
 
   E2E_AUDIT_SILENCES: "knob",
+  E2E_CONTROL_LOCAL_WRITE: "knob",
   E2E_ACCESS_ALLOW_SEND: "knob",
   E2E_NOTION_QUERY: "knob",
   E2E_WEBHOOK_HOOK_ID: "knob",
@@ -162,6 +164,8 @@ export const TRACKED_ROOM_IDS: Readonly<Record<string, string>> = {
   E2E_ADDRESSED_LINEAR_TEAM_ID: "1a000000-0000-4000-8000-000000000012",
 
   E2E_SLACK_MPIM_CHANNEL: "C0EXCHAN010",
+
+  E2E_SLACK_HALT_CHANNEL: "C0EXCHAN011",
 
   E2E_ADDRESSED_GITHUB_REPO: "example-owner/oe-e2e-addressed-github",
 };

@@ -91,6 +91,7 @@ export async function fetchTeamsCatchUpWindow(
   ];
 
   const out: NormalizedMessage[] = [];
+  let failedReads = 0;
   for (const read of reads) {
     try {
       const raw = await fetchGraphPages(deps.request, read.url, CATCH_UP_LIMIT);
@@ -103,10 +104,12 @@ export async function fetchTeamsCatchUpWindow(
       }
       await record({ status: "ok", resource: read.resource, path: graphPathOf(read.url), raw: raw.length, kept });
     } catch (err) {
+      failedReads++;
       const status = httpStatusOf(err);
       await record({ status: "error", resource: read.resource, path: graphPathOf(read.url), raw: 0, kept: 0, ...(status === undefined ? {} : { httpStatus: status }) });
     }
   }
+  if (failedReads === reads.length) throw new Error("Teams catch-up: every Graph read failed");
   return out;
 }
 

@@ -310,10 +310,29 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
 
   {
     const inTurn = newSession();
-    const ctx = slackCtx("turn_5d") as unknown as { session: Record<string, unknown> };
-    ctx.session["parent"] = { sessionId: "parent-session-2" };
     reactOutcome = "ok";
     await inTurn(async () => {
+      const spawnEvents = (
+        (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+          events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
+        }
+      ).events;
+      const parent = slackCtx("turn_5d_parent") as unknown as { session: Record<string, unknown> };
+      parent.session["id"] = "parent-session-2";
+      await spawnEvents["actions.requested"]!(
+        { data: { actions: [{ kind: "subagent-call", callId: "call_terminal_react", subagentName: "agent" }] } },
+        parent,
+      );
+      const ctx = slackCtx("turn_5d") as unknown as { channel: Record<string, unknown>; session: Record<string, unknown> };
+      ctx.channel["kind"] = "subagent";
+      ctx.channel["continuationToken"] = "subagent:parent-session-2:call_terminal_react";
+      ctx.session["parent"] = { sessionId: "parent-session-2", callId: "call_terminal_react", rootSessionId: "parent-session-2" };
+      const bindingStarted = (
+        (await import("../agent/hooks/binding-bridge.js")).default as unknown as {
+          events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
+        }
+      ).events["turn.started"]!;
+      await bindingStarted({}, ctx);
       const armed = armOf(reactTool, ctx);
       await armed!.execute({ emoji: "eyes" }, ctx);
       ok(turnHasTerminalAction(repliedTurn) === false, "§5d: a worker's `react` arms the gate as well — every terminal verb a worker can call must");

@@ -67,7 +67,7 @@ export default windowGated("delete_skill", defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `delete of skill "${name}" (domain "${domain}")`;

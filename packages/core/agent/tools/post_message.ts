@@ -89,7 +89,7 @@ const postMessageEntry = defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `post into ${target.platform} container ${target.container}`;

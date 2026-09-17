@@ -18,6 +18,19 @@ export function hashLinkCode(code: string): string {
 
 const CLAIM_RE = new RegExp(String.raw`^link[\s:]+([${LINK_CODE_ALPHABET}]{${LINK_CODE_LENGTH}})$`, "i");
 
+const MACHINE_LINK_CLAIM_RE = new RegExp(String.raw`\blink([\s:]+)[${LINK_CODE_ALPHABET}]{${LINK_CODE_LENGTH}}\b`, "gi");
+const MACHINE_LINK_CODE_LINE_RE = new RegExp(
+  String.raw`(^|\n)([ \t]*)[${LINK_CODE_ALPHABET}]{${LINK_CODE_LENGTH}}(?=[ \t]*(?:\n|$))`,
+  "gi",
+);
+const PRIVATE_LINK_CODE_MARKER = "[private identity-link code omitted]";
+
+export function redactMachineLinkCodes(text: string): string {
+  return text
+    .replace(MACHINE_LINK_CLAIM_RE, (_whole: string, separator: string) => `link${separator}${PRIVATE_LINK_CODE_MARKER}`)
+    .replace(MACHINE_LINK_CODE_LINE_RE, (_whole: string, start: string, indent: string) => `${start}${indent}${PRIVATE_LINK_CODE_MARKER}`);
+}
+
 export function detectLinkClaim(text: string | undefined): string | undefined {
   if (!text) return undefined;
   const m = CLAIM_RE.exec(text.trim());

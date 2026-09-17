@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 import type { HaltAddress, HaltRow, OperationalStore } from "../agent/operational/store.js";
 
@@ -11,7 +12,7 @@ const SQLITE_DIR = mkdtempSync(join(tmpdir(), "oe-halt-"));
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(SQLITE_DIR, "halt.sqlite3");
 
-const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+const { sqliteOperationalStore, _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
 const { initOperationalSchema, makeOperationalPostgresStore } = await import("../agent/operational/postgres.js");
 const { openTestPg, closeAllTestPg } = await import("./test-pg-driver.js");
 const { CAP_LEVELS, OPERATIONAL_TABLES, assertHaltAddress, haltAddressColumns, haltAddressFromColumns } = await import("../agent/operational/store.js");
@@ -55,10 +56,11 @@ ok(OPERATIONAL_TABLES.includes("halt"), "§1 `halt` is in OPERATIONAL_TABLES —
 async function storeContract(store: OperationalStore, engine: string): Promise<void> {
   ok((await store.activeHalts(ORG)).length === 0, `§1/${engine} a fresh store holds no halts`);
 
-  await store.setHalt(ORG, ORG_WIDE, { setBy: "U-alice" });
+  const fixedSetAt = "2026-05-26T05:32:00.123Z";
+  await store.setHalt(ORG, ORG_WIDE, { setBy: "U-alice", setAt: fixedSetAt, setRef: "wake-owned" });
   const afterSet = await store.activeHalts(ORG);
   ok(afterSet.length === 1 && afterSet[0]!.address.orgWide === true, `§1/${engine} an org-wide halt round-trips as the org-wide ADDRESS, not as a scope key`);
-  ok(afterSet[0]!.setBy === "U-alice" && afterSet[0]!.setAt.length > 0, `§1/${engine} the row names who halted and when`);
+  ok(afterSet[0]!.setBy === "U-alice" && afterSet[0]!.setAt === fixedSetAt && afterSet[0]!.setRef === "wake-owned", `§1/${engine} the row preserves the exact host time + wake ownership stamp`);
 
   await store.setHalt(ORG, AT_SURFACE, { setBy: "U-bob" });
   ok((await store.activeHalts(ORG)).length === 2, `§1/${engine} an addressed halt is a SECOND row — it does not replace the org-wide one`);
@@ -73,6 +75,24 @@ async function storeContract(store: OperationalStore, engine: string): Promise<v
   ok(re.setBy === "U-carol", `§1/${engine} re-halting an address restamps setBy`);
   ok(re.clearedAt === undefined && re.clearedBy === undefined, `§1/${engine} 🔴 re-halting DROPS the previous resume stamps — a cleared_at beside an active row would read as "resumed"`);
   ok((await store.activeHalts(ORG)).length === 2, `§1/${engine} and it is still ONE row for that address, not two`);
+
+  ok(
+    (await store.clearHalt(ORG, AT_SURFACE, { clearedBy: "fixture" }, { setAt: re.setAt, setBy: "not-carol" })) === false,
+    `§1/${engine} an owner-safe clear refuses a mismatched setter`,
+  );
+  ok(
+    (await store.clearHalt(ORG, AT_SURFACE, { clearedBy: "fixture" }, { setAt: re.setAt, setBy: re.setBy, setRef: "another-wake" })) === false,
+    `§1/${engine} an owner-safe clear refuses a mismatched wake ownership stamp`,
+  );
+  ok(
+    (await store.activeHalts(ORG)).some((r) => !r.address.orgWide && r.setBy === "U-carol"),
+    `§1/${engine} the refused owner-safe clear leaves the active halt untouched`,
+  );
+  ok(
+    (await store.clearHalt(ORG, AT_SURFACE, { clearedBy: "fixture" }, { setAt: re.setAt, setBy: re.setBy })) === true,
+    `§1/${engine} the exact owner-safe handle clears its own unchanged halt`,
+  );
+  await store.setHalt(ORG, AT_SURFACE, { setBy: "U-carol" });
 
   for (const level of CAP_LEVELS) {
     await store.setHalt(ORG, { orgWide: false, level, scopeKey: `k-${level}` });
@@ -90,11 +110,33 @@ async function storeContract(store: OperationalStore, engine: string): Promise<v
   ok((await store.activeHalts(ORG)).length === 0, `§1/${engine} the store is clean again`);
 }
 
+{
+  const livePath = process.env.OE_SQLITE_PATH!;
+  const legacyPath = join(SQLITE_DIR, "legacy-halt.sqlite3");
+  const legacy = new DatabaseSync(legacyPath);
+  legacy.exec(`CREATE TABLE halt (org_id TEXT NOT NULL, level TEXT NOT NULL, scope_key TEXT NOT NULL, org_wide INTEGER NOT NULL, active INTEGER NOT NULL, set_by TEXT, set_at TEXT NOT NULL, cleared_by TEXT, cleared_at TEXT, PRIMARY KEY (org_id, level, scope_key, org_wide));`);
+  legacy.prepare("INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at) VALUES (?, '', '', 1, 1, ?, ?)").run(ORG, "legacy-operator", "2026-03-18T16:50:00.000Z");
+  legacy.close();
+  process.env.OE_SQLITE_PATH = legacyPath;
+  _resetOperationalDbForTest();
+  const [row] = await sqliteOperationalStore.activeHalts(ORG);
+  ok(row?.setBy === "legacy-operator" && row.setRef === undefined, "§1/sqlite legacy schema adds set_ref without rewriting an existing operator halt");
+  await sqliteOperationalStore.clearHalt(ORG, ORG_WIDE, { clearedBy: "cleanup" }, { setAt: row!.setAt, setBy: row!.setBy });
+  process.env.OE_SQLITE_PATH = livePath;
+  _resetOperationalDbForTest();
+}
+
 await storeContract(sqliteOperationalStore, "sqlite");
 {
   const pg = await openTestPg();
+  await pg.client.query(`CREATE TABLE halt (org_id text NOT NULL, level text NOT NULL, scope_key text NOT NULL, org_wide boolean NOT NULL, active boolean NOT NULL, set_by text, set_at text NOT NULL, cleared_by text, cleared_at text, PRIMARY KEY (org_id, level, scope_key, org_wide))`);
+  await pg.client.query("INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at) VALUES ($1, '', '', true, true, $2, $3)", [ORG, "legacy-operator", "2026-03-18T16:50:00.000Z"]);
   await initOperationalSchema(pg.client);
-  await storeContract(makeOperationalPostgresStore(pg.client), "postgres");
+  const store = makeOperationalPostgresStore(pg.client);
+  const [legacy] = await store.activeHalts(ORG);
+  ok(legacy?.setBy === "legacy-operator" && legacy.setRef === undefined, "§1/postgres legacy schema adds set_ref without rewriting an existing operator halt");
+  await store.clearHalt(ORG, ORG_WIDE, { clearedBy: "cleanup" }, { setAt: legacy!.setAt, setBy: legacy!.setBy });
+  await storeContract(store, "postgres");
 }
 
 assert.throws(() => assertHaltAddress({ orgWide: false, level: "surface", scopeKey: "  " }), /non-blank/);
@@ -718,7 +760,13 @@ registerConfig({
   const haltToolSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools", "halt.ts"), "utf8");
   const execute = haltToolSource.slice(haltToolSource.indexOf("async execute("));
   ok(execute.includes("announceHalt("), "§12b STRUCTURAL: the tool's execute calls the announcement — the room is told by the host, not by the turn");
-  ok(execute.includes("announced },"), "§12b STRUCTURAL: …and the `admin.halt.set` row carries `announced`, so a brake nobody heard leaves a row");
+  ok(execute.includes("announced,"), "§12b STRUCTURAL: …and the `admin.halt.set` row carries `announced`, so a brake nobody heard leaves a row");
+  ok(execute.includes("const wakeId = currentWakeId(ctx)"), "§12b the halt audit join reads the host-owned wake id");
+  ok(execute.includes("const sessionId = currentSessionId(ctx)"), "§12b …and the host-owned session id");
+  ok(execute.includes("...(wakeId ? { wakeId } : {})"), "§12b …and records a non-empty wake join without inventing one");
+  ok(execute.includes("...(sessionId ? { sessionId } : {})"), "§12b …and records a non-empty session join without inventing one");
+  ok(execute.includes("setAt,"), "§12b …and records the exact store set timestamp for cleanup correlation");
+  ok(execute.includes("setRef: wakeId"), "§12b …while the stored row owns the host wake, rather than only the human actor");
   ok(execute.includes("haltModelMessage(announced, scope)"), "§12b STRUCTURAL: …and the tool hands the model the arm §12a measured, rather than a second copy of the sentence");
 
 }

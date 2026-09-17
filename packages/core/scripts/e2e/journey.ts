@@ -36,7 +36,7 @@ export function eveRequestApprovalButtons(
 
 export const APPROVAL_REQUEST_PROVENANCE_ACTIONS = ["wake.ingress", "turn.question_bridged"] as const;
 
-function slackMessageTimestampIso(ts: string): string | undefined {
+export function slackMessageTimestampIso(ts: string): string | undefined {
   const match = /^(\d+)\.(\d{1,6})$/.exec(ts);
   if (!match) return undefined;
   const seconds = Number(match[1]);

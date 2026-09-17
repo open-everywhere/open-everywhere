@@ -15,6 +15,8 @@ export function emptyGrantsFile(): GrantsFile {
 
 export function overlayBundleName(scope: RequestingScope): string {
   switch (scope.level) {
+    case "domain":
+      return `grants:domain:${scope.domain}`;
     case "surface":
       return `grants:${scope.surface}`;
     case "principal":
@@ -26,6 +28,8 @@ export function overlayBundleName(scope: RequestingScope): string {
 
 function bindingScope(scope: RequestingScope): Scope {
   switch (scope.level) {
+    case "domain":
+      return { level: "domain", domain: scope.domain };
     case "surface":
       return { level: "surface", surface: scope.surface };
     case "principal":
@@ -36,6 +40,7 @@ function bindingScope(scope: RequestingScope): Scope {
 }
 
 function requestingScopeOf(s: Scope): RequestingScope | undefined {
+  if (s.level === "domain" && typeof s.domain === "string") return { level: "domain", domain: s.domain };
   if (s.level === "surface" && typeof s.surface === "string") return { level: "surface", surface: s.surface };
   if (s.level === "principal" && typeof s.principal === "string") return { level: "principal", principal: s.principal };
   if (s.level === "group" && typeof s.group === "string") return { level: "group", group: s.group };
@@ -113,7 +118,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
     const scope = requestingScopeOf(raw as unknown as Scope);
     if (!scope) {
       throw new GrantsCodemodError(
-        `grants binding for "${bd.bundle}" must be surface-, principal- or group-scoped with that level's own address field (got level="${String(raw.level)}") — the overlay never binds wider than one room, one person or one declared group`,
+        `grants binding for "${bd.bundle}" must be domain-, surface-, principal- or group-scoped with that level's own address field (got level="${String(raw.level)}") — the overlay never binds outside the canonical domain, one standalone room, one person or one declared group`,
       );
     }
     const stray = ["tenant", "domain", "surface", "group", "principal"].filter(

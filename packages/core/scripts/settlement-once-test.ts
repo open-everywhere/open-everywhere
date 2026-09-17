@@ -35,6 +35,8 @@ const { platformFailureClass } = await import("../agent/channels/platform-failur
 const { CredentialEndpointError } = await import("../agent/access/credential-endpoints.js");
 const { SETTLEMENT_REPORT_POSTED_ACTION, SETTLEMENT_REPORT_SKIPPED_ACTION } = await import("../agent/access/pending-delegation-signal.js");
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+const { recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type SessionTailEntry = import("../agent/channels/session-tail.js").SessionTailEntry;
@@ -95,6 +97,7 @@ const armReply = (ctx: unknown): Armed | null => (replyTool as unknown as { even
 
 const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
 const dispatchHook = hooks["action.result"]!;
+const requestedHook = hooks["actions.requested"]!;
 const turnStarted = hooks["turn.started"]!;
 const settlementWake = hooks["message.received"]!;
 
@@ -122,6 +125,15 @@ function ctxFor(turnWake: string, turnId: string): BindableContext {
     },
     agent: { name: "oe", nodeId: "__root__" },
   } as unknown as BindableContext;
+}
+
+async function dispatchTask(turnWake: string, turnId: string, callId: string, taskId: string): Promise<void> {
+  const ctx = ctxFor(turnWake, turnId);
+  const envelope = `<wake wake-id="${turnWake}"><channel><message from="human" author-id="U1" trigger="true">delegate</message></channel></wake>`;
+  recordDeliveredWakes(turnId, envelope);
+  recordRequesterIdentity(ctx, turnId, envelope);
+  await requestedHook({ data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } }, ctx);
+  await dispatchHook({ data: { result: receipt(callId, taskId) } }, ctx);
 }
 
 const nodeRequire = createRequire(import.meta.url);
@@ -157,7 +169,31 @@ const callNoReply = async (turnWake: string, turnId: string, reason = "nothing_t
 
 async function wakeOn(channelId: string, threadTs: string): Promise<string> {
   const id = mintWakeId();
-  await registerUnifiedWakeTarget(store, ORG, id, { platform: "slack", channelId, threadTs }, new Date().toISOString(), TOKEN);
+  const binding = {
+    org: ORG,
+    platform: "slack" as const,
+    workspace: "T1",
+    surface: channelId,
+    mode: "channel" as const,
+    visibility: "public" as const,
+    trust: "internal" as const,
+    principalId: "U1",
+    target: { channelId },
+    threadTs,
+  };
+  await registerUnifiedWakeTarget(
+    store,
+    ORG,
+    id,
+    { platform: "slack", channelId, threadTs },
+    new Date().toISOString(),
+    TOKEN,
+    true,
+    undefined,
+    `slack/T1/${channelId}`,
+    binding,
+    { binding, requester: { kind: "requester", principalId: "U1" }, nonMemberWake: false },
+  );
   return id;
 }
 
@@ -189,7 +225,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_28_a"));
-    await dispatchHook({ data: { result: receipt("call_28", TASK) } }, ctxFor(wAsk, "turn_28_a"));
+    await dispatchTask(wAsk, "turn_28_a", "call_28", TASK);
     const banner = await callReply(wAsk, "turn_28_a", wAsk, "I've started that check; I'll report what it returns.", false);
     ok(banner.posted === true, "§1/SETUP: the hand-off note posted, so a report is PROMISED");
     const roomAfterBanner = posted.length;
@@ -247,7 +283,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_w_a"));
-    await dispatchHook({ data: { result: receipt("call_w", TASK) } }, ctxFor(wAsk, "turn_w_a"));
+    await dispatchTask(wAsk, "turn_w_a", "call_w", TASK);
     const banner = await callReply(wAsk, "turn_w_a", wAsk, "Started it — I'll report back.", false);
     ok(banner.posted === true, "§1b/SETUP: the hand-off note posted");
     await turnStarted({}, ctxFor(wAsk, "turn_w_b"));
@@ -308,7 +344,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_f_a"));
-    await dispatchHook({ data: { result: receipt("call_f", TASK) } }, ctxFor(wAsk, "turn_f_a"));
+    await dispatchTask(wAsk, "turn_f_a", "call_f", TASK);
     const banner = await callReply(wAsk, "turn_f_a", wAsk, "On it — I'll report back.", false);
     ok(banner.posted === true, "§3/SETUP: the hand-off note posted");
     await turnStarted({}, ctxFor(wAsk, "turn_f_b"));

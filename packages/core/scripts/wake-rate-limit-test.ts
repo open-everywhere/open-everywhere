@@ -15,6 +15,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
 import { RateLimitExhaustedError } from "../agent/channels/rate-limit-retry.js";
 import { WAKE_RETRY_ACTION, WAKE_DISPATCH_RETRY_POLICY } from "../agent/channels/wake-timing.js";
+import { dispatchNativeWakeWithRetry } from "../agent/channels/native-wake-retry.js";
 import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
@@ -37,6 +38,10 @@ function queueRefusal(): Error {
   const err = new Error("Too many requests — please retry later");
   err.name = "TooManyRequestsError";
   return err;
+}
+
+function immediateQueueRefusal(): Error {
+  return Object.assign(queueRefusal(), { retryAfter: 0 });
 }
 
 const DOMAIN = "payments";
@@ -155,6 +160,66 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
 }
 
 {
+  const surfaceKey = "discord/G_NATIVE/C_NATIVE";
+  let calls = 0;
+  await dispatchNativeWakeWithRetry(
+    async () => {
+      calls += 1;
+      if (calls === 1) throw immediateQueueRefusal();
+      return "delivered";
+    },
+    { platform: "discord", workspace: "G_NATIVE", surfaceKey },
+  );
+  eq(calls, 2, "🔴 §5 native: a refused queue launch is repeated exactly once, then settles");
+  const nativeRows = (await readAudit({ org: deploymentOrg(), action: WAKE_RETRY_ACTION }))
+    .map((r) => r.detail as Record<string, unknown>)
+    .filter((d) => d["surfaceKey"] === surfaceKey);
+  eq(nativeRows.length, 1, "🔴 §5 native: the refusal leaves one retry row under the real native surface");
+  ok(typeof nativeRows[0]?.["deliveryId"] === "string", "🔴 §5 native: the row carries a host-minted deliveryId for this dispatch");
+  ok(!("wakeId" in (nativeRows[0] ?? {})), "🔴 §5 native: the row omits wakeId — this road has no ingress/turn join to claim");
+}
+{
+  const transport = new Error("socket hang up");
+  let calls = 0;
+  let threw: unknown;
+  try {
+    await dispatchNativeWakeWithRetry(
+      async () => {
+        calls += 1;
+        throw transport;
+      },
+      { platform: "notion", workspace: "W_NATIVE", surfaceKey: "notion/W_NATIVE/P_NATIVE" },
+    );
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === transport, "🔴 §5 native: an ambiguous transport throw propagates unchanged");
+  eq(calls, 1, "🔴 §5 native: an ambiguous transport throw gets exactly one attempt");
+}
+{
+  let calls = 0;
+  let threw: unknown;
+  try {
+    await dispatchNativeWakeWithRetry(
+      async () => {
+        calls += 1;
+        throw immediateQueueRefusal();
+      },
+      { platform: "github", workspace: "acme", surfaceKey: "github/acme/native" },
+    );
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw instanceof RateLimitExhaustedError, "🔴 §5 native: exhaustion is an explicit named failure");
+  eq(calls, WAKE_DISPATCH_RETRY_POLICY.maxAttempts, "🔴 §5 native: exhaustion stops at the shared wake attempt bound");
+  const rows = (await readAudit({ org: deploymentOrg(), action: WAKE_RETRY_ACTION }))
+    .map((r) => r.detail as Record<string, unknown>)
+    .filter((d) => d["surfaceKey"] === "github/acme/native");
+  eq(new Set(rows.map((r) => r["deliveryId"])).size, 1, "🔴 §5 native: every refused attempt shares one stable deliveryId");
+  eq(rows.filter((r) => r["outcome"] === "exhausted").length, 1, "🔴 §5 native: the final row states exhaustion explicitly");
+}
+
+{
   const src = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
   ok(
     /withRetryAfterThrown\(\s*\(\)\s*=>\s*receive\(channel, target\)\.send\(/.test(src),
@@ -172,4 +237,4 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
   );
 }
 
-console.log(`✓ wake-rate-limit: ${n} assertions passed (eve live pin, the retried wake and its row, the three negative controls, bounded exhaustion, the one road)`);
+console.log(`✓ wake-rate-limit: ${n} assertions passed (eve live pin, windowed and native retries, negative controls, bounded exhaustion, the one road)`);

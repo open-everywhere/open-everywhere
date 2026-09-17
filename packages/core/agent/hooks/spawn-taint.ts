@@ -27,8 +27,9 @@ import {
   readDelegationFailure,
   readTaskReceipt,
   taskNotificationFailure,
+  taskNotificationStartsWithTerminal,
   taskViewsOf,
-  terminalTaskNotification,
+  terminalTaskNotifications,
   terminalTaskViewsOf,
   type DelegationFailure,
   type TaskNotificationFailure,
@@ -39,11 +40,13 @@ import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
 import { auditErrorDetail, auditErrorFrames } from "../audit/tool-action.js";
-import { currentTurnId, currentWakeId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
-import { noteTurnBoundary } from "../access/task-wake-signal.js";
-import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
+import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
+import { noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
+import { addressedWakeThisTurn, exactDispatchWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
+import { requesterThisTurn } from "../access/requester-identity.js";
+import { noteSettlementDispatchAuthority, settlementDispatchAuthorityThisTurn } from "../access/settlement-dispatch-signal.js";
 import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
 import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { delegatedSecondAddress, delegatingParentLink, settleDelegatedReads } from "../channels/delegated-provenance.js";
@@ -581,6 +584,9 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
 export type SettlementFromNotification = {
   readonly failure?: TaskNotificationFailure;
   readonly link?: TaskCallLink;
+  readonly links?: ReadonlyMap<string, TaskCallLink | undefined>;
+  readonly notification?: boolean;
+  readonly authorizeRedispatch?: boolean;
 };
 
 export async function applyTaskSettlement(
@@ -591,7 +597,7 @@ export async function applyTaskSettlement(
 ): Promise<boolean> {
   if (views.length === 0) return false;
   const failure = views.length === 1 ? settlement.failure : undefined;
-  const edge: DelegationFailureEdge = failure === undefined ? "settlement" : "notification";
+  const edge: DelegationFailureEdge = settlement.notification === true || failure !== undefined ? "notification" : "settlement";
   const settlementLink = views.length === 1 ? settlement.link : undefined;
   const bind = ctx as unknown as BindableContext;
   const inheritedWakeId = inheritedWakeStampOf(bind);
@@ -605,7 +611,11 @@ export async function applyTaskSettlement(
     seatSurfaceKey = undefined;
   }
   for (const view of views) {
-    const link = settlementLink !== undefined ? settlementLink : await taskCallLink(deploymentOrg(), view.taskId);
+    const link = settlement.links?.has(view.taskId)
+      ? settlement.links.get(view.taskId)
+      : settlementLink !== undefined
+        ? settlementLink
+        : await taskCallLink(deploymentOrg(), view.taskId);
     const install = await installTaskWake({
       org: deploymentOrg(),
       taskId: view.taskId,
@@ -614,6 +624,13 @@ export async function applyTaskSettlement(
       turnId: wakeTurnId,
       inheritedWakeId,
     });
+    if (edge === "notification" && settlement.authorizeRedispatch === true) {
+      noteSettlementDispatchAuthority(
+        wakeTurnId,
+        view.taskId,
+        install.outcome === "installed" || install.outcome === "already" ? install.dispatchAuthority : undefined,
+      );
+    }
     if (install.outcome === "installed" && claimPromisedReport(view.taskId)) {
       noteSettlementReportOwed(wakeTurnId, view.taskId, install.wakeId ?? undefined);
     }
@@ -678,17 +695,30 @@ export async function applyTaskSettlement(
 }
 
 export async function settleFromTaskNotification(message: unknown, ownSessionId: string, ctx: HookContext): Promise<boolean> {
-  const view = terminalTaskNotification(message);
-  if (view === null) return false;
-  let settled = view;
-  let link: TaskCallLink | undefined;
-  try {
-    link = await taskCallLink(deploymentOrg(), view.taskId);
-    if (link?.agentId !== undefined) settled = { ...view, agentId: link.agentId };
-  } catch {
+  const views = terminalTaskNotifications(message);
+  if (views.length === 0) return false;
+  const settled: TaskSummary[] = [];
+  const links = new Map<string, TaskCallLink | undefined>();
+  for (const view of views) {
+    let next = view;
+    if (!links.has(view.taskId)) {
+      try {
+        links.set(view.taskId, await taskCallLink(deploymentOrg(), view.taskId));
+      } catch {
+        links.set(view.taskId, undefined);
+      }
+    }
+    const link = links.get(view.taskId);
+    if (link?.agentId !== undefined) next = { ...view, agentId: link.agentId };
+    noteTaskSettled(next);
+    settled.push(next);
   }
-  noteTaskSettled(settled);
-  return applyTaskSettlement([settled], ownSessionId, ctx, { failure: taskNotificationFailure(message), ...(link !== undefined ? { link } : {}) });
+  return applyTaskSettlement(settled, ownSessionId, ctx, {
+    notification: true,
+    links,
+    authorizeRedispatch: taskNotificationStartsWithTerminal(message),
+    ...(settled.length === 1 ? { failure: taskNotificationFailure(message) } : {}),
+  });
 }
 
 export default defineHook({
@@ -740,6 +770,44 @@ export default defineHook({
       }
     },
 
+    "actions.requested": async (event, ctx) => {
+      if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
+      const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+      if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+      const bind = ctx as unknown as BindableContext;
+      const turnId = currentTurnId(bind);
+      const actions = (event.data as { actions?: readonly { kind?: unknown; callId?: unknown; toolName?: unknown }[] } | undefined)?.actions ?? [];
+      for (const action of actions) {
+        const delegated = action.kind === "subagent-call" || (action.kind === "tool-call" && action.toolName === "agent");
+        if (delegated && typeof action.callId === "string" && action.callId.length > 0) {
+          const settlement = settlementDispatchAuthorityThisTurn(turnId);
+          const uningressedUnifiedTurn = isUnifiedWindowContext(bind) && uningressedTurn(turnId);
+          const settlementTurn =
+            uningressedUnifiedTurn && (settlement.kind !== "none" || taskWakeThisTurn(turnId) !== undefined);
+          if (settlementTurn && settlement.kind !== "single") {
+            throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+          }
+          const settlementAuthority = settlement.kind === "single" ? settlement.authority : undefined;
+          const wakeId = settlementTurn
+            ? settlementAuthority?.wakeId
+            : addressedWakeThisTurn(turnId) ?? exactDispatchWakeThisTurn(turnId);
+          if (wakeId !== undefined) {
+            try {
+              await rememberDelegatedTaskWake(deploymentOrg(), ownSessionId, action.callId, wakeId);
+            } catch {
+              throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+            }
+          }
+          else if (!isUnifiedWindowContext(bind)) {
+            const requester = requesterThisTurn(turnId);
+            const nonMemberWake = (bind as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_CHAT_NONMEMBER_ATTR] === "true";
+            await rememberDelegatedTaskBinding(deploymentOrg(), ownSessionId, action.callId, bindFrom(bind), requester, nonMemberWake);
+          }
+          else throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+        }
+      }
+    },
+
     "action.result": async (event, ctx) => {
       try {
         if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
@@ -752,7 +820,11 @@ export default defineHook({
           await noteTaskReceipt(receipt, ownSessionId);
           const bind = ctx as unknown as BindableContext;
           const dispatchTurnId = currentTurnId(bind);
-          const dispatchWakeId = addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind);
+          const prelaunchAuthority = await delegatedTaskDispatchAuthority(deploymentOrg(), ownSessionId, receipt.callId);
+          if (isUnifiedWindowContext(bind) && prelaunchAuthority === undefined) {
+            throw new Error("delegated task authority disappeared before receipt");
+          }
+          const dispatchWakeId = prelaunchAuthority?.wakeId;
           const ownWindowToken = resolveOwnWindowToken(bind);
           const minted = await openTaskWake({
             org: deploymentOrg(),
@@ -760,6 +832,10 @@ export default defineHook({
             parentWakeId: dispatchWakeId,
             windowToken: ownWindowToken,
           });
+          if (minted !== null) {
+            if (prelaunchAuthority === undefined) throw new Error("delegated task authority disappeared before receipt");
+            await advanceDelegatedTaskWake(deploymentOrg(), ownSessionId, receipt.callId, receipt.taskId, minted, prelaunchAuthority);
+          }
           await noteGenerationDelegation(deploymentOrg(), ownWindowToken, receipt.taskId);
           if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
           notePendingDelegation(dispatchTurnId, receipt.taskId, dispatchWakeId);

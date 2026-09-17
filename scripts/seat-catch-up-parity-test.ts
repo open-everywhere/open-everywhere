@@ -71,8 +71,17 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(out.length === 1 && out[0].sender === "human", "slack: an attributable person's message normalizes as human");
   ok(out[0].ms === SINCE + 60_000, "slack: the Slack ts becomes an epoch-ms time");
   ok(out.every((m) => m.text !== "who said this?"), "slack: VISIBILITY GATE — an unattributable message never reaches the seat");
-  const soft = await fetchSlackSeatCatchUp({ container: "C1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); }, identity: async () => ({}) });
-  ok(soft.length === 0, "slack: a throwing transport fails soft to empty");
+  await assert.rejects(
+    () => fetchSlackSeatCatchUp({ container: "C1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); }, identity: async () => ({}) }),
+    /down/,
+    "slack: a throwing transport reaches the shared failure boundary",
+  );
+  ok(true, "slack: a throwing transport reaches the shared failure boundary");
+  await assert.rejects(
+    () => fetchSlackSeatCatchUp({ container: "C1", sinceMs: SINCE }, { request: async () => undefined, identity: async () => ({}) }),
+    /Slack catch-up conversations\.history failed/,
+  );
+  ok(true, "slack: the live requester's swallowed/non-ok shape is restored to a catch-up failure");
 }
 
 {
@@ -89,8 +98,13 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(seen[0]?.query.before === "999", "discord: the trigger's snowflake is the `before=` anchor");
   ok(out.length === 1 && out[0].id === "200", "discord: an attributable message normalizes; an unattributable one is dropped");
   ok(out[0].type === "thread" && out[0].threadId === "TH", "discord: a thread-bound read tags its messages thread-scoped");
-  const soft = await fetchDiscordSeatCatchUp({ container: "CH", sinceMs: SINCE }, { request: async () => { throw new Error("down"); } });
-  ok(soft.length === 0, "discord: a throwing transport fails soft to empty");
+  await assert.rejects(() => fetchDiscordSeatCatchUp({ container: "CH", sinceMs: SINCE }, { request: async () => { throw new Error("down"); } }), /down/);
+  ok(true, "discord: a throwing transport reaches the shared failure boundary");
+  await assert.rejects(
+    () => fetchDiscordSeatCatchUp({ container: "CH", sinceMs: SINCE }, { request: async () => undefined }),
+    /Discord catch-up request failed/,
+  );
+  ok(true, "discord: the live requester's missing-token/non-ok shape is restored to a catch-up failure");
 }
 
 {
@@ -114,8 +128,19 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(byId(out, "12")?.sender === "bot", "github: an App actor is MARKED AWARENESS, not silently dropped");
   const unaddressable = await fetchGitHubCatchUpWindow({ container: "not-a-container", sinceMs: SINCE }, { fetchFn, resolveToken: async () => "t" });
   ok(unaddressable.length === 0, "github: an unparseable container reads nothing rather than guessing a repo");
-  const soft = await fetchGitHubCatchUpWindow({ container: "acme/web#42", sinceMs: SINCE }, { fetchFn: (async () => { throw new Error("down"); }) as never, resolveToken: async () => "t" });
-  ok(soft.length === 0, "github: a throwing transport fails soft to empty");
+  await assert.rejects(
+    () => fetchGitHubCatchUpWindow({ container: "acme/web#42", sinceMs: SINCE }, { fetchFn: (async () => { throw new Error("down"); }) as never, resolveToken: async () => "t" }),
+    /down/,
+  );
+  ok(true, "github: a throwing transport reaches the shared failure boundary");
+  await assert.rejects(
+    () => fetchGitHubCatchUpWindow(
+      { container: "acme/web#42", sinceMs: SINCE },
+      { fetchFn: (async () => ({ ok: true, json: async () => ({ message: "not a comment page" }) })) as never, resolveToken: async () => "t" },
+    ),
+    /GitHub catch-up returned a malformed response/,
+  );
+  ok(true, "github: a 2xx non-array response reaches the shared failure boundary instead of reading as quiet");
 }
 
 {
@@ -141,8 +166,8 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(byId(out, "c-new")?.type === "channel", "linear: a top-level comment is container-scoped");
   ok(byId(out, "c-reply")?.threadId === "c-new", "linear: a reply carries its parent as the thread root");
   ok(out.every((m) => m.id !== "c-ghost"), "linear: VISIBILITY GATE — an unattributable comment never reaches the seat");
-  const soft = await fetchLinearCatchUpWindow({ container: "OPE-42", sinceMs: SINCE }, { readIssue: (async () => { throw new Error("down"); }) as never });
-  ok(soft.length === 0, "linear: a throwing read fails soft to empty");
+  await assert.rejects(() => fetchLinearCatchUpWindow({ container: "OPE-42", sinceMs: SINCE }, { readIssue: (async () => { throw new Error("down"); }) as never }), /down/);
+  ok(true, "linear: a throwing read reaches the shared failure boundary");
 }
 
 {
@@ -173,6 +198,19 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(out.every((m) => m.type === "thread" && m.threadId === "D1"), "notion: every comment is thread-scoped — a Notion wake is thread-first");
   ok(out.every((m) => m.text !== "a different discussion"), "notion: another discussion on the same page never enters the seat's context");
   ok(out.some((m) => m.sender === "bot"), "notion: an integration author is MARKED AWARENESS, not silently dropped");
+  asked.length = 0;
+  await fetchNotionCatchUpWindow(
+    { container: "page-1", threadRoot: "D1", threadAnchor: "block-80-plus", sinceMs: SINCE },
+    {
+      readComments: (async (pageId: string, opts: { block?: string }) => {
+        asked.push({ page: pageId, block: opts.block });
+        return { discussionCount: 0, blocksScanned: 1, truncated: false, comments: [] };
+      }) as never,
+      resolveCredential,
+      domains: [],
+    },
+  );
+  ok(asked[0]?.block === "block-80-plus", "🔴 notion/OPE-1843: an authenticated inline block anchor drills into that exact block instead of scanning the page's oldest 80 blocks");
   ok(out.map((m) => m.id).join(",") === "c-1,c-2", "🔴 notion: each comment normalizes under its OWN Notion id — the only thing `excludeId` can match on a surface whose comments share one floored instant");
   const deduped = await fetchNotionCatchUpWindow({ container: "page-1", threadRoot: "D1", sinceMs: SINCE }, { readComments, resolveCredential, domains: [] });
   ok(deduped.filter((m) => m.id === "c-1").length === 1, "notion: an id identifies exactly one comment, so removing the wake's own message removes one message");
@@ -194,8 +232,11 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(askedCredential.length === 1, "notion: the credential is resolved once per read");
   const unconfigured = await fetchNotionCatchUpWindow({ container: "page-1", sinceMs: SINCE }, { readComments, resolveCredential: (async () => undefined) as never });
   ok(unconfigured.length === 0, "notion: an unresolvable credential reads nothing rather than guessing a key");
-  const soft = await fetchNotionCatchUpWindow({ container: "page-1", sinceMs: SINCE }, { readComments: (async () => { throw new Error("down"); }) as never, resolveCredential });
-  ok(soft.length === 0, "notion: a throwing read fails soft to empty");
+  await assert.rejects(
+    () => fetchNotionCatchUpWindow({ container: "page-1", sinceMs: SINCE }, { readComments: (async () => { throw new Error("down"); }) as never, resolveCredential }),
+    /down/,
+  );
+  ok(true, "notion: a throwing read reaches the shared failure boundary");
 }
 
 {
@@ -312,8 +353,11 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(urls[2]!.includes("/messages/root-1/replies"), "🔴 teams: …and ALSO the chain, because Graph serves roots and replies from different endpoints and neither holds the other");
   ok(threaded.some((m) => m.type === "thread" && m.threadId === "root-1"), "teams: the chain half tags its messages thread-scoped");
   ok(threaded.some((m) => m.type === "channel"), "teams: …and the channel half stays container-scoped — the two halves are told apart, not merged into one kind");
-  const soft = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); }, audit: quiet });
-  ok(soft.length === 0, "teams: a throwing Graph call fails soft to empty (the requester itself fails LOUD by contract)");
+  await assert.rejects(
+    () => fetchTeamsCatchUpWindow({ container: "team-1/chan-1", sinceMs: SINCE }, { request: async () => { throw new Error("down"); }, audit: quiet }),
+    /every Graph read failed/,
+  );
+  ok(true, "teams: every Graph read failing reaches the shared failure boundary");
 }
 
 {
@@ -347,11 +391,14 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   const empty = await fetchTeamsCatchUpWindow({ container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY }, { request: async () => ({ value: [] }), audit });
   ok(empty.length === 0 && rows.length === 2 && rows.every((r) => r.detail!["status"] === "ok" && r.detail!["raw"] === 0), "🔴 teams/OPE-1817: a genuine EMPTY page records status ok with raw 0");
   rows.length = 0;
-  const failed = await fetchTeamsCatchUpWindow(
-    { container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY },
-    { request: async (u: string) => { throw new Error(`read: Teams Graph GET failed (HTTP 404) for ${u} — {"error":{"code":"NotFound"}}`); }, audit },
+  await assert.rejects(
+    () => fetchTeamsCatchUpWindow(
+      { container: "team-1/chan-1", threadRoot: ROOT, sinceMs: SINCE, channelKey: KEY },
+      { request: async (u: string) => { throw new Error(`read: Teams Graph GET failed (HTTP 404) for ${u} — {"error":{"code":"NotFound"}}`); }, audit },
+    ),
+    /every Graph read failed/,
   );
-  ok(failed.length === 0, "teams/OPE-1817: a 404 still fails soft — a wake never depends on its catch-up");
+  ok(true, "teams/OPE-1817: two 404s propagate to the shared fail-soft boundary");
   ok(rows.length === 2 && rows.every((r) => r.detail!["status"] === "error" && r.detail!["httpStatus"] === 404), "🔴 teams/OPE-1817: …and both rows say 404, so a 404 and an empty room are no longer the same evidence");
   ok(!JSON.stringify(rows[0]!.detail).includes("NotFound"), "teams/OPE-1817: the row takes the STATUS out of the vendor error and never the response body");
 
@@ -416,6 +463,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
     readonly req: SeatCatchUpRequest;
     readonly reads: SeatCatchUpFetch;
     readonly empty: SeatCatchUpFetch;
+    readonly fails: SeatCatchUpFetch;
   }> = [
     {
       platform: "slack",
@@ -426,6 +474,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
           identity: async () => ({ userId: "UBOT", botId: "BBOT" }),
         }),
       empty: (r) => fetchSlackSeatCatchUp(r, { request: async () => ({ ok: true, messages: [] }), identity: async () => ({}) }),
+      fails: (r) => fetchSlackSeatCatchUp(r, { request: async () => { throw new Error("slack unavailable"); }, identity: async () => ({}) }),
     },
     {
       platform: "discord",
@@ -435,6 +484,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
           request: async () => [{ id: "200", type: 0, timestamp: new Date(SINCE + 60_000).toISOString(), content: BODY, author: { id: "D1" } }],
         }),
       empty: (r) => fetchDiscordSeatCatchUp(r, { request: async () => [] }),
+      fails: (r) => fetchDiscordSeatCatchUp(r, { request: async () => { throw new Error("discord unavailable"); } }),
     },
     {
       platform: "teams",
@@ -445,6 +495,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
           audit: async () => {},
         }),
       empty: (r) => fetchTeamsCatchUpWindow(r, { request: async () => ({ value: [] }), audit: async () => {} }),
+      fails: (r) => fetchTeamsCatchUpWindow(r, { request: async () => { throw new Error("teams unavailable"); }, audit: async () => {} }),
     },
     {
       platform: "github",
@@ -455,6 +506,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
           resolveToken: async () => "t",
         }),
       empty: (r) => fetchGitHubCatchUpWindow(r, { fetchFn: (async () => ({ ok: true, json: async () => [] })) as never, resolveToken: async () => "t" }),
+      fails: (r) => fetchGitHubCatchUpWindow(r, { fetchFn: (async () => { throw new Error("github unavailable"); }) as never, resolveToken: async () => "t" }),
     },
     {
       platform: "linear",
@@ -464,6 +516,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
           readIssue: (async () => ({ description: "", comments: [{ id: "c-new", authorId: "L1", createdAt: AFTER, text: BODY }], truncated: false })) as never,
         }),
       empty: (r) => fetchLinearCatchUpWindow(r, { readIssue: (async () => ({ description: "", comments: [], truncated: false })) as never }),
+      fails: (r) => fetchLinearCatchUpWindow(r, { readIssue: (async () => { throw new Error("linear unavailable"); }) as never }),
     },
     {
       platform: "notion",
@@ -482,6 +535,12 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
       empty: (r) =>
         fetchNotionCatchUpWindow(r, {
           readComments: (async () => ({ discussionCount: 0, blocksScanned: 1, truncated: false, comments: [] })) as never,
+          resolveCredential: (async () => ({ apiKey: "k" })) as never,
+          domains: [],
+        }),
+      fails: (r) =>
+        fetchNotionCatchUpWindow(r, {
+          readComments: (async () => { throw new Error("notion unavailable"); }) as never,
           resolveCredential: (async () => ({ apiKey: "k" })) as never,
           domains: [],
         }),
@@ -516,6 +575,13 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
     registerSeatCatchUp(d.platform, d.empty, declared);
     await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
     ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "empty", `🔴 ${d.platform}: a quiet room writes its own row, reading \`empty\` — an empty catch-up is now a RECORDED fact on every surface, not an absence`);
+
+    rows.length = 0;
+    registerSeatCatchUp(d.platform, d.fails, declared);
+    const failed = await seatCatchUp(d.platform, d.req, { audit, admit: () => true });
+    ok(failed.messages.length === 0, `${d.platform}: a failed catch-up remains fail-soft to the wake`);
+    ok(rows.length === 1 && rows[0]!.detail!["outcome"] === "failed", `🔴 ${d.platform}/OPE-1842: a transport failure writes \`failed\`, never the quiet-room \`empty\` outcome`);
+    ok(rows[0]!.detail!["reason"] === "fetch-threw", `${d.platform}: the shared failure row names the fetch boundary without recording message content`);
 
     registerSeatCatchUp(d.platform, real!, declared);
     ok(seatCatchUpFetchFor(d.platform) === real, `${d.platform}: the real fetch is back on the road after the drive`);

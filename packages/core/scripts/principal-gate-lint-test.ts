@@ -5,6 +5,7 @@ import {
   ATTENDEDNESS_DERIVATION,
   ATTENDEDNESS_DERIVATION_BINDING,
   BINDING_RECEIVERS,
+  checkApprovalAuthoritySites,
   DESTRUCTURED_PRINCIPAL_KEYS,
   INTENT_FOR_ACCESSOR,
   PRINCIPAL_GATE_INTENTS,
@@ -452,6 +453,41 @@ class Policies {
   ok(eveSites.filter((a) => a.file.endsWith("connections/connector-auth.ts")).length >= 3, "real-r5E: …and the connection plane's three policy factories are seen too");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).length === 2, "real-r5: 🔴 BOTH slash-command propose sites are seen — they call through an injected alias, and a checker blind to that reported the file clean while both shipped with no bag");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).every((a) => a.expr === ATTENDEDNESS_DERIVATION_BINDING), "real-r5: …and both derive through the binding-taking twin, which is the only spelling available to a caller with no ctx");
+}
+
+{
+  const sitesIn = (src: string) => findAttendednessSites("fixture.ts", src).filter((site) => site.shape === "propose");
+  const defectsIn = (src: string) => checkApprovalAuthoritySites(sitesIn(src));
+  const proposal = (deps: string) => `await requestApproval({ chain: { unattended: unattendedOf(ctx) } }, ${deps});`;
+  ok(defectsIn(proposal(`approvalPostDeps(binding.platform)`)).some((d) => d.rule === "approval-authority-context-missing"), "real-r6: 🔴 a proposal whose deps omit the live context is RED");
+  ok(defectsIn(proposal(`approvalPostDeps(binding.platform, ctx)`)).length === 0, "real-r6: passing the live tool context at the proposal site is GREEN");
+  ok(defectsIn(`await requestApproval({ chain: { unattended: unattendedOf(ctx) } }, {});`).some((d) => d.rule === "approval-authority-context-missing"), "real-r6: 🔴 a direct requestApproval call with an empty deps object is SEEN and RED");
+  ok(
+    defectsIn(`// approval-authority: headless — slash command execution has no model turn or wake envelope.\nawait requestApproval({ chain: { unattended: unattendedFrom(binding) } }, approvalPostDeps(binding.platform));`).length === 0,
+    "real-r6: a genuinely headless caller can state why no proposal authority exists",
+  );
+  ok(
+    defectsIn(`// approval-authority: headless\nawait requestApproval({ chain: { unattended: unattendedFrom(binding) } }, approvalPostDeps(binding.platform));`).some((d) => d.rule === "approval-authority-exempt-no-reason"),
+    "real-r6: a reasonless headless marker is RED",
+  );
+
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const agentDir = join(root, "packages", "core", "agent");
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === "dist" || name === "generated") continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) out.push(...walk(full));
+      else if (name.endsWith(".ts") && !name.endsWith(".d.ts")) out.push(full);
+    }
+    return out;
+  };
+  const sites = walk(agentDir).flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8"))).filter((site) => site.shape === "propose");
+  const defects = checkApprovalAuthoritySites(sites);
+  ok(defects.length === 0, `real-r6: every approvalPostDeps site carries proposal authority or states why it is headless (${defects.map((d) => `${d.file}:${d.line}`).join(", ")})`);
+  ok(sites.filter((s) => !s.authorityExempt).length >= 20, `real-r6: model-turn approval inventory did not collapse (${sites.length})`);
+  ok(sites.filter((s) => s.authorityExempt).length === 3, "real-r6: exactly the two slash-command callers and routine permission proposal are headless exemptions");
 }
 
 {

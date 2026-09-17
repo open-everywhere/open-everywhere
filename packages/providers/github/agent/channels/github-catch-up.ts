@@ -52,23 +52,19 @@ export async function fetchGitHubCatchUpWindow(
   req: { container: string; sinceMs: number },
   deps: GitHubCatchUpDeps = liveDeps,
 ): Promise<readonly NormalizedMessage[]> {
-  try {
-    const target = parseGithubContainer(req.container);
-    if (!target) return [];
-    const token = await (deps.resolveToken ?? resolveConversationReadToken)(target.repoFull);
-    const since = new Date(req.sinceMs).toISOString();
-    const url = `${API_BASE}/repos/${target.repoFull}/issues/${target.number}/comments?per_page=${CATCH_UP_PAGE_LIMIT}&since=${encodeURIComponent(since)}`;
-    const raw = await getJson<readonly RawTimelineComment[]>(deps.fetchFn, url, token, "issues.listComments");
-    if (!Array.isArray(raw)) return [];
-    const out: NormalizedMessage[] = [];
-    for (const c of raw) {
-      const n = normalizeComment(c, deps.selfLogin);
-      if (n) out.push(n);
-    }
-    return out;
-  } catch {
-    return [];
+  const target = parseGithubContainer(req.container);
+  if (!target) return [];
+  const token = await (deps.resolveToken ?? resolveConversationReadToken)(target.repoFull);
+  const since = new Date(req.sinceMs).toISOString();
+  const url = `${API_BASE}/repos/${target.repoFull}/issues/${target.number}/comments?per_page=${CATCH_UP_PAGE_LIMIT}&since=${encodeURIComponent(since)}`;
+  const raw = await getJson<readonly RawTimelineComment[]>(deps.fetchFn, url, token, "issues.listComments");
+  if (!Array.isArray(raw)) throw new Error("GitHub catch-up returned a malformed response");
+  const out: NormalizedMessage[] = [];
+  for (const c of raw) {
+    const n = normalizeComment(c, deps.selfLogin);
+    if (n) out.push(n);
   }
+  return out;
 }
 
 export const GITHUB_TIMESTAMP_PRECISION_MS = 1_000;

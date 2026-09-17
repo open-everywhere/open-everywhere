@@ -7,7 +7,8 @@ import { isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { isUnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { parseWindowToken, dmAnchorSurfaceForToken } from "./window-key.js";
 import { appendAudit } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
+import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
+import { isFrozenSurfaceBinding } from "../identity/frozen-surface-binding.internal.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 
@@ -32,6 +33,7 @@ export interface UnifiedDispatchPayload {
   readonly window: UnifiedWindowWake;
   readonly surfaceKey: string;
   readonly auth: { attributes?: Record<string, unknown> };
+  readonly binding?: SurfaceBinding;
   readonly excludeTaskResultId?: string;
 }
 
@@ -85,6 +87,9 @@ export function parseSelfDispatchPayload(v: unknown): { payload: UnifiedDispatch
   if (auth.attributes !== undefined && (typeof auth.attributes !== "object" || auth.attributes === null || Array.isArray(auth.attributes))) {
     return { error: "`auth.attributes` must be a plain object when present" };
   }
+  if (b.binding !== undefined && !isFrozenSurfaceBinding(b.binding)) {
+    return { error: "`binding` must be a valid frozen surface binding when present" };
+  }
   if (b.excludeTaskResultId !== undefined && (typeof b.excludeTaskResultId !== "string" || b.excludeTaskResultId.length === 0)) {
     return { error: "`excludeTaskResultId` must be a non-empty string when present" };
   }
@@ -100,6 +105,7 @@ export function parseSelfDispatchPayload(v: unknown): { payload: UnifiedDispatch
       },
       surfaceKey: b.surfaceKey,
       auth: { ...(auth.attributes !== undefined ? { attributes: auth.attributes as Record<string, unknown> } : {}) },
+      ...(b.binding !== undefined ? { binding: b.binding } : {}),
       ...(b.excludeTaskResultId !== undefined ? { excludeTaskResultId: b.excludeTaskResultId } : {}),
     },
   };

@@ -19,11 +19,17 @@ import { siloTier, tierId, type MemoryFiles, type Tier } from "../agent/memory/s
 import { type Partition } from "../agent/memory/partition.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { formatWindowToken } from "../agent/channels/window-key.js";
+import { registerUnifiedWakeTarget } from "../agent/channels/unified-window.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import { bindFrom, currentTurnId, type BindableContext } from "../agent/identity/binding.js";
+import { recordDeliveredWakes } from "../agent/access/dispatch-origin-signal.js";
+import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import type { HookContext } from "eve/hooks";
 
-import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { registerSlackFixtureCodec, registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
+registerSlackFixtureCodec();
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -188,7 +194,8 @@ function seatCtx(s: Session, sequence: number): HookContext {
   } as unknown as HookContext;
 }
 
-function makeChild(parent: Session, childId: string, sequence: number, pinnedTurn: string, callId: string): Session {
+async function makeChild(parent: Session, childId: string, sequence: number, pinnedTurn: string, callId: string): Promise<Session> {
+  await armChildDispatch(parent, callId);
   const bag: Record<string, unknown> = { ...parent.bag };
   const s: Session = { id: childId, sandbox: parent.sandbox, als: new FakeEveContext(), bag, ctx: {} as HookContext };
   s.ctx = childCtx(s, parent, sequence, pinnedTurn, callId);
@@ -232,6 +239,48 @@ async function inSession<T>(s: Session, fn: () => Promise<T> | T): Promise<T> {
   return await eveContextStorage().run(s.als, async () => await fn());
 }
 
+async function armChildDispatch(parent: Session, callId: string): Promise<void> {
+  const turnId = currentTurnId(parent.ctx as unknown as BindableContext);
+  if (turnId === undefined) throw new Error("taint provenance fixture parent has no turn id");
+  const wakeId = `${parent.id}-${turnId}-${callId}`;
+  parent.bag["oe_wake_id"] = wakeId;
+  const binding = bindFrom(parent.ctx as unknown as BindableContext);
+  await registerUnifiedWakeTarget(
+    getOperationalStore(),
+    binding.org,
+    wakeId,
+    { platform: "slack", channelId: binding.surface },
+    new Date().toISOString(),
+    WINDOW,
+    true,
+    undefined,
+    `${binding.platform}/${binding.workspace}/${binding.surface}`,
+    binding,
+    { binding, requester: { kind: "requester", principalId: "U7" }, nonMemberWake: false },
+  );
+  const envelope = `<wake wake-id="${wakeId}"><channel><message from="human" author-id="U7" trigger="true">delegate</message></channel></wake>`;
+  await inSession(parent, async () => {
+    recordDeliveredWakes(turnId, envelope);
+    recordRequesterIdentity(parent.ctx as unknown as BindableContext, turnId, envelope);
+    await taint.events["actions.requested"]!(
+      { data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } },
+      parent.ctx,
+    );
+  });
+}
+
+async function startTaintTurn(s: Session): Promise<void> {
+  if ((s.ctx as { session?: { parent?: unknown } }).session?.parent !== undefined) {
+    const bindingStarted = (
+      (await import("../agent/hooks/binding-bridge.js")).default as unknown as {
+        events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
+      }
+    ).events["turn.started"]!;
+    await bindingStarted({}, s.ctx);
+  }
+  await taint.events["turn.started"]!({}, s.ctx);
+}
+
 async function taintedParentTurn(parent: Session, sequence: number, kinds: readonly string[]): Promise<void> {
   parent.ctx = seatCtx(parent, sequence);
   await inSession(parent, async () => {
@@ -250,7 +299,7 @@ async function cleanParentTurn(parent: Session, sequence: number): Promise<void>
 
 async function turnThatWrites(s: Session, write: () => void): Promise<void> {
   await inSession(s, async () => {
-    await taint.events["turn.started"]!({}, s.ctx);
+    await startTaintTurn(s);
     await memory.events["turn.started"]!({}, s.ctx);
     write();
     await memory.events["turn.completed"]!({}, s.ctx);
@@ -277,7 +326,7 @@ console.log("A — parent taint → child adoption → a MARKED bullet, naming w
     "[A] 🔴 THE STAMP CARRIES THE KINDS (OPE-1215 item 2) — the pair alone left the child unable to name what was read",
   );
 
-  const child = makeChild(parent, "join-child", 0, "join-parent-turn-1", "call_a1");
+  const child = await makeChild(parent, "join-child", 0, "join-parent-turn-1", "call_a1");
   await turnThatWrites(child, () => {
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Ada owns billing\n`);
   });
@@ -298,9 +347,9 @@ console.log("A — parent taint → child adoption → a MARKED bullet, naming w
   await cleanParentTurn(parent, 1);
   eq(parent.bag[OE_PARENT_TURN_TAINTED_ATTR], undefined, "[A] a clean parent turn writes no stamp at all");
 
-  const child = makeChild(parent, "join-child-clean", 0, "join-parent-clean-turn-1", "call_a2");
+  const child = await makeChild(parent, "join-child-clean", 0, "join-parent-clean-turn-1", "call_a2");
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), false, "[A] 🔴 NEGATIVE CONTROL: a child of a CLEAN parent starts clean — asserted `=== false`, not merely falsy");
   });
   await turnThatWrites(child, () => {
@@ -315,9 +364,9 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
   parent.sandbox.put("MEMORY.md", SEEDED);
 
   await taintedParentTurn(parent, 1, ["web"]);
-  const child = makeChild(parent, "cont-child", 0, "cont-parent-turn-1", "call_b1");
+  const child = await makeChild(parent, "cont-child", 0, "cont-parent-turn-1", "call_b1");
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[B] precondition: the child's FIRST turn adopts, as it always did");
   });
 
@@ -346,9 +395,9 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
   parent.sandbox.put("MEMORY.md", SEEDED);
   await taintedParentTurn(parent, 1, ["web"]);
 
-  const child = makeChild(parent, "stale-child", 0, "stale-parent-turn-1", "call_b3");
+  const child = await makeChild(parent, "stale-child", 0, "stale-parent-turn-1", "call_b3");
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[B] precondition: the first turn adopts the stamp");
   });
 
@@ -367,30 +416,30 @@ console.log("C — the kinds cross the hop, and only kinds the ingestion table n
 {
   const parent = makeSeat("kind-parent", "standing");
   await taintedParentTurn(parent, 1, ["web", "github", "linear"]);
-  const child = makeChild(parent, "kind-child", 0, "kind-parent-turn-1", "call_c1");
+  const child = await makeChild(parent, "kind-child", 0, "kind-parent-turn-1", "call_c1");
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq([...taintKindsThisTurn()], ["web", "github", "linear"], "[C] 🔴 every kind crosses the hop, in the parent's first-seen order");
   });
 }
 {
   const parent = makeSeat("forge-parent", "standing");
-  const child = makeChild(parent, "forge-child", 0, "forge-parent-turn-1", "call_c2");
+  const child = await makeChild(parent, "forge-child", 0, "forge-parent-turn-1", "call_c2");
   child.bag[OE_DISPATCH_TURN_ATTR] = "forge-parent|forge-parent-turn-1";
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "forge-parent|forge-parent-turn-1|web,not-a-real-kind";
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[C] the stamp still taints the child");
     eq([...taintKindsThisTurn()], ["web"], "[C] 🔴 a kind the ingestion table does not name is DROPPED — nothing off an auth bag names itself in a memory bullet");
   });
 }
 {
   const parent = makeSeat("bare-parent", "standing");
-  const child = makeChild(parent, "bare-child", 0, "bare-parent-turn-1", "call_c3");
+  const child = await makeChild(parent, "bare-child", 0, "bare-parent-turn-1", "call_c3");
   child.bag[OE_DISPATCH_TURN_ATTR] = "bare-parent|bare-parent-turn-1";
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "bare-parent|bare-parent-turn-1";
   await inSession(child, async () => {
-    await taint.events["turn.started"]!({}, child.ctx);
+    await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[C] 🔴 a stamp with NO kind tail — the pre-OPE-1215 bytes — still taints; the tail is disclosure, never the signal");
     eq([...taintKindsThisTurn()], [], "[C] …and leaves the breakdown empty, which renders the unqualified wording");
   });

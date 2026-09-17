@@ -41,7 +41,8 @@ import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings
 import type { BindableContext } from "../agent/identity/binding.js";
 import linkIdentityTool from "../agent/tools/link_identity.js";
 import confirmLinkTool from "../agent/tools/confirm_link.js";
-import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { registerSurfaceMessageOps } from "../agent/channels/surface-message-ops.js";
 
 registerSlackFixtureMapper();
 
@@ -62,6 +63,12 @@ async function refuses(fn: () => Promise<unknown>, needle: string, label: string
 
 const ORG = "default";
 const T1 = "T1";
+const hostIdentityPosts: string[] = [];
+let throwAfterPrivateCodePost = false;
+const issuedCodeFrom = (text: string): string => text.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+const latestIssuedCode = (): string => issuedCodeFrom(hostIdentityPosts.findLast((text) => /\blink [2-9A-HJ-NP-Z]{8}\b/.test(text))!);
+const codeBackFrom = (text: string): string => text.match(new RegExp(String.raw`(?:^|\n)\s*(${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})\s*(?:\n|$)`))![1]!;
+const latestCodeBack = (): string => codeBackFrom(hostIdentityPosts.findLast((text) => new RegExp(String.raw`(?:^|\n)\s*${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}}\s*(?:\n|$)`).test(text))!);
 const db = new PGlite();
 const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
 await initOperationalSchema(client);
@@ -435,6 +442,23 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   _resetAccountDirectoriesForTest();
   _resetAccountDisplayNamesForTest();
   const dms: { platform: string; to: string; text: string }[] = [];
+  registerSlackTestBridge({
+    form: async (method, body) => {
+      if (method === "chat.postMessage") hostIdentityPosts.push(new URLSearchParams(body).get("text") ?? "");
+      if (throwAfterPrivateCodePost) throw new Error("connection reset after request write");
+      return { ok: true, ts: `host-${hostIdentityPosts.length}` };
+    },
+  });
+  for (const platform of ["discord", "teams"]) {
+    registerSurfaceMessageOps({
+      platform,
+      postText: async (_channelId, text) => {
+        hostIdentityPosts.push(text);
+        return `host-${hostIdentityPosts.length}`;
+      },
+      editMessage: async () => undefined,
+    });
+  }
   registerPostArm({
     platform: "slack",
     deliverDirectMessage: async (input) => {
@@ -452,18 +476,44 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 
   const bare = await linkIdentity.execute({}, dmA);
   ok(bare.decided === "code" && typeof bare.challengeId === "string", "link_identity {}: still the code transport");
-  ok(/link [A-Z0-9]{8}/.test(bare.instructions), "link_identity {}: the instructions carry the code");
-  await confirmLink.execute({ decision: "deny", challengeId: bare.challengeId }, dmA).catch(() => undefined);
+  ok(!/link [A-Z0-9]{8}/.test(JSON.stringify(bare)), "🔴 OPE-1890: the model-visible tool result carries no live link code into a later turn or room");
+  ok(/link [A-Z0-9]{8}/.test(hostIdentityPosts[0] ?? ""), "OPE-1890: the host posts the live code directly into the initiating DM");
+  ok(/do not repeat/i.test(bare.instructions), "OPE-1890: the safe result tells the model the private host delivery is already complete");
+  await denyLinkChallenge({ org: ORG, challengeId: bare.challengeId });
+
+  throwAfterPrivateCodePost = true;
+  let deliveryFailure = "";
+  try {
+    await linkIdentity.execute({}, dmA);
+  } catch (err) {
+    deliveryFailure = err instanceof Error ? err.message : String(err);
+  }
+  const failedCode = latestIssuedCode();
+  const failedRows = await pg.listLinkChallenges(ORG, { initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_A", status: "pending" });
+  const failedRow = failedRows.find((row) => row.nonceHash === hashLinkCode(failedCode));
+  ok(
+    /could not confirm whether the private link code was posted/i.test(deliveryFailure) &&
+      /if a code appeared, use that one/i.test(deliveryFailure) &&
+      !deliveryFailure.includes(failedCode),
+    "🔴 OPE-1890: an ambiguous host-post throw returns an honest, code-free error to the model",
+  );
+  ok(failedRow !== undefined, "OPE-1890: ambiguous delivery leaves the pending digest valid under the existing ten-minute expiry");
+  throwAfterPrivateCodePost = false;
+  const retried = await linkIdentity.execute({}, dmA);
+  const retryCode = latestIssuedCode();
+  ok(retried.decided === "code" && retryCode !== failedCode, "OPE-1890: retry mints and host-delivers a fresh code");
+  await denyLinkChallenge({ org: ORG, challengeId: retried.challengeId });
+  await denyLinkChallenge({ org: ORG, challengeId: failedRow!.id });
 
   const noDirectory = await linkIdentity.execute({ platform: "github", query: "octocat" }, dmA);
   ok(noDirectory.decided === "code", "🔴 link_identity: a platform with NO directory arm FALLS BACK to the code transport rather than refusing");
   ok(/no user directory/i.test(noDirectory.instructions), "link_identity: the fallback SAYS which capability was missing, so an operator can go and grant it");
-  await confirmLink.execute({ decision: "deny", challengeId: noDirectory.challengeId }, dmA).catch(() => undefined);
+  await denyLinkChallenge({ org: ORG, challengeId: noDirectory.challengeId });
 
   registerAccountDirectory("linear", async () => [{ nativeId: "lin-1", name: "Alice Initiator" }]);
   const noDm = await linkIdentity.execute({ platform: "linear", query: "alice" }, dmA);
   ok(noDm.decided === "code" && /DM an account there/i.test(noDm.instructions), "link_identity: a directory WITHOUT a DM arm also falls back — nobody could consent privately");
-  await confirmLink.execute({ decision: "deny", challengeId: noDm.challengeId }, dmA).catch(() => undefined);
+  await denyLinkChallenge({ org: ORG, challengeId: noDm.challengeId });
 
   registerAccountDirectory("slack", async () => [
     { nativeId: "U_B", name: "Bob Target", handle: "bob" },
@@ -548,9 +598,44 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 
   await confirmLink.execute({ decision: "confirm" }, dmE);
   const consent = await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: asked.challengeId }, dmE);
-  ok(typeof consent.codeBack === "string" && consent.codeBack.length === 8, "🔴 armed knob: the DIRECTORY transport now mints a code-back at consent time");
-  ok((await pg.getLinkChallenge(ORG, asked.challengeId))?.backNonceHash === hashLinkCode(consent.codeBack), "armed knob: the row carries the digest, and only the digest");
-  ok(!dms.some((d) => d.to === "U_D" && d.text.includes(consent.codeBack)), "🔴 armed knob: the code is NEVER sent to the initiator — the whole point is that they read it off the other side");
+  const consentCodeBack = latestCodeBack();
+  ok(!JSON.stringify(consent).includes(consentCodeBack), "🔴 OPE-1890: confirm_link's model-visible consent result contains no live code-back");
+  ok(consentCodeBack.length === 8, "🔴 armed knob: the DIRECTORY transport host-posts a code-back into the consenting account's DM");
+  ok((await pg.getLinkChallenge(ORG, asked.challengeId))?.backNonceHash === hashLinkCode(consentCodeBack), "armed knob: the row carries the digest, and only the digest");
+  ok(!dms.some((d) => d.to === "U_D" && d.text.includes(consentCodeBack)), "🔴 armed knob: the code is NEVER sent to the initiator — the whole point is that they read it off the other side");
+
+  const ambiguous = await issueLinkChallenge({
+    org: ORG,
+    platform: "slack",
+    tenant: T1,
+    nativeId: "U_AMBIG_INIT",
+    surfaceKey: "slack/T1/D_AMBIG_INIT",
+    transport: "directory",
+    target: { platform: "slack", tenant: T1, nativeId: "U_AMBIG_TARGET" },
+  });
+  const ambiguousTargetDm = ctxFor({ channelId: "D_AMBIG_TARGET", channelType: "im", principalId: "U_AMBIG_TARGET" });
+  await confirmLink.execute({ decision: "confirm", challengeId: ambiguous.challenge.id }, ambiguousTargetDm);
+  throwAfterPrivateCodePost = true;
+  let ambiguousConsentFailure = "";
+  try {
+    await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: ambiguous.challenge.id }, ambiguousTargetDm);
+  } catch (err) {
+    ambiguousConsentFailure = err instanceof Error ? err.message : String(err);
+  } finally {
+    throwAfterPrivateCodePost = false;
+  }
+  const ambiguousBackCode = latestCodeBack();
+  const ambiguousRow = await pg.getLinkChallenge(ORG, ambiguous.challenge.id);
+  ok(
+    /could not confirm whether the private second code was posted/i.test(ambiguousConsentFailure) &&
+      /if the code appeared, give it to the person who started the link/i.test(ambiguousConsentFailure) &&
+      !ambiguousConsentFailure.includes(ambiguousBackCode),
+    "🔴 OPE-1890: an ambiguous code-back throw reports both outcomes without exposing the code",
+  );
+  ok(
+    ambiguousRow?.status === "claimed" && ambiguousRow.backNonceHash === hashLinkCode(ambiguousBackCode),
+    "OPE-1890: ambiguous code-back delivery preserves the consent and pending digest until expiry",
+  );
 
   const peek = await confirmLink.execute({ decision: "confirm" }, dmD);
   ok(peek.needsCode === true && /second code/i.test(peek.note), "armed knob: the initiator's peek says a code is needed");
@@ -561,7 +646,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   resetSettingsForTest();
   await refuses(() => confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: asked.challengeId }, dmD), "alone does not finalize", "🔴 THE ROW DECIDES: disarming the knob after the consent does not drop the code-back this request already carries");
 
-  const done = await confirmLink.execute({ decision: "confirm", code: consent.codeBack, challengeId: asked.challengeId }, dmD);
+  const done = await confirmLink.execute({ decision: "confirm", code: consentCodeBack, challengeId: asked.challengeId }, dmD);
   ok(done.decided === "confirmed", "forced code-back: the RIGHT code finalizes the link");
   const linked = await expandLinkSet(ORG, done.linkSetId);
   assert.deepEqual(linked.map((a) => a.nativeId).sort(), ["U_D", "U_E"], "forced code-back: exactly the two named accounts are linked");
@@ -609,7 +694,6 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 
 {
   const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
-  const codeOf = (text: string): string => text.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
   const backCodeOf = (text: string): string => text.match(new RegExp(String.raw`(${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})\n`))![1]!;
   const trustedHalf = (note: string): string => note.slice(0, note.indexOf(UNTRUSTED_OPEN)).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<AT>");
 
@@ -617,14 +701,15 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   registerAccountDisplayName("github", async (nativeId) => (nativeId === "oct-1858" ? { name: "Octo Eighteen", handle: "oct18" } : undefined));
 
   const dmInit = ctxFor({ channelId: "D_1858", channelType: "im", principalId: "U_1858" });
-  const minted = (await linkIdentity.execute({}, dmInit)) as { instructions: string };
+  await linkIdentity.execute({}, dmInit);
+  const mintedCode = latestIssuedCode();
   const claimantSaw: string[] = [];
   const claimedId = await observeLinkClaim({
     org: ORG,
     platform: "github",
     authorId: "oct-1858",
     addressed: true,
-    text: `link ${codeOf(minted.instructions)}`,
+    text: `link ${mintedCode}`,
     trust: "peer",
     codeBackDeliverable: true,
     notifyClaimant: (t) => {
@@ -682,7 +767,6 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 {
   const { UNTRUSTED_OPEN } = await import("../agent/access/untrusted.js");
   const { registerIdentityMapper } = await import("../agent/identity/binding.js");
-  const codeOf = (text: string): string => text.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
   const backCodeOf = (text: string): string => text.match(new RegExp(String.raw`(${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})\n`))![1]!;
   const trustedHalf = (note: string): string => note.slice(0, note.indexOf(UNTRUSTED_OPEN)).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<AT>");
 
@@ -702,7 +786,8 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 
   async function linkAcross(initiator: string, claimPlatform: string, tag: string): Promise<{ note: string; committed: boolean; rowed: boolean }> {
     const dm = dmOn(initiator, `U_${tag}`);
-    const minted = (await linkIdentity.execute({}, dm)) as { instructions: string };
+    await linkIdentity.execute({}, dm);
+    const mintedCode = latestIssuedCode();
     const saw: string[] = [];
     const challengeId = await observeLinkClaim({
       org: ORG,
@@ -710,7 +795,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
       tenant: isTenantScopedPlatform(claimPlatform) ? T1 : "",
       authorId: `acct-${tag}`,
       addressed: true,
-      text: `link ${codeOf(minted.instructions)}`,
+      text: `link ${mintedCode}`,
       trust: "peer",
       codeBackDeliverable: true,
       notifyClaimant: (t) => {

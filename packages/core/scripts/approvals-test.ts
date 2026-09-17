@@ -7,6 +7,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { registerSlackFixtureCodec } from "./_slack-test-stubs.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -25,6 +26,8 @@ const { registerActionKind, actionKind } = await import("../agent/approvals/acti
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
 const { markCardPostedThisTurn, consumeCardPostedThisTurn } = await import("../agent/approvals/card-signal.js");
+
+registerSlackFixtureCodec();
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -823,6 +826,17 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
   const slackOrigin = (o: UnifiedWakeOrigin): Extract<UnifiedWakeOrigin, { platform: "slack" }> | null => (o.platform === "slack" ? o : null);
 
+  ok(
+    (await dispatchApprovalDecisionWake({
+      token: "oe-dom:win:win:slack/TW/C_WIN:oe-sup:g1",
+      origin: { platform: "slack", channelId: "C_WIN", threadTs: "ANCHOR.W" },
+      wakeId: "legacy-no-authority",
+      message: "decision recorded",
+      domain: "win",
+    })) === false,
+    "decision authority: a legacy/malformed row with no frozen proposal authority cannot wake the seat through ambient or env identity",
+  );
+
   overrideSettingsForTest({ window: { topology: true } });
   try {
     const grain = supervisorGrainFor("slack/TW/C_WIN", getConfig().loadDomains());
@@ -857,6 +871,254 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
         argsJson: JSON.stringify({ org: over.org ?? "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 700, currentCap: null }),
         ...over,
       });
+
+    const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
+    const { rememberDelegatedTaskBinding, rememberDelegatedTaskWake } = await import("../agent/channels/task-wake.js");
+    const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
+    const { captureApprovalDecisionAuthority } = await import("../agent/approvals/decision-authority.internal.js");
+    const { claimTasksForAddressedWake, recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+    const { renderWakeEnvelope } = await import("../agent/channels/wake-envelope.js");
+    const proposalWake = "wake-proposal-authority";
+    const proposalOrigin = { platform: "slack", channelId: "C_WIN", threadTs: "ANCHOR.W" } as const;
+    const proposalBinding = {
+      org: "default",
+      platform: "slack",
+      workspace: "TW",
+      surface: "C_WIN",
+      mode: "channel",
+      visibility: "private",
+      trust: "internal",
+      principalId: "U_ORIGINAL_REQUESTER",
+      target: { channelId: "C_WIN" },
+      threadTs: "ANCHOR.W",
+    } as const;
+    await registerUnifiedWakeTarget(store, "default", proposalWake, proposalOrigin, new Date().toISOString(), WIN_TOKEN, true, "direct-mention", "slack/TW/C_WIN", proposalBinding, {
+      binding: proposalBinding,
+      requester: { kind: "requester", principalId: "U_ORIGINAL_REQUESTER" },
+      nonMemberWake: false,
+    });
+    const siblingWake = "wake-later-nonmember";
+    const siblingOrigin = { platform: "slack", channelId: "C_WIN", threadTs: "LATER.B" } as const;
+    const siblingBinding = { ...proposalBinding, principalId: "U_LATER", threadTs: "LATER.B" } as const;
+    await registerUnifiedWakeTarget(store, "default", siblingWake, siblingOrigin, new Date().toISOString(), WIN_TOKEN, true, undefined, "slack/TW/C_WIN", siblingBinding, {
+      binding: siblingBinding,
+      requester: { kind: "requester", principalId: "U_LATER" },
+      nonMemberWake: true,
+    });
+    const proposalHookCtx = {
+      channel: { kind: "unified" },
+      session: {
+        turn: { id: "turn-proposal-authority" },
+        auth: { current: { attributes: { oe_platform: "slack", oe_wake_id: siblingWake, oe_window_token: WIN_TOKEN, oe_chat_nonmember: "true" } } },
+      },
+    };
+    const proposalCtx = { session: proposalHookCtx.session };
+    const proposalEnvelope = renderWakeEnvelope({
+      wakeId: proposalWake,
+      reason: "mention",
+      currentTime: "2026-07-19T00:00:00Z",
+      channel: { id: "C_WIN" },
+      messages: [
+        {
+          trigger: true,
+          from: "human",
+          trust: "peer",
+          author: "original requester",
+          authorId: "U_ORIGINAL_REQUESTER",
+          body: "please propose this action",
+          sentAt: "2026-07-18T23:59:59Z",
+          id: "proposal-message",
+        },
+      ],
+    });
+    const siblingEnvelope = renderWakeEnvelope({
+      wakeId: siblingWake,
+      reason: "channel-activity",
+      currentTime: "2026-07-19T00:00:01Z",
+      channel: { id: "C_WIN" },
+      messages: [{ trigger: true, from: "human", trust: "unauth", author: "later outsider", authorId: "U_LATER", body: "unrelated later delivery", sentAt: "2026-07-19T00:00:00Z", id: "later-message" }],
+    });
+    const coalescedEnvelope = `${proposalEnvelope}\n${siblingEnvelope}`;
+    const proposed = await inSession(async () => {
+      recordDeliveredWakes("turn-proposal-authority", coalescedEnvelope);
+      claimTasksForAddressedWake("turn-proposal-authority", proposalWake);
+      recordRequesterIdentity(proposalHookCtx as never, "turn-proposal-authority", coalescedEnvelope);
+      return requestApproval(
+        {
+          org: "default",
+          kind: "test.member",
+          args: { marker: "decision-authority" },
+          scopeKey: "slack/TW/C_WIN",
+          domain: "win",
+          requestedBy: "U_ORIGINAL_REQUESTER",
+          channelId: "C_WIN",
+          threadTs: "ANCHOR.W",
+          postedTo: "slack/TW/C_WIN",
+          chain: { unattended: false },
+        },
+        { postCard: async () => "proposal-card-ts", authorityContext: proposalCtx as never },
+      );
+    });
+
+    const incompleteWake = "wake-proposal-no-binding";
+    await registerUnifiedWakeTarget(store, "default", incompleteWake, proposalOrigin, new Date().toISOString(), WIN_TOKEN, true, "direct-mention", "slack/TW/C_WIN");
+    const incompleteCtx = {
+      ...proposalCtx,
+      session: {
+        ...proposalCtx.session,
+        auth: { current: { attributes: { ...proposalCtx.session.auth.current.attributes, oe_wake_id: incompleteWake } } },
+      },
+    };
+    const incompleteEnvelope = renderWakeEnvelope({
+      wakeId: incompleteWake,
+      reason: "mention",
+      currentTime: "2026-07-19T00:00:01Z",
+      channel: { id: "C_WIN" },
+      messages: [{ trigger: true, from: "human", trust: "peer", author: "original requester", authorId: "U_ORIGINAL_REQUESTER", body: "try again", sentAt: "2026-07-19T00:00:00Z", id: "proposal-message-2" }],
+    });
+    await assert.rejects(
+      () =>
+        inSession(async () => {
+          recordDeliveredWakes("turn-proposal-authority", incompleteEnvelope);
+          return captureApprovalDecisionAuthority(incompleteCtx as never);
+        }),
+      /no complete frozen binding/,
+      "decision authority: an exact delivered wake without a durable binding fails closed",
+    );
+    n++;
+
+    const childCtx = {
+      channel: { kind: "subagent", continuationToken: "subagent:parent-proposal:call-proposal" },
+      session: {
+        id: "child-proposal",
+        parent: { sessionId: "parent-proposal", callId: "call-proposal", rootSessionId: "parent-proposal" },
+        turn: { id: "turn-child-proposal", sequence: 0 },
+        auth: {
+          current: {
+            attributes: {
+              oe_platform: "notion",
+              workspace_id: "N_OTHER",
+              page_id: "P_OTHER",
+              discussion_id: "D_OTHER",
+              oe_window_token: WIN_TOKEN,
+              oe_requester: "U_LATER",
+              oe_chat_nonmember: "true",
+            },
+            principalId: "U_LATER",
+          },
+        },
+      },
+    };
+    await rememberDelegatedTaskWake("default", "parent-proposal", "call-proposal", proposalWake);
+    const childAuthority = await captureApprovalDecisionAuthority(childCtx as never);
+    ok(JSON.stringify(childAuthority?.binding) === JSON.stringify(proposalBinding), "decision authority: a child proposal resolves its exact parent dispatch binding through parent+call, not copied current auth");
+    ok(childAuthority?.requester.kind === "requester" && childAuthority.requester.principalId === "U_ORIGINAL_REQUESTER", "decision authority: a child proposal keeps the dispatch requester's identity");
+    ok(childAuthority?.nonMemberWake === false, "decision authority: a child proposal keeps dispatch-time membership rather than later child auth");
+
+    const childProposed = await requestApproval(
+      {
+        org: "default",
+        kind: "test.member",
+        args: { marker: "child-decision-authority" },
+        scopeKey: "slack/TW/C_WIN",
+        domain: "win",
+        requestedBy: "U_ORIGINAL_REQUESTER",
+        channelId: "C_WIN",
+        threadTs: "ANCHOR.W",
+        postedTo: "slack/TW/C_WIN",
+        chain: { unattended: false },
+      },
+      { postCard: async () => "child-proposal-card-ts", authorityContext: childCtx as never },
+    );
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload(`oe_approval:reject:${childProposed.id}`, { user: "U_ORG_ADMIN" }), { post, decisionWake });
+    ok(wakes.length === 1 && JSON.stringify(wakes[0]!.binding) === JSON.stringify(proposalBinding), "decision authority: a child proposal's click resumes the conversational parent destination");
+
+    const missingChild = {
+      ...childCtx,
+      session: {
+        ...childCtx.session,
+        parent: { sessionId: "parent-proposal", callId: "call-missing", rootSessionId: "parent-proposal" },
+      },
+    };
+    await assert.rejects(
+      () => captureApprovalDecisionAuthority(missingChild as never),
+      /delegated child has no exact wake-backed dispatch authority/,
+      "decision authority: a child with no durable dispatch pointer fails closed despite copied window/auth stamps",
+    );
+    n++;
+
+    await rememberDelegatedTaskBinding(
+      "default",
+      "parent-proposal",
+      "call-binding-only",
+      proposalBinding,
+      { kind: "requester", principalId: "U_ORIGINAL_REQUESTER" },
+      false,
+    );
+    const bindingOnlyChild = {
+      ...childCtx,
+      session: {
+        ...childCtx.session,
+        parent: { sessionId: "parent-proposal", callId: "call-binding-only", rootSessionId: "parent-proposal" },
+      },
+    };
+    await assert.rejects(
+      () => captureApprovalDecisionAuthority(bindingOnlyChild as never),
+      /delegated child has no exact wake-backed dispatch authority/,
+      "decision authority: a unified binding-only child cannot invent a wake-backed continuation destination",
+    );
+    n++;
+
+    const nativeBindingOnlyChild = {
+      ...bindingOnlyChild,
+      channel: { kind: "subagent", continuationToken: "subagent:parent-proposal:call-binding-only" },
+      session: {
+        ...bindingOnlyChild.session,
+        auth: {
+          current: {
+            attributes: { oe_platform: "notion", workspace_id: "N_OTHER", page_id: "P_OTHER", discussion_id: "D_OTHER" },
+            principalId: "U_LATER",
+          },
+        },
+      },
+    };
+    ok((await captureApprovalDecisionAuthority(nativeBindingOnlyChild as never)) === undefined, "decision authority: a true native child has no unified continuation to freeze and remains card-capable");
+    const nativeProposed = await requestApproval(
+      {
+        org: "default",
+        kind: "test.member",
+        args: { marker: "native-child-card-only" },
+        scopeKey: "slack/TW/C_WIN",
+        domain: "win",
+        requestedBy: "U_ORIGINAL_REQUESTER",
+        channelId: "C_WIN",
+        threadTs: "ANCHOR.W",
+        postedTo: "slack/TW/C_WIN",
+        chain: { unattended: false },
+      },
+      { postCard: async () => "native-child-card-ts", authorityContext: nativeBindingOnlyChild as never },
+    );
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload(`oe_approval:reject:${nativeProposed.id}`, { user: "U_ORG_ADMIN" }), { post, decisionWake });
+    ok(
+      wakes.length === 1 && wakes[0]!.binding === undefined && wakes[0]!.requester === undefined,
+      "decision authority: a native child card resolves without inventing unified authority (the production dispatcher refuses this authority-less optional wake)",
+    );
+
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload(`oe_approval:reject:${proposed.id}`, { user: "U_ORG_ADMIN" }), { post, decisionWake });
+    ok(wakes.length === 1, "decision authority: the real proposal+click path emits one continuation");
+    ok(JSON.stringify(wakes[0]!.binding) === JSON.stringify(proposalBinding), "decision authority: the continuation carries the exact binding frozen from the proposing wake row");
+    ok(
+      wakes[0]!.requester?.kind === "requester" && wakes[0]!.requester.principalId === "U_ORIGINAL_REQUESTER",
+      "decision authority: the original authenticated requester survives the click",
+    );
+    ok(
+      wakes[0]!.requester?.kind === "requester" && wakes[0]!.requester.principalId !== "U_ORG_ADMIN",
+      "decision authority: the approving actor never replaces the requester",
+    );
+    ok(wakes[0]!.nonMemberWake === false, "decision authority: later wake B's non-member mark cannot taint selected proposal wake A");
 
     await store.addPendingAction(winRow({ id: "p-win-reject" }));
     wakes.length = 0;

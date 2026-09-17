@@ -89,7 +89,7 @@ export default defineTool({
         postedTo: postedToSurfaceKey(binding, channelId),
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(binding.platform, ctx),
     );
 
     const subject = `issuing a fresh signing secret for the "${declared.id}" webhook`;

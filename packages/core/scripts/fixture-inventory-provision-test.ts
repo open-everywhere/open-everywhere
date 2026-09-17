@@ -158,24 +158,24 @@ function notion429(opts: { readonly retryAfter?: string; readonly secondStatus?:
   );
   ok(first instanceof Error && first.message.includes("timed out after 60ms"), `notion 429: probe one times out with its call still running (got ${String(first)})`);
 
+  let secondResponseCompleted = false;
   const slowSecond = (async () => {
     answer?.(new Response(JSON.stringify({ code: "rate_limited" }), { status: 429, headers: { "retry-after": "30" } }));
     await new Promise((r) => setTimeout(r, 400));
+    secondResponseCompleted = true;
     return new Response("{}", { status: 200 });
   }) as typeof fetch;
-  const started = Date.now();
   const second: unknown = await withPatchedFetch(slowSecond, () =>
     withTimeout(() => notionApi("k", "/pages/two"), "notion lookup two", 150).then(
       () => undefined,
       (e: unknown) => e,
     ),
   );
-  const took = Date.now() - started;
   ok(
     second instanceof Error && second.message.includes("timed out after 150ms"),
     `🔴 notion 429: probe TWO still times out on its own 150ms — a 30s wait its predecessor honoured is not its budget (got ${String(second)})`,
   );
-  ok(took < 2_000, `notion 429: …and it timed out promptly rather than inheriting the 30s (took ${took}ms)`);
+  ok(!secondResponseCompleted, "notion 429: probe TWO times out before its slower response completes, without inheriting the predecessor's wait");
   ok(
     second instanceof Error && !second.message.includes("honoured Retry-After"),
     `🔴 notion 429: …and its own message claims NO honoured wait, because it honoured none (got ${String(second)})`,

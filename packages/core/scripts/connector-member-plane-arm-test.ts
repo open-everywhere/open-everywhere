@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
@@ -76,6 +78,13 @@ const { assertBundlesValid, assertBindingsValid } = await import("../agent/acces
 const { assertDomainsValid } = await import("../agent/memory/domain.js");
 const { memberPlaneGrants, memberGrantKey } = await import("../agent/access/member-grant.js");
 const { boundConnectorCredential } = await import("../agent/access/connector-scope.js");
+const { adoptDelegatedAuthority } = await import("../agent/identity/delegated-binding.js");
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+  ContextContainer: new () => unknown;
+  contextStorage: { run<T>(store: unknown, fn: () => T): T };
+};
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -245,6 +254,40 @@ for (const [label, auth] of [
   ok(r.token === undefined && (r.err ?? "").includes("not vouched as a members-only room"), "🔴 ⑤ G4a: a non-member wake is refused even in a DECLARED room — the vouch is not an override");
   ok(m.calls.length === 0, "⑤ …and no personal token was minted");
 }
+
+const dispatchBinding = bindFrom({ session: { auth: roomAuth({ requester: REQUESTER }) } } as never);
+const laterAdminAuth = slackAuth({
+  channel_id: ROOM,
+  channel_type: "channel",
+  user_id: "U_later_admin",
+  trust_checked: "true",
+  is_ext_shared: "false",
+  [OE_REQUESTER_ATTR]: "U_later_admin",
+});
+
+await contextStorage.run(new ContextContainer(), async () => {
+  ok(
+    adoptDelegatedAuthority({ binding: dispatchBinding, requester: { kind: "requester", principalId: REQUESTER }, nonMemberWake: true }, "turn_child"),
+    "⑤b precondition: the child adopted one validated dispatch authority snapshot",
+  );
+  const m = makeMinter();
+  const r = await getToken(laterAdminAuth, m);
+  ok(r.token === undefined && (r.err ?? "").includes("not vouched as a members-only room"), "🔴 ⑤b NONMEMBER: dispatch-time nonmember=true still refuses when later admin-B auth omits the stamp");
+  ok(m.calls.length === 0, "⑤b …and the later admin's raw bag cannot mint a personal token");
+});
+
+await contextStorage.run(new ContextContainer(), async () => {
+  ok(
+    adoptDelegatedAuthority({ binding: dispatchBinding, requester: { kind: "requester", principalId: REQUESTER }, nonMemberWake: false }, "turn_child"),
+    "⑤b requester control: a clean dispatch snapshot is adopted",
+  );
+  const m = makeMinter();
+  const r = await getToken(laterAdminAuth, m);
+  const requesterSubject = rawVaultSubject(deploymentOrg(), "slack", TEAM, REQUESTER);
+  const laterAdminSubject = rawVaultSubject(deploymentOrg(), "slack", TEAM, "U_later_admin");
+  ok(r.token === `USER-TOKEN-${requesterSubject}` && m.calls[0]?.id === requesterSubject, "🔴 ⑤b REQUESTER: the real mint acts as dispatch requester A");
+  ok(m.calls[0]?.id !== laterAdminSubject, "🔴 ⑤b …never later admin B from the child's raw launch auth");
+});
 
 {
   armMemberPlane(false);

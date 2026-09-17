@@ -124,31 +124,23 @@ const bundles: Bundle[] = [
 const bindings: Binding[] = [
   defineBinding({ bundle: "org-default", scope: { level: "org" } }),
 
-  defineBinding({ bundle: "coding", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
+  defineBinding({ bundle: "coding", scope: { level: "domain", domain: "e2e-connector" } }),
 
-  defineBinding({ bundle: "notion-connectors", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
+  defineBinding({ bundle: "notion-connectors", scope: { level: "domain", domain: "e2e-connector" } }),
 
-  defineBinding({ bundle: "e2e-access-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+  defineBinding({ bundle: "e2e-access-fixture", scope: { level: "domain", domain: "e2e-connector" } }),
 
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
   defineBinding({ bundle: "soak-pr-fixture", scope: { level: "domain", domain: "soak" } }),
 
-  defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+  defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "domain", domain: "e2e-connector" } }),
 
-  defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
-
-  defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+  defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "domain", domain: "e2e-connector" } }),
 
   defineBinding({ bundle: "e2e-teams-person-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
   defineBinding({ bundle: "e2e-teams-channel-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
-
-  defineBinding({
-    bundle: "notion-connectors",
-    scope: { level: "tenant", tenant: "discord/1300000000000000100" },
-    allowBroad: "single-operator Discord test guild — every channel in it is the operator's own live-test surface",
-  }),
 
   defineBinding({
     bundle: "notion-personal",

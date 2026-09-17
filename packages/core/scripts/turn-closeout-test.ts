@@ -175,6 +175,77 @@ function newSession(id = "turn-closeout-test"): <T>(fn: () => Promise<T>) => Pro
   return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
 }
 
+interface ControlledDeadlines {
+  waitForNext(): Promise<void>;
+  fireNext(): Promise<void>;
+}
+
+async function withControlledStoreDeadlines<T>(run: (deadlines: ControlledDeadlines) => Promise<T>): Promise<T> {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  interface Timer {
+    active: boolean;
+    run(): void;
+  }
+  const controlled = new Set<Timer>();
+  const queue: Timer[] = [];
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay !== TURN_STATE_STORE_DEADLINE_MS) {
+      return realSetTimeout(callback as (...args: never[]) => void, delay, ...(args as never[]));
+    }
+    const timer: Timer = {
+      active: true,
+      run: () => {
+        if (!timer.active) return;
+        timer.active = false;
+        callback(...args);
+      },
+    };
+    controlled.add(timer);
+    queue.push(timer);
+    return timer as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+    const timer = handle as unknown as Timer;
+    if (controlled.has(timer)) {
+      timer.active = false;
+      return;
+    }
+    realClearTimeout(handle);
+  }) as typeof clearTimeout;
+
+  const next = async (): Promise<Timer> => {
+    for (let i = 0; i < 100; i++) {
+      const timer = queue.find((candidate) => candidate.active);
+      if (timer) return timer;
+      await Promise.resolve();
+    }
+    throw new Error("fixture observed no armed turn-state store deadline");
+  };
+
+  try {
+    return await run({
+      waitForNext: async () => void (await next()),
+      fireNext: async () => {
+        (await next()).run();
+        await Promise.resolve();
+      },
+    });
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 async function callNoReply(turnWake: string, turnId: string): Promise<{ note?: string; error?: string }> {
   return noReplyTool
     .execute({ reason: "not_relevant" }, ctxFor(turnWake, turnId))
@@ -630,20 +701,29 @@ resetSettingsForTest();
 
   const realGet = store.getTaskResult.bind(store);
   const realPut = store.putTaskResult.bind(store);
-  const hang = <T>(): Promise<T> => new Promise<T>(() => {});
+  let hungReads = 0;
+  const hang = <T>(): Promise<T> => {
+    hungReads += 1;
+    return new Promise<T>(() => {});
+  };
   (store as unknown as Record<string, unknown>)["getTaskResult"] = hang;
   (store as unknown as Record<string, unknown>)["putTaskResult"] = hang;
   try {
-    const startedAt = Date.now();
-    const out = await inTurn(() => oneRoundTrip(ctx15));
-    const elapsed = Date.now() - startedAt;
-    ok(out.backendCalls === 1, "§15: 🔴 the model round-trip PROCEEDS against a store that never answers");
-    ok(out.text === undefined, "§15: …and it is a real model call, not a turn-ending stub");
-    ok(
-      elapsed < TURN_STATE_STORE_DEADLINE_MS * 4,
-      `§15: …and it cost at most the store deadline (${elapsed} ms against a ${TURN_STATE_STORE_DEADLINE_MS} ms budget), never the 800 s function cap`,
-    );
-    ok(elapsed >= TURN_STATE_STORE_DEADLINE_MS, "§15/CONTROL: it really did wait for the deadline — so the assertion above is about a raced call, not about a read that never happened");
+    await withControlledStoreDeadlines(async (deadlines) => {
+      let completed = false;
+      const roundTrip = inTurn(() => oneRoundTrip(ctx15)).then((out) => {
+        completed = true;
+        return out;
+      });
+      await deadlines.waitForNext();
+      ok(hungReads === 1, "§15/CONTROL: the round-trip really issued the store read that never answers");
+      ok(completed === false, "§15/CONTROL: it remains pending until the store deadline fires");
+
+      await deadlines.fireNext();
+      const out = await roundTrip;
+      ok(out.backendCalls === 1, "§15: 🔴 the model round-trip PROCEEDS when a hung store reaches its deadline");
+      ok(out.text === undefined, "§15: …and it is a real model call, not a turn-ending stub");
+    });
   } finally {
     (store as unknown as Record<string, unknown>)["getTaskResult"] = realGet;
     (store as unknown as Record<string, unknown>)["putTaskResult"] = realPut;
@@ -659,54 +739,65 @@ resetSettingsForTest();
 
   const realPut = store.putTaskResult.bind(store);
   const realDelete = store.deleteTaskResult.bind(store);
+  let releaseSlowPut = deferred();
+  let slowPutStarted = deferred();
+  let twoPutsSettled = deferred();
+  let deleteSettled = deferred();
   let settled = 0;
   let slowPutsLeft = 1;
-  const SLOW_PUT_MS = TURN_STATE_STORE_DEADLINE_MS * 2;
   (store as unknown as Record<string, unknown>)["putTaskResult"] = async (...args: Parameters<typeof realPut>): Promise<void> => {
     if (slowPutsLeft > 0) {
       slowPutsLeft -= 1;
-      await new Promise((r) => setTimeout(r, SLOW_PUT_MS));
+      slowPutStarted.resolve();
+      await releaseSlowPut.promise;
     }
     await realPut(...args);
     settled += 1;
+    if (settled === 2) twoPutsSettled.resolve();
   };
   (store as unknown as Record<string, unknown>)["deleteTaskResult"] = async (...args: Parameters<typeof realDelete>): Promise<boolean> => {
     const out = await realDelete(...args);
     settled += 1;
+    deleteSettled.resolve();
     return out;
   };
-  const drained = async (n: number): Promise<boolean> => {
-    for (let i = 0; i < 200 && settled < n; i++) await new Promise((r) => setTimeout(r, 25));
-    return settled >= n;
-  };
   try {
-    const startedAt = Date.now();
-    await writeTurnState(pair, { steps: 10 });
-    const abandonedAfter = Date.now() - startedAt;
-    ok(
-      abandonedAfter >= TURN_STATE_STORE_DEADLINE_MS - 25 && abandonedAfter < SLOW_PUT_MS,
-      `§16/PRECONDITION: the first write really was ABANDONED at the deadline (${abandonedAfter} ms, store call ${SLOW_PUT_MS} ms) — without that this leg proves nothing`,
-    );
-    ok(settled === 0, "§16/PRECONDITION: …and it had not landed yet, so the overtake window is genuinely open");
+    await withControlledStoreDeadlines(async (deadlines) => {
+      const first = writeTurnState(pair, { steps: 10 });
+      await slowPutStarted.promise;
+      await deadlines.fireNext();
+      await first;
+      ok(settled === 0, "§16/PRECONDITION: the first write returned at its deadline while the store call was still held open");
 
-    const queuedAt = Date.now();
-    await writeTurnState(pair, { steps: 11, stoppedAck: true });
-    const queuedFor = Date.now() - queuedAt;
-    ok(
-      queuedFor < SLOW_PUT_MS - TURN_STATE_STORE_DEADLINE_MS / 2,
-      `§16: 🔴 the QUEUED caller still pays only the deadline (${queuedFor} ms, predecessor ${SLOW_PUT_MS} ms) — ordering must not put a predecessor's hang on the round-trip`,
-    );
+      const second = writeTurnState(pair, { steps: 11, stoppedAck: true });
+      await deadlines.fireNext();
+      await second;
+      ok(settled === 0, "§16: 🔴 the queued caller returns at its own deadline without overtaking the held predecessor");
 
-    ok(await drained(2), "§16/PRECONDITION: both store calls settled, so the row below is read at its final value");
+      releaseSlowPut.resolve();
+      await twoPutsSettled.promise;
+    });
     const final = await readTurnState(pair);
     ok(final?.steps === 11, `§16: 🔴 the row holds the SECOND write's count — an abandoned write does not rewind it (read ${String(final?.steps)})`);
     ok(final?.stoppedAck === true, "§16: 🔴 …and the stand-down valve stays SPENT — the un-spent read is one more post into a conversation the person asked the seat to leave");
 
     slowPutsLeft = 1;
     settled = 0;
-    await writeTurnState(pair, { steps: 12 });
-    await deleteTurnState(pair);
-    ok(await drained(2), "§16/PRECONDITION: the slow write and the delete both settled");
+    releaseSlowPut = deferred();
+    slowPutStarted = deferred();
+    deleteSettled = deferred();
+    await withControlledStoreDeadlines(async (deadlines) => {
+      const slowWrite = writeTurnState(pair, { steps: 12 });
+      await slowPutStarted.promise;
+      await deadlines.fireNext();
+      await slowWrite;
+      const deletion = deleteTurnState(pair);
+      await deadlines.fireNext();
+      await deletion;
+      ok(settled === 0, "§16/PRECONDITION: the delete returned at its deadline without overtaking the held write");
+      releaseSlowPut.resolve();
+      await deleteSettled.promise;
+    });
     const afterDelete = await readTurnState(pair);
     ok(afterDelete?.steps === 0, `§16: 🔴 a delete issued after an abandoned write wins — the row is GONE, not resurrected (read ${JSON.stringify(afterDelete)})`);
   } finally {
@@ -717,27 +808,51 @@ resetSettingsForTest();
   {
     const pair2 = turnPairKey("session-16", "turn_1602");
     const realPut = store.putTaskResult.bind(store);
+    const realGet = store.getTaskResult.bind(store);
     let slowPutsLeft = 0;
-    const SLOW_PUT_MS = TURN_STATE_STORE_DEADLINE_MS * 4;
+    let slowPutStarted = deferred();
+    let releaseSlowPut = deferred();
+    let slowPutSettled = deferred();
+    let readsIssued = 0;
     (store as unknown as Record<string, unknown>)["putTaskResult"] = async (...args: Parameters<typeof realPut>): Promise<void> => {
       if (slowPutsLeft > 0) {
         slowPutsLeft -= 1;
-        await new Promise((r) => setTimeout(r, SLOW_PUT_MS));
+        slowPutStarted.resolve();
+        await releaseSlowPut.promise;
       }
       await realPut(...args);
+      slowPutSettled.resolve();
+    };
+    (store as unknown as Record<string, unknown>)["getTaskResult"] = async (...args: Parameters<typeof realGet>): Promise<string | null> => {
+      readsIssued += 1;
+      return realGet(...args);
     };
     try {
       await deleteTurnState(pair2);
       await writeTurnState(pair2, { steps: 5 });
       ok((await readTurnState(pair2))?.steps === 5, "§16/PRECONDITION: the row is staged at steps 5 with a healthy store");
 
-      slowPutsLeft = 1;
-      await writeTurnState(pair2, { steps: 5, stoppedAck: true });
+      const readsBefore = readsIssued;
+      let stored: Awaited<ReturnType<typeof readTurnState>> = undefined;
+      await withControlledStoreDeadlines(async (deadlines) => {
+        slowPutsLeft = 1;
+        slowPutStarted = deferred();
+        releaseSlowPut = deferred();
+        slowPutSettled = deferred();
+        const slowWrite = writeTurnState(pair2, { steps: 5, stoppedAck: true });
+        await slowPutStarted.promise;
+        await deadlines.fireNext();
+        await slowWrite;
 
-      const stored = await readTurnState(pair2);
-      if (stored !== undefined) await writeTurnState(pair2, { ...stored, steps: stored.steps + 1 });
+        const queuedRead = readTurnState(pair2);
+        await deadlines.waitForNext();
+        ok(readsIssued === readsBefore, "§16/PRECONDITION: the successor read has not overtaken the held write");
+        await deadlines.fireNext();
+        stored = await queuedRead;
 
-      await new Promise((r) => setTimeout(r, SLOW_PUT_MS + 400));
+        releaseSlowPut.resolve();
+        await slowPutSettled.promise;
+      });
       const final = await readTurnState(pair2);
       ok(
         final?.stoppedAck === true,
@@ -746,6 +861,7 @@ resetSettingsForTest();
       ok(stored === undefined, "§16: …because the queued read lost its OWN deadline race and answered `undefined`, so the writer skipped a row it had not seen");
     } finally {
       (store as unknown as Record<string, unknown>)["putTaskResult"] = realPut;
+      (store as unknown as Record<string, unknown>)["getTaskResult"] = realGet;
       await deleteTurnState(pair2);
     }
   }

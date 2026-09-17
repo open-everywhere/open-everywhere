@@ -17,6 +17,7 @@ import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-a
 import { spoolNote, type ReadSpool } from "./read-spool.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { ageAtRead } from "../access/dated-read.js";
+import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 export { ChannelScopeError };
 
 export interface RenderedLine {
@@ -228,7 +229,7 @@ async function gradeAndProject(
     messages: lines.map((m) => ({
       author: m.author,
       ts: m.ts,
-      text: withheld(m) ? WITHHELD_BODY_MARKER : m.text,
+      text: withheld(m) ? WITHHELD_BODY_MARKER : m.bot === true ? redactMachineLinkCodes(m.text) : m.text,
       ...(m.readAt !== undefined ? { readAt: m.readAt } : {}),
       ...(m.live !== undefined ? { live: m.live } : {}),
     })),

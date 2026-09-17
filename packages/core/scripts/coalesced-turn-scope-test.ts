@@ -76,7 +76,7 @@ function seatCtx(turnId: string) {
   ok(rowA !== null, "§0: the wake row is readable");
   eq(wakeSurfaceKeyFromTargetJson(rowA!), A_SURFACE, "🔴 §0: the divert's own surface key rides the wake row as a tolerated extra field");
   const { resolveUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
-  eq(await resolveUnifiedWakeTarget(store, ORG, W_A), { ...A_ORIGIN, addressing: "direct-mention", surfaceKey: A_SURFACE }, "§0: the origin still validates with the extra fields present");
+  eq(await resolveUnifiedWakeTarget(store, ORG, W_A), A_ORIGIN, "§0: the origin still validates with routing metadata present, and returns only the provider post target");
   eq(wakeSurfaceKeyFromTargetJson("not json"), undefined, "§0: a malformed row names no surface key — total, never a throw");
   eq(wakeSurfaceKeyFromTargetJson(JSON.stringify(A_ORIGIN)), undefined, "🔴 §0: a row minted BEFORE this field existed names none either — the fallback arm, asserted rather than assumed");
 }

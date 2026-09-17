@@ -85,7 +85,7 @@ const clearConnectorOverrideEntry = defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `clear override for "${plan.args.connector}" on "${plan.args.scopeKey}"`;

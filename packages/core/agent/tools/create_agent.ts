@@ -215,7 +215,7 @@ export default defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const memoryClause = spec.memory.kind === "new-readonly" ? `a new read-only ${spec.memory.provider} silo` : `existing silo "${spec.memory.silo}"`;

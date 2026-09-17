@@ -8,6 +8,7 @@ import {
   subagentParentSessionId,
   type BindableContext,
 } from "../identity/binding.js";
+import { ensureDelegatedTaskBinding } from "../channels/task-wake.js";
 
 function lostBindingError(ctx: BindableContext): Error {
   const b = bindFrom(ctx);
@@ -40,6 +41,7 @@ async function auditRefusal(ctx: BindableContext, phase: "session.started" | "tu
 }
 
 async function refreshHealAndGuard(ctx: BindableContext, phase: "session.started" | "turn.started"): Promise<void> {
+  await ensureDelegatedTaskBinding(ctx);
   refreshBindingStamp(ctx);
   const healed = healDeliveryIdentity(ctx);
   if (healed === "unwritable") {

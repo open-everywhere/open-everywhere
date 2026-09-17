@@ -13,6 +13,7 @@ import { e2eDriverPrincipals, isE2eDriver } from "../testing/driver-allowlist.js
 export interface SeatCatchUpRequest {
   readonly container: string;
   readonly threadRoot?: string;
+  readonly threadAnchor?: string;
   readonly sinceMs: number;
   readonly untilMs?: number;
   readonly excludeId?: string;

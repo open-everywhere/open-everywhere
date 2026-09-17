@@ -102,7 +102,7 @@ export default windowGated("create_skill", defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""}`;

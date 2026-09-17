@@ -229,7 +229,7 @@ const purgeEntry = defineTool({
         chain: { unattended: unattendedOf(ctx) },
         summaryLines: purgePlan.cardLines,
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const first = purgePlan.args.bullets[0]!;

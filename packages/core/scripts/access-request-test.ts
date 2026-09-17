@@ -72,6 +72,10 @@ const groups: Group[] = [
 ];
 
 const domains: Domain[] = [{ name: "org", match: "org", admins: ["slack/T1/U_ADMIN"] }];
+const domainTargetDomains: Domain[] = [
+  ...domains,
+  { name: "payments", reach: ["slack/T1/C1", "teams/W1/CH1"], memory: "payments-silo" },
+];
 
 function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
   return {
@@ -79,6 +83,7 @@ function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfi
     configRepo: "acme/agent-config",
     baseBundles: () => codeBundles,
     baseBindings: () => codeBindings,
+    domainRegistry: () => domainTargetDomains,
     groupRegistry: () => groups,
     ...over,
   };
@@ -130,6 +135,7 @@ function planCtxFor(channel: string): PlanContext {
 }
 
 const extras = { scopeKey: "slack/T1/C1", channelId: "C1", configRepo: "acme/agent-config", domains } as const;
+const domainExtras = { ...extras, domains: domainTargetDomains, requestingSurfaceKey: "slack/T1/C1" } as const;
 
 {
   const teamsArgs = planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras);
@@ -219,6 +225,35 @@ ok(
   widenArgs.delta.kind === "widen-connection" && widenArgs.delta.baseConnection.secretRef === "NOTION_API_KEY" && widenArgs.delta.addMethods.join() === "PATCH",
   "plan: widen ask freezes the effective base connection into the delta",
 );
+
+{
+  const derived = requestingScopeFor("channel", slackBinding(), "slack/T1/C1", {}, domainTargetDomains);
+  ok(derived.level === "domain" && derived.domain === "payments", "domain target: canonical domain is derived server-side from the requesting surface");
+  const standalone = requestingScopeFor(
+    "channel",
+    slackBinding({ surface: "C_OUT", target: { channelId: "C_OUT" } }),
+    "slack/T1/C_OUT",
+    {},
+    domainTargetDomains,
+  );
+  ok(standalone.level === "surface" && standalone.surface === "slack/T1/C_OUT", "domain target: a standalone room remains surface-scoped");
+  const planned = planRequestAccess(
+    slackBinding(),
+    { ...planCtxFor("C1"), scope: derived, domains: domainTargetDomains },
+    { kind: "grant-connector", connector: "linear", credential: "k" },
+    domainExtras,
+  );
+  ok(planned.delta.scope.level === "domain" && planned.delta.scope.domain === "payments", "domain target: the frozen request carries the domain scope");
+  ok(
+    planned.universe?.includes('Domain grant for "payments"') === true && planned.universe.includes("every current and future room"),
+    "domain target: the proposal explicitly discloses the full domain assignment",
+  );
+  const generated = applyDelta(emptyGrantsFile(), planned.delta);
+  ok(
+    generated.grants.bindings[0]?.scope.level === "domain" && generated.grants.bindings[0]?.scope.domain === "payments",
+    "domain target: request → generated binding stays at domain level",
+  );
+}
 
 const dmBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding =>
   slackBinding({ mode: "dm", surface: "D_ASK", target: { channelId: "D_ASK" }, threadTs: undefined, visibility: "private", ...over });
@@ -390,6 +425,17 @@ ok(kind !== undefined && kind.policy === "member", "kind: access.request registe
   ok(lines.some((l: string) => l.includes("grant-connector: linear (credential k) → slack/T1/C1")), "kind: summary renders the exact machine delta");
   ok(lines.some((l: string) => l.includes("triage needs Linear")), "kind: summary shows the reason");
   ok(lines.some((l: string) => l.includes("acme/agent-config") && l.includes("nothing is granted until")), "kind: summary names the config repo + the merge-is-the-gate contract");
+
+  const domainScope = requestingScopeFor("channel", slackBinding(), "slack/T1/C1", {}, domainTargetDomains);
+  const domainArgs = planRequestAccess(
+    slackBinding(),
+    { ...planCtxFor("C1"), scope: domainScope, domains: domainTargetDomains },
+    { kind: "grant-connector", connector: "linear", credential: "k" },
+    domainExtras,
+  );
+  const domainLines = kind!.summarize(domainArgs);
+  ok(domainLines[0]?.includes('domain "payments" (every room it admits)') === true, "kind(domain): the card grant sentence names the whole domain");
+  ok(domainLines.some((line: string) => line.includes("every current and future room")), "kind(domain): the card includes the frozen full-domain assignment");
 }
 
 await rejectsWith(() => requireAccessRequestsConfig(arConfig({ adminChannel: undefined })), "aren't enabled", "config: missing admin channel fails closed");
@@ -494,6 +540,44 @@ function fakeDeps(state: FakeState) {
 }
 
 {
+  const domainScope = requestingScopeFor("channel", slackBinding(), "slack/T1/C1", {}, domainTargetDomains);
+  const domainArgs = planRequestAccess(
+    slackBinding(),
+    { ...planCtxFor("C1"), scope: domainScope, domains: domainTargetDomains },
+    { kind: "grant-connector", connector: "linear", credential: "k" },
+    domainExtras,
+  );
+  const domainState: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+  await executeAccessRequest(domainArgs, "U_ASK", { config: arConfig(), ...fakeDeps(domainState) });
+  ok(domainState.prs[0]?.title.includes('domain "payments" (every room it admits)') === true, "execute(domain): the PR title names the whole domain");
+  ok(domainState.prs[0]?.body.includes("every current and future room admitted by that domain's reach rules") === true, "execute(domain): the PR body carries the frozen full-domain assignment");
+  ok(
+    parseGrantsModule(domainState.puts[0]!).bindings[0]?.scope.level === "domain" &&
+      parseGrantsModule(domainState.puts[0]!).bindings[0]?.scope.domain === "payments",
+    "execute(domain): the committed overlay carries the canonical domain binding",
+  );
+
+  const staleDomain: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+  await rejectsWith(
+    () => executeAccessRequest(domainArgs, "U_ASK", { config: arConfig({ domainRegistry: () => domains }), ...fakeDeps(staleDomain) }),
+    'frozen domain "payments" is no longer declared',
+    "execute(domain): approval refuses when the domain frozen at proposal has been deleted or renamed",
+  );
+  ok(
+    staleDomain.puts.length === 0 && staleDomain.prs.length === 0 && Object.keys(staleDomain.branches).join(",") === "main",
+    "execute(domain): stale domain creates no branch, file write or PR",
+  );
+  const missingDomainRegistry: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+  await rejectsWith(
+    () => executeAccessRequest(domainArgs, "U_ASK", { config: arConfig({ domainRegistry: undefined }), ...fakeDeps(missingDomainRegistry) }),
+    "doesn't expose its merged domain registry",
+    "execute(domain): approval fails closed when the current canonical roster cannot be read",
+  );
+  ok(
+    Object.keys(missingDomainRegistry.branches).join(",") === "main" && missingDomainRegistry.puts.length === 0 && missingDomainRegistry.prs.length === 0,
+    "execute(domain): unreadable registry creates no branch, file write or PR",
+  );
+
   const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras);
   const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
   await executeAccessRequest(personalArgs, "U_ASK", { config: arConfig(), ...fakeDeps(state) });

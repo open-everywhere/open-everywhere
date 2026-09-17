@@ -322,7 +322,7 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
           postedTo: postedToSurfaceKey(binding, channelId!),
           summaryLines: checkpointCardLines(plan, scopeLabel),
         },
-        approvalPostDeps(binding.platform),
+        approvalPostDeps(binding.platform, ctx),
       );
       cardState = "posted";
       await store.setSessionApproval({ org: plan.org, sessionId: plan.memoKey, kind: CHECKPOINT_ASK_MEMO, grantedBy: requestedBy!, createdAt: nowIso, expiresAt });

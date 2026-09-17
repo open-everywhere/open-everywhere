@@ -331,4 +331,53 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean; sendTh
   eq(strandRows.length, 0, "negative control: a TRANSIENT native guild send failure classifies not-classified and writes NO strand audit row at all");
 }
 
-console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder, OPE-970 wake-failure audit, OPE-971 native guild strand audit + negative control)`);
+{
+  let calls = 0;
+  const retryingSend = (async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  }) as unknown as DiscordGatewaySend;
+  const guildMsg: DiscordRelayMessage = {
+    id: "6003",
+    content: "<@BOT9> retry this",
+    channelId: "7004",
+    channelType: "0",
+    guildId: "G_ACME4",
+    author: { id: "U_ERIN", username: "erin", bot: false },
+    mentionsBot: true,
+    botId: BOT,
+  };
+  await dispatchTurn(guildMsg, authForRelayMessage(guildMsg)!, retryingSend, async () => null, async () => undefined, undefined);
+  eq(calls, 2, "🔴 OPE-1881: Discord's real native launch retries one proven 429 and delivers");
+  const rows = (await getOperationalStore().readAudit({ org: "default", action: "surface.wake_retry" })).filter((row) => row.surface === "discord/G_ACME4/7004");
+  eq(rows.length, 1, "🔴 OPE-1881: Discord records the native refusal under the real guild/channel surface");
+  ok(!("wakeId" in ((rows[0]?.detail ?? {}) as Record<string, unknown>)), "🔴 the native Discord row does not fabricate a wakeId");
+}
+
+{
+  let calls = 0;
+  const refusingSend = (async () => {
+    calls += 1;
+    throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  }) as unknown as DiscordGatewaySend;
+  const guildMsg: DiscordRelayMessage = {
+    id: "6004",
+    content: "<@BOT9> keep retrying",
+    channelId: "7005",
+    channelType: "0",
+    guildId: "G_ACME5",
+    author: { id: "U_FRANK", username: "frank", bot: false },
+    mentionsBot: true,
+    botId: BOT,
+  };
+  let threw: unknown;
+  try {
+    await dispatchTurn(guildMsg, authForRelayMessage(guildMsg)!, refusingSend, async () => null, async () => undefined, undefined);
+  } catch (err) {
+    threw = err;
+  }
+  eq(calls, 4, "🔴 Discord's native adapter stops at the shared four-attempt bound");
+  ok(threw instanceof Error && threw.name === "RateLimitExhaustedError", "🔴 Discord propagates named retry exhaustion through its existing strand-heal catch");
+}
+
+console.log(`✓ discord-dm-divert: ${n} assertions passed (DM divert, native failure audit/heal, native 429 retry + controls)`);

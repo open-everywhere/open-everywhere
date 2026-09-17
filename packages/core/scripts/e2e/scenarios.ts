@@ -26,21 +26,26 @@ import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type Not
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
+import {
+  approvedSuspendedReply,
+  slackVendorTimestamp,
+  suspendedApprovalRequest,
+  SUSPENDED_APPROVAL_ACTIONS,
+} from "./suspended-approval.js";
 import { findCredentialedWriteHost, notionPageLinks, quotedPagePhrase } from "./egress-evidence.js";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
   allNamePermissionKind,
   allNoticesDelivered,
-  askIdsOf,
   pinnedConnectorToolPermissionKind,
   discordOwnedAsks,
-  discordOwnedAsksInChannel,
+  discordWakeSessionIds,
+  exactDiscordOwnedAsks,
   grantIdsOf,
-  grantsForAsks,
+  grantsForExactAsk,
   noticesForGrant,
   refusedGrantAlreadyLive,
-  surfaceNamesChannel,
   refusedUnverifiedRequester,
   splitFenceRows,
   unexpiredGrants,
@@ -64,6 +69,7 @@ import {
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   awaitReplyPostRows,
+  awaitRepliesForAdmittedWakes,
   awaitStandDownVerdict,
   dispatchAddressings,
   isAmbientLegAddressing,
@@ -96,6 +102,9 @@ import type { TimingsRecord } from "./timings-record.js";
 import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
+import { ControlWriteDriver, type ControlWriteConfig, type SpendOwnershipHandle, type HaltOwnershipHandle } from "./control-write-driver.js";
+import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
+import { haltConfirmation } from "../../agent/tools/halt.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply } from "./read-channel-lib.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
@@ -117,6 +126,7 @@ import {
   withoutMarker,
   parseLinkCode,
   silenceCauseGate,
+  slackMessageTimestampIso,
   SPEND_GATE_DOORS,
   spendGateDoorOf,
 } from "./journey.js";
@@ -172,6 +182,8 @@ export interface ScenarioContext {
   readonly slackB?: SlackDriver;
   readonly slackMpim?: SlackDriver;
   readonly slackCapFixture?: SlackDriver;
+  readonly slackHalt?: SlackDriver;
+  readonly controlWriteConfig?: ControlWriteConfig;
   readonly slackSupervisor?: SlackDriver;
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
@@ -312,8 +324,8 @@ const SEAT_FENCE_QUIET_MS = 20_000;
 const SEAT_FENCE_WAIT = 440_000;
 const SEAT_FENCE_OWED_GRACE_MS = 420_000;
 
-async function fenceDmSeat(ctx: ScenarioContext, legId: string): Promise<void> {
-  const dm = ctx.dm;
+async function fenceDmSeat(ctx: ScenarioContext, legId: string, drivenDm: SlackDriver | undefined = ctx.dm): Promise<void> {
+  const dm = drivenDm;
   if (!dm) return;
   const fence = await dm.awaitSeatQuiet({
     quietMs: SEAT_FENCE_QUIET_MS,
@@ -345,6 +357,59 @@ async function fenceDmSeat(ctx: ScenarioContext, legId: string): Promise<void> {
     `seat: ${legId} drives DM ${dm.channelId} — drained to ts ${fence.anchorTs ?? "(empty)"} in ${Math.round(fence.waitedMs / 1000)}s` +
       `${fence.abandoned ? " (the seat DECLINED to answer that message — past the owed grace, so it blocks nothing)" : ""}, conversation ${generation}`,
   );
+}
+
+async function archiveNotionPageFromDm(
+  ctx: ScenarioContext,
+  dm: SlackDriver,
+  teamId: string,
+  pageTitle: string,
+  legId: string,
+): Promise<void> {
+  try {
+    const sinceIso = new Date().toISOString();
+    const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
+    let answeredApproval: string | undefined;
+    let beforeAnswer = new Map<string, string>();
+    const done = await pollUntil(
+      async () => {
+        const [messages, auditRows] = await Promise.all([
+          dm.collectBotMessagesAfter(teardownTs, teardownTs),
+          ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
+        ]);
+        if (answeredApproval === undefined) {
+          const selected = approvalRequestForSlackAsk({
+            messages,
+            auditRows,
+            anchorTs: teardownTs,
+            teamId,
+            channelId: dm.channelId,
+            decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
+          });
+          if (!selected) return undefined;
+          beforeAnswer = new Map(messages.map((message) => [message.ts, message.text]));
+          answeredApproval = selected.message.ts;
+          await dm.post("Approve");
+          ctx.log(`${legId} teardown: answered exact archive approval ${answeredApproval} with "Approve"`);
+          return undefined;
+        }
+        return messages.find((message) => {
+          if (message.text.includes(APPROVAL_ANSWER_HINT)) return false;
+          const text = message.text.trim();
+          if (text.length === 0 || isFillerAck(text)) return false;
+          const before = beforeAnswer.get(message.ts);
+          return before === undefined || before !== message.text;
+        });
+      },
+      { timeoutMs: FILE_REPLY_WAIT, what: `a reply after approving the exact archive request for "${pageTitle}"` },
+    );
+    ctx.observe(`${legId} teardown: archive approval ${answeredApproval} answered; the seat replied "${done.text.trim().slice(0, 160)}"`);
+  } catch (error) {
+    ctx.log(
+      `${legId} teardown did NOT complete (${error instanceof Error ? error.message : String(error)}). ` +
+        `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
+    );
+  }
 }
 
 export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean {
@@ -599,14 +664,16 @@ async function gateOneSeatAcrossNameDrops(
     ctx.gate(false, `one-seat: ctx.auditRead is unwired, so neither the seat continuity nor the wake admission can be read — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. In the room the two shapes this gate tells apart look identical, so there is nothing else to assert on`);
     return;
   }
-  const posts =
-    (await awaitReplyPostRows(ctx.auditRead, {
-      sinceIso: opts.sinceIso,
-      platform: opts.platform,
-      surface: opts.surface,
-      minRows: 2,
-      budget: { timeoutMs: REPLY_WAIT, what: `second name-drop: two ${REPLY_POST_ACTION} rows on ${opts.surface}` },
-    })) ?? [];
+  const evidence = await awaitRepliesForAdmittedWakes(ctx.auditRead, {
+    sinceIso: opts.sinceIso,
+    platform: opts.platform,
+    surface: opts.surface,
+    container: opts.container,
+    minWakes: 2,
+    budget: { timeoutMs: REPLY_WAIT, what: `second name-drop: replies to two admitted wakes on ${opts.surface}` },
+  });
+  const posts = evidence?.posts ?? [];
+  const wakes = evidence?.wakeIds ?? [];
   const seat = seatContinuity(posts, { surface: opts.surface });
   ctx.gate(
     seat.replies >= 2,
@@ -620,9 +687,11 @@ async function gateOneSeatAcrossNameDrops(
     seat.sessionIds.length === 1,
     `🔴 second name-drop: ONE SEAT answered both — a single eve session id across the two replies (saw ${JSON.stringify(seat.sessionIds)}). Two ids is the older shape this journey exists to refuse: a name-drop opening its own per-thread session, so the room's second name-drop reached an agent with none of the first exchange`,
   );
-  const wakes = wakeIngressIds(await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [WAKE_INGRESS_ACTION] }), {
-    container: opts.container,
-  });
+  const answered = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakes });
+  ctx.gate(
+    answered.answeredWakeIds.length >= 2,
+    `second name-drop: replies join to at least two distinct admitted wakes (${answered.answeredWakeIds.length} matched); duplicate posts and replies without admitted wake IDs cannot prove continuity`,
+  );
   ctx.gate(
     wakes.length >= 2,
     `second name-drop: the deployment admitted BOTH name-drops as their own wake — ${wakes.length} distinct ${WAKE_INGRESS_ACTION} wake id(s) on ${opts.container}. One id would mean the two messages were coalesced into a single wake, which is a different behaviour from one seat waking twice`,
@@ -689,6 +758,134 @@ function requireAuditRead(ctx: ScenarioContext): void {
         "E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — a post-only run cannot tell an engaged wake from an ambient one",
     );
   }
+}
+
+export interface HaltLiveEvidenceKey {
+  readonly surfaceKey: string;
+  readonly channelId: string;
+  readonly workspaceId: string;
+  readonly driverUserId: string;
+  readonly runStart: string;
+}
+
+export function haltWakeForSlackAnchor(rows: readonly AuditWireEntry[], key: HaltLiveEvidenceKey, anchorTs: string): string | undefined {
+  const vendorTs = slackMessageTimestampIso(anchorTs);
+  if (!vendorTs) return undefined;
+  const wakes = new Set<string>();
+  for (const row of rows) {
+    if (
+      row.action !== "wake.ingress" ||
+      row.platform !== "slack" ||
+      row.workspace !== key.workspaceId ||
+      row.surface !== key.channelId ||
+      row.detail?.surfaceKey !== key.surfaceKey ||
+      row.detail.vendorTs !== vendorTs
+    ) continue;
+    const wakeId = row.detail.wakeId;
+    if (typeof wakeId === "string" && wakeId.length > 0) wakes.add(wakeId);
+  }
+  return wakes.size === 1 ? [...wakes][0] : undefined;
+}
+
+export function haltSetEvidence(row: AuditWireEntry, key: HaltLiveEvidenceKey, wakeId: string): boolean {
+  return (
+    row.platform === "slack" &&
+    row.workspace === key.workspaceId &&
+    row.surface === key.channelId &&
+    row.principalId === key.driverUserId &&
+    Date.parse(row.ts) >= Date.parse(key.runStart) &&
+    row.detail?.door === "chat" &&
+    row.detail?.level === "surface" &&
+    row.detail?.scopeKey === key.surfaceKey &&
+    row.detail?.announced === true &&
+    row.detail?.wakeId === wakeId &&
+    typeof row.detail?.setAt === "string" &&
+    !Number.isNaN(Date.parse(row.detail.setAt)) &&
+    typeof row.detail?.sessionId === "string" &&
+    row.detail.sessionId.length > 0
+  );
+}
+
+export function haltClearEvidence(row: AuditWireEntry, key: HaltLiveEvidenceKey): boolean {
+  return (
+    row.principalId === "local-operator" &&
+    Date.parse(row.ts) >= Date.parse(key.runStart) &&
+    row.detail?.door === "control-mcp" &&
+    row.detail?.level === "surface" &&
+    row.detail?.scopeKey === key.surfaceKey &&
+    row.detail?.cleared === true
+  );
+}
+
+export function haltOwnedBySet(handle: HaltOwnershipHandle | undefined, row: AuditWireEntry, key: HaltLiveEvidenceKey, wakeId: string): handle is HaltOwnershipHandle {
+  return (
+    haltOwnedByWake(handle, key, wakeId) &&
+    haltSetEvidence(row, key, wakeId) &&
+    handle.setAt === row.detail?.setAt
+  );
+}
+
+export function haltOwnedByWake(handle: HaltOwnershipHandle | undefined, key: HaltLiveEvidenceKey, wakeId: string): handle is HaltOwnershipHandle {
+  return (
+    handle !== undefined &&
+    handle.scopeKey === key.surfaceKey &&
+    handle.setBy === key.driverUserId &&
+    handle.setRef === wakeId &&
+    Date.parse(handle.setAt) >= Date.parse(key.runStart)
+  );
+}
+
+export type HaltCleanupResult =
+  | { readonly status: "cleared" | "already-cleared"; readonly wakeId?: string }
+  | { readonly status: "residue"; readonly reason: "anchor-wake-unresolved" | "audit-read-failed" | "halt-read-failed" | "halt-not-owned" | "cleanup-missing" | "cleanup-changed" };
+
+export async function cleanupExactHalt(opts: {
+  readonly key: HaltLiveEvidenceKey;
+  readonly anchorTs: string | undefined;
+  readonly anchorWakeId?: string;
+  readonly owned?: HaltOwnershipHandle;
+  readonly alreadyCleared: boolean;
+  readonly auditRead: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+  readonly inspectHalt: () => Promise<HaltOwnershipHandle | undefined>;
+  readonly clearOwnedHalt: (handle: HaltOwnershipHandle) => Promise<"cleared" | "missing" | "changed">;
+}): Promise<HaltCleanupResult> {
+  if (opts.alreadyCleared) return { status: "already-cleared", ...(opts.anchorWakeId ? { wakeId: opts.anchorWakeId } : {}) };
+
+  let wakeId = opts.anchorWakeId;
+  if (!wakeId) {
+    if (!opts.anchorTs) return { status: "residue", reason: "anchor-wake-unresolved" };
+    let rows: readonly AuditWireEntry[];
+    try {
+      rows = await opts.auditRead({
+        sinceIso: opts.key.runStart,
+        platform: "slack",
+        workspace: opts.key.workspaceId,
+        surface: opts.key.channelId,
+        actions: ["wake.ingress"],
+        limit: 100,
+      });
+    } catch {
+      return { status: "residue", reason: "audit-read-failed" };
+    }
+    wakeId = haltWakeForSlackAnchor(rows, opts.key, opts.anchorTs);
+    if (!wakeId) return { status: "residue", reason: "anchor-wake-unresolved" };
+  }
+
+  let owned = opts.owned;
+  if (!owned) {
+    let candidate: HaltOwnershipHandle | undefined;
+    try {
+      candidate = await opts.inspectHalt();
+    } catch {
+      return { status: "residue", reason: "halt-read-failed" };
+    }
+    if (!haltOwnedByWake(candidate, opts.key, wakeId)) return { status: "residue", reason: "halt-not-owned" };
+    owned = candidate;
+  }
+
+  const outcome = await opts.clearOwnedHalt(owned);
+  if (outcome !== "cleared") return { status: "residue", reason: `cleanup-${outcome}` };
+  return { status: "cleared", wakeId };
 }
 
 export const SCENARIOS: readonly Scenario[] = [
@@ -1437,71 +1634,119 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-SPEND-REFUSAL-KEYS",
     title: "OPE-1860: a spend refusal in a DM names the layer that actually bit and the key that raises it — never 'your own usage' for a room's or the workspace's cap",
-    requires: ["slack", "syntheticDm"],
+    requires: ["slack", "slackSecondary", "controlWrite"],
     surface: "slack",
     suite: "core",
     timeoutMs: 1_110_000,
     judged: false,
     run: async (ctx) => {
-      const dm = ctx.dm!;
-      const capFixture = capFixtureFor("dm");
-      if (!capFixture) {
-        const channelFixture = capFixtureFor("channel");
-        return ctx.skip(
-          "no DM-scoped cap fixture is declared (fixture-inventory-lib.ts CAP_FIXTURES" +
-            (channelFixture ? `; the declared fixture is CHANNEL-scoped, on ${channelFixture.surfaceKey}` : "") +
-            "), so a DM turn is admitted and there is no refusal to read. 🔴 A CAP ALONE IS NOT THE FIXTURE: " +
-            "spend/bypass.ts admits an ORG ADMIN past every cap with a warning, and spend/ingress-gate.ts treats a refusal " +
-            "read by an admin as unreachable-by-construction. This pack's DM belongs to the driver identity, which is an org " +
-            "admin, so a cap declared on it is dead config for a refusal. The fixture this leg needs is a DM owned by a " +
-            "NON-ADMIN the pack can drive, plus a cap covering that DM.",
-        );
-      }
-      const runStart = new Date(Date.now() - 60_000).toISOString();
-      await fenceDmSeat(ctx, "S-SPEND-REFUSAL-KEYS");
-      const { teamId } = await dm.identity();
-      const workspaceKey = `slack/${teamId}`;
-      for (let i = 0; i < 5; i++) {
-        const { ts } = await dm.post(`cap check ${i + 1}: summarise our last exchange in one line`);
-        const reply = await dm.awaitAnyReply(ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
-        if (!CAP_REFUSAL_MARKER.test(reply.text)) continue;
+      if (!ctx.auditRead) ctx.fixtureMissing("S-SPEND-REFUSAL-KEYS needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to join the refusal to its exact spend.gate row");
 
-        const claimsOwn = /cap on your own usage/i.test(reply.text);
-        ctx.gate(/Scope keys for the override:/i.test(reply.text), "the DM refusal names the scope keys an admin needs — a refusal with no key costs the reader a round trip");
-        if (/per-workspace cap/i.test(reply.text)) {
-          ctx.gate(reply.text.includes(workspaceKey), `the WORKSPACE cap's refusal names the workspace key (${workspaceKey}) — the only key that raises it`);
-          ctx.gate(!claimsOwn, "…and never claims the workspace's cap is the reader's own — the OPE-1860 defect, read from a live refusal");
-        } else if (/per-user cap/i.test(reply.text)) {
-          ctx.gate(claimsOwn, "a PER-USER breach is the one refusal that may say the cap is the reader's own");
-          ctx.gate(/your own allowance = /.test(reply.text), "…and it names the allowance key, which is what set_spend_limit level:\"user\" takes");
-        } else {
-          ctx.gate(!claimsOwn, "a SURFACE-layer refusal in a DM never claims the cap is the reader's own — it is the room's");
-          ctx.gate(reply.text.includes(dm.channelId), "…and names this conversation's own key, which is the one an admin raises");
+      const primary = await ctx.slack!.identity();
+      const secondary = await ctx.slackSecondary!.identity();
+      const dmChannelId = await ctx.slackSecondary!.openDirectMessage(ctx.slack!.botUserId);
+      const preflight = deployedSpendRefusalDmPreflight({
+        primary,
+        secondary,
+        expectedSecondaryUserId: ctx.slackSecondaryUserId!,
+        dmChannelId,
+      });
+      ctx.gate(preflight.ok, preflight.ok ? "the secondary DM identity is a real non-admin in the primary workspace" : preflight.reason);
+      if (!preflight.ok) return;
+
+      const dm = ctx.slackSecondary!.withChannel(dmChannelId);
+      await fenceDmSeat(ctx, "S-SPEND-REFUSAL-KEYS", dm);
+      const control = await ControlWriteDriver.connect(ctx.controlWriteConfig!, preflight.surfaceKey);
+      let owned: SpendOwnershipHandle | undefined;
+      let runError: unknown;
+      try {
+        await control.assertReady();
+        if ((await control.inspectSpendLimit()) !== undefined) {
+          return ctx.skip(`a spend limit already exists on ${preflight.surfaceKey}; S-SPEND-REFUSAL-KEYS leaves operator state untouched`);
         }
-        ctx.log(`S-SPEND-REFUSAL-KEYS: refusal read on turn ${i + 1} — "${reply.text.slice(0, 200)}"`);
-        return;
-      }
-      if (!ctx.auditRead) {
-        return ctx.skip(
-          `no refusal posted in the DM within the 5-turn budget, and the audit read is not wired, so the declared cap fixture ` +
-            `(${capFixture.surfaceKey}) cannot be attributed — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to tell an admin ` +
-            `bypass (a fixture state) from a cap that never bit (a regression).`,
+        const created = await control.setTemporarySpendLimit({
+          monthlyTokens: 1,
+          ttlSeconds: 1_800,
+          reason: `e2e:S-SPEND-REFUSAL-KEYS:${factToken("cap")}`,
+        });
+        if (created.outcome === "occupied") {
+          return ctx.skip(`another writer installed a spend limit on ${preflight.surfaceKey}; S-SPEND-REFUSAL-KEYS did not overwrite it`);
+        }
+        owned = created.handle;
+        const stored = await control.inspectSpendLimit();
+        ctx.gate(
+          stored?.scopeKey === owned.scopeKey &&
+            stored.level === "surface" &&
+            stored.monthlyTokens === 1 &&
+            stored.monthlyUsd === undefined &&
+            stored.expiresAt === owned.expiresAt &&
+            stored.reason === owned.reason &&
+            stored.setBy === owned.setBy,
+          "the local control writer read back the exact owned one-token cap on this secondary DM",
         );
-      }
-      const bypassed = await ctx.auditRead({ sinceIso: runStart, actions: ["spend.cap_bypassed"], surface: dm.channelId, limit: 50 });
-      if (bypassed.length > 0) {
-        return ctx.skip(
-          `no refusal posted in the DM within the 5-turn budget — the cap BIT and ${bypassed.length} spend.cap_bypassed row(s) show the driver ` +
-            `was admitted past it as an org admin (spend/bypass.ts's audited sudo). A refusal in a DM is only ever read by a NON-ADMIN, so this ` +
-            `leg needs a DM owned by a non-admin identity the pack can drive; the declared fixture (${capFixture.surfaceKey}) is not that room.`,
+
+        const runStart = new Date().toISOString();
+        const workspaceKey = `slack/${secondary.teamId}`;
+        for (let i = 0; i < 5; i++) {
+          const { ts } = await dm.post(`cap check ${i + 1}: summarise our last exchange in one line`);
+          const reply = await dm.awaitAnyReply(ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+          if (!CAP_REFUSAL_MARKER.test(reply.text)) continue;
+
+          const claimsOwn = /cap on your own usage/i.test(reply.text);
+          ctx.gate(/Scope keys for the override:/i.test(reply.text), "the DM refusal names the scope keys an admin needs — a refusal with no key costs the reader a round trip");
+          if (/per-workspace cap/i.test(reply.text)) {
+            ctx.gate(reply.text.includes(workspaceKey), `the WORKSPACE cap's refusal names the workspace key (${workspaceKey}) — the only key that raises it`);
+            ctx.gate(!claimsOwn, "…and never claims the workspace's cap is the reader's own — the OPE-1860 defect, read from a live refusal");
+          } else if (/per-user cap/i.test(reply.text)) {
+            ctx.gate(claimsOwn, "a PER-USER breach is the one refusal that may say the cap is the reader's own");
+            ctx.gate(/your own allowance = /.test(reply.text), "…and it names the allowance key, which is what set_spend_limit level:\"user\" takes");
+          } else {
+            ctx.gate(!claimsOwn, "a SURFACE-layer refusal in a DM never claims the cap is the reader's own — it is the room's");
+            ctx.gate(reply.text.includes(dm.channelId), "…and names this conversation's own key, which is the one an admin raises");
+          }
+          const gateRow = await pollOptional(
+            async () =>
+              (await ctx.auditRead!({ sinceIso: runStart, platform: "slack", workspace: secondary.teamId, surface: dm.channelId, actions: ["spend.gate"], limit: 50 })).find(
+                (row) =>
+                  row.platform === "slack" &&
+                  row.workspace === secondary.teamId &&
+                  row.surface === dm.channelId &&
+                  row.detail?.key === preflight.surfaceKey &&
+                  row.detail?.mode === "dm" &&
+                  row.detail?.over === true,
+              ),
+            { timeoutMs: 60_000, initialDelayMs: 1_000, what: "this DM's exact over-cap spend.gate row" },
+          );
+          ctx.gate(gateRow !== undefined, "the refusal joins to this DM's exact over-cap spend.gate row");
+          ctx.log(`S-SPEND-REFUSAL-KEYS: refusal read on turn ${i + 1} — "${reply.text.slice(0, 200)}"`);
+          return;
+        }
+
+        const bypassed = await ctx.auditRead!({ sinceIso: runStart, platform: "slack", workspace: secondary.teamId, surface: dm.channelId, actions: ["spend.cap_bypassed"], limit: 50 });
+        ctx.gate(
+          bypassed.length === 0,
+          "the verified non-admin secondary identity must not acquire an org/domain-admin spend bypass while the leg runs",
         );
+        ctx.gate(false, `the exact temporary cap on ${preflight.surfaceKey} refused nothing in 5 turns and no spend.cap_bypassed row explains it`);
+      } catch (error) {
+        runError = error;
+      } finally {
+        let cleanupError: unknown;
+        try {
+          if (owned) {
+            const result = await control.clearOwnedSpendLimit(owned);
+            if (result === "cleared") ctx.log(`S-SPEND-REFUSAL-KEYS: temporary spend cap cleared from ${owned.scopeKey}`);
+            else if (result === "missing") ctx.log(`S-SPEND-REFUSAL-KEYS: temporary spend cap was already absent from ${owned.scopeKey}`);
+            else cleanupError = new GateFailure(`the temporary cap on ${owned.scopeKey} changed during the run; the replacement was retained rather than cleared`);
+          }
+        } catch (error) {
+          cleanupError = error;
+        } finally {
+          await control.close();
+        }
+        if (cleanupError) throw cleanupError;
       }
-      ctx.gate(
-        false,
-        `the declared DM cap fixture (${capFixture.surfaceKey}, fixture-inventory-lib.ts CAP_FIXTURES) refused nothing in 5 turns, and no ` +
-          `spend.cap_bypassed row for this DM is visible in the window — either nothing consulted the cap (a spend-cap enforcement ` +
-          `regression) or the fixture's cap is not low enough to bite inside the budget`,
-      );
+      if (runError) throw runError;
     },
   },
   {
@@ -1690,11 +1935,11 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         ctx.gate(
           false,
-          "mint: an identity.link.challenge_issued row exists but no `link <CODE>` line could be parsed out of the DM reply — the model " +
-            `paraphrased instead of relaying the instructions verbatim. Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+          "mint: an identity.link.challenge_issued row exists but no `link <CODE>` line could be parsed out of the private DM delivery. " +
+            `Post: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
         );
       }
-      ctx.log(`mint: parsed link code (${code!.length} symbols) from the DM reply; ${issuedRows.length} challenge_issued row(s) in the window`);
+      ctx.log(`mint: parsed link code (${code!.length} symbols) from the host DM post; ${issuedRows.length} challenge_issued row(s) in the window`);
 
       const v2Verdict = deployedBuildVerdict(OPE617_V2_SHA);
       if (v2Verdict !== "carries") {
@@ -1791,13 +2036,13 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J4",
     title: "Slack access-request journey: propose card (tap+PR opt-in), DM refusal, out-of-vocab refusal (absorbs S17/S18)",
-    requires: ["slack", "syntheticDm"],
+    requires: ["slack", "syntheticDm", "notion"],
     surface: "slack",
     suite: "core",
     timeoutMs: 2_400_000,
     judged: true,
     run: async (ctx) => {
-      const slack = ctx.slack!;
+      const slack = ctx.notion!;
       const dm = ctx.dm!;
       await fenceDmSeat(ctx, "J4");
       const { teamId } = await slack.identity();
@@ -1809,18 +2054,18 @@ export const SCENARIOS: readonly Scenario[] = [
           const store = await wireNeonOperationalStore(rotateDbUrl);
           opStore = store;
           const org = process.env[ENV.org]?.trim() || "default";
-          const domain = process.env[ENV.unifiedDomain]?.trim() || "e2e-unified";
-          const rot = await rotateUnifiedWindow(store, org, domain);
+          const domain = "e2e-connector";
+          const rot = await rotateUnifiedWindow(store, org, domain, `slack/${teamId}/${slack.channelId}`);
           ctx.log(
             `J4: rotated the ${domain} window → fresh generation ${rot.mintedGeneration} (OPE-344 — this run starts with no widen-ask/reject footprint from prior runs)`,
           );
         } catch (e) {
           ctx.log(
-            `J4: could not rotate the e2e-unified window (${String(e instanceof Error ? e.message : e)}) — proceeding on whatever generation the standing window is already on, which risks OPE-344's harness-footprint misread`,
+            `J4: could not rotate the e2e-connector surface window (${String(e instanceof Error ? e.message : e)}) — proceeding on whatever generation the standing window is already on, which risks OPE-344's harness-footprint misread`,
           );
         }
       } else {
-        ctx.log("J4: no DATABASE_URL — skipping the OPE-344 rotate-at-start; this run rides the standing e2e-unified window's current generation as-is");
+        ctx.log("J4: no DATABASE_URL — skipping the OPE-344 rotate-at-start; this run rides the standing e2e-connector surface window's current generation as-is");
       }
 
       const pendingCleanup: Array<{ pendingId: string; org: string; where: string }> = [];
@@ -3555,16 +3800,102 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SUSPENDED-slack",
-    title: "Approval-SUSPENDED turn on Slack: a bridged eve approval parks the turn and a settlement resumes it (OPE-1856) — RED until a Slack-reachable connector grant exists",
-    requires: ["slack"],
+    title: "Approval-SUSPENDED turn on Slack: an exact human answer settles the bridged eve approval and the same session posts its resumed reply (OPE-1856)",
+    requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 600_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
-      ctx.fixtureMissing(
-        "suspending a turn needs a connector op that parks on eve's tool-approval, and this pack has no consented personal connector grant reachable from a Slack seat — the only one it holds is the Notion grant S-EVE-BRIDGE drives (E2E_CONNECTOR_WRITE_*). Provision a Slack-reachable connector grant and this leg drives the same shape S-EVE-BRIDGE does: approval.eve_candidate → the card → the settlement → approval.eve_settled, with the resumed turn's reply.post after it.",
+      const arming = await watchConnectorArming(
+        {
+          ...armingProbeOf(ctx),
+          skip: (reason: string): never =>
+            ctx.fixtureMissing(`GAP: S-SUSPENDED-slack needs the driver's consented personal Notion grant. ${reason}`),
+        },
+        NOTION_CONNECTOR,
       );
+      await fenceDmSeat(ctx, "S-SUSPENDED-slack");
+      const dm = ctx.dm!;
+      const { teamId } = await ctx.slack!.identity();
+      const token = factToken("suspended-slack");
+      const pageTitle = `OE suspended ${token}`;
+      const sinceIso = new Date().toISOString();
+      let creationAttempted = false;
+      try {
+        const { ts: askTs } = await dm.post(`Create a new Notion page titled "${pageTitle}" with a one-line body containing ${token}.`);
+        creationAttempted = true;
+        const askVendorTs = slackVendorTimestamp(askTs);
+        ctx.gate(askVendorTs !== undefined, `S-SUSPENDED-slack: Slack returned a parseable vendor timestamp for the ask (${askTs})`);
+        const surfaceKey = `slack/${teamId}/${dm.channelId}`;
+
+        const raised = await pollUntil(
+          async () => {
+            const [messages, rows] = await Promise.all([
+              dm.collectBotMessagesAfter(askTs, askTs),
+              ctx.auditRead!({ sinceIso, actions: SUSPENDED_APPROVAL_ACTIONS, limit: 1000 }),
+            ]);
+            const request = suspendedApprovalRequest(rows, {
+              anchor: { platform: "slack", surfaceKey, vendorTs: askVendorTs! },
+              destinationPlatform: "slack",
+              destinationWorkspace: teamId,
+              containerKey: `slack/${dm.channelId}`,
+            });
+            if (!request) return undefined;
+            const message = messages.find((candidate) => candidate.ts === request.messageId && candidate.text.includes(APPROVAL_ANSWER_HINT));
+            return message ? { request, message } : undefined;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: "the exact Slack ask's bridged tool approval and readable host answer line" },
+        ).catch(async (error: unknown) => {
+          await arming.recheck();
+          throw error;
+        });
+        ctx.gate(/\bApprove\b/.test(raised.message.text), "S-SUSPENDED-slack: the exact bridged request offers the Approve option the human will type");
+
+        const beforeAnswer = new Map<string, string>();
+        for (const message of await dm.collectBotMessagesAfter(askTs, askTs)) beforeAnswer.set(message.ts, message.text);
+
+        const { ts: answerTs } = await dm.post("Approve");
+        const answerVendorTs = slackVendorTimestamp(answerTs);
+        ctx.gate(answerVendorTs !== undefined, `S-SUSPENDED-slack: Slack returned a parseable vendor timestamp for the human answer (${answerTs})`);
+
+        const resumed = await pollUntil(
+          async () => {
+            const [messages, rows] = await Promise.all([
+              dm.collectBotMessagesAfter(askTs, askTs),
+              ctx.auditRead!({ sinceIso, actions: SUSPENDED_APPROVAL_ACTIONS, limit: 1000 }),
+            ]);
+            const candidates = messages
+              .filter(
+                (message) =>
+                  message.ts !== raised.message.ts &&
+                  !message.text.includes(APPROVAL_ANSWER_HINT) &&
+                  message.text.includes(token) &&
+                  message.text.trim().length > 0 &&
+                  !isFillerAck(message.text),
+              )
+              .map((message) => ({ id: message.ts, text: message.text, message }));
+            return approvedSuspendedReply(rows, {
+              request: raised.request,
+              answer: { platform: "slack", surfaceKey, vendorTs: answerVendorTs! },
+              replyPlatform: "slack",
+              candidates,
+              beforeAnswer,
+            });
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `a new/edited reply naming ${token} whose own reply.post closes the exact approved lifecycle` },
+        ).catch(async (error: unknown) => {
+          await arming.recheck();
+          throw error;
+        });
+        await arming.recheck();
+        ctx.gate(
+          resumed.lifecycle.request.requestId === raised.request.requestId && resumed.lifecycle.request.sessionId === raised.request.sessionId,
+          `S-SUSPENDED-slack: exact lifecycle joined request ${raised.request.requestId}, session ${raised.request.sessionId}, answer wake ${resumed.lifecycle.answerWakeId} and reply ${resumed.candidate.id}`,
+        );
+      } finally {
+        if (creationAttempted) await archiveNotionPageFromDm(ctx, dm, teamId, pageTitle, "S-SUSPENDED-slack");
+      }
     },
   },
   {
@@ -3611,7 +3942,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SUSPENDED-github",
-    title: "Approval-SUSPENDED turn on GitHub (OPE-1856) — RED until a GitHub-reachable connector grant exists",
+    title: "Approval-SUSPENDED turn on GitHub (OPE-1856) — GAP: no shipped GitHub-reachable eve-HITL operation exists",
     requires: ["github"],
     surface: "github",
     suite: "core",
@@ -3619,7 +3950,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "no consented personal connector grant is reachable from a GitHub seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on GitHub.",
+        "GAP (no live call was made): this deployment exposes no GitHub-reachable eve-HITL operation. Personal Notion writes are DM-only, member-plane grants refuse writes, and post_file is unsupported on GitHub. Existing personal Notion consent cannot seed this row. A real fixture requires a DEDICATED private GitHub repo/domain plus a connector whose MCP endpoint accepts a non-personal service credential, a bundle bound only to that domain, one write op, and the ordinary per-call human approval; no such connector exists in the shipped catalogue, so there is no honest seeder command today. Treat GitHub approval-SUSPENDED as unsupported/N/A in release policy until that isolated capability exists; do not substitute an OE requestApproval card.",
       );
     },
   },
@@ -3764,16 +4095,88 @@ export const SCENARIOS: readonly Scenario[] = [
 
   {
     id: "S-HALT",
-    title: "Break-glass halt: the operator's stop button writes admin.halt.set and the halt is then CLEARED (OPE-1836) — RED until a clear road exists",
-    requires: ["slack"],
+    title: "Break-glass halt: a real chat brake is visible, scoped, announced, and atomically cleared through the local control plane (OPE-1836)",
+    requires: ["slack", "slackHalt", "controlWrite"],
     surface: "slack",
     suite: "core",
     timeoutMs: 600_000,
     judged: false,
     run: async (ctx) => {
-      ctx.fixtureMissing(
-        "driving the break-glass halt needs a CLEAR road, and clearing is control-plane only (admin.halt.cleared carries door \"control-mcp\"; no chat road writes it). The pack holds a control READ token (E2E_CONTROL_READ_TOKEN) and no write token, so a halt it set could never be lifted — it would halt a fixture room permanently. Provision a control-plane WRITE credential plus a dedicated halt fixture room, and this leg asks for the halt in chat, reads the admin.halt.set row with its scoped address, clears it over the control plane, and reads admin.halt.cleared back.",
-      );
+      const slack = ctx.slackHalt!;
+      const auditRead = ctx.auditRead;
+      if (!auditRead) return ctx.fixtureMissing("S-HALT needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to join the exact chat halt and control-plane clear rows");
+      const identity = await slack.identity();
+      const surfaceKey = `slack/${identity.teamId}/${slack.channelId}`;
+      const control = await ControlWriteDriver.connect(ctx.controlWriteConfig!, surfaceKey);
+      let owned: HaltOwnershipHandle | undefined;
+      let setEvidence: { readonly row: AuditWireEntry; readonly wakeId: string } | undefined;
+      let anchorWakeId: string | undefined;
+      let anchorTs: string | undefined;
+      let cleared = false;
+      let runStart: string | undefined;
+      try {
+        await control.assertReady();
+        ctx.gate((await control.inspectHalt()) === undefined, "S-HALT refuses a pre-existing halt and leaves it untouched");
+
+        const startedAt = new Date().toISOString();
+        runStart = startedAt;
+        const evidenceKey: HaltLiveEvidenceKey = { surfaceKey, channelId: slack.channelId, workspaceId: identity.teamId, driverUserId: identity.userId, runStart: startedAt };
+        const marker = `oe-e2e-halt-${Date.now()}`;
+        const anchor = await slack.post(slack.mention(`Authorized break-glass fixture test ${marker}. Call halt now with scope surface.`));
+        anchorTs = anchor.ts;
+        const reply = await slack.awaitAnyReply(anchor.ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+        ctx.gate(reply.text.includes(haltConfirmation("surface")), "S-HALT receives the host-authored surface halt confirmation");
+
+        setEvidence = await pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso: startedAt, platform: "slack", workspace: identity.teamId, surface: slack.channelId, actions: ["wake.ingress", "admin.halt.set"], limit: 100 });
+            const wakeId = haltWakeForSlackAnchor(rows, evidenceKey, anchor.ts);
+            if (!wakeId) return undefined;
+            anchorWakeId = wakeId;
+            const row = rows.find((candidate) => candidate.action === "admin.halt.set" && haltSetEvidence(candidate, evidenceKey, wakeId));
+            return row ? { row, wakeId } : undefined;
+          },
+          { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "the exact S-HALT set row" },
+        );
+        ctx.gate(setEvidence !== undefined, "S-HALT joins the posted Slack timestamp through wake.ingress to the same announced admin.halt.set wake");
+
+        const observed = await control.inspectHalt();
+        ctx.gate(haltOwnedBySet(observed, setEvidence!.row, evidenceKey, setEvidence!.wakeId), "S-HALT reads back the exact wake-owned halt before cleanup");
+        owned = observed;
+        const outcome = await control.clearOwnedHalt(owned!);
+        ctx.gate(outcome === "cleared", "S-HALT atomically clears only the unchanged halt it just observed");
+        cleared = true;
+
+        const clearRow = await pollOptional(
+          async () =>
+            (await auditRead({ sinceIso: startedAt, actions: ["admin.halt.cleared"], limit: 50 })).find((row) => haltClearEvidence(row, evidenceKey)),
+          { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "the exact S-HALT clear row" },
+        );
+        ctx.gate(clearRow !== undefined, "S-HALT reads back the exact control-plane clear row");
+      } finally {
+        try {
+          if (runStart) {
+            const evidenceKey: HaltLiveEvidenceKey = { surfaceKey, channelId: slack.channelId, workspaceId: identity.teamId, driverUserId: identity.userId, runStart };
+            const cleanup = await cleanupExactHalt({
+              key: evidenceKey,
+              anchorTs,
+              anchorWakeId,
+              owned,
+              alreadyCleared: cleared,
+              auditRead,
+              inspectHalt: () => control.inspectHalt(),
+              clearOwnedHalt: (handle) => control.clearOwnedHalt(handle),
+            });
+            if (cleanup.status === "residue") {
+              ctx.log(
+                `S-HALT cleanup residue (${cleanup.reason}): the dedicated fixture may remain halted; inspect its exact local control override before the next run. No unrelated state was mutated.`,
+              );
+            }
+          }
+        } finally {
+          await control.close();
+        }
+      }
     },
   },
   {
@@ -5796,19 +6199,40 @@ export const SCENARIOS: readonly Scenario[] = [
         }
 
         {
-          const refE1 = factToken("taintfloorclean");
-          const { ts: askE1Ts } = await slack.post(
-            slack.mention(
+          const floorSlack = ctx.notion;
+          if (!floorSlack) {
+            ctx.log(
+              "ARM E (taint floor) SKIPPED — E2E_NOTION_CHANNEL is not configured, so the one-member e2e-connector domain carrying the lowering fixture has no driver. The other taint arms remain on E2E_SLACK_CHANNEL.",
+            );
+          } else {
+            if (opStore) {
+              try {
+                const { teamId } = await floorSlack.identity();
+                const org = process.env[ENV.org]?.trim() || "default";
+                const rot = await rotateUnifiedWindow(
+                  opStore,
+                  org,
+                  "e2e-connector",
+                  `slack/${teamId}/${floorSlack.channelId}`,
+                );
+                ctx.log(`ARM E: rotated the e2e-connector surface window → fresh generation ${rot.mintedGeneration}`);
+              } catch (e) {
+                ctx.log(`ARM E: could not rotate the e2e-connector surface window (${String(e instanceof Error ? e.message : e)}) — proceeding on its current generation`);
+              }
+            }
+            const refE1 = factToken("taintfloorclean");
+            const { ts: askE1Ts } = await floorSlack.post(
+              floorSlack.mention(
               `Please hand this to a worker: call explain_permission ONCE for the tool add_routine_rule, with unattended set to false and tainted set to false, and return its full trace. When the worker is back, reply to me with that trace pasted exactly as the tool printed it, and nothing else (ref ${refE1}).`,
             ),
           );
-          const traceRelayed = (text: string): boolean => /resolved by:/i.test(text) && /registry baseline:/i.test(text);
-          const replyE1 = await slack
+            const traceRelayed = (text: string): boolean => /resolved by:/i.test(text) && /registry baseline:/i.test(text);
+            const replyE1 = await floorSlack
             .awaitThreadReply(askE1Ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) || !traceRelayed(m.text) })
             .catch(() => undefined);
-          if (replyE1 === undefined) {
+            if (replyE1 === undefined) {
             ctx.log("ARM E (taint floor) SKIPPED — no reply carrying the add_routine_rule trace landed within the wait; the lowering-prevention arm needs the seat's relayed trace and has nothing to read");
-          } else {
+            } else {
             const cleanText = replyE1.text;
             ctx.log(`ARM E clean leg reply: "${cleanText.replace(/\s+/g, " ").trim().slice(0, 400)}"`);
             const loweringPresent = /custom:e2e-taint-lower/i.test(cleanText);
@@ -5823,12 +6247,12 @@ export const SCENARIOS: readonly Scenario[] = [
               );
 
               const refE2 = factToken("taintfloorgate");
-              const { ts: askE2Ts } = await slack.post(
-                slack.mention(
+              const { ts: askE2Ts } = await floorSlack.post(
+                floorSlack.mention(
                   `Now the same again, to a worker: call explain_permission ONCE for the same tool add_routine_rule, with unattended set to false and this time tainted set to true, and return its full trace. Reply to me with that trace pasted exactly as the tool printed it, and nothing else (ref ${refE2}).`,
                 ),
               );
-              const replyE2 = await slack
+              const replyE2 = await floorSlack
                 .awaitThreadReply(askE2Ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) || !traceRelayed(m.text) })
                 .catch(() => undefined);
               if (replyE2 === undefined) {
@@ -5849,6 +6273,7 @@ export const SCENARIOS: readonly Scenario[] = [
                   `🔴 ARM E (hard): the named arrow moved the verdict allow → ask specifically — the direction is the claim, and a transform that fired the other way (or from a different starting verdict) would not be the lowering-prevention effect. Trace: "${gateText.replace(/\s+/g, " ").trim().slice(0, 400)}"`,
                 );
               }
+            }
             }
           }
         }
@@ -6171,15 +6596,50 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(reply.content.trim().length > 0, "S-DISCORD-GRANT: the grant ask drew a bot reply (the turn ran end-to-end)");
       ctx.log(`S-DISCORD-GRANT: reply — "${reply.content.replace(/\s+/g, " ").trim().slice(0, 220)}"`);
 
-      type GrantDetail = { readonly owner?: unknown; readonly gate?: unknown; readonly connector?: unknown; readonly grantId?: unknown };
+      const currentWakeSessions = await pollUntil(
+        async () => {
+          const rows = await auditRead({ sinceIso, actions: ["wake.ingress", "wake.turn_start"] });
+          const sessionIds = discordWakeSessionIds(rows, asked.id, asked.channelId);
+          return sessionIds.length > 0 ? sessionIds : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: "S-DISCORD-GRANT: the phase-1 Discord wake's uniquely anchored turn session" },
+      );
+      if (currentWakeSessions.length !== 1) {
+        ctx.skip(
+          `the phase-1 Discord message joined ${currentWakeSessions.length} sessions instead of exactly one. Phase 2 cannot compare a saved grant scope to an ambiguous current session, so it refuses before posting a grant-consuming ask.`,
+        );
+      }
+      const currentSessionId = currentWakeSessions[0]!;
+
+      type GrantDetail = {
+        readonly owner?: unknown;
+        readonly gate?: unknown;
+        readonly connector?: unknown;
+        readonly grantId?: unknown;
+        readonly askId?: unknown;
+        readonly scopeKey?: unknown;
+      };
       const grantRows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
       const refused = grantRows.filter((e) => e.action === "grant.refused");
       const askedRows = grantRows.filter((e) => e.action === "grant.asked");
 
-      const noFreshAsk = tapped && askedRows.length === 0 && refusedGrantAlreadyLive(grantRows).some((e) => surfaceNamesChannel(e.surface, threadId));
+      const reentry = resolveGrantThread({ pin: process.env[ENV.discordGrantThread], record: readGrantThreadRecord(threadRecordPath), nowMs: Date.now() });
+      if (tapped && reentry.kind !== "record") {
+        const reason = reentry.kind === "ambiguous" ? reentry.reason : "absent";
+        ctx.skip(
+          `${ENV.discordGrantTapped}=1 is set but the saved grant authority is ${reason}. Phase 2 requires one exact sidecar carrying askId, scopeKey, threadId and raisedAt; a thread-only pin or legacy two-field record cannot identify which grant was tapped. Reconcile the old record against the audit trail to one exact ask/scope tuple, or raise and tap a fresh ask.`,
+        );
+      }
+      if (tapped && reentry.kind === "record" && reentry.scopeKey !== currentSessionId) {
+        ctx.skip(
+          `the saved grant belongs to a different Eve session than this run's phase-1 Discord wake. The deployment may have opened a new generation/session; consent is never migrated across scopes. No granted call was posted. Raise a new ask in the current session and obtain a human tap only if this candidate's board still requires the grant leg.`,
+        );
+      }
+
+      const noFreshAsk = tapped && askedRows.length === 0 && reentry.kind === "record" && reentry.scopeKey === currentSessionId && refusedGrantAlreadyLive(grantRows).length > 0;
       if (noFreshAsk) {
         ctx.log(
-          `S-DISCORD-GRANT: this tapped run's own fresh raise was refused \`grant_already_live\` and wrote no grant.asked row — the EXPECTED state, because the raise ran in the session that already holds the tapped grant. Phase 1's row gates stand down for this run only; phase 2 drives on the ${ARMING_ADVISORY_LOOKBACK_DAYS}-day lookback joined to thread ${process.env[ENV.discordGrantThread]?.trim() || "(from the sidecar)"}'s own asks.`,
+          `S-DISCORD-GRANT: this tapped run's fresh raise was refused \`grant_already_live\` in the exact session saved with the tapped ask. Phase 1's row gates stand down for this run only; phase 2 joins the saved askId + scopeKey directly.`,
         );
       }
       if (askedRows.length === 0 && !noFreshAsk) {
@@ -6206,44 +6666,61 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       if (!tapped) {
-        const written = writeGrantThreadRecord(threadRecordPath, { threadId, raisedAt: new Date().toISOString() });
+        const currentSessionAsks = discordOwned.filter((e) => (e.detail as GrantDetail | undefined)?.scopeKey === currentSessionId);
+        if (currentSessionAsks.length !== 1) {
+          ctx.skip(
+            `phase 1 found ${currentSessionAsks.length} Discord-owned grant.asked rows for the exact current session; the harness will not guess which card a later tap answers. Re-run in a quiet window so one exact askId/scopeKey tuple can be persisted.`,
+          );
+        }
+        const exactAsk = currentSessionAsks[0]!;
+        const rawAskId = (exactAsk.detail as GrantDetail | undefined)?.askId;
+        const exactAskId =
+          typeof rawAskId === "string" && rawAskId.length > 0
+            ? rawAskId
+            : ctx.skip("the current session's grant.asked row carries no readable askId, so no exact cross-run authority record can be written");
+        const written = writeGrantThreadRecord(threadRecordPath, {
+          threadId,
+          raisedAt: exactAsk.ts,
+          askId: exactAskId,
+          scopeKey: currentSessionId,
+        });
         ctx.log(
-          `S-DISCORD-GRANT: the Discord grant card is now live in the owner's DM. THE HARNESS CANNOT TAP IT — Discord signs interactions with Ed25519 and this deployment holds only the public key, so unlike every Slack card in this pack there is no forge. To prove the tap-approve half a human taps Approve on that card and the leg is re-run — the exact steps are in packages/core/scripts/e2e/AUDIT.md § S-DISCORD-GRANT — operator procedure. THIS RUN'S ASK LIVES IN THREAD ${threadId}: the grant is scoped to that session, so the re-run needs ${ENV.discordGrantThread}=${threadId} ${ENV.discordGrantTapped}=1${written ? ` (also recorded in ${threadRecordPath}, which a re-run on THIS machine reads on its own)` : ` (the sidecar write failed, so the pin above is the only carrier)`}. Left unproven this run: tap-approve routing, the ephemeral answer, the components-strip on the decided card, and grant.notified.`,
+          `S-DISCORD-GRANT: the Discord grant card is now live in the owner's DM. THE HARNESS CANNOT TAP IT — Discord signs interactions with Ed25519 and this deployment holds only the public key, so unlike every Slack card in this pack there is no forge. To prove the tap-approve half a human taps Approve on that card and the leg is re-run — the exact steps are in packages/core/scripts/e2e/AUDIT.md § S-DISCORD-GRANT — operator procedure. THIS RUN'S ASK LIVES IN THREAD ${threadId}: the grant is scoped to that session, so the re-run needs ${ENV.discordGrantTapped}=1${written ? ` and the exact record in ${threadRecordPath} (copy that whole private sidecar if the rerun is on another machine; ${ENV.discordGrantThread} may only confirm its thread)` : `, but the exact sidecar write failed. A thread pin alone is insufficient; reconcile this ask to its exact audit askId/scopeKey or raise again`}. Left unproven this run: tap-approve routing, the ephemeral answer, the components-strip on the decided card, and grant.notified.`,
         );
         return;
       }
 
-      const reentry = resolveGrantThread({ pin: process.env[ENV.discordGrantThread], record: readGrantThreadRecord(threadRecordPath), nowMs: Date.now() });
-      const grantThreadId =
-        reentry.kind === "pin" || reentry.kind === "record"
-          ? reentry.threadId
-          : reentry.kind === "expired"
-            ? ctx.skip(
-                `the recorded thread ${reentry.threadId} was raised ${Math.round(reentry.ageMs / 60_000)} minute(s) ago, past the ${Math.round(reentry.maxAgeMs / 60_000)}-minute ceiling (the ask's own TTL plus the "for this conversation" grant's — see grant-thread-record.ts). No grant that run raised can still be spent, so driving a call into it would red the grant.used gate over an expired fixture rather than over the product. Raise a fresh ask, tap it, and set ${ENV.discordGrantThread} to the thread that run prints.`,
-              )
-            : ctx.skip(
-                `${ENV.discordGrantTapped}=1 is set but NO thread is named, so there is no session to re-enter. A grant is scoped to the session that raised the ask, and on Discord that session is the ask's own auto-thread — a fresh mention would open a new one and hold no grant. Set ${ENV.discordGrantThread} to the thread id the RAISING run printed (it also writes ${threadRecordPath}, which is read here when both runs share a disk).`,
-              );
-      ctx.log(`S-DISCORD-GRANT: phase 2 re-enters thread ${grantThreadId} (source: ${reentry.kind === "pin" ? `the ${ENV.discordGrantThread} pin` : `the ${threadRecordPath} sidecar`}) — the session the tapped grant is scoped to.`);
+      const exactReentry = reentry.kind === "record" ? reentry : ctx.skip("the exact grant re-entry record became unavailable before phase 2");
+      const grantThreadId = exactReentry.threadId;
+      ctx.log(`S-DISCORD-GRANT: phase 2 re-enters its saved thread (source: ${exactReentry.source}) after the exact current-session match passed.`);
 
-      const lookback = lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS);
+      const lookback = new Date(Date.parse(exactReentry.raisedAt) - 5_000).toISOString();
       const asksInLookback = await auditRead({ sinceIso: lookback, actions: ["grant.asked"] });
-      const asksInThread = discordOwnedAsksInChannel(asksInLookback, grantThreadId);
-      if (asksInThread.length === 0) {
-        const seen = asksInLookback.map((e) => e.surface);
+      const exactAsks = exactDiscordOwnedAsks(asksInLookback, exactReentry.askId, exactReentry.scopeKey);
+      if (exactAsks.length !== 1) {
         ctx.skip(
-          `no grant.asked row in the ${ARMING_ADVISORY_LOOKBACK_DAYS}-day lookback was raised in thread ${grantThreadId}, so this leg cannot tie a tap to the session it is re-entering. Either that thread never raised an ask — a stale ${ENV.discordGrantThread} pin, or a ${threadRecordPath} sidecar a later untapped run overwrote, in which case raise and tap again — or the row no longer stamps its surface with the room the ask was raised in. Surfaces seen on the asks read: ${JSON.stringify([...new Set(seen)])}.`,
+          `the audit window starting at the exact saved raise found ${exactAsks.length} Discord-owned grant.asked rows matching the saved askId + scopeKey tuple. Exactly one is required; phase 2 will not substitute another ask from the same thread or session.`,
         );
       }
-      const grantedDiscord = grantsForAsks(await auditRead({ sinceIso: lookback, actions: ["grant.granted"] }), askIdsOf(asksInThread));
+      const grantedDiscord = grantsForExactAsk(
+        await auditRead({ sinceIso: lookback, actions: ["grant.granted"] }),
+        exactReentry.askId,
+        exactReentry.scopeKey,
+      );
       ctx.gate(
         grantedDiscord.length > 0,
-        `🔴 (hard, pinned by ${ENV.discordGrantTapped}): a grant.granted row ANSWERING one of thread ${grantThreadId}'s own asks exists — the pin declares a human tapped Approve on the card that thread raised, and this row is the tap's own evidence. None found for ask(s) ${JSON.stringify(askIdsOf(asksInThread))}, so either the tap never landed, or it landed on a DIFFERENT conversation's card, or the Discord grant-click door (packages/providers/discord/agent/access/discord-grant-click.ts) did not reach core's resolver.`,
+        `🔴 (hard, pinned by ${ENV.discordGrantTapped}): a grant.granted row answers the exact saved askId + scopeKey tuple. None found, so either the tap never landed, it answered another card/session, or the Discord grant-click door did not reach core's resolver.`,
       );
+      const grantedExpiries = grantedDiscord.map((e) => (e.detail as { expiresAt?: unknown } | undefined)?.expiresAt);
+      if (!grantedExpiries.every((value) => typeof value === "string" && Number.isFinite(Date.parse(value)))) {
+        ctx.skip(
+          "the exact grant.granted row carries a missing or unparseable expiresAt. Phase 2 cannot prove the standing grant is still live, so it refuses before posting a credentialed call.",
+        );
+      }
       const liveGranted = unexpiredGrants(grantedDiscord, Date.now());
       if (liveGranted.length === 0) {
         ctx.skip(
-          `thread ${grantThreadId}'s grant WAS tapped, and every grant that tap minted has since expired (expiresAt ${JSON.stringify(grantedDiscord.map((e) => (e.detail as { expiresAt?: unknown } | undefined)?.expiresAt))}). A lapsed grant does not mount, so the granted call below would refuse and the grant.used gate would red over a timed-out fixture rather than over the product. Tap a fresh card and re-run inside the grant's own TTL — see AUDIT.md § S-DISCORD-GRANT — operator procedure.`,
+          `the exact saved grant WAS tapped, and every grant that tap minted has since expired (expiresAt ${JSON.stringify(grantedExpiries)}). A lapsed grant does not mount, so the granted call below would refuse and the grant.used gate would red over a timed-out fixture rather than over the product. Tap a fresh card and re-run inside the grant's own TTL — see AUDIT.md § S-DISCORD-GRANT — operator procedure.`,
         );
       }
       const useToken = factToken("dgrantuse");
@@ -6267,7 +6744,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const notified = grantIds.flatMap((id) => noticesForGrant(noticeRows, id));
       ctx.gate(
         notified.length > 0,
-        `🔴 (hard): the OWNER WAS TOLD their credential was spent — a grant.notified row for grant ${grantIds.join(", ")} anywhere in the ${ARMING_ADVISORY_LOOKBACK_DAYS}-day lookback (found ${notified.length} of ${noticeRows.length} notice row(s) read). This closes deploy #146's standing "grant.notified UNPROVEN" gap: the row is claimed once per grant forever, so a grant.used with no grant.notified for the same grant is an owner who was never told.`,
+        `🔴 (hard): the OWNER WAS TOLD their credential was spent — a grant.notified row for grant ${grantIds.join(", ")} since the exact saved raise (found ${notified.length} of ${noticeRows.length} notice row(s) read). This closes a live run's standing "grant.notified UNPROVEN" gap: the row is claimed once per grant forever, so a grant.used with no grant.notified for the same grant is an owner who was never told.`,
       );
       ctx.gate(
         allNoticesDelivered(notified, "discord"),

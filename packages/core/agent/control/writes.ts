@@ -83,18 +83,43 @@ function judgeOperatorAddress(a: JudgeOperatorScopeArgs): { domain: string } | {
   return a.domain === undefined ? { orgWide: true } : { domain: a.domain };
 }
 
-const haltOperatorScopeSchema = z
-  .object({
-    org: z.string().min(1),
-    level: z.enum(CAP_LEVELS).optional(),
-    scopeKey: z.string().min(1).optional(),
-    orgWide: z.literal(true).optional(),
-  })
-  .refine((a) => (a.level === undefined) === (a.scopeKey === undefined), {
+const haltOperatorScopeFields = {
+  org: z.string().min(1),
+  level: z.enum(CAP_LEVELS).optional(),
+  scopeKey: z.string().min(1).optional(),
+  orgWide: z.literal(true).optional(),
+} as const;
+
+function refineHaltOperatorScope<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema
+  .refine((raw) => {
+    const a = raw as { level?: unknown; scopeKey?: unknown };
+    return (a.level === undefined) === (a.scopeKey === undefined);
+  }, {
     message: 'an addressed halt needs BOTH "level" and "scopeKey" — a level with no key addresses nothing.',
   })
-  .refine((a) => (a.level === undefined) !== (a.orgWide === undefined), {
+  .refine((raw) => {
+    const a = raw as { level?: unknown; orgWide?: unknown };
+    return (a.level === undefined) !== (a.orgWide === undefined);
+  }, {
     message: 'name exactly one address: a ("level", "scopeKey") pair, or "orgWide": true for the whole org — never both, never neither.',
+  });
+}
+
+const haltOwnershipSchema = z.object({ setAt: z.string().datetime(), setBy: z.string().min(1).optional(), setRef: z.string().min(1).optional() });
+const haltOperatorScopeSchema = refineHaltOperatorScope(z.object(haltOperatorScopeFields));
+const resumeOperatorScopeSchema = refineHaltOperatorScope(z.object({ ...haltOperatorScopeFields, expected: haltOwnershipSchema.optional() }));
+
+const spendOwnershipSchema = z
+  .object({
+    monthlyTokens: z.number().int().positive().optional(),
+    monthlyUsd: z.number().positive().optional(),
+    expiresAt: z.number().int(),
+    reason: z.string().min(1),
+    setBy: z.string().min(1),
+  })
+  .refine((a) => a.monthlyTokens != null || a.monthlyUsd != null, {
+    message: "an owned spend row needs monthlyTokens and/or monthlyUsd",
   });
 
 type HaltOperatorScopeArgs = z.infer<typeof haltOperatorScopeSchema>;
@@ -158,6 +183,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         monthlyUsd: z.number().positive().optional(),
         ttlSeconds: z.number().int().positive().optional(),
         reason: z.string().optional(),
+        ifAbsent: z.literal(true).optional(),
       },
     },
     async (a) => {
@@ -168,10 +194,18 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       }
       try {
         const expiresAt = a.ttlSeconds != null ? Date.now() + a.ttlSeconds * 1000 : undefined;
-        await store().setSpendLimit(a.org, a.scopeKey, a.level, { monthlyTokens: a.monthlyTokens, monthlyUsd: a.monthlyUsd }, { expiresAt, reason: a.reason, setBy: actor });
+        const created = await store().setSpendLimit(
+          a.org,
+          a.scopeKey,
+          a.level,
+          { monthlyTokens: a.monthlyTokens, monthlyUsd: a.monthlyUsd },
+          { expiresAt, reason: a.reason, setBy: actor },
+          ...(a.ifAbsent ? [{ ifAbsent: true } as const] : []),
+        );
         const amounts = { ...(a.monthlyTokens != null ? { monthlyTokens: a.monthlyTokens } : {}), ...(a.monthlyUsd != null ? { monthlyUsd: a.monthlyUsd } : {}) };
+        if (!created) return jsonResult({ ok: true, created: false, org: a.org, scopeKey: a.scopeKey, level: a.level });
         await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.set_limit", detail: { scopeKey: a.scopeKey, level: a.level, ...amounts, ...(expiresAt != null ? { expiresAt } : {}), ...(a.reason ? { reason: a.reason } : {}) } });
-        return jsonResult({ ok: true, org: a.org, scopeKey: a.scopeKey, level: a.level, ...amounts, ...(expiresAt != null ? { expiresAt } : {}) });
+        return jsonResult({ ok: true, created: true, org: a.org, scopeKey: a.scopeKey, level: a.level, ...amounts, ...(expiresAt != null ? { expiresAt } : {}), ...(a.reason ? { reason: a.reason } : {}), setBy: actor });
       } catch (e) {
         return errorResult(`set_spend_limit failed: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -183,13 +217,13 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Clear spend limit",
       description: "Remove a spend-limit override (reverts the scope to the config-as-code caps).",
-      inputSchema: { org: z.string().min(1), scopeKey: z.string().min(1), level: z.enum(["surface", "workspace"]) },
+      inputSchema: { org: z.string().min(1), scopeKey: z.string().min(1), level: z.enum(["surface", "workspace"]), expected: spendOwnershipSchema.optional() },
     },
     async (a) => {
       const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.scopeKey });
       if (denial) return errorResult(denial);
       try {
-        const cleared = await store().clearSpendLimit(a.org, a.scopeKey, a.level);
+        const cleared = await store().clearSpendLimit(a.org, a.scopeKey, a.level, a.expected);
         await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.clear_limit", detail: { scopeKey: a.scopeKey, level: a.level, cleared } });
         return jsonResult({ ok: true, cleared, org: a.org, scopeKey: a.scopeKey, level: a.level });
       } catch (e) {
@@ -445,14 +479,14 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       title: "Lift the break-glass halt at one address",
       description:
         "Lift a halt at one address, now — the symmetric partner of `halt` and the door that works when the in-chat one does not (that one is carded and needs an admin present). It restores the consequential acts `halt` paused; reading and replying never stopped, so nothing about them changes here. Name EXACTLY ONE address, the same two `halt` takes: a (`level`, `scopeKey`) pair, or `orgWide: true`. 🔴 The addresses are a strict partition: lifting the org-wide halt does not lift an addressed one, and vice versa — if both cover a call, both must be resumed. `cleared: false` means nothing was halted there; that is not an error. 🔴 `org` MUST be this deployment's own org.",
-      inputSchema: haltOperatorScopeSchema,
+      inputSchema: resumeOperatorScopeSchema,
     },
     async (a) => {
       const denial = haltOperatorOrgDenial(a) ?? scopeDenial(roles, haltOperatorScopeRequest(a));
       if (denial) return errorResult(denial);
       try {
         const address = haltAddressFromParts(a);
-        const cleared = await getOperationalStore().clearHalt(a.org, address, { clearedBy: actor });
+        const cleared = await getOperationalStore().clearHalt(a.org, address, { clearedBy: actor }, a.expected);
         await appendAudit({
           ...(address.orgWide ? orgWideWhere(a.org) : whereFromScope(a.org, address.scopeKey)),
           principalId: actor,

@@ -54,7 +54,7 @@ export { registerConfigPrProvider } from "./credentials/config-pr.js";
 export type { ConfigPrProvider, ConfigPrOutcome, ConfigFileContent, CommitIdentity } from "./credentials/config-pr.js";
 export { registerGitHubConfigPrProvider, makeGitHubConfigPrProvider } from "./credentials/config-pr-github.js";
 
-export { parsePrivateKey, signAppJwt, mintInstallationToken } from "./scm/mint.js";
+export { parsePrivateKey, signAppJwt, mintInstallationToken, MEMORY_WRITE_PERMISSIONS } from "./scm/mint.js";
 export { loadGitHubAppConfig } from "./scm/config.js";
 export {
   composeGitHubInstallations,
@@ -136,7 +136,14 @@ export type { ConnectorMemoryCapability, ConnectorMemoryMode, DomainMemoryGrants
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
-export type { ProactiveAddress } from "./operational/store.js";
+export type {
+  ProactiveAddress,
+  OperationalStore,
+  IngressDeliveryKey,
+  IngressDeliveryWrite,
+  DueIngressDelivery,
+  ClaimedIngressDelivery,
+} from "./operational/store.js";
 export { initOperationalSchema } from "./operational/postgres.js";
 export { registerOperationalPglite, registerOperationalPgliteLazy, pgliteOperationalDataDir } from "./operational/pglite-client.js";
 
@@ -531,6 +538,9 @@ export type { OeCommand, OeCommandDeps } from "./commands/core.js";
 
 export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.js";
 
+export { getOrMintSelfSecret, selfSecretsArmed } from "./credentials/self-secrets.js";
+export { readCappedBody, selfDispatchBaseUrl } from "./channels/self-dispatch.js";
+
 export {
   registerWebhookVerifier,
   webhookVerifier,
@@ -826,3 +836,6 @@ export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js
 export { withRetryAfter, withRetryAfterLoose, parseRetryAfterMs, RateLimitExhaustedError } from "./channels/rate-limit-retry.js";
 export { RATE_LIMITED_STATUS, DEFAULT_MAX_ATTEMPTS, DEFAULT_CAP_MS, DEFAULT_FALLBACK_MS, DEFAULT_TOTAL_BUDGET_MS } from "./channels/rate-limit-retry.js";
 export type { RateLimitRetryOptions, RetryPolicy } from "./channels/rate-limit-retry.js";
+
+export { dispatchNativeWakeWithRetry } from "./channels/native-wake-retry.js";
+export type { NativeWakeRetryAttribution } from "./channels/native-wake-retry.js";

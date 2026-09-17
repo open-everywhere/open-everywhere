@@ -250,6 +250,10 @@ ok(summariseWakeSplits(joined).includes("ENVIRONMENTAL"), "the summary repeats t
   ok(!("deliveryId" in bare), "🔴 an absent deliveryId is ABSENT, never present-and-undefined — the same rule the ingress row's vendor reading follows");
   eq(bare.outcome, "exhausted", "the exhausted row says so, so a reader can tell a retried wake from a lost one");
 
+  const native = wakeRetryDetail({ deliveryId: "native-d-1", surfaceKey: "discord/G1/C1", attempt: 1, delayMs: 0, waitedMs: 0, outcome: "retrying", refusalStatus: 429 });
+  eq(native, { deliveryId: "native-d-1", surfaceKey: "discord/G1/C1", attempt: 1, delayMs: 0, waitedMs: 0, outcome: "retrying", refusalStatus: 429 }, "🔴 a native retry row carries its real per-dispatch deliveryId and does not fabricate a wakeId");
+  ok(!("wakeId" in native), "🔴 native attribution omits wakeId entirely — absence says there is no ingress/turn join");
+
   const p = WAKE_DISPATCH_RETRY_POLICY;
   ok(p.maxAttempts >= 2, "🔴 the wake dispatch retries at least once — never dropping on the first 429 is the whole acceptance");
   ok(p.totalBudgetMs < (p.maxAttempts - 1) * p.capMs, "🔴 the TOTAL budget, not the attempt count, is what bounds this path's latency");

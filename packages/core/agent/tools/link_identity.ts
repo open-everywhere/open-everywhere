@@ -16,6 +16,7 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { linkTenantOf, tryLinkTenantOf } from "../identity/link-tenant.js";
 import { ingestUntrusted } from "../access/untrusted.js";
+import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 
 const TTL_MINUTES = Math.round(LINK_CHALLENGE_TTL_MS / 60_000);
 
@@ -25,7 +26,7 @@ function fenced(text: string): string {
 
 export default defineTool({
   description:
-    "Start linking another account (GitHub, Linear, Slack, …) to the person you are talking to, so their work is attributed to ONE human across surfaces. DM only, and nothing is linked by this call. THREE WAYS TO CALL IT. (1) `{platform, query}` — SEARCH that platform's user directory for the person's other account and return candidates; show them the names and let them pick. (2) `{platform, nativeId}` — ask that exact account to consent, in its own DM; you then finalize with confirm_link once it answers. (3) `{}` — the fallback: returns a short single-use code the person posts as `link <code>` from their other account. Ways 1 and 2 fall back to way 3 by themselves when the platform has no directory or no DM delivery, and say so. Relay the returned instructions verbatim; do not paraphrase a code.",
+    "Start linking another account (GitHub, Linear, Slack, …) to the person you are talking to, so their work is attributed to ONE human across surfaces. DM only, and nothing is linked by this call. THREE WAYS TO CALL IT. (1) `{platform, query}` — SEARCH that platform's user directory for the person's other account and return candidates; show them the names and let them pick. (2) `{platform, nativeId}` — ask that exact account to consent, in its own DM; you then finalize with confirm_link once it answers. (3) `{}` — the fallback: the HOST privately posts a short single-use code into this DM for the person to carry to their other account. Ways 1 and 2 fall back to way 3 by themselves when the platform has no directory or no DM delivery, and say so. The tool result never contains the live code; do not ask for it or repeat one from history.",
   inputSchema: z.object({
     platform: z
       .string()
@@ -75,6 +76,7 @@ export default defineTool({
         tenant: binding.workspace,
         nativeId: actor,
         surfaceKey,
+        channelId: p.surface,
         why: platform && (query || nativeId) ? `I can't look ${platform} accounts up: ${shortfall}.` : undefined,
       });
     }
@@ -87,6 +89,7 @@ export default defineTool({
         tenant: binding.workspace,
         nativeId: actor,
         surfaceKey,
+        channelId: p.surface,
         why: `I can't tell which ${platform} workspace to look in — this deployment serves more than one.`,
       });
     }
@@ -185,6 +188,7 @@ async function issueCodeChallenge(input: {
   readonly tenant?: string;
   readonly nativeId: string;
   readonly surfaceKey: string;
+  readonly channelId: string;
   readonly why?: string;
 }): Promise<{ decided: string; challengeId: string; expiresAt: string; instructions: string }> {
   const issued = await issueLinkChallenge({
@@ -195,10 +199,21 @@ async function issueCodeChallenge(input: {
     surfaceKey: input.surfaceKey,
   });
   if (!issued.code) throw new Error("internal: the code transport issued no code.");
+  const privateInstructions = (input.why ? `${input.why} Use the code instead.\n\n` : "") + linkClaimInstructions(issued.code, TTL_MINUTES);
+  try {
+    await postSurfaceTextStrict(input.platform, { channelId: input.channelId, text: privateInstructions });
+  } catch (err) {
+    console.log(`[open-everywhere:identity] link request ${issued.challenge.id}: private-code delivery outcome is unknown: ${String(err)}`);
+    throw new Error(
+      "I could not confirm whether the private link code was posted. Check this DM: if a code appeared, use that one; if none appeared, ask me to start again. Nothing was linked.",
+    );
+  }
   return {
     decided: "code",
     challengeId: issued.challenge.id,
     expiresAt: issued.challenge.expiresAt,
-    instructions: (input.why ? `${input.why} Use the code instead.\n\n` : "") + linkClaimInstructions(issued.code, TTL_MINUTES),
+    instructions:
+      (input.why ? `${input.why} ` : "") +
+      "I posted the private single-use code and its instructions directly in this DM. The host delivery is already complete; do not repeat or quote the code.",
   };
 }

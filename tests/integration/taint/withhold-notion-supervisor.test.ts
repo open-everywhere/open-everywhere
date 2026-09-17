@@ -72,7 +72,7 @@ const triggerComments = new Map<string, StubComment>();
 let stub: { calls: readonly NotionApiCall[] } | undefined;
 
 async function armSeams(): Promise<void> {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   if (stub) return;
   const policy = await import("@open-everywhere/core/agent/access/external-policy.js");
   WITHHELD_MARKER = policy.WITHHELD_BODY_MARKER;

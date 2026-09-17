@@ -28,6 +28,7 @@ const { resolveApproverChain, toolForActionKind } = await import("../agent/acces
 const { registerConfig } = await import("../agent/access/config.js");
 const { requestApproval, resolveApprovalClick, registerJudgeLiftNoticePoster, judgeLiftNoticeRenderFor, hasJudgeLiftNoticePath } = await import("../agent/approvals/flow.js");
 const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
+const { registerGovernanceMemberSupplier, _resetAudienceFloorCacheForTest, _resetGovernanceMemberSupplierForTest } = await import("../agent/access/audience-floor.js");
 const { contradictJudgeAllow, disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { recordApprovalJudgeContradiction } = await import("../agent/access/approval-judge.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -730,6 +731,21 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(noticeBlocks.includes(`oe_approval:contradict:${noticed.id}`), "notice: the message carries the contradict button bound to THIS wedge row");
   ok(noticeBlocks.includes("This should not have run"), "notice: the button says what it does");
   ok(!noticeBlocks.includes("oe_approval:approve:"), "notice: it is a REVIEW surface, not a decision one — no approve button on an act that already ran");
+
+  posts.length = 0;
+  _resetAudienceFloorCacheForTest();
+  registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_MEMBER", "U_GUEST"], resolved: true, isPrivate: false, hasGuest: true }));
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const guestLift = await requestApproval(
+    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 121_500 }, postedTo: "slack/T1/C_GUEST" },
+    { post },
+  );
+  ok(guestLift.autoApproved?.resolvedBy === "judge", "notice disclosure: the judge-lifted action still runs successfully in an observed-guest room");
+  ok(posts.length === 0, "🔴 notice disclosure: the code-rendered summary is withheld from an observed-guest room");
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+  resetApprovalJudgeCompletion();
 
   posts.length = 0;
   clearApprovalJudgeVerdictCache();

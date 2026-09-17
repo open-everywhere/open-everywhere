@@ -46,9 +46,21 @@ export const OPERATIONAL_TABLES = [
   "credential_grant_ask",
   "credential_grant",
   "dm_audience",
+  "ingress_delivery",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+
+export const INGRESS_DELIVERY_TOMBSTONE_RETENTION_MS = 24 * 60 * 60_000;
+
+export function assertIngressDeliveryRetainUntil(completedAt: string, retainUntil: string): void {
+  const at = Date.parse(completedAt);
+  const until = Date.parse(retainUntil);
+  if (!Number.isFinite(at) || !Number.isFinite(until)) throw new Error("ingress delivery completion and retention times must be valid ISO-8601 instants");
+  if (until <= at || until > at + INGRESS_DELIVERY_TOMBSTONE_RETENTION_MS) {
+    throw new Error(`ingress delivery retainUntil must be after completion and at most ${INGRESS_DELIVERY_TOMBSTONE_RETENTION_MS}ms later`);
+  }
+}
 
 export const CAPTURE_MAX_DELIVERIES = 50;
 
@@ -255,6 +267,14 @@ export interface SpendLimitAmount {
   readonly monthlyUsd?: number;
 }
 
+export interface SpendLimitMatch extends SpendLimitAmount, OverrideMeta {}
+
+export interface HaltMatch {
+  readonly setAt: string;
+  readonly setBy?: string;
+  readonly setRef?: string;
+}
+
 export function assertSpendLimitAmount(limit: SpendLimitAmount): void {
   if (limit.monthlyTokens == null && limit.monthlyUsd == null) {
     throw new Error("spend limit must set monthlyTokens and/or monthlyUsd");
@@ -277,6 +297,7 @@ export interface HaltRow {
   readonly active: boolean;
   readonly setAt: string;
   readonly setBy?: string;
+  readonly setRef?: string;
   readonly clearedAt?: string;
   readonly clearedBy?: string;
 }
@@ -752,6 +773,28 @@ export function proactiveAddressRow(
   return { platform, kind, refKey, tenant, address, updatedAt };
 }
 
+export interface IngressDeliveryKey {
+  readonly source: string;
+  readonly authorityId: string;
+  readonly deliveryId: string;
+}
+
+export interface IngressDeliveryWrite extends IngressDeliveryKey {
+  readonly payloadJson: string;
+  readonly receivedAt: string;
+}
+
+export interface DueIngressDelivery extends IngressDeliveryKey {
+  readonly receivedAt: string;
+  readonly availableAt: string;
+}
+
+export interface ClaimedIngressDelivery extends DueIngressDelivery {
+  readonly payloadJson: string;
+  readonly claimId: string;
+  readonly claimedAt: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -774,12 +817,19 @@ export interface OperationalStore {
   readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
   sealAuditChainEpoch(org: string, sealedBy: string): Promise<AuditChainEpochWritten | null>;
 
-  setSpendLimit(org: string, scopeKey: string, level: CapLevel, limit: SpendLimitAmount, meta?: OverrideMeta): Promise<void>;
-  clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;
+  setSpendLimit(
+    org: string,
+    scopeKey: string,
+    level: CapLevel,
+    limit: SpendLimitAmount,
+    meta?: OverrideMeta,
+    condition?: { readonly ifAbsent?: true },
+  ): Promise<boolean>;
+  clearSpendLimit(org: string, scopeKey: string, level: CapLevel, expected?: SpendLimitMatch): Promise<boolean>;
   spendLimits(org: string): Promise<SpendLimitRow[]>;
 
-  setHalt(org: string, address: HaltAddress, meta?: { readonly setBy?: string }): Promise<void>;
-  clearHalt(org: string, address: HaltAddress, meta?: { readonly clearedBy?: string }): Promise<boolean>;
+  setHalt(org: string, address: HaltAddress, meta?: { readonly setBy?: string; readonly setAt?: string; readonly setRef?: string }): Promise<void>;
+  clearHalt(org: string, address: HaltAddress, meta?: { readonly clearedBy?: string }, expected?: HaltMatch): Promise<boolean>;
   activeHalts(org: string): Promise<HaltRow[]>;
 
   setConnectorOverride(org: string, scopeKey: string, connector: string, granted: boolean, meta?: Omit<OverrideMeta, "expiresAt">): Promise<void>;
@@ -851,6 +901,13 @@ export interface OperationalStore {
   listDmAudience(org: string): Promise<DmAudienceRow[]>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
+
+  enqueueIngressDelivery(org: string, write: IngressDeliveryWrite): Promise<boolean>;
+  listDueIngressDeliveries(org: string, source: string, nowIso: string, staleBeforeIso: string, limit: number): Promise<readonly DueIngressDelivery[]>;
+  claimIngressDelivery(org: string, key: IngressDeliveryKey, claimId: string, claimedAtIso: string, staleBeforeIso: string): Promise<ClaimedIngressDelivery | null>;
+  releaseIngressDelivery(org: string, key: IngressDeliveryKey, claimId: string, availableAtIso: string): Promise<boolean>;
+  completeIngressDelivery(org: string, key: IngressDeliveryKey, claimId: string, completedAtIso: string, retainUntilIso: string): Promise<boolean>;
+  discardIngressDelivery(org: string, key: IngressDeliveryKey, claimId: string): Promise<boolean>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
   hasEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;

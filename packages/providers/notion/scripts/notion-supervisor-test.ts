@@ -280,6 +280,27 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
 }
 
 {
+  const INLINE_BLOCK = "block-after-oldest-80";
+  const session: NotionSupervisorSession = {
+    token: notionSupervisorToken(PAGE, 1),
+    generation: 1,
+    freshGeneration: false,
+    tail: [],
+    lastWakeAt: "2026-07-10T09:00:00.000Z",
+  };
+  let request: Parameters<NonNullable<NotionSupervisorDeps["catchUp"]>>[0] | undefined;
+  const { deps } = captureDeps(session, {
+    catchUp: async (r) => {
+      request = r;
+      return { messages: [] };
+    },
+  });
+  await handleNotionSupervisorDispatch(dispatch({ trigger: { ...trigger, anchorId: INLINE_BLOCK } }), deps);
+  ok(request?.threadRoot === DISCUSSION, "OPE-1843: the discussion id remains the catch-up's conversation filter");
+  ok(request?.threadAnchor === INLINE_BLOCK, "🔴 OPE-1843: ongoing catch-up drills into the authenticated parent block");
+}
+
+{
   const session: NotionSupervisorSession = {
     token: notionSupervisorToken(PAGE, 2),
     generation: 2,

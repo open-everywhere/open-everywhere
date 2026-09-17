@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -119,6 +119,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      active     boolean NOT NULL,            -- true = halted; a cleared row stays for the trail
      set_by     text,
      set_at     text    NOT NULL,            -- ISO-8601
+     set_ref    text,                        -- host wake owning a chat-set halt; NULL for operator/legacy rows
      cleared_by text,
      cleared_at text,                        -- ISO-8601; NULL until a resume clears it
      PRIMARY KEY (org_id, level, scope_key, org_wide)
@@ -175,6 +176,21 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      seen_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS ingress_delivery (
+     org_id        text NOT NULL,
+     source        text NOT NULL,
+     authority_id  text NOT NULL,
+     delivery_id   text NOT NULL,
+     payload_json  text,
+     received_at   text NOT NULL,
+     available_at  text NOT NULL,
+     claim_id      text,
+     claimed_at    text,
+     completed_at  text,
+     retain_until  text,
+     PRIMARY KEY (org_id, source, authority_id, delivery_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS ingress_delivery_due ON ingress_delivery (org_id, source, completed_at, available_at, claimed_at)`,
   `CREATE TABLE IF NOT EXISTS webhook_capture (
      org_id      text   NOT NULL,
      source      text   NOT NULL,
@@ -547,6 +563,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS monthly_usd double precision`,
+  `ALTER TABLE halt ADD COLUMN IF NOT EXISTS set_ref text`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS set_by text`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS participating boolean NOT NULL DEFAULT false`,
@@ -640,6 +657,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE ingress_delivery ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE session_tail ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE webhook_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
@@ -683,6 +701,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
+  `DROP POLICY IF EXISTS ingress_delivery_org_isolation ON ingress_delivery`,
   `DROP POLICY IF EXISTS session_tail_org_isolation ON session_tail`,
   `DROP POLICY IF EXISTS webhook_capture_org_isolation ON webhook_capture`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
@@ -739,6 +758,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY ingress_delivery_org_isolation ON ingress_delivery
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY session_tail_org_isolation ON session_tail
@@ -1245,6 +1267,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   thread_engagement: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   channel_session: ["SELECT", "INSERT", "UPDATE"],
   event_dedupe: ["SELECT", "INSERT", "DELETE"],
+  ingress_delivery: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   session_tail: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   pending_actions: ["SELECT", "INSERT", "UPDATE"],
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1904,22 +1927,38 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
 
-    async setSpendLimit(org, scopeKey, level, limit, meta) {
+    async setSpendLimit(org, scopeKey, level, limit, meta, condition) {
       assertSpendLimitAmount(limit);
-      await client.query(
-        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (org_id, scope_key, level) DO UPDATE SET
-           monthly_tokens = excluded.monthly_tokens,
-           monthly_usd    = excluded.monthly_usd,
-           expires_at     = excluded.expires_at,
-           reason         = excluded.reason,
-           set_by         = excluded.set_by`,
-        [org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null],
-      );
+      const params = [org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null];
+      const { rows } = condition?.ifAbsent
+        ? await client.query(
+            `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (org_id, scope_key, level) DO NOTHING
+             RETURNING scope_key`,
+            params,
+          )
+        : await client.query(
+            `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (org_id, scope_key, level) DO UPDATE SET
+               monthly_tokens = excluded.monthly_tokens,
+               monthly_usd    = excluded.monthly_usd,
+               expires_at     = excluded.expires_at,
+               reason         = excluded.reason,
+               set_by         = excluded.set_by
+             RETURNING scope_key`,
+            params,
+          );
+      return rows.length > 0;
     },
 
-    async clearSpendLimit(org, scopeKey, level) {
-      const { rows } = await client.query("DELETE FROM spend_limit WHERE org_id = $1 AND scope_key = $2 AND level = $3 RETURNING scope_key", [org, scopeKey, level]);
+    async clearSpendLimit(org, scopeKey, level, expected) {
+      const expectedSql = expected
+        ? " AND monthly_tokens IS NOT DISTINCT FROM $4 AND monthly_usd IS NOT DISTINCT FROM $5 AND expires_at IS NOT DISTINCT FROM $6 AND reason IS NOT DISTINCT FROM $7 AND set_by IS NOT DISTINCT FROM $8"
+        : "";
+      const params = expected
+        ? [org, scopeKey, level, expected.monthlyTokens ?? -1, expected.monthlyUsd ?? null, expected.expiresAt ?? null, expected.reason ?? null, expected.setBy ?? null]
+        : [org, scopeKey, level];
+      const { rows } = await client.query(`DELETE FROM spend_limit WHERE org_id = $1 AND scope_key = $2 AND level = $3${expectedSql} RETURNING scope_key`, params);
       return rows.length > 0;
     },
 
@@ -1941,38 +1980,42 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       assertHaltAddress(address);
       const a = haltAddressColumns(address);
       await client.query(
-        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, cleared_by, cleared_at) VALUES ($1, $2, $3, $4, true, $5, $6, NULL, NULL)
+        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, set_ref, cleared_by, cleared_at) VALUES ($1, $2, $3, $4, true, $5, $6, $7, NULL, NULL)
          ON CONFLICT (org_id, level, scope_key, org_wide) DO UPDATE SET
            active     = true,
            set_by     = excluded.set_by,
            set_at     = excluded.set_at,
+           set_ref    = excluded.set_ref,
            cleared_by = NULL,
            cleared_at = NULL`,
-        [org, a.level, a.scopeKey, a.orgWide, meta?.setBy ?? null, new Date().toISOString()],
+        [org, a.level, a.scopeKey, a.orgWide, meta?.setBy ?? null, meta?.setAt ?? new Date().toISOString(), meta?.setRef ?? null],
       );
     },
 
-    async clearHalt(org, address, meta) {
+    async clearHalt(org, address, meta, expected) {
       assertHaltAddress(address);
       const a = haltAddressColumns(address);
+      const expectedSql = expected ? " AND set_at = $7 AND set_by IS NOT DISTINCT FROM $8 AND set_ref IS NOT DISTINCT FROM $9" : "";
+      const params = [meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide, ...(expected ? [expected.setAt, expected.setBy ?? null, expected.setRef ?? null] : [])];
       const { rows } = await client.query(
-        "UPDATE halt SET active = false, cleared_by = $1, cleared_at = $2 WHERE org_id = $3 AND level = $4 AND scope_key = $5 AND org_wide = $6 AND active = true RETURNING org_id",
-        [meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide],
+        `UPDATE halt SET active = false, cleared_by = $1, cleared_at = $2 WHERE org_id = $3 AND level = $4 AND scope_key = $5 AND org_wide = $6 AND active = true${expectedSql} RETURNING org_id`,
+        params,
       );
       return rows.length > 0;
     },
 
     async activeHalts(org) {
       const { rows } = await client.query(
-        "SELECT level, scope_key, org_wide, set_by, set_at, cleared_by, cleared_at FROM halt WHERE org_id = $1 AND active = true",
+        "SELECT level, scope_key, org_wide, set_by, set_at, set_ref, cleared_by, cleared_at FROM halt WHERE org_id = $1 AND active = true",
         [org],
       );
-      return (rows as { level: string; scope_key: string; org_wide: boolean; set_by: string | null; set_at: string; cleared_by: string | null; cleared_at: string | null }[]).map((r) => ({
+      return (rows as { level: string; scope_key: string; org_wide: boolean; set_by: string | null; set_at: string; set_ref: string | null; cleared_by: string | null; cleared_at: string | null }[]).map((r) => ({
         org,
         address: haltAddressFromColumns(r.level, r.scope_key, r.org_wide === true),
         active: true,
         setAt: r.set_at,
         ...(r.set_by ? { setBy: r.set_by } : {}),
+        ...(r.set_ref ? { setRef: r.set_ref } : {}),
         ...(r.cleared_by ? { clearedBy: r.cleared_by } : {}),
         ...(r.cleared_at ? { clearedAt: r.cleared_at } : {}),
       }));
@@ -2798,6 +2841,104 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { sql, params } = assembleAnalyticsSql(compiled, "dollar");
       const { rows } = await client.query(sql, params as unknown[]);
       return rows as Record<string, unknown>[];
+    },
+
+    async enqueueIngressDelivery(org, write) {
+      await client.query(
+        `DELETE FROM ingress_delivery
+          WHERE org_id = $1 AND source = $2 AND completed_at IS NOT NULL
+            AND retain_until IS NOT NULL AND retain_until <= $3`,
+        [org, write.source, write.receivedAt],
+      );
+      const { rows } = await client.query(
+        `INSERT INTO ingress_delivery
+           (org_id, source, authority_id, delivery_id, payload_json, received_at, available_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $6)
+         ON CONFLICT (org_id, source, authority_id, delivery_id) DO NOTHING
+         RETURNING delivery_id`,
+        [org, write.source, write.authorityId, write.deliveryId, write.payloadJson, write.receivedAt],
+      );
+      return rows.length > 0;
+    },
+
+    async listDueIngressDeliveries(org, source, nowIso, staleBeforeIso, limit) {
+      const { rows } = await client.query(
+        `SELECT authority_id, delivery_id, received_at, available_at
+           FROM ingress_delivery
+          WHERE org_id = $1 AND source = $2 AND completed_at IS NULL AND payload_json IS NOT NULL
+            AND available_at <= $3
+            AND (claim_id IS NULL OR (claimed_at IS NOT NULL AND claimed_at <= $4))
+          ORDER BY received_at ASC, authority_id ASC, delivery_id ASC
+          LIMIT $5`,
+        [org, source, nowIso, staleBeforeIso, Math.max(0, Math.trunc(limit))],
+      );
+      return (rows as Array<{ authority_id: string; delivery_id: string; received_at: string; available_at: string }>).map(
+        (row): DueIngressDelivery => ({
+          source,
+          authorityId: row.authority_id,
+          deliveryId: row.delivery_id,
+          receivedAt: row.received_at,
+          availableAt: row.available_at,
+        }),
+      );
+    },
+
+    async claimIngressDelivery(org, key, claimId, claimedAtIso, staleBeforeIso) {
+      const { rows } = await client.query(
+        `UPDATE ingress_delivery SET claim_id = $1, claimed_at = $2
+          WHERE org_id = $3 AND source = $4 AND authority_id = $5 AND delivery_id = $6
+            AND completed_at IS NULL AND payload_json IS NOT NULL AND available_at <= $2
+            AND (claim_id IS NULL OR (claimed_at IS NOT NULL AND claimed_at <= $7))
+        RETURNING payload_json, received_at, available_at`,
+        [claimId, claimedAtIso, org, key.source, key.authorityId, key.deliveryId, staleBeforeIso],
+      );
+      const row = (rows as Array<{ payload_json: string; received_at: string; available_at: string }>)[0];
+      return row
+        ? ({
+            ...key,
+            payloadJson: row.payload_json,
+            receivedAt: row.received_at,
+            availableAt: row.available_at,
+            claimId,
+            claimedAt: claimedAtIso,
+          } satisfies ClaimedIngressDelivery)
+        : null;
+    },
+
+    async releaseIngressDelivery(org, key, claimId, availableAtIso) {
+      const { rows } = await client.query(
+        `UPDATE ingress_delivery SET claim_id = NULL, claimed_at = NULL, available_at = $1
+          WHERE org_id = $2 AND source = $3 AND authority_id = $4 AND delivery_id = $5
+            AND completed_at IS NULL AND claim_id = $6
+        RETURNING delivery_id`,
+        [availableAtIso, org, key.source, key.authorityId, key.deliveryId, claimId],
+      );
+      return rows.length > 0;
+    },
+
+    async completeIngressDelivery(org, key, claimId, completedAtIso, retainUntilIso) {
+      assertIngressDeliveryRetainUntil(completedAtIso, retainUntilIso);
+      const { rows } = await client.query(
+        `UPDATE ingress_delivery
+            SET payload_json = NULL, claim_id = NULL, claimed_at = NULL,
+                completed_at = $1, retain_until = $2
+          WHERE org_id = $3 AND source = $4 AND authority_id = $5 AND delivery_id = $6
+            AND completed_at IS NULL AND claim_id = $7
+        RETURNING delivery_id`,
+        [completedAtIso, retainUntilIso, org, key.source, key.authorityId, key.deliveryId, claimId],
+      );
+      return rows.length > 0;
+    },
+
+    async discardIngressDelivery(org, key, claimId) {
+      const { rows } = await client.query(
+        `DELETE FROM ingress_delivery
+          WHERE org_id = $1 AND source = $2 AND authority_id = $3 AND delivery_id = $4
+            AND completed_at IS NULL AND claim_id = $5
+        RETURNING delivery_id`,
+        [org, key.source, key.authorityId, key.deliveryId, claimId],
+      );
+      return rows.length > 0;
     },
 
     async markEventSeen(org, key, at, ttlMs) {

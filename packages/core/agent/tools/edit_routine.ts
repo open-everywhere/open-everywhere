@@ -99,7 +99,7 @@ export default defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `rewrite of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;

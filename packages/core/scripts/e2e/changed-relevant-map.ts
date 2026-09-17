@@ -228,6 +228,19 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "OPE-1862/OPE-1860. S-SPEND-DM-MASK spends in a REAL DM and then reads a spend report in a room on ANOTHER platform: the mask reads a `surface_mode` stamp the spend hook writes from the turn's own binding, and no offline tier can see whether a real turn's row carries it — an unstamped row masks to `(unclassified)` instead, which is safe but wrong-looking and invisible to every unit test. S-SPEND-REFUSAL-KEYS reads a live refusal's bytes against the cap layer its own reason names: the copy is a pure function, but it is only as right as the `layer`/`scopeKey` the gate hands it, and a gate that dropped either would render a refusal naming a cap that did not bite. Changing any file here changes one of those two answers.",
   },
   {
+    area: "break-glass-halt",
+    globs: [
+      "packages/core/agent/access/halt.ts",
+      "packages/core/agent/tools/halt.ts",
+      "packages/core/agent/control/writes.ts",
+      "packages/core/agent/operational/store.ts",
+      "packages/core/agent/operational/sqlite.ts",
+      "packages/core/agent/operational/postgres.ts",
+    ],
+    scenarios: ["S-HALT"],
+    why: "S-HALT is the only live leg that asks for a surface halt through chat, joins it to the originating wake/session and exact stored address, then atomically clears only that observed halt through the local control plane. It exercises both doors and both operational adapters' shared conditional-clear contract.",
+  },
+  {
     area: "reply-provenance",
     globs: [
       "packages/core/agent/channels/reply-provenance.ts",
@@ -255,12 +268,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
 
 export const ALWAYS_RELEVANT: readonly string[] = ["J1", "J-TEAMS"];
 
-export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [
-  {
-    id: "S-HALT",
-    why: "The break-glass halt is declared RED-until-fixture (OPE-1836): clearing a halt is control-plane only, so a pack holding a read token could never lift one it set. Mapping it to `agent/tools/halt.ts` would SELECT a leg that cannot run, which is the opposite of what this map is for — it would make every halt change look e2e-covered. It earns an area the day it has a clear road.",
-  },
-];
+export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [];
 
 export function relevantScenarios(changedPaths: readonly string[]): string[] {
   const ids = new Set<string>(ALWAYS_RELEVANT);

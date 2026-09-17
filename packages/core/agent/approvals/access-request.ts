@@ -90,6 +90,21 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   }
   const sentence = grantSentence(args.delta);
 
+  if (args.delta.scope.level === "domain") {
+    const domainName = args.delta.scope.domain;
+    const domains = cfg.domainRegistry?.();
+    if (!domains) {
+      throw new Error(
+        `cannot revalidate frozen domain "${domainName}" — this deployment doesn't expose its merged domain registry (AccessRequestsConfig.domainRegistry), so no PR was opened`,
+      );
+    }
+    if (!domains.some((domain) => domain.name === domainName)) {
+      throw new Error(
+        `frozen domain "${domainName}" is no longer declared — it may have been deleted or renamed after this card was posted. Nothing was changed; request access again from the channel so its current canonical domain is reviewed.`,
+      );
+    }
+  }
+
   const validateMerged = (grantsText: string): ReturnType<typeof applyDelta> => {
     const grants = grantsText ? parseGrantsModule(grantsText) : emptyGrantsFile();
     const result = applyDelta(grants, args.delta);

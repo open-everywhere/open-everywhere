@@ -3,6 +3,7 @@ import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
 import { groupWidth } from "./lint.js";
+import { domainContainers, type Domain } from "../memory/domain.js";
 import type { EffectiveAccess } from "./resolver.js";
 import type { ConnectorCredentials as ConnectorCredentialsCatalogue } from "./connector-credentials.js";
 
@@ -12,12 +13,15 @@ export const OUT_OF_VOCABULARY =
 export const HTTP_METHODS: readonly HttpMethod[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 export type RequestingScope =
+  | { readonly level: "domain"; readonly domain: string }
   | { readonly level: "surface"; readonly surface: string }
   | { readonly level: "principal"; readonly principal: string }
   | { readonly level: "group"; readonly group: string };
 
 function scopeAddress(scope: RequestingScope): string {
   switch (scope.level) {
+    case "domain":
+      return scope.domain;
     case "surface":
       return scope.surface;
     case "principal":
@@ -33,6 +37,10 @@ export function sameScope(a: RequestingScope, b: RequestingScope): boolean {
 
 export function requestingScopeProblem(scope: RequestingScope): string | undefined {
   switch (scope.level) {
+    case "domain":
+      return scope.domain.trim().length > 0 && !scope.domain.includes("/")
+        ? undefined
+        : `domain="${scope.domain}" is not the bare name of a declared memory domain`;
     case "surface":
       return SURFACE_KEY.test(scope.surface ?? "")
         ? undefined
@@ -92,6 +100,7 @@ export interface PlanContext {
   readonly bundles: readonly Bundle[];
   readonly connectorCredentials?: readonly ConnectorCredentialsCatalogue[];
   readonly groups?: readonly Group[];
+  readonly domains?: readonly Domain[];
 }
 
 function isHttpMethod(v: string): v is HttpMethod {
@@ -112,6 +121,8 @@ export function definedConnectorCredentials(
 
 function scopeWhere(scope: RequestingScope): string {
   switch (scope.level) {
+    case "domain":
+      return `domain "${scope.domain}" (every room it admits)`;
     case "surface":
       return `surface ${scope.surface}`;
     case "principal":
@@ -123,6 +134,8 @@ function scopeWhere(scope: RequestingScope): string {
 
 function scopeHere(scope: RequestingScope): string {
   switch (scope.level) {
+    case "domain":
+      return `domain "${scope.domain}"`;
     case "surface":
       return "this channel";
     case "principal":
@@ -161,6 +174,27 @@ function planGroupTarget(ask: AccessAsk, ctx: PlanContext): string | undefined {
     throw new Error(
       `granting "${name}" is a BROAD grant — ${width}. CI refuses a broad credentialed grant that nobody acknowledged, ` +
         `so this request needs a reason: say why the whole group should have it, and I'll record it on the binding as \`allowBroad\` for the merging admin to read.`,
+    );
+  }
+  return normalizeAllowBroadReason(reason);
+}
+
+function planDomainTarget(ask: AccessAsk, ctx: PlanContext): string | undefined {
+  if (ctx.scope.level !== "domain") return undefined;
+  const domainName = ctx.scope.domain;
+  const domain = (ctx.domains ?? []).find((candidate) => candidate.name === domainName);
+  if (!domain) {
+    throw new Error(
+      `"${domainName}" isn't a declared memory domain — domain targets are resolved from the server's canonical roster, so ${OUT_OF_VOCABULARY}`,
+    );
+  }
+  const containers = domainContainers(domain);
+  if (containers.length === 0) return undefined;
+  const reason = (ask.reason ?? "").trim();
+  if (reason.length === 0) {
+    throw new Error(
+      `granting domain "${domain.name}" is a BROAD grant — its reach includes container rule(s) ${containers.join(", ")}, so matching current and future rooms receive the credential without another binding diff. ` +
+        `CI refuses that generated binding unless the widening is acknowledged, so this request needs a reason: say why every room those rules admit should have it, and I'll record it on the binding as \`allowBroad\` for the tapping member and merging admin to read.`,
     );
   }
   return normalizeAllowBroadReason(reason);
@@ -268,7 +302,7 @@ export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
   if (problem) {
     throw new Error(`invalid requesting scope (${ctx.scope.level}) — ${problem}.`);
   }
-  const allowBroad = planGroupTarget(ask, ctx);
+  const allowBroad = planGroupTarget(ask, ctx) ?? planDomainTarget(ask, ctx);
   switch (ask.kind) {
     case "widen-connection":
       return planWidenConnection(ask, ctx, allowBroad);

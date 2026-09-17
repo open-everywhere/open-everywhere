@@ -11,7 +11,7 @@ afterAll(async () => {
 });
 
 test("an ABSENT db credential row: the delivery still acks 200, and the deployment names the ref it could not resolve", async () => {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: "it-ope-639-comment-1" });

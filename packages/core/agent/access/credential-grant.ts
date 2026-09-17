@@ -176,7 +176,7 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
 }
 
 const GRANT_ONCE_TTL_MS = 60 * 60 * 1000;
-export const GRANT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const GRANT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const GRANT_STANDING_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function credentialGrantExpiry(mode: CredentialGrantMode, nowMs: number, requestedMs?: number): string {

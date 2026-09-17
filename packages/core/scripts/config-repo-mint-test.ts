@@ -252,7 +252,6 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
     `fence: …and ALL ${WRITE_SET_OWNERS.length} owners were actually found (a renamed file would shrink this scan and pass it) — found ${namesWriteSet.join(", ")}`,
   );
 
-  const IMPLICIT_ALLOWED = ["packages/providers/github/agent/memory/memory.ts"];
   const argumentLists = (text: string): string[] => {
     const needle = "tokensForRepos(";
     const out: string[] = [];
@@ -282,10 +281,11 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
   };
   const implicit = sources.filter((p) => argumentLists(readFileSync(p, "utf8")).some(oneArgument)).map(rel);
   ok(
-    implicit.every((p) => IMPLICIT_ALLOWED.includes(p)),
-    `🔴 fence: no call site takes the write set by OMITTING its permissions argument — found ${implicit.filter((p) => !IMPLICIT_ALLOWED.includes(p)).join(", ")}`,
+    implicit.length === 0,
+    `🔴 fence: no call site takes the write set by OMITTING its permissions argument — found ${implicit.join(", ")}`,
   );
-  ok(implicit.includes("packages/providers/github/agent/memory/memory.ts"), "fence: the OPE-1825 exception still describes the tree (delete it when that ticket lands, not before)");
+  const memorySource = readFileSync(join(repoRoot, "packages/providers/github/agent/memory/memory.ts"), "utf8");
+  ok(memorySource.includes("tokensForRepos([repo], MEMORY_WRITE_PERMISSIONS)"), "fence: GitHub memory names its narrow memory-write set at the warm-token mint call site");
 
   for (const flow of FLOWS) {
     const text = readFileSync(join(repoRoot, flow.file), "utf8");

@@ -29,7 +29,8 @@ const { unifiedSupervisorToken } = await import("../agent/channels/unified-super
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { taskWakeId, TASK_WAKE_RETARGET_ACTION } = await import("../agent/channels/task-wake.js");
-const { addressedWakeThisTurn } = await import("../agent/access/dispatch-origin-signal.js");
+const { addressedWakeThisTurn, recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
 const { consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
   "../agent/access/pending-delegation-signal.js"
@@ -82,7 +83,9 @@ interface Armed {
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
 
-const hook = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["action.result"]!;
+const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+const hook = hooks["action.result"]!;
+const requestedHook = hooks["actions.requested"]!;
 
 const receiptResult = (callId: string, taskId: string, agentId = "ag_agent:6666") => ({
   backgroundTask: { status: "working", taskId },
@@ -124,6 +127,22 @@ function ctxFor(turnWake: string, turnId: string): BindableContext {
     },
     agent: { name: "oe", nodeId: "__root__" },
   } as unknown as BindableContext;
+}
+
+async function dispatchReceipt(
+  turnWake: string | undefined,
+  turnId: string,
+  callId: string,
+  result: unknown,
+  ctx: BindableContext,
+): Promise<void> {
+  if (turnWake !== undefined) {
+    const envelope = `<wake wake-id="${turnWake}"><channel><message from="human" author-id="U1" trigger="true">delegate</message></channel></wake>`;
+    recordDeliveredWakes(turnId, envelope);
+    recordRequesterIdentity(ctx, turnId, envelope);
+  }
+  await requestedHook({ data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } }, ctx);
+  await hook({ data: { result } }, ctx);
 }
 
 const nodeRequire = createRequire(import.meta.url);
@@ -175,6 +194,18 @@ async function callEdit(
 
 async function wake(channelId: string, threadTs?: string): Promise<string> {
   const id = mintWakeId();
+  const binding = {
+    org: ORG,
+    platform: "slack" as const,
+    workspace: "T1",
+    surface: channelId,
+    mode: "channel" as const,
+    visibility: "public" as const,
+    trust: "internal" as const,
+    principalId: "U1",
+    target: { channelId },
+    ...(threadTs === undefined ? {} : { threadTs }),
+  };
   await registerUnifiedWakeTarget(
     store,
     ORG,
@@ -182,6 +213,11 @@ async function wake(channelId: string, threadTs?: string): Promise<string> {
     { platform: "slack", channelId, ...(threadTs === undefined ? {} : { threadTs }) },
     new Date().toISOString(),
     TOKEN,
+    true,
+    undefined,
+    `slack/T1/${channelId}`,
+    binding,
+    { binding, requester: { kind: "requester", principalId: "U1" }, nonMemberWake: false },
   );
   return id;
 }
@@ -197,7 +233,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   const before = posted.length;
 
   await inTurn(async () => {
-    await hook({ data: { result: receiptResult("call_696a", "task_696a") } }, ctxFor(wAsk, "turn_696"));
+    await dispatchReceipt(wAsk, "turn_696", "call_696a", receiptResult("call_696a", "task_696a"), ctxFor(wAsk, "turn_696"));
     const minted = await taskWakeId(ORG, "task_696a");
     ok(
       typeof minted === "string" && minted.length > 0,
@@ -237,7 +273,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   const before = posted.length;
 
   await inTurn(async () => {
-    await hook({ data: { result: receiptResultV2("call_943a", "task_943a") } }, ctxFor(wAsk, "turn_943"));
+    await dispatchReceipt(wAsk, "turn_943", "call_943a", receiptResultV2("call_943a", "task_943a"), ctxFor(wAsk, "turn_943"));
     const minted = await taskWakeId(ORG, "task_943a");
     ok(typeof minted === "string" && minted.length > 0, "🔴 §1B REACHABILITY: the REAL hook ran BRANCH 1 for an ENVELOPE B receipt and minted the wake. Before the reader was widened this read `undefined`, and the refusal below would pass on a branch that never ran");
 
@@ -292,7 +328,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   const before = posted.length;
 
   await inSession(async () => {
-    await hook({ data: { result: receiptResult("call_696b", "task_696b") } }, ctxFor(wOld, "turn_old"));
+    await dispatchReceipt(wOld, "turn_old", "call_696b", receiptResult("call_696b", "task_696b"), ctxFor(wOld, "turn_old"));
     const blocked = await callReply(wOld, "turn_old", wOld, "An answer while the worker runs.", true);
     ok(typeof blocked.error === "string", "§4 precondition: the dispatching turn IS guarded");
 
@@ -312,7 +348,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   const before = posted.length;
 
   await inTurn(async () => {
-    await hook({ data: { result: receiptResult("call_696c", "task_696c") } }, ctxFor(wAsk, "turn_resid"));
+    await dispatchReceipt(wAsk, "turn_resid", "call_696c", receiptResult("call_696c", "task_696c"), ctxFor(wAsk, "turn_resid"));
     const sib = await callReply(wAsk, "turn_resid", wSib, "A full answer for the sibling conversation.", true);
     ok(
       typeof sib.error === "string",
@@ -404,7 +440,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const inTurn = bridgeSession(wBridge, "turn_701");
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_701a", "task_701a") } }, ctxFor(wBridge, "turn_701"));
+      await dispatchReceipt(wBridge, "turn_701", "call_701a", receiptResult("call_701a", "task_701a"), ctxFor(wBridge, "turn_701"));
 
       const refused = await callReply(wBridge, "turn_701", wBridge, FABRICATION, true);
       ok(typeof refused.error === "string", "§9a precondition: the reply tool refuses the fabricated `done:true`");
@@ -463,7 +499,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_699a", "task_699a") } }, ctxFor(w, "turn_699a"));
+      await dispatchReceipt(w, "turn_699a", "call_699a", receiptResult("call_699a", "task_699a"), ctxFor(w, "turn_699a"));
       const ack = await callReply(w, "turn_699a", w, HANDOFF, false);
       ok(ack.posted === true, "§10a precondition: the `done:false` hand-off posts");
       ok(
@@ -489,7 +525,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_1544a", "task_1544a") } }, ctxFor(w, "turn_1544a"));
+      await dispatchReceipt(w, "turn_1544a", "call_1544a", receiptResult("call_1544a", "task_1544a"), ctxFor(w, "turn_1544a"));
       const ack = await callReply(w, "turn_1544a", w, HANDOFF, false);
       ok(ack.posted === true, "§10g precondition: the `done:false` hand-off posts, so there is an own post to edit");
 
@@ -547,7 +583,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const REAL = "The worker reports: memory_admin_list requires an org admin.";
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_699c", "task_699c") } }, ctxFor(w, "turn_699c"));
+      await dispatchReceipt(w, "turn_699c", "call_699c", receiptResult("call_699c", "task_699c"), ctxFor(w, "turn_699c"));
 
       const pending = await callReply(w, "turn_699c", w, HANDOFF, false);
       ok(pending.posted === true, "§10c precondition: the hand-off posts while the worker runs");
@@ -571,7 +607,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
 
     await bridgeSession(wB, "turn_699d")(async () => {
-      await hook({ data: { result: receiptResult("call_699d", "task_699d") } }, ctxFor(wB, "turn_699d"));
+      await dispatchReceipt(wB, "turn_699d", "call_699d", receiptResult("call_699d", "task_699d"), ctxFor(wB, "turn_699d"));
       const refused = await callReply(wB, "turn_699d", wB, FABRICATION, true);
       ok(typeof refused.error === "string", "§10d precondition: the reply tool refuses the fabricated `done:true`");
       await bridgeComplete(FABRICATION);
@@ -625,7 +661,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const addressedAtBridge: (string | undefined)[] = [];
 
     await bridgeSession(wTurn, "turn_706a")(async () => {
-      await hook({ data: { result: receiptResult("call_706a", "task_706a") } }, ctxFor(wTurn, "turn_706a"));
+      await dispatchReceipt(wTurn, "turn_706a", "call_706a", receiptResult("call_706a", "task_706a"), ctxFor(wTurn, "turn_706a"));
       const refused = await callReply(wTurn, "turn_706a", wTurn, FABRICATION, true);
       ok(typeof refused.error === "string", "§11a precondition: the reply tool refuses the fabricated `done:true` — the refusal is what leaves `replied` false and opens the bridge");
       addressedAtBridge.push(addressedWakeThisTurn("turn_706a"));
@@ -686,7 +722,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const retargetsBefore = (await readAudit({ org: ORG, action: TASK_WAKE_RETARGET_ACTION })).length;
 
     await newSession()(async () => {
-      await hook({ data: { result: receiptResult("call_706c", "task_706c") } }, ctxFor(wAsk, "turn_706c"));
+      await dispatchReceipt(wAsk, "turn_706c", "call_706c", receiptResult("call_706c", "task_706c"), ctxFor(wAsk, "turn_706c"));
       ok((await taskChannel("task_706c")) === "C_706_ASK", "§11c precondition: the dispatch edge registered the task against the turn's own wake");
       const sib = await callReply(wAsk, "turn_706c", wOther, "The sibling's answer, part one.", false);
       ok(sib.posted === true, "§11c precondition: the sibling's `done:false` answer posts");
@@ -777,7 +813,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_1575a", "task_1575a") } }, baseCtxFor("turn_1575a", "1201.1"));
+      await dispatchReceipt(undefined, "turn_1575a", "call_1575a", receiptResult("call_1575a", "task_1575a"), baseCtxFor("turn_1575a", "1201.1"));
       const ack = await callBaseReply("turn_1575a", "1201.1", HANDOFF);
       ok(ack.posted === true, "§12a precondition: the per-surface hand-off posts");
       ok(
@@ -821,7 +857,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
 
     await inTurn(async () => {
-      await hook({ data: { result: receiptResult("call_1575c", "task_1575c") } }, baseCtxFor("turn_1575c", "1203.3"));
+      await dispatchReceipt(undefined, "turn_1575c", "call_1575c", receiptResult("call_1575c", "task_1575c"), baseCtxFor("turn_1575c", "1203.3"));
       const ack = await callBaseReply("turn_1575c", "1203.3", HANDOFF);
       ok(ack.posted === true, "§12c precondition: the hand-off posts, so there is an own post to edit");
       const edited = await callBaseEdit("turn_1575c", "1203.3", "ts-" + String(posted.length), "The hand-off, reworded.");
@@ -990,7 +1026,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
     await inTurn(async () => {
       await turnStarted({}, ctxFor(wAsk, "turn_1655_a"));
-      await hook({ data: { result: receiptResult("call_1655a", TASK) } }, ctxFor(wAsk, "turn_1655_a"));
+      await dispatchReceipt(wAsk, "turn_1655_a", "call_1655a", receiptResult("call_1655a", TASK), ctxFor(wAsk, "turn_1655_a"));
       const minted = await taskWakeId(ORG, TASK);
       ok(typeof minted === "string" && minted.length > 0, "§13a/REACHABILITY: the REAL dispatch hook minted the task's wake identity");
       const before = posted.length;
@@ -1042,7 +1078,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const TASK = "task_1655eeeeffff";
     await inTurn(async () => {
       await turnStarted({}, ctxFor(wAsk, "turn_1655_e1"));
-      await hook({ data: { result: receiptResult("call_1655e", TASK) } }, ctxFor(wAsk, "turn_1655_e1"));
+      await dispatchReceipt(wAsk, "turn_1655_e1", "call_1655e", receiptResult("call_1655e", TASK), ctxFor(wAsk, "turn_1655_e1"));
       const ack = await callReply(wAsk, "turn_1655_e1", wAsk, "On it — I'll report what the worker finds.", false);
       ok(ack.posted === true, "§13e/SETUP: the hand-off note posted, so a report is promised");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_e2"));
@@ -1064,7 +1100,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const TASK = "task_1655hhhhiiii";
     await inTurn(async () => {
       await turnStarted({}, ctxFor(wAsk, "turn_1655_h1"));
-      await hook({ data: { result: receiptResult("call_1655h", TASK) } }, ctxFor(wAsk, "turn_1655_h1"));
+      await dispatchReceipt(wAsk, "turn_1655_h1", "call_1655h", receiptResult("call_1655h", TASK), ctxFor(wAsk, "turn_1655_h1"));
       const ack = await callReply(wAsk, "turn_1655_h1", wAsk, "I've started it; I'll report back here.", false);
       ok(ack.posted === true, "§13h/SETUP: the hand-off note posted into conversation A");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_h2"));
@@ -1091,7 +1127,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const TASK = "task_1655ffffgggg";
     await inTurn(async () => {
       await turnStarted({}, ctxFor(wAsk, "turn_1655_f1"));
-      await hook({ data: { result: receiptResult("call_1655f", TASK) } }, ctxFor(wAsk, "turn_1655_f1"));
+      await dispatchReceipt(wAsk, "turn_1655_f1", "call_1655f", receiptResult("call_1655f", TASK), ctxFor(wAsk, "turn_1655_f1"));
       const ack = await callReply(wAsk, "turn_1655_f1", wAsk, "Started it — I'll report back.", false);
       ok(ack.posted === true, "§13f/SETUP: the hand-off note posted, so a report is promised");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_f2"));
@@ -1112,7 +1148,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const TASK = "task_1655gggghhhh";
     await inTurn(async () => {
       await turnStarted({}, ctxFor(wAsk, "turn_1655_g1"));
-      await hook({ data: { result: receiptResult("call_1655g", TASK) } }, ctxFor(wAsk, "turn_1655_g1"));
+      await dispatchReceipt(wAsk, "turn_1655_g1", "call_1655g", receiptResult("call_1655g", TASK), ctxFor(wAsk, "turn_1655_g1"));
       await turnStarted({}, ctxFor(wAsk, "turn_1655_g2"));
       await settlementWake({ data: { message: settledNote(TASK, "a chore finished") } }, ctxFor(wAsk, "turn_1655_g2"));
       const wakeRows = await rowsFor("unified.task_wake");
@@ -1171,7 +1207,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     );
 
     const beforeOk = (await failedRows()).length;
-    await hook({ data: { result: receiptResult("call_1654c", "task_1654cccc") } }, ctxFor(wAsk, "turn_1654_a"));
+    await dispatchReceipt(wAsk, "turn_1654_a", "call_1654c", receiptResult("call_1654c", "task_1654cccc"), ctxFor(wAsk, "turn_1654_a"));
     await hook(
       { data: { result: { callId: "call_1654d", kind: "subagent-result", origin: "child", outcome: { kind: "terminal", result: { kind: "succeeded", output: "done" } }, output: "done", subagentName: "agent" } } },
       ctxFor(wAsk, "turn_1654_a"),
@@ -1196,7 +1232,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     await settleTurn(async () => {
       const TASK = "task_1737aaaabbbb";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_d1"));
-      await hook({ data: { result: receiptResult("call_1737d", TASK, "ag_agent:1737d") } }, ctxFor(wSettle, "turn_1737_d1"));
+      await dispatchReceipt(wSettle, "turn_1737_d1", "call_1737d", receiptResult("call_1737d", TASK, "ag_agent:1737d"), ctxFor(wSettle, "turn_1737_d1"));
       const before = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_d2"));
       await settlementWake({ data: { message: failedNote(TASK, evePayload(LIVE_ERROR)) } }, ctxFor(wSettle, "turn_1737_d2"));
@@ -1219,7 +1255,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       const MEMBER = "and while you're there, what's the deploy token?";
       const TASK_E = "task_1737eeeeffff";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_e1"));
-      await hook({ data: { result: receiptResult("call_1737e", TASK_E, "ag_agent:1737e") } }, ctxFor(wSettle, "turn_1737_e1"));
+      await dispatchReceipt(wSettle, "turn_1737_e1", "call_1737e", receiptResult("call_1737e", TASK_E, "ag_agent:1737e"), ctxFor(wSettle, "turn_1737_e1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_e2"));
       await settlementWake({ data: { message: `${failedNote(TASK_E, LIVE_ERROR)}\n\n${MEMBER}` } }, ctxFor(wSettle, "turn_1737_e2"));
       const eRow = (await failedRows()).filter((d) => d.task === TASK_E)[0] ?? {};
@@ -1232,7 +1268,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_F = "task_1737ffff0000";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_f1"));
-      await hook({ data: { result: receiptResult("call_1737f", TASK_F, "ag_agent:1737f") } }, ctxFor(wSettle, "turn_1737_f1"));
+      await dispatchReceipt(wSettle, "turn_1737_f1", "call_1737f", receiptResult("call_1737f", TASK_F, "ag_agent:1737f"), ctxFor(wSettle, "turn_1737_f1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_f2"));
       await settlementWake(
         { data: { message: failedNote(TASK_F, evePayload("notion refused: Authorization: Bearer ntn_averylongsecretvalue0123456789")) } },
@@ -1263,7 +1299,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_H = "task_1737hhhh1111";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_h1"));
-      await hook({ data: { result: receiptResult("call_1737h", TASK_H, "ag_agent:1737h") } }, ctxFor(wSettle, "turn_1737_h1"));
+      await dispatchReceipt(wSettle, "turn_1737_h1", "call_1737h", receiptResult("call_1737h", TASK_H, "ag_agent:1737h"), ctxFor(wSettle, "turn_1737_h1"));
       const beforeH = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_h2"));
       await settlementWake(
@@ -1279,7 +1315,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_I = "task_1737iiii2222";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_i1"));
-      await hook({ data: { result: receiptResult("call_1737i", TASK_I, "ag_agent:1737i") } }, ctxFor(wSettle, "turn_1737_i1"));
+      await dispatchReceipt(wSettle, "turn_1737_i1", "call_1737i", receiptResult("call_1737i", TASK_I, "ag_agent:1737i"), ctxFor(wSettle, "turn_1737_i1"));
       const beforeI = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_i2"));
       await settlementWake({ data: { message: `Background task ${TASK_I} (agent) is cancelled.` } }, ctxFor(wSettle, "turn_1737_i2"));
@@ -1287,7 +1323,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_J = "task_1737jjjj3333";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_j1"));
-      await hook({ data: { result: receiptResult("call_1737j", TASK_J, "ag_agent:1737j") } }, ctxFor(wSettle, "turn_1737_j1"));
+      await dispatchReceipt(wSettle, "turn_1737_j1", "call_1737j", receiptResult("call_1737j", TASK_J, "ag_agent:1737j"), ctxFor(wSettle, "turn_1737_j1"));
       const beforeJ = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_j2"));
       await settlementWake({ data: { message: `Background task ${TASK_J} (agent) failed.` } }, ctxFor(wSettle, "turn_1737_j2"));
@@ -1303,7 +1339,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_K = "task_1737kkkk4444";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_k1"));
-      await hook({ data: { result: receiptResult("call_1737k", TASK_K, "ag_agent:1737k") } }, ctxFor(wSettle, "turn_1737_k1"));
+      await dispatchReceipt(wSettle, "turn_1737_k1", "call_1737k", receiptResult("call_1737k", TASK_K, "ag_agent:1737k"), ctxFor(wSettle, "turn_1737_k1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_k2"));
       await settlementWake({ data: { message: failedNote(TASK_K, JSON.stringify({ code: "ETIMEDOUT" })) } }, ctxFor(wSettle, "turn_1737_k2"));
       const kRow = (await failedRows()).filter((d) => d.task === TASK_K)[0] ?? {};
@@ -1313,7 +1349,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_L = "task_1737llll5555";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_l1"));
-      await hook({ data: { result: receiptResult("call_1737l", TASK_L, "ag_agent:1737l") } }, ctxFor(wSettle, "turn_1737_l1"));
+      await dispatchReceipt(wSettle, "turn_1737_l1", "call_1737l", receiptResult("call_1737l", TASK_L, "ag_agent:1737l"), ctxFor(wSettle, "turn_1737_l1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_l2"));
       await settlementWake(
         { data: { message: `Background task ${TASK_L} (agent) failed.\nAuthorization: Bearer ntn_averylongsecretvalue0123456789` } },
@@ -1328,7 +1364,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
       const TASK_M = "task_1737mmmm6666";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_m1"));
-      await hook({ data: { result: receiptResult("call_1737m", TASK_M, "ag_agent:1737m") } }, ctxFor(wSettle, "turn_1737_m1"));
+      await dispatchReceipt(wSettle, "turn_1737_m1", "call_1737m", receiptResult("call_1737m", TASK_M, "ag_agent:1737m"), ctxFor(wSettle, "turn_1737_m1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_m2"));
       await settlementWake(
         { data: { message: failedNote(TASK_M, JSON.stringify({ code: "Authorization: Bearer ntn_averylongsecretvalue0123456789", message: "the worker died" })) } },

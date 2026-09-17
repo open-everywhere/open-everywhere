@@ -5,10 +5,17 @@ import {
   boardGaps,
   boardTotals,
   isDeclaredGap,
+  releaseBoardProblems,
   renderBoard,
   rosterIds,
   type BoardLeg,
 } from "../packages/core/scripts/e2e/board.js";
+import {
+  LAUNCH_RELEASE_SCOPE,
+  releasePhaseProblem,
+  releaseScopeIndex,
+  releaseScopeProblems,
+} from "../packages/core/scripts/e2e/release-scope.js";
 import { SCENARIOS } from "../packages/core/scripts/e2e/scenarios.js";
 
 let n = 0;
@@ -20,10 +27,110 @@ const ok = (cond: boolean, label: string): void => {
 const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {}): BoardLeg => ({ id, surface: "slack", status, ...over });
 
 {
-  const legs = [leg("a", "GREEN"), leg("b", "RED"), leg("c", "RED"), leg("d", "DEFERRED"), leg("e", "FILTERED")];
+  const legs = [leg("a", "GREEN"), leg("b", "RED"), leg("c", "RED"), leg("d", "DEFERRED"), leg("e", "FILTERED"), leg("f", "NOT_RUN")];
   const t = boardTotals(legs);
-  ok(t.green === 1 && t.red === 2 && t.deferred === 1 && t.filtered === 1 && t.total === 5, "the totals count each status once and sum to the row count");
+  ok(t.green === 1 && t.red === 2 && t.deferred === 1 && t.filtered === 1 && t.notRun === 1 && t.total === 6, "the totals count each status once and sum to the row count");
   ok(boardTotals([]).total === 0, "an empty board totals zero rather than throwing");
+}
+
+{
+  const problems = releaseScopeProblems();
+  ok(
+    problems.missing.length === 0 &&
+      problems.unknown.length === 0 &&
+      problems.duplicate.length === 0 &&
+      problems.invalidEquivalent.length === 0 &&
+      problems.invalidReason.length === 0 &&
+      problems.invalidPhase.length === 0,
+    "the launch policy classifies every real scenario exactly once and every named equivalent is itself required",
+  );
+  ok(LAUNCH_RELEASE_SCOPE.length === SCENARIOS.length, "the launch policy has one visible accounting row per roster leg");
+
+  const index = releaseScopeIndex();
+  ok(index.get("S-SPEND-DM-MASK")?.requirement === "REQUIRED", "a shared security row stays REQUIRED even though its current live vehicle is Discord");
+  ok(
+    index.get("S8")?.requirement === "NON_LAUNCH" && index.get("S8")?.equivalents?.join(",") === "J2,J-UNI-X",
+    "S8 is deferred only with both required launch-surface memory/isolation equivalents named",
+  );
+  ok(
+    index.get("S-DISCORD-GRANT")?.requirement === "REQUIRED" &&
+      index.get("S-DISCORD-GRANT")?.requiredPhase === "discord-grant-tapped" &&
+      index.get("S-DISCORD-GRANT")?.reason.includes("Discord owner") === true,
+    "grant.used to grant.notified remains REQUIRED and explicitly requires the human-tapped Discord phase",
+  );
+  const grantRow = index.get("S-DISCORD-GRANT")!;
+  ok(
+    releasePhaseProblem(grantRow, {})?.includes("E2E_DISCORD_GRANT_TAPPED=1") === true,
+    "an ordinary raising-phase S-DISCORD-GRANT run cannot satisfy the launch release",
+  );
+  ok(
+    releasePhaseProblem(grantRow, { E2E_DISCORD_GRANT_TAPPED: "1" }) === undefined,
+    "the tapped phase clears the release phase prerequisite so its grant.used/notified gates decide the row",
+  );
+
+  const missing = releaseScopeProblems(LAUNCH_RELEASE_SCOPE.filter((row) => row.id !== "J1"));
+  ok(missing.missing.join(",") === "J1", "a new or accidentally removed roster classification fails the policy closed");
+  const duplicate = releaseScopeProblems([...LAUNCH_RELEASE_SCOPE, LAUNCH_RELEASE_SCOPE[0]!]);
+  ok(duplicate.duplicate.join(",") === LAUNCH_RELEASE_SCOPE[0]!.id, "a duplicate policy row is reported rather than overwritten by an index");
+  const badEquivalent = releaseScopeProblems(
+    LAUNCH_RELEASE_SCOPE.map((row) => (row.id === "S8" ? { ...row, equivalents: ["J-DISC"] } : row)),
+  );
+  ok(badEquivalent.invalidEquivalent.join(",") === "S8->J-DISC", "a non-required equivalence target is refused");
+  const blankReason = releaseScopeProblems(
+    LAUNCH_RELEASE_SCOPE.map((row) => (row.id === "J1" ? { ...row, reason: " " } : row)),
+  );
+  ok(blankReason.invalidReason.join(",") === "J1", "an empty release-policy reason is refused");
+  const phaseOnNonLaunch = releaseScopeProblems(
+    LAUNCH_RELEASE_SCOPE.map((row) => (row.id === "J-DISC" ? { ...row, requiredPhase: "discord-grant-tapped" as const } : row)),
+  );
+  ok(phaseOnNonLaunch.invalidPhase.join(",") === "J-DISC:discord-grant-tapped", "a phase prerequisite cannot hide on a NON_LAUNCH row");
+  const phaseOnWrongRequired = releaseScopeProblems(
+    LAUNCH_RELEASE_SCOPE.map((row) => (row.id === "J1" ? { ...row, requiredPhase: "discord-grant-tapped" as const } : row)),
+  );
+  ok(phaseOnWrongRequired.invalidPhase.join(",") === "J1:discord-grant-tapped", "the Discord tap prerequisite cannot be copied onto an unrelated REQUIRED row");
+}
+
+{
+  const scoped = [
+    leg("required", "GREEN", { requirement: "REQUIRED", evidence: "1 gate" }),
+    leg("deferred", "NOT_RUN", { requirement: "NON_LAUNCH", surface: "discord", reason: "outside launch" }),
+  ];
+  const clean = releaseBoardProblems(scoped);
+  ok(
+    clean.requiredNotGreen.length === 0 && clean.nonLaunchNotNotRun.length === 0 && clean.unearnedEquivalent.length === 0 && clean.unclassified.length === 0,
+    "a required GREEN plus a visible non-launch NOT_RUN is a complete scoped board",
+  );
+
+  const requiredRed = releaseBoardProblems([leg("required", "RED", { requirement: "REQUIRED", reason: "fixture missing" })]);
+  ok(requiredRed.requiredNotGreen.join(",") === "required:RED", "a required missing/failed leg cannot pass a scoped release");
+  const hiddenRequired = releaseBoardProblems([leg("required", "NOT_RUN", { requirement: "REQUIRED", reason: "wrongly omitted" })]);
+  ok(hiddenRequired.requiredNotGreen.join(",") === "required:NOT_RUN", "a required leg cannot disappear into NOT_RUN accounting");
+  const ranNonLaunch = releaseBoardProblems([leg("deferred", "GREEN", { requirement: "NON_LAUNCH", evidence: "ran unexpectedly" })]);
+  ok(ranNonLaunch.nonLaunchNotNotRun.join(",") === "deferred:GREEN", "a non-launch row that accidentally ran cannot be folded into the scoped verdict");
+  const earnedEquivalent = releaseBoardProblems([
+    leg("J2", "GREEN", { requirement: "REQUIRED", evidence: "memory isolation proved" }),
+    leg("J-UNI-X", "GREEN", { requirement: "REQUIRED", evidence: "cross-surface recall proved" }),
+    leg("S8", "NOT_RUN", { requirement: "NON_LAUNCH", equivalents: ["J2", "J-UNI-X"], reason: "Discord vehicle deferred" }),
+  ]);
+  ok(earnedEquivalent.unearnedEquivalent.length === 0, "S8 equivalence is earned only when J2 and J-UNI-X are both GREEN in this run");
+  const unearnedEquivalent = releaseBoardProblems([
+    leg("J2", "GREEN", { requirement: "REQUIRED", evidence: "memory isolation proved" }),
+    leg("J-UNI-X", "RED", { requirement: "REQUIRED", reason: "failed" }),
+    leg("S8", "NOT_RUN", { requirement: "NON_LAUNCH", equivalents: ["J2", "J-UNI-X"], reason: "Discord vehicle deferred" }),
+  ]);
+  ok(unearnedEquivalent.unearnedEquivalent.join(",") === "S8->J-UNI-X", "S8 cannot claim equivalence from a present but non-green J-UNI-X row");
+  const missingIsolationEquivalent = releaseBoardProblems([
+    leg("J-UNI-X", "GREEN", { requirement: "REQUIRED", evidence: "cross-surface recall proved" }),
+    leg("S8", "NOT_RUN", { requirement: "NON_LAUNCH", equivalents: ["J2", "J-UNI-X"], reason: "Discord vehicle deferred" }),
+  ]);
+  ok(
+    missingIsolationEquivalent.unearnedEquivalent.join(",") === "S8->J2",
+    "S8 cannot claim equivalence from cross-surface recall alone without J2's memory/silo proof",
+  );
+
+  const lines = renderBoard(scoped, ["required", "deferred"]);
+  ok(lines.some((line) => line === "| Leg | Surface | Requirement | Status | Evidence / reason |"), "a scoped board labels each row's requirement");
+  ok(lines.some((line) => line.includes("1 NOT RUN outside this release scope")), "the headline counts non-launch work as NOT RUN, never green or absent");
 }
 
 {

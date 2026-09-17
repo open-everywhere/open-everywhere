@@ -105,4 +105,40 @@ const unusedTo = (() => {
   eq(received.length, 1, "a window-carrying wake still diverts through `to`, untouched by the OPE-971 native wrapping");
 }
 
-console.log(`✓ slack-native-wake-heal: ${n} assertions passed (OPE-971 native flag-off pruned-deployment heal + negative control + window-branch untouched)`);
+{
+  let calls = 0;
+  const retryingSend: WakeSend = async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  };
+  const wrapped = withSingleWindowDiversion(liveSupervisorDeps(retryingSend), unusedTo, SURFACE);
+  await wrapped.wake({
+    token: "C0123456:oe-sup:g1",
+    auth: { attributes: { team_id: "T0AAAAAAA", channel_id: "C0123456" } },
+    message: "<wake>retry me</wake>",
+    state: undefined,
+  });
+  eq(calls, 2, "🔴 OPE-1881: Slack's real native launch retries one proven 429 and delivers");
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_retry" })).filter((row) => row.surface === SURFACE);
+  eq(rows.length, 1, "🔴 OPE-1881: Slack records the native refusal under the real surface");
+  ok(!("wakeId" in ((rows[0]?.detail ?? {}) as Record<string, unknown>)), "🔴 the native Slack row does not fabricate a wakeId");
+}
+
+{
+  let calls = 0;
+  const refusingSend: WakeSend = async () => {
+    calls += 1;
+    throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  };
+  const wrapped = withSingleWindowDiversion(liveSupervisorDeps(refusingSend), unusedTo, SURFACE);
+  let threw: unknown;
+  try {
+    await wrapped.wake({ token: "exhaust-tok", auth: { attributes: { team_id: "T0AAAAAAA", channel_id: "C0123456" } }, message: "<wake>retry</wake>", state: undefined });
+  } catch (err) {
+    threw = err;
+  }
+  eq(calls, 4, "🔴 Slack's native adapter stops at the shared four-attempt bound");
+  ok(threw instanceof Error && threw.name === "RateLimitExhaustedError", "🔴 Slack propagates named retry exhaustion through its existing strand-heal catch");
+}
+
+console.log(`✓ slack-native-wake-heal: ${n} assertions passed (OPE-971 heal + native 429 retry + controls)`);

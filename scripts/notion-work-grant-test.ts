@@ -1,8 +1,13 @@
+import { assertPackageDistFresh } from "./core-dist-freshness.js";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   ChannelScopeError,
   TurnOriginFenceError,
   declaredWorkspaceTrust,
+  bindFrom,
   defineDomain,
   defineSurface,
   isSubagentChildContext,
@@ -13,13 +18,14 @@ import {
   type BindableContext,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { adoptDelegatedAuthority } from "@open-everywhere/core/agent/identity/delegated-binding.js";
 import {
   registerBroker,
   resetBrokers,
   resetRegisteredConnectorCredentials,
   setRegisteredConnectorCredentials,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { registerNotionProvider } from "../agent/register.js";
+import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import {
   notionCallerDomain,
   notionWorkCredential,
@@ -27,13 +33,13 @@ import {
   notionWorkMount,
   notionWorkspacesOf,
   NOTION_WORK_CREDENTIAL,
-} from "../agent/channels/notion-work.js";
-import { assertNotionWorkPageAllowed, notionWorkScope } from "../agent/channels/notion-scope.js";
-import { notionReadAdapter } from "../agent/channels/notion-read.js";
-import { notionWorkSearchAdapter } from "../agent/channels/notion-work-search.js";
-import notionSearch, { notionSearchEntry } from "../agent/tools/notion_search.js";
-import { readNotionPageEntry } from "../agent/tools/read_notion_page.js";
-import { readNotionCommentsEntry } from "../agent/tools/read_notion_comments.js";
+} from "@open-everywhere/provider-notion/agent/channels/notion-work.js";
+import { assertNotionWorkPageAllowed, notionWorkScope } from "@open-everywhere/provider-notion/agent/channels/notion-scope.js";
+import { notionReadAdapter } from "@open-everywhere/provider-notion/agent/channels/notion-read.js";
+import { notionWorkSearchAdapter } from "@open-everywhere/provider-notion/agent/channels/notion-work-search.js";
+import notionSearch, { notionSearchEntry } from "@open-everywhere/provider-notion/agent/tools/notion_search.js";
+import { readNotionPageEntry } from "@open-everywhere/provider-notion/agent/tools/read_notion_page.js";
+import { readNotionCommentsEntry } from "@open-everywhere/provider-notion/agent/tools/read_notion_comments.js";
 
 registerNotionProvider();
 
@@ -41,6 +47,9 @@ registerIdentityMapper("slack", (ctx) => {
   const attrs = (ctx.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
   return { workspace: attrs.team_id, surface: attrs.channel_id, mode: "channel", visibility: "private", trust: "internal" };
 });
+
+assertPackageDistFresh("packages/core", "@open-everywhere/core");
+assertPackageDistFresh("packages/providers/notion", "@open-everywhere/provider-notion");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -95,6 +104,24 @@ const slackCtx = (channel: string): BindableContext =>
     channel: { kind: "slack" },
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: channel }, principalId: "U1", principalType: "slack-user" } } },
   }) as BindableContext;
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+  ContextContainer: new () => unknown;
+  contextStorage: { run<T>(store: unknown, fn: () => T): T };
+};
+async function withSlackWorkerAuthority<T>(channel: string, fn: () => T | Promise<T>): Promise<T> {
+  return contextStorage.run(new ContextContainer(), async () => {
+    assert.ok(
+      adoptDelegatedAuthority(
+        { binding: bindFrom(slackCtx(channel)), requester: { kind: "requester", principalId: "U1" }, nonMemberWake: false },
+        "turn_0",
+      ),
+      "fixture must install the host-captured child dispatch authority",
+    );
+    return fn();
+  });
+}
 const notionCtx = (page: string, ws = WS): BindableContext =>
   ({
     channel: { kind: "notion" },
@@ -304,44 +331,58 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   } as unknown as BindableContext;
 
   ok(isSubagentChildContext(workerResolverCtx("C_DEV")), "the resolver-shaped worker context IS recognised as a native subagent child");
-  ok(
-    resolvePartition(workerResolverCtx("C_DEV")).surfaceKey === "slack/T1/C_DEV",
-    "🔴 a delegated worker's surface key is its SPAWNING surface's key — not `unified/<domain>/…`, not `subagent/…`",
-  );
-  ok(notionCallerDomain(resolvePartition(workerResolverCtx("C_DEV")).surfaceKey, DOMAINS)?.name === "soak", "…so it resolves the spawning domain");
+  await withSlackWorkerAuthority("C_DEV", async () => {
+    ok(
+      resolvePartition(workerResolverCtx("C_DEV")).surfaceKey === "slack/T1/C_DEV",
+      "🔴 a delegated worker's surface key is its DISPATCH surface — not launch-time sibling auth, `unified/<domain>/…`, or `subagent/…`",
+    );
+    ok(notionCallerDomain(resolvePartition(workerResolverCtx("C_DEV")).surfaceKey, DOMAINS)?.name === "soak", "…so it resolves the dispatch domain");
 
-  ok((await resolve({}, workerResolverCtx("C_DEV"))) === notionSearchEntry, "🔴 notion_search MOUNTS on a delegated worker spawned from a work-granted domain");
-  ok((await resolve({}, workerHookCtx("C_DEV"))) === notionSearchEntry, "…on the hook-shaped context too — both discriminator sets agree");
-  ok(notionWorkMount(workerResolverCtx("C_DEV"), () => DOMAINS), "the mount predicate is true for the worker (explicit true)");
+    ok((await resolve({}, workerResolverCtx("C_DEV"))) === notionSearchEntry, "🔴 notion_search MOUNTS on a delegated worker dispatched from a work-granted domain");
+    ok((await resolve({}, workerHookCtx("C_DEV"))) === notionSearchEntry, "…on the hook-shaped context too — both discriminator sets agree");
+    ok(notionWorkMount(workerResolverCtx("C_DEV"), () => DOMAINS), "the mount predicate is true for the worker (explicit true)");
 
-  ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.credential === "soak-work-key", "the worker's grant names the WORK credential");
-  ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.domain.name === "soak", "…and names the spawning domain, never a wider set");
+    ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.credential === "soak-work-key", "the worker's grant names the WORK credential");
+    ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.domain.name === "soak", "…and names the dispatch domain, never a wider set");
+  });
 
-  ok((await resolve({}, workerResolverCtx("C_ENG"))) === null, "🔴 a worker spawned from an UNGRANTED domain mounts NOTHING — delegation is not a grant");
-  ok((await resolve({}, workerResolverCtx("C_BILL"))) === null, "🔴 …and a chat-credential declaration does not mount it for a worker either");
-  ok((await resolve({}, workerResolverCtx("C_NOWHERE"))) === null, "🔴 …nor does a worker spawned from a surface in no domain");
-  ok(notionWorkGrant(workerResolverCtx("C_ENG"), DOMAINS) === undefined, "…and no work credential resolves there (explicit undefined)");
+  await withSlackWorkerAuthority("C_ENG", async () => {
+    ok((await resolve({}, workerResolverCtx("C_ENG"))) === null, "🔴 a worker dispatched from an UNGRANTED domain mounts NOTHING — delegation is not a grant");
+    ok(notionWorkGrant(workerResolverCtx("C_ENG"), DOMAINS) === undefined, "…and no work credential resolves there (explicit undefined)");
+  });
+  await withSlackWorkerAuthority("C_BILL", async () => {
+    ok((await resolve({}, workerResolverCtx("C_BILL"))) === null, "🔴 a chat-credential declaration does not mount the work tool for a worker");
+  });
+  await withSlackWorkerAuthority("C_NOWHERE", async () => {
+    ok((await resolve({}, workerResolverCtx("C_NOWHERE"))) === null, "🔴 a worker dispatched from a surface in no domain mounts nothing");
+  });
 
   ok(notionCallerDomain(resolvePartition(unstampedWorkerCtx).surfaceKey, DOMAINS) === undefined, "an unstamped child resolves NO domain — the hop is what carries the identity");
   ok((await resolve({}, unstampedWorkerCtx)) === null, "🔴 …so notion_search is ABSENT on it (fail closed, never a guessed domain)");
 
   const execute = readNotionPageEntry.execute as (i: unknown, c: BindableContext) => Promise<unknown>;
-  await assert.rejects(
-    () => execute({ page: SPEC_PAGE }, workerResolverCtx("C_DEV")),
-    /work credential "soak-work-key"/,
-    "a worker's read of its own domain's page passes both fences and resolves the WORK credential",
+  await withSlackWorkerAuthority("C_DEV", () =>
+    assert.rejects(
+      () => execute({ page: SPEC_PAGE }, workerResolverCtx("C_DEV")),
+      /work credential "soak-work-key"/,
+      "a worker's read of its own domain's page passes both fences and resolves the WORK credential",
+    ),
   );
   passed++;
-  await assert.rejects(
-    () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_DEV")),
-    ChannelScopeError,
-    "🔴 …and STILL cannot reach another domain's page (the OPE-913 cross-domain wall holds for a worker)",
+  await withSlackWorkerAuthority("C_DEV", () =>
+    assert.rejects(
+      () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_DEV")),
+      ChannelScopeError,
+      "🔴 …and STILL cannot reach another domain's page (the OPE-913 cross-domain wall holds for a worker)",
+    ),
   );
   passed++;
-  await assert.rejects(
-    () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_ENG")),
-    TurnOriginFenceError,
-    "🔴 a worker in an UNGRANTED domain is still refused by the per-turn origin fence",
+  await withSlackWorkerAuthority("C_ENG", () =>
+    assert.rejects(
+      () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_ENG")),
+      TurnOriginFenceError,
+      "🔴 a worker in an UNGRANTED domain is still refused by the per-turn origin fence",
+    ),
   );
   passed++;
 
@@ -461,17 +502,21 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   );
   passed++;
 
-  await assert.rejects(
-    () => execute({ page: SPEC_PAGE }, askingWorker("C_DEV")),
-    /asks to act with the requester's own notion account/,
-    "🔴 …and so does the DELEGATED WORKER, which is where the live substitution happened",
+  await withSlackWorkerAuthority("C_DEV", () =>
+    assert.rejects(
+      () => execute({ page: SPEC_PAGE }, askingWorker("C_DEV")),
+      /asks to act with the requester's own notion account/,
+      "🔴 …and so does the DELEGATED WORKER, which is where the live substitution happened",
+    ),
   );
   passed++;
 
-  await assert.rejects(
-    () => execute({ page: SPEC_PAGE }, askingWorkerTokenOnly("C_DEV")),
-    /asks to act with the requester's own notion account/,
-    "🔴 …including one whose only linkage to its seat is the subagent continuation token",
+  await withSlackWorkerAuthority("C_DEV", () =>
+    assert.rejects(
+      () => execute({ page: SPEC_PAGE }, askingWorkerTokenOnly("C_DEV")),
+      /asks to act with the requester's own notion account/,
+      "🔴 …including one whose only linkage to its seat is the subagent continuation token",
+    ),
   );
   passed++;
 

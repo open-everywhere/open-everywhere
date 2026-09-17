@@ -49,8 +49,8 @@ export function isRunFireSeatWindowId(windowId: string): boolean {
 export function fireReplyMandate(wakeId: string): string {
   return (
     "<system-reminder>\n" +
-    "This turn was started by a TRIGGER, not by a message, so there is no wake envelope above this " +
-    `line and no one is going to send you one: the \`wake-id\` for this fire is \`${wakeId}\`.\n` +
+    "This turn was started by a TRIGGER, not by a message. The host marker above carries this " +
+    `fire's \`wake-id\`: \`${wakeId}\`.\n` +
     "You are in a cross-surface window, so anything you have to say MUST be delivered by CALLING THE " +
     "`reply` TOOL with `wake` set to that exact id — your turn-final text is not posted here. " +
     `Choosing to stay silent is still fine (end with ${NO_REPLY_SENTINEL}, or call the no_reply tool). ` +
@@ -60,13 +60,24 @@ export function fireReplyMandate(wakeId: string): string {
   );
 }
 
+export function fireWakeMarker(wakeId: string): string {
+  const escaped = wakeId
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("'", "&apos;");
+  return `<wake wake-id="${escaped}"></wake>`;
+}
+
 export function renderFireWindowMessage(
   message: string,
   wakeId: string,
   attributes: Readonly<Record<string, unknown>> = {},
 ): string {
-  if (attributes[ROUTINE_MARKER.silent] === "true") return message;
-  return `${message}\n\n${fireReplyMandate(wakeId)}`;
+  const addressed = `${fireWakeMarker(wakeId)}\n\n${message}`;
+  if (attributes[ROUTINE_MARKER.silent] === "true") return addressed;
+  return `${addressed}\n\n${fireReplyMandate(wakeId)}`;
 }
 
 export interface FireWindowPlan {

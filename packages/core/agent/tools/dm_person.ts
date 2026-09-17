@@ -118,7 +118,7 @@ const dmPersonEntry = defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `start a direct message with ${target.platform} person ${target.principalId}`;

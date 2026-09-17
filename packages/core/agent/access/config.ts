@@ -33,6 +33,7 @@ export interface AccessRequestsConfig {
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
+  domainRegistry?(): readonly Domain[];
   groupRegistry?(): readonly Group[];
   baseConnectorCredentials?(): readonly ConnectorCredentials[];
 }

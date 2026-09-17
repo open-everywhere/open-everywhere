@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
-import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, PR_READ_PERMISSIONS, CONVERSATION_WRITE_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
+import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, MEMORY_WRITE_PERMISSIONS, READ_PERMISSIONS, PR_READ_PERMISSIONS, CONVERSATION_WRITE_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
 import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, stagePushCommand, parseStagedSha, PENDING_REF_PREFIX, STAGED_SHA_MARKER, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
 import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
 import {
@@ -54,10 +54,10 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  const body = buildMintBody(["web", "web", "api"]);
+  const body = buildMintBody(["web", "web", "api"], DEFAULT_PERMISSIONS);
   ok(body.repositories.length === 2 && body.repositories.includes("web") && body.repositories.includes("api"), "mint body dedups repo names");
   ok(body.permissions.contents === "write" && body.permissions.pull_requests === "write" && body.permissions.metadata === "read", "default permissions are the PR-flow write set");
-  ok(buildMintBody(Array.from({ length: 600 }, (_, i) => `r${i}`)).repositories.length === 500, "repo list is capped at 500");
+  ok(buildMintBody(Array.from({ length: 600 }, (_, i) => `r${i}`), DEFAULT_PERMISSIONS).repositories.length === 500, "repo list is capped at 500");
   ok(DEFAULT_PERMISSIONS.contents === "write", "exported default permissions are correct");
   const ro = buildMintBody(["web"], READ_PERMISSIONS);
   ok(ro.permissions.contents === "read" && ro.permissions.metadata === "read", "checkout read set is contents:read + metadata:read");
@@ -74,6 +74,15 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(
     READ_PERMISSIONS.pull_requests === undefined,
     "🔴 the PERSISTED checkout set still carries NO pull_requests — PR_READ_PERMISSIONS is a SEPARATE constant, never a widening of the credential that lands in a clone's git config",
+  );
+  const memory = buildMintBody(["brain"], MEMORY_WRITE_PERMISSIONS);
+  ok(
+    memory.permissions.contents === "write" && memory.permissions.metadata === "read",
+    "GitHub memory's job set can read, write and delete files through the Contents API",
+  );
+  ok(
+    memory.permissions.pull_requests === undefined && memory.permissions.issues === undefined,
+    "🔴 GitHub memory's warm credential carries NO pull-request or issue write authority",
   );
 }
 

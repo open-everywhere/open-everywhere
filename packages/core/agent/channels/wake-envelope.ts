@@ -2,6 +2,7 @@ import { ingestUntrusted, untrustedCloseTag, UNTRUSTED_OPEN } from "../access/un
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
+import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
 
 export type WakeReason =
@@ -155,8 +156,10 @@ function renderMessage(m: WakeMessageInput, sourcePlatform: string): string {
   const unfenced = authorTrustAdmitsUnfencedBody(m);
 
   noteIngestionVerdict({ kind: "chat-message", label: `wake-envelope:${sourcePlatform}` }, unfenced ? false : taintMarkLands());
-  const renderBody = (text: string, source: string): string =>
-    unfenced ? capResult(escapeXml(text)) : ingestUntrusted(escapeXml(text), { source });
+  const renderBody = (text: string, source: string): string => {
+    const projected = m.from === "human" ? text : redactMachineLinkCodes(text);
+    return unfenced ? capResult(escapeXml(projected)) : ingestUntrusted(escapeXml(projected), { source });
+  };
   const body = renderBody(m.body, `${sourcePlatform}-message`);
   const previousBody = m.previousBody
     ? `\n<previous-body>\n${indent(renderBody(m.previousBody, `${sourcePlatform}-message-previous`), 2)}\n</previous-body>`
@@ -266,6 +269,20 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
 const MESSAGE_ELEMENT_RE = /<message(\s[^>]*)>([\s\S]*?)<\/message>/g;
 
 const WAKE_OPENER_RE = /<wake\b/g;
+const WAKE_WITH_ATTRIBUTES_RE = /<wake\b([^>]*)>/g;
+const WAKE_ID_ATTR_RE = /\bwake-id="([^"]+)"/;
+const UNTRUSTED_BLOCK_RE = /<untrusted_external_data\b[^>]*>[\s\S]*?<\/untrusted_external_data(?:\s+nonce="[^"]+")?>/g;
+
+export function wakeIdsFromEnvelope(rendered: string): readonly string[] {
+  const ids: string[] = [];
+  const hostStructure = rendered.replace(UNTRUSTED_BLOCK_RE, "");
+  for (const match of hostStructure.matchAll(WAKE_WITH_ATTRIBUTES_RE)) {
+    const encoded = WAKE_ID_ATTR_RE.exec(match[1] ?? "")?.[1];
+    if (encoded === undefined || encoded.length === 0) continue;
+    ids.push(unescapeXml(encoded));
+  }
+  return ids;
+}
 
 const TRIGGER_ATTR_RE = /\btrigger="true"/;
 

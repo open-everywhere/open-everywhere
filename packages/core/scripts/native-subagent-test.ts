@@ -11,6 +11,7 @@ _setDeploymentIdentityForTest({ workspace: "dev" });
 
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureMapper();
+__slackStubs.registerSlackFixtureCodec();
 
 import {
   bindFrom,
@@ -56,13 +57,14 @@ const PARENT_ATTRS = {
 
 const parentCtx = {
   channel: { kind: "channel:slack", continuationToken: `unified:${PARENT_TOKEN}` },
-  session: { id: "sess-parent", auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } } },
+  session: { id: "sess-parent", turn: { id: "turn_parent", sequence: 1 }, auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } } },
 } as unknown as BindableContext;
 
 const childCtx = {
   channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
   session: {
     id: "sess-child",
+    turn: { id: "turn_child", sequence: 0 },
     parent: { sessionId: "sess-parent", callId: "call_1", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
     auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } },
   },
@@ -99,11 +101,56 @@ ok(subagentParentSessionId(childCtx) === "sess-parent", "the typed linkage names
 ok(subagentParentSessionId(parentCtx) === undefined, "…and is absent on a root run");
 ok(SUBAGENT_CHANNEL_KIND === "subagent", "the framework channel kind constant matches eve's FRAMEWORK_CHANNEL_KINDS spelling");
 
-ok(channelPlatform(childCtx) === "slack", "🔴 D1: a child's channelPlatform resolves the PARENT's origin platform from the inherited oe_platform stamp — not the literal `subagent` kind");
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+  ContextContainer: new () => unknown;
+  contextStorage: { run<T>(store: unknown, fn: () => T): T };
+};
+function inSession<T>(fn: () => T): T {
+  return contextStorage.run(new ContextContainer(), fn);
+}
+
+ok(channelPlatform(childCtx) === "slack", "D1: the inherited platform stamp remains available as a compatibility label before the opening hook; bindFrom below still requires durable authority");
 ok(channelPlatform(unstampedChildCtx) === "subagent", "🔴 D1 FAIL-CLOSED: with no inherited stamp it stays `subagent` — no mapper, so bindFrom falls through to bindLocal exactly as any unknown kind does; never a GUESSED platform");
 
-{
+await inSession(async () => {
   const parent = bindFrom(parentCtx);
+  const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+  const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
+  const envelope = `<wake wake-id="wake_probe_393"><channel><message from="human" author-id="UPROBE393" trigger="true">delegate</message></channel></wake>`;
+  await registerUnifiedWakeTarget(
+    getOperationalStore(),
+    parent.org,
+    "wake_probe_393",
+    { platform: "slack", channelId: parent.surface },
+    new Date().toISOString(),
+    PARENT_TOKEN,
+    true,
+    undefined,
+    `${parent.platform}/${parent.workspace}/${parent.surface}`,
+    parent,
+    { binding: parent, requester: { kind: "requester", principalId: "UPROBE393" }, nonMemberWake: false },
+  );
+  recordDeliveredWakes("turn_parent", envelope);
+  recordRequesterIdentity(parentCtx, "turn_parent", envelope);
+  const spawnEvents = (
+    (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+      events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
+    }
+  ).events;
+  await spawnEvents["actions.requested"]!(
+    { data: { actions: [{ kind: "subagent-call", callId: "call_1", subagentName: "agent" }] } },
+    parentCtx,
+  );
+  const bindingStarted = (
+    (await import("../agent/hooks/binding-bridge.js")).default as unknown as {
+      events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
+    }
+  ).events["turn.started"]!;
+  await bindingStarted({}, childCtx);
   const child = bindFrom(childCtx);
   eq(
     { platform: child.platform, workspace: child.workspace, surface: child.surface, mode: child.mode, visibility: child.visibility, trust: child.trust, principalId: child.principalId },
@@ -113,13 +160,13 @@ ok(channelPlatform(unstampedChildCtx) === "subagent", "🔴 D1 FAIL-CLOSED: with
   ok(child.platform === "slack" && child.workspace === "T0EXAMPLE" && child.surface === "C0EXCHAN003", "…and the values are the PARENT's real surface, so connector grants / memory / egress / spend all resolve against it");
 
   ok(channelPlatform(childToolCtx) === undefined || channelPlatform(childToolCtx) !== "slack", "a child TOOL context carries no channel, so channelPlatform cannot hop directly — the binding bridge is what heals it, and the bridge re-enters this function with kind `subagent`");
-}
+});
 
 {
   const unstamped = bindFrom(unstampedChildCtx);
-  ok(unstamped.platform === "subagent", `🔴 D1 RED (the pre-fix world, still the answer when nothing stamped the origin): platform "subagent" (got "${unstamped.platform}")`);
+  ok(unstamped.platform === "subagent", `🔴 D1 FAIL-CLOSED: without restored durable authority the platform stays "subagent" (got "${unstamped.platform}")`);
   ok(unstamped.workspace === "dev", `…workspace literally "dev" — bindFrom's declared ambient-workspace rung, NOT the unnamed-tenant literal (got "${unstamped.workspace}"; correcting the first written account of this bug)`);
-  ok(unstamped.surface === "default", "…surface `default`");
+  ok(unstamped.surface === "unresolved", "…surface `unresolved`, so no deployment scope can treat the missing authority as a real room");
   ok(unstamped.principalId === undefined, "…and NO principal — which is why its spend rows were unattributed as well as mis-partitioned (OPE-394)");
   ok(unstamped.trust === "external", "…and trust fails CLOSED to external, so the memory gate grants it nothing");
 }
@@ -220,16 +267,6 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   delete rootDeps.parentPublishedFingerprint;
   const rootRes = await enforceEgress("session.started", rootDeps as never);
   ok(rootRes.abortError === undefined && root.applied.length === 1, "a root session's deps carry no parentPublishedFingerprint, so the tripwire costs it not even a read");
-}
-
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
-  ContextContainer: new () => unknown;
-  contextStorage: { run<T>(store: unknown, fn: () => T): T };
-};
-function inSession<T>(fn: () => T): T {
-  return contextStorage.run(new ContextContainer(), fn);
 }
 
 {

@@ -1,5 +1,13 @@
 import { afterAll, expect, test } from "vitest";
-import { bootAgent, NOTION_WORKSPACE_ID, notionCommentEventPost, readAuditRows, waitFor } from "../harness";
+import {
+  bootAgent,
+  CREDENTIAL_ENCRYPTION_KEY,
+  NOTION_WORKSPACE_ID,
+  notionCommentEventPost,
+  readAuditRows,
+  setEnvForRunningAgent,
+  waitFor,
+} from "../harness";
 
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = "";
 
@@ -13,7 +21,8 @@ afterAll(async () => {
 });
 
 test("an UNREGISTERED db broker: the delivery still acks 200, and the deployment names the broker nobody registered", async () => {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
+  setEnvForRunningAgent("OE_CREDENTIAL_ENCRYPTION_KEY", CREDENTIAL_ENCRYPTION_KEY);
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: "it-ope-776-comment-1" });

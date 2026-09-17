@@ -10,6 +10,8 @@ import { getOperationalStore } from "../operational/provider.js";
 import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
 import { humanAccountLabel } from "../identity/account-display-name.js";
 import { ingestUntrusted } from "../access/untrusted.js";
+import { resolvePartition } from "../memory/partition.js";
+import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 
 function claimantLabel(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): string {
   if (!platform || !nativeId) return "an account this request never recorded";
@@ -82,7 +84,6 @@ export default defineTool({
     decided: z.string(),
     role: z.string().optional(),
     initiatorName: z.string().optional(),
-    codeBack: z.string().optional(),
     needsCode: z.boolean().optional(),
     claimant: z.string().optional(),
     claimantName: z.string().optional(),
@@ -136,7 +137,15 @@ export default defineTool({
     }
 
     if (picked.role === "consent") {
-      return await decideConsent({ org: binding.org, platform: binding.platform, tenant, actor, challenge: picked.challenge, input });
+      return await decideConsent({
+        org: binding.org,
+        platform: binding.platform,
+        tenant,
+        actor,
+        channelId: resolvePartition(ctx).surface,
+        challenge: picked.challenge,
+        input,
+      });
     }
     const challenge = picked.challenge;
     if (challenge.initiatingPlatform !== binding.platform || challenge.initiatingTenant !== tenant || challenge.initiatingNativeId !== actor) {
@@ -217,9 +226,10 @@ async function decideConsent(args: {
   readonly platform: string;
   readonly tenant: string;
   readonly actor: string;
+  readonly channelId: string;
   readonly challenge: LinkChallengeRow;
   readonly input: { readonly decision: "confirm" | "deny"; readonly acknowledge?: boolean; readonly challengeId?: string; readonly code?: string };
-}): Promise<{ decided: string; role: string; initiatorName?: string; codeBack?: string; challengeId?: string; note: string }> {
+}): Promise<{ decided: string; role: string; initiatorName?: string; challengeId?: string; note: string }> {
   const c = args.challenge;
   const who = fencedClaimantName(await claimantName(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId));
 
@@ -255,14 +265,24 @@ async function decideConsent(args: {
     deliverable: true,
   });
 
+  if (backCode) {
+    try {
+      await postSurfaceTextStrict(args.platform, { channelId: args.channelId, text: codeBackInstructions(backCode) });
+    } catch (err) {
+      console.log(`[open-everywhere:identity] link consent ${c.id}: private second-code delivery outcome is unknown: ${String(err)}`);
+      throw new Error(
+        "Consent was recorded, but I could not confirm whether the private second code was posted. Check this DM: if the code appeared, give it to the person who started the link; if none appeared, this request will expire. Nothing is linked.",
+      );
+    }
+  }
+
   return {
     decided: "consented",
     role: "consent",
     initiatorName: who,
-    ...(backCode ? { codeBack: backCode } : {}),
     challengeId: c.id,
     note: backCode
-      ? `Consent recorded. Nothing is linked yet. Show them this exactly: ${codeBackInstructions(backCode)}`
+      ? "Consent recorded. Nothing is linked yet. I posted the private second code directly in this DM; give it to the person who started the link. Do not repeat or quote it yourself."
       : noteThenAccounts("Consent recorded. Nothing is linked yet — the account that asked has to finish it on their side, and I have told them so.", who),
   };
 }

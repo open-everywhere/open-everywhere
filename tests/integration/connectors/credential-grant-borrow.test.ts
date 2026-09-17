@@ -5,6 +5,7 @@ import { getOperationalStore } from "@open-everywhere/core/agent/operational/pro
 import { encryptedKvVault } from "@open-everywhere/core/agent/credentials/kv-vault.js";
 import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connections/connector-auth.js";
 import { grantCardActionId } from "@open-everywhere/core/agent/access/credential-grant-card.js";
+import { grantOwnerNoticeText } from "@open-everywhere/core/agent/access/credential-grant-notice.js";
 import { isGrantToolName, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
 
 import {
@@ -249,6 +250,15 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(snapshotProps["page_size"], "the row pinned no vendor schema, so the approve-time catalogue read never happened").toBeDefined();
   expect(snapshotProps["id"]?.const, "the frozen page is not `const`-pinned in the snapshot the mount will offer").toBe(GRANTED_PAGE_ID);
   expect(grant.inputSchema?.["required"], "the frozen page is pinned but optional, so the model could omit it").toContain("id");
+  const ownerNoticeFirstLine = grantOwnerNoticeText(grant, undefined, Date.now()).split("\n", 1)[0]!;
+  const ownerNoticePosts = () =>
+    slack.calls.filter(
+      (call) =>
+        call.method === "chat.postMessage" &&
+        call.params.get("channel") === OWNER_DM_CHANNEL &&
+        call.params.get("text")?.startsWith(ownerNoticeFirstLine) === true,
+    );
+  expect(ownerNoticePosts(), "a first-use owner notice was sent before the grant was used").toHaveLength(0);
   const listed = vendorRequests(vendor, "tools/list");
   expect(listed, "the approve path never read the owner's live catalogue").toHaveLength(1);
   expect(new Headers(listed[0]!.init?.headers ?? {}).get("authorization"), "the catalogue was read under something other than the OWNER's minted token").toBe(
@@ -306,6 +316,21 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(detail["requester"]).toBe(REQUESTER_PRINCIPAL);
   expect(detail["mode"]).toBe("session");
   expect(JSON.stringify(used[0]), "a credential value reached the audit chain").not.toContain(OWNER_ACCESS_TOKEN);
+  const firstUseNotice = await waitFor(async () => {
+    const rows = (await readAuditRows({ actions: ["grant.notified"], sinceIso })).filter(
+      (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
+    );
+    const posts = ownerNoticePosts();
+    return rows.length > 0 && posts.length > 0 ? { posts, rows } : undefined;
+  }, `the first-use owner notice and grant.notified row for ${grant.id}`);
+  expect(firstUseNotice.posts, "the first grant use sent more than one owner notice").toHaveLength(1);
+  expect(firstUseNotice.rows, "the first grant use wrote more than one grant.notified row").toHaveLength(1);
+  const notifiedDetail = firstUseNotice.rows[0]!.detail ?? {};
+  expect(notifiedDetail["outcome"]).toBe("sent");
+  expect(notifiedDetail["ownerPlatform"]).toBe("slack");
+  expect(notifiedDetail["owner"]).toBe(OWNER_PRINCIPAL);
+  expect(notifiedDetail["requester"]).toBe(REQUESTER_PRINCIPAL);
+  expect(JSON.stringify(firstUseNotice.rows[0]), "a credential value reached the owner-notice audit row").not.toContain(OWNER_ACCESS_TOKEN);
   expect((await readAuditRows({ actions: ["grant.refused"], sinceIso })).filter((r) => (r.detail as { grantId?: unknown }).grantId === grant.id)).toEqual([]);
 
   expect(vendorRequests(vendor, "notifications/initialized").length, "the SDK never sent `notifications/initialized`, so it never tried to open the SSE stream").toBeGreaterThan(0);
@@ -347,6 +372,20 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   );
   expect(JSON.stringify(postDeploy.output), "the grant stopped working after turn 3's refusal, so that refusal spent it").toContain(VENDOR_BODY_MARKER);
   expect(vendorRequests(vendor, "tools/call"), "the post-deploy granted call never reached the vendor").toHaveLength(beforeRedeploy + 1);
+  const usedTwice = await waitFor(async () => {
+    const rows = (await readAuditRows({ actions: ["grant.used"], sinceIso })).filter(
+      (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
+    );
+    return rows.length >= 2 ? rows : undefined;
+  }, `the second grant.used audit row for ${grant.id}`);
+  expect(usedTwice, "the session grant was used more than twice before the retry leg").toHaveLength(2);
+  expect(ownerNoticePosts(), "the second successful use sent the owner another first-use notice").toHaveLength(1);
+  expect(
+    (await readAuditRows({ actions: ["grant.notified"], sinceIso })).filter(
+      (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
+    ),
+    "the second successful use wrote another grant.notified row",
+  ).toHaveLength(1);
 
   const beforeRateLimited = vendorRequests(vendor, "tools/call").length;
   vendor.refuseNextCalls(1, "1");

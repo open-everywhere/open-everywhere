@@ -2,11 +2,12 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, authPrincipalId, attestedFireCreatorId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, authPrincipalId, attestedFireCreatorId, bindFrom, carriesPlatformIdentity, windowGrainOf, windowTaskLabelOf, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import {
   WAKE_INGRESS_ACTION,
   wakeIngressDetail,
@@ -44,9 +45,13 @@ import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import {
   OE_REQUESTER_ATTR,
   OE_REQUESTER_CANDIDATES_ATTR,
+  REQUESTER_UNVERIFIED,
   requesterCandidatesStampForDispatch,
   requesterStampForDispatch,
+  requesterVerdictFor,
+  type RequesterVerdict,
 } from "../access/requester-identity.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
@@ -90,6 +95,11 @@ export function completeWakeAuth(
 }
 
 let rememberedReceive: RouteHandlerArgs["to"] | undefined;
+
+function authString(value: unknown): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value;
+  return typeof first === "string" && first.length > 0 ? first : undefined;
+}
 function rememberUnifiedReceive(to: RouteHandlerArgs["to"]): void {
   rememberedReceive = to;
 }
@@ -123,6 +133,7 @@ export interface UnifiedReceiveTarget {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;
   readonly surfaceKey: string;
+  readonly authority?: UnifiedWakeAuthority;
   readonly context?: readonly string[];
   readonly answer?: {
     readonly requestId: string;
@@ -365,6 +376,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       typeof t.wakeId !== "string" ||
       t.wakeId.length === 0 ||
       typeof t.surfaceKey !== "string" ||
+      (t.authority !== undefined && !isUnifiedWakeAuthority(t.authority)) ||
       !isUnifiedWakeOrigin(t.origin) ||
       (t.answer !== undefined &&
         (typeof t.answer.requestId !== "string" ||
@@ -378,7 +390,16 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
-    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing, t.surfaceKey);
+    const store = getOperationalStore();
+    const existingAuthority = await resolveUnifiedWakeAuthority(store, org, t.wakeId);
+    const authority = existingAuthority
+      ? {
+          binding: existingAuthority.binding,
+          requester: existingAuthority.requester,
+          nonMemberWake: existingAuthority.nonMemberWake,
+        }
+      : t.authority;
+    await registerUnifiedWakeTarget(store, org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing, t.surfaceKey, authority?.binding, authority);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     await drainGenerationRetirements(from, { org, incomingToken: t.token }, { labelsFor: auditLabels });
     const answerText = typeof input.message === "string" ? input.message : undefined;
@@ -733,6 +754,7 @@ export async function divertToUnifiedWindow(
     readonly window: UnifiedWindowWake;
     readonly surfaceKey: string;
     readonly auth: { attributes?: Record<string, unknown> };
+    readonly binding?: SurfaceBinding;
     readonly internalDispatch?: true;
   },
 ): Promise<void> {
@@ -749,6 +771,17 @@ export async function divertToUnifiedWindow(
     }).catch(() => undefined);
     return;
   }
+  if (input.binding !== undefined) {
+    const bindingKey = `${input.binding.platform}/${input.binding.workspace}/${input.binding.surface}`;
+    if (
+      !isFrozenSurfaceBinding(input.binding) ||
+      input.binding.org !== deploymentOrg() ||
+      bindingKey !== input.surfaceKey ||
+      !wakeBindingMatchesOrigin(input.binding, input.window.origin)
+    ) {
+      throw new Error("unified continuation binding does not match its durable origin");
+    }
+  }
   if (input.internalDispatch !== true && (await windowSpendGate(input)) === "declined") {
     ulog(`DECLINED single-window wake ${input.window.wakeId} from ${input.surfaceKey} — over its spend cap (refusal posted, no model turn)`);
     return;
@@ -758,7 +791,13 @@ export async function divertToUnifiedWindow(
   const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
   const replyAnchor = unifiedPlacementRef(input.window.origin);
   const deliveryId = mintWakeId();
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor, deliveryId);
+  const authorityAttributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}) };
+  delete authorityAttributes[OE_FROZEN_SURFACE_BINDING_ATTR];
+  if (input.binding !== undefined) authorityAttributes[OE_FROZEN_SURFACE_BINDING_ATTR] = JSON.stringify(input.binding);
+  const authorityAuth = { ...input.auth, attributes: authorityAttributes };
+  const auth = stampUnifiedWindowAuth(authorityAuth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor, deliveryId);
+  const bindingContext: BindableContext = { channel: { kind: "unified" }, session: { auth: { current: auth as never } } };
+  const binding = input.binding ?? (carriesPlatformIdentity(bindingContext) ? bindFrom(bindingContext) : undefined);
   try {
     if (input.internalDispatch !== true) {
       await appendAudit({
@@ -784,6 +823,20 @@ export async function divertToUnifiedWindow(
     token: input.token,
     wakeId: input.window.wakeId,
     origin: input.window.origin,
+    ...(binding
+      ? {
+          authority: {
+            binding,
+            requester: requesterVerdictFor({
+              text: input.message,
+              seat: input.internalDispatch === true ? "worker" : "room",
+              inherited: authString(authorityAttributes[OE_REQUESTER_ATTR]),
+              inheritedCandidates: authString(authorityAttributes[OE_REQUESTER_CANDIDATES_ATTR]),
+            }),
+            nonMemberWake: authString(authorityAttributes[OE_CHAT_NONMEMBER_ATTR]) === "true",
+          },
+        }
+      : {}),
     ...(answer ? { answer } : {}),
     surfaceKey: input.surfaceKey,
     inbound: input.internalDispatch !== true,
@@ -946,9 +999,24 @@ export async function dispatchApprovalDecisionWake(input: {
   readonly wakeId: string;
   readonly message: string;
   readonly domain: string;
+  readonly binding?: SurfaceBinding;
+  readonly requester?: RequesterVerdict;
+  readonly nonMemberWake?: boolean;
   readonly authAttributes?: Record<string, unknown>;
 }): Promise<boolean> {
-  return dispatchAmbientSeatWake(input);
+  if (input.binding === undefined || input.requester === undefined) return false;
+  const attributes: Record<string, unknown> = { ...(input.authAttributes ?? {}) };
+  if (input.requester !== undefined) {
+    attributes[OE_REQUESTER_ATTR] = input.requester.kind === "requester" ? input.requester.principalId : REQUESTER_UNVERIFIED;
+    if (input.requester.kind === "unverified" && input.requester.candidates !== undefined) {
+      attributes[OE_REQUESTER_CANDIDATES_ATTR] = JSON.stringify(input.requester.candidates);
+    } else {
+      delete attributes[OE_REQUESTER_CANDIDATES_ATTR];
+    }
+  }
+  if (input.nonMemberWake === true) attributes[OE_CHAT_NONMEMBER_ATTR] = "true";
+  else delete attributes[OE_CHAT_NONMEMBER_ATTR];
+  return dispatchAmbientSeatWake({ ...input, authAttributes: attributes });
 }
 
 async function dispatchAmbientSeatWake(input: {
@@ -957,10 +1025,13 @@ async function dispatchAmbientSeatWake(input: {
   readonly wakeId: string;
   readonly message: string;
   readonly domain: string;
+  readonly binding?: SurfaceBinding;
   readonly authAttributes?: Record<string, unknown>;
 }): Promise<boolean> {
   if (!crossProcessDispatchAvailable()) return false;
-  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform, parseWindowToken(input.token)?.windowId);
+  const surfaceKey = input.binding
+    ? `${input.binding.platform}/${input.binding.workspace}/${input.binding.surface}`
+    : pickRedriveSurfaceKey(input.domain, input.origin.platform, parseWindowToken(input.token)?.windowId);
   if (!surfaceKey) return false;
   try {
     await deliverUnifiedDispatch({
@@ -969,6 +1040,7 @@ async function dispatchAmbientSeatWake(input: {
       window: { wakeId: input.wakeId, origin: input.origin },
       surfaceKey,
       auth: { attributes: input.authAttributes ?? {} },
+      ...(input.binding ? { binding: input.binding } : {}),
     });
     return true;
   } catch {

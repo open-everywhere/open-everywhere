@@ -27,6 +27,7 @@ import {
 import {
   mintWakeId,
   registerUnifiedWakeTarget,
+  resolveUnifiedWakeAuthority,
   resolveUnifiedWakeTarget,
   sameUnifiedConversation,
   resolveAnswerableReplyTarget,
@@ -97,7 +98,7 @@ import {
 import { buildTeamsAuth } from "@open-everywhere/provider-teams/agent/channels/teams-identity.js";
 import { isTrustedTeamsServiceUrl } from "@open-everywhere/provider-teams/agent/channels/teams-origin-codec.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { channelPlatform, isUnifiedWindowContext, turnOriginPlatform, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, turnOriginPlatform, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext, type SurfaceBinding } from "@open-everywhere/core/agent/identity/binding.js";
 import { registerPostArm, postArm, type PostArm } from "@open-everywhere/core/agent/channels/post-arms.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
 import { tailWindowFor } from "@open-everywhere/core/agent/channels/session-tail-record.js";
@@ -396,6 +397,7 @@ await handleGitHubSupervisorDispatch(
 }
 
 const linAuth = buildLinearAuth({
+  agentSessionId: "as-lin-77",
   organizationId: "O_WIN",
   teamId: "T_WINX",
   issueId: "issue-uuid-77",
@@ -821,6 +823,77 @@ await handleTeamsSingleWindowDispatch(
 
 const store = getOperationalStore();
 
+{
+  const requester = { kind: "requester", principalId: "U_AUTH" } as const;
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly origin: UnifiedWakeOrigin;
+    readonly good: SurfaceBinding;
+    readonly bad: SurfaceBinding;
+  }> = [
+    {
+      name: "discord guild",
+      origin: { platform: "discord", channelId: "C_AUTH", guildId: "G_A" },
+      good: { org: "default", platform: "discord", workspace: "G_A", surface: "C_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { channelId: "C_AUTH", guildId: "G_A" } },
+      bad: { org: "default", platform: "discord", workspace: "G_B", surface: "C_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { channelId: "C_AUTH", guildId: "G_B" } },
+    },
+    {
+      name: "notion workspace and credential",
+      origin: { platform: "notion", discussionId: "D_AUTH", pageId: "P_AUTH", workspaceId: "W_A", credentialId: "K_A" },
+      good: { org: "default", platform: "notion", workspace: "W_A", surface: "P_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { discussionId: "D_AUTH", pageId: "P_AUTH", credentialId: "K_A" } },
+      bad: { org: "default", platform: "notion", workspace: "W_B", surface: "P_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { discussionId: "D_AUTH", pageId: "P_AUTH", credentialId: "K_B" } },
+    },
+    {
+      name: "teams tenant",
+      origin: { platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "CONV_AUTH", tenantId: "TENANT_A" },
+      good: { org: "default", platform: "teams", workspace: "TENANT_A", surface: "CONV_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "CONV_AUTH", tenantId: "TENANT_A" } },
+      bad: { org: "default", platform: "teams", workspace: "TENANT_B", surface: "CONV_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "CONV_AUTH", tenantId: "TENANT_B" } },
+    },
+    {
+      name: "github owner repo and installation",
+      origin: { platform: "github", owner: "OWNER_A", repo: "REPO_A", issueNumber: 7, installationId: 11 },
+      good: { org: "default", platform: "github", workspace: "OWNER_A", surface: "REPO_A", mode: "channel", visibility: "private", trust: "internal", target: { owner: "OWNER_A", repo: "REPO_A", issueNumber: 7, installationId: 11 } },
+      bad: { org: "default", platform: "github", workspace: "OWNER_B", surface: "REPO_B", mode: "channel", visibility: "private", trust: "internal", target: { owner: "OWNER_A", repo: "REPO_A", issueNumber: 7, installationId: 11 } },
+    },
+    {
+      name: "linear organization",
+      origin: { platform: "linear", agentSessionId: "AS_AUTH", issueId: "ISSUE_AUTH", parentId: "ROOT_AUTH", organizationId: "ORG_A" },
+      good: { org: "default", platform: "linear", workspace: "ORG_A", surface: "TEAM_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { agentSessionId: "AS_AUTH", issueId: "ISSUE_AUTH", parentId: "ROOT_AUTH", organizationId: "ORG_A" } },
+      bad: { org: "default", platform: "linear", workspace: "ORG_B", surface: "TEAM_AUTH", mode: "channel", visibility: "private", trust: "internal", target: { agentSessionId: "AS_AUTH", issueId: "ISSUE_AUTH", parentId: "ROOT_AUTH", organizationId: "ORG_B" } },
+    },
+  ];
+  for (const [index, fixture] of cases.entries()) {
+    const goodId = `authority-good-${index}`;
+    await registerUnifiedWakeTarget(store, "default", goodId, fixture.origin, new Date().toISOString(), RAW_TOKEN, true, undefined, `${fixture.good.platform}/${fixture.good.workspace}/${fixture.good.surface}`, fixture.good, { binding: fixture.good, requester, nonMemberWake: false });
+    ok((await resolveUnifiedWakeAuthority(store, "default", goodId)) !== undefined, `authority relation: valid ${fixture.name} tuple round-trips`);
+
+    await assert.rejects(
+      () => registerUnifiedWakeTarget(store, "default", `authority-bad-write-${index}`, fixture.origin, new Date().toISOString(), RAW_TOKEN, true, undefined, `${fixture.bad.platform}/${fixture.bad.workspace}/${fixture.bad.surface}`, fixture.bad, { binding: fixture.bad, requester, nonMemberWake: false }),
+      /binding does not match its durable origin/,
+      `authority relation: mismatched ${fixture.name} tuple is rejected on write`,
+    );
+    n++;
+
+    const corruptId = `authority-bad-read-${index}`;
+    await store.putUnifiedWakeTarget("default", corruptId, JSON.stringify({ ...fixture.origin, surfaceKey: `${fixture.bad.platform}/${fixture.bad.workspace}/${fixture.bad.surface}`, authority: { binding: fixture.bad, requester, nonMemberWake: false } }), new Date().toISOString(), WAKE_TARGET_TTL_MS, RAW_TOKEN, true);
+    ok((await resolveUnifiedWakeAuthority(store, "default", corruptId)) === undefined, `authority relation: stored mismatched ${fixture.name} tuple fails closed on read`);
+  }
+
+  const dualOrigin = { platform: "slack", channelId: "C_DUAL", threadTs: "1.1" } as const;
+  const dual = { org: "default", platform: "slack", workspace: "T_DUAL", surface: "C_DUAL", mode: "channel", visibility: "private", trust: "internal", principalId: "U_A", target: { channelId: "C_DUAL" }, threadTs: "1.1" } as const;
+  await assert.rejects(
+    () => registerUnifiedWakeTarget(store, "default", "authority-dual-mismatch", dualOrigin, new Date().toISOString(), RAW_TOKEN, true, undefined, "slack/T_DUAL/C_DUAL", { ...dual, principalId: "U_B" }, { binding: dual, requester, nonMemberWake: false }),
+    /binding does not match its durable origin/,
+    "authority relation: contradictory legacy binding and atomic authority arguments are rejected",
+  );
+  n++;
+
+  const discordDmOrigin = { platform: "discord", channelId: "DM_AUTH", dm: true } as const;
+  const discordDmBinding = { org: "default", platform: "discord", workspace: "U_DM", surface: "DM_AUTH", mode: "dm", visibility: "private", trust: "internal", target: { channelId: "DM_AUTH" } } as const;
+  await registerUnifiedWakeTarget(store, "default", "authority-discord-dm", discordDmOrigin, new Date().toISOString(), RAW_TOKEN, true, undefined, "discord/U_DM/DM_AUTH", discordDmBinding, { binding: discordDmBinding, requester, nonMemberWake: false });
+  ok((await resolveUnifiedWakeAuthority(store, "default", "authority-discord-dm")) !== undefined, "authority relation: explicit Discord DM form remains valid without inventing a guild requirement");
+}
+
 const ope922Require = createRequire(import.meta.url);
 const ope922EveRoot = dirname(ope922Require.resolve("eve/package.json"));
 const ope922Abs = (rel: string): string => pathToFileURL(join(ope922EveRoot, rel)).href;
@@ -897,6 +970,19 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
     ok(
       !(await store.listPendingUnifiedWakes("default", RAW_TOKEN, since, 50)).some((r) => r.wakeId === internalWake),
       "🔴 receive: an INTERNAL wake is NOT listed — counting one would refuse the hand-off note of every delegating turn",
+    );
+
+    const authorityBeforeRedrive = await resolveUnifiedWakeAuthority(store, "default", received[0].target.wakeId);
+    await withGate(true, async () => {
+      await unifiedChannel.receive!(
+        { message: received[0].message, target: received[0].target, auth: received[0].auth as never },
+        { from: fakeFrom, resolveSession: (async () => undefined) as never },
+      );
+    });
+    const authorityAfterRedrive = await resolveUnifiedWakeAuthority(store, "default", received[0].target.wakeId);
+    ok(
+      authorityBeforeRedrive !== undefined && JSON.stringify(authorityAfterRedrive) === JSON.stringify(authorityBeforeRedrive),
+      "receive: re-registering an existing wake projects the resolved row back to the closed authority shape and preserves it",
     );
   }
 

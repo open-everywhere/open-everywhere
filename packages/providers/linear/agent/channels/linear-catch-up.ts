@@ -13,31 +13,27 @@ export async function fetchLinearCatchUpWindow(
   req: { container: string; sinceMs: number; organizationId?: string },
   deps: LinearCatchUpDeps = { readIssue: readLinearIssue },
 ): Promise<readonly NormalizedMessage[]> {
-  try {
-    const issue = await deps.readIssue(req.container, {
-      maxComments: CATCH_UP_MAX_COMMENTS,
-      ...(req.organizationId ? { organizationId: req.organizationId } : {}),
+  const issue = await deps.readIssue(req.container, {
+    maxComments: CATCH_UP_MAX_COMMENTS,
+    ...(req.organizationId ? { organizationId: req.organizationId } : {}),
+  });
+  const out: NormalizedMessage[] = [];
+  for (const c of issue.comments) {
+    const text = c.text.trim();
+    if (text.length === 0 || !c.authorId || !c.id) continue;
+    const ms = Date.parse(c.createdAt ?? "");
+    if (!Number.isFinite(ms) || ms < req.sinceMs) continue;
+    const isSelf = deps.selfActorId !== undefined && c.authorId === deps.selfActorId;
+    out.push({
+      id: c.id,
+      ms,
+      ...(isSelf ? {} : { authorId: c.authorId }),
+      sender: catchUpSender({ self: isSelf }),
+      ...(c.parentId ? { type: "thread" as const, threadId: c.parentId } : { type: "channel" as const }),
+      text,
     });
-    const out: NormalizedMessage[] = [];
-    for (const c of issue.comments) {
-      const text = c.text.trim();
-      if (text.length === 0 || !c.authorId || !c.id) continue;
-      const ms = Date.parse(c.createdAt ?? "");
-      if (!Number.isFinite(ms) || ms < req.sinceMs) continue;
-      const isSelf = deps.selfActorId !== undefined && c.authorId === deps.selfActorId;
-      out.push({
-        id: c.id,
-        ms,
-        ...(isSelf ? {} : { authorId: c.authorId }),
-        sender: catchUpSender({ self: isSelf }),
-        ...(c.parentId ? { type: "thread" as const, threadId: c.parentId } : { type: "channel" as const }),
-        text,
-      });
-    }
-    return out;
-  } catch {
-    return [];
   }
+  return out;
 }
 
 export function linearOrgFromChannelKey(channelKey: string | undefined): string | undefined {

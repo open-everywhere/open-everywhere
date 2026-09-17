@@ -37,7 +37,9 @@ export interface PrincipalGateDefect {
     | "attendedness-missing"
     | "attendedness-hand-rolled"
     | "attendedness-eve-approval-underived"
-    | "attendedness-exempt-no-reason";
+    | "attendedness-exempt-no-reason"
+    | "approval-authority-context-missing"
+    | "approval-authority-exempt-no-reason";
   readonly message: string;
 }
 
@@ -292,6 +294,9 @@ export interface AttendednessSite {
   readonly derivedInFile?: boolean;
   readonly exemptReason?: string;
   readonly exempt: boolean;
+  readonly authorityContext?: string;
+  readonly authorityExempt: boolean;
+  readonly authorityExemptReason?: string;
 }
 
 const PROPOSE_CALL_RE = /\brequestApproval\s*\(/;
@@ -312,6 +317,7 @@ const UNATTENDED_KEY_RE = /\bunattended\s*:\s*(.+)$/;
 const UNATTENDED_SHORTHAND_RE = /^\s*unattended\s*,\s*$/;
 const ATTENDEDNESS_WINDOW = 60;
 const EXEMPT_MARKER_RE = /approval-chain:\s*exempt\s*(?:—|-{1,2}|:)?\s*(.*)$/;
+const AUTHORITY_EXEMPT_RE = /approval-authority:\s*headless\s*(?:—|-{1,2}|:)?\s*(.*)$/;
 
 function exemptMarkerAbove(lines: readonly string[], line: number): { reason: string } | undefined {
   for (let i = line - 2; i >= 0; i--) {
@@ -319,6 +325,17 @@ function exemptMarkerAbove(lines: readonly string[], line: number): { reason: st
     if (t === "") continue;
     if (!(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"))) return undefined;
     const m = EXEMPT_MARKER_RE.exec(t);
+    if (m) return { reason: (m[1] ?? "").trim() };
+  }
+  return undefined;
+}
+
+function authorityExemptAbove(lines: readonly string[], line: number): { reason: string } | undefined {
+  for (let i = line - 2; i >= 0; i--) {
+    const t = (lines[i] ?? "").trim();
+    if (t === "") continue;
+    if (!(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"))) return undefined;
+    const m = AUTHORITY_EXEMPT_RE.exec(t);
     if (m) return { reason: (m[1] ?? "").trim() };
   }
   return undefined;
@@ -376,6 +393,7 @@ export function findAttendednessSites(file: string, source: string): Attendednes
         derivedInFile: fileDerives,
         ...(eveMarker !== undefined ? { exemptReason: eveMarker.reason } : {}),
         exempt: eveMarker !== undefined,
+        authorityExempt: false,
       });
       continue;
     }
@@ -383,20 +401,25 @@ export function findAttendednessSites(file: string, source: string): Attendednes
     if (!isPropose && !CHAIN_LITERAL_RE.test(c)) continue;
     const indent = (c.match(/^\s*/) ?? [""])[0].length;
     let expr: string | undefined;
+    let authorityContext: string | undefined;
     for (let j = i; j < Math.min(i + 1 + ATTENDEDNESS_WINDOW, code.length); j++) {
       const line = code[j] ?? "";
       if (j > i && /^\s*[)}]/.test(line) && (line.match(/^\s*/) ?? [""])[0].length <= indent) break;
       if (UNATTENDED_SHORTHAND_RE.test(line)) {
         expr = "unattended";
-        break;
       }
       const m = UNATTENDED_KEY_RE.exec(line);
       if (m) {
         expr = (m[1] ?? "").trim().replace(/[,}]+\s*$/, "").trim();
-        break;
       }
+      const postDeps = /\bapprovalPostDeps\s*\(\s*[^,)]*(?:,\s*([A-Za-z_$][\w$]*))?\s*\)/.exec(line);
+      if (postDeps?.[1]) authorityContext = postDeps[1];
+      const explicit = /\bauthorityContext\s*:\s*([A-Za-z_$][\w$]*)/.exec(line);
+      if (explicit?.[1]) authorityContext = explicit[1];
+      if (/^\s*authorityContext\s*,\s*$/.test(line)) authorityContext = "authorityContext";
     }
     const marker = exemptMarkerAbove(lines, i + 1);
+    const authorityMarker = isPropose ? authorityExemptAbove(lines, i + 1) : undefined;
     sites.push({
       file,
       line: i + 1,
@@ -404,6 +427,9 @@ export function findAttendednessSites(file: string, source: string): Attendednes
       ...(expr !== undefined ? { expr } : {}),
       ...(marker !== undefined ? { exemptReason: marker.reason } : {}),
       exempt: marker !== undefined,
+      ...(authorityContext !== undefined ? { authorityContext } : {}),
+      authorityExempt: authorityMarker !== undefined,
+      ...(authorityMarker !== undefined ? { authorityExemptReason: authorityMarker.reason } : {}),
     });
   }
   const derived = derivedNames(code);
@@ -471,6 +497,28 @@ export function checkAttendednessSites(sites: readonly AttendednessSite[]): Prin
           `\`${ATTENDEDNESS_DERIVATION_BINDING}\` (identity/binding.ts).\n` +
           `      One function, one place to test it. A hand-rolled spelling is how the wrong accessor gets in: read the BOUND\n` +
           `      principal here and every fire answers "a human is present", because a fire binds as its attested creator.`,
+      });
+    }
+  }
+  return defects;
+}
+
+export function checkApprovalAuthoritySites(sites: readonly AttendednessSite[]): PrincipalGateDefect[] {
+  const defects: PrincipalGateDefect[] = [];
+  for (const site of sites) {
+    if (site.shape !== "propose") continue;
+    if (site.authorityExempt) {
+      if ((site.authorityExemptReason ?? "").length < 12) {
+        defects.push({ file: site.file, line: site.line, rule: "approval-authority-exempt-no-reason", message: "an `approval-authority: headless` marker needs a reason naming why this caller has no live model turn" });
+      }
+      continue;
+    }
+    if (site.authorityContext !== "ctx") {
+      defects.push({
+        file: site.file,
+        line: site.line,
+        rule: "approval-authority-context-missing",
+        message: "requestApproval must receive dependencies carrying the live tool context (`approvalPostDeps(platform, ctx)` or `authorityContext: ctx`) so a decision wake restores the exact proposing wake; use `approval-authority: headless — <reason>` only for a real control-plane caller",
       });
     }
   }

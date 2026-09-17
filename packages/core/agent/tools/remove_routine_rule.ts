@@ -97,7 +97,7 @@ export default defineTool({
         postedTo: venue.surfaceKey,
         chain: { unattended: unattendedOf(ctx) },
       },
-      approvalPostDeps(venue.platform),
+      approvalPostDeps(venue.platform, ctx),
     );
 
     const subject = `removal of standing rule ${target.id} from routine ${routineId} (${description})`;

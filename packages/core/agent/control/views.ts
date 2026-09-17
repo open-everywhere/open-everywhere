@@ -188,17 +188,26 @@ export interface ConnectorOverrideDriftRow {
   readonly reason?: string;
   readonly setBy?: string;
 }
+export interface HaltOverrideDriftRow {
+  readonly orgWide: boolean;
+  readonly level?: CapLevel;
+  readonly scopeKey?: string;
+  readonly setAt: string;
+  readonly setBy?: string;
+  readonly setRef?: string;
+}
 export interface OverridesView {
   readonly org: string;
   readonly now: number;
   readonly spend: readonly SpendOverrideDriftRow[];
   readonly connectors: readonly ConnectorOverrideDriftRow[];
+  readonly halts: readonly HaltOverrideDriftRow[];
   readonly note: string;
 }
 
 export async function overridesView(org: string, now: number = Date.now()): Promise<OverridesView> {
   const store = getOperationalStore();
-  const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
+  const [limits, connectors, halts] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org), store.activeHalts(org)]);
   const spend: SpendOverrideDriftRow[] = limits.map((l) => {
     const parsedUser = l.level === "user" ? parseScopeKey(l.scopeKey) : undefined;
     const config: Caps =
@@ -240,7 +249,14 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
     now,
     spend,
     connectors: connectorRows,
-    note: 'Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a spend-budgets PR (agent/spend/budgets.ts, or clear_spend_limit); expired=true rows are no longer applied and should be cleared. A level:"user" row reconciles into perUser.overrides keyed on the same person — drop the "user:" marker ("user:slack/U1" -> "slack/U1"). Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.',
+    halts: halts.map((h) => ({
+      orgWide: h.address.orgWide,
+      ...(!h.address.orgWide ? { level: h.address.level, scopeKey: h.address.scopeKey } : {}),
+      setAt: h.setAt,
+      ...(h.setBy ? { setBy: h.setBy } : {}),
+      ...(h.setRef ? { setRef: h.setRef } : {}),
+    })),
+    note: 'Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a spend-budgets PR (agent/spend/budgets.ts, or clear_spend_limit); expired=true rows are no longer applied and should be cleared. A level:"user" row reconciles into perUser.overrides keyed on the same person — drop the "user:" marker ("user:slack/U1" -> "slack/U1"). Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts. Active halts have no expiry and stay until an operator resumes their exact address.',
   };
 }
 

@@ -105,6 +105,7 @@ export interface NotionWakeMessage {
   readonly authorId?: string;
   readonly sentAt: string;
   readonly text: string;
+  readonly anchorId?: string;
   readonly trust: WakeTrust;
 }
 
@@ -317,6 +318,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       : await deps.catchUp({
           container: d.pageId,
           ...(d.discussionId ? { threadRoot: d.discussionId } : {}),
+          ...(d.trigger.anchorId ? { threadAnchor: d.trigger.anchorId } : {}),
           sinceMs: seatCatchUpSinceMs(session.lastWakeAt, Date.parse(atIso) || Date.now(), NOTION_CATCH_UP_REACHBACK_HOURS),
           untilMs: Date.parse(d.trigger.sentAt) || Date.parse(atIso) || Date.now(),
           excludeId: d.trigger.id,

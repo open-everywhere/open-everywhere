@@ -1,4 +1,5 @@
-import { TRACKED_ROOM_IDS, credentialVarFor, identityVarsFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
+import { ROOM_VARS, TRACKED_ROOM_IDS, credentialVarFor, identityVarsFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
+import { resolveControlWriteConfig, type ControlWriteConfig } from "./control-write-driver.js";
 
 export const ENV = {
   slackUserToken: "E2E_SLACK_USER_TOKEN",
@@ -23,6 +24,8 @@ export const ENV = {
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
   slackSupervisorChannel: "E2E_SLACK_SUPERVISOR_CHANNEL",
   slackCapChannel: "E2E_SLACK_CAP_CHANNEL",
+  slackHaltChannel: "E2E_SLACK_HALT_CHANNEL",
+  controlLocalWrite: "E2E_CONTROL_LOCAL_WRITE",
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
@@ -105,6 +108,8 @@ export type Capability =
   | "slackChannelB"
   | "slackMpim"
   | "slackCapFixture"
+  | "slackHalt"
+  | "controlWrite"
   | "syntheticDm"
   | "slackUser2"
   | "slackSecondary"
@@ -368,6 +373,26 @@ export function resolveSlackCapFixture(env: Env = process.env): Resolved<SlackEx
       missing: [`${ENV.slackCapChannel} to a channel other than ${ENV.slackChannel}'s — S10 needs a ledger the shared room cannot entangle (OPE-1905)`],
     };
   return { ok: true, cfg: { channel: values[0] } };
+}
+
+export function resolveSlackHalt(
+  env: Env = process.env,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): Resolved<SlackExtraChannelConfig> {
+  const channel = roomIdFor(ENV.slackHaltChannel, env, tracked);
+  if (!channel) return { ok: false, missing: [ENV.slackHaltChannel] };
+  const collision = ROOM_VARS.find(
+    (room) => room.surface === "slack" && room.envVar !== ENV.slackHaltChannel && roomIdFor(room.envVar, env, tracked) === channel,
+  );
+  if (collision) {
+    return { ok: false, missing: [`${ENV.slackHaltChannel} to a room other than ${collision.envVar}'s — S-HALT needs an isolated cleanup scope`] };
+  }
+  return { ok: true, cfg: { channel } };
+}
+
+export function resolveControlWrite(env: Env = process.env): Resolved<ControlWriteConfig> {
+  const resolved = resolveControlWriteConfig(env);
+  return resolved.ok ? { ok: true, cfg: resolved.cfg } : { ok: false, missing: resolved.missing };
 }
 
 export function resolveSlackSupervisor(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
@@ -644,6 +669,14 @@ export const TRACKED_ROOM_RESOLVERS: Readonly<Record<string, TrackedRoomResolver
     },
     alsoNeeds: roomExtraVars(ENV.slackMpimChannel),
   },
+  [ENV.slackHaltChannel]: {
+    capability: "slackHalt",
+    roomId: (env, tracked) => {
+      const r = resolveSlackHalt(env, tracked);
+      return r.ok ? r.cfg.channel : undefined;
+    },
+    alsoNeeds: roomExtraVars(ENV.slackHaltChannel),
+  },
   [ENGAGED_ROOM_VARS.github]: {
     capability: "engagedGithub",
     roomId: (env, tracked) => {
@@ -671,6 +704,8 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   const slackChannelB = resolveSlackChannelB(env);
   const slackMpim = resolveSlackMpim(env, tracked);
   const slackCapFixture = resolveSlackCapFixture(env);
+  const slackHalt = resolveSlackHalt(env, tracked);
+  const controlWrite = resolveControlWrite(env);
   const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
   const slackUser2 = resolveSlackUser2(env);
@@ -701,6 +736,8 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   if (slackChannelB.ok) available.add("slackChannelB");
   if (slack.ok && slackMpim.ok) available.add("slackMpim");
   if (slackCapFixture.ok) available.add("slackCapFixture");
+  if (slack.ok && slackHalt.ok) available.add("slackHalt");
+  if (controlWrite.ok) available.add("controlWrite");
   if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");
   if (slackUser2.ok) available.add("slackUser2");
@@ -733,6 +770,8 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
       slackMpim: slackMpim.ok ? [] : slackMpim.missing,
       slackCapFixture: slackCapFixture.ok ? [] : slackCapFixture.missing,
+      slackHalt: slackHalt.ok ? [] : slackHalt.missing,
+      controlWrite: controlWrite.ok ? [] : controlWrite.missing,
       slackSupervisor: slackSupervisor.ok ? [] : slackSupervisor.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,

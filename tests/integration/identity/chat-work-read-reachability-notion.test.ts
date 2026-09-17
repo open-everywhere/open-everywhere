@@ -85,7 +85,7 @@ function assertWorkerHoldsWorkReads(handle: ScriptedHandle): void {
 }
 
 test("Notion: a delegated worker in it-work-read-fixture-notion holds read_work_channel/read_work_thread", async () => {
-  await bootAgent({ sharedSqlite: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   await pinFixtureDomainGrant();
   await seedNotionChannelKey();
 

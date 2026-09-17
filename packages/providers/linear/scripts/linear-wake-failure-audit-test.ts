@@ -150,4 +150,36 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSu
   eq(strandRows.length, 0, "…and writes no strand audit row either");
 }
 
-console.log(`✓ linear-wake-failure-audit: ${n} assertions passed (OPE-970 ambient divert failure audit + negative control, OPE-971 native flag-off heal + negative control)`);
+{
+  let calls = 0;
+  const retryingSend = (async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+    return {};
+  }) as unknown as Parameters<typeof liveLinearSupervisorDeps>[0];
+  const deps = liveLinearSupervisorDeps(retryingSend, TEAM_ID, ORG_ID, undefined);
+  await deps.wake({ token: "native-retry-tok", auth: { attributes: {} } as never, message: "<wake>retry</wake>", context: [] });
+  eq(calls, 2, "🔴 OPE-1881: Linear's real native launch retries one proven 429 and delivers");
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_retry" })).filter((row) => row.surface === SURFACE);
+  eq(rows.length, 1, "🔴 OPE-1881: Linear records the native refusal under the real team surface");
+  ok(!("wakeId" in ((rows[0]?.detail ?? {}) as Record<string, unknown>)), "🔴 the native Linear row does not fabricate a wakeId");
+}
+
+{
+  let calls = 0;
+  const refusingSend = (async () => {
+    calls += 1;
+    throw Object.assign(new Error("refused"), { name: "TooManyRequestsError", retryAfter: 0 });
+  }) as unknown as Parameters<typeof liveLinearSupervisorDeps>[0];
+  const deps = liveLinearSupervisorDeps(refusingSend, TEAM_ID, ORG_ID, undefined);
+  let threw: unknown;
+  try {
+    await deps.wake({ token: "exhaust-tok", auth: { attributes: {} } as never, message: "<wake>retry</wake>", context: [] });
+  } catch (err) {
+    threw = err;
+  }
+  eq(calls, 4, "🔴 Linear's native adapter stops at the shared four-attempt bound");
+  ok(threw instanceof Error && threw.name === "RateLimitExhaustedError", "🔴 Linear propagates named retry exhaustion through its existing strand-heal catch");
+}
+
+console.log(`✓ linear-wake-failure-audit: ${n} assertions passed (wake failure audit/heal + native 429 retry + controls)`);

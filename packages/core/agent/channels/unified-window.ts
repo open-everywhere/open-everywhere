@@ -3,6 +3,9 @@ import { encodeSources } from "./window-sources.js";
 import { wakeOriginCodec } from "./wake-origin-codec.js";
 import { secondMessageValve } from "./reply-signal.js";
 import type { VendorEventTime } from "./wake-timing.js";
+import type { SurfaceBinding } from "../identity/binding.js";
+import { isFrozenSurfaceBinding } from "../identity/frozen-surface-binding.internal.js";
+import { isRequesterVerdict, type RequesterVerdict } from "../access/requester-identity.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -75,6 +78,28 @@ export interface UnifiedWakeRecord {
   readonly auditedAt?: string;
 }
 
+export interface UnifiedWakeAuthority {
+  readonly binding: SurfaceBinding;
+  readonly requester: RequesterVerdict;
+  readonly nonMemberWake: boolean;
+}
+
+export interface ResolvedUnifiedWakeAuthority extends UnifiedWakeAuthority {
+  readonly origin: UnifiedWakeOrigin;
+  readonly surfaceKey: string;
+}
+
+export function isUnifiedWakeAuthority(value: unknown): value is UnifiedWakeAuthority {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const authority = value as Record<string, unknown>;
+  return (
+    Object.keys(authority).every((key) => key === "binding" || key === "requester" || key === "nonMemberWake") &&
+    isWakeSurfaceBinding(authority.binding) &&
+    isRequesterVerdict(authority.requester) &&
+    typeof authority.nonMemberWake === "boolean"
+  );
+}
+
 export interface PendingUnifiedWake {
   readonly wakeId: string;
   readonly targetJson: string;
@@ -96,9 +121,172 @@ export async function registerUnifiedWakeTarget(
   inbound?: boolean,
   addressing?: string,
   surfaceKey?: string,
+  binding?: SurfaceBinding,
+  authority?: UnifiedWakeAuthority,
 ): Promise<void> {
-  const targetJson = JSON.stringify({ ...origin, ...(addressing ? { addressing } : {}), ...(surfaceKey ? { surfaceKey } : {}) });
+  const frozenBinding = authority?.binding ?? binding;
+  const dualBindingMismatch =
+    authority !== undefined &&
+    binding !== undefined &&
+    JSON.stringify(canonicalBinding(authority.binding)) !== JSON.stringify(canonicalBinding(binding));
+  if (frozenBinding !== undefined) {
+    const bindingKey = `${frozenBinding.platform}/${frozenBinding.workspace}/${frozenBinding.surface}`;
+    if (
+      !isWakeSurfaceBinding(frozenBinding) ||
+      (authority !== undefined && !isUnifiedWakeAuthority(authority)) ||
+      dualBindingMismatch ||
+      frozenBinding.org !== org ||
+      frozenBinding.platform !== origin.platform ||
+      surfaceKey !== bindingKey ||
+      !wakeBindingMatchesOrigin(frozenBinding, origin)
+    ) {
+      throw new Error("unified wake binding does not match its durable origin");
+    }
+  }
+  const targetJson = JSON.stringify({
+    ...origin,
+    ...(addressing ? { addressing } : {}),
+    ...(surfaceKey ? { surfaceKey } : {}),
+    ...(authority ? { authority } : binding ? { binding } : {}),
+  });
   await store.putUnifiedWakeTarget(org, wakeId, targetJson, atIso, WAKE_TARGET_TTL_MS, windowToken, inbound);
+}
+
+function canonicalBinding(binding: SurfaceBinding): Record<string, unknown> {
+  const target = binding.target
+    ? Object.fromEntries(Object.entries(binding.target).sort(([a], [b]) => a.localeCompare(b)))
+    : undefined;
+  return {
+    org: binding.org,
+    platform: binding.platform,
+    workspace: binding.workspace,
+    surface: binding.surface,
+    domainSurface: binding.domainSurface,
+    mode: binding.mode,
+    visibility: binding.visibility,
+    trust: binding.trust,
+    declaredTrust: binding.declaredTrust,
+    principalId: binding.principalId,
+    principalAttested: binding.principalAttested,
+    target,
+    threadTs: binding.threadTs,
+    engagementKey: binding.engagementKey,
+    roomEngagementKey: binding.roomEngagementKey,
+    anchorMessageId: binding.anchorMessageId,
+    anchorChannelId: binding.anchorChannelId,
+  };
+}
+
+export function wakeBindingMatchesOrigin(binding: SurfaceBinding, origin: UnifiedWakeOrigin): boolean {
+  if (binding.platform !== origin.platform) return false;
+  const target = binding.target;
+  switch (origin.platform) {
+    case "slack":
+      return (
+        binding.surface === origin.channelId &&
+        target?.["channelId"] === origin.channelId &&
+        binding.threadTs === (origin.threadTs ?? origin.replyAnchorTs)
+      );
+    case "discord":
+      return (
+        binding.surface === origin.channelId &&
+        target?.["channelId"] === origin.channelId &&
+        (!("guildId" in origin) ||
+          (binding.workspace === origin.guildId && target?.["guildId"] === origin.guildId))
+      );
+    case "notion":
+      return (
+        (origin.pageId === undefined || binding.surface === origin.pageId) &&
+        (origin.workspaceId === undefined || binding.workspace === origin.workspaceId) &&
+        target?.["discussionId"] === origin.discussionId &&
+        (origin.pageId === undefined || target?.["pageId"] === origin.pageId) &&
+        (origin.credentialId === undefined || target?.["credentialId"] === origin.credentialId)
+      );
+    case "github":
+      return (
+        binding.workspace === origin.owner &&
+        binding.surface === origin.repo &&
+        target?.["owner"] === origin.owner &&
+        target?.["repo"] === origin.repo &&
+        target?.["issueNumber"] === origin.issueNumber &&
+        (origin.installationId === undefined || target?.["installationId"] === origin.installationId)
+      );
+    case "linear":
+      return (
+        target?.["issueId"] === origin.issueId &&
+        (origin.agentSessionId === undefined || target?.["agentSessionId"] === origin.agentSessionId) &&
+        (origin.organizationId === undefined ||
+          (binding.workspace === origin.organizationId && target?.["organizationId"] === origin.organizationId)) &&
+        target?.["parentId"] === origin.parentId
+      );
+    case "teams":
+      return (
+        binding.surface === origin.conversationId &&
+        target?.["serviceUrl"] === origin.serviceUrl &&
+        target?.["conversationId"] === origin.conversationId &&
+        (origin.tenantId === undefined ||
+          (binding.workspace === origin.tenantId && target?.["tenantId"] === origin.tenantId))
+      );
+  }
+}
+
+export const isWakeSurfaceBinding = isFrozenSurfaceBinding;
+
+export async function resolveUnifiedWakeAuthority(
+  store: UnifiedWakeTargetStore,
+  org: string,
+  wakeId: string,
+): Promise<ResolvedUnifiedWakeAuthority | undefined> {
+  if (typeof wakeId !== "string" || wakeId.length === 0 || wakeId.length > 200) return undefined;
+  try {
+    const json = await store.getUnifiedWakeTarget(org, wakeId);
+    if (!json) return undefined;
+    const parsed: unknown = JSON.parse(json);
+    if (parsed === null || typeof parsed !== "object") return undefined;
+    const row = parsed as Record<string, unknown>;
+    const authority = row.authority;
+    if (!isUnifiedWakeAuthority(authority)) return undefined;
+    const binding = authority.binding;
+    if (binding.org !== org) return undefined;
+    const { authority: _authority, binding: _legacyBinding, surfaceKey: _surfaceKey, addressing: _addressing, ...origin } = row;
+    if (!isUnifiedWakeOrigin(origin) || origin.platform !== binding.platform || !wakeBindingMatchesOrigin(binding, origin)) return undefined;
+    if (row.surfaceKey !== `${binding.platform}/${binding.workspace}/${binding.surface}`) return undefined;
+    return { binding, requester: authority.requester, nonMemberWake: authority.nonMemberWake, origin, surfaceKey: row.surfaceKey };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function resolveUnifiedWakeBinding(store: UnifiedWakeTargetStore, org: string, wakeId: string): Promise<SurfaceBinding | undefined> {
+  const authority = await resolveUnifiedWakeAuthority(store, org, wakeId);
+  if (authority !== undefined) return authority.binding;
+  if (typeof wakeId !== "string" || wakeId.length === 0 || wakeId.length > 200) return undefined;
+  try {
+    const json = await store.getUnifiedWakeTarget(org, wakeId);
+    if (!json) return undefined;
+    const row = JSON.parse(json) as Record<string, unknown>;
+    const binding = row.binding;
+    if (!isWakeSurfaceBinding(binding) || binding.org !== org) return undefined;
+    const { authority: _authority, binding: _binding, surfaceKey: _surfaceKey, addressing: _addressing, ...origin } = row;
+    if (!isUnifiedWakeOrigin(origin) || row.surfaceKey !== `${binding.platform}/${binding.workspace}/${binding.surface}` || !wakeBindingMatchesOrigin(binding, origin)) return undefined;
+    return binding;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function resolveUnifiedWakeSurfaceKey(
+  store: UnifiedWakeTargetStore,
+  org: string,
+  wakeId: string,
+): Promise<string | undefined> {
+  if (typeof wakeId !== "string" || wakeId.length === 0 || wakeId.length > 200) return undefined;
+  try {
+    const json = await store.getUnifiedWakeTarget(org, wakeId);
+    return json ? wakeSurfaceKeyFromTargetJson(json) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function wakeSurfaceKeyFromTargetJson(targetJson: string): string | undefined {
@@ -140,7 +328,9 @@ export async function resolveUnifiedWakeTarget(store: UnifiedWakeTargetStore, or
   } catch {
     return null;
   }
-  return isUnifiedWakeOrigin(parsed) ? parsed : null;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const { authority: _authority, binding: _legacyBinding, surfaceKey: _surfaceKey, addressing: _addressing, ...origin } = parsed as Record<string, unknown>;
+  return isUnifiedWakeOrigin(origin) ? origin : null;
 }
 
 export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {

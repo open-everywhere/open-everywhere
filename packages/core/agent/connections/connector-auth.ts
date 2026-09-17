@@ -52,6 +52,7 @@ import { randomUUID } from "node:crypto";
 import { recordConsentDetour, type ConsentOrigin } from "./consent-resume.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { currentSessionId } from "../identity/binding.js";
+import { delegatedNonMemberWakeThisTurn, delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
 import {
   connectorAuthRequiredThisTurn,
   connectorAuthUrlThisTurn,
@@ -60,6 +61,18 @@ import {
   clearConnectorAuthRequired,
   freshGrantConfirmed,
 } from "./auth-retry-memo.js";
+
+function requesterForAuthority(auth: MemberPlaneAuthLike | undefined) {
+  const delegated = delegatedRequesterThisTurn(undefined);
+  if (delegated?.kind === "requester") return { kind: "requester" as const, principalId: delegated.principalId };
+  if (delegated?.kind === "unverified") return { kind: "unverified" as const };
+  if (delegated?.kind === "none") return { kind: "none" as const };
+  return requesterFromAuth(auth, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED);
+}
+
+function nonMemberWakeForAuthority(auth: MemberPlaneAuthLike | undefined): boolean {
+  return delegatedNonMemberWakeThisTurn(undefined) ?? nonMemberWakeFromAuth(auth, OE_CHAT_NONMEMBER_ATTR);
+}
 
 export function appStaticToken(opts: {
   readonly connector: string;
@@ -329,8 +342,8 @@ export function userAwareProviderToken(
             armed: connectorMemberPlaneEnabled(),
             opTiered: connectorOpTieringEnabled(),
             granted: true,
-            requester: requesterFromAuth(ctx.session.auth, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED),
-            nonMemberWake: nonMemberWakeFromAuth(ctx.session.auth, OE_CHAT_NONMEMBER_ATTR),
+            requester: requesterForAuthority(ctx.session.auth),
+            nonMemberWake: nonMemberWakeForAuthority(ctx.session.auth),
             roomVouchedInternal: roomVouchedInternalFrom(declaredTrust, trust),
           });
           if (!verdict.admit) {
@@ -435,7 +448,7 @@ async function decideConnectorWrite(
       personalCredential,
       ...(surface.mode === undefined ? {} : { surfaceMode: surface.mode }),
       ...(surface.principalId === undefined ? {} : { actingPrincipalId: surface.principalId }),
-      requester: requesterFromAuth(auth as MemberPlaneAuthLike, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED),
+      requester: requesterForAuthority(auth as MemberPlaneAuthLike),
     });
     if (!verdict.prompt) {
       return { type: "denied", reason: personalWriteRefusalMessage(connection, verdict.reason) };

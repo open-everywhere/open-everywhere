@@ -5,7 +5,7 @@ import { appendAudit } from "../audit/audit.js";
 import { orgWideWhere, whereFromScope } from "../approvals/actions.js";
 import { haltAddressFields } from "../access/halt.js";
 import { postHostNotice, REPLY_DEDUPE_SKIPPED_ID, resolveReplyTarget, type ReplyTarget } from "../channels/reply-post.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentSessionId, currentWakeId, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -70,13 +70,24 @@ export default defineTool({
     const scope = input.scope ?? "org";
     const address = chatHaltAddress(scope, p.surfaceKey);
     const setBy = principalIdOf(ctx);
-    await getOperationalStore().setHalt(p.org, address, ...(setBy ? [{ setBy }] : []));
+    const wakeId = currentWakeId(ctx);
+    const sessionId = currentSessionId(ctx);
+    const setAt = new Date().toISOString();
+    await getOperationalStore().setHalt(p.org, address, { ...(setBy ? { setBy } : {}), setAt, ...(wakeId ? { setRef: wakeId } : {}) });
     const announced = await announceHalt(ctx as BindableContext, scope);
     await appendAudit({
       ...(address.orgWide ? orgWideWhere(p.org) : whereFromScope(p.org, address.scopeKey)),
       ...(setBy ? { principalId: setBy } : {}),
       action: "admin.halt.set",
-      detail: { ...haltAddressFields(address), door: "chat", platform: bindFrom(ctx).platform, announced },
+      detail: {
+        ...haltAddressFields(address),
+        door: "chat",
+        platform: bindFrom(ctx).platform,
+        announced,
+        setAt,
+        ...(wakeId ? { wakeId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+      },
     }).catch(() => undefined);
     return { halted: true, scope, announced, message: haltModelMessage(announced, scope) };
   },

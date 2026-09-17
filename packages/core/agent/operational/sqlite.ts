@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -138,6 +138,7 @@ function getDb(): DatabaseSync {
       active     INTEGER NOT NULL,            -- 1 = halted; a cleared row stays for the trail
       set_by     TEXT,
       set_at     TEXT    NOT NULL,            -- ISO-8601
+      set_ref    TEXT,                        -- host wake owning a chat-set halt; NULL for operator/legacy rows
       cleared_by TEXT,
       cleared_at TEXT,                        -- ISO-8601; NULL until a resume clears it
       PRIMARY KEY (org_id, level, scope_key, org_wide)
@@ -200,6 +201,25 @@ function getDb(): DatabaseSync {
       seen_at TEXT NOT NULL,                  -- ISO-8601 (lexicographic = chronological)
       PRIMARY KEY (org_id, key)
     );
+    -- Durable provider inbox. The verified signer id is part of the immutable delivery identity;
+    -- payload_json contains a versioned provider envelope but never the raw signature or secret.
+    -- Pending rows have retain_until NULL and survive arbitrarily long outages. Completion erases
+    -- payload_json and starts the bounded tombstone clock in the SAME fenced UPDATE.
+    CREATE TABLE IF NOT EXISTS ingress_delivery (
+      org_id       TEXT NOT NULL,
+      source       TEXT NOT NULL,
+      authority_id TEXT NOT NULL,
+      delivery_id  TEXT NOT NULL,
+      payload_json TEXT,
+      received_at  TEXT NOT NULL,
+      available_at TEXT NOT NULL,
+      claim_id     TEXT,
+      claimed_at   TEXT,
+      completed_at TEXT,
+      retain_until TEXT,
+      PRIMARY KEY (org_id, source, authority_id, delivery_id)
+    );
+    CREATE INDEX IF NOT EXISTS ingress_delivery_due ON ingress_delivery (org_id, source, completed_at, available_at, claimed_at);
     -- webhook_capture: the BOUNDED CAPTURE WINDOW (OPE-211 + OPE-184 Half 2). The only table here
     -- that holds bytes an outside party authored — see webhooks/capture-window.ts for what the
     -- document column is (the jq filter document, NOT the raw body) and why that is the safety
@@ -664,6 +684,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE spend_limit ADD COLUMN reason TEXT",
     "ALTER TABLE spend_limit ADD COLUMN set_by TEXT",
     "ALTER TABLE spend_limit ADD COLUMN monthly_usd REAL",
+    "ALTER TABLE halt ADD COLUMN set_ref TEXT",
 
     "ALTER TABLE connector_override ADD COLUMN reason TEXT",
     "ALTER TABLE connector_override ADD COLUMN set_by TEXT",
@@ -1516,23 +1537,34 @@ export const sqliteOperationalStore: OperationalStore = {
     });
   },
 
-  async setSpendLimit(org, scopeKey, level, limit, meta) {
+  async setSpendLimit(org, scopeKey, level, limit, meta, condition) {
     assertSpendLimitAmount(limit);
-    getDb()
-      .prepare(
-        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(org_id, scope_key, level) DO UPDATE SET
+    const conflict = condition?.ifAbsent
+      ? "DO NOTHING"
+      : `DO UPDATE SET
            monthly_tokens = excluded.monthly_tokens,
            monthly_usd    = excluded.monthly_usd,
            expires_at     = excluded.expires_at,
            reason         = excluded.reason,
-           set_by         = excluded.set_by`,
-      )
-      .run(org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null);
+           set_by         = excluded.set_by`;
+    return (
+      getDb()
+        .prepare(
+          `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(org_id, scope_key, level) ${conflict}`,
+        )
+        .run(org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null).changes > 0
+    );
   },
 
-  async clearSpendLimit(org, scopeKey, level) {
-    return getDb().prepare("DELETE FROM spend_limit WHERE org_id = ? AND scope_key = ? AND level = ?").run(org, scopeKey, level).changes > 0;
+  async clearSpendLimit(org, scopeKey, level, expected) {
+    const sql = expected
+      ? "DELETE FROM spend_limit WHERE org_id = ? AND scope_key = ? AND level = ? AND monthly_tokens IS ? AND monthly_usd IS ? AND expires_at IS ? AND reason IS ? AND set_by IS ?"
+      : "DELETE FROM spend_limit WHERE org_id = ? AND scope_key = ? AND level = ?";
+    const params = expected
+      ? [org, scopeKey, level, expected.monthlyTokens ?? -1, expected.monthlyUsd ?? null, expected.expiresAt ?? null, expected.reason ?? null, expected.setBy ?? null]
+      : [org, scopeKey, level];
+    return getDb().prepare(sql).run(...params).changes > 0;
   },
 
   async spendLimits(org) {
@@ -1556,37 +1588,41 @@ export const sqliteOperationalStore: OperationalStore = {
     const a = haltAddressColumns(address);
     getDb()
       .prepare(
-        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, cleared_by, cleared_at) VALUES (?, ?, ?, ?, 1, ?, ?, NULL, NULL)
+        `INSERT INTO halt (org_id, level, scope_key, org_wide, active, set_by, set_at, set_ref, cleared_by, cleared_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, NULL, NULL)
          ON CONFLICT(org_id, level, scope_key, org_wide) DO UPDATE SET
            active     = 1,
            set_by     = excluded.set_by,
            set_at     = excluded.set_at,
+           set_ref    = excluded.set_ref,
            cleared_by = NULL,
            cleared_at = NULL`,
       )
-      .run(org, a.level, a.scopeKey, a.orgWide ? 1 : 0, meta?.setBy ?? null, new Date().toISOString());
+      .run(org, a.level, a.scopeKey, a.orgWide ? 1 : 0, meta?.setBy ?? null, meta?.setAt ?? new Date().toISOString(), meta?.setRef ?? null);
   },
 
-  async clearHalt(org, address, meta) {
+  async clearHalt(org, address, meta, expected) {
     assertHaltAddress(address);
     const a = haltAddressColumns(address);
+    const expectedSql = expected ? " AND set_at = ? AND set_by IS ? AND set_ref IS ?" : "";
+    const expectedParams = expected ? [expected.setAt, expected.setBy ?? null, expected.setRef ?? null] : [];
     return (
       getDb()
-        .prepare("UPDATE halt SET active = 0, cleared_by = ?, cleared_at = ? WHERE org_id = ? AND level = ? AND scope_key = ? AND org_wide = ? AND active = 1")
-        .run(meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide ? 1 : 0).changes > 0
+        .prepare(`UPDATE halt SET active = 0, cleared_by = ?, cleared_at = ? WHERE org_id = ? AND level = ? AND scope_key = ? AND org_wide = ? AND active = 1${expectedSql}`)
+        .run(meta?.clearedBy ?? null, new Date().toISOString(), org, a.level, a.scopeKey, a.orgWide ? 1 : 0, ...expectedParams).changes > 0
     );
   },
 
   async activeHalts(org) {
     const rows = getDb()
-      .prepare("SELECT level, scope_key, org_wide, set_by, set_at, cleared_by, cleared_at FROM halt WHERE org_id = ? AND active = 1")
-      .all(org) as { level: string; scope_key: string; org_wide: number; set_by: string | null; set_at: string; cleared_by: string | null; cleared_at: string | null }[];
+      .prepare("SELECT level, scope_key, org_wide, set_by, set_at, set_ref, cleared_by, cleared_at FROM halt WHERE org_id = ? AND active = 1")
+      .all(org) as { level: string; scope_key: string; org_wide: number; set_by: string | null; set_at: string; set_ref: string | null; cleared_by: string | null; cleared_at: string | null }[];
     return rows.map((r) => ({
       org,
       address: haltAddressFromColumns(r.level, r.scope_key, r.org_wide === 1),
       active: true,
       setAt: r.set_at,
       ...(r.set_by ? { setBy: r.set_by } : {}),
+      ...(r.set_ref ? { setRef: r.set_ref } : {}),
       ...(r.cleared_by ? { clearedBy: r.cleared_by } : {}),
       ...(r.cleared_at ? { clearedAt: r.cleared_at } : {}),
     }));
@@ -2311,6 +2347,107 @@ export const sqliteOperationalStore: OperationalStore = {
   async runAnalyticsQuery(compiled) {
     const { sql, params } = assembleAnalyticsSql(compiled, "qmark");
     return getDb().prepare(sql).all(...(params as (string | number | null)[])) as Record<string, unknown>[];
+  },
+
+  async enqueueIngressDelivery(org, write) {
+    const handle = getDb();
+    handle
+      .prepare("DELETE FROM ingress_delivery WHERE org_id = ? AND source = ? AND completed_at IS NOT NULL AND retain_until IS NOT NULL AND retain_until <= ?")
+      .run(org, write.source, write.receivedAt);
+    const info = handle
+      .prepare(
+        `INSERT OR IGNORE INTO ingress_delivery
+           (org_id, source, authority_id, delivery_id, payload_json, received_at, available_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(org, write.source, write.authorityId, write.deliveryId, write.payloadJson, write.receivedAt, write.receivedAt);
+    return info.changes > 0;
+  },
+
+  async listDueIngressDeliveries(org, source, nowIso, staleBeforeIso, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT authority_id, delivery_id, received_at, available_at
+           FROM ingress_delivery
+          WHERE org_id = ? AND source = ? AND completed_at IS NULL AND payload_json IS NOT NULL
+            AND available_at <= ?
+            AND (claim_id IS NULL OR (claimed_at IS NOT NULL AND claimed_at <= ?))
+          ORDER BY received_at ASC, authority_id ASC, delivery_id ASC
+          LIMIT ?`,
+      )
+      .all(org, source, nowIso, staleBeforeIso, Math.max(0, Math.trunc(limit))) as Array<{
+        authority_id: string;
+        delivery_id: string;
+        received_at: string;
+        available_at: string;
+      }>;
+    return rows.map((row): DueIngressDelivery => ({
+      source,
+      authorityId: row.authority_id,
+      deliveryId: row.delivery_id,
+      receivedAt: row.received_at,
+      availableAt: row.available_at,
+    }));
+  },
+
+  async claimIngressDelivery(org, key, claimId, claimedAtIso, staleBeforeIso) {
+    const row = getDb()
+      .prepare(
+        `UPDATE ingress_delivery SET claim_id = ?, claimed_at = ?
+          WHERE org_id = ? AND source = ? AND authority_id = ? AND delivery_id = ?
+            AND completed_at IS NULL AND payload_json IS NOT NULL AND available_at <= ?
+            AND (claim_id IS NULL OR (claimed_at IS NOT NULL AND claimed_at <= ?))
+        RETURNING payload_json, received_at, available_at`,
+      )
+      .get(claimId, claimedAtIso, org, key.source, key.authorityId, key.deliveryId, claimedAtIso, staleBeforeIso) as
+      | { payload_json: string; received_at: string; available_at: string }
+      | undefined;
+    return row
+      ? ({
+          ...key,
+          payloadJson: row.payload_json,
+          receivedAt: row.received_at,
+          availableAt: row.available_at,
+          claimId,
+          claimedAt: claimedAtIso,
+        } satisfies ClaimedIngressDelivery)
+      : null;
+  },
+
+  async releaseIngressDelivery(org, key, claimId, availableAtIso) {
+    const info = getDb()
+      .prepare(
+        `UPDATE ingress_delivery SET claim_id = NULL, claimed_at = NULL, available_at = ?
+          WHERE org_id = ? AND source = ? AND authority_id = ? AND delivery_id = ?
+            AND completed_at IS NULL AND claim_id = ?`,
+      )
+      .run(availableAtIso, org, key.source, key.authorityId, key.deliveryId, claimId);
+    return info.changes > 0;
+  },
+
+  async completeIngressDelivery(org, key, claimId, completedAtIso, retainUntilIso) {
+    assertIngressDeliveryRetainUntil(completedAtIso, retainUntilIso);
+    const info = getDb()
+      .prepare(
+        `UPDATE ingress_delivery
+            SET payload_json = NULL, claim_id = NULL, claimed_at = NULL,
+                completed_at = ?, retain_until = ?
+          WHERE org_id = ? AND source = ? AND authority_id = ? AND delivery_id = ?
+            AND completed_at IS NULL AND claim_id = ?`,
+      )
+      .run(completedAtIso, retainUntilIso, org, key.source, key.authorityId, key.deliveryId, claimId);
+    return info.changes > 0;
+  },
+
+  async discardIngressDelivery(org, key, claimId) {
+    const info = getDb()
+      .prepare(
+        `DELETE FROM ingress_delivery
+          WHERE org_id = ? AND source = ? AND authority_id = ? AND delivery_id = ?
+            AND completed_at IS NULL AND claim_id = ?`,
+      )
+      .run(org, key.source, key.authorityId, key.deliveryId, claimId);
+    return info.changes > 0;
   },
 
   async markEventSeen(org, key, at, ttlMs) {
