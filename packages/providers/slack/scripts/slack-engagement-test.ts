@@ -75,7 +75,7 @@ import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, mentionSiblingSuppressed, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolvePartition } from "@open-everywhere/core/agent/adapter-api.js";
-import { OE_APPROVAL_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
+import { OE_APPROVAL_PREFIX, OE_GRANT_ACTION_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError } from "../agent/channels/slack-read.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
@@ -915,6 +915,84 @@ registerConfig({
   ok(
     handedToHost.length === 1,
     `🔴 OPE-1709: …and it is the ROUTE'S hook — work registered through it reaches the host, so a deferred session-grant release survives the response (saw ${String(handedToHost.length)} registrations)`,
+  );
+
+  let releaseGrantClick: (() => void) | undefined;
+  let grantClickFinished = false;
+  const heldGrantWork: Promise<unknown>[] = [];
+  const grantHandler = buildFrontHandler(
+    async () => new Response("must not forward"),
+    {
+      signingSecret: secret,
+      now: () => nowMs,
+      handleGrantCardClick: async () => {
+        await new Promise<void>((resolve) => {
+          releaseGrantClick = resolve;
+        });
+        grantClickFinished = true;
+        return true;
+      },
+    },
+  );
+  const grantBody = payloadBody({
+    type: "block_actions",
+    actions: [{ action_id: `${OE_GRANT_ACTION_PREFIX}once:ask-slow-catalogue` }],
+    channel: { id: "D-owner" },
+    team: { id: "T_ENG" },
+    user: { id: "U-owner" },
+  });
+  const grantResponsePromise = grantHandler(
+    mkReq(grantBody),
+    { ...fakeArgs, waitUntil: (p: Promise<unknown>) => void heldGrantWork.push(p) } as unknown as Parameters<typeof grantHandler>[1],
+  );
+  const grantAcked = await Promise.race([
+    grantResponsePromise.then(() => true),
+    new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+  ]);
+  if (!grantAcked) releaseGrantClick?.();
+  ok(grantAcked, "🔴 grant-click acknowledges before the owner catalogue read finishes");
+  const grantResponse = await grantResponsePromise;
+  ok(grantResponse.status === 200 && (await grantResponse.text()) === "", "…with Slack's empty successful interactivity response");
+  ok(!grantClickFinished && heldGrantWork.length === 1, "…while the unresolved decision is held exactly once by the host");
+  releaseGrantClick?.();
+  await Promise.all(heldGrantWork);
+  ok(grantClickFinished, "…and the held grant decision finishes after the acknowledgement");
+
+  let rejectedGrantCalls = 0;
+  let rejectedGrantForwarded = false;
+  const rejectedGrantWork: Promise<unknown>[] = [];
+  const rejectedGrantLogs: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...parts: unknown[]) => rejectedGrantLogs.push(parts.map(String).join(" "));
+  try {
+    const rejectedGrantHandler = buildFrontHandler(
+      async () => {
+        rejectedGrantForwarded = true;
+        return new Response("must not forward");
+      },
+      {
+        signingSecret: secret,
+        now: () => nowMs,
+        handleGrantCardClick: async () => {
+          rejectedGrantCalls++;
+          throw new Error("VENDOR_DETAIL_MUST_NOT_REACH_ROUTE_LOG");
+        },
+      },
+    );
+    const rejectedGrantResponse = await rejectedGrantHandler(
+      mkReq(grantBody),
+      { ...fakeArgs, waitUntil: (p: Promise<unknown>) => void rejectedGrantWork.push(p) } as unknown as Parameters<typeof rejectedGrantHandler>[1],
+    );
+    ok(rejectedGrantResponse.status === 200, "…and an impossible handler rejection cannot revoke the acknowledgement");
+    await Promise.all(rejectedGrantWork);
+  } finally {
+    console.warn = originalWarn;
+  }
+  ok(rejectedGrantCalls === 1 && rejectedGrantWork.length === 1 && !rejectedGrantForwarded, "…with one contained attempt and no post-ack native forward");
+  ok(
+    rejectedGrantLogs.some((line) => line.includes("grant click failed after acknowledgement")) &&
+      rejectedGrantLogs.every((line) => !line.includes("VENDOR_DETAIL_MUST_NOT_REACH_ROUTE_LOG")),
+    "…and the diagnostic names the fixed failure class without copying vendor error text",
   );
 
   innerCalled = false;

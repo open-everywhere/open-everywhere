@@ -80,6 +80,25 @@ const linearOnly = relevantScenarios(["packages/providers/linear/agent/whatever.
 ok("a Linear-only change selects J-LIN", linearOnly.includes("J-LIN"));
 ok("a Linear-only change does NOT select J-DISC (discord-only surface)", !linearOnly.includes("J-DISC"));
 
+for (const [path, label] of [
+  ["packages/providers/github/agent/channels/github.ts", "GitHub provider"],
+  ["packages/providers/notion/agent/channels/notion-api.ts", "Notion provider"],
+  ["agent/access/bundles.ts", "domain access binding"],
+  ["agent/plugins/skill-content.ts", "notion-rest plugin skill"],
+  ["packages/core/agent/access/egress.ts", "sandbox egress compiler"],
+] as const) {
+  ok(
+    `${label} changes select S-GITHUB-NOTION-REST`,
+    relevantScenarios([path]).includes("S-GITHUB-NOTION-REST"),
+  );
+}
+
+const unrelatedPluginGenerated = relevantScenarios(["agent/plugins/generated/unrelated.ts"]);
+ok(
+  "an unrelated generated plugin file does NOT select S-GITHUB-NOTION-REST through an over-broad plugin glob",
+  !unrelatedPluginGenerated.includes("S-GITHUB-NOTION-REST"),
+);
+
 ok("ALWAYS_RELEVANT scenarios ride along on an unrelated change", ALWAYS_RELEVANT.every((id) => discordOnly.includes(id)));
 const noChanges = relevantScenarios([]);
 ok(

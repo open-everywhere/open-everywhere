@@ -16,6 +16,7 @@ import { liveGitHubReactionFeedbackDeps, parseGitHubReactionPollTarget, routeGit
 import {
   classifyGitHubAmbientComment,
   extractGitHubAmbientEvent,
+  githubDispatchAuditDetail,
   githubSupervisorToken,
   handleGitHubSupervisorDispatch,
   shouldRotate,
@@ -363,6 +364,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   }
   const directMention = cls.addressing === "direct";
   const mentionPolicy = singleWindowMentionPolicy(singleWindow, directMention, vouched);
+  const wakeId = singleWindow && vouched ? mintWakeId() : undefined;
   const auth = buildGitHubAuth({
     owner: ev.owner,
     repo: ev.repo,
@@ -403,9 +405,9 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
       engagementTier: githubEngagementTier(surfaceKey),
       unified: githubGrainFor(surfaceKey).unified,
       directMention,
-      window: singleWindow && vouched
+      window: wakeId
         ? ({
-            wakeId: mintWakeId(),
+            wakeId,
             origin: {
               platform: "github",
               owner: ev.owner,
@@ -427,12 +429,14 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
     surface: surfaceKey,
     principalId: ev.comment.authorLogin,
     action: "github.dispatched",
-    detail: {
+    detail: githubDispatchAuditDetail({
       addressing: githubWakeAddressing(cls.addressing, admission.engagedFollowUp),
       issueNumber: ev.issueNumber,
+      commentId: ev.comment.id,
+      wakeId,
       repoPrivate: ev.repoPrivate === true,
       vouched,
-    },
+    }),
   });
   slog(`comment on ${surfaceKey}#${ev.issueNumber} → judged wake dispatched`);
 }

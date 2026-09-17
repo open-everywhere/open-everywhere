@@ -35,8 +35,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "github-provider",
     globs: ["packages/providers/github/**"],
-    scenarios: ["J-GH", "J-ENGAGED-github", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X", "S-DELEGATED-github", "S-SUSPENDED-github"],
-    why: "J-GH and J-ENGAGED-github are surface: \"github\" — the second drives the ambient engagement seam (OPE-1501: an @mention engages the issue, a plain comment wakes, stand_down stops it), which no other GitHub scenario reads. The rest open, read status on, or subscribe to a real GitHub PR (open_pull_request's chain) and would break silently on a GitHub adapter regression even though they run through Slack.",
+    scenarios: ["J-GH", "J-ENGAGED-github", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X", "S-DELEGATED-github", "S-SUSPENDED-github", "S-GITHUB-NOTION-REST"],
+    why: "J-GH and J-ENGAGED-github are surface: \"github\"; S-GITHUB-NOTION-REST is cross-surface with a GitHub origin. J-ENGAGED-github drives the ambient engagement seam (OPE-1501), while S-GITHUB-NOTION-REST joins an exact issue comment through the GitHub dispatch/wake/session/reply path to a verified shared Notion write. The rest open, read status on, or subscribe to a real GitHub PR (open_pull_request's chain) and would break silently on a GitHub adapter regression even though they run through Slack.",
   },
   {
     area: "linear-provider",
@@ -47,8 +47,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "notion-provider",
     globs: ["packages/providers/notion/**"],
-    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-OWN-ACCOUNT-NOTION", "S-DELEGATED-notion", "S-SIBLING-notion"],
-    why: "J-NOT and J-ENGAGED-notion are surface: \"notion\" — the second drives the ambient engagement seam (OPE-1501: a NAME-DROP engages the page, because Notion has no @mention of an integration) and is the only leg that reads the ingress's addressing-aware ambient gate. The rest all drive a live Notion connector (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE). S-OWN-ACCOUNT-NOTION (OPE-1599) is surface: \"notion\" as well, and it is the only leg that GATES on the `connector.acting_identity` row. J-NOT's ordinary reads run the same seam and write `install` rows, but assert nothing about them, so a gate regression that flips a refusal is visible only here. The dispatcher `channels/notion-acting-identity.ts` lives in THIS package and is the sole route to the own-account gate, so a change to it decides whether that row can be written at all.",
+    scenarios: ["J-NOT", "J-ENGAGED-notion", "S24", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-OWN-ACCOUNT-NOTION", "S-DELEGATED-notion", "S-SIBLING-notion", "S-GITHUB-NOTION-REST"],
+    why: "J-NOT and J-ENGAGED-notion are surface: \"notion\" — the second drives the ambient engagement seam (OPE-1501: a NAME-DROP engages the page, because Notion has no @mention of an integration) and is the only leg that reads the ingress's addressing-aware ambient gate. The rest drive a live Notion integration (read at S24/S-DM-NOTION, write at S-NOTION-WRITE/S-CONNECTOR-TIER, offer/intake at S-CONNECT-CARD/S-APIKEY-INTAKE, and raw shared REST plus independent API readback at S-GITHUB-NOTION-REST). S-OWN-ACCOUNT-NOTION (OPE-1599) is surface: \"notion\" as well, and it is the only leg that GATES on the `connector.acting_identity` row. J-NOT's ordinary reads run the same seam and write `install` rows, but assert nothing about them, so a gate regression that flips a refusal is visible only here. The dispatcher `channels/notion-acting-identity.ts` lives in THIS package and is the sole route to the own-account gate, so a change to it decides whether that row can be written at all.",
   },
 
   {
@@ -112,8 +112,24 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "credentials-and-connectors",
     globs: ["packages/core/agent/credentials/**", "packages/core/agent/connections/**", "packages/core/agent/hooks/own-account-ask.ts"],
-    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT", "S-OWN-ACCOUNT-NOTION"],
+    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT", "S-OWN-ACCOUNT-NOTION", "S-GITHUB-NOTION-REST"],
     why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario. S-ROUTINE-CONNECTOR-WRITE is the only leg on `withUnattendedConnectorFence` (connections/connector-auth.ts), and S-DISCORD-GRANT the only one on the credential-GRANT plane. S-OWN-ACCOUNT-NOTION (OPE-1599) is the only leg that GATES on the `connector.acting_identity` row — the row `connections/own-account-gate.ts` writes when it refuses a team-key read of a member's own account. J-NOT's ordinary Notion reads run the same gate and write `install` rows, but assert nothing about them. That gate decides WHICH credential a connector read spends, so the leg belongs with the credential legs even though it reads rather than writes. `hooks/own-account-ask.ts` is in the globs for the same leg: it is the sole producer AND clearer of the `oe_own_account_ask` stamp the gate reads before the requester's own words (OPE-1597), so a change there decides whether the refusal can be produced at all. That file sat outside every glob until OPE-1599 — a change touched it and this map selected no leg that drives it. S-EVE-CARD is the only leg that SETTLES a `connectorApprovalPolicy()` card, so a change that stops eve receiving the policy — the OPE-1218 class, where the resolver drops a non-function `approval` — reds it.",
+  },
+  {
+    area: "shared-notion-rest-egress",
+    globs: [
+      "agent/access/bundles.ts",
+      "agent/plugins/registry.ts",
+      "agent/plugins/skill-content.ts",
+      "packages/core/agent/access/bundle.ts",
+      "packages/core/agent/access/resolver.ts",
+      "packages/core/agent/access/credentials.ts",
+      "packages/core/agent/access/egress.ts",
+      "packages/core/agent/hooks/egress.ts",
+      "packages/core/agent/skills/scoped.ts",
+    ],
+    scenarios: ["S-GITHUB-NOTION-REST"],
+    why: "S-GITHUB-NOTION-REST is the live workflow that crosses every part of the shared notion-rest route: the domain binding and connection in app access config, the plugin alias and packaged skill, scoped skill resolution, brokered header resolution, and sandbox policy compilation/application. It verifies the mutation through an independent Notion credential and requires a policy row for the GitHub scope to name the notion-rest credentialed write route.",
   },
   {
     area: "proactive-dm-road",

@@ -69,10 +69,14 @@ function run(env: Record<string, string>): { code: number; out: string } {
 {
   const r = run({ E2E_RELEASE_SCOPE: "launch" });
   ok(r.code !== 0, `a canonical launch run with no capabilities exits NON-zero — got ${r.code}. Output:\n${r.out}`);
-  ok(r.out.includes("release scope=launch: 58 REQUIRED, 21 NON_LAUNCH"), "the canonical selector prints its reviewed accounting totals");
+  ok(r.out.includes("release scope=launch: 59 REQUIRED, 21 NON_LAUNCH"), "the canonical selector prints its reviewed accounting totals");
   ok(/\| J1 \| slack \| REQUIRED \| RED \|/.test(r.out), `a required missing Slack leg is RED — got:\n${r.out}`);
   ok(/\| S-SPEND-DM-MASK \| discord \| REQUIRED \| RED \|/.test(r.out), "a shared security row remains REQUIRED despite its Discord vehicle");
   ok(/\| S-DISCORD-GRANT \| discord \| REQUIRED \| RED \|/.test(r.out), "the unresolved live grant-used to grant-notified row remains REQUIRED despite its Discord vehicle");
+  ok(
+    /\| S-GITHUB-NOTION-REST \| cross \| REQUIRED \| RED \|/.test(r.out),
+    "the GitHub-origin shared Notion REST workflow is an explicit required row, not only part of the aggregate count",
+  );
   ok(
     r.out.includes("S-DISCORD-GRANT requires the human-tapped phase") && r.out.includes("E2E_DISCORD_GRANT_TAPPED=1"),
     "an untapped raising phase is visibly RED and cannot masquerade as deployed grant.used/grant.notified evidence",

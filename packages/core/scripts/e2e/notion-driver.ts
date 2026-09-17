@@ -91,6 +91,13 @@ export interface NotionComment {
   readonly createdTime: string;
 }
 
+export interface NotionTextBlock {
+  readonly id: string;
+  readonly type: string;
+  readonly text: string;
+  readonly createdTime: string;
+}
+
 export interface NotionReplyFilter {
   readonly seen?: ReadonlySet<string>;
   readonly skip?: (c: NotionComment) => boolean;
@@ -382,8 +389,8 @@ export class NotionDriver {
     return id;
   }
 
-  async archiveBlock(blockId: string): Promise<void> {
-    await notionFetch(
+  async archiveBlockStrict(blockId: string): Promise<void> {
+    const res = await notionFetch(
       `${NOTION_API}/blocks/${encodeURIComponent(blockId)}`,
       {
         method: "PATCH",
@@ -391,12 +398,52 @@ export class NotionDriver {
         body: JSON.stringify({ archived: true }),
       },
       { what: `PATCH /v1/blocks/${blockId} (archive)`, ...this.retry },
-    ).catch(() => undefined);
+    );
+    if (!res.ok) {
+      throw new Error(`notion PATCH /blocks/${blockId} (archive) → ${res.status}`);
+    }
+    const json = (await res.json()) as { id?: unknown; archived?: unknown };
+    if (json.id !== blockId || json.archived !== true) {
+      throw new Error(`notion block ${blockId} archive returned no matching archived block`);
+    }
+    this.blockIdsCache = undefined;
+  }
+
+  async archiveBlock(blockId: string): Promise<void> {
+    await this.archiveBlockStrict(blockId).catch(() => undefined);
   }
 
   async pageBlocks(): Promise<readonly string[]> {
     const results = await this.apiAllPages(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children`);
     return results.map((b) => (typeof b.id === "string" ? b.id : "")).filter((id) => id.length > 0);
+  }
+
+  async pageTextBlocks(): Promise<readonly NotionTextBlock[]> {
+    const results = await this.apiAllPages(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children`);
+    return results.flatMap((block) => {
+      const id = typeof block.id === "string" ? block.id : undefined;
+      const type = typeof block.type === "string" ? block.type : undefined;
+      const createdTime = typeof block.created_time === "string" ? block.created_time : undefined;
+      if (!id || !type || !createdTime) return [];
+      const value = block[type];
+      if (typeof value !== "object" || value === null) return [];
+      const rich = (value as { rich_text?: unknown }).rich_text;
+      if (!Array.isArray(rich)) return [];
+      const text = rich
+        .map((item) => (typeof item === "object" && item !== null && typeof (item as { plain_text?: unknown }).plain_text === "string" ? (item as { plain_text: string }).plain_text : ""))
+        .join("");
+      return [{ id, type, text, createdTime }];
+    });
+  }
+
+  async awaitTextBlocks(marker: string, timeoutMs: number): Promise<readonly NotionTextBlock[]> {
+    return pollUntil(
+      async () => {
+        const matches = (await this.pageTextBlocks()).filter((block) => block.text.includes(marker));
+        return matches.length > 0 ? matches : undefined;
+      },
+      { timeoutMs, what: `a Notion block containing ${marker}` },
+    );
   }
 
   async createBlockDiscussion(blockId: string, text: string): Promise<{ commentId: string; discussionId: string }> {

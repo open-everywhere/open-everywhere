@@ -143,6 +143,24 @@ export interface GitHubAmbientEvent {
   };
 }
 
+export function githubDispatchAuditDetail(input: {
+  readonly addressing: string;
+  readonly issueNumber: number;
+  readonly commentId?: string;
+  readonly wakeId?: string;
+  readonly repoPrivate: boolean;
+  readonly vouched: boolean;
+}): Readonly<Record<string, unknown>> {
+  return {
+    addressing: input.addressing,
+    issueNumber: input.issueNumber,
+    ...(input.commentId ? { commentId: input.commentId } : {}),
+    ...(input.wakeId ? { wakeId: input.wakeId } : {}),
+    repoPrivate: input.repoPrivate,
+    vouched: input.vouched,
+  };
+}
+
 function pick(o: unknown, k: string): unknown {
   return o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined;
 }

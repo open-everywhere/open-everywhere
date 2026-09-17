@@ -4,6 +4,7 @@ import {
   githubSupervisorSentinel,
   classifyGitHubAmbientComment,
   extractGitHubAmbientEvent,
+  githubDispatchAuditDetail,
   buildGitHubSupervisorWake,
   handleGitHubSupervisorDispatch,
   shouldRotate,
@@ -55,6 +56,20 @@ ok(!githubAmbientLegKeeps("drop", true, false), "the classifier's own DROP is fi
 
 ok(githubAmbientLegKeeps("channel-watch", false, true), "🔴 the measured case: an ENGAGED container's plain follow-up is kept with the chattiness flag OFF — and the un-engaged row above, refused with the same two other inputs, is what makes this a door rather than an open gate");
 ok(!githubAmbientLegKeeps("drop", false, true), "the classifier's own DROP is final — enrolment never re-opens it either");
+
+{
+  const detail = githubDispatchAuditDetail({
+    addressing: "direct-mention",
+    issueNumber: 42,
+    commentId: "101",
+    wakeId: "wake-101",
+    repoPrivate: true,
+    vouched: true,
+  });
+  ok(detail.commentId === "101" && detail.wakeId === "wake-101" && detail.issueNumber === 42, "github.dispatched carries the exact comment id and the one wake id minted for its window");
+  const native = githubDispatchAuditDetail({ addressing: "channel-watch", issueNumber: 42, repoPrivate: true, vouched: false });
+  ok(native.commentId === undefined && native.wakeId === undefined, "absent source ids remain absent on a native/non-window dispatch rather than being guessed");
+}
 
 const base: GitHubAmbientComment = { body: "looks good, shipping this after lunch", authorLogin: "human-dev", authorType: "User", repoPrivate: true };
 
@@ -230,6 +245,8 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(src.includes("admit: seatAdmissionFor(surfaceKey)"), "🔴 the live ambient leg passes the domain's admission policy into the supervisor dispatch");
   ok(src.includes("catchUp: (req) => seatCatchUp(\"github\", req),"), "🔴 …and the catch-up read passes NO `admit`, so the policy is the shared road's own and the two reads cannot disagree");
   ok(!/seatCatchUp\("github", req, \{[^}]*admit:/u.test(src), "NEGATIVE CONTROL: this leg does not smuggle its own admission policy back in past the shared road");
+  ok(src.includes("const wakeId = singleWindow && vouched ? mintWakeId() : undefined"), "the live ambient leg mints the unified wake id once");
+  ok(src.includes("window: wakeId") && src.includes("githubDispatchAuditDetail({") && src.includes("commentId: ev.comment.id") && src.includes("wakeId,"), "…and carries that same id beside the exact comment id on github.dispatched");
 }
 
 {

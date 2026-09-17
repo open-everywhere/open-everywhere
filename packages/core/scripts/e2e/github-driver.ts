@@ -83,8 +83,15 @@ export class GithubDriver {
     return number;
   }
 
+  async closeIssueStrict(issueNumber: number): Promise<void> {
+    const json = await this.api("PATCH", `/repos/${this.cfg.repo}/issues/${issueNumber}`, { state: "closed" });
+    if (json.state !== "closed" || json.number !== issueNumber) {
+      throw new Error(`github issue #${issueNumber} close returned no matching closed issue`);
+    }
+  }
+
   async closeIssue(issueNumber: number): Promise<void> {
-    await this.api("PATCH", `/repos/${this.cfg.repo}/issues/${issueNumber}`, { state: "closed" }).catch(() => undefined);
+    await this.closeIssueStrict(issueNumber).catch(() => undefined);
   }
 
   async comment(issueNumber: number, body: string): Promise<number> {
@@ -98,6 +105,10 @@ export class GithubDriver {
     const json = (await this.api("GET", `/repos/${this.cfg.repo}/issues/${issueNumber}/comments?per_page=100`)) as unknown as GithubApiComment[];
     const arr = Array.isArray(json) ? json : [];
     return arr.map((c) => ({ id: c.id ?? 0, body: c.body ?? "", authorLogin: c.user?.login ?? "", authorType: c.user?.type ?? "", createdAt: c.created_at ?? "" }));
+  }
+
+  async commentById(issueNumber: number, commentId: number): Promise<GithubComment | undefined> {
+    return (await this.comments(issueNumber)).find((comment) => comment.id === commentId);
   }
 
   isBotComment(c: GithubComment): boolean {

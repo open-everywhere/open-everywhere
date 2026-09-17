@@ -10,7 +10,7 @@ import type { GrantJsonObject } from "../operational/credential-grant-rows.js";
 import { connectorTransportSpec, type ConnectorTransportSpec } from "./connector-transport.js";
 import { requireUserAuthFlow, userAuthFlowProvider, type UserAuthSubject } from "./user-auth-flow.js";
 
-export const BORROW_APPROVE_READ_BUDGET_MS = 2_000;
+export const BORROW_APPROVE_READ_BUDGET_MS = 5_000;
 
 export interface BorrowDeadline {
   remainingMs(): number;

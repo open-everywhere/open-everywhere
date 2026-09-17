@@ -997,10 +997,18 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "grant-click", "front-interactivity-branch")) {
         return fencedAck(new Response(null, { status: 200 }));
       }
-      if (await handleGrantCardClick(decision.payload)) {
-        return new Response(null, { status: 200 });
-      }
-      return forwardNative();
+      args.waitUntil(
+        Promise.resolve()
+          .then(async () => {
+            if (!(await handleGrantCardClick(decision.payload))) {
+              console.warn("[open-everywhere:slack-front] classified grant click was not claimed by the grant handler");
+            }
+          })
+          .catch(() => {
+            console.warn("[open-everywhere:slack-front] grant click failed after acknowledgement");
+          }),
+      );
+      return new Response(null, { status: 200 });
     }
 
     if (decision.kind === "input-click") {

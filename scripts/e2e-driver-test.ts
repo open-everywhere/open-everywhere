@@ -33,6 +33,10 @@ import {
   approvedSuspendedContinuation,
   suspendedApprovalRequest,
 } from "../packages/core/scripts/e2e/suspended-approval.js";
+import {
+  githubNotionOriginLifecycle,
+  githubNotionReplyRow,
+} from "../packages/core/scripts/e2e/github-notion-rest.js";
 import type { HaltOwnershipHandle } from "../packages/core/scripts/e2e/control-write-driver.js";
 import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
@@ -863,6 +867,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-DELEGATED-linear",
     "S-DELEGATED-github",
     "S-DELEGATED-notion",
+    "S-GITHUB-NOTION-REST",
     "S-SUSPENDED-slack",
     "S-SUSPENDED-discord",
     "S-SUSPENDED-teams",
@@ -924,7 +929,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
     nonSlack.join(",") ===
-      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-BRIDGE,S-EVE-CARD,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SPEND-DM-MASK,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
+      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-BRIDGE,S-EVE-CARD,S-GITHUB-NOTION-REST,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SPEND-DM-MASK,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
     "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE+S-OWN-ACCOUNT-NOTION(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
@@ -934,7 +939,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-APPROVAL-COALESCED,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-HALT,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-APPROVAL-COALESCED,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-HALT,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -942,6 +947,10 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(
     req("S-SUSPENDED-slack") === "slack+syntheticDm",
     "S-SUSPENDED-slack drives the real Slack DM door that can legally use the consented personal connector",
+  );
+  ok(
+    req("S-GITHUB-NOTION-REST") === "github+notionAmbient",
+    "S-GITHUB-NOTION-REST requires the GitHub origin driver plus the independent Notion page readback driver",
   );
   ok(req("J3") === "slack+synthetic+slackUser2", "J3 (governance journey) requires slack + synthetic + slackUser2 (union of S5/S19 synthetic + S15/S16 non-admin identity)");
   ok(req("J4") === "slack+syntheticDm+notion", "J4 (access journey) requires slack + syntheticDm + notion (channel legs run in the one-member e2e-connector domain; DM legs keep their own driver)");
@@ -991,6 +1000,127 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     githubGap.includes("GAP (no live call was made)") && githubGap.includes("no GitHub-reachable eve-HITL operation"),
     "S-SUSPENDED-github fails as a named static capability/fixture GAP without driving GitHub",
   );
+
+  {
+    const origin = { surfaceKey: "github/example-owner/e2e-scratch", issueNumber: 77, commentId: 101, vendorCreatedAt: "2026-05-26T06:32:00Z" };
+    const rows: AuditWireEntry[] = [
+      { ts: "2026-05-26T06:32:01.000Z", org: "o", platform: "github", workspace: "example-owner", surface: origin.surfaceKey, action: "github.dispatched", detail: { issueNumber: 77, commentId: "101", wakeId: "wake-77" } },
+      { ts: "2026-05-26T06:32:01.000Z", org: "o", platform: "github", workspace: "e2e-unified", surface: origin.surfaceKey, action: "wake.ingress", detail: { surfaceKey: origin.surfaceKey, vendorTs: "2026-05-26T06:32:00.000Z", vendorTsSource: "vendor-time", deliveryId: "delivery-77", wakeId: "wake-77" } },
+      { ts: "2026-05-26T06:32:02.000Z", org: "o", platform: "github", workspace: "example-owner", surface: origin.surfaceKey, action: "wake.turn_start", detail: { wakeId: "wake-77", sessionId: "session-77" } },
+      { ts: "2026-05-26T06:32:03.000Z", org: "o", platform: "github", workspace: "example-owner", surface: "e2e-scratch", action: "egress.policy", detail: { scopeKey: origin.surfaceKey, writeHosts: [{ host: "api.notion.com", credentialed: true, credential: "notion-rest", verb: ["GET", "POST", "PATCH"] }] } },
+      { ts: "2026-05-26T06:32:07.000Z", org: "o", platform: "github", workspace: "example-owner", surface: "e2e-scratch", action: "reply.post", detail: { id: "303", platform: "github", sessionId: "session-77", wakeId: "wake-77" } },
+    ];
+    const lifecycle = githubNotionOriginLifecycle(rows, origin);
+    ok(
+      lifecycle?.deliveryId === "delivery-77" && lifecycle.wakeId === "wake-77" && lifecycle.sessionId === "session-77",
+      "GitHub→Notion origin rows join the exact issue/comment to one delivery, wake and session",
+    );
+    ok(
+      githubNotionReplyRow(rows, { replyId: 303, sessionId: "session-77" })?.action === "reply.post",
+      "…and the exact GitHub reply id joins to that session after its body names the independently-read block id",
+    );
+    ok(
+      githubNotionOriginLifecycle([...rows, { ...rows[1]!, detail: { ...rows[1]!.detail, deliveryId: "other-delivery", wakeId: "other-wake" } }], origin)?.deliveryId === "delivery-77",
+      "origin join ignores another issue's ingress even when GitHub stamped it in the same whole second",
+    );
+    ok(
+      githubNotionOriginLifecycle([...rows, { ...rows[1]!, detail: { ...rows[1]!.detail, deliveryId: "ambiguous" } }], origin) === undefined,
+      "origin join fails closed on a duplicate ingress for the exact shared wake id",
+    );
+    ok(
+      githubNotionReplyRow(rows, { replyId: 303, sessionId: "another-session" }) === undefined &&
+        githubNotionReplyRow([...rows, rows[4]!], { replyId: 303, sessionId: "session-77" }) === undefined,
+      "reply join rejects the wrong session and an ambiguous duplicate row",
+    );
+
+    const scenario = SCENARIOS.find((candidate) => candidate.id === "S-GITHUB-NOTION-REST")!;
+    let marker = "";
+    let ask = "";
+    let archived = "";
+    let closed = 0;
+    const github = {
+      repo: "example-owner/e2e-scratch",
+      mention(text: string) { return `@open-everywhere ${text}`; },
+      async createIssue(title: string) {
+        marker = title.match(/github-notion-rest-\d+/u)?.[0] ?? "";
+        return 77;
+      },
+      async comment(issue: number, body: string) {
+        ok(issue === 77, "workflow posts its ask on the temporary issue it created");
+        ask = body;
+        return 101;
+      },
+      async commentById(issue: number, id: number) {
+        return issue === 77 && id === 101 ? { id, body: ask, authorLogin: "driver", authorType: "User", createdAt: origin.vendorCreatedAt } : undefined;
+      },
+      async awaitBotReply(issue: number, after: number, opts: { skip?: (comment: { body: string }) => boolean }) {
+        const reply = { id: 303, body: `Completed ${marker}; new block block77`, authorLogin: "open-everywhere[bot]", authorType: "Bot", createdAt: "2026-05-26T06:32:06.000Z" };
+        ok(opts.skip?.({ body: `Completed ${marker}` }) === true, "workflow rejects a marker-only reply that cannot prove the append returned a block id");
+        ok(issue === 77 && after === 101 && opts.skip?.(reply) === false, "workflow waits past hand-offs for the marker-bearing settled GitHub reply");
+        return reply;
+      },
+      async closeIssueStrict(issue: number) { closed = issue; },
+    };
+    const notion = {
+      pageId: "notion-page-fixture",
+      async awaitTextBlocks(want: string) {
+        ok(want === marker, "workflow readback asks Notion for the one run marker created in GitHub");
+        return [{ id: "block-77", type: "paragraph", text: `handoff ${marker}`, createdTime: "2026-05-26T06:32:05.000Z" }];
+      },
+      async archiveBlockStrict(id: string) { archived = id; },
+    };
+    let gates = 0;
+    await scenario.run({
+      github,
+      notionAmbient: notion,
+      async auditRead() { return rows; },
+      gate(pass: boolean, label: string) { if (!pass) throw new Error(`GATE ${label}`); gates++; },
+      skip(reason: string): never { throw new ScenarioSkip(reason); },
+      log() {},
+    } as never);
+    ok(marker.length > 0 && ask.includes(marker) && ask.includes("notion-page-fixture"), "workflow uses one unique marker and the exact E2E_NOTION_PAGE_ID fixture in its delegated ask");
+    ok(ask.includes("do not wait for or claim a per-write approval"), "workflow states raw shared REST's real approval behavior instead of inventing a suspended request");
+    ok(gates >= 6, "workflow gates vendor time, unique readback, mutation/reply order, credential route and exact lifecycle");
+    ok(archived === "block-77" && closed === 77, "workflow strictly archives the exact returned block and closes its own issue");
+
+    let cleanupFailure: unknown;
+    try {
+      await scenario.run({
+        github: { ...github, async closeIssueStrict() { throw new Error("close refused"); } },
+        notionAmbient: notion,
+        async auditRead() { return rows; },
+        gate(pass: boolean, label: string) { if (!pass) throw new Error(`GATE ${label}`); },
+        skip(reason: string): never { throw new ScenarioSkip(reason); },
+        log() {},
+      } as never);
+    } catch (error) {
+      cleanupFailure = error;
+    }
+    ok(
+      cleanupFailure instanceof AggregateError && cleanupFailure.message.includes("cleanup operation(s) also failed"),
+      "workflow turns an owned issue cleanup failure into a scenario failure instead of reporting a fake green",
+    );
+
+    let lateArchived = "";
+    let failedWait: unknown;
+    try {
+      await scenario.run({
+        github: { ...github, async comment() { throw new Error("connection failed after GitHub may have accepted the comment"); } },
+        notionAmbient: {
+          ...notion,
+          async pageTextBlocks() { return [{ id: "late-block-77", type: "paragraph", text: `late ${marker}`, createdTime: new Date().toISOString() }]; },
+          async archiveBlockStrict(id: string) { lateArchived = id; },
+        },
+        async auditRead() { return rows; },
+        gate(pass: boolean, label: string) { if (!pass) throw new Error(`GATE ${label}`); },
+        skip(reason: string): never { throw new ScenarioSkip(reason); },
+        log() {},
+      } as never);
+    } catch (error) {
+      failedWait = error;
+    }
+    ok(failedWait instanceof AggregateError && lateArchived === "late-block-77", "an ambiguous GitHub POST failure still re-reads within the cleanup cutoff and archives a resulting late marker block before reporting the original failure");
+  }
 
   ok(req("J-ENGAGED-slack") === "slack+engagedSlack", "J-ENGAGED-slack requires slack + engagedSlack (the base xoxp driver, rebound onto the addressed-only channel)");
   ok(req("J-ENGAGED-discord") === "discord+engagedDiscord", "J-ENGAGED-discord requires discord + engagedDiscord");
@@ -1880,7 +2010,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const { engagedRepoSkipReason } = await import("../packages/core/scripts/e2e/github-driver.js");
+  const { engagedRepoSkipReason, GithubDriver } = await import("../packages/core/scripts/e2e/github-driver.js");
   const publicReason = engagedRepoSkipReason("acme/fixture", false);
   ok(publicReason !== undefined, "a PUBLIC fixture repo yields a skip reason");
   ok(publicReason!.includes("acme/fixture"), "…which names the repo the operator must fix");
@@ -1888,6 +2018,19 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(publicReason!.includes("E2E_ADDRESSED_GITHUB_REPO"), "…and the variable that points the journey elsewhere");
   ok(engagedRepoSkipReason("acme/fixture", true) === undefined, "a PRIVATE fixture repo yields no skip — the journey runs");
   ok(engagedRepoSkipReason("acme/fixture", undefined) === undefined, "an UNREADABLE probe yields no skip either — unknown privacy is not evidence the floor blocks step (b)");
+
+  const realFetch = globalThis.fetch;
+  try {
+    const driver = new GithubDriver({ repo: "acme/fixture", token: "driver-token", appSlug: "open-everywhere", issue: "7" } as never);
+    globalThis.fetch = async () => new Response(JSON.stringify({ number: 77, state: "closed" }), { status: 200 });
+    await driver.closeIssueStrict(77);
+    let malformed: unknown;
+    globalThis.fetch = async () => new Response(JSON.stringify({ number: 77, state: "open" }), { status: 200 });
+    try { await driver.closeIssueStrict(77); } catch (error) { malformed = error; }
+    ok(malformed instanceof Error && malformed.message.includes("no matching closed issue"), "strict GitHub teardown rejects a malformed 2xx that did not close its exact issue");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 {
@@ -5420,6 +5563,19 @@ rmSync(dir, { recursive: true, force: true });
   ok(parseNotionRetryAfterMs("not-a-delay", 0) === undefined, "…as does a value in neither RFC 9110 form");
   ok(parseNotionRetryAfterMs(new Date(5_000).toUTCString(), 0) === 5_000, "an HTTP-date reads as a delay relative to now");
   ok(parseNotionRetryAfterMs(new Date(0).toUTCString(), 5_000) === 0, "a PAST date clamps to 0 — the vendor says the wait is already over");
+
+  {
+    const valid = new NotionDriver({ driverKey: "k", pageId: "p", workspaceId: "w", botUserId: "b" } as never, {
+      fetchFn: async () => res(200, { body: { id: "block-1", archived: true } }),
+    });
+    await valid.archiveBlockStrict("block-1");
+    const malformed = new NotionDriver({ driverKey: "k", pageId: "p", workspaceId: "w", botUserId: "b" } as never, {
+      fetchFn: async () => res(200, { body: { id: "block-1", archived: false } }),
+    });
+    let thrown: unknown;
+    try { await malformed.archiveBlockStrict("block-1"); } catch (error) { thrown = error; }
+    ok(thrown instanceof Error && thrown.message.includes("no matching archived block"), "strict Notion teardown rejects a malformed 2xx that did not archive its exact block");
+  }
 
   {
     const waits: number[] = [];

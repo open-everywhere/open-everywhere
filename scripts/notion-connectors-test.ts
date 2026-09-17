@@ -60,6 +60,33 @@ ok(
 const notionConn = bound.connections.find((c) => c.id === "notion-rest");
 ok(notionConn?.credentialType === "bearer" && notionConn?.secretRef === "db:notion:team-key", "route ①: bearer credential, secretRef db:notion:team-key");
 
+const unified = domains.find((domain) => domain.name === "e2e-unified");
+ok(unified?.mode === "unified", "shared Notion fixture uses the unified domain");
+ok(unified?.reach?.includes("github/example-owner/e2e-scratch") === true,
+  "the GitHub test repo is a member, so shared access coverage cannot pass without it");
+for (const surface of unified?.reach ?? []) {
+  const [platform, workspace, ...channelParts] = surface.split("/");
+  const channel = channelParts.join("/");
+  const access = resolveAccess({
+    mode: "channel", platform, workspace, channel,
+    domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }, domains),
+  }, bundles, bindings, PLUGIN_REGISTRY, catalogues);
+  const connection = access.connections.find((candidate) => candidate.id === "notion-rest");
+  ok(connection?.secretRef === "db:notion:team-key" && connection.broker === "db",
+    `${platform} domain member uses the shared Notion credential`);
+  ok(access.skills.includes("notion-rest"), `${platform} domain member can use the Notion REST skill`);
+  ok(!access.connectors.includes("notion"), `${platform} domain member does not inherit personal Notion MCP access`);
+  const host = access.reachableHosts.find((candidate) => candidate.host === "api.notion.com");
+  ok(host?.viaConnection === "notion-rest" && host.methods?.includes("PATCH") === true,
+    `${platform} domain member can update Notion through the credentialed connection`);
+}
+const unrelatedGithub = resolveAccess({
+  mode: "channel", platform: "github", workspace: "example-owner", channel: "unrelated-notion-test",
+  domains: domainsForSurface({ workspaceKey: "github/example-owner", surface: "unrelated-notion-test" }, domains),
+}, bundles, bindings, PLUGIN_REGISTRY, catalogues);
+ok(!unrelatedGithub.connections.some((connection) => connection.id === "notion-rest"),
+  "unrelated GitHub repo does not inherit the domain's shared Notion credential");
+
 ok(bound.plugins.includes("notion"), "route ②: bundle grants the 'notion' plugin");
 ok(bound.skills.includes("notion-rest"), "route ②: plugin expands to the 'notion-rest' skill (scoped visibility)");
 ok(SKILL_CONTENT["notion-rest"] !== undefined, "route ②: skill content exists in the registry");

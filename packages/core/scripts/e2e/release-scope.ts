@@ -45,6 +45,7 @@ const REQUIRED_IDS = [
   "S-DELEGATED-slack",
   "S-DELEGATED-github",
   "S-DELEGATED-notion",
+  "S-GITHUB-NOTION-REST",
   "S-SUSPENDED-slack",
   "S-SUSPENDED-github",
   "S-SIBLING-notion",

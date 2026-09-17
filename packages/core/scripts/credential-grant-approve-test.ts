@@ -418,6 +418,23 @@ console.log("6a. one shared deadline across the probe, the mint and the catalogu
     BORROW_APPROVE_READ_BUDGET_MS > 0 && BORROW_APPROVE_READ_BUDGET_MS <= 5_000,
     `…and the budget the flow itself starts is seconds, not that default (it is ${String(BORROW_APPROVE_READ_BUDGET_MS)}ms)`,
   );
+
+  const coldVendor = server({ tools: PUBLISHED });
+  let coldLeg = true;
+  const coldFetch: FakeMcpServer["fetch"] = async (url, init) => {
+    if (coldLeg && (init?.method ?? "GET").toUpperCase() === "POST") {
+      coldLeg = false;
+      await new Promise((resolve) => setTimeout(resolve, 2_200));
+    }
+    return await coldVendor.fetch(url, init);
+  };
+  const coldAsk = await raise({ label: "Cold catalogue" });
+  const coldApproval = await approveCredentialGrant(stamps, coldAsk.askId, "session", OWNER, NOW + 700, undefined, {
+    fetch: coldFetch,
+    mintOwnerToken: async () => "OWNER-TOKEN",
+  });
+  ok(coldApproval.approved, "🔴 a healthy cold catalogue may take longer than two seconds and still mint inside the bounded host hold");
+  eq((await store.getCredentialGrantAsk(ORG, coldAsk.askId))?.status, "approved", "…and the owner's approval reaches the CAS rather than being reported as a retryable catalogue failure");
 }
 
 console.log("6b. the card cannot hide a fixed argument behind a padded one:");

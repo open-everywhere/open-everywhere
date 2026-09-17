@@ -23,6 +23,7 @@ import { engagedRepoSkipReason, githubCommentAtOrAfter, type GithubDriver } from
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
+import { GITHUB_NOTION_REST_ACTIONS, githubNotionOriginLifecycle, githubNotionReplyRow } from "./github-notion-rest.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
@@ -3798,6 +3799,166 @@ export const SCENARIOS: readonly Scenario[] = [
       await notion.archiveBlock(blockId).catch(() => undefined);
     },
   },
+
+  {
+    id: "S-GITHUB-NOTION-REST",
+    title: "GitHub-origin shared workflow: the exact issue wake writes the domain's Notion page through credential-injected REST, readback verifies it, then the same session replies",
+    requires: ["github", "notionAmbient"],
+    surface: "cross",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      if (!ctx.auditRead) {
+        ctx.skip(
+          "S-GITHUB-NOTION-REST needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN: without the audit route it cannot join this GitHub comment to its delivery/wake/session and reply.post",
+        );
+      }
+      const github = ctx.github!;
+      const notion = ctx.notionAmbient!;
+      const marker = factToken("github-notion-rest");
+      const surfaceKey = `github/${github.repo}`;
+      const repoName = github.repo.split("/")[1] ?? github.repo;
+      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      let issueNumber: number | undefined;
+      let askAttempted = false;
+      let readbackBlocks: Awaited<ReturnType<NotionDriver["pageTextBlocks"]>> = [];
+      let runError: unknown;
+
+      try {
+        issueNumber = await github.createIssue(
+          `(e2e) GitHub to Notion REST ${marker}`,
+          "Temporary workflow issue opened by the e2e pack. The pack closes it after checking the cross-surface result.",
+        );
+        askAttempted = true;
+        const askId = await github.comment(
+          issueNumber,
+          github.mention(
+            `Handle this issue as a shared-workspace handoff. Delegate the work and use the notion-rest skill's REST pattern to PATCH exactly one paragraph onto Notion page ${notion.pageId}; preserve the returned results[0].id as the new block id, and include this exact marker in the paragraph: ${marker}. ` +
+              `Do not supply an Authorization header: the boundary injects the shared credential. The domain configuration already authorizes this REST write, so do not wait for or claim a per-write approval. After the append succeeds, reply here with ${marker} and the returned new block id.`,
+          ),
+        );
+        const anchor = await pollUntil(() => github.commentById(issueNumber!, askId), {
+          timeoutMs: 60_000,
+          what: `GitHub comment ${askId} with its vendor created_at timestamp`,
+        });
+        ctx.gate(!Number.isNaN(Date.parse(anchor.createdAt)), `S-GITHUB-NOTION-REST: GitHub returned a parseable created_at for comment ${askId}`);
+
+        readbackBlocks = await notion.awaitTextBlocks(marker, FILE_REPLY_WAIT);
+        ctx.gate(
+          readbackBlocks.length === 1,
+          `S-GITHUB-NOTION-REST: independent Notion readback found exactly one block containing the unique marker ${marker} (found ${readbackBlocks.length})`,
+        );
+        const block = readbackBlocks[0]!;
+        ctx.gate(!Number.isNaN(Date.parse(block.createdTime)), `S-GITHUB-NOTION-REST: returned block ${block.id} carries a parseable Notion created_time`);
+        const normalizedBlockId = block.id.toLowerCase().replaceAll("-", "");
+
+        const reply = await github.awaitBotReply(issueNumber, askId, {
+          timeoutMs: FILE_REPLY_WAIT,
+          skip: (candidate) =>
+            isPendingWorkHandoff(candidate.body) ||
+            !candidate.body.includes(marker) ||
+            !candidate.body.toLowerCase().replaceAll("-", "").includes(normalizedBlockId),
+        });
+        ctx.gate(
+          reply.body.toLowerCase().replaceAll("-", "").includes(normalizedBlockId),
+          `S-GITHUB-NOTION-REST: GitHub reply ${reply.id} names response-derived Notion block ${block.id}, which was unknowable before the successful append`,
+        );
+        ctx.gate(
+          !Number.isNaN(Date.parse(reply.createdAt)),
+          `S-GITHUB-NOTION-REST: GitHub reply ${reply.id} carries a parseable created_at for diagnostics`,
+        );
+        ctx.log(
+          `S-GITHUB-NOTION-REST timestamp diagnostic (never scored across vendor/deployment clocks): block ${block.createdTime}; reply ${reply.createdAt}`,
+        );
+
+        const evidence = await pollUntil(
+          async () => {
+            const rows = await ctx.auditRead!({ sinceIso, actions: GITHUB_NOTION_REST_ACTIONS, limit: 1000 });
+            const lifecycle = githubNotionOriginLifecycle(rows, {
+              surfaceKey,
+              issueNumber: issueNumber!,
+              commentId: askId,
+              vendorCreatedAt: anchor.createdAt,
+            });
+            if (!lifecycle) return undefined;
+            const replyRow = githubNotionReplyRow(rows, {
+              replyId: reply.id,
+              sessionId: lifecycle.sessionId,
+            });
+            if (!replyRow) return undefined;
+            const scopedPolicyRows = rows.filter(
+              (row) => row.action === "egress.policy" && row.detail?.scopeKey === surfaceKey,
+            );
+            const route = findCredentialedWriteHost(scopedPolicyRows, { host: "api.notion.com", surface: repoName });
+            if (!route.matches.some((match) => match.via === "notion-rest")) return undefined;
+            return { lifecycle, replyRow, route };
+          },
+          {
+            timeoutMs: FILE_REPLY_WAIT,
+            what: "the exact GitHub issue/delivery/wake/session/reply join plus its notion-rest credentialed write policy",
+          },
+        );
+        ctx.gate(
+          evidence.route.matches.some((match) => match.via === "notion-rest"),
+          "S-GITHUB-NOTION-REST: originating GitHub scope compiled api.notion.com write access via notion-rest; independent readback, not this policy row, proves the request mutated Notion",
+        );
+        ctx.gate(
+          evidence.replyRow.detail?.sessionId === evidence.lifecycle.sessionId,
+          `S-GITHUB-NOTION-REST: issue #${issueNumber} comment ${askId} joined delivery ${evidence.lifecycle.deliveryId}, wake ${evidence.lifecycle.wakeId}, session ${evidence.lifecycle.sessionId}, Notion block ${block.id}, and GitHub reply ${reply.id}`,
+        );
+      } catch (error) {
+        runError = error;
+      }
+
+      const cleanupErrors: unknown[] = [];
+      if (askAttempted && readbackBlocks.length === 0) {
+        try {
+          const lateBlocks = await pollOptional(
+            async () => {
+              const matches = (await notion.pageTextBlocks()).filter(
+                (block) => block.text.includes(marker) && block.createdTime >= notionMinuteFloor(sinceIso),
+              );
+              return matches.length > 0 ? matches : undefined;
+            },
+            {
+              timeoutMs: 30_000,
+              what: `a late Notion block containing ${marker} so failed-run cleanup can archive it`,
+            },
+          );
+          if (lateBlocks === undefined) {
+            cleanupErrors.push(
+              new Error(`Notion cleanup unconfirmed: no block containing ${marker} became readable within the 30s cleanup cutoff`),
+            );
+          } else {
+            readbackBlocks = lateBlocks;
+          }
+        } catch (error) {
+          cleanupErrors.push(new Error(`Notion cleanup re-read failed for ${marker}`, { cause: error }));
+        }
+      }
+      for (const block of readbackBlocks) {
+        try {
+          await notion.archiveBlockStrict(block.id);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (issueNumber !== undefined) {
+        try {
+          await github.closeIssueStrict(issueNumber);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (runError !== undefined || cleanupErrors.length > 0) {
+        throw new AggregateError(
+          [...(runError === undefined ? [] : [runError]), ...cleanupErrors],
+          `S-GITHUB-NOTION-REST failed${cleanupErrors.length > 0 ? `; ${cleanupErrors.length} owned-artifact cleanup operation(s) also failed` : ""}`,
+        );
+      }
+    },
+  },
   {
     id: "S-SUSPENDED-slack",
     title: "Approval-SUSPENDED turn on Slack: an exact human answer settles the bridged eve approval and the same session posts its resumed reply (OPE-1856)",
@@ -3950,7 +4111,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "GAP (no live call was made): this deployment exposes no GitHub-reachable eve-HITL operation. Personal Notion writes are DM-only, member-plane grants refuse writes, and post_file is unsupported on GitHub. Existing personal Notion consent cannot seed this row. A real fixture requires a DEDICATED private GitHub repo/domain plus a connector whose MCP endpoint accepts a non-personal service credential, a bundle bound only to that domain, one write op, and the ordinary per-call human approval; no such connector exists in the shipped catalogue, so there is no honest seeder command today. Treat GitHub approval-SUSPENDED as unsupported/N/A in release policy until that isolated capability exists; do not substitute an OE requestApproval card.",
+        "GAP (no live call was made): this deployment exposes no GitHub-reachable eve-HITL operation. Personal Notion writes are DM-only, member-plane grants refuse writes, and post_file is unsupported on GitHub. Existing personal Notion consent cannot seed this row. S-GITHUB-NOTION-REST separately proves the supported GitHub-origin shared Notion REST write, whose standing domain grant intentionally raises no per-write approval and therefore cannot satisfy this suspended lifecycle. A real fixture for THIS row requires a connector operation reachable from GitHub that raises eve's ordinary per-call tool-approval; no such operation exists in the shipped catalogue. Do not substitute an OE requestApproval card or an ask_question suspension for that connector-write claim.",
       );
     },
   },

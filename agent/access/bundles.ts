@@ -128,6 +128,8 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "notion-connectors", scope: { level: "domain", domain: "e2e-connector" } }),
 
+  defineBinding({ bundle: "notion-connectors", scope: { level: "domain", domain: "e2e-unified" } }),
+
   defineBinding({ bundle: "e2e-access-fixture", scope: { level: "domain", domain: "e2e-connector" } }),
 
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
