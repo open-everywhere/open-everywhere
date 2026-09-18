@@ -17,6 +17,7 @@ export const CONTROL_READ_RUNTIME_SIGNAL_PATH = "/control/v1/runtime-signal";
 export const CONTROL_READ_MODEL_CALLS_PATH = "/control/v1/session/:sessionId/model-calls";
 export const CONTROL_READ_MODEL_CALL_SESSIONS_PATH = "/control/v1/model-calls/sessions";
 export const AUDIT_MAX_LIMIT = 1000;
+const AUDIT_MAX_ACTIONS = 25;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
 const TRANSCRIPT_MAX_LIMIT = 10000;
@@ -101,10 +102,19 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     if (!Number.isInteger(n) || n <= 0) return json(400, { error: `limit "${limitRaw}" must be a positive integer` });
     limit = Math.min(n, AUDIT_MAX_LIMIT);
   }
-  const actions = (p("actions") ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const actions = [
+    ...new Set(
+      (p("actions") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (actions.length > AUDIT_MAX_ACTIONS) {
+    return json(400, {
+      error: `actions names ${actions.length} distinct actions, more than the ${AUDIT_MAX_ACTIONS} this route scans in one request — ask for fewer, or drop the filter and match the rows yourself`,
+    });
+  }
   const base: AuditFilter = {
     org: deploymentOrg(),
     since: sinceIso,
@@ -129,17 +139,20 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
       const view = await auditView({ ...base, ...(actions.length === 1 ? { action: actions[0] } : {}), limit });
       return json(200, { ...view, maxLimit: AUDIT_MAX_LIMIT });
     }
-    const view = await auditView({ ...base, limit: AUDIT_MAX_LIMIT });
-    const scanTruncated = view.entries.length >= AUDIT_MAX_LIMIT;
-    const wanted = new Set(actions);
-    const filtered = view.entries.filter((e) => wanted.has(e.action)).slice(0, limit);
+    const views = await Promise.all(actions.map((action) => auditView({ ...base, action, limit: AUDIT_MAX_LIMIT })));
+    const scanTruncated = views.some((v) => v.entries.length >= AUDIT_MAX_LIMIT);
+    const scanned = views.reduce((n, v) => n + v.entries.length, 0);
+    const merged = views
+      .flatMap((v) => v.entries)
+      .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
+      .slice(0, limit);
     return json(200, {
-      ...view,
-      filter: { ...view.filter, limit },
-      entries: filtered,
-      capped: filtered.length === limit || scanTruncated,
+      root: views[0]!.root,
+      filter: { ...base, limit },
+      entries: merged,
+      capped: merged.length === limit || scanTruncated,
       maxLimit: AUDIT_MAX_LIMIT,
-      ...(scanTruncated ? { scanTruncated: true, scanned: view.entries.length } : {}),
+      ...(scanTruncated ? { scanTruncated: true, scanned } : {}),
     });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });

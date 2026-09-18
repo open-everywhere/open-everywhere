@@ -14,6 +14,7 @@ import {
   registerScript,
   seedNotionChannelKey,
   waitFor,
+  waitForAuditRows,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -215,10 +216,15 @@ async function expectLiftedNoticeOnVenue(input: {
   readonly originCalls: readonly unknown[];
   readonly consultsBefore: number;
 }): Promise<void> {
-  const rows = await waitFor(async () => {
-    const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
-    return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
-  }, `${input.label}: this turn's approval.autoapproved row to land`);
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
+    },
+    label: `${input.label}: this turn's approval.autoapproved row to land`,
+    actions: APPROVAL_ACTIONS,
+    wakeAt: input.wakeAt,
+  });
   const lifted = rows.filter((r) => r.action === "approval.autoapproved");
   expect(lifted, `${input.label}: expected exactly one lift row`).toHaveLength(1);
   expect(lifted[0]!.detail?.resolvedBy).toBe("judge");
@@ -258,10 +264,15 @@ async function expectCardOnVenueAndNoNotice(input: {
   readonly originCalls: readonly unknown[];
   readonly consultsBefore: number;
 }): Promise<void> {
-  const rows = await waitFor(async () => {
-    const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
-    return got.some((r) => r.action === "approval.requested") ? got : undefined;
-  }, `${input.label}: this turn's approval.requested row to land`);
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.requested") ? got : undefined;
+    },
+    label: `${input.label}: this turn's approval.requested row to land`,
+    actions: APPROVAL_ACTIONS,
+    wakeAt: input.wakeAt,
+  });
   expect(rows.filter((r) => r.action === "approval.autoapproved"), `${input.label}: something lifted with the judge off`).toEqual([]);
   expect(reasons.length, `${input.label}: the judge was consulted with the mode off`).toBe(input.consultsBefore);
 

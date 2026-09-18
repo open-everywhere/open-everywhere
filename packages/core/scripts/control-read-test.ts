@@ -240,7 +240,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(one.entries.length > 0 && one.entries.every((e) => e.action === "notion.no_reply"), "audit actions=notion.no_reply returns only audited-silence rows");
   const many = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as { entries: { action: string }[] };
   const manyActions = new Set(many.entries.map((e) => e.action));
-  ok(manyActions.has("notion.no_reply") && manyActions.has("github.dispatched") && !manyActions.has("notion.replied"), "audit actions=<csv> keeps only the named actions (in-process match)");
+  ok(manyActions.has("notion.no_reply") && manyActions.has("github.dispatched") && !manyActions.has("notion.replied"), "audit actions=<csv> keeps only the named actions (one store-narrowed scan each)");
 
   await appendAudit({ org: "other", platform: "notion", workspace: "wsOther", action: "notion.cross_tenant_marker", detail: {} });
   const crossOrg = (await (await getAudit(`${sinceQ}&org=other&actions=notion.cross_tenant_marker`, SECRET)).json()) as { entries: unknown[] };
@@ -265,22 +265,72 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   for (let i = 0; i < 1000; i++) {
     await appendAudit({ org: "acme", platform: "noise", workspace: "ws1", action: "noise.filler", detail: { i } });
   }
-  const truncated = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as {
+  const buried = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as {
+    entries: { action: string }[];
+    capped: boolean;
+    scanTruncated?: boolean;
+  };
+  const buriedActions = new Set(buried.entries.map((e) => e.action));
+  ok(
+    buriedActions.has("notion.no_reply") && buriedActions.has("github.dispatched"),
+    "audit actions=<csv> still finds BOTH actions' rows behind 1000 newer rows of an unrelated action",
+  );
+  ok(
+    buried.entries.every((e) => e.action === "notion.no_reply" || e.action === "github.dispatched"),
+    "audit actions=<csv> returns only the named actions (the unrelated flood is not in the answer)",
+  );
+  ok(
+    buried.scanTruncated === undefined && buried.capped === false,
+    "audit actions=<csv> claims no truncation when the flood is of an action nobody asked for",
+  );
+  for (let i = 0; i < 1000; i++) {
+    await appendAudit({ org: "acme", platform: "github", workspace: "ws1", action: "github.dispatched", detail: { i } });
+  }
+  const truncated = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched&limit=5`, SECRET)).json()) as {
     capped: boolean;
     scanTruncated?: boolean;
     scanned?: number;
     entries: unknown[];
   };
-  ok(truncated.scanTruncated === true, "audit actions=<csv> over a TRUNCATED scan reports scanTruncated:true");
-  ok(truncated.capped === true, "audit actions=<csv> over a TRUNCATED scan reports capped:true even when nothing matched");
-  ok(truncated.scanned === 1000, "audit actions=<csv> names how many rows the scan actually read");
+  ok(truncated.scanTruncated === true, "audit actions=<csv> reports scanTruncated:true when ONE named action fills its own page");
+  ok(truncated.capped === true, "audit actions=<csv> over a TRUNCATED scan reports capped:true");
+  ok(
+    truncated.scanned !== undefined && truncated.scanned >= 1000,
+    "audit actions=<csv> names how many rows the per-action scans actually read",
+  );
+  const squeezed = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched&limit=5`, SECRET)).json()) as {
+    entries: { action: string }[];
+    capped: boolean;
+  };
+  ok(
+    squeezed.entries.length === 5 && squeezed.entries.every((e) => e.action === "github.dispatched"),
+    "a multi-action answer capped by `limit` can hold NONE of a rare action's rows — the scan found them, the cut dropped them",
+  );
+  ok(squeezed.capped === true, "🔴 …and it says so through `capped`, which is the ONLY flag set in that case");
+
+  const repeated = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,notion.no_reply`, SECRET)).json()) as {
+    entries: { ts: string; action: string }[];
+  };
+  const once = (await (await getAudit(`${sinceQ}&actions=notion.no_reply`, SECRET)).json()) as { entries: { ts: string }[] };
+  ok(
+    repeated.entries.length === once.entries.length,
+    `audit actions=<csv> de-duplicates a repeated action — got ${repeated.entries.length} rows for the repeat against ${once.entries.length} for one`,
+  );
+
+  const tooMany = Array.from({ length: 26 }, (_, i) => `ope1933.fanout_${i}`).join(",");
+  const refused = await getAudit(`${sinceQ}&actions=${tooMany}`, SECRET);
+  ok(refused.status === 400, "audit refuses a CSV naming more distinct actions than it will scan in one request");
+  ok((await refused.text()).includes("26"), "…and the refusal names how many it was asked for, so the caller can narrow");
+  const atCeiling = await getAudit(`${sinceQ}&actions=${Array.from({ length: 25 }, (_, i) => `ope1933.fanout_${i}`).join(",")}`, SECRET);
+  ok(atCeiling.status === 200, "audit ACCEPTS a CSV naming exactly the ceiling (negative control for the bound)");
+
   const single = (await (await getAudit(`${sinceQ}&actions=notion.no_reply&limit=5`, SECRET)).json()) as {
     entries: { action: string }[];
     scanTruncated?: boolean;
   };
   ok(
     single.scanTruncated === undefined && single.entries.length > 0 && single.entries.every((e) => e.action === "notion.no_reply"),
-    "audit actions=<one> still narrows at the store and finds its rows behind 1000 newer ones",
+    "audit actions=<one> still narrows at the store and finds its rows behind 2000 newer ones",
   );
 
   const legSince = new Date(Date.now() - 1_800_000).toISOString();
@@ -295,13 +345,29 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     "audit: until BEFORE since → 400 (an inverted window would answer empty and read as 'nothing happened')",
   );
 
-  const unbounded = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&${markers}`, SECRET)).json()) as {
-    entries: { action: string }[];
+  await appendAudit({
+    org: "acme",
+    platform: "github",
+    workspace: "ws1",
+    ts: new Date(Date.now() - 1_750_000).toISOString(),
+    action: "github.dispatched",
+    detail: { wakeId: "inside" },
+  });
+  const floodedMarkers = "actions=github.dispatched,oe1886.after_window";
+  const unbounded = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&${floodedMarkers}`, SECRET)).json()) as {
+    entries: { action: string; detail?: { wakeId?: string } }[];
     scanTruncated?: boolean;
   };
   ok(
-    unbounded.entries.length === 0 && unbounded.scanTruncated === true,
-    "audit since-only over a busy log cannot reach a CLOSED window's rows (the live-run shape) and reports the truncation",
+    unbounded.entries.every((e) => e.detail?.wakeId !== "inside") && unbounded.scanTruncated === true,
+    "audit since-only over an action's OWN full page cannot reach a CLOSED window's row (the live-run shape) and reports the truncation",
+  );
+  const boundedFlooded = (await (
+    await getAudit(`?since=${encodeURIComponent(legSince)}&until=${encodeURIComponent(legUntil)}&${floodedMarkers}`, SECRET)
+  ).json()) as { entries: { detail?: { wakeId?: string } }[]; scanTruncated?: boolean };
+  ok(
+    boundedFlooded.entries.some((e) => e.detail?.wakeId === "inside") && boundedFlooded.scanTruncated === undefined,
+    "audit since+until reaches the flooded action's closed-window row however many newer rows exist",
   );
   const boundedBody = (await (await getAudit(`?since=${encodeURIComponent(legSince)}&until=${encodeURIComponent(legUntil)}&${markers}`, SECRET)).json()) as {
     entries: { action: string; detail?: { wakeId?: string } }[];

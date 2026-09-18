@@ -12,6 +12,7 @@ import {
   awaitTaskSettlement,
   SETTLEMENT_DRAIN_SCRIPT,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   SLACK_TEAM_ID,
   type AuditRow,
@@ -74,10 +75,15 @@ async function driveProposal(ids: string, prompt: string): Promise<Driven> {
 }
 
 async function chainRow(wakeAt: number): Promise<AuditRow> {
-  return waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["approval.chain"], sinceIso: new Date(wakeAt).toISOString() });
-    return rows.find((r) => r.detail?.["tool"] === "create_routine");
-  }, "the approval.chain row for create_routine");
+  return waitForAuditRows({
+    probe: async () => {
+      const rows = await readAuditRows({ actions: ["approval.chain"], sinceIso: new Date(wakeAt).toISOString() });
+      return rows.find((r) => r.detail?.["tool"] === "create_routine");
+    },
+    label: "the approval.chain row for create_routine",
+    actions: ["approval.chain"],
+    wakeAt,
+  });
 }
 
 test("① under an active halt, a real turn's gated propose is DENIED by the mode:HALT arrow — no card, no routine", async () => {
@@ -119,10 +125,15 @@ test("③ under an active halt, a DUE routine does not fire on the clock leg, an
   expect(sessions).toEqual([]);
 
   const { ROUTINE_AUDIT } = await import("@open-everywhere/core/agent/routines/fire-audit.js");
-  const skip = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: [ROUTINE_AUDIT.skip], sinceIso });
-    return rows.find((r) => r.detail?.["routineId"] === id);
-  }, `the ${ROUTINE_AUDIT.skip} row for the halted fire`);
+  const skip = await waitForAuditRows({
+    probe: async () => {
+      const rows = await readAuditRows({ actions: [ROUTINE_AUDIT.skip], sinceIso });
+      return rows.find((r) => r.detail?.["routineId"] === id);
+    },
+    label: `the ${ROUTINE_AUDIT.skip} row for the halted fire`,
+    actions: [ROUTINE_AUDIT.skip],
+    wakeAt: Date.parse(sinceIso),
+  });
   expect(skip.detail?.["reason"]).toBe("halted");
 });
 
@@ -142,10 +153,15 @@ test("④ NEGATIVE CONTROL: the same due routine fires once the halt is lifted",
   const sessions = await runRoutineDispatchTick();
   expect(sessions.length).toBeGreaterThan(0);
   const { ROUTINE_AUDIT } = await import("@open-everywhere/core/agent/routines/fire-audit.js");
-  const fired = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: [ROUTINE_AUDIT.fire, ROUTINE_AUDIT.skip], sinceIso, limit: 100 });
-    return rows.find((r) => r.detail?.["routineId"] === id);
-  }, `an audit row for the resumed routine ${id}`);
+  const fired = await waitForAuditRows({
+    probe: async () => {
+      const rows = await readAuditRows({ actions: [ROUTINE_AUDIT.fire, ROUTINE_AUDIT.skip], sinceIso, limit: 100 });
+      return rows.find((r) => r.detail?.["routineId"] === id);
+    },
+    label: `an audit row for the resumed routine ${id}`,
+    actions: [ROUTINE_AUDIT.fire, ROUTINE_AUDIT.skip],
+    wakeAt: Date.parse(sinceIso),
+  });
   expect(fired.action).toBe(ROUTINE_AUDIT.fire);
 });
 

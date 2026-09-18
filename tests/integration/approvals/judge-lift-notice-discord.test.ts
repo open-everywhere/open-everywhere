@@ -12,6 +12,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   type AuditRow,
   type ScriptedHandle,
@@ -159,10 +160,15 @@ test("① an armed judge lift POSTS the notice into the Discord room, carrying t
 
   const wakeAt = await proposeRoutine("lift", "post the standup digest every weekday morning");
 
-  const rows = await waitFor(async () => {
-    const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
-    return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
-  }, "this turn's approval.autoapproved row to land");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
+    },
+    label: "this turn's approval.autoapproved row to land",
+    actions: APPROVAL_ACTIONS,
+    wakeAt,
+  });
   const lifted = rows.filter((r) => r.action === "approval.autoapproved");
   expect(lifted).toHaveLength(1);
   expect(lifted[0]!.detail?.resolvedBy).toBe("judge");
@@ -201,10 +207,15 @@ test("② a signed click on THAT button records the contradiction, and a second 
   expect(first.content).toContain("does NOT undo the action");
   expect(first.components).toBeUndefined();
 
-  const recorded = await waitFor(async () => {
-    const got = await rowsSince(clickAt, ["approval.judge.contradicted"]);
-    return got.length > 0 ? got : undefined;
-  }, "the approval.judge.contradicted row to land");
+  const recorded = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(clickAt, ["approval.judge.contradicted"]);
+      return got.length > 0 ? got : undefined;
+    },
+    label: "the approval.judge.contradicted row to land",
+    actions: ["approval.judge.contradicted"],
+    wakeAt: clickAt,
+  });
   expect(recorded).toHaveLength(1);
   expect(recorded[0]!.detail?.id).toBe(wedgeRowId);
   expect(recorded[0]!.detail?.kind).toBe("routine.create");
@@ -227,10 +238,15 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
 
   const wakeAt = await proposeRoutine("carded", "post the release notes every weekday afternoon");
 
-  const rows = await waitFor(async () => {
-    const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
-    return got.some((r) => r.action === "approval.requested") ? got : undefined;
-  }, "this turn's approval.requested row to land");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.requested") ? got : undefined;
+    },
+    label: "this turn's approval.requested row to land",
+    actions: APPROVAL_ACTIONS,
+    wakeAt,
+  });
   expect(rows.filter((r) => r.action === "approval.autoapproved")).toEqual([]);
   expect(reasons.length).toBe(consultsBefore);
 
@@ -253,10 +269,15 @@ test("④ 🔴 with OE_EGRESS_SPOOF armed and a real bot token present, the noti
 
   const wakeAt = await proposeRoutine("spoofed", "post the oncall handover every weekday evening");
 
-  const rows = await waitFor(async () => {
-    const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
-    return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
-  }, "the spoofed turn's approval.autoapproved row to land");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
+    },
+    label: "the spoofed turn's approval.autoapproved row to land",
+    actions: APPROVAL_ACTIONS,
+    wakeAt,
+  });
   expect(rows.filter((r) => r.action === "approval.autoapproved")).toHaveLength(1);
   expect(rows.filter((r) => r.action === "approval.autoapproved")[0]!.detail?.resolvedBy).toBe("judge");
 

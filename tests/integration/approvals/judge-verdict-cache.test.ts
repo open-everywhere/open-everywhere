@@ -10,6 +10,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
   type AuditRow,
@@ -131,11 +132,16 @@ async function rowsOfThisTurn(wakeAt: number, actions: readonly string[]): Promi
 }
 
 async function approvalRows(wakeAt: number, count: number): Promise<AuditRow[]> {
-  return waitFor(async () => {
-    const got = await rowsOfThisTurn(wakeAt, APPROVAL_ACTIONS);
-    const judged = got.filter((r) => r.action === "approval.judge.verdict" && r.detail?.tool === "create_routine");
-    return judged.length >= count ? got : undefined;
-  }, `this turn's ${count} approval.judge.verdict row(s) for create_routine to land`);
+  return waitForAuditRows({
+    probe: async () => {
+      const got = await rowsOfThisTurn(wakeAt, APPROVAL_ACTIONS);
+      const judged = got.filter((r) => r.action === "approval.judge.verdict" && r.detail?.tool === "create_routine");
+      return judged.length >= count ? got : undefined;
+    },
+    label: `this turn's ${count} approval.judge.verdict row(s) for create_routine to land`,
+    actions: APPROVAL_ACTIONS,
+    wakeAt,
+  });
 }
 
 function judgeRows(rows: readonly AuditRow[]): { reason: string; source: unknown; cacheHit: unknown; passes: unknown }[] {

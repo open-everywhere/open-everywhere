@@ -14,6 +14,7 @@ import {
   slackTs,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   type AuditRow,
   type ScriptedHandle,
@@ -152,18 +153,28 @@ test("a slackDmWake turn reaches the connector plane as mode \"dm\"; the same dr
 
     const dmSince = new Date().toISOString();
     await driveConnectorTurn({ label: "dm-ingress", origin: "dm" });
-    const dmUse = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["connector.use"], sinceIso: dmSince });
-      return rows.find((r) => r.detail?.connection === "notion");
-    }, "the DM turn's own connector.use row");
+    const dmUse = await waitForAuditRows({
+      probe: async () => {
+        const rows = await readAuditRows({ actions: ["connector.use"], sinceIso: dmSince });
+        return rows.find((r) => r.detail?.connection === "notion");
+      },
+      label: "the DM turn's own connector.use row",
+      actions: ["connector.use"],
+      wakeAt: Date.parse(dmSince),
+    });
     expect(dmUse.detail?.mode, "the DM wake did not reach the connector plane as a DM — the helper produced a channel binding").toBe("dm");
 
     const channelSince = new Date().toISOString();
     const channelHandle = await driveConnectorTurn({ label: "channel-control", origin: "channel" });
-    const refused = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["connector.refused"], sinceIso: channelSince });
-      return rows.find((r) => r.detail?.connection === "notion");
-    }, "the channel turn's own connector.refused row");
+    const refused = await waitForAuditRows({
+      probe: async () => {
+        const rows = await readAuditRows({ actions: ["connector.refused"], sinceIso: channelSince });
+        return rows.find((r) => r.detail?.connection === "notion");
+      },
+      label: "the channel turn's own connector.refused row",
+      actions: ["connector.refused"],
+      wakeAt: Date.parse(channelSince),
+    });
     expect(refused.detail?.reason, "the channel control was refused for some other reason than the missing grant").toBe("ungranted");
     expect(
       (await readAuditRows({ actions: ["connector.use"], sinceIso: channelSince })).filter((r) => r.detail?.connection === "notion"),
@@ -196,10 +207,15 @@ test("connectors.userPrincipal ON selects userAwareProviderToken: the DM turn ta
       "is not valid on an app connection",
     );
 
-    const mints = await waitFor(async () => {
-      const rows = await notionMintRows(sinceIso);
-      return rows.length > 0 ? rows : undefined;
-    }, "the ON arm's connector.mint row");
+    const mints = await waitForAuditRows({
+      probe: async () => {
+        const rows = await notionMintRows(sinceIso);
+        return rows.length > 0 ? rows : undefined;
+      },
+      label: "the ON arm's connector.mint row",
+      actions: ["connector.mint"],
+      wakeAt: Date.parse(sinceIso),
+    });
     expect(mints.map((r) => r.detail?.subject), "the ON arm minted for something other than the user").toEqual(mints.map(() => "user"));
   } finally {
     stub.uninstall();

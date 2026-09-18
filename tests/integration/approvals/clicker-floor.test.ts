@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
-import { bootAgent, readAuditRows, slackInteractivityPost, waitFor, type AuditRow } from "../harness";
+import { bootAgent, readAuditRows, slackInteractivityPost, waitForAuditRows, type AuditRow } from "../harness";
 
 process.env.SLACK_BOT_TOKEN = "xoxb-integration-tier-placeholder-not-a-credential";
 
@@ -208,14 +208,16 @@ async function rowsSince(since: number, actions: readonly string[]): Promise<Aud
 const DECIDE_ACTIONS = ["approval.denied", "approval.approved", "approval.rejected", "approval.failed"] as const;
 
 async function decideRows(clickAt: number, id: string): Promise<AuditRow[]> {
-  return waitFor(
-    async () => {
+  return waitForAuditRows({
+    probe: async () => {
       const got = await rowsSince(clickAt, [...DECIDE_ACTIONS, "routine.create"]);
       return got.some((r) => (DECIDE_ACTIONS as readonly string[]).includes(r.action) && r.detail?.id === id) ? got : undefined;
     },
-    `a decide audit row for pending ${id}`,
-    60_000,
-  );
+    label: `a decide audit row for pending ${id}`,
+    actions: [...DECIDE_ACTIONS, "routine.create"],
+    wakeAt: clickAt,
+    timeoutMs: 60_000,
+  });
 }
 
 async function expectFloorRefusal(input: { rows: AuditRow[]; id: string; reason: string; clickerId?: string }): Promise<void> {

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach } from "vitest";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
+import { AUDIT_DUMP_LIMIT, AUDIT_DUMP_LOOKBACK_MS, formatAuditTimeoutDump, type AuditDumpRow } from "./audit-timeout-dump";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
 import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
@@ -278,6 +279,8 @@ export async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export const WAIT_TIMEOUT_PREFIX = "timed out after";
+
 export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefined>, label: string, timeoutMs = 360_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -294,7 +297,7 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
       );
     }
     if (Date.now() > deadline) {
-      throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}${staleHoldExpiryNote()}${redeliveryRecoveryNote()}`);
+      throw new Error(`${WAIT_TIMEOUT_PREFIX} ${timeoutMs}ms waiting for: ${label}${staleHoldExpiryNote()}${redeliveryRecoveryNote()}`);
     }
     await sleep(400);
   }
@@ -1017,6 +1020,56 @@ export async function readAuditRows(input: { actions: readonly string[]; sinceIs
   if (!res.ok) throw new Error(`integration harness: audit read failed ${res.status}`);
   const parsed = (await res.json()) as { entries?: AuditRow[] };
   return parsed.entries ?? [];
+}
+
+export async function auditTimeoutDump(input: { actions: readonly string[]; wakeAt: number }): Promise<string> {
+  const sinceIso = new Date(input.wakeAt - AUDIT_DUMP_LOOKBACK_MS).toISOString();
+  const untilIso = new Date().toISOString();
+  try {
+    if (booted === undefined) throw new Error("no booted host");
+    const { buildAuditQuery } = await import("../../packages/core/scripts/e2e/audit-read");
+    const q = buildAuditQuery({ sinceIso, untilIso, actions: [...input.actions], limit: AUDIT_DUMP_LIMIT });
+    const res = await fetch(`${booted.base}/control/v1/audit?${q}`, {
+      headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`audit re-read returned ${res.status}`);
+    const parsed = (await res.json()) as {
+      entries?: AuditDumpRow[];
+      capped?: boolean;
+      scanTruncated?: boolean;
+      scanned?: number;
+    };
+    return formatAuditTimeoutDump({
+      actions: input.actions,
+      sinceIso,
+      untilIso,
+      limit: AUDIT_DUMP_LIMIT,
+      rows: parsed.entries ?? [],
+      ...(parsed.capped !== undefined ? { capped: parsed.capped } : {}),
+      ...(parsed.scanTruncated !== undefined ? { scanTruncated: parsed.scanTruncated } : {}),
+      ...(parsed.scanned !== undefined ? { scanned: parsed.scanned } : {}),
+    });
+  } catch (err) {
+    return `--- OPE-1933 audit diagnostic UNAVAILABLE: the widened re-read (${sinceIso} … ${untilIso}) failed: ${String(err)} ---`;
+  }
+}
+
+export async function waitForAuditRows<T>(input: {
+  readonly probe: () => T | undefined | Promise<T | undefined>;
+  readonly label: string;
+  readonly actions: readonly string[];
+  readonly wakeAt: number;
+  readonly timeoutMs?: number;
+}): Promise<T> {
+  try {
+    return await waitFor(input.probe, input.label, input.timeoutMs);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.startsWith(WAIT_TIMEOUT_PREFIX)) throw err;
+    const dump = await auditTimeoutDump({ actions: input.actions, wakeAt: input.wakeAt });
+    throw new Error(`${message}\n${dump}`);
+  }
 }
 
 export async function controlGet(path: string, opts: { readonly token?: string | null } = {}): Promise<{ status: number; body: string }> {

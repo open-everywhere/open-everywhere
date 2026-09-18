@@ -10,6 +10,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
   type AuditRow,
@@ -122,10 +123,15 @@ async function approvalRows(wakeAt: number): Promise<AuditRow[]> {
     "approval.expired",
     "approval.denied",
   ] as const;
-  return waitFor(async () => {
-    const got = await rowsOfThisTurn(wakeAt, ACTIONS);
-    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
-  }, "this turn's approval.chain row to land");
+  return waitForAuditRows({
+    probe: async () => {
+      const got = await rowsOfThisTurn(wakeAt, ACTIONS);
+      return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
+    },
+    label: "this turn's approval.chain row to land",
+    actions: ACTIONS,
+    wakeAt,
+  });
 }
 
 function routineResult(handle: ScriptedHandle): { isError: boolean; output: Record<string, unknown> } {
@@ -250,14 +256,16 @@ test("judgeMode shadow: an approval.judge.shadow row records a would-be allow wh
   expect(chain!.detail?.tainted).toBe(false);
   expect(chain!.detail?.judge).toBeUndefined();
 
-  const shadow = await waitFor(
-    async () => {
+  const shadow = await waitForAuditRows({
+    probe: async () => {
       const got = await rowsOfThisTurn(wakeAt, ["approval.judge.shadow"]);
       return got.find((r) => r.detail?.tool === "create_routine");
     },
-    "the detached approval.judge.shadow row to land",
-    60_000,
-  );
+    label: "the detached approval.judge.shadow row to land",
+    actions: ["approval.judge.shadow"],
+    wakeAt,
+    timeoutMs: 60_000,
+  });
   expect(shadow.detail?.mode).toBe("shadow");
   expect(shadow.detail?.wouldVerdict).toBe("allow");
   expect(shadow.detail?.enforcedVerdict).toBe("ask");

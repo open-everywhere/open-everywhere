@@ -13,6 +13,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   type AuditRow,
   type ScriptedHandle,
@@ -149,14 +150,16 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
-  const requested = await waitFor(
-    async () => {
+  const requested = await waitForAuditRows({
+    probe: async () => {
       const rows = await rowsSince(wakeAt, ["approval.requested"]);
       return rows.find((r) => r.detail?.kind === "routine.create");
     },
-    "this turn's approval.requested row to land",
-    60_000,
-  );
+    label: "this turn's approval.requested row to land",
+    actions: ["approval.requested"],
+    wakeAt,
+    timeoutMs: 60_000,
+  });
   const id = requested.detail?.id;
   expect(typeof id).toBe("string");
   return id as string;
@@ -171,15 +174,17 @@ const TERMINAL_ACTIONS = ["approval.approved", "approval.rejected", "approval.fa
 
 async function decideRows(clickAt: number, id: string): Promise<AuditRow[]> {
   const ACTIONS = [...TERMINAL_ACTIONS, "approval.denied", "approval.session_granted", "routine.create"];
-  return waitFor(
-    async () => {
+  return waitForAuditRows({
+    probe: async () => {
       const got = await rowsSince(clickAt, ACTIONS);
       const terminal = got.some((r) => (TERMINAL_ACTIONS as readonly string[]).includes(r.action) && r.detail?.id === id);
       return terminal ? got : undefined;
     },
-    `a terminal approval row for pending ${id}`,
-    60_000,
-  );
+    label: `a terminal approval row for pending ${id}`,
+    actions: ACTIONS,
+    wakeAt: clickAt,
+    timeoutMs: 60_000,
+  });
 }
 
 async function armedRoutines(): Promise<{ id: string; prompt: string; status: string }[]> {

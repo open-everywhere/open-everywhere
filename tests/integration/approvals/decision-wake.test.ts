@@ -13,6 +13,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   type AuditRow,
   type ScriptedHandle,
@@ -125,14 +126,16 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const requested = await waitFor(
-    async () => {
+  const requested = await waitForAuditRows({
+    probe: async () => {
       const rows = await rowsSince(wakeAt, ["approval.requested"]);
       return rows.find((r) => r.detail?.kind === "routine.create");
     },
-    "this turn's approval.requested row to land",
-    60_000,
-  );
+    label: "this turn's approval.requested row to land",
+    actions: ["approval.requested"],
+    wakeAt,
+    timeoutMs: 60_000,
+  });
   const id = requested.detail?.id;
   expect(typeof id).toBe("string");
   return { id: id as string, handle };
@@ -144,14 +147,16 @@ async function rowsSince(since: number, actions: readonly string[]): Promise<Aud
 }
 
 async function waitForDecided(clickAt: number, id: string): Promise<void> {
-  await waitFor(
-    async () => {
+  await waitForAuditRows({
+    probe: async () => {
       const rows = await rowsSince(clickAt, ["approval.approved", "approval.failed", "approval.rejected"]);
       return rows.find((r) => r.detail?.id === id);
     },
-    `a terminal approval row for pending ${id}`,
-    60_000,
-  );
+    label: `a terminal approval row for pending ${id}`,
+    actions: ["approval.approved", "approval.failed", "approval.rejected"],
+    wakeAt: clickAt,
+    timeoutMs: 60_000,
+  });
 }
 
 test("🔴 the control: a click with NO guild_id decides the card and writes NO approval.decision_wake row", async () => {
@@ -200,11 +205,13 @@ test("a guild-context click wakes the proposing window session with the decision
   expect(wake.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(wake.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const row = await waitFor(
-    async () => (await rowsSince(clickAt, ["approval.decision_wake"])).find((r) => r.detail?.id === id),
-    `an approval.decision_wake row for pending ${id}`,
-    60_000,
-  );
+  const row = await waitForAuditRows({
+    probe: async () => (await rowsSince(clickAt, ["approval.decision_wake"])).find((r) => r.detail?.id === id),
+    label: `an approval.decision_wake row for pending ${id}`,
+    actions: ["approval.decision_wake"],
+    wakeAt: clickAt,
+    timeoutMs: 60_000,
+  });
   expect(row.detail?.delivered).toBe(true);
   expect(row.detail?.outcome).toBe("approved");
   expect(row.detail?.domain).toBe(WINDOW_DOMAIN);

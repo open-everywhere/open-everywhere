@@ -292,12 +292,40 @@ registerConfig({
 }
 
 {
-  const unreadable = await halt.resolveHalt({ org: ORG }, { rows: () => Promise.reject(new Error("store is down")) });
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    warned.push(args.map((a) => String(a)).join(" "));
+  };
+  let unreadable: Awaited<ReturnType<typeof halt.resolveHalt>>;
+  try {
+    unreadable = await halt.resolveHalt({ org: ORG }, { rows: () => Promise.reject(new Error("store is down")) });
+  } finally {
+    console.warn = realWarn;
+  }
   ok(unreadable.halted === true, "🔴 §3 an UNREADABLE store answers HALTED — a reader that failed open could be switched off by breaking the database");
   ok(unreadable.halted === true && unreadable.unreadable !== undefined, "§3 and it says so, so the refusal sentence can distinguish it from an operator's act");
   ok(halt.haltRefusalMessage(unreadable, "this action").includes("could not be read"), "§3 the refusal names the fail-closed case rather than inventing an address");
+  ok(
+    warned.some((w) => w.includes("[open-everywhere:halt]") && w.includes(ORG) && w.includes("store is down")),
+    "🔴 §3 the fail-closed arm WARNS, naming the org and the underlying error — a silent arm leaves a broken store indistinguishable from a halt in every log",
+  );
 
-  const clear = await halt.resolveHalt({ org: ORG }, { rows: async () => [] });
+  const warnedOnClear: string[] = [];
+  const realWarn2 = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    warnedOnClear.push(args.map((a) => String(a)).join(" "));
+  };
+  let clear: Awaited<ReturnType<typeof halt.resolveHalt>>;
+  try {
+    clear = await halt.resolveHalt({ org: ORG }, { rows: async () => [] });
+  } finally {
+    console.warn = realWarn2;
+  }
+  ok(
+    !warnedOnClear.some((w) => w.includes("[open-everywhere:halt]")),
+    "§3 negative control: a READABLE store warns nothing — the line belongs to the throw, not to every resolve",
+  );
   ok(clear.halted === false, "§3 negative control: a readable store with no rows answers NOT halted");
   ok(halt.haltSeatParagraph(clear) === null, "§3 and the seat is told nothing at all — byte-identical prompt on every ordinary turn");
   ok((halt.haltSeatParagraph(unreadable) ?? "").includes("resume"), "§3 a halted seat is told how it ends");

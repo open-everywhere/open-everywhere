@@ -12,17 +12,19 @@ import type { ModelReasoning } from "../memory/domain.js";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
 
-function dbPath(): string {
-  if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
+function dbPath(): { readonly path: string; readonly fromEnv: boolean } {
+  if (process.env.OE_SQLITE_PATH) return { path: process.env.OE_SQLITE_PATH, fromEnv: true };
   const root = process.env.OE_MEMORY_DIR ?? join(process.cwd(), ".open-everywhere-memory");
-  return join(root, "open-everywhere.sqlite3");
+  return { path: join(root, "open-everywhere.sqlite3"), fromEnv: false };
 }
 
 let db: DatabaseSync | null = null;
 let openedPath: string | null = null;
 
 function getDb(): DatabaseSync {
-  const path = dbPath();
+  const resolved = dbPath();
+  if (db && !resolved.fromEnv) return db;
+  const path = resolved.path;
   if (db && openedPath !== path) {
     db.close();
     db = null;
@@ -774,7 +776,15 @@ function getDb(): DatabaseSync {
 }
 
 export function sqliteOperationalDbPath(): string {
-  return dbPath();
+  return dbPath().path;
+}
+
+export function _openedOperationalDbPathForTest(): string | null {
+  return openedPath;
+}
+
+function operationalRoot(): string {
+  return openedPath ?? dbPath().path;
 }
 
 export function sqliteOperationalTableNames(): string[] {
@@ -1207,7 +1217,7 @@ function dmAudienceRowFrom(r: { address: string; first_dm_at: string | null; sto
 
 export const sqliteOperationalStore: OperationalStore = {
   id: "sqlite",
-  root: dbPath,
+  root: operationalRoot,
 
   async recordSpend(org, write: SpendLedgerWrite) {
     getDb()

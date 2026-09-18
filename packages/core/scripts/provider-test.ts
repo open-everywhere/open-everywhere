@@ -129,6 +129,45 @@ for (const provider of [gitProvider, sqliteProvider]) {
   ok(a !== null && b !== null && Number(b) > Number(a), "sqlite version token is monotonic across changes");
 }
 
+{
+  const pinned = process.env.OE_SQLITE_PATH!;
+  const sqliteRoot = sqliteProvider.root;
+  ok(typeof sqliteRoot === "function", "fixture control (memory sqlite): the provider exposes root(), which is what names the open file");
+  const rootOf = (): string => sqliteRoot!.call(sqliteProvider);
+  const p = partition("envpin", "general");
+  await sqliteProvider.ensureTier(p, WORKSPACE);
+  ok(rootOf() === pinned, "fixture control (memory sqlite): the handle is open at this suite's pinned file");
+
+  const saved = process.env.OE_SQLITE_PATH;
+  delete process.env.OE_SQLITE_PATH;
+  try {
+    await sqliteProvider.writeTier(p, WORKSPACE, { "MEMORY.md": "written with the env unset\n" }, "1");
+    ok(
+      rootOf() === pinned,
+      "🔴 OPE-1933 (memory sqlite): an ABSENT OE_SQLITE_PATH keeps the OPEN file — an env read that returns undefined is not an instruction to switch databases",
+    );
+  } finally {
+    process.env.OE_SQLITE_PATH = saved;
+  }
+  const back = await sqliteProvider.readTier(p, WORKSPACE);
+  ok(back["MEMORY.md"] === "written with the env unset\n", "🔴 OPE-1933 (memory sqlite): the tier written while the env was unset reads back from the pinned file");
+
+  const elsewhere = join(tmp, "mem-ope1933-elsewhere.sqlite3");
+  process.env.OE_SQLITE_PATH = elsewhere;
+  try {
+    await sqliteProvider.ensureTier(p, WORKSPACE);
+    ok(
+      rootOf() === elsewhere,
+      "OPE-1933 (memory sqlite) negative control: a PRESENT OE_SQLITE_PATH naming another file still switches",
+    );
+    const fresh = await sqliteProvider.readTier(p, WORKSPACE);
+    ok(fresh["MEMORY.md"] !== "written with the env unset\n", "…and the new file is a DIFFERENT database — the pinned file's row is not visible there");
+  } finally {
+    process.env.OE_SQLITE_PATH = pinned;
+    _resetDbForTest();
+  }
+}
+
 _resetDbForTest();
 cleanupTmp();
 console.log(`✓ provider — ${passed} assertions (git + sqlite contract, org isolation, erasure, versioning)`);

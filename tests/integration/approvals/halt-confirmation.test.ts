@@ -8,6 +8,7 @@ import {
   readAuditRows,
   registerScript,
   waitFor,
+  waitForAuditRows,
   type ScriptedHandle,
 } from "../harness";
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
@@ -59,10 +60,15 @@ test("② a real `halt` call posts the host's confirmation into the room, and th
   expect(posted.channelId).toBe(DISCORD_LISTED_CHANNEL_ID);
   expect(confirmationsInRoom(confirmation)).toHaveLength(1);
 
-  const rows = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["admin.halt.set"], sinceIso: new Date(wakeAt).toISOString() });
-    return got.length > 0 ? got : undefined;
-  }, "this turn's admin.halt.set row to land");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await readAuditRows({ actions: ["admin.halt.set"], sinceIso: new Date(wakeAt).toISOString() });
+      return got.length > 0 ? got : undefined;
+    },
+    label: "this turn's admin.halt.set row to land",
+    actions: ["admin.halt.set"],
+    wakeAt,
+  });
   expect(rows).toHaveLength(1);
   expect(rows[0]!.detail?.["announced"]).toBe(true);
   expect(rows[0]!.detail?.["level"]).toBe("surface");

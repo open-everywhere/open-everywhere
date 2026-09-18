@@ -13,6 +13,7 @@ import {
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
   type AuditRow,
@@ -113,30 +114,39 @@ const ROW_WAIT_MS = 45_000;
 
 async function armRows(wakeAt: number, want: { verdictRow: boolean; forwardRows: boolean }): Promise<AuditRow[]> {
   const ACTIONS = ["approval.chain", "taint.verdict", "taint.forward"];
-  let rows = await waitFor(async () => {
-    const got = await rowsOfThisArm(wakeAt, ACTIONS);
-    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
-  }, "this arm's create_routine approval.chain row to land");
+  let rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsOfThisArm(wakeAt, ACTIONS);
+      return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
+    },
+    label: "this arm's create_routine approval.chain row to land",
+    actions: ACTIONS,
+    wakeAt,
+  });
 
   if (want.verdictRow) {
-    rows = await waitFor(
-      async () => {
+    rows = await waitForAuditRows({
+      probe: async () => {
         const got = await rowsOfThisArm(wakeAt, ACTIONS);
         return readerVerdictRows(got).length > 0 ? got : undefined;
       },
-      `this arm's ${READER_LABEL} taint.verdict row to land — the table wrote no divergence for this read`,
-      ROW_WAIT_MS,
-    );
+      label: `this arm's ${READER_LABEL} taint.verdict row to land — the table wrote no divergence for this read`,
+      actions: ACTIONS,
+      wakeAt,
+      timeoutMs: ROW_WAIT_MS,
+    });
   }
   if (want.forwardRows) {
-    rows = await waitFor(
-      async () => {
+    rows = await waitForAuditRows({
+      probe: async () => {
         const got = await rowsOfThisArm(wakeAt, ACTIONS);
         return forwardLeg(got, "mark").length > 0 && forwardLeg(got, "adopt").length > 0 ? got : undefined;
       },
-      "this arm's taint.forward mark AND adopt rows to land — the seat's taint did not propagate to its worker",
-      ROW_WAIT_MS,
-    );
+      label: "this arm's taint.forward mark AND adopt rows to land — the seat's taint did not propagate to its worker",
+      actions: ACTIONS,
+      wakeAt,
+      timeoutMs: ROW_WAIT_MS,
+    });
   }
   return rows;
 }

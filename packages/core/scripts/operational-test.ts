@@ -233,6 +233,49 @@ const store = makeOperationalPostgresStore(client);
     h.close();
   }
 
+  {
+    const pinned = pinnedSuiteStorePath();
+    ok(sqliteMod._openedOperationalDbPathForTest() === pinned, "fixture control (sqlite): the handle is open at this suite's pinned file");
+
+    const saved = process.env.OE_SQLITE_PATH;
+    delete process.env.OE_SQLITE_PATH;
+    const ORG_1933 = "ope1933";
+    try {
+      await sqliteMod.sqliteOperationalStore.appendAudit({
+        ts: new Date().toISOString(),
+        org: ORG_1933,
+        platform: "control",
+        workspace: "ws1",
+        action: "ope1933.env_unset",
+        detail: {},
+      });
+      ok(
+        sqliteMod._openedOperationalDbPathForTest() === pinned,
+        "🔴 OPE-1933 (sqlite): an ABSENT OE_SQLITE_PATH keeps the OPEN file — an env read that returns undefined is not an instruction to switch databases",
+      );
+    } finally {
+      process.env.OE_SQLITE_PATH = saved;
+    }
+    {
+      const h = new DatabaseSync(pinned, { readOnly: true });
+      const found = h.prepare("SELECT COUNT(*) AS n FROM audit_entry WHERE org_id = ? AND action = ?").get(ORG_1933, "ope1933.env_unset") as { n: number };
+      h.close();
+      ok(found.n === 1, "🔴 OPE-1933 (sqlite): the row written while the env was unset is in the PINNED file, not in a cwd-derived one");
+    }
+    const elsewhere = `${pinned}.ope1933-elsewhere`;
+    process.env.OE_SQLITE_PATH = elsewhere;
+    try {
+      await sqliteMod.sqliteOperationalStore.readAudit({ org: ORG_1933 });
+      ok(
+        sqliteMod._openedOperationalDbPathForTest() === elsewhere,
+        "OPE-1933 (sqlite) negative control: a PRESENT OE_SQLITE_PATH naming another file still switches — the guard pins an absent read, not every read",
+      );
+    } finally {
+      process.env.OE_SQLITE_PATH = pinned;
+      sqliteMod._resetOperationalDbForTest();
+    }
+  }
+
   const planPg = await openTestPg();
   const planClient: PgClient = planPg.client;
   await initOperationalSchema(planClient);

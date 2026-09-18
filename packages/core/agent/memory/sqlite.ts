@@ -6,17 +6,19 @@ import type { Partition } from "./partition.js";
 import type { MemoryProvider } from "./provider.js";
 import type { MemoryFiles, Tier } from "./store.js";
 
-function dbPath(): string {
-  if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
+function dbPath(): { readonly path: string; readonly fromEnv: boolean } {
+  if (process.env.OE_SQLITE_PATH) return { path: process.env.OE_SQLITE_PATH, fromEnv: true };
   const root = process.env.OE_MEMORY_DIR ?? join(process.cwd(), ".open-everywhere-memory");
-  return join(root, "open-everywhere.sqlite3");
+  return { path: join(root, "open-everywhere.sqlite3"), fromEnv: false };
 }
 
 let db: DatabaseSync | null = null;
 let openedPath: string | null = null;
 
 function getDb(): DatabaseSync {
-  const path = dbPath();
+  const resolved = dbPath();
+  if (db && !resolved.fromEnv) return db;
+  const path = resolved.path;
   if (db && openedPath !== path) {
     db.close();
     db = null;
@@ -170,6 +172,6 @@ export const sqliteProvider: MemoryProvider = {
   },
 
   root() {
-    return dbPath();
+    return openedPath ?? dbPath().path;
   },
 };

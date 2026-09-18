@@ -49,6 +49,7 @@ async function activeHaltRows(org: string, deps: HaltDeps): Promise<readonly Hal
   try {
     return await (deps.rows ?? ((o: string) => getOperationalStore().activeHalts(o)))(org);
   } catch (err) {
+    console.warn(`[open-everywhere:halt] the halt store read for org "${org}" THREW; failing closed (treating the call as halted): ${String(err)}`);
     return { unreadable: String(err) };
   }
 }
