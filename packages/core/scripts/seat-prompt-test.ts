@@ -477,6 +477,95 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  const FORBIDDEN_AWS =
+    '"I\'m running the AWS identity check now and will paste its complete output verbatim when it returns" is the forbidden sentence';
+  const FORBIDDEN_HANDOFF =
+    '"I\'ve handed this off to make the one-line README change — I\'ll report the actual result when it returns" is the same fabrication on a turn that called no worker';
+  const ACCEPTED_WITHHOLDING =
+    '"I can\'t run that AWS check — this channel has no AWS role granted, and an admin binds one" is a complete answer';
+
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const arms = [
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "wake-addressed", pinned: false } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "reply-only" } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "closing-text" } }),
+    seat,
+    renderSeatPersona({ seatKind: "worker", midTurnPost: true }),
+    renderSeatPersona({ seatKind: "worker", midTurnPost: false }),
+  ];
+  for (const [i, text] of arms.entries()) {
+    const body = flat(text);
+    ok(
+      body.includes("THE TEST IS THIS TURN'S TOOL CALLS."),
+      `🔴 §13b: arm ${i} carries the same-turn test — a seat that reads §13 without it decides the carve-out on its own intent`,
+    );
+    ok(
+      body.includes(flat(FORBIDDEN_AWS)),
+      `🔴 §13b: arm ${i} quotes S-AWS-BOUNDARY's measured narration and calls it forbidden (OPE-1910)`,
+    );
+    ok(
+      body.includes(flat(FORBIDDEN_HANDOFF)),
+      `🔴 §13b: arm ${i} quotes S-PR-SESSION's measured hand-off narration and rules it the SAME sentence (OPE-1910)`,
+    );
+    ok(
+      body.includes(flat(ACCEPTED_WITHHOLDING)),
+      `🔴 §13b: arm ${i} quotes the accepted withholding, so the seat is told what to say INSTEAD (OPE-1875)`,
+    );
+  }
+
+  ok(
+    flat(seat).includes("may be reported only when a tool call in THIS SAME turn performed it"),
+    "🔴 §13b: the criterion is a tool call in the SAME turn — the one fact a seat can check about itself",
+  );
+  ok(
+    flat(seat).includes("No call this turn means there is no act of yours to report, whatever you planned"),
+    "🔴 §13b: …and intent is ruled out by name, because intent is what the fabricating seat gets right and the tool call is what it gets wrong",
+  );
+
+  ok(
+    flat(seat).includes("An act of your OWN"),
+    "🔴 §13b: the same-turn test is scoped to the seat's OWN act, so it cannot forbid the settlement report the same prompt orders",
+  );
+  ok(
+    seat.includes("Handing the work to a worker is the one case that differs"),
+    "🔴 §13b/CONTROL: §13's delegation carve-out survives — the same-turn test narrows it, it does not replace it",
+  );
+  ok(
+    flat(seat).includes("Delegated work is dated by ITS call, not by the turn you are on"),
+    "🔴 §13b: …and a delegation is dated by its CALL, which is what makes the hand-off sentence checkable without banning it",
+  );
+  ok(
+    flat(seat).includes("on a later turn say plainly that it is still running, and report what it found when its notice arrives"),
+    "🔴 §13b: …and the later turns stay ORDERED, so this block and PENDING_WORK_INSTRUCTION give the seat the same instruction",
+  );
+
+  ok(
+    flat(seat).includes("it names the act you are not taking and the reason you are not taking it"),
+    "🔴 §13b: a truthful withholding NAMES THE REASON — the half OPE-1875's acceptance turns on",
+  );
+  ok(
+    flat(seat).includes("A withholding is not a failure report."),
+    "🔴 §13b: …and it is ruled out of the failure class, which is what J-WORKFLOW's judge read it as",
+  );
+  ok(
+    flat(seat).includes("do not carry it into a later summary of this room as one"),
+    "🔴 §13b: …and the ban reaches the later summary, which is where J-WORKFLOW actually measured the red",
+  );
+
+  const block = seat.split("### Say what happened")[1]!.split("###")[0]!;
+  ok(seat.includes("### Trust grades") && !block.includes("### Trust grades"), "🔴 §13b/CONTROL: the honest-ack slice excludes a section the persona really carries");
+  ok(
+    !/\battempted\b|\btried to\b/i.test(block),
+    "🔴 §13b/CONTROL: the block never offers attempt-language, in either new paragraph",
+  );
+  ok(
+    flat(block).includes("THE TEST IS THIS TURN'S TOOL CALLS.") && flat(block).includes(flat(ACCEPTED_WITHHOLDING)),
+    "🔴 §13b/CONTROL: …and both new paragraphs really sit INSIDE the honest-ack block, not somewhere else in the prompt",
+  );
+}
+
+{
   const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
 
   ok(seat.includes('"Stop" has three answers'), "🔴 §14: the seat is told that stop is a THREE-way question, not one word with one verb");
