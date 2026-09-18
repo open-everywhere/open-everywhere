@@ -13,6 +13,7 @@ import * as e2eCap from "./e2e-cap.js";
 import * as itMemory from "./it-memory.js";
 import * as itMemoryB from "./it-memory-b.js";
 import * as itNotionWithhold from "./it-notion-withhold.js";
+import * as itJudgeLiftGithub from "./it-judge-lift-github.js";
 import * as itWorkReadFixtureDiscord from "./it-work-read-fixture-discord.js";
 import * as itWorkReadFixtureTeams from "./it-work-read-fixture-teams.js";
 import * as itWorkReadFixtureNotion from "./it-work-read-fixture-notion.js";
@@ -36,6 +37,7 @@ const MODULES: readonly DomainModule[] = [
   itMemory,
   itMemoryB,
   itNotionWithhold,
+  itJudgeLiftGithub,
   itWorkReadFixtureDiscord,
   itWorkReadFixtureTeams,
   itWorkReadFixtureNotion,
