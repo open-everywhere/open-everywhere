@@ -66,11 +66,15 @@ export function teamsUserTypeFromMember(info: unknown): "guest" | "member" | und
   return undefined;
 }
 
-export function teamsMode(scope: string | undefined): SessionMode {
+export function teamsResolvedMode(scope: string | undefined): SessionMode | undefined {
   if (scope === "personal") return "dm";
   if (scope === "groupChat") return "mpim";
   if (scope === "channel") return "channel";
-  return "channel";
+  return undefined;
+}
+
+export function teamsMode(scope: string | undefined): SessionMode {
+  return teamsResolvedMode(scope) ?? "channel";
 }
 
 export function teamsVisibility(
@@ -143,7 +147,7 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     workspace: tenantId,
     surface: conversationId,
     domainSurface: teamsAttr(a, ["channel_id", "channelId"]),
-    mode,
+    mode: teamsResolvedMode(scope),
     ...(teamsTrustGroup(teamsAttr(a, ["team_id", "teamId"])) ?? {}),
     visibility: teamsVisibility(scope, membershipType, mode),
     trust: teamsTrust(scope, membershipType, mode, tenantId, userType),

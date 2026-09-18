@@ -245,7 +245,7 @@ ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s")
     [ROUTINE_MARKER.org]: "default",
   });
   ok(turnKind(routineCtx as never) === "routine", "turnKind: a routine-fired session -> \"routine\" (checked before mode)");
-  ok(turnKind({} as never) === "channel", "turnKind: an unusual/empty ctx degrades to \"channel\", never throws");
+  ok(turnKind({} as never) === "unclassified", "turnKind: an unusual/empty ctx degrades to \"unclassified\" — never throws, and never claims a room the binding could not resolve");
 }
 
 const dir = join(tmpdir(), `open-everywhere-spend-test-${process.pid}`);

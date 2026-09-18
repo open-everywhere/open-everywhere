@@ -52,8 +52,8 @@ await sqlStore.appendUsageEvent({ org: "other", surfaceKey: "slack/T1/CA", sessi
 await pgStore.appendUsageEvent({ org: "other", surfaceKey: "slack/T1/CA", sessionId: "sx", principalId: "U_A", ts: "2026-07-01T10:00:00Z", kind: "channel", inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
 
 for (const a of [
-  { platform: "slack", workspace: "T1", surface: "CA", principalId: "U_A", action: "reply.post", detail: { note: "eng row" } },
-  { platform: "slack", workspace: "T1", surface: "CB", principalId: "U_B", action: "reply.post", detail: { note: "fin row" } },
+  { platform: "slack", workspace: "T1", surface: "CA", surfaceMode: "channel" as const, principalId: "U_A", action: "reply.post", detail: { note: "eng row" } },
+  { platform: "slack", workspace: "T1", surface: "CB", surfaceMode: "channel" as const, principalId: "U_B", action: "reply.post", detail: { note: "fin row" } },
 ]) {
   await sqlStore.appendAudit({ org: ORG, ts: `2026-07-01T10:00:00Z`, ...a });
   await pgStore.appendAudit({ org: ORG, ts: `2026-07-01T10:00:00Z`, ...a });
@@ -286,4 +286,38 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   ok(Number(ledCb?.usd) === 0.001, "🔴 OPE-1611: the reasoning dimension is ATTRIBUTION only — the row's $ is exactly its usdMicros, unmoved by 30 reasoning tokens");
 }
 
-console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd, OPE-1611 attribution measures + coverage counts)\n`);
+{
+  const dmRows = [
+    { platform: "discord", workspace: "G1", surface: "1122334455667788", surfaceMode: "dm" as const, principalId: "U_D", action: "reply.post" },
+    { platform: "teams", workspace: "TEN1", surface: "19:abc_def@unq.gbl.spaces", surfaceMode: "dm" as const, principalId: "U_T", action: "reply.post" },
+    { platform: "slack", workspace: "T1", surface: "D0SLACKDM1", surfaceMode: "dm" as const, principalId: "U_A", action: "reply.post" },
+    { platform: "discord", workspace: "G1", surface: "9988776655443322", surfaceMode: "mpim" as const, principalId: "U_D", action: "reply.post" },
+    { platform: "discord", workspace: "G1", surface: "5566778899001122", principalId: "U_D", action: "reply.post" },
+  ];
+  for (const a of dmRows) {
+    await sqlStore.appendAudit({ org: ORG, ts: "2026-07-06T10:00:00Z", ...a });
+    await pgStore.appendAudit({ org: ORG, ts: "2026-07-06T10:00:00Z", ...a });
+  }
+
+  const grouped = await runBoth({ dataset: "audit", scope: "org", groupBy: ["surface"], select: ["rows"] }, orgScope);
+  ok(canon(grouped.s.rows) === canon(grouped.p.rows), "OPE-1866: the audit surface mask is dual-engine identical");
+  const surfaces = new Set(grouped.s.rows.map((r) => String(r.surface)));
+  for (const published of ["1122334455667788", "19:abc_def@unq.gbl.spaces", "D0SLACKDM1"]) {
+    ok(!surfaces.has(published), `🔴 OPE-1866: the audit dataset no longer names the one-to-one conversation "${published}" — it is a DM on its own platform's say-so, not on a Slack id shape`);
+  }
+  ok(surfaces.has("(dms)"), "OPE-1866: all three DM rows fold into the one (dms) bucket");
+  ok(surfaces.has("9988776655443322"), "🔴 OPE-1866: the GROUP DM still publishes — a group is a room, not an individual, so (dms) is not simply 'everything that is not a channel'");
+  ok(surfaces.has("(unclassified)"), "🔴 OPE-1866: the UNSTAMPED row masks too, into its own bucket — fail closed, and never folded into (dms)");
+  ok(surfaces.has("CA") && surfaces.has("CB"), "OPE-1866: a stamped CHANNEL row still publishes its surface — the mask narrowed to DMs, it did not swallow the dataset");
+  ok(Number(grouped.s.rows.find((r) => r.surface === "(dms)")?.rows) === 3, "OPE-1866: the (dms) bucket COUNTS its three rows — masking folds the key, it never drops the row");
+
+  const raw = await runBoth({ dataset: "audit", scope: "org", mode: "rows" }, orgScope);
+  ok(raw.s.rows.filter((r) => r.ts === "2026-07-06T10:00:00Z").length === dmRows.length, `OPE-1866: rows mode returned all ${dmRows.length} seeded rows (the absence assertions below are over a non-empty result)`);
+  ok(!raw.s.rows.some((r) => r.surface === "19:abc_def@unq.gbl.spaces"), "🔴 OPE-1866: rows mode masks the Teams DM too — the column is selected beside the surface, not only grouped");
+  ok(canon(raw.s.rows) === canon(raw.p.rows), "OPE-1866: audit rows-mode parity holds with the mode column selected");
+
+  const unmasked = await runBoth({ dataset: "audit", scope: "org", groupBy: ["surface"], select: ["rows"] }, orgScopeDmUnmasked);
+  ok(unmasked.s.rows.some((r) => r.surface === "19:abc_def@unq.gbl.spaces"), "OPE-1866: dmUnmasked scope reads the audit DM surface unbucketed, as it does for spend and usage");
+}
+
+console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd, OPE-1611 attribution measures + coverage counts, OPE-1866 audit DM mask)\n`);

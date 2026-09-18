@@ -50,6 +50,22 @@ function distFilesMatching(re: RegExp, sub = "."): Set<string> {
   return found;
 }
 
+function vendorNormalised(rel: string): string {
+  const m = /(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?(.+)$/.exec(rel);
+  return m === null ? rel : `node_modules:${m[1]}`;
+}
+
+function pinNormalisedMatchSet(re: RegExp, expected: readonly string[], what: string, guidance: string): void {
+  const found = new Set([...distFilesMatching(re)].map(vendorNormalised));
+  const unexpected = [...found].filter((f) => !expected.includes(f));
+  if (unexpected.length > 0) {
+    console.error(`\u2717 eve ${eveVersion} has NEW ${what}: ${unexpected.join(", ")}\n  ${guidance}`);
+    process.exit(1);
+  }
+  passed++;
+  for (const e of expected) ok(found.has(e), `eve still names ${what} in ${e} (the site is not gone/renamed)`);
+}
+
 function pinMatchSet(re: RegExp, expected: readonly string[], what: string, guidance: string): void {
   const found = distFilesMatching(re);
   const unexpected = [...found].filter((f) => !expected.includes(f));
@@ -98,6 +114,31 @@ pinMatchSet(
     "runtime/authorization-context.js still awaits the execution's getToken (it is the module that holds the resolved value)",
   );
 }
+
+pinNormalisedMatchSet(
+  /\.getToken\(/g,
+  [
+    "runtime/connections/scoped-authorization.js",
+    "runtime/authorization-context.js",
+    "execution/tool-auth.js",
+
+    "tools/definition.js",
+
+    "compiled/@chat-adapter/slack/index.js",
+    "compiled/@photon-ai/chat-adapter-imessage/index.js",
+    "compiled/@workflow/world-vercel/index.js",
+    "public/models/openai/chatgpt/transport.js",
+    "node_modules:openai/client.js",
+    "node_modules:openai/auth/workload-identity-auth.js",
+
+    "compiled/jsonc-parser/index.js",
+    "compiled/shadcn-registry/index.js",
+  ],
+  "modules CALLING .getToken( anywhere in the dist",
+  "Read the new site before widening this list. If it calls `.getToken` on an authorization EXECUTION it is a\n" +
+    "  FOURTH place the raw connection bearer flows — docs/security/credentials-and-planes.md:61 claims there are three,\n" +
+    "  and the DOC is what changes first. If it is another plane's token, a lexer, or a string, say which, here.",
+);
 
 {
   const connectionFiles = distFiles("runtime/connections");

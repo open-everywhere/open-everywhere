@@ -26,6 +26,7 @@ export interface SurfaceBinding {
   readonly surface: string;
   readonly domainSurface?: string;
   readonly mode: SessionMode;
+  readonly modeResolved?: true;
   readonly visibility: Visibility;
   readonly trust: Trust;
   readonly declaredTrust?: SurfaceTrust;
@@ -189,7 +190,7 @@ const bindLocal: Mapper = (ctx) => {
   return {
     workspace: undefined,
     surface: undefined,
-    mode: envMode && ENV_MODES.has(envMode) ? (envMode as SessionMode) : "channel",
+    mode: envMode && ENV_MODES.has(envMode) ? (envMode as SessionMode) : undefined,
     visibility: envVis === "private" ? "private" : "public",
     trust: envTrust === "external" ? "external" : envTrust === "internal" ? "internal" : undefined,
     principalId: authPrincipalId(ctx) ?? process.env.OE_PRINCIPAL,
@@ -528,7 +529,8 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     }
   }
   const local = bindLocal(ctx);
-  const mode = raw.mode ?? local.mode ?? "channel";
+  const resolvedMode = raw.mode ?? local.mode;
+  const mode = resolvedMode ?? "channel";
   const workspace = seg(raw.workspace ?? ambientWorkspace(), UNNAMED_TENANT);
   const surface = seg(raw.surface ?? ambientSurface(), "default");
   const domainSurfaceSeg = raw.domainSurface ? seg(raw.domainSurface, surface) : undefined;
@@ -562,6 +564,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     surface,
     domainSurface: domainSurfaceSeg !== undefined && domainSurfaceSeg !== surface ? domainSurfaceSeg : undefined,
     mode,
+    ...(resolvedMode === undefined ? {} : { modeResolved: true as const }),
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
     ...(declared === undefined ? {} : { declaredTrust: declared }),

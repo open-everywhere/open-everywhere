@@ -105,10 +105,30 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     /session:\{auth:\{current:(\w+)\.auth,initiator:\1\.initiatorAuth\}/.test(read("execution/tools/workflow/start.js")),
     "startWorkflowTask still builds the run's session.auth from its OWN auth/initiatorAuth arguments, never off the model's task input",
   );
-  ok(
-    /startWorkflowTask\(\{auth:(\w+)\.auth,[^}]*initiatorAuth:\1\.initiatorAuth/.test(read("execution/coordination-dispatch-step.js")),
-    "the coordination step still passes those two straight from the prepared dispatch — the AuthKey read pinned above",
-  );
+  {
+    const step = read("execution/coordination-dispatch-step.js");
+    const prepared = /\b(\w+)=await prepareCoordinationDispatch\(/.exec(step);
+    ok(prepared !== null, "the coordination step still prepares its dispatch through prepareCoordinationDispatch");
+    const dispatchLocal = prepared![1]!;
+    ok(
+      new RegExp(`startWorkflowTask\\(\\{auth:${dispatchLocal}\\.auth,[^}]*initiatorAuth:${dispatchLocal}\\.initiatorAuth`).test(step),
+      "🔴 the workflow task's auth pair is read off THE OBJECT prepareCoordinationDispatch returned — the named local, not merely one identifier used twice",
+    );
+
+    const shared = read("execution/coordination-dispatch-shared.js");
+    const inner = /\b(\w+)=await prepareActionDispatch\(\{/.exec(shared);
+    ok(inner !== null, "prepareCoordinationDispatch still delegates to prepareActionDispatch");
+    const innerLocal = inner![1]!;
+    ok(
+      new RegExp(`return\\{\\.\\.\\.${innerLocal}[,}]`).test(shared),
+      "🔴 …and prepareCoordinationDispatch RETURNS that object by spread — `auth` reaches the step verbatim, never re-sourced in between",
+    );
+
+    ok(
+      /async function prepareActionDispatch\(\w+\)\{(?:(?!function )[\s\S]){0,2000}?auth:\w+\.get\(AuthKey\)\?\?null/.test(shared),
+      "🔴 …and the object originates in prepareActionDispatch, whose own body is where the AuthKey read happens",
+    );
+  }
   ok(
     /session:\w+\.session/.test(read("execution/tools/workflow/body.js")),
     "createWorkflowBodyContext still takes ctx.session from the RUN INPUT (the model's own half is ctx.input), so the twin copies THAT bag",

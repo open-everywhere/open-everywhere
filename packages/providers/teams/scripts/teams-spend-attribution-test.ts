@@ -113,5 +113,25 @@ async function driveTurn(input: {
   ok(personal.calls === 1, "a personal chat's spend caps under its own key, not the channel's");
 }
 
+{
+  const noScope = await driveTurn({
+    channel: { kind: "teams" },
+    attributes: { tenant_id: "TEN1", conversation_id: "19:dm-nc", user_id: "AAD-1" },
+    sessionId: "teams-no-scope",
+  });
+  ok(noScope.length === 1, "an activity with no conversationType still writes its usage row — spend is never dropped");
+  ok(noScope[0]!.surfaceMode === undefined, "🔴 OPE-1867: the row is UNSTAMPED, so the report mask buckets it as (unclassified) rather than naming a conversation Teams never called a room");
+
+  const personal = await driveTurn({
+    channel: { kind: "teams" },
+    attributes: { ...PERSONAL_ATTRS, conversation_id: "19:dm-nc2" },
+    sessionId: "teams-personal-stamped",
+  });
+  ok(personal[0]!.surfaceMode === "dm", "🔴 OPE-1867 NEGATIVE CONTROL: a personal chat that DOES carry its scope is stamped 'dm' — the fix narrowed the stamp to resolved modes, it did not remove it");
+
+  const channel = await driveTurn({ channel: { kind: "teams" }, attributes: { ...CHANNEL_ATTRS }, sessionId: "teams-channel-stamped" });
+  ok(channel[0]!.surfaceMode === "channel", "🔴 OPE-1867 NEGATIVE CONTROL: a positively-identified team channel is stamped 'channel', so its spend is still reported by name");
+}
+
 rmSync(DIR, { recursive: true, force: true });
 console.log(`✓ teams spend attribution: ${passed} assertions passed`);

@@ -17,7 +17,7 @@ export interface DatasetSpec {
   readonly measures: Readonly<Record<string, MeasureSpec>>;
   readonly rowColumns: readonly string[];
   readonly surfaceColumn: string | null;
-  readonly surfaceModeColumn: string | null;
+  readonly surfaceModeColumn: string;
   readonly surfaceKindColumn: string | null;
   readonly surfaceParts: readonly string[] | null;
   readonly principalColumn: string;
@@ -39,9 +39,9 @@ const AUDIT: DatasetSpec = {
   measures: {
     rows: { kind: "sql", expr: "COUNT(*)" },
   },
-  rowColumns: ["ts", "platform", "workspace", "surface", "principal_id", "action"],
+  rowColumns: ["ts", "platform", "workspace", "surface", "surface_mode", "principal_id", "action"],
   surfaceColumn: null,
-  surfaceModeColumn: null,
+  surfaceModeColumn: "surface_mode",
   surfaceKindColumn: null,
   surfaceParts: ["platform", "workspace", "surface"],
   principalColumn: "principal_id",

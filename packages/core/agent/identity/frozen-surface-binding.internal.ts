@@ -12,6 +12,7 @@ export function isFrozenSurfaceBinding(value: unknown): value is SurfaceBinding 
     "surface",
     "domainSurface",
     "mode",
+    "modeResolved",
     "visibility",
     "trust",
     "declaredTrust",
@@ -33,6 +34,7 @@ export function isFrozenSurfaceBinding(value: unknown): value is SurfaceBinding 
   if (b.trust !== "internal" && b.trust !== "external") return false;
   if (b.declaredTrust !== undefined && b.declaredTrust !== "internal" && b.declaredTrust !== "public") return false;
   if (b.principalAttested !== undefined && b.principalAttested !== true) return false;
+  if (b.modeResolved !== undefined && b.modeResolved !== true) return false;
   for (const key of ["domainSurface", "principalId", "threadTs", "engagementKey", "roomEngagementKey", "anchorMessageId", "anchorChannelId"] as const) {
     if (b[key] !== undefined && (typeof b[key] !== "string" || b[key].length === 0)) return false;
   }

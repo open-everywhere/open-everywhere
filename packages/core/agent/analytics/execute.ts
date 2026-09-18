@@ -25,7 +25,6 @@ function isSummableMeasure(dataset: string, measure: string): boolean {
 
 function maskSurface(value: unknown, row: Record<string, unknown>, plan: AnalyticsPlan, dmUnmasked: boolean): unknown {
   if (dmUnmasked || typeof value !== "string") return value;
-  if (!plan.surfaceModeColumn) return LEGACY_SLACK_DM_SURFACE_ID.test(value) ? "(dms)" : value;
   const mode = row[plan.surfaceModeColumn];
   const kind = plan.surfaceKindColumn ? row[plan.surfaceKindColumn] : undefined;
   return maskSurfaceKey(
@@ -37,8 +36,6 @@ function maskSurface(value: unknown, row: Record<string, unknown>, plan: Analyti
     }),
   );
 }
-
-const LEGACY_SLACK_DM_SURFACE_ID = /^D[A-Z0-9]{5,}$/;
 
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);

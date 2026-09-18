@@ -48,7 +48,9 @@ export function subagentParentOf(
 
 export function turnSurfaceMode(ctx: BindableContext): SurfaceMode | undefined {
   try {
-    const mode = bindFrom(ctx).mode;
+    const binding = bindFrom(ctx);
+    if (!binding.modeResolved) return undefined;
+    const mode = binding.mode;
     return mode === "dm" || mode === "mpim" || mode === "channel" ? mode : undefined;
   } catch {
     return undefined;
@@ -62,9 +64,11 @@ export function turnKind(ctx: DelegatableContext, continuationToken?: unknown): 
     if (routineMarker(attrs)) return "routine";
     if (isSupervisorToken(continuationToken)) return "supervisor";
     if (subagentParentOf(ctx, continuationToken)) return "subagent";
-    return bindFrom(ctx).mode === "dm" ? "dm" : "channel";
+    const binding = bindFrom(ctx);
+    if (!binding.modeResolved) return "unclassified";
+    return binding.mode === "dm" ? "dm" : "channel";
   } catch {
-    return "channel";
+    return "unclassified";
   }
 }
 

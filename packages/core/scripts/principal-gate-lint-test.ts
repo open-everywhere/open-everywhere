@@ -14,6 +14,7 @@ import {
   checkUnattendedDispatch,
   findAttendednessSites,
   findPrincipalGates,
+  findProposeAliasShapeProblems,
   findUnattendedDispatchSites,
   type PrincipalGate,
 } from "../agent/access/principal-gate-manifest.js";
@@ -315,6 +316,57 @@ export async function runBudgetRaise(binding, deps = {}) {
 async function f(ctx) {
   const posted = await requestApproval({ org, kind: "a", postedTo: k }, deps);
 }`).length === 1, "synthetic-r5: 🔴 …while `const posted = await requestApproval(` IS still a site — the alias matcher requires a reference, never a call");
+
+  {
+    const mentionInTemplate = `
+async function f(ctx) {
+  const failed = new Error(\`requestApproval: failed to post the approval card for "\${kind}"\`);
+  if (bad) throw failed;
+  failed(release);
+}`;
+    ok(sitesIn(mentionInTemplate).length === 0, "🔴 OPE-1892: a name mentioned inside a TEMPLATE LITERAL declares no alias, so the unrelated `failed(` call below it is not read as a propose site");
+    ok(r5(mentionInTemplate).length === 0, "🔴 OPE-1892: …and the rule is therefore GREEN on the line that cost a gate cycle");
+    ok(sitesIn(`
+async function f(ctx) {
+  const failed = new Error("requestApproval: could not post");
+  failed(release);
+}`).length === 0, "OPE-1892: a plain STRING mention declares no alias either");
+    ok(sitesIn(`
+async function f(ctx) {
+  const DECL_RE = /\\bfunction\\s+requestApproval\\b/;
+  DECL_RE(x);
+}`).length === 0, "🔴 OPE-1892: nor does a REGEX literal — principal-gate-manifest.ts holds exactly that declaration, so the rule was mis-reading its own source");
+
+    ok(sitesIn(aliased).length === 1, "🔴 OPE-1892 NEGATIVE CONTROL: the REAL alias (`deps.requestApproval ?? requestApproval`) is still read — the narrowing did not blind the reader to the shape it exists for");
+    ok(sitesIn(`
+async function f(ctx) {
+  const fn = requestApproval;
+  fn({ org, kind: "a", postedTo: k }, deps);
+}`).length === 1, "OPE-1892 NEGATIVE CONTROL: a bare reference alias is still read");
+    ok(sitesIn(`
+async function f(ctx) {
+  const fn = deps?.approvals.requestApproval ?? requestApproval;
+  fn({ org, kind: "a", postedTo: k }, deps);
+}`).length === 1, "OPE-1892 NEGATIVE CONTROL: an optional-chained member path is still read");
+
+    const unreadable = `
+async function f(ctx) {
+  const fn = cond ? noop : requestApproval;
+  fn({ org, kind: "a", postedTo: k }, deps);
+}`;
+    const shapes = findProposeAliasShapeProblems("fixture.ts", unreadable);
+    ok(shapes.length === 1 && shapes[0]!.line === 3, "🔴 OPE-1892: a binding the reader cannot classify is REPORTED at its own line — the narrowing cannot go quiet on a propose site it stopped following");
+    ok(findProposeAliasShapeProblems("fixture.ts", aliased).length === 0, "OPE-1892: the ordinary reference alias raises no shape problem");
+    ok(findProposeAliasShapeProblems("fixture.ts", mentionInTemplate).length === 0, "🔴 OPE-1892: and neither does a mention inside a literal — otherwise the fix would have swapped one false positive for another");
+
+    const collide = `
+async function f(ctx) {
+  const unclassified = deps.requestApproval ?? requestApproval;
+  unclassified({ org, kind: "a", postedTo: k }, deps);
+}`;
+    ok(sitesIn(collide).length === 1, "🔴 OPE-1892: an alias literally NAMED `unclassified` is still followed — the reader's sentinel cannot be spelled by the code it reads");
+    ok(findProposeAliasShapeProblems("fixture.ts", collide).length === 0, "🔴 OPE-1892: …and it raises no false shape problem, so the citation an author reads is never about a line that is fine");
+  }
 
   ok(sitesIn(`// await requestApproval({ postedTo: k }, deps);`).length === 0, "synthetic-r5: the idiom quoted in a COMMENT is not a site, so this tree can keep explaining itself");
   ok(sitesIn(`export async function requestApproval(input, deps) { return null; }`).length === 0, "synthetic-r5: the function's own DECLARATION is not a call site");

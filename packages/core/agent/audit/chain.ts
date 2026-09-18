@@ -7,6 +7,7 @@ export interface HashableAuditRow {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceMode?: string;
   readonly principalId?: string;
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
@@ -26,7 +27,7 @@ function stableStringify(value: unknown): string {
 }
 
 export function auditRowSha(row: HashableAuditRow, prevSha: string | null): string {
-  const canonical = JSON.stringify([
+  const fields: unknown[] = [
     prevSha,
     row.org,
     row.ts,
@@ -36,8 +37,9 @@ export function auditRowSha(row: HashableAuditRow, prevSha: string | null): stri
     row.principalId ?? null,
     row.action,
     row.detail === undefined ? null : stableStringify(row.detail),
-  ]);
-  return createHash("sha256").update(canonical).digest("hex");
+  ];
+  if (row.surfaceMode !== undefined) fields.push(row.surfaceMode);
+  return createHash("sha256").update(JSON.stringify(fields)).digest("hex");
 }
 
 export const AUDIT_CHAIN_EPOCH_ACTION = "audit.chain_epoch";

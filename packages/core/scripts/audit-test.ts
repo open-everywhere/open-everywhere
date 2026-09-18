@@ -150,6 +150,34 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   const tail = await store.readAuditChain(CO, { tailLimit: 2 });
   ok(tail.length === 2 && tail[0].ts === "2026-07-01T00:01:00Z" && findChainBreak(tail, { expectGenesis: false }) === null, "chain: tailLimit returns the last N oldest-first, sound");
 
+  {
+    const { createHash } = await import("node:crypto");
+    const legacy = { org: CO, ts: "2026-07-01T00:00:00Z", platform: "slack", workspace: "T1", surface: "CX", principalId: "U_A", action: "a.one", detail: { n: 1 } };
+    const ninePositional = createHash("sha256")
+      .update(JSON.stringify([null, legacy.org, legacy.ts, legacy.platform, legacy.workspace, legacy.surface, legacy.principalId, legacy.action, JSON.stringify(legacy.detail)]))
+      .digest("hex");
+    ok(auditRowSha(legacy, null) === ninePositional, "🔴 OPE-1866: a row with no surface_mode still hashes as the nine-element array — every pre-migration row keeps the sha its successor's prev_sha already stores");
+
+    const asDm = auditRowSha({ ...legacy, surfaceMode: "dm" }, null);
+    const asChannel = auditRowSha({ ...legacy, surfaceMode: "channel" }, null);
+    ok(asDm !== ninePositional && asChannel !== ninePositional, "OPE-1866: a STAMPED row hashes differently from the same row unstamped — stripping the mode is detectable");
+    ok(asDm !== asChannel, "🔴 OPE-1866: 'dm' and 'channel' hash differently — rewriting a DM row to read as a room breaks the chain, which is what puts the mask's input under tamper detection");
+  }
+
+  {
+    const MO = "chainmodeorg";
+    await appendAudit({ ts: "2026-07-02T00:00:00Z", org: MO, platform: "teams", workspace: "TEN1", surface: "19:abc@unq.gbl.spaces", surfaceMode: "dm", action: "m.one" });
+    await appendAudit({ ts: "2026-07-02T00:01:00Z", org: MO, platform: "teams", workspace: "TEN1", surface: "19:room@thread.tacv2", surfaceMode: "channel", action: "m.two" });
+    const modeChain = await store.readAuditChain(MO);
+    ok(modeChain.length === 2 && modeChain[0].surfaceMode === "dm" && modeChain[1].surfaceMode === "channel", "OPE-1866: appendAudit persists surface_mode and readAuditChain reads it back");
+    ok(findChainBreak(modeChain, { expectGenesis: true }) === null, "OPE-1866: a chain of STAMPED rows verifies clean — the link is computed from the same reading the row gets back");
+    const rawMode = new DatabaseSync(dbFile);
+    rawMode.prepare("UPDATE audit_entry SET surface_mode = ? WHERE org_id = ? AND action = ?").run("channel", MO, "m.one");
+    const tamperedMode = await store.readAuditChain(MO);
+    ok(findChainBreak(tamperedMode, { expectGenesis: true })?.action === "m.two", "🔴 OPE-1866: rewriting a DM row's surface_mode to 'channel' — the edit that would publish an individual's conversation id — is detected at its successor");
+    rawMode.close();
+  }
+
   const raw = new DatabaseSync(dbFile);
   raw.prepare("UPDATE audit_entry SET detail = ? WHERE org_id = ? AND action = ?").run(JSON.stringify({ n: 999 }), CO, "a.two");
   const tampered = await store.readAuditChain(CO);

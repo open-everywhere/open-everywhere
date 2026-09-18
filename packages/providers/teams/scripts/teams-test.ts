@@ -2,6 +2,7 @@ import {
   buildTeamsAuth,
   teamsMembershipType,
   teamsMode,
+  teamsResolvedMode,
   teamsTrust,
   teamsTrustGroup,
   teamsUserTypeFromMember,
@@ -74,6 +75,12 @@ ok(teamsMode("groupChat") === "mpim", "scope groupChat -> mpim");
 ok(teamsMode("channel") === "channel", "scope channel -> channel");
 ok(teamsMode("unknown") === "channel", "scope unknown -> channel (default)");
 ok(teamsMode(undefined) === "channel", "scope absent -> channel (default)");
+
+ok(teamsResolvedMode("personal") === "dm", "resolved: scope personal -> dm");
+ok(teamsResolvedMode("groupChat") === "mpim", "resolved: scope groupChat -> mpim");
+ok(teamsResolvedMode("channel") === "channel", "resolved: scope channel -> channel");
+ok(teamsResolvedMode("unknown") === undefined, "🔴 OPE-1867: an unrecognised scope resolves NOTHING — the `channel` it used to return was a default wearing a reading's clothes");
+ok(teamsResolvedMode(undefined) === undefined, "🔴 OPE-1867: an activity with no conversationType resolves nothing either — the exact shape that stamped a personal chat as a room");
 
 ok(teamsVisibility("channel", "standard", "channel") === "public", "standard team channel -> public");
 ok(teamsVisibility("channel", "private", "channel") === "private", "private membershipType -> private");

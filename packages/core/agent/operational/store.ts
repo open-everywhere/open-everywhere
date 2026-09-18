@@ -87,6 +87,7 @@ export interface AuditEntry {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly principalId?: string;
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
@@ -105,6 +106,7 @@ export interface AuditChainRow {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceMode?: SurfaceMode;
   readonly principalId?: string;
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
@@ -145,6 +147,11 @@ export type SurfaceMode = "dm" | "mpim" | "channel";
 
 export function asSurfaceMode(value: unknown): SurfaceMode | undefined {
   return value === "dm" || value === "mpim" || value === "channel" ? value : undefined;
+}
+
+export function auditSurfaceMode(value: unknown): { surfaceMode?: SurfaceMode } {
+  const mode = asSurfaceMode(value);
+  return mode === undefined ? {} : { surfaceMode: mode };
 }
 
 export interface SpendLedgerKey {

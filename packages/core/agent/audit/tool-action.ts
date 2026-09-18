@@ -109,12 +109,14 @@ export async function auditToolAction(
 ): Promise<void> {
   try {
     const p = resolvePartition(ctx);
+    const binding = bindFrom(ctx);
     await appendAudit({
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
-      principalId: bindFrom(ctx).principalId,
+      ...(binding.modeResolved ? { surfaceMode: binding.mode } : {}),
+      principalId: binding.principalId,
       action,
       detail,
     });

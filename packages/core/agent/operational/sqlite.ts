@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -115,6 +115,7 @@ function getDb(): DatabaseSync {
       platform     TEXT NOT NULL,
       workspace    TEXT NOT NULL,
       surface      TEXT,
+      surface_mode TEXT,                      -- OPE-1866: the conversation the surface names; NULL = unclassified, which MASKS
       principal_id TEXT,
       action       TEXT NOT NULL,
       detail       TEXT,                      -- JSON
@@ -725,6 +726,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE credential_intake RENAME COLUMN provider TO connector",
 
     "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
+
+    "ALTER TABLE audit_entry ADD COLUMN surface_mode TEXT",
 
     "ALTER TABLE usage_events ADD COLUMN routine_id TEXT",
 
@@ -1394,12 +1397,13 @@ export const sqliteOperationalStore: OperationalStore = {
     const handle = getDb();
     const last = handle
       .prepare(
-        `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+        `SELECT ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
          FROM audit_entry WHERE org_id = ? ORDER BY seq DESC LIMIT 1`,
       )
       .get(entry.org) as
-      | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
+      | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; surface_mode: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
       | undefined;
+    const lastMode = auditSurfaceMode(last?.surface_mode);
     const prevSha = last
       ? auditRowSha(
           {
@@ -1408,6 +1412,7 @@ export const sqliteOperationalStore: OperationalStore = {
             platform: last.platform,
             workspace: last.workspace,
             ...(last.surface ? { surface: last.surface } : {}),
+            ...lastMode,
             ...(last.principal_id ? { principalId: last.principal_id } : {}),
             action: last.action,
             ...(last.detail ? { detail: JSON.parse(last.detail) as Record<string, unknown> } : {}),
@@ -1417,8 +1422,8 @@ export const sqliteOperationalStore: OperationalStore = {
       : null;
     handle
       .prepare(
-        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.ts,
@@ -1426,6 +1431,7 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.platform,
         entry.workspace,
         entry.surface ?? null,
+        entry.surfaceMode ?? null,
         entry.principalId ?? null,
         entry.action,
         entry.detail ? JSON.stringify(entry.detail) : null,
@@ -1462,7 +1468,7 @@ export const sqliteOperationalStore: OperationalStore = {
     const limit = filter.limit && filter.limit > 0 ? filter.limit : -1;
     const rows = getDb()
       .prepare(
-        `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail
+        `SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail
          FROM audit_entry ${clause} ORDER BY ts DESC, seq DESC LIMIT ?`,
       )
       .all(...params, limit) as {
@@ -1472,6 +1478,7 @@ export const sqliteOperationalStore: OperationalStore = {
       platform: string;
       workspace: string;
       surface: string | null;
+      surface_mode: string | null;
       principal_id: string | null;
       action: string;
       detail: string | null;
@@ -1483,6 +1490,7 @@ export const sqliteOperationalStore: OperationalStore = {
       platform: r.platform,
       workspace: r.workspace,
       ...(r.surface ? { surface: r.surface } : {}),
+      ...auditSurfaceMode(r.surface_mode),
       ...(r.principal_id ? { principalId: r.principal_id } : {}),
       action: r.action,
       ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
@@ -1499,10 +1507,10 @@ export const sqliteOperationalStore: OperationalStore = {
     const sql =
       tail && tail > 0
         ? `SELECT * FROM (
-             SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+             SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
              FROM audit_entry WHERE org_id = ? ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq ASC`
-        : `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+        : `SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
            FROM audit_entry WHERE org_id = ? ORDER BY seq ASC`;
     const rows = getDb()
       .prepare(sql)
@@ -1513,6 +1521,7 @@ export const sqliteOperationalStore: OperationalStore = {
       platform: string;
       workspace: string;
       surface: string | null;
+      surface_mode: string | null;
       principal_id: string | null;
       action: string;
       detail: string | null;
@@ -1526,6 +1535,7 @@ export const sqliteOperationalStore: OperationalStore = {
         platform: r.platform,
         workspace: r.workspace,
         ...(r.surface ? { surface: r.surface } : {}),
+        ...auditSurfaceMode(r.surface_mode),
         ...(r.principal_id ? { principalId: r.principal_id } : {}),
         action: r.action,
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),

@@ -302,12 +302,83 @@ export interface AttendednessSite {
 const PROPOSE_CALL_RE = /\brequestApproval\s*\(/;
 const PROPOSE_ALIAS_DECL_RE = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.*)$/;
 
-function proposeAliasOn(line: string): string | undefined {
+const REFERENCE_OPERAND = String.raw`[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*`;
+
+const PROPOSE_ALIAS_RHS_RE = new RegExp(String.raw`^${REFERENCE_OPERAND}(?:\s*(?:\?\?|\|\|)\s*${REFERENCE_OPERAND})*\s*;?\s*$`);
+
+const REGEX_MAY_OPEN_AFTER: ReadonlySet<string> = new Set(["", "=", "(", ",", ":", "[", "{", ";", "!", "&", "|", "?", "+", "-", "*", "%", "<", ">", "~", "^"]);
+
+function stripLiterals(text: string): string {
+  let out = "";
+  let i = 0;
+  let prev = "";
+  const blankUntil = (close: string, isRegex: boolean): void => {
+    let inClass = false;
+    while (i < text.length) {
+      const c = text[i]!;
+      if (c === "\\") {
+        out += "  ".slice(0, Math.min(2, text.length - i));
+        i += 2;
+        continue;
+      }
+      if (isRegex && c === "[") inClass = true;
+      else if (isRegex && c === "]") inClass = false;
+      else if (c === close && !inClass) break;
+      out += " ";
+      i += 1;
+    }
+    if (i < text.length) {
+      out += close;
+      i += 1;
+    }
+    prev = close;
+  };
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"' || ch === "'" || ch === "`") {
+      out += ch;
+      i += 1;
+      blankUntil(ch, false);
+      continue;
+    }
+    if (ch === "/" && REGEX_MAY_OPEN_AFTER.has(prev)) {
+      out += ch;
+      i += 1;
+      blankUntil("/", true);
+      continue;
+    }
+    out += ch;
+    if (ch.trim() !== "") prev = ch;
+    i += 1;
+  }
+  return out;
+}
+
+function proposeAliasOn(line: string): ProposeAliasRead {
   const m = PROPOSE_ALIAS_DECL_RE.exec(line);
   if (!m) return undefined;
-  const rhs = m[2] ?? "";
+  const rhs = stripLiterals(m[2] ?? "");
   if (!/\brequestApproval\b/.test(rhs) || PROPOSE_CALL_RE.test(rhs)) return undefined;
-  return m[1] === "requestApproval" ? undefined : m[1];
+  if (!PROPOSE_ALIAS_RHS_RE.test(rhs.trim())) return { kind: "unclassified" };
+  return m[1] === "requestApproval" ? undefined : { kind: "alias", name: m[1]! };
+}
+
+type ProposeAliasRead = { readonly kind: "alias"; readonly name: string } | { readonly kind: "unclassified" } | undefined;
+
+export interface ProposeAliasShapeProblem {
+  readonly file: string;
+  readonly line: number;
+  readonly text: string;
+}
+
+export function findProposeAliasShapeProblems(file: string, source: string): ProposeAliasShapeProblem[] {
+  const lines = source.split("\n");
+  const code = stripComments(lines);
+  const problems: ProposeAliasShapeProblem[] = [];
+  for (let i = 0; i < code.length; i++) {
+    if (proposeAliasOn(code[i] ?? "")?.kind === "unclassified") problems.push({ file, line: i + 1, text: (lines[i] ?? "").trim().slice(0, 160) });
+  }
+  return problems;
 }
 const CHAIN_LITERAL_RE = /\bresolveApproverChain\s*\(\s*\{|:\s*ApprovalChainRequest\s*=\s*\{/;
 const EVE_APPROVAL_DECL_RE = /^\s*(?:export\s+)?(?:const|let)\s+[A-Za-z_$][\w$]*\s*:\s*(?:Approval|ApprovalPolicy)\b[^=]*=/;
@@ -369,8 +440,8 @@ function derivedNames(code: readonly string[]): Set<string> {
 function proposeAliases(code: readonly string[]): RegExp | undefined {
   const names: string[] = [];
   for (const line of code) {
-    const name = proposeAliasOn(line);
-    if (name !== undefined) names.push(name);
+    const read = proposeAliasOn(line);
+    if (read?.kind === "alias") names.push(read.name);
   }
   return names.length === 0 ? undefined : new RegExp(`\\b(?:${names.join("|")})\\s*\\(`);
 }

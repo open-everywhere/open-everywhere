@@ -9,6 +9,7 @@ import {
   checkUnattendedDispatch,
   findAttendednessSites,
   findPrincipalGates,
+  findProposeAliasShapeProblems,
   findUnattendedDispatchSites,
   type AttendednessSite,
   type PrincipalGate,
@@ -64,6 +65,7 @@ const gates: PrincipalGate[] = files.flatMap((f) => findPrincipalGates(relative(
 const sites: UnattendedDispatchSite[] = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
 const attended: AttendednessSite[] = files.flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8")));
 const approvalAuthority = attended.filter((site) => site.shape === "propose");
+const aliasShapes = files.flatMap((f) => findProposeAliasShapeProblems(relative(root, f), readFileSync(f, "utf8")));
 
 if (listOnly) {
   for (const g of [...gates].sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)))) {
@@ -90,7 +92,20 @@ if (listOnly) {
   process.exit(0);
 }
 
-const defects = [...checkPrincipalGates(gates), ...checkUnattendedDispatch(sites), ...checkAttendednessSites(attended), ...checkApprovalAuthoritySites(approvalAuthority)];
+const defects = [
+  ...checkPrincipalGates(gates),
+  ...checkUnattendedDispatch(sites),
+  ...checkAttendednessSites(attended),
+  ...checkApprovalAuthoritySites(approvalAuthority),
+  ...aliasShapes.map((a) => ({
+    rule: "propose-alias-shape",
+    file: a.file,
+    line: a.line,
+    message:
+      `this declaration names requestApproval on its right-hand side in a shape the alias reader cannot classify, so a call through it would NOT be checked for a chain: bag — \`${a.text}\`. ` +
+      `Bind it as a plain reference (\`const fn = deps.requestApproval ?? requestApproval\`), or teach principal-gate-manifest.ts the new shape under review.`,
+  })),
+];
 if (defects.length > 0) {
   console.error(`✗ principal-gate-lint: ${defects.length} problem(s) — an undeclared or contradictory principal gate, an unattended origin with no marker, or an attendedness signal that is not derived:`);
   for (const d of defects) console.error(`  - [${d.rule}] ${d.file}:${d.line} — ${d.message}`);

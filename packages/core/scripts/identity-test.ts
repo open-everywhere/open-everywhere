@@ -459,4 +459,60 @@ ok(
   });
 }
 
+{
+  const { turnSurfaceMode } = await import("../agent/hooks/spend.js");
+  const { maskedSurfaceKeyOf } = await import("../agent/spend/dm-mask.js");
+
+  const PLATFORM = "provenance-probe";
+  const mapperFor = (mode: "dm" | "channel" | undefined): IdentityMapper => () => ({
+    workspace: "W1",
+    surface: "S1",
+    ...(mode === undefined ? {} : { mode }),
+    visibility: "private",
+    trust: "external",
+    principalId: "U_P",
+  });
+  const ctx = { channel: { kind: PLATFORM } } as unknown as BindableContext;
+  const surfaceKey = `${PLATFORM}/W1/S1`;
+
+  registerIdentityMapper(PLATFORM, mapperFor("dm"));
+  const resolvedDm = bindFrom(ctx);
+  ok(resolvedDm.mode === "dm" && resolvedDm.modeResolved === true, "OPE-1867: a mapper that classifies the conversation marks the binding's mode RESOLVED");
+  ok(turnSurfaceMode(ctx) === "dm", "OPE-1867: a resolved mode reaches the spend stamp, so the row is classifiable");
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: turnSurfaceMode(ctx) }) === `${PLATFORM}/W1/(dms)`, "OPE-1867: a resolved DM masks into the (dms) bucket — the road still works");
+
+  registerIdentityMapper(PLATFORM, mapperFor("channel"));
+  const resolvedChannel = bindFrom(ctx);
+  ok(resolvedChannel.mode === "channel" && resolvedChannel.modeResolved === true, "OPE-1867: a positively-identified room is RESOLVED too — the flag is about provenance, not about being a DM");
+  ok(turnSurfaceMode(ctx) === "channel", "OPE-1867: a resolved channel still stamps 'channel'");
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: turnSurfaceMode(ctx) }) === surfaceKey, "🔴 OPE-1867 NEGATIVE CONTROL: a resolved room still PUBLISHES its key — the fix narrowed the stamp, it did not mask everything");
+
+  registerIdentityMapper(PLATFORM, mapperFor(undefined));
+  const gapFilled = bindFrom(ctx);
+  ok(gapFilled.mode === "channel", "OPE-1867: an unclassifiable conversation still gap-fills `channel` — every OTHER reader keeps a usable value, which is why this is a separate flag and not an optional mode");
+  ok(gapFilled.modeResolved === undefined, "🔴 OPE-1867: …and the binding SAYS it was gap-filled, which is the fact nothing downstream could learn before");
+  ok(turnSurfaceMode(ctx) === undefined, "🔴 OPE-1867: the spend stamp refuses a gap-filled mode — the row is written UNCLASSIFIED rather than as a room");
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: turnSurfaceMode(ctx) }) === `${PLATFORM}/W1/(unclassified)`, "🔴 OPE-1867: so the report masks the surface instead of naming a conversation nothing could classify");
+
+  const { turnKind } = await import("../agent/hooks/spend.js");
+  ok(turnKind(ctx) === "unclassified", "🔴 OPE-1867: an unresolvable turn's ORIGIN TAG says unclassified, not 'channel'");
+  ok(
+    maskedSurfaceKeyOf({ surfaceKey, ...(turnSurfaceMode(ctx) ? { surfaceMode: turnSurfaceMode(ctx)! } : {}), kind: turnKind(ctx) }) === `${PLATFORM}/W1/(unclassified)`,
+    "🔴 OPE-1867: the WHOLE row — stamp and origin tag together, exactly as the spend hook writes it — masks. This is the assertion the mode-only fix passed while the surface was still published.",
+  );
+
+  registerIdentityMapper(PLATFORM, mapperFor("channel"));
+  ok(turnKind(ctx) === "channel", "🔴 OPE-1867 NEGATIVE CONTROL: a RESOLVED room still tags 'channel', so the legacy fallback keeps working and reports keep naming real rooms");
+  registerIdentityMapper(PLATFORM, mapperFor("dm"));
+  ok(turnKind(ctx) === "dm", "OPE-1867 NEGATIVE CONTROL: a resolved DM still tags 'dm'");
+  registerIdentityMapper(PLATFORM, mapperFor(undefined));
+
+  ok(!("modeResolved" in gapFilled), "OPE-1867: a gap-filled binding OMITS the key rather than carrying `false` — one spelling, so a deep-equal over a binding is stable");
+
+  const { isFrozenSurfaceBinding } = await import("../agent/identity/frozen-surface-binding.internal.js");
+  ok(isFrozenSurfaceBinding({ ...resolvedDm, modeResolved: true }), "🔴 OPE-1867: the frozen-binding grammar ADMITS modeResolved — an unlisted key is rejected outright, so omitting it here would silently drop every frozen binding");
+  ok(!isFrozenSurfaceBinding({ ...resolvedDm, modeResolved: false }), "OPE-1867: the grammar refuses `false` — true-or-absent, like principalAttested");
+  ok(isFrozenSurfaceBinding({ ...gapFilled, principalId: "U_P" }), "OPE-1867: a gap-filled binding freezes fine without the key");
+}
+
 console.log(`✓ identity: ${passed} assertions passed`);

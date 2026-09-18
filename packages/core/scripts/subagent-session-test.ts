@@ -103,7 +103,8 @@ function withMode<T>(mode: string, fn: () => T): T {
 
   eq(turnKind(ctx, "oe-dom:payments:oe-sup:g3"), "supervisor", "a supervisor token still tags 'supervisor' (precedence unchanged)");
   eq(withMode("dm", () => turnKind(ctx, formatDmSeatToken("D123", 2))), "dm", "a DM seat still tags 'dm'");
-  eq(turnKind(ctx, "cse_x"), "channel", "an ordinary channel turn still tags 'channel'");
+  eq(withMode("channel", () => turnKind(ctx, "cse_x")), "channel", "an ordinary channel turn still tags 'channel'");
+  eq(turnKind(ctx, "cse_x"), "unclassified", "🔴 …and the SAME turn with nothing to resolve its mode tags 'unclassified' instead — a default may not reach the report mask as a room");
 }
 
 const FRAMEWORK = ["ask_question", "bash", "glob", "grep", "load_skill", "read_file", "todo", "web_fetch", "web_search", "write_file"];

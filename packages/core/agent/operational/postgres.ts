@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -94,6 +94,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      platform     text NOT NULL,
      workspace    text NOT NULL,
      surface      text,
+     surface_mode text,                       -- OPE-1866: the conversation the surface names; NULL = unclassified, which MASKS
      principal_id text,
      action       text NOT NULL,
      detail       text,
@@ -606,6 +607,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    END
    $$`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
+  `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS surface_mode text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS usd_micros_measured bigint`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text`,
@@ -1089,7 +1091,7 @@ export function auditChainLockKey(org: string): number {
 const AUDIT_CHAIN_LOCK_TIMEOUT_MS = 10_000;
 
 async function readAuditChainRows(client: PgClient, org: string, tail?: number): Promise<AuditChainRow[]> {
-  const cols = "seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha";
+  const cols = "seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha";
   const sql =
     tail && tail > 0
       ? `SELECT ${cols} FROM (
@@ -1104,6 +1106,7 @@ async function readAuditChainRows(client: PgClient, org: string, tail?: number):
     platform: string;
     workspace: string;
     surface: string | null;
+    surface_mode: string | null;
     principal_id: string | null;
     action: string;
     detail: string | null;
@@ -1116,6 +1119,7 @@ async function readAuditChainRows(client: PgClient, org: string, tail?: number):
       platform: r.platform,
       workspace: r.workspace,
       ...(r.surface ? { surface: r.surface } : {}),
+      ...auditSurfaceMode(r.surface_mode),
       ...(r.principal_id ? { principalId: r.principal_id } : {}),
       action: r.action,
       ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
@@ -1171,12 +1175,12 @@ export function _resetAuditChainSerialisationWarnForTest(): void {
 
 async function nextAuditPrevSha(client: PgClient, org: string): Promise<string | null> {
   const { rows } = await client.query(
-    `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+    `SELECT ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
      FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT 1`,
     [org],
   );
   const last = rows[0] as
-    | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
+    | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; surface_mode: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
     | undefined;
   if (!last) return null;
   return auditRowSha(
@@ -1186,6 +1190,7 @@ async function nextAuditPrevSha(client: PgClient, org: string): Promise<string |
       platform: last.platform,
       workspace: last.workspace,
       ...(last.surface ? { surface: last.surface } : {}),
+      ...auditSurfaceMode(last.surface_mode),
       ...(last.principal_id ? { principalId: last.principal_id } : {}),
       action: last.action,
       ...(last.detail ? { detail: JSON.parse(last.detail) as Record<string, unknown> } : {}),
@@ -1830,14 +1835,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await withAuditChainLock(client, entry.org, async (conn) => {
         const prevSha = await nextAuditPrevSha(conn, entry.org);
         await conn.query(
-          `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             entry.ts,
             entry.org,
             entry.platform,
             entry.workspace,
             entry.surface ?? null,
+            entry.surfaceMode ?? null,
             entry.principalId ?? null,
             entry.action,
             entry.detail ? JSON.stringify(entry.detail) : null,
@@ -1878,7 +1884,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         limitClause = `LIMIT $${params.length}`;
       }
       const { rows } = await client.query(
-        `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail
+        `SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail
          FROM audit_entry ${clause} ORDER BY ts DESC, seq DESC ${limitClause}`,
         params,
       );
@@ -1889,6 +1895,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         platform: string;
         workspace: string;
         surface: string | null;
+        surface_mode: string | null;
         principal_id: string | null;
         action: string;
         detail: string | null;
@@ -1899,6 +1906,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         platform: r.platform,
         workspace: r.workspace,
         ...(r.surface ? { surface: r.surface } : {}),
+        ...auditSurfaceMode(r.surface_mode),
         ...(r.principal_id ? { principalId: r.principal_id } : {}),
         action: r.action,
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
