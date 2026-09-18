@@ -89,6 +89,7 @@ import {
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
+import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
   decomposeSession,
@@ -202,6 +203,7 @@ export interface ScenarioContext {
   readonly notionAmbient?: NotionDriver;
   readonly slackUnifiedA?: SlackDriver;
   readonly slackUnifiedB?: SlackDriver;
+  readonly postSlackUnifiedBurst?: (askText: string, asideText: string) => Promise<{ readonly askTs: string }>;
   readonly unifiedDomain?: string;
   readonly unifiedAuditCall?: UnifiedAuditCall;
   readonly targetUrl?: string;
@@ -3630,6 +3632,12 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
       const b = ctx.slackUnifiedB!;
+      if (!ctx.postSlackUnifiedBurst) {
+        ctx.fixtureMissing(
+          "S-APPROVAL-COALESCED needs the runner's tracked two-room pacing burst (`ctx.postSlackUnifiedBurst`); ordinary per-room pacing separates the deliveries by a full floor and cannot satisfy the coalescing precondition",
+        );
+      }
+      const postBurst = ctx.postSlackUnifiedBurst!;
       const auditRead = ctx.auditRead;
       if (!auditRead) {
         ctx.skip(
@@ -3648,10 +3656,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean }> => {
         const sinceIso = new Date(Date.now() - 30_000).toISOString();
         const marker = factToken(`coalesce${n}`);
-        const { ts: askTs } = await a.post(
-          `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`,
-        );
-        await b.post(`(aside, no reply needed) filing the ${marker} notes from the other room for later.`);
+        const askText = `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`;
+        const asideText = `(aside, no reply needed) filing the ${marker} notes from the other room for later.`;
+        const { askTs } = await postBurst(askText, asideText);
         const reply = await pollOptional(
           async () => {
             try {
@@ -5977,26 +5984,78 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (ctx.notionAmbient) {
         const not = ctx.notionAmbient;
-        if (not.webhookSecret && not.anchorHuman && ctx.targetUrl) {
+        if (not.webhookSecret && ctx.targetUrl) {
           const since = new Date().toISOString();
-          const forge = await not.forgeCommentCreated(ctx.targetUrl, not.anchorHuman, { signed: true });
+          const comments = await not.allComments();
+          const anchorCtx = { botUserId: not.botUserId, nowMs: Date.now() };
+          const choice = not.anchorHuman
+            ? ((): ReturnType<typeof chooseNotionTaintAnchor> => {
+                const pinned = comments.find((c) => c.id === not.anchorHuman);
+                const why = notionTaintAnchorProblem({ ...anchorCtx, comment: pinned });
+                return why
+                  ? { ok: false, reason: `E2E_NOTION_ANCHOR_HUMAN pins comment ${not.anchorHuman}, and ${why}`, considered: comments.length }
+                  : { ok: true, comment: pinned!, considered: comments.length };
+              })()
+            : chooseNotionTaintAnchor(comments, anchorCtx);
+          const chosen = choice.ok
+            ? choice.comment
+            : ctx.fixtureMissing(`S-TAINT-DRYRUN ARM B cannot run: ${choice.reason}. ${notionTaintFixtureRemedy(not.pageId)}`);
+          const anchorId = chosen.id;
+          ctx.log(
+            `arm B anchor: ${anchorId} (${Math.floor((anchorCtx.nowMs - Date.parse(chosen.createdTime)) / 3_600_000)}h old)` +
+              `${not.anchorHuman ? " — pinned by E2E_NOTION_ANCHOR_HUMAN" : ` — DISCOVERED as the newest qualifying of ${choice.considered} comment(s) on the page`}`,
+          );
+          const discussionId = chosen.discussionId;
+          const replayFrom = new Date(Date.now() - 5_000).toISOString();
+          const replayActions = ["notion.dispatched", "wake.turn_start", "notion.replied", "notion.no_reply", "taint.verdict"];
+          const forge = await not.forgeCommentCreated(ctx.targetUrl, anchorId, { signed: true });
           ctx.gate(forge.status === 200, "ARM B: signed forge-replay of the human anchor comment is acked (200)");
-          const notionRows = await awaitRows("notion", 'a taint.verdict row with kind "notion" (read_notion_page declaring the bound workspace tier)');
-          ctx.gate(notionRows !== undefined, "ARM B: the forge-replayed wake produced a real read_notion_page call — a `taint.verdict` row for kind `notion` landed");
-          if (notionRows) {
-            const nd = notionRows[0].detail as { assumed?: unknown; divergence?: unknown };
+          const joinNow = async () =>
+            notionTaintReplayEvidence(await auditRead({ sinceIso: replayFrom, actions: replayActions }), {
+              deliveryId: forge.deliveryId,
+              commentId: anchorId,
+              discussionId,
+            });
+          const replay = await pollOptional(
+            async () => {
+              const found = await joinNow();
+              return found.ok ? found.evidence : undefined;
+            },
+            { timeoutMs: REPLY_WAIT, what: "the taint.verdict row joined to THIS forged Notion replay by its delivery id" },
+          );
+          const why = replay ? undefined : await joinNow();
+          if (why && !why.ok && why.fixture) {
+            ctx.fixtureMissing(`S-TAINT-DRYRUN ARM B cannot attribute its replay: ${why.reason}`);
+          }
+          ctx.gate(
+            replay !== undefined,
+            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for kind \`notion\` — a real read_notion_page call, joined to the delivery by id rather than by time` +
+              (replay ? "" : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
+          );
+          if (replay) {
+            const nd = replay.verdict.detail as { assumed?: unknown; divergence?: unknown };
             ctx.log(
-              `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
+              `arm B: wake ${replay.wakeId} → session ${replay.sessionId}` +
+                (replay.verdictSessionId === replay.sessionId ? " (the seat read the page itself)" : ` → worker ${replay.verdictSessionId} (the seat delegated the read)`) +
+                `; notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
                 (nd.assumed === true
                   ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
                   : "a REAL verdict off the vouched workspace tier"),
             );
+            const events = ctx.transcriptRead ? await ctx.transcriptRead(replay.verdictSessionId).catch(() => undefined) : undefined;
+            if (events) {
+              ctx.gate(
+                transcriptHasNotionPageRead(events),
+                `ARM B: the verdict session's own transcript requested read_notion_page — the audit row and the transcript agree about what the turn did (session ${replay.verdictSessionId})`,
+              );
+            } else {
+              ctx.log(`arm B: the transcript for ${replay.verdictSessionId} is unreadable on this deployment, so the verdict row is the only witness for this run.`);
+            }
           }
-          const discussionId = await not.discussionOf(not.anchorHuman);
-          if (discussionId) await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+          await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         } else {
           ctx.log(
-            "arm B (notion) SKIPPED — forge-replay needs E2E_NOTION_WEBHOOK_SECRET + E2E_NOTION_ANCHOR_HUMAN + E2E_TARGET_URL; `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The `notion` row shape is unpopulated in this run's sample.",
+            "arm B (notion) SKIPPED — forge-replay needs E2E_NOTION_WEBHOOK_SECRET + E2E_TARGET_URL (the anchor itself is DISCOVERED on the page, so no anchor id has to be configured); `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The `notion` row shape is unpopulated in this run's sample.",
           );
         }
       } else {

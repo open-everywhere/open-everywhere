@@ -29,7 +29,7 @@ import {
 } from "../agent/access/taint-signal.js";
 import { ingestUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
-import { announceTaintOff, openTaintTurn, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
+import { announceTaintOff, openTaintTurn, taintVerdictIdentityDetail, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import {
   chainAuditDetail,
   renderChainResolution,
@@ -455,6 +455,19 @@ console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fu
     ok(!("taintMode" in chainAuditDetail(req, res)), "[9] and the audit row is byte-identical to the pre-OPE-399 shape");
     ok(!announceTaintOff({ session: { id: "sess-z" } } as unknown as Parameters<typeof announceTaintOff>[0]), "[9] …with no posture row written");
   });
+}
+
+{
+  const seat = taintVerdictIdentityDetail({ sessionId: "s-1", turnId: "t-1" }, null);
+  ok(seat.sessionId === "s-1" && seat.turnId === "t-1", "OPE-1907: a verdict row names the session and the turn that wrote it");
+  ok(!("parentSessionId" in seat), "a root seat declares no parent — a key with no value would read like a delegation that did not happen");
+
+  const worker = taintVerdictIdentityDetail({ sessionId: "w-1", turnId: "t-w" }, { parent: { sessionId: "s-1" } });
+  ok(worker.sessionId === "w-1" && worker.parentSessionId === "s-1", "🔴 a DELEGATED read names both the worker that wrote the verdict and the seat that delegated it — without the second, a delegated verdict cannot be joined to the wake at all");
+
+  ok(Object.keys(taintVerdictIdentityDetail(null, null)).length === 0, "🔴 NEGATIVE CONTROL: with no readable identity the builder adds NOTHING, so the row is byte-identical to before this existed and an unreadable context can never cost a verdict its row");
+  ok(Object.keys(taintVerdictIdentityDetail({ sessionId: "", turnId: "" }, { parent: null })).length === 0, "an empty id is not an id — a blank string is dropped rather than recorded as a join key that can never match");
+  ok(!("parentSessionId" in taintVerdictIdentityDetail({ sessionId: "s-1" }, { parent: { sessionId: "s-1" } })), "a session is never its OWN parent — a self-link would make the join read as a delegation");
 }
 
 console.log(`\ntaint-mode: ${n} assertions passed.`);

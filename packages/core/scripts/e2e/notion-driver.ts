@@ -87,6 +87,7 @@ export interface NotionComment {
   readonly id: string;
   readonly discussionId: string;
   readonly authorId: string;
+  readonly authorType?: string;
   readonly text: string;
   readonly createdTime: string;
 }
@@ -301,11 +302,12 @@ export class NotionDriver {
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
     return results.map((c) => {
       const rich = Array.isArray(c.rich_text) ? (c.rich_text as { plain_text?: string }[]) : [];
-      const by = (c.created_by ?? {}) as { id?: string };
+      const by = (c.created_by ?? {}) as { id?: string; type?: string };
       return {
         id: typeof c.id === "string" ? c.id : "",
         discussionId: typeof c.discussion_id === "string" ? c.discussion_id : "",
         authorId: by.id ?? "",
+        ...(typeof by.type === "string" && by.type.length > 0 ? { authorType: by.type } : {}),
         text: rich.map((r) => r.plain_text ?? "").join(""),
         createdTime: typeof c.created_time === "string" ? c.created_time : "",
       };
@@ -337,6 +339,10 @@ export class NotionDriver {
 
   async discussionOf(commentId: string): Promise<string | undefined> {
     return (await this.allComments()).find((c) => c.id === commentId)?.discussionId;
+  }
+
+  async commentById(commentId: string): Promise<NotionComment | undefined> {
+    return (await this.allComments()).find((c) => c.id === commentId);
   }
 
   isBotComment(c: NotionComment): boolean {
@@ -518,13 +524,14 @@ export class NotionDriver {
     );
   }
 
-  async forgeCommentCreated(targetUrl: string, commentId: string, opts: { signed?: boolean } = {}): Promise<{ status: number }> {
+  async forgeCommentCreated(targetUrl: string, commentId: string, opts: { signed?: boolean } = {}): Promise<{ status: number; deliveryId: string }> {
+    const deliveryId = randomUUID();
     const rawBody = JSON.stringify(
       buildCommentCreatedEvent({
         workspaceId: this.cfg.workspaceId,
         commentId,
         pageId: this.cfg.pageId,
-        deliveryId: randomUUID(),
+        deliveryId,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -534,6 +541,6 @@ export class NotionDriver {
       headers["x-notion-signature"] = signNotionBody(this.cfg.webhookSecret, rawBody);
     }
     const res = await fetch(`${targetUrl.replace(/\/+$/, "")}/eve/v1/notion`, { method: "POST", headers, body: rawBody });
-    return { status: res.status };
+    return { status: res.status, deliveryId };
   }
 }

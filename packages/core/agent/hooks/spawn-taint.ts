@@ -57,13 +57,33 @@ import type { MemoryPersistContext } from "./memory.js";
 
 const TAINT_VERDICT_ACTION = "taint.verdict";
 
+export function taintVerdictIdentityDetail(
+  turn: { readonly sessionId?: string; readonly turnId?: string } | null | undefined,
+  subagent: { readonly parent: { readonly sessionId?: string } | null } | null | undefined,
+): { sessionId?: string; turnId?: string; parentSessionId?: string } {
+  const out: { sessionId?: string; turnId?: string; parentSessionId?: string } = {};
+  if (turn?.sessionId) out.sessionId = turn.sessionId;
+  if (turn?.turnId) out.turnId = turn.turnId;
+  const parent = subagent?.parent?.sessionId;
+  if (parent && parent !== turn?.sessionId) out.parentSessionId = parent;
+  return out;
+}
+
+function liveTaintVerdictIdentity(): { sessionId?: string; turnId?: string; parentSessionId?: string } {
+  try {
+    return taintVerdictIdentityDetail(turnIdentity.get(), subagentIdentity.get());
+  } catch {
+    return {};
+  }
+}
+
 registerTaintVerdictSink((row: TaintVerdictRow) => {
   void appendAudit({
     org: deploymentOrg(),
     platform: "ingest",
     workspace: row.kind,
     action: TAINT_VERDICT_ACTION,
-    detail: { ...row },
+    detail: { ...row, ...liveTaintVerdictIdentity() },
   }).catch(() => undefined);
 });
 

@@ -86,7 +86,7 @@ import {
   type NotionUntieredSupervisorDispatch,
   type NotionUntieredWakeMessage,
 } from "./notion-supervisor.js";
-import { notionWakeAuditDetail } from "./notion-engagement.js";
+import { notionDispatchJoinDetail, notionWakeAuditDetail } from "./notion-engagement.js";
 
 const ROUTE = "/eve/v1/notion";
 
@@ -485,6 +485,11 @@ const notionWebhookRouteHandler = timedNotionWebhookRoute(
           action: "notion.dispatched",
           detail: {
             ...notionWakeAuditDetail(d.addressing, d.engagedFollowUp, d.domainVia),
+            ...notionDispatchJoinDetail({
+              deliveryId: notionEventDeliveryId(rawBody),
+              commentId: d.trigger.id,
+              ...(window ? { wakeId: window.wakeId } : {}),
+            }),
             discussionId: d.discussionId,
             ...(window ? { singleWindow: true } : {}),
             ...(d.trust

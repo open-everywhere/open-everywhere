@@ -58,6 +58,7 @@ import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type Leg
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
 import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
+import { slackUnifiedCoalescingBurst } from "./coalesced-burst.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
 
@@ -159,7 +160,8 @@ async function main(): Promise<void> {
       : undefined;
 
   const pacing = createPacingGate();
-  const slackDriver = paceMaybe(slack.ok ? new SlackDriver(slack.cfg) : undefined, "slack", pacing);
+  const rawSlackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
+  const slackDriver = paceMaybe(rawSlackDriver, "slack", pacing);
   const githubDriver = paceMaybe(github.ok ? new GithubDriver(github.cfg) : undefined, "github", pacing);
   const linearDriver = paceMaybe(linear.ok ? new LinearDriver(linear.cfg) : undefined, "linear", pacing);
   const notionAmbientDriver = paceMaybe(notionAmbient.ok ? new NotionDriver(notionAmbient.cfg) : undefined, "notion", pacing);
@@ -175,6 +177,14 @@ async function main(): Promise<void> {
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
   const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
+  const postSlackUnifiedBurst = rawSlackDriver && slackUnified.ok
+    ? slackUnifiedCoalescingBurst({
+        gate: pacing,
+        channelA: slackUnified.cfg.channelA,
+        channelB: slackUnified.cfg.channelB,
+        post: (channel, text) => rawSlackDriver.withChannel(channel).post(text),
+      })
+    : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
@@ -437,6 +447,7 @@ async function main(): Promise<void> {
       notionAmbient: notionAmbientDriver,
       slackUnifiedA: slackUnifiedADriver,
       slackUnifiedB: slackUnifiedBDriver,
+      postSlackUnifiedBurst,
       unifiedDomain: slackUnified.ok ? slackUnified.cfg.domain : undefined,
       unifiedAuditCall,
       targetUrl: auditTarget || undefined,

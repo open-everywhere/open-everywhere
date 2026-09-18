@@ -28,6 +28,15 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
+import type { NotionComment } from "../packages/core/scripts/e2e/notion-driver.js";
+import {
+  chooseNotionTaintAnchor,
+  NOTION_TAINT_ANCHOR_MAX_AGE_MS,
+  notionTaintAnchorProblem,
+  notionTaintFixtureRemedy,
+  notionTaintReplayEvidence,
+  transcriptHasNotionPageRead,
+} from "../packages/core/scripts/e2e/notion-taint-replay.js";
 import {
   approvedSuspendedReply,
   approvedSuspendedContinuation,
@@ -4377,6 +4386,116 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     ok(withReds.lines[0].includes("deploy:smoke"), "the summary points at the deterministic gate that DOES decide a deploy");
     ok(withReds.lines[1].includes("S20 reply quality"), "each red verdict is re-printed under the summary");
   }
+}
+
+{
+  const now = Date.parse("2026-09-17T12:00:00.000Z");
+  const anchorComment: NotionComment = {
+    id: "comment-1",
+    discussionId: "discussion-1",
+    authorId: "person-1",
+    text: "Open Everywhere — read this page and summarise its current contents for this e2e check.",
+    createdTime: "2026-09-18T23:00:00.000Z",
+  };
+  const anchor = {
+    comment: anchorComment as NotionComment | undefined,
+    botUserId: "bot-1" as string | undefined,
+    nowMs: now,
+  };
+  const problem = (over: Partial<NotionComment>): string | undefined =>
+    notionTaintAnchorProblem({ ...anchor, comment: { ...anchorComment, ...over } });
+
+  ok(notionTaintAnchorProblem(anchor) === undefined, "OPE-1907: a recent, person-authored, addressed page-read anchor passes the preflight");
+  ok(problem({ authorType: undefined }) === undefined, "🔴 an ABSENT authorType passes — Notion omits it on a person's comment, and the classifier reads absence as unknown, not as bot");
+  ok(problem({ authorType: "person" }) === undefined, "…and a present `person` type passes too");
+  ok(problem({ authorType: "bot" })?.includes("bot-authored") === true, "a REST-created bot comment cannot masquerade as the human replay fixture");
+  ok(problem({ authorId: "bot-1" })?.includes("OWN reply") === true, "🔴 the agent's own reply is refused — the self-authored loop guard drops it, so replaying it would spend a wake on nothing");
+  ok(problem({ authorId: "" })?.includes("created_by.id") === true, "an author the harness cannot identify is refused, the same direction the classifier fails closed in");
+  ok(problem({ createdTime: "2026-08-16T01:23:00.000Z" })?.includes("out of reach") === true, "the ship #217 31-day-old anchor is outside the leg's 168h reach-back and is refused BEFORE a webhook is forged");
+  ok(NOTION_TAINT_ANCHOR_MAX_AGE_MS === 168 * 60 * 60 * 1_000, "the anchor reach-back is 168h, the same floor notion-supervisor.ts's catch-up uses");
+  ok(problem({ createdTime: "2026-09-13T12:00:00.000Z" }) === undefined, "🔴 a four-day-old anchor still qualifies — a 24h bound would have re-imposed a daily re-seed the product never asked for");
+  ok(problem({ createdTime: "2026-09-19T00:30:00.000Z" })?.includes("future") === true, "a comment stamped an hour ahead is a clock fault, not a fresh ask");
+  ok(problem({ text: "e2e anchor: please summarise this page" })?.includes("does not NAME") === true, "🔴 the old unaddressed anchor is refused before it can become a thread-follow no_reply");
+  ok(problem({ text: "Open Everywhere — how are you today?" })?.includes("read, review or summarise") === true, "an addressed comment that asks for no page read is refused — nothing in that turn need call read_notion_page");
+  ok(notionTaintAnchorProblem({ ...anchor, comment: undefined })?.includes("not visible") === true, "an anchor this credential cannot see is named as such, never treated as a product silence");
+  ok(notionTaintAnchorProblem({ ...anchor, botUserId: undefined })?.includes("own Notion user id") === true, "🔴 without the agent's own user id the preflight fails CLOSED — it cannot tell a human anchor from the agent's own reply");
+  const remedy = notionTaintFixtureRemedy("page-1");
+  ok(remedy.includes("page-1") && remedy.includes("Open Everywhere"), "the remedy names the exact page and the exact words to write — a person can act on the red without reading the scenario");
+  ok(!remedy.includes("E2E_"), "🔴 the remedy asks for ONE action and names NO env var: the leg discovers the anchor, and a second step somebody has to remember is a second step somebody skips");
+
+  {
+    const at = (iso: string, over: Partial<NotionComment>): NotionComment => ({ ...anchorComment, id: `c-${iso}`, createdTime: iso, ...over });
+    const good = "Open Everywhere — read this page and summarise it.";
+    const page = [
+      at("2026-09-17T21:45:00.000Z", { text: good }),
+      at("2026-05-26T05:32:00.000Z", { text: good }),
+      at("2026-09-18T22:30:00.000Z", { text: "thanks, looks good to me" }),
+      at("2026-09-18T23:00:00.000Z", { authorId: "bot-1", text: good }),
+    ];
+    const picked = chooseNotionTaintAnchor(page, { botUserId: "bot-1", nowMs: now });
+    ok(picked.ok && picked.comment.createdTime === "2026-05-26T05:32:00.000Z", "🔴 the NEWEST QUALIFYING comment wins — a newer comment that does not qualify is skipped, not taken and then failed");
+    ok(picked.ok && picked.considered === 4, "the choice reports how many comments it looked at, so a thin page is distinguishable from a fussy predicate");
+    ok(chooseNotionTaintAnchor([...page].reverse(), { botUserId: "bot-1", nowMs: now }).ok, "read order does not decide the pick — the sort does");
+
+    const none = chooseNotionTaintAnchor(page.filter((c) => !c.text.startsWith("Open Everywhere")), { botUserId: "bot-1", nowMs: now });
+    ok(!none.ok && none.reason.includes("does not NAME"), "🔴 when nothing qualifies the reason is the NEWEST PERSON-authored comment's own problem — 'your newest comment does not name the agent' sends someone to the right place");
+    ok(!none.ok && !none.reason.includes("OWN reply"), "…and it blames a person's comment rather than the agent's own reply, which nobody can act on");
+    const empty = chooseNotionTaintAnchor([], { botUserId: "bot-1", nowMs: now });
+    ok(!empty.ok && empty.considered === 0 && empty.reason.includes("no comments"), "an unreadable or empty page says so rather than reporting a fussy predicate");
+  }
+
+  const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: "2026-09-18T23:30:01.000Z",
+    org: "default",
+    platform: action === "taint.verdict" ? "ingest" : "notion",
+    workspace: "workspace-1",
+    surface: "page-1",
+    action,
+    detail,
+  });
+  const mine = { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1" };
+  const exactRows = [
+    row("notion.dispatched", { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1", addressing: "direct", wakeId: "wake-1" }),
+    row("wake.turn_start", { wakeId: "wake-1", sessionId: "session-1", turnId: "turn-1" }),
+    row("notion.replied", { sessionId: "session-1", discussionId: "discussion-1" }),
+    row("taint.verdict", { kind: "notion", parentSessionId: "session-1", sessionId: "worker-1", turnId: "turn-worker" }),
+  ];
+  const joined = notionTaintReplayEvidence(exactRows, mine);
+  ok(joined.ok && joined.evidence.sessionId === "session-1", "the exact delivery joins through its wake to the turn that answered");
+  ok(joined.ok && joined.evidence.verdictSessionId === "worker-1", "🔴 a DELEGATED read is attributed to the worker that wrote the verdict, not silently reported as the seat's own");
+  ok(joined.ok && joined.evidence.lifecycle?.action === "notion.replied", "the seat's terminal lifecycle row rides along, so a red can say what the turn decided");
+
+  const other = notionTaintReplayEvidence(exactRows, { ...mine, deliveryId: "another-delivery" });
+  ok(!other.ok && other.reason.includes("never reached dispatch"), "🔴 a notion verdict in the same time window cannot satisfy ANOTHER delivery's replay — the join is by id, not by clock");
+
+  const threadFollow = notionTaintReplayEvidence(
+    exactRows.map((r) => (r.action === "notion.dispatched" ? { ...r, detail: { ...r.detail, addressing: "thread-follow" } } : r)),
+    mine,
+  );
+  ok(!threadFollow.ok && threadFollow.reason.includes("thread-follow"), "🔴 the ship #217 shape is named exactly: a thread-follow dispatch cannot satisfy the direct-addressing precondition");
+
+  const noWake = notionTaintReplayEvidence(
+    exactRows.map((r) => (r.action === "notion.dispatched" ? { ...r, detail: { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1", addressing: "direct" } } : r)),
+    mine,
+  );
+  ok(!noWake.ok && noWake.reason.includes("no wakeId"), "a dispatch with no window wake names the missing join key");
+  ok(!noWake.ok && noWake.fixture === true, "🔴 …and marks it a FIXTURE fact, so the leg reds as RED-until-fixture: a delivery that minted no single-window wake has measured NOTHING about the taint plane, and calling that a hard gate failure puts a red on the taint plane for a domain-mode setting");
+  ok(!threadFollow.ok && threadFollow.fixture === undefined, "🔴 NEGATIVE CONTROL: a thread-follow dispatch is NOT a fixture fact — the preflight already accepted this anchor, so the front door disagreeing with it is a finding and stays a hard gate");
+
+  const noVerdict = notionTaintReplayEvidence(
+    exactRows.filter((r) => r.action !== "taint.verdict" && r.action !== "notion.replied").concat(row("notion.no_reply", { sessionId: "session-1", reason: "not_relevant" })),
+    mine,
+  );
+  ok(!noVerdict.ok && noVerdict.reason.includes("notion.no_reply"), "🔴 when the replay's own turn ran and wrote no verdict, the red names the turn's terminal row — the exact fact that settled ship #217's diagnosis");
+
+  const foreignVerdict = notionTaintReplayEvidence(
+    exactRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { kind: "notion", sessionId: "someone-else", parentSessionId: "another-seat" } } : r)),
+    mine,
+  );
+  ok(!foreignVerdict.ok, "🔴 NEGATIVE CONTROL: a `notion` verdict written by an unrelated session does NOT satisfy this replay, which is precisely what the old time-window scan could not tell apart");
+
+  ok(transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "read_notion_page" }] } }]), "the replay session's transcript confirms the page-read tool request");
+  ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }]), "🔴 ship #217's no_reply-only transcript cannot pass the page-read proof");
 }
 
 {

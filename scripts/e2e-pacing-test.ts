@@ -7,6 +7,7 @@ import {
   renderPacingLine,
   type PacingClock,
 } from "../packages/core/scripts/e2e/pacing.js";
+import { slackUnifiedCoalescingBurst } from "../packages/core/scripts/e2e/coalesced-burst.js";
 import { PACING_CHANNEL_FLOOR_MS, PACING_MAX_CONCURRENT_PER_SURFACE } from "../packages/core/scripts/e2e/env.js";
 import { SlackDriver } from "../packages/core/scripts/e2e/slack-driver.js";
 import { DiscordDriver } from "../packages/core/scripts/e2e/discord-driver.js";
@@ -91,6 +92,177 @@ function fakeClock(): PacingClock & { readonly slept: number[]; settle(): Promis
     "🔴 NEGATIVE CONTROL: with floorMs 0 every drive starts at 0 — so the spacing above came from the floor and not from the clock advancing on its own",
   );
   ok(gate.stats().waitedMs === 0, "…and nothing was held back");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const startedAt: Record<string, number> = {};
+  const work = (async () => {
+    await gate.driveBurst("slack", ["CA", "CB"], async () => {
+      startedAt.A = clock.now();
+      startedAt.B = clock.now();
+    });
+    await gate.drive("slack", "CA", async () => {
+      startedAt.nextA = clock.now();
+    });
+    await gate.drive("slack", "CB", async () => {
+      startedAt.nextB = clock.now();
+    });
+  })();
+  await clock.settle();
+  await work;
+  ok(startedAt.A === 0 && startedAt.B === 0, "OPE-1913: the explicitly paired rooms run in one burst with no floor between them, so the pacer does not make coalescing impossible");
+  ok(startedAt.nextA === 1_000 && startedAt.nextB === 1_000, "the burst consumes each room's ordinary floor; later drives are still paced");
+  ok(gate.stats().totalDrives === 4, "the burst reports both vendor posts plus both later drives — the pacing report does not hide the exception");
+  ok(gate.stats().drivesPerChannel.get("slack/CA") === 2 && gate.stats().drivesPerChannel.get("slack/CB") === 2, "burst accounting remains per channel");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const order: string[] = [];
+  let calls = 0;
+  const work = gate.driveBurst("slack", ["CA", "CB"], async () => {
+    calls++;
+    order.push("ask");
+    await new Promise((r) => setImmediate(r));
+    order.push("aside");
+    return "done";
+  });
+  await clock.settle();
+  ok((await work) === "done", "the burst returns the callback's own value — the gate wraps the drive and decides nothing about it");
+  ok(calls === 1, "the gate invoked the callback exactly once");
+  ok(order.join(",") === "ask,aside", "🔴 the callback's own ordering survives the burst — the gate never parallelises or reorders the posts inside it");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 4, clock });
+  const startedAt: number[] = [];
+  const record = async (): Promise<void> => {
+    startedAt.push(clock.now());
+  };
+  const work = (async () => {
+    await gate.driveBurst("slack", ["C1"], record);
+    await gate.drive("slack", "C1", record);
+    await gate.driveBurst("slack", ["C1"], record);
+  })();
+  await clock.settle();
+  await work;
+  ok(
+    startedAt.length === 3 && startedAt[0] === 0 && startedAt[1] === 1_000 && startedAt[2] === 2_000,
+    "🔴 REGRESSION: a SINGLE-room burst paces exactly as `drive` does — the exception is the PAIRING, not a bypass any one-room caller can reach",
+  );
+  ok(gate.stats().drivesPerChannel.get("slack/C1") === 3 && gate.stats().totalDrives === 3, "…and it is counted as the three drives it is");
+  ok(gate.stats().waitedMs === 2_000, "…and it reports the same held-back cost the all-`drive` schedule reports");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const startedAt: Record<string, number> = {};
+  let burstDone = false;
+  const work = Promise.all([
+    gate.driveBurst("slack", ["CA", "CB"], async () => {
+      startedAt.burst = clock.now();
+      await clock.sleep(5_000);
+      burstDone = true;
+    }),
+    gate.drive("slack", "CC", async () => {
+      startedAt.third = clock.now();
+      ok(burstDone, "🔴 a third room of the same surface cannot be driven until the burst releases BOTH slots — the burst is capped, never exempt");
+    }),
+  ]);
+  await clock.settle();
+  await work;
+  ok(startedAt.burst === 0 && startedAt.third === 5_000, "the third room ran only after the burst's own work finished");
+  ok(gate.stats().maxConcurrencyPerSurface.get("slack") === 2, "the burst reports the two slots it really held — the pacing line never understates the exception");
+}
+
+ok(PACING_MAX_CONCURRENT_PER_SURFACE === 2, "the shipped per-surface cap is 2, which is the size of S-APPROVAL-COALESCED's two-room burst");
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const ran: string[] = [];
+  const work = Promise.all([
+    gate.driveBurst("slack", ["CA", "CB"], async () => {
+      ran.push("first");
+      await clock.sleep(1_000);
+    }),
+    gate.driveBurst("slack", ["CC", "CD"], async () => {
+      ran.push("second");
+    }),
+  ]);
+  await clock.settle();
+  const outcome = await Promise.race([work.then(() => "settled"), new Promise<string>((r) => setTimeout(() => r("deadlocked"), 250))]);
+  ok(outcome === "settled", "🔴 neither burst deadlocks the other — the slots are taken all-or-nothing, so a waiting burst holds none of them");
+  ok(ran.length === 2 && ran[0] === "first", "both bursts ran, the first one first");
+  ok(gate.stats().totalDrives === 4, "both bursts drove both of their rooms");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const calls: { channel: string; text: string; at: number; settled: number }[] = [];
+  let settled = 0;
+  const drive = slackUnifiedCoalescingBurst({
+    gate,
+    channelA: "CASK",
+    channelB: "CASIDE",
+    post: async (channel, text) => {
+      const at = calls.length;
+      await new Promise((r) => setImmediate(r));
+      calls.push({ channel, text, at, settled: settled++ });
+      return { ts: `ts-${channel}` };
+    },
+  });
+  const work = drive("the routine ask", "the aside");
+  await clock.settle();
+  const out = await work;
+
+  ok(calls.length === 2, "the drive made exactly two vendor posts");
+  ok(calls[0]?.channel === "CASK" && calls[0]?.text === "the routine ask", "🔴 the ASK is posted FIRST, into the asking room");
+  ok(calls[1]?.channel === "CASIDE" && calls[1]?.text === "the aside", "🔴 the ASIDE is posted SECOND, so it is the last delivery eve can merge — the whole reason the leg reproduces OPE-1756");
+  ok(calls[0]!.at === 0 && calls[1]!.at === 1, "🔴 the second post is not even STARTED until the first has returned — a concurrent `Promise.all` would leave the arrival order to the network");
+  ok(out.askTs === "ts-CASK", "the drive returns the ASK's ts — the reply the leg waits for is the one in the asking room");
+  ok(gate.stats().drivesPerChannel.get("slack/CASK") === 1 && gate.stats().drivesPerChannel.get("slack/CASIDE") === 1, "both rooms are accounted for in the pacing report");
+  ok(gate.stats().waitedMs === 0, "…and on a fresh pair of rooms the burst held nothing back: the two posts are back-to-back, which is the coalescing precondition");
+}
+
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  const startedAt: number[] = [];
+  const drive = slackUnifiedCoalescingBurst({
+    gate,
+    channelA: "CASK",
+    channelB: "CASIDE",
+    post: async () => {
+      startedAt.push(clock.now());
+      return { ts: "ts" };
+    },
+  });
+  const work = (async () => {
+    await drive("ask 1", "aside 1");
+    await drive("ask 2", "aside 2");
+  })();
+  await clock.settle();
+  await work;
+  ok(startedAt.length === 4, "both attempts drove both rooms");
+  ok(startedAt[0] === 0 && startedAt[1] === 0, "attempt 1's two posts are back-to-back");
+  ok(startedAt[2] === 1_000 && startedAt[3] === 1_000, "🔴 attempt 2 waits a full floor — the retry the leg makes when the first interleave did not coalesce is still paced");
+  ok(gate.stats().waitedMs === 1_000, "…and the cost of that wait is reported");
+}
+{
+  const clock = fakeClock();
+  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
+  await assert.rejects(() => gate.driveBurst("slack", ["CA", "CB", "CC"], async () => undefined), /exceeds/);
+  n++;
+  await assert.rejects(() => gate.driveBurst("slack", [], async () => undefined), /at least one channel/);
+  n++;
+  ok(gate.stats().totalDrives === 0, "a refused burst drives nothing and is counted as nothing");
 }
 
 {

@@ -153,3 +153,17 @@ async function liveMarkDispatchSeen(org: string, key: string, atIso: string): Pr
     return true;
   }
 }
+
+export interface NotionDispatchJoinIds {
+  readonly deliveryId?: string;
+  readonly commentId?: string;
+  readonly wakeId?: string;
+}
+
+export function notionDispatchJoinDetail(ids: NotionDispatchJoinIds): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (ids.deliveryId) out.deliveryId = ids.deliveryId;
+  if (ids.commentId) out.commentId = ids.commentId;
+  if (ids.wakeId) out.wakeId = ids.wakeId;
+  return out;
+}

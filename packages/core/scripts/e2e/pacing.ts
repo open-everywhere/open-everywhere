@@ -19,6 +19,7 @@ export interface PacingStats {
 
 export interface PacingGate {
   drive<T>(surface: string, channel: string, fn: () => Promise<T>): Promise<T>;
+  driveBurst<T>(surface: string, channels: readonly string[], fn: () => Promise<T>): Promise<T>;
   stats(): PacingStats;
 }
 
@@ -39,30 +40,35 @@ export function createPacingGate(opts?: {
   const drivesPerChannel = new Map<string, number>();
   const inFlight = new Map<string, number>();
   const maxConcurrencyPerSurface = new Map<string, number>();
-  const waiters = new Map<string, (() => void)[]>();
+  const waiters = new Map<string, { need: number; resolve: () => void }[]>();
   let waitedMs = 0;
   let totalDrives = 0;
 
-  async function acquire(surface: string): Promise<void> {
+  async function acquire(surface: string, need = 1): Promise<void> {
     const live = inFlight.get(surface) ?? 0;
-    if (live < cap) {
-      inFlight.set(surface, live + 1);
+    const queued = waiters.get(surface)?.length ?? 0;
+    if (queued === 0 && live + need <= cap) {
+      inFlight.set(surface, live + need);
       return;
     }
     await new Promise<void>((resolve) => {
       const queue = waiters.get(surface) ?? [];
-      queue.push(resolve);
+      queue.push({ need, resolve });
       waiters.set(surface, queue);
     });
   }
 
-  function release(surface: string): void {
-    const next = waiters.get(surface)?.shift();
-    if (next) {
-      next();
-      return;
+  function release(surface: string, held = 1): void {
+    inFlight.set(surface, Math.max(0, (inFlight.get(surface) ?? held) - held));
+    const queue = waiters.get(surface);
+    while (queue && queue.length > 0) {
+      const head = queue[0]!;
+      const live = inFlight.get(surface) ?? 0;
+      if (live + head.need > cap) return;
+      queue.shift();
+      inFlight.set(surface, live + head.need);
+      head.resolve();
     }
-    inFlight.set(surface, Math.max(0, (inFlight.get(surface) ?? 1) - 1));
   }
 
   return {
@@ -84,6 +90,34 @@ export function createPacingGate(opts?: {
         return await fn();
       } finally {
         release(surface);
+      }
+    },
+    async driveBurst<T>(surface: string, channels: readonly string[], fn: () => Promise<T>): Promise<T> {
+      const unique = [...new Set(channels)];
+      if (unique.length === 0) throw new Error("pacing burst requires at least one channel");
+      if (unique.length > cap) {
+        throw new Error(`pacing burst of ${unique.length} channels exceeds ${surface}'s concurrency cap ${cap}`);
+      }
+      await acquire(surface, unique.length);
+      try {
+        const live = inFlight.get(surface) ?? unique.length;
+        maxConcurrencyPerSurface.set(surface, Math.max(maxConcurrencyPerSurface.get(surface) ?? 0, live));
+        const now = clock.now();
+        const at = Math.max(now, ...unique.map((channel) => nextAllowedAt.get(channelKey(surface, channel)) ?? 0));
+        for (const channel of unique) nextAllowedAt.set(channelKey(surface, channel), at + floorMs);
+        const wait = at - clock.now();
+        if (wait > 0) {
+          waitedMs += wait;
+          await clock.sleep(wait);
+        }
+        for (const channel of unique) {
+          const key = channelKey(surface, channel);
+          drivesPerChannel.set(key, (drivesPerChannel.get(key) ?? 0) + 1);
+          totalDrives++;
+        }
+        return await fn();
+      } finally {
+        release(surface, unique.length);
       }
     },
     stats(): PacingStats {

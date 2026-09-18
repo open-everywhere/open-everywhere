@@ -6,6 +6,7 @@ import {
   markNotionEngaged,
   notionEngagementAnchor,
   notionSeamPartition,
+  notionDispatchJoinDetail,
   notionWakeAddressing,
   notionWakeAuditDetail,
   resolveNotionEngagement,
@@ -209,6 +210,18 @@ ok(notionEngagementAnchor({ ...FACTS, workspaceId: undefined }) === undefined, "
   ok(await firstNotionDispatchOfComment(FACTS, "cmt-4", throwing), "🔴 6j: an unreachable store -> admit (fail open) — a duplicate turn beats a deaf page");
 }
 
+{
+  const full = notionDispatchJoinDetail({ deliveryId: "evt-1", commentId: "c-1", wakeId: "w-1" });
+  ok(full.deliveryId === "evt-1" && full.commentId === "c-1" && full.wakeId === "w-1", "OPE-1907: the dispatch row carries the delivery, the comment and the wake — the three hops of the join");
+  ok(Object.keys(full).length === 3, "…and nothing else: the builder adds ids, never a comment body, an author name or a page title");
+
+  const perDoc = notionDispatchJoinDetail({ commentId: "c-1" });
+  ok(perDoc.commentId === "c-1", "a per-doc delivery still names its comment");
+  ok(!("wakeId" in perDoc) && !("deliveryId" in perDoc), "🔴 an absent id is OMITTED from the row, never written as an empty key");
+  ok(Object.keys(notionDispatchJoinDetail({})).length === 0, "🔴 NEGATIVE CONTROL: with nothing to say the builder adds nothing at all, so the row is byte-identical to before this existed");
+  ok(Object.keys(notionDispatchJoinDetail({ deliveryId: "", commentId: "", wakeId: "" })).length === 0, "an EMPTY id is not an id — a blank string is dropped, never recorded as a join key that can never match");
+}
+
 console.log(
-  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard + the dispatch row's addressing and its domain origin + the wake once-guard)`,
+  `✓ notion-engagement: ${n} assertions passed (page anchor + its grain pinned against the discussion + the decision table with a negative control on every boolean + the name-drop mark + its redelivery guard + the dispatch row's addressing and its domain origin + the wake once-guard + the dispatch row's exact-join ids)`,
 );
