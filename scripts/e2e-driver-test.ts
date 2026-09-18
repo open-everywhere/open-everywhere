@@ -264,6 +264,178 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { spendReportReaderPreflight, dmSpendPresence, spendMaskVerdict, spendMaskVerdictOver } = await import(
+    "../packages/core/scripts/e2e/spend-dm-mask.js"
+  );
+  const { dmBucketKey: productBucketKey } = await import("../packages/core/agent/spend/dm-mask.js");
+  const orgAdmin = defineDomain({ name: "org", match: "org", admins: ["slack/T_FIXTURE/U_ADMIN"] });
+
+  const admin = spendReportReaderPreflight({ reader: { userId: "U_ADMIN", teamId: "T_FIXTURE" }, domains: [orgAdmin] });
+  ok(admin.ok && admin.principalKey === "slack/T_FIXTURE/U_ADMIN", "the org-admin reader passes the preflight and carries its own qualified key");
+
+  const member = spendReportReaderPreflight({ reader: { userId: "U_MEMBER", teamId: "T_FIXTURE" }, domains: [orgAdmin] });
+  ok(!member.ok && member.reason.includes("slack/T_FIXTURE/U_MEMBER"), "a NON-admin reader is refused, and the reason names the exact key an operator must add");
+  ok(!member.ok && member.reason.includes('scope:"org"'), "…and says WHY standing decides it: only org scope renders DM spend at all");
+
+  const otherWorkspace = spendReportReaderPreflight({ reader: { userId: "U_ADMIN", teamId: "T_OTHER" }, domains: [orgAdmin] });
+  ok(!otherWorkspace.ok, "NEGATIVE CONTROL: admin standing is workspace-qualified — the same user id in another tenant is not an org admin");
+
+  const domainAdminOnly = spendReportReaderPreflight({
+    reader: { userId: "U_LEAD", teamId: "T_FIXTURE" },
+    domains: [orgAdmin, defineDomain({ name: "eng", reach: ["slack/T_FIXTURE/C1"], admins: ["slack/T_FIXTURE/U_LEAD"] })],
+  });
+  ok(!domainAdminOnly.ok, "NEGATIVE CONTROL: a DOMAIN admin is not an org admin — `requireOrgAdmin` reads the org roster only, and this preflight must not be looser");
+
+  const blank = spendReportReaderPreflight({ reader: { userId: "", teamId: "T_FIXTURE" }, domains: [orgAdmin] });
+  ok(!blank.ok, "an incomplete identity fails closed rather than composing a key nothing can admit");
+
+  const DM_KEY = "slack/T_FIXTURE/D0DRIVER";
+  ok(productBucketKey(DM_KEY) === "slack/T_FIXTURE/(dms)", "the masked bucket key comes from the PRODUCT's own dmBucketKey — the pack composes no bucket string of its own, so a rename there reds here rather than live");
+
+  const usage = [
+    { surfaceKey: DM_KEY, calls: 2, inputTokens: 10, outputTokens: 4 },
+    { surfaceKey: DM_KEY, calls: 1, inputTokens: 6, outputTokens: 0 },
+    { surfaceKey: "slack/T_FIXTURE/C_ROOM", calls: 9, inputTokens: 99, outputTokens: 99 },
+  ];
+  const seen = dmSpendPresence(usage, DM_KEY);
+  ok(seen.present && seen.calls === 3 && seen.tokens === 20, "the raw usage read sums THIS DM surface's rows only — the channel row beside it contributes nothing");
+  ok(dmSpendPresence(usage, "slack/T_FIXTURE/D0NOBODY").present === false, "NEGATIVE CONTROL: a DM surface with no row is absent, so the leg's positive gate stays conditional on a row it can see");
+  ok(dmSpendPresence([{ surfaceKey: DM_KEY, calls: 0, inputTokens: 0, outputTokens: 0 }], DM_KEY).present === false, "a zero-call row is not spend — presence needs a call, not merely a key");
+
+  const leaked = spendMaskVerdict(`surfaces:\nslack/T_FIXTURE/C_ROOM 198\n${DM_KEY} 20`, { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(leaked.leaks.includes(DM_KEY) && leaked.leaks.includes("D0DRIVER"), "a report naming the DM surface is a DISCLOSURE, and both the key and the bare channel id are reported");
+  ok(leaked.bucket === false, "…and that report renders no masked bucket, so the positive gate cannot pass on it either");
+
+  const masked = spendMaskVerdict(`surfaces:\nslack/T_FIXTURE/C_ROOM 198\nslack/T_FIXTURE/(dms) 20`, { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(masked.leaks.length === 0 && masked.bucket && !masked.bareBucketOnly, "the masked report discloses nothing and renders the workspace-qualified bucket — the live leg's pass");
+
+  const noteOnly = spendMaskVerdict(
+    'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports.',
+    { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY },
+  );
+  ok(
+    noteOnly.bucket === false && noteOnly.bareBucketOnly,
+    "🔴 the FALSE PASS this verdict exists to refuse: spend_report's own note carries the words \"(dms)\" bucket, so a reply that merely explains the masking renders no row and must not satisfy the positive gate",
+  );
+
+  const nothing = spendMaskVerdict("I can't run that here.", { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(nothing.leaks.length === 0 && !nothing.bucket && !nothing.bareBucketOnly, "a refusal discloses nothing and proves nothing — the exclusion passes, the positive gate reds, which is the leg scoring a product outcome");
+
+  const split = spendMaskVerdictOver(
+    ["Here's the breakdown:", `slack/T_FIXTURE/C_ROOM 198\n${DM_KEY} 20`],
+    { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY },
+  );
+  ok(
+    split.leaks.includes(DM_KEY) && split.leaks.includes("D0DRIVER"),
+    "🔴 a DM key disclosed in the SECOND message is still a disclosure — `leaks` is the union across every message the ask produced",
+  );
+  ok(
+    spendMaskVerdict("Here's the breakdown:", { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY }).leaks.length === 0,
+    "NEGATIVE CONTROL: the preface alone discloses nothing, which is exactly why reading only the first reply would have passed the leaked run",
+  );
+  const splitBucket = spendMaskVerdictOver(["Here's the breakdown:", "slack/T_FIXTURE/(dms) 20"], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(splitBucket.bucket && splitBucket.leaks.length === 0, "…and the positive half is an OR: the bucket counts wherever the table landed");
+  const noneAtAll = spendMaskVerdictOver([], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(!noneAtAll.bucket && !noneAtAll.bareBucketOnly && noneAtAll.leaks.length === 0, "NEGATIVE CONTROL: no messages at all renders no bucket — silence reds the positive gate instead of passing it vacuously");
+  const bareThenQualified = spendMaskVerdictOver(['the "(dms)" bucket aggregates DM spend', "slack/T_FIXTURE/(dms) 20"], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(bareThenQualified.bucket && !bareThenQualified.bareBucketOnly, "a qualified key in ANY message clears the ambiguous bare-(dms) state the second ask exists to resolve");
+
+  const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-DM-MASK")!;
+  ok(scenario.surface === "slack", "S-SPEND-DM-MASK drives SLACK (OPE-1914) — a launch surface, so a missing fixture scores RED rather than a declared gap");
+  ok(scenario.requires.join("+") === "slack+syntheticDm", "…and it needs only the Slack driver plus the real DM channel — the Discord capability went with the old vehicle");
+  ok(
+    scenario.timeoutMs >= 1_790_000,
+    "the budget sits above the leg's real worst-case wait sum (fence 440s + DM reply 180s + usage poll 240s + two 420s channel round-trips + two 45s continuation windows)",
+  );
+}
+
+{
+  const { routineConnectorFixture, NOTION_MCP_HOST } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const { readFileSync: readSource } = await import("node:fs");
+  const { fileURLToPath: toPath } = await import("node:url");
+
+  const notionSource = readSource(toPath(new URL("../packages/core/agent/connections/notion.ts", import.meta.url)), "utf8");
+  const dialled = /NOTION_MCP_URL\s*=\s*"([^"]+)"/u.exec(notionSource)?.[1];
+  ok(dialled !== undefined, "connections/notion.ts still declares NOTION_MCP_URL as a literal this test can read");
+  ok(dialled !== undefined && new URL(dialled).hostname === NOTION_MCP_HOST, `NOTION_MCP_HOST tracks the host connections/notion.ts dials (${String(dialled)})`);
+
+  const SURFACE = "slack/T_FIXTURE/C_CONNECTOR";
+  const domains = [defineDomain({ name: "e2e-connector", reach: [SURFACE] })];
+  const credentials = [
+    {
+      connector: "notion",
+      allows: ["api-key", "user-oauth"],
+      credentials: [
+        { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db", endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } },
+        { id: "user-oauth", type: "user-oauth" },
+      ],
+    },
+  ] as const;
+  const call = (bundles: readonly unknown[], bindings: readonly unknown[]) =>
+    routineConnectorFixture({
+      surfaceKey: SURFACE,
+      connector: "notion",
+      op: "notion__create_page",
+      mcpHost: NOTION_MCP_HOST,
+      domains,
+      bundles: bundles as never,
+      bindings: bindings as never,
+      credentials: credentials as never,
+    });
+
+  const noGrant = call([{ name: "rest-only", connections: [{ id: "notion-rest" }] }], [{ bundle: "rest-only", scope: { level: "domain", domain: "e2e-connector" } }]);
+  ok(!noGrant.ok && noGrant.reason.includes("no bundle bound to") && noGrant.reason.includes('domain "e2e-connector"'), "no connector grant at all ⇒ RED-until-fixture naming the domain that needs one");
+
+  const blocked = call(
+    [{ name: "e2e-connector-fixture", connectors: [{ name: "notion", credential: "team-key" }] }],
+    [{ bundle: "e2e-connector-fixture", scope: { level: "domain", domain: "e2e-connector" } }],
+  );
+  ok(
+    !blocked.ok && blocked.reason.includes("e2e-connector-fixture") && blocked.reason.includes("team-key") && blocked.reason.includes("api.notion.com") && blocked.reason.includes(NOTION_MCP_HOST),
+    "🔴 the LIVE state: a grant whose credential is narrowed to another host reds with the exact bundle, credential, allowed host and dialled host — the sentence an operator acts on",
+  );
+
+  const armed = call(
+    [{ name: "notion-oauth-fixture", connectors: [{ name: "notion", credential: "user-oauth" }] }],
+    [{ bundle: "notion-oauth-fixture", scope: { level: "domain", domain: "e2e-connector" } }],
+  );
+  ok(armed.ok && armed.bundle === "notion-oauth-fixture" && armed.credential === "user-oauth", "a credential with no endpoint narrowing IS reachable — the derivation is not a blanket refusal, which is what makes the red above meaningful");
+
+  const surfaceScoped = call(
+    [{ name: "surface-fixture", connectors: [{ name: "notion", credential: "user-oauth" }] }],
+    [{ bundle: "surface-fixture", scope: { level: "surface", surface: SURFACE } }],
+  );
+  ok(surfaceScoped.ok, "a SURFACE-scoped binding on the exact driven room counts too");
+
+  const personal = call(
+    [{ name: "notion-personal", connectors: [{ name: "notion", credential: "user-oauth" }] }],
+    [{ bundle: "notion-personal", scope: { level: "principal", principal: "slack/T_FIXTURE/U_ADMIN" } }],
+  );
+  ok(
+    !personal.ok && personal.reason.includes("no bundle bound to"),
+    "🔴 NEGATIVE CONTROL: a PRINCIPAL-scoped personal grant never satisfies the derivation — it resolves only in the DM universe, and a routine reusing a person's own DM credential is the escalation the fence exists to stop",
+  );
+
+  const otherRoom = routineConnectorFixture({
+    surfaceKey: "slack/T_FIXTURE/C_ELSEWHERE",
+    connector: "notion",
+    op: "notion__create_page",
+    mcpHost: NOTION_MCP_HOST,
+    domains,
+    bundles: [{ name: "e2e-connector-fixture", connectors: [{ name: "notion", credential: "user-oauth" }] }] as never,
+    bindings: [{ bundle: "e2e-connector-fixture", scope: { level: "domain", domain: "e2e-connector" } }] as never,
+    credentials: credentials as never,
+  });
+  ok(!otherRoom.ok, "NEGATIVE CONTROL: a domain-scoped grant does not reach a room outside that domain");
+
+  const unconfigured = call(
+    [{ name: "typo-fixture", connectors: [{ name: "notion", credential: "team-kye" }] }],
+    [{ bundle: "typo-fixture", scope: { level: "domain", domain: "e2e-connector" } }],
+  );
+  ok(!unconfigured.ok && unconfigured.reason.includes("does not configure"), "a grant naming a credential the catalogue has no entry for reds naming it, rather than resolving to something");
+}
+
+{
   const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-REFUSAL-KEYS")!;
   const { sqliteOperationalStore } = await import("../packages/core/agent/operational/sqlite.js");
   const org = "spend-refusal-driver-test";
@@ -929,7 +1101,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
     nonSlack.join(",") ===
-      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-BRIDGE,S-EVE-CARD,S-GITHUB-NOTION-REST,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SPEND-DM-MASK,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
+      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-BRIDGE,S-EVE-CARD,S-GITHUB-NOTION-REST,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
     "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE+S-OWN-ACCOUNT-NOTION(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);

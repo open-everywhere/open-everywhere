@@ -71,7 +71,7 @@ function run(env: Record<string, string>): { code: number; out: string } {
   ok(r.code !== 0, `a canonical launch run with no capabilities exits NON-zero — got ${r.code}. Output:\n${r.out}`);
   ok(r.out.includes("release scope=launch: 58 REQUIRED, 22 NON_LAUNCH"), "the canonical selector prints its reviewed accounting totals");
   ok(/\| J1 \| slack \| REQUIRED \| RED \|/.test(r.out), `a required missing Slack leg is RED — got:\n${r.out}`);
-  ok(/\| S-SPEND-DM-MASK \| discord \| REQUIRED \| RED \|/.test(r.out), "a shared security row remains REQUIRED despite its Discord vehicle");
+  ok(/\| S-SPEND-DM-MASK \| slack \| REQUIRED \| RED \|/.test(r.out), "a shared security row remains REQUIRED, and a leg that could not run scores RED on a LAUNCH surface (OPE-1914 re-vehicled this row onto Slack)");
   ok(/\| S-DISCORD-GRANT \| discord \| REQUIRED \| RED \|/.test(r.out), "the unresolved live grant-used to grant-notified row remains REQUIRED despite its Discord vehicle");
   ok(
     /\| S-GITHUB-NOTION-REST \| cross \| REQUIRED \| RED \|/.test(r.out),

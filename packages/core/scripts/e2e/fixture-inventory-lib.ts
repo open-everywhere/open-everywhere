@@ -140,7 +140,6 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_UNIX_ARMED: "knob",
   E2E_SPEND_GATE_DOOR: "knob",
   E2E_ACCESS_PERSONAL_FIXTURE: "knob",
-  E2E_ROUTINE_CONNECTOR_FIXTURE: "knob",
   E2E_DISCORD_GRANT_TAPPED: "knob",
   E2E_EXPECT_MODELS: "knob",
   E2E_EXPECT_MODELS_REQUIRED: "knob",

@@ -105,6 +105,10 @@ import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import { ControlWriteDriver, type ControlWriteConfig, type SpendOwnershipHandle, type HaltOwnershipHandle } from "./control-write-driver.js";
 import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
+import { deployedSpendReportReaderPreflight, dmSpendPresence, spendMaskVerdictOver } from "./spend-dm-mask.js";
+import { dmBucketKey } from "../../agent/spend/dm-mask.js";
+import { fetchRunUsage } from "./cost.js";
+import { deployedRoutineConnectorFixture, NOTION_MCP_HOST } from "./routine-connector-fixture.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply } from "./read-channel-lib.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
@@ -1600,35 +1604,98 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SPEND-DM-MASK",
-    title: "OPE-1862: a spend report asked in a DISCORD channel names the (dms) bucket and NEVER an individual's DM surface",
-    requires: ["discord", "slack", "syntheticDm"],
-    surface: "discord",
+    title: "OPE-1862: an ORG ADMIN's spend report, read in a shared Slack channel, names the (dms) bucket and NEVER an individual's DM surface",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
     suite: "core",
-    timeoutMs: 1_050_000,
+    timeoutMs: 2_100_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
+      const room = ctx.slack!;
+
+      const reader = await room.identity();
+      const standing = deployedSpendReportReaderPreflight({ reader });
+      if (!standing.ok) return ctx.fixtureMissing(`S-SPEND-DM-MASK: ${standing.reason}`);
+
+      const targetUrl = ctx.targetUrl;
+      const readToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
+      if (targetUrl === undefined || readToken.length === 0) {
+        return ctx.fixtureMissing(
+          "S-SPEND-DM-MASK needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the UNMASKED usage read is what proves a real DM row exists, and " +
+            "without it a report with no (dms) bucket cannot be told apart from a window holding no DM spend",
+        );
+      }
+      ctx.log(`S-SPEND-DM-MASK: reading the org-scope report as ${standing.principalKey} in ${room.channelId}`);
+
       await fenceDmSeat(ctx, "S-SPEND-DM-MASK");
-      const discord = ctx.discord!;
+      const { teamId } = await dm.identity();
+      const dmSurfaceKey = `slack/${teamId}/${dm.channelId}`;
+      const bucketKey = dmBucketKey(dmSurfaceKey);
+      const workspaceKey = `slack/${teamId}`;
+      const windowSince = new Date(Date.now() - 5 * 60_000).toISOString();
+
+      let baselineCalls: number;
+      try {
+        const baseline = await fetchRunUsage(targetUrl, readToken, windowSince, [workspaceKey]);
+        baselineCalls = dmSpendPresence(baseline.rows, dmSurfaceKey).calls;
+      } catch (e) {
+        return ctx.fixtureMissing(`S-SPEND-DM-MASK could not read GET /control/v1/usage: ${String(e instanceof Error ? e.message : e)}`);
+      }
+
       const { ts: dmTs } = await dm.post("quick one — what's 7*6? reply with just the number");
       await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
-      ctx.log(`S-SPEND-DM-MASK: drove one DM turn in ${dm.channelId} — its ledger row is this month's DM spend`);
+      ctx.log(`S-SPEND-DM-MASK: drove one DM turn in ${dm.channelId} — its ledger row is this window's DM spend`);
 
-      const ask = await discord.post(discord.mention("give me this month's spend report, broken down by surface"));
-      const threadId = await discord.awaitThread(ask.id, { timeoutMs: REPLY_WAIT });
-      const reply = await discord.awaitReply(threadId, ask.id, { timeoutMs: FILE_REPLY_WAIT });
+      const presence = await pollOptional(
+        async () => {
+          const usage = await fetchRunUsage(targetUrl, readToken, windowSince, [workspaceKey]);
+          const seen = dmSpendPresence(usage.rows, dmSurfaceKey);
+          return seen.calls > baselineCalls ? seen : undefined;
+        },
+        { timeoutMs: 240_000, what: `an UNMASKED usage row for the driven DM surface ${dmSurfaceKey} (baseline ${baselineCalls} call(s))` },
+      );
+      ctx.gate(
+        presence !== undefined,
+        `🔴 (hard) this leg's own DM turn reached the raw admin read as ${dmSurfaceKey} (${presence?.calls ?? 0} call(s), ${presence?.tokens ?? 0} tokens, up from ` +
+          `${baselineCalls}) — real DM spend exists in the window the report below covers. An absence here is the spend hook not writing the DM turn's ` +
+          "usage row at all, which no offline tier can see either",
+      );
+
+      const surfaceRowAsk =
+        'run the ORG-wide spend report for this month (scope "org") and post the surface breakdown. List every surface row EXACTLY as the tool ' +
+        "returned it: copy each surfaceKey string verbatim, one per line, with its token total beside it. Do not rename, prettify, group or omit " +
+        "any row, and never replace a surfaceKey with a channel name.";
+      const keys = { dmChannelId: dm.channelId, dmSurfaceKey };
+      const posted: string[] = [];
+      const collectAfter = async (rootTs: string, afterTs: string): Promise<void> => {
+        await sleep(SILENCE_WINDOW);
+        posted.push(...(await room.collectBotMessagesAfter(rootTs, afterTs)).map((m) => m.text));
+      };
+      const { ts: askTs } = await room.post(room.mention(surfaceRowAsk));
+      await room.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await collectAfter(askTs, askTs);
+      let verdict = spendMaskVerdictOver(posted, keys);
+
+      if (!verdict.bucket && verdict.bareBucketOnly) {
+        ctx.log(`S-SPEND-DM-MASK: the reply named "(dms)" but not ${bucketKey} — asking once for the keys verbatim`);
+        const { ts: againTs } = await room.post("print the surfaceKey of every aggregate row in that report exactly as the tool returned it, one per line, and nothing else", askTs);
+        await room.awaitThreadReply(askTs, { afterTs: againTs, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+        await collectAfter(askTs, againTs);
+        verdict = spendMaskVerdictOver(posted, keys);
+      }
 
       ctx.gate(
-        !reply.content.includes(dm.channelId),
-        `the spend report NEVER names the individual DM surface (${dm.channelId}) — the anti-doxxing property docs/capabilities/analytics.md states`,
+        verdict.leaks.length === 0,
+        `🔴 (hard) the spend report NEVER names the individual DM surface (${dmSurfaceKey}) — the anti-doxxing property docs/capabilities/analytics.md states ` +
+          `(disclosed: ${verdict.leaks.join(", ") || "none"})`,
       );
-      if (/\(dms\)/.test(reply.content)) {
-        ctx.gate(true, "the report renders the masked (dms) bucket — DM spend is reported, and reported anonymously");
-        return;
-      }
-      ctx.skip(
-        "no (dms) line in the reply — the Discord driver identity may not hold the org-admin standing spend_report needs, or the report " +
-          "rendered no surface rows. The exclusion gate above still ran. Give the driver identity org-admin standing to make this leg assert the bucket too.",
+      ctx.gate(
+        verdict.bucket,
+        `🔴 (hard) the report renders the MASKED bucket ${bucketKey} across ${posted.length} posted message(s) — a stamped DM row in this window reaches the ` +
+          "report ANONYMOUSLY rather than being dropped or published. The bucket is a workspace-wide 30-day aggregate, so this does not say WHICH row " +
+          "carried the stamp. An absent bucket means every DM row in the window reached the report unstamped (masked to \"(unclassified)\" instead — " +
+          "hooks/spend.ts `turnSurfaceMode`), or the reader's org-scope read was refused or redirected out of this room",
       );
     },
   },
@@ -6577,10 +6644,22 @@ export const SCENARIOS: readonly Scenario[] = [
           "the fence is ONLY assertable over the audit trail — it mints no card and its refusal reaches the model, not the channel. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
         );
       }
-      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const auditRead = ctx.auditRead!;
       const connector = ctx.connectorWrite!;
-      const pinned = process.env[ENV.routineConnectorFixture] === "1";
+
+      const OP = "notion__create_page";
+
+      const { teamId: connectorTeamId } = await connector.identity();
+      const fixture = deployedRoutineConnectorFixture({
+        surfaceKey: `slack/${connectorTeamId}/${connector.channelId}`,
+        connector: NOTION_CONNECTOR,
+        op: OP,
+        mcpHost: NOTION_MCP_HOST,
+      });
+      if (!fixture.ok) return ctx.fixtureMissing(`S-ROUTINE-CONNECTOR-WRITE: ${fixture.reason}`);
+      ctx.log(`S-ROUTINE-CONNECTOR-WRITE: ${OP} is reachable in domain "${fixture.domain}" — bundle "${fixture.bundle}" grants it as credential "${fixture.credential}"`);
+
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
 
       const dbUrlForRotate = process.env.DATABASE_URL;
       if (dbUrlForRotate) {
@@ -6595,7 +6674,6 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
 
-      const OP = "notion__create_page";
       const OP_PERMISSION_KIND = pinnedConnectorToolPermissionKind(OP);
 
       const driveArm = async (arm: "A" | "B", declared: boolean): Promise<{ sinceIso: string; cardTs?: string }> => {
@@ -6667,11 +6745,10 @@ export const SCENARIOS: readonly Scenario[] = [
       await arming.recheck();
       const rowsA = await connectorRows(a.sinceIso);
       const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
-      if (reachedA === 0) {
-        const reason = `arm A: the fire ran and reported back, but NO connector-plane row of ANY kind exists for ${OP} — no fence refusal, no lift, and no other-plane refusal either. The op was never reached. On an unarmed deployment it is never discovered, so there is no tool to call; this is a fixture state, not a fence verdict. Set E2E_ROUTINE_CONNECTOR_FIXTURE=1 once the op is known discoverable to make this a hard failure.`;
-        if (pinned) ctx.gate(false, `🔴 (hard, pinned by E2E_ROUTINE_CONNECTOR_FIXTURE) ${reason}`);
-        ctx.skip(reason);
-      }
+      ctx.gate(
+        reachedA > 0,
+        `🔴 (hard) arm A: the fire ran and reported back, and the connector plane carries a row for ${OP} — found 0 (no fence refusal, no lift, no other-plane refusal). The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is the fence going unreached, not a missing fixture.`,
+      );
       ctx.gate(
         rowsA.refused.length > 0,
         `🔴 (hard) arm A: the undeclared fire's connector WRITE was refused by the UNATTENDED FENCE — a connector.refused row for ${OP} carrying an ask-unattended reason. Other connector.refused families for this op are counted separately and do NOT satisfy this gate (the disclosure plane's audience_floor and the scope gate's unresolved_surface share the action and mean something else): found ${rowsA.refused.length} fence refusal(s), ${rowsA.otherRefusals.length} other refusal(s) ${JSON.stringify(rowsA.otherRefusals.map((e) => e.detail))}`,

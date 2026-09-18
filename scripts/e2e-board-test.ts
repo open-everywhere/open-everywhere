@@ -47,7 +47,7 @@ const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {
   ok(LAUNCH_RELEASE_SCOPE.length === SCENARIOS.length, "the launch policy has one visible accounting row per roster leg");
 
   const index = releaseScopeIndex();
-  ok(index.get("S-SPEND-DM-MASK")?.requirement === "REQUIRED", "a shared security row stays REQUIRED even though its current live vehicle is Discord");
+  ok(index.get("S-SPEND-DM-MASK")?.requirement === "REQUIRED", "a shared security row is listed for its PROPERTY, not its surface — it stays REQUIRED across a vehicle change (OPE-1914 moved it from Discord to Slack)");
   const suspendedGithub = index.get("S-SUSPENDED-github");
   ok(
     suspendedGithub?.requirement === "NON_LAUNCH" &&

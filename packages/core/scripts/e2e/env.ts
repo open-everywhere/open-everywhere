@@ -91,7 +91,6 @@ export const ENV = {
   unixArmed: "E2E_UNIX_ARMED",
   spendGateDoor: "E2E_SPEND_GATE_DOOR",
   accessPersonalFixture: "E2E_ACCESS_PERSONAL_FIXTURE",
-  routineConnectorFixture: "E2E_ROUTINE_CONNECTOR_FIXTURE",
   discordGrantOwner: "E2E_DISCORD_GRANT_OWNER",
   discordGrantTapped: "E2E_DISCORD_GRANT_TAPPED",
   discordGrantThread: "E2E_DISCORD_GRANT_THREAD",
