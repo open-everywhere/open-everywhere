@@ -15,7 +15,7 @@ import {
   type SeatCatchUpRequest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { SLACK_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-slack/agent/channels/slack-wake-backscroll.js";
-import { DISCORD_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-discord/agent/channels/discord-backscroll.js";
+import { DISCORD_TIMESTAMP_PRECISION_MS, DISCORD_RAW_FETCH_REACHBACK_HOURS } from "@open-everywhere/provider-discord/agent/channels/discord-backscroll.js";
 import { TEAMS_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-teams/agent/channels/teams-catch-up.js";
 import { GITHUB_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-github/agent/channels/github-catch-up.js";
 import { LINEAR_TIMESTAMP_PRECISION_MS } from "@open-everywhere/provider-linear/agent/channels/linear-catch-up.js";
@@ -46,8 +46,27 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const SINCE = Date.parse("2026-09-12T12:00:00.000Z");
-const AFTER = "2026-09-10T19:05:00.000Z";
+const NOW = Date.now();
+const SINCE = Math.floor((NOW - 6 * 3_600_000) / 60_000) * 60_000;
+const SINCE_FRESH = SINCE - 6 * 3_600_000;
+const AFTER = new Date(SINCE + 300_000).toISOString();
+{
+  const RELATIVE_LOWER_BOUNDS: ReadonlyArray<readonly [string, number]> = [
+    ["SINCE", SINCE],
+    ["SINCE_FRESH", SINCE_FRESH],
+  ];
+  const floorMs = NOW - DISCORD_RAW_FETCH_REACHBACK_HOURS * 3_600_000;
+  const oldest = RELATIVE_LOWER_BOUNDS.reduce((a, b) => (b[1] < a[1] ? b : a));
+  const marginHours = (oldest[1] - floorMs) / 3_600_000;
+  ok(
+    marginHours >= 24,
+    `🔴 FIXTURE CLOCK: the oldest relative bound (${oldest[0]} = ${new Date(oldest[1]).toISOString()}) is only ${marginHours.toFixed(1)} h inside discord's now-relative reachback floor (${new Date(floorMs).toISOString()} = now − ${DISCORD_RAW_FETCH_REACHBACK_HOURS} h); at least 24 h of margin is required. Re-derive the fixture from \`NOW\` — do NOT widen the product constant. Without this guard the same fault reads as the discord arm's PRECONDITION failure, which names neither number.`,
+  );
+  ok(
+    Date.parse(AFTER) <= NOW,
+    `🔴 FIXTURE CLOCK: the newest fixture stamp (AFTER = ${AFTER}) is not in the past relative to now (${new Date(NOW).toISOString()}); a future-stamped fixture falls outside the now-anchored UPPER bound and reads as unsent.`,
+  );
+}
 const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.id === id);
 
 {
@@ -285,7 +304,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   const ancient = Array.from({ length: 100 }, (_, i) => ({
     id: `old-${i}`,
     discussion_id: "D1",
-    created_time: "2026-08-01T09:00:00.000Z",
+    created_time: new Date(SINCE - 42 * 24 * 3_600_000).toISOString(),
     created_by: { id: "N9", type: "person" },
     rich_text: [{ plain_text: `an old comment ${i}` }],
   }));
@@ -484,7 +503,7 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
 {
   const ROOT = "1757600000000";
   const reply = { id: "r1", createdDateTime: AFTER, body: { content: "said in the chain while away" }, from: { user: { id: "E1", displayName: "Ada" } } };
-  const root = { id: ROOT, createdDateTime: "2026-09-11T11:00:00.000Z", body: { content: "the chain root" }, from: { user: { id: "E1" } } };
+  const root = { id: ROOT, createdDateTime: new Date(SINCE - 3_600_000).toISOString(), body: { content: "the chain root" }, from: { user: { id: "E1" } } };
   const graph = async (url: string) => ({ value: url.includes(`/messages/${ROOT}/replies`) ? [reply] : [root] });
 
   const rows: AuditInput[] = [];
@@ -784,7 +803,6 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   const audit = async (e: AuditInput) => {
     rows.push(e);
   };
-  const SINCE_FRESH = SINCE - 6 * 3600_000;
   const admissionDrives: ReadonlyArray<{
     readonly platform: string;
     readonly req: SeatCatchUpRequest;
