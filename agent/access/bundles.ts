@@ -72,7 +72,7 @@ const bundles: Bundle[] = [
 
   defineBundle({
     name: "e2e-connector-fixture",
-    connectors: [{ name: "notion", credential: "team-key", contentOrigin: "external" }],
+    connectors: [{ name: "notion", credential: "workspace-oauth", contentOrigin: "external" }],
   }),
 
   defineBundle({

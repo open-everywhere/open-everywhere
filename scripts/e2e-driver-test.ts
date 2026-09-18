@@ -401,7 +401,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
   ok(
     !blocked.ok && blocked.reason.includes("e2e-connector-fixture") && blocked.reason.includes("team-key") && blocked.reason.includes("api.notion.com") && blocked.reason.includes(NOTION_MCP_HOST),
-    "🔴 the LIVE state: a grant whose credential is narrowed to another host reds with the exact bundle, credential, allowed host and dialled host — the sentence an operator acts on",
+    "🔴 a grant whose credential is narrowed to another host reds with the exact bundle, credential, allowed host and dialled host — the sentence an operator acts on. This WAS the shipped state until OPE-1914 re-credentialled the bundle to `workspace-oauth`; the shipped arming is asserted in scripts/notion-connectors-test.ts, and this arm keeps the refusal sentence pinned",
   );
 
   const armed = call(

@@ -19,7 +19,7 @@ const {
 } = await import("../agent/connections/connector-offer.js");
 type CredentialHome = import("../agent/credentials/home.js").CredentialHome;
 const fakeHome = (name: string, hw: boolean): CredentialHome => ({ name, hostWriteAvailable: () => hw, store: async () => {} });
-const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
+const { buildConnectCard, handleConnectClick, renderNonSlackConnect, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
 const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -45,6 +45,16 @@ const NOTION: ConnectorCredentials = {
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
     { id: "team-oauth", type: "service-oauth", home: vercelConnectorHome("notion.so/open-everywhere"), dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
     { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("notion.so/open-everywhere") },
+  ],
+};
+
+const NOTION_ORG_MINT: ConnectorCredentials = {
+  connector: "notion",
+  allows: ["api-key", "service-oauth", "user-oauth"],
+  credentials: [
+    { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
+    { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
+    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
   ],
 };
 
@@ -188,7 +198,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec = recorder();
   const st = starter();
   ok((await handleConnectClick(click("service-oauth", "U_ADMIN", "C123"), deps({ post: rec.post, startAuth: st.startAuth }))) === true, "service-oauth admin click handled");
-  eq(st.calls.length, 0, "service-oauth NEVER calls startAuthorization (app subjects rejected by the hosted flow)");
+  eq(st.calls.length, 0, "a service-oauth credential WITH a dashboardUrl calls no startAuthorization — Connect's hosted flow rejects app subjects");
   ok(rec.methods().includes("chat.postEphemeral"), "the dashboard link is delivered EPHEMERALLY");
   ok(
     rec.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://vercel.com/team-x/~/connect/scl_TEST")),
@@ -202,6 +212,67 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   await handleConnectClick(click("service-oauth", "U_MEMBER", "C123"), deps({ post: rec2.post, startAuth: st2.startAuth }));
   eq(st2.calls.length, 0, "service-oauth by a NON-admin mints NOTHING (standing re-verified host-side, card not trusted)");
   ok(rec2.methods().includes("chat.postEphemeral"), "a non-admin gets a refusal notice");
+}
+
+{
+  const orgDeps = (over: Record<string, unknown> = {}) => ({ loadConnectorCredentials: () => [NOTION_ORG_MINT], loadDomains: () => DOMAINS, ...over });
+  const issuedRows = async () => (await readAudit({ org: ORG })).filter((r) => r.action === "connector.oauth_url_issued");
+  const appSubject = (rows: readonly { detail?: unknown }[]) => rows.filter((r) => JSON.stringify(r.detail).includes('"subject":"app"')).length;
+  const startRows = await issuedRows();
+  const before = startRows.length;
+  const appBefore = appSubject(startRows);
+  const rec = recorder();
+  const st = starter();
+  ok((await handleConnectClick(click("service-oauth", "U_ADMIN", "C123"), orgDeps({ post: rec.post, startAuth: st.startAuth }))) === true, "org-mint service-oauth admin click handled");
+  eq(st.calls.length, 1, "🔴 …and it MINTS — exactly one startAuthorization call (the dashboard route would make zero)");
+  eq(st.calls[0].subject, { type: "app" }, "🔴 …for the APP subject — no principal id, so the vault row belongs to the org and to nobody");
+  eq(st.calls[0].vc, "mcp.notion.com/notion-mcp", "…against the credential's own OAuth home ref");
+  eq(st.calls[0].expiresInMs, AUTH_URL_TTL_MS, "…with the short capability TTL every OE authorization URL carries");
+  ok(rec.methods().includes("chat.postEphemeral"), "the URL is delivered EPHEMERALLY (clicker-only), never into the room");
+  ok(rec.calls.some((c) => c.body.includes(encodeURIComponent(FAKE_URL)) || c.body.includes(FAKE_URL)), "the ephemeral post carries the URL");
+
+  const rows = await issuedRows();
+  eq(rows.length, before + 1, "audit: exactly one new connector.oauth_url_issued row");
+  eq(appSubject(rows), appBefore + 1, "🔴 audit: the new row names subject 'app' — an operator can tell an org mint from a personal one");
+  ok(!rows.some((r) => JSON.stringify(r.detail).includes(FAKE_URL)), "🔴 …and NO audit row carries the capability URL");
+
+  const rec2 = recorder();
+  const st2 = starter();
+  await handleConnectClick(click("service-oauth", "U_MEMBER", "C123"), orgDeps({ post: rec2.post, startAuth: st2.startAuth }));
+  eq(st2.calls.length, 0, "🔴 a NON-admin mints NO org credential even on the mint route — the standing is re-derived host-side, never read off the card");
+  ok(rec2.methods().includes("chat.postEphemeral"), "…and gets a refusal notice");
+}
+
+{
+  const orgOpt = resolveConnectorOptions({ catalogue: NOTION_ORG_MINT, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true })
+    .filter((o) => o.credentialType === "service-oauth");
+  eq(orgOpt.length, 1, "the org option is offered on a non-Slack surface for an admin");
+  ok(orgOpt[0].dashboardUrl === undefined, "…and it carries no dashboardUrl, so it takes the mint route");
+
+  const st = starter();
+  const minted = await renderNonSlackConnect("notion", orgOpt, { mode: "dm", org: ORG, platform: "discord", workspace: "G1" }, st.startAuth);
+  eq(st.calls.length, 1, "renderNonSlackConnect MINTS the org option in a DM");
+  eq(st.calls[0].subject, { type: "app" }, "🔴 …for the APP subject, exactly as the Slack click does");
+  ok(minted.text.includes(FAKE_URL), "the URL lives ONLY in the returned text, which the caller host-posts");
+  eq(minted.issued.map((o) => o.credentialId), ["workspace-oauth"], "🔴 …and the option is reported as ISSUED, so the caller writes its connector.oauth_url_issued row");
+
+  const stCh = starter();
+  const inChannel = await renderNonSlackConnect("notion", orgOpt, { mode: "channel", org: ORG, platform: "discord", workspace: "G1" }, stCh.startAuth);
+  eq(stCh.calls.length, 0, "🔴 …and it mints NOTHING on a CHANNEL — the text is host-posted into the room, so an org URL there is a credential anybody present could claim");
+  ok(!inChannel.text.includes(FAKE_URL), "🔴 …so no capability URL reaches the room");
+  eq(inChannel.issued.length, 0, "…and nothing is reported as issued, so no oauth_url_issued row claims a mint that never happened");
+  ok(inChannel.text.includes("message me directly"), "…and the degrade line names the working path instead of failing silently");
+
+  const dashOpt = resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true })
+    .filter((o) => o.credentialType === "service-oauth");
+  const st2 = starter();
+  const linked = await renderNonSlackConnect("notion", dashOpt, { mode: "channel", org: ORG, platform: "discord", workspace: "G1" }, st2.startAuth);
+  eq(st2.calls.length, 0, "🔴 …and a credential that DOES declare a dashboardUrl still mints NOTHING");
+  ok(linked.text.includes("https://vercel.com/team-x/~/connect/scl_TEST"), "…it posts the dashboard link instead");
+  eq(linked.issued.length, 0, "…and issues no URL, so no oauth_url_issued row is written for it");
+
+  const memberOpts = resolveConnectorOptions({ catalogue: NOTION_ORG_MINT, platform: "discord", mode: "channel", isAdmin: false, hostWriteBroker: true });
+  eq(memberOpts.filter((o) => o.credentialType === "service-oauth").length, 0, "🔴 a non-admin is offered NO org option on a non-Slack surface");
 }
 
 {

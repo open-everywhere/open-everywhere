@@ -75,11 +75,25 @@ export async function renderNonSlackConnect(
   const issued: ConnectorOption[] = [];
   for (const o of options) {
     if (o.credentialType === "service-oauth") {
-      lines.push(
-        o.dashboardUrl
-          ? `• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`
-          : `• *${optionLabel(o)}* — an operator authorizes the org account on the vendor's admin dashboard.`,
-      );
+      if (o.dashboardUrl) {
+        lines.push(`• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`);
+        continue;
+      }
+      if (o.route.kind === "url" && o.vercelConnector && ctx.mode === "dm") {
+        try {
+          const url = await mintOAuthUrl(startAuth, o.vercelConnector, { type: "app" });
+          lines.push(`• *${optionLabel(o)}* — connect the org account (expires soon): ${url}`);
+          issued.push(o);
+        } catch {
+          lines.push(`• *${optionLabel(o)}* — couldn't start the org connect flow (the connector isn't fully provisioned; ask an operator).`);
+        }
+        continue;
+      }
+      if (o.route.kind === "url" && o.vercelConnector) {
+        lines.push(`• *${optionLabel(o)}* — message me directly and ask again: this surface has no buttons, so the link would be posted into the room, and whoever opened it first would bind the org account.`);
+        continue;
+      }
+      lines.push(`• *${optionLabel(o)}* — an operator authorizes the org account on the vendor's admin dashboard.`);
       continue;
     }
     if (o.route.kind === "page") {
@@ -212,6 +226,13 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         return true;
       }
       const dash = cred.dashboardUrl;
+      const orgConnector = vercelConnectorOf(cred);
+      if (!dash && orgConnector) {
+        return await mintAndDeliverOAuth(post, startAuth, {
+          org, teamId, channelId, clickerId, connectorName, vercelConnector: orgConnector,
+          subject: { type: "app" }, subjectLabel: "app",
+        });
+      }
       await ephemeral(
         post,
         channelId,

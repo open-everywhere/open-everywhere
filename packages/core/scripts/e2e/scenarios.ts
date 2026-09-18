@@ -5808,7 +5808,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-CONNECT-CARD",
     title:
-      "Channel connector card: (A) a 'connect notion here' ask posts a card that is now API-KEY ONLY — the 'Set API key' button is present, NO org (service-oauth) button (service-oauth removed as a dead end); (B) a forged admin service-oauth click against the ISOLATED e2e-intake fixture issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
+      "Channel connector card: (A) a 'connect notion here' ask by an ADMIN posts a card carrying BOTH buttons — 'Set API key' (api-key) and 'Connect org account' (service-oauth, the org-subject MCP credential restored at OPE-1914); (B) a forged admin service-oauth click against the ISOLATED e2e-intake fixture issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
     requires: ["slack", "synthetic"],
     surface: "notion",
     suite: "core",
@@ -5835,8 +5835,8 @@ export const SCENARIOS: readonly Scenario[] = [
       if (notionCard) {
         const ids = (notionCard.actions ?? []).map((a) => a.actionId);
         ctx.log(`notion connect card ts=${notionCard.ts} buttons=[${ids.join(", ")}]`);
-        ctx.gate(!ids.some((id) => id.endsWith(":service-oauth")), "notion card offers NO org (service-oauth) button — service-oauth removed as a dead end");
-        ctx.gate(ids.includes("oe_connect:notion:api-key"), "notion card offers the 'Set API key' (api-key) button — the api-key-only offer under the db broker");
+        ctx.gate(ids.includes("oe_connect:notion:service-oauth"), "notion card offers the org ('Connect org account', service-oauth) button — the org-subject MCP credential restored at OPE-1914");
+        ctx.gate(ids.includes("oe_connect:notion:api-key"), "notion card offers the 'Set API key' (api-key) button — the db-broker intake offer, beside the org button");
       } else {
         ctx.log(
           "no notion connect card observed (the model may not have posted it, or the active broker isn't db so the channel card has no offerable option) — proceeding to the deterministic org-click forge (B)",
@@ -5857,7 +5857,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(rows.length > 0, "audit: a connector.dashboard_link_issued row was written for the org-account click (service-oauth handler ran)");
       const configured = Boolean((rows[0].detail as { configured?: unknown } | undefined)?.configured);
       ctx.log(
-        `connector.dashboard_link_issued rows=${rows.length} connector=${String((rows[0].detail as { connector?: unknown } | undefined)?.connector ?? "?")} configured=${configured} (fixture has no dashboardUrl ⇒ false expected)`,
+        `connector.dashboard_link_issued rows=${rows.length} connector=${String((rows[0].detail as { connector?: unknown } | undefined)?.connector ?? "?")} configured=${configured} (the fixture declares a dashboardUrl since OPE-1914 ⇒ true expected)`,
       );
     },
   },

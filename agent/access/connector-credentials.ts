@@ -11,7 +11,7 @@ const catalogues: ConnectorCredentials[] = [
   defineConnectorCredentials({
     description: "Notion workspace (host-side MCP) — read/write the team knowledge base.",
     connector: "notion",
-    allows: ["api-key", "user-oauth"],
+    allows: ["api-key", "service-oauth", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db", endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } },
       {
@@ -31,6 +31,7 @@ const catalogues: ConnectorCredentials[] = [
         endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET"] },
       },
       { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
+      { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
     ],
   }),
 
@@ -105,7 +106,7 @@ const catalogues: ConnectorCredentials[] = [
     allows: ["api-key", "service-oauth"],
     credentials: [
       { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "env" },
-      { id: "e2e-oauth", type: "service-oauth", home: vercelConnectorHome("example.com/e2e-intake") },
+      { id: "e2e-oauth", type: "service-oauth", home: vercelConnectorHome("example.com/e2e-intake"), dashboardUrl: "https://example.com/e2e-intake/org-consent" },
     ],
   }),
 ];

@@ -15,6 +15,8 @@ import { connectorGrantCredentialProblems } from "@open-everywhere/core/agent/ac
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
 import { credentialEndpointVerdict, credentialEndpointHostVerdict } from "@open-everywhere/core/agent/access/credential-endpoints.js";
+import { vercelConnectorOf } from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { offerableCredential } from "@open-everywhere/core/agent/connections/connector-offer.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -101,13 +103,94 @@ ok(
 
 ok(bound.connectors.includes("notion"), "S24 fixture channel: the notion connector IS granted here (e2e-connector-fixture), so the connector plane is reachable");
 ok(
-  bound.connectorCredentials["notion"]?.credential === "team-key",
-  `S24 fixture channel: the grant resolves the 'team-key' credential (got: ${JSON.stringify(bound.connectorCredentials["notion"]?.credential)})`,
+  bound.connectorCredentials["notion"]?.credential === "workspace-oauth",
+  `S24 fixture channel: the grant resolves the 'workspace-oauth' credential (got: ${JSON.stringify(bound.connectorCredentials["notion"]?.credential)})`,
 );
 ok(
-  !catalogues.some((c) => c.connector === "notion" && c.credentials.some((cr) => cr.type === "service-oauth")),
-  "route ③ REMOVED: the notion catalogue configures NO service-oauth credential at all, so the dead end cannot be re-granted by naming it",
+  bound.connectorCredentials["notion"]?.principal === "app",
+  `S24 fixture channel: the resolved binding is APP-principal (got: ${JSON.stringify(bound.connectorCredentials["notion"]?.principal)})`,
 );
+ok(
+  bound.connectorCredentials["notion"]?.grantFamily === "install",
+  "…and its grant family is 'install' — not a human-acting credential wearing an app-principal type",
+);
+
+{
+  const notionCat = catalogues.find((c) => c.connector === "notion")!;
+  ok(notionCat.allows.includes("service-oauth"), "the notion connection ACCEPTS service-oauth again — without this the grant above resolves to nothing");
+
+  const orgCreds = notionCat.credentials.filter((cr) => cr.type === "service-oauth");
+  ok(orgCreds.length === 1, `🔴 EXACTLY ONE service-oauth credential — got ${orgCreds.length}; offerableCredential takes the FIRST of a type, so a second is unreachable rather than additive`);
+  const org = orgCreds[0];
+  ok(org?.id === "workspace-oauth", "…and it is 'workspace-oauth', the id the e2e-connector-fixture grant names");
+  ok(
+    offerableCredential(notionCat, "service-oauth")?.id === "workspace-oauth",
+    "…and it is what the connector card's 'Connect org account' click actually resolves (offerableCredential, the one selector both sides use)",
+  );
+
+  ok(org?.dashboardUrl === undefined, "🔴 it declares NO dashboardUrl — that field routes the click away from the mint, to a Vercel page that cannot complete this grant");
+  ok(vercelConnectorOf(org!) === "mcp.notion.com/notion-mcp", "…and it is homed at the MCP OAuth ref — the only token family hosted mcp.notion.com accepts");
+
+  const dmCred = notionCat.credentials.find((cr) => cr.id === "user-oauth");
+  ok(vercelConnectorOf(org!) === vercelConnectorOf(dmCred!), "…and it shares `user-oauth`'s home ref — one provider entry, one client, two vault rows keyed by subject");
+
+  ok(credentialEndpointHostVerdict(org?.endpoints, "https://mcp.notion.com/mcp").allowed, "the org credential's rules ADMIT hosted MCP — the host connections/notion.ts actually dials");
+  ok(
+    !credentialEndpointHostVerdict(org?.endpoints, "https://api.notion.com/v1/pages").allowed,
+    "🔴 …and REFUSE api.notion.com — an MCP-family token gets 401 there, so a rule naming both hosts would send this token to REST under the ORG's name",
+  );
+  ok(!credentialEndpointHostVerdict(org?.endpoints, "https://evil.example/mcp").allowed, "🔴 …and REFUSE a wrong host outright");
+  ok((org?.endpoints?.hosts?.length ?? 0) === 1, "🔴 …and name EXACTLY ONE host");
+
+  const bothHosts = notionCat.credentials.filter((cr) => {
+    const hosts = cr.endpoints?.hosts ?? [];
+    return hosts.includes("api.notion.com") && hosts.includes("mcp.notion.com");
+  });
+  ok(
+    bothHosts.length === 0,
+    `🔴 no Notion credential names BOTH api.notion.com and mcp.notion.com — got ${JSON.stringify(bothHosts.map((cr) => cr.id))}`,
+  );
+  ok(
+    notionCat.credentials.some((cr) => (cr.endpoints?.hosts ?? []).length > 0),
+    "…and that sweep reads real endpoint rules — at least one notion credential narrows its hosts, so the check above is not vacuously true",
+  );
+}
+
+{
+  const { routineConnectorFixture, NOTION_MCP_HOST } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const e2eConnector = domains.find((d) => d.name === "e2e-connector");
+  ok(e2eConnector !== undefined, "the shipped config still declares the e2e-connector domain the fixture bundle binds to");
+  const surfaceKey = e2eConnector?.reach?.[0];
+  ok(typeof surfaceKey === "string" && surfaceKey.length > 0, "…and that domain still declares the surface S-ROUTINE-CONNECTOR-WRITE fires in");
+
+  const live = routineConnectorFixture({
+    surfaceKey: surfaceKey!,
+    connector: "notion",
+    op: "notion__create_page",
+    mcpHost: NOTION_MCP_HOST,
+    domains,
+    bundles,
+    bindings,
+    credentials: catalogues,
+  });
+  ok(
+    live.ok,
+    `🔴 the SHIPPED config arms S-ROUTINE-CONNECTOR-WRITE — an unattended fire in this room reaches a notion MCP op (reason when red: ${live.ok ? "" : live.reason})`,
+  );
+  ok(live.ok && live.bundle === "e2e-connector-fixture" && live.credential === "workspace-oauth", "…through the e2e-connector-fixture bundle, as the 'workspace-oauth' credential");
+
+  const elsewhere = routineConnectorFixture({
+    surfaceKey: "slack/T_NOT_OURS/C_NOT_OURS",
+    connector: "notion",
+    op: "notion__create_page",
+    mcpHost: NOTION_MCP_HOST,
+    domains,
+    bundles,
+    bindings,
+    credentials: catalogues,
+  });
+  ok(!elsewhere.ok, "🔴 …and an unrelated room is NOT armed — the grant is a domain binding, not a blanket one");
+}
 
 const unbound = resolveFor("T_SOME_OTHER_WORKSPACE", "C_SOME_OTHER_CHANNEL");
 ok(!unbound.reachableHosts.some((h) => h.host === "api.notion.com"), "unbound channel: api.notion.com NOT reachable");
@@ -133,7 +216,7 @@ for (const b of bundles) {
 ok(grantedConnectorNames.has("notion"), "connections-lint invariant: 'notion' is granted somewhere on the one connectors list");
 ok(
   catalogues.some((c) => c.connector === "notion" && c.credentials.some((cr) => cr.id === "team-key")),
-  "the shipped notion catalogue configures the 'team-key' credential the e2e-connector-fixture grant names",
+  "the shipped notion catalogue configures the 'team-key' credential the work-surface REST routes name",
 );
 
 {
@@ -161,7 +244,7 @@ ok(
 
   ok(
     !credentialEndpointHostVerdict(teamKey?.endpoints, "https://mcp.notion.com/mcp").allowed,
-    "the accepted trade-off: team-key's rules do NOT admit mcp.notion.com (the MCP connector's directUrl) — a connector grant now fails at the credential wall instead of at Notion's 401",
+    "team-key's rules do NOT admit mcp.notion.com (the MCP connector's directUrl) — an api-key grant on that connector fails at the credential wall instead of at Notion's 401",
   );
 
   const memoryKey = notionCat.credentials.find((cr) => cr.id === "memory");
@@ -208,7 +291,10 @@ ok(
   ok(!defined.includes("linear-mcp"), "…and the defined set is not a wildcard: an ungranted connector name is absent");
 
   const configured = definedConnectorCredentials(catalogues, "notion");
-  ok(configured.includes("team-key") && configured.includes("user-oauth"), "the notion catalogue's credential ids are the closed set an ask may name");
+  ok(
+    configured.includes("team-key") && configured.includes("user-oauth") && configured.includes("workspace-oauth"),
+    "the notion catalogue's credential ids are the closed set an ask may name",
+  );
   ok(!configured.includes("nope"), "…and an id nobody configured is not in it");
   ok(definedConnectorCredentials(catalogues, "linear-mcp").length === 0, "a connector with no catalogue configures nothing — fail-closed, not 'anything goes'");
 
@@ -355,4 +441,4 @@ ok(append.method === "PATCH" && append.path === "/v1/blocks/blk123/children", "b
 const appendBody = append.body as { children: { paragraph: { rich_text: { text: { content: string } }[] } }[] };
 ok(appendBody.children.length === 1 && appendBody.children[0].paragraph.rich_text[0].text.content === "hello from the test", "buildAppendRequest: exactly one paragraph block with the given text");
 
-console.log(`✓ notion-connectors: ${passed} assertions passed (REST + skill route wiring, route ③ removal, scoping, the one grant list, egress policy, skill script)`);
+console.log(`✓ notion-connectors: ${passed} assertions passed (REST + skill route wiring, route ③'s org-subject MCP credential, the S-ROUTINE-CONNECTOR-WRITE preflight over shipped config, scoping, the one grant list, egress policy, skill script)`);
