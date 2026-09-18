@@ -61,6 +61,16 @@ export function noteRoutineRunPermissionRefusal(entry: RoutineRunPermissionRefus
   }
 }
 
+export function peekRoutineRunPermissionRefusals(): readonly RoutineRunPermissionRefusal[] {
+  try {
+    const held = refusals.get();
+    if (held === null) return [];
+    return held.turnId === currentTurnKey() ? held.entries : [];
+  } catch {
+    return [];
+  }
+}
+
 export function consumeRoutineRunPermissionRefusals(): readonly RoutineRunPermissionRefusal[] {
   try {
     const held = refusals.get();

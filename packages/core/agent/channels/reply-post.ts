@@ -75,6 +75,10 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
   };
 }
 
+export function replyCarriesSubstance(body: string): boolean {
+  return /[\p{L}\p{N}]/u.test(body.replace(/:[a-z0-9_+-]+:/gi, " "));
+}
+
 export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
   if (!audit) return;
   await appendAudit({

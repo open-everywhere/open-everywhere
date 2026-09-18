@@ -54,7 +54,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     stop: "exempt",
     recordsDelivery: false,
     exemptBecause:
-      "It is not somebody else's errand: it tells a person that their OWN identity changed, and it is the only thing that makes a quiet takeover loud. Whether a stop should silence a security alert about the recipient themselves is a behaviour ruling, and OPE-1868 holds it.",
+      "It is not somebody else's errand: it tells a person that their OWN identity changed, and it is the only thing that makes a quiet takeover loud. A stop request throttles chattiness and this message is important, so it stays exempt — a security alert about the recipient themselves is not what a person is asking to be spared.",
   },
   {
     plane: "identity.link-consent",
@@ -67,7 +67,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     stop: "exempt",
     recordsDelivery: false,
     exemptBecause:
-      "Mixed, and stated at its weakest: the answers `identity/link-consent.ts` and `hooks/link-claim.ts` send go back to the account that began the handshake, but `tools/link_identity.ts` cold-DMs the named TARGET account, which began nothing — it is the challenge that proves that account's ownership, and its copy names the initiator so the person can judge it. A stopped person can therefore still be made to receive that challenge, repeatedly, by anyone who names their account. OPE-1868 holds the ruling on these facts.",
+      "Mixed, and stated at its weakest: the answers `identity/link-consent.ts` and `hooks/link-claim.ts` send go back to the account that began the handshake, but `tools/link_identity.ts` cold-DMs the named TARGET account, which began nothing — it is the challenge that proves that account's ownership, and its copy names the initiator so the person can judge it. A stopped person can therefore still be made to receive that challenge, repeatedly, by anyone who names their account. It stays exempt on the rule that a stop request throttles chattiness: a challenge against the recipient's own account is important, and silencing it would let a link be claimed without the one message that can contest it. The repetition is the real cost, and it belongs to a rate limit on this plane rather than to the stop. NO SUCH RATE LIMIT EXISTS TODAY: `tools/link_identity.ts` names that gap in its own header, and one DM per TTL-bounded single-use request is the only bound the plane has.",
   },
   {
     plane: "governance.pane",
@@ -76,7 +76,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     stop: "exempt",
     recordsDelivery: false,
     exemptBecause:
-      "It answers the recipient's own tool call. The DM is the private venue for a pane they just asked for, because an org-grain read must not land in a room, so it is a reply rather than a message the agent starts. OPE-1868 holds the ruling.",
+      "It answers the recipient's own tool call. The DM is the private venue for a pane they just asked for, because an org-grain read must not land in a room, so it is a reply rather than a message the agent starts. A stop request throttles chattiness, and an answer the person asked for this minute is not chattiness — silencing it would drop the reply to their own command.",
   },
 ];
 

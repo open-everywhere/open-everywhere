@@ -487,6 +487,37 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     );
     ok((await heldRows()).length === heldBefore, "§9b/AUDIT: …and it writes no held-wake row, so the row counts only the turns the guard acted on");
   }
+
+  {
+    const { NO_SUBSTANCE_DROP_REASON } = await import("../agent/channels/unified.js");
+    const dropRows = async (): Promise<Record<string, unknown>[]> =>
+      (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+    const wStub = await wake("C_BRIDGE_STUB", "904.4");
+    const before = posted.length;
+    const dropsBefore = (await dropRows()).length;
+
+    await bridgeSession(wStub, "turn_1911_stub")(() => bridgeComplete("..."));
+
+    ok(
+      posted.length === before,
+      `🔴 §9c THE FIX: a substance-free stub is NOT bridged — nothing reaches the room. Pre-fix the three characters posted AND closed the wake (expected ${before} posts, saw ${posted.length})`,
+    );
+    ok(
+      (await answeredAt(wStub)) === undefined,
+      "🔴 §9c: …and the wake stays ANSWERABLE, which is what lets a corrective turn — the auto-redrive's, or any later one — deliver a real answer into the same conversation. Pre-fix the mark closed that road",
+    );
+    const drops = await dropRows();
+    ok(drops.length === dropsBefore + 1, `🔴 §9c/AUDIT REACHABILITY: the stub is a ROW, not an absence (expected ${dropsBefore + 1}, saw ${drops.length})`);
+    ok(
+      drops[drops.length - 1]?.["reason"] === NO_SUBSTANCE_DROP_REASON,
+      "🔴 §9c/AUDIT: the row reads `no-substance` — the turn produced no answer to deliver, which is a different finding from `no-reply-call`, where the answer is in the dropped text",
+    );
+    ok(
+      drops[drops.length - 1]?.["addressing"] === "direct-mention",
+      "§9c/AUDIT: …and the addressing still reads direct-mention, so a stub on an OWED answer stays countable apart from an ambient drop",
+    );
+  }
 }
 
 {

@@ -27,7 +27,7 @@ import {
   resumeDmAudience,
   stopDmAudience,
 } from "../agent/channels/dm-audience.js";
-import { PROACTIVE_DM_PLANES } from "../agent/channels/proactive-dm-manifest.js";
+import { PROACTIVE_DM_PLANES, proactiveDmPlaneRow } from "../agent/channels/proactive-dm-manifest.js";
 import { registerSlackFixtureManifest, registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -327,6 +327,42 @@ console.log("7. no plane bypasses the road:");
       ok(live, `${row.plane}: ${mod} still emits a direct message — a row naming a module that does not is a stale exemption`);
     }
   }
+}
+
+{
+  const RULED_EXEMPT = ["identity.link-set", "identity.link-consent", "governance.pane"] as const;
+
+  for (const plane of RULED_EXEMPT) {
+    const row = proactiveDmPlaneRow(plane);
+    ok(
+      row.stop === "exempt",
+      `🔴 §8/OPE-1868: ${plane} is EXEMPT from the recipient's stop — the ruling is that an important or host-originated message stays exempt. Losing this row forces the plane onto the road, where the stop then silences that message`,
+    );
+    ok(
+      typeof row.exemptBecause === "string" && row.exemptBecause.length > 0,
+      `§8: ${plane} states WHY it is exempt — an exemption a reviewer cannot weigh is the oversight this table exists to prevent`,
+    );
+  }
+
+  const RULED_ON_THE_ROAD = ["chat.dm", "credential.grant.card", "credential.grant.notice", "credential.grant.consent"] as const;
+  for (const plane of RULED_ON_THE_ROAD) {
+    const row = proactiveDmPlaneRow(plane);
+    ok(
+      row.stop === "outranks",
+      `🔴 §8/OPE-1868 NEGATIVE CONTROL: ${plane} carries somebody else's errand, so the recipient's stop OUTRANKS it. An exemption here excuses its modules from §7's scan, which is the OPE-1855 defect returning with nothing left to catch it`,
+    );
+    ok(row.exemptBecause === undefined, `§8: ${plane} carries no exemption reason, because it has no exemption to explain`);
+  }
+
+  const exempt = PROACTIVE_DM_PLANES.filter((r) => r.stop === "exempt").map((r) => r.plane);
+  ok(
+    exempt.length === RULED_EXEMPT.length && RULED_EXEMPT.every((p) => exempt.includes(p)),
+    `🔴 §8/OPE-1868: EXACTLY these planes are exempt — ${RULED_EXEMPT.join(", ")}. Saw: ${exempt.join(", ") || "none"}. A new exemption is a ruling, so it changes this list in the same commit that argues for it`,
+  );
+  ok(
+    PROACTIVE_DM_PLANES.every((r) => r.stop === "exempt" || r.stop === "outranks"),
+    "§8: every plane takes one of the two standings — the table admits no third state",
+  );
 }
 
 console.log(`✓ proactive-dm-road: ${String(n)} assertions`);

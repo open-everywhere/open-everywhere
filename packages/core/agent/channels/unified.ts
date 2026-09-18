@@ -57,9 +57,10 @@ import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
 import { finalMessageActionForTurn, isBareStop, replierLabelFor, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
-import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
+import { consumeRoutineRunPermissionRefusals, peekRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
+import { replyCarriesSubstance } from "./reply-post.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
@@ -175,12 +176,21 @@ export function ambientProseDropDetail(
   addressed: boolean,
   replied: boolean,
   blockingRefusal: string | undefined,
+  carriesSubstance: boolean,
 ): { readonly addressing: string; readonly reason: string } {
   return {
     addressing: rawAddressing ?? (addressed ? "addressed-other" : "ambient"),
-    reason: replied ? "narration-after-reply" : blockingRefusal !== undefined ? `refused:${blockingRefusal}` : "no-reply-call",
+    reason: replied
+      ? "narration-after-reply"
+      : blockingRefusal !== undefined
+        ? `refused:${blockingRefusal}`
+        : carriesSubstance || !addressed
+          ? "no-reply-call"
+          : NO_SUBSTANCE_DROP_REASON,
   };
 }
+
+export const NO_SUBSTANCE_DROP_REASON = "no-substance";
 
 export async function answeredSameContainerThisTurn(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<boolean> {
   const replied = repliedWakesThisTurn(turnId).filter((w) => w !== wakeId);
@@ -521,7 +531,9 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       }
       const bind = { session: ctx.session } as unknown as BindableContext;
       const bridgeRefusal = bridgeBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
-      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied, bridgeRefusal)) {
+      const proseCarriesSubstance = replyCarriesSubstance(action.text);
+      const bridgeCarriesSubstance = proseCarriesSubstance || peekRoutineRunPermissionRefusals().length > 0;
+      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied, bridgeRefusal) && bridgeCarriesSubstance) {
         const wakeId = currentWakeId(bind);
         const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         if (!origin) {
@@ -559,6 +571,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
               route: "bridge",
             },
             replier,
+            { terminal: owingTask === undefined },
           );
           ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
           if (wakeId) {
@@ -598,6 +611,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         currentTurnAddressed(bind),
         replied,
         bridgeRefusal,
+        proseCarriesSubstance,
       );
       ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}; reason=${dropReason}) — replies must come from the reply tool`);
       await appendAudit({

@@ -183,42 +183,70 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
-  const { ambientProseDropDetail } = await import("../agent/channels/unified.js");
+  const { ambientProseDropDetail, NO_SUBSTANCE_DROP_REASON } = await import("../agent/channels/unified.js");
 
   ok(
-    JSON.stringify(ambientProseDropDetail(undefined, false, false, undefined)) === JSON.stringify({ addressing: "ambient", reason: "no-reply-call" }),
+    JSON.stringify(ambientProseDropDetail(undefined, false, false, undefined, true)) === JSON.stringify({ addressing: "ambient", reason: "no-reply-call" }),
     "unaddressed + no reply-tool call → addressing:ambient, reason:no-reply-call",
   );
 
-  const nameDrop = ambientProseDropDetail(undefined, true, false, undefined);
+  const nameDrop = ambientProseDropDetail(undefined, true, false, undefined, true);
   ok(nameDrop.addressing === "addressed-other", "addressed (name-drop/mention) but not direct-mention → addressing:addressed-other, NOT ambient");
   ok(nameDrop.reason === "no-reply-call", "same reason as the ambient case — the drop mechanism doesn't care why it was addressed");
-  ok(nameDrop.addressing !== ambientProseDropDetail(undefined, false, false, undefined).addressing, "NEGATIVE CONTROL — addressed and unaddressed drops must NOT read as the same kind");
+  ok(nameDrop.addressing !== ambientProseDropDetail(undefined, false, false, undefined, true).addressing, "NEGATIVE CONTROL — addressed and unaddressed drops must NOT read as the same kind");
 
   ok(
-    ambientProseDropDetail(undefined, false, true, undefined).reason === "narration-after-reply",
+    ambientProseDropDetail(undefined, false, true, undefined, true).reason === "narration-after-reply",
     "a reply already posted this turn → reason:narration-after-reply (NOT no-reply-call)",
   );
   ok(
-    ambientProseDropDetail(undefined, false, true, undefined).reason !== ambientProseDropDetail(undefined, false, false, undefined).reason,
+    ambientProseDropDetail(undefined, false, true, undefined, true).reason !== ambientProseDropDetail(undefined, false, false, undefined, true).reason,
     "NEGATIVE CONTROL — replied vs not-replied must not collapse to the same reason",
   );
 
   ok(
-    ambientProseDropDetail("direct-mention", true, false, undefined).addressing === "direct-mention",
+    ambientProseDropDetail("direct-mention", true, false, undefined, true).addressing === "direct-mention",
     "a present raw addressing value is reported verbatim, never overridden by the addressed/ambient fallback",
   );
 
-  const refusedDrop = ambientProseDropDetail("direct-mention", true, false, "should-be-edit");
+  const refusedDrop = ambientProseDropDetail("direct-mention", true, false, "should-be-edit", true);
   ok(refusedDrop.reason === "refused:should-be-edit", "🔴 a bridge blocked by a host refusal reports `refused:<reason>` — the DECISION, not `no-reply-call`, which is only its symptom");
   ok(refusedDrop.addressing === "direct-mention", "…and the addressing still reads direct-mention, so an owed-but-withheld answer stays countable apart from an ambient drop");
   ok(
-    refusedDrop.reason !== ambientProseDropDetail("direct-mention", true, false, undefined).reason,
+    refusedDrop.reason !== ambientProseDropDetail("direct-mention", true, false, undefined, true).reason,
     "NEGATIVE CONTROL — a refusal-caused drop and an unrefused one must NOT collapse to the same reason",
   );
   ok(
-    ambientProseDropDetail("direct-mention", true, true, "should-be-edit").reason === "narration-after-reply",
+    ambientProseDropDetail("direct-mention", true, true, "should-be-edit", true).reason === "narration-after-reply",
     "🔴 `replied` still WINS: a turn that DID post through the tool and then narrated is benign narration, and the bridge was disarmed by the post, not by the refusal",
+  );
+
+  const stubDrop = ambientProseDropDetail("direct-mention", true, false, undefined, false);
+  ok(stubDrop.reason === NO_SUBSTANCE_DROP_REASON, "🔴 OPE-1911: an addressed turn whose terminal prose carries no letter or digit reports `no-substance`");
+  ok(
+    stubDrop.reason !== ambientProseDropDetail("direct-mention", true, false, undefined, true).reason,
+    "🔴 OPE-1911 NEGATIVE CONTROL — a substance-free stub and a withheld real answer must NOT collapse to the same reason. Without this the fix could be `every addressed drop now reads no-substance`",
+  );
+  ok(stubDrop.addressing === "direct-mention", "…and the addressing is untouched, so the stub stays countable as an addressed drop");
+  ok(
+    ambientProseDropDetail("direct-mention", true, true, undefined, false).reason === "narration-after-reply",
+    "🔴 OPE-1911: `replied` still wins over the substance floor — a turn that posted a real answer through the tool and then trailed off is benign narration",
+  );
+  ok(
+    ambientProseDropDetail("direct-mention", true, false, "should-be-edit", false).reason === "refused:should-be-edit",
+    "🔴 OPE-1911: a host refusal still wins over the substance floor — the DECISION a reader must act on is the refusal, not what the model happened to trail off with",
+  );
+  ok(
+    ambientProseDropDetail(undefined, false, false, undefined, false).reason === "no-reply-call",
+    "🔴 OPE-1911: an UNADDRESSED turn's substance-free prose stays `no-reply-call` — the stub reason is for a turn that was OWED an answer, and nothing else",
+  );
+  ok(
+    ambientProseDropDetail(undefined, false, false, undefined, false).reason !== stubDrop.reason,
+    "🔴 OPE-1911 NEGATIVE CONTROL — the ambient stub and the ADDRESSED stub must NOT collapse to one reason, or the diagnostic query this ticket rests on reads ambient noise",
+  );
+  ok(
+    ambientProseDropDetail(undefined, true, false, undefined, false).reason === NO_SUBSTANCE_DROP_REASON,
+    "…and a name-drop addressed turn (`addressed` true, no direct-mention stamp) DOES report the stub reason: the conjunct reads `addressed`, the broader stamp, not the bridge's own addressing value",
   );
 }
 
