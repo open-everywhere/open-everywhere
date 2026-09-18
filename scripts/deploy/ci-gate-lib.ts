@@ -2,6 +2,7 @@ import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
 import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
 import { EXEC_TIMEOUT_MS, type Env, type Exec, realExec, resolveGithubApiBase, withExecDeadline } from "./lib.js";
+import { ensureProxyDispatcher } from "./proxy-dispatcher.js";
 
 export type CheckRun = {
   name: string;
@@ -95,6 +96,7 @@ export type GithubApiFetchLike = (
 export const GITHUB_API_TIMEOUT_MS = 30_000;
 
 export const realGithubApiFetch: GithubApiFetchLike = async (url, init) => {
+  ensureProxyDispatcher();
   const res = await fetch(url, { headers: init.headers, signal: init.signal });
   return { status: res.status, text: () => res.text() };
 };

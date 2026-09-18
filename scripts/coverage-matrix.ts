@@ -1,6 +1,6 @@
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findings, isCovered, coverageReportLines } from "./coverage-matrix-lib.js";
+import { findings, coverageReportLines, summarise, totals, summaryDisagreements } from "./coverage-matrix-lib.js";
 import { scanTree, INVENTORY_DIR } from "./coverage-scan-lib.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,12 +32,20 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const summaries = summarise(scan.matrix);
+  const disagreements = summaryDisagreements(scan.matrix, summaries);
+  if (disagreements.length > 0) {
+    console.error("");
+    console.error(`✗ coverage matrix: the per-page table and the totals disagree — ${disagreements.length} problem(s).`);
+    for (const problem of disagreements) console.error(`  ${problem}`);
+    console.error("  Both numbers describe one tree, so this is a defect in the report, never a finding about the tree.");
+    process.exit(1);
+  }
+
   const found = findings(scan.matrix, scan.claims);
   if (found.length === 0) {
-    const covered = scan.matrix.filter(isCovered).length;
-    const pending = scan.matrix.filter((e) => e.na?.pending === true).length;
-    const exempt = scan.matrix.filter((e) => e.na !== undefined && e.na.pending === false).length;
-    console.log(`✓ coverage matrix: ${scan.matrix.length} rows, ${covered} covered, ${exempt} exempt, ${pending} PENDING (n/a: unannotated — unanswered, not exempt).`);
+    const all = totals(summaries);
+    console.log(`✓ coverage matrix: ${all.rows} rows, ${all.covered} covered, ${all.naDeclared} exempt, ${all.pending} PENDING (n/a: unannotated — unanswered, not exempt).`);
     return;
   }
   console.error("");

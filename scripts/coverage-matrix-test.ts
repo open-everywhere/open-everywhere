@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,8 @@ import {
   isCovered,
   findings,
   summarise,
+  classifyRow,
+  summaryDisagreements,
   totals,
   coverageReportLines,
   legVerdict,
@@ -130,6 +132,46 @@ const PAGE = [
   const printed = coverageReportLines(matrix).join("\n");
   ok(printed.includes("| docs/inventory/fixture.md | 5 | 1 | 1 | 1 | 2 |"), "the report prints the per-page row it computed");
   ok(printed.includes("unit 1"), "…and the per-cell counts beside it");
+}
+
+{
+  const rows = parseInventoryRows(PAGE, "docs/inventory/fixture.md");
+  const claims: ProvesClaim[] = [
+    { ids: ["FIX-covered"], source: "t.ts", line: 1, kind: "unit", cell: "t.ts" },
+    { ids: ["FIX-pending"], source: "t.ts", line: 2, kind: "unit", cell: "t.ts" },
+  ];
+  const matrix = buildMatrix(rows, claims, new Set());
+  const seeded = matrix.find((e) => e.row.id === "FIX-pending");
+  ok(seeded?.na?.pending === true, "the fixture row really does still carry its seed `n/a: unannotated` cell");
+  ok(isCovered(seeded as never), "…and really is covered, so it is the double-counted shape");
+  ok(classifyRow(seeded as never) === "covered", "a covered row classifies as covered, whatever its cell still says");
+
+  const summaries = summarise(matrix);
+  const all = totals(summaries);
+  ok(all.covered === 2 && all.pending === 0, `the seeded-and-covered row is counted ONCE, as covered — got ${JSON.stringify(all)}`);
+  ok(summaryDisagreements(matrix, summaries).length === 0, "the table and the totals agree on a matrix classified once");
+
+  const doubled = summaries.map((s) => ({ ...s, pending: s.pending + 1 }));
+  const problems = summaryDisagreements(matrix, doubled);
+  ok(problems.length > 0, "a bucket counted twice is a disagreement, not a silent number");
+  ok(problems.some((p) => p.includes("docs/inventory/fixture.md") && p.includes("counted twice")), `…and the problem names the page — got ${JSON.stringify(problems)}`);
+  ok(summaryDisagreements(matrix, summaries.map((s) => ({ ...s, covered: s.covered - 1 }))).length > 0, "a bucket counted too FEW times reds the same way");
+  ok(summaryDisagreements(matrix, []).length > 0, "a table that dropped every page reds rather than reporting zero rows");
+}
+
+{
+  const deployDir = join(dirname(fileURLToPath(import.meta.url)), "deploy");
+  const readers: string[] = [];
+  for (const entry of readdirSync(deployDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+    const text = readFileSync(join(deployDir, entry.name), "utf8");
+    if (/coverage-(matrix|scan|board)/.test(text)) readers.push(entry.name);
+  }
+  ok(readers.length === 0, `no ship rung reads the coverage matrix — got ${JSON.stringify(readers)}`);
+  const here = readdirSync(dirname(fileURLToPath(import.meta.url)), { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".ts") && /coverage-(matrix|scan|board)/.test(readFileSync(join(dirname(fileURLToPath(import.meta.url)), e.name), "utf8")))
+    .length;
+  ok(here > 0, `the scan finds coverage-matrix readers where they do exist — got ${here}`);
 }
 
 {

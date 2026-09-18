@@ -172,6 +172,14 @@ export function isCovered(entry: MatrixRow): boolean {
   return unit.length + e2e.length + soak.length + audit.length > 0;
 }
 
+export type RowClass = "covered" | "naDeclared" | "pending" | "uncovered";
+
+export function classifyRow(entry: MatrixRow): RowClass {
+  if (isCovered(entry)) return "covered";
+  if (entry.na === undefined) return "uncovered";
+  return entry.na.pending ? "pending" : "naDeclared";
+}
+
 export function findings(matrix: readonly MatrixRow[], claims: readonly ProvesClaim[]): readonly Finding[] {
   const out: Finding[] = [];
   for (const entry of matrix) {
@@ -212,10 +220,7 @@ export function summarise(matrix: readonly MatrixRow[]): readonly FileSummary[] 
       order.push(entry.row.file);
     }
     bucket.rows++;
-    if (isCovered(entry)) bucket.covered++;
-    else if (entry.na === undefined) bucket.uncovered++;
-    else if (entry.na.pending) bucket.pending++;
-    else bucket.naDeclared++;
+    bucket[classifyRow(entry)]++;
   }
   return order.map((file) => ({ file, ...(acc.get(file) as { rows: number; covered: number; naDeclared: number; pending: number; uncovered: number }) }));
 }
@@ -252,6 +257,32 @@ export function totals(summaries: readonly FileSummary[]): Omit<FileSummary, "fi
     pending: sum((s) => s.pending),
     uncovered: sum((s) => s.uncovered),
   };
+}
+
+export function summaryDisagreements(matrix: readonly MatrixRow[], summaries: readonly FileSummary[]): string[] {
+  const problems: string[] = [];
+  for (const s of summaries) {
+    const parts = s.covered + s.naDeclared + s.pending + s.uncovered;
+    if (parts !== s.rows) {
+      problems.push(
+        `${s.file}: ${s.rows} rows, but the four buckets sum to ${parts} ` +
+          `(covered ${s.covered} + n/a ${s.naDeclared} + pending ${s.pending} + uncovered ${s.uncovered}). ` +
+          "A row is counted twice, or not at all.",
+      );
+    }
+  }
+  const all = totals(summaries);
+  if (all.rows !== matrix.length) {
+    problems.push(`the per-page table covers ${all.rows} rows, but the matrix holds ${matrix.length}. A page was dropped.`);
+  }
+  const direct = { covered: 0, naDeclared: 0, pending: 0, uncovered: 0 };
+  for (const entry of matrix) direct[classifyRow(entry)]++;
+  for (const key of ["covered", "naDeclared", "pending", "uncovered"] as const) {
+    if (direct[key] !== all[key]) {
+      problems.push(`the totals row says ${key}=${all[key]}, but the matrix classifies ${direct[key]} rows that way.`);
+    }
+  }
+  return problems;
 }
 
 const LAUNCH_SURFACES = ["slack", "notion", "github"] as const;

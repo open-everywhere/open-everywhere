@@ -55,14 +55,14 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     doc: "docs/glossary.md",
     fact: "worker-only-standing",
     kind: "count",
-    pattern: String.raw`\(\x60WORKER_ONLY_TOOLS_STANDING\x60, (\d+) entries\)`,
+    pattern: String.raw`#WORKER_ONLY_TOOLS_STANDING\x60 \((\d+) entries\)`,
   },
   {
     id: "glossary/worker-thread-entries",
     doc: "docs/glossary.md",
     fact: "worker-only-thread",
     kind: "count",
-    pattern: String.raw`\(\x60WORKER_ONLY_TOOLS_THREAD\x60, (\d+) entries\)`,
+    pattern: String.raw`#WORKER_ONLY_TOOLS_THREAD\x60 \((\d+) entries\)`,
   },
   {
     id: "settings/sole-env-seam",
