@@ -9,13 +9,14 @@ import {
   NOTION_PAGE_ID,
   NOTION_PAGE_ID_2,
   NOTION_WORKSPACE_ID,
+  auditCursor,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
   waitFor,
   waitForAuditRows,
-  type AuditRow,
+  type AuditCursor,
   type ScriptedHandle,
 } from "../harness";
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
@@ -130,11 +131,6 @@ async function pinVenueContract(platform: string, originSurfaceKey: string, expe
 
 const APPROVAL_ACTIONS = ["approval.autoapproved", "approval.requested"] as const;
 
-async function rowsSince(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(wakeAt - 1_000).toISOString(), limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
-}
-
 function venueMessages(mark: string): DiscordCreateMessageCall[] {
   return discord.messages.filter((m) => m.content.includes(mark));
 }
@@ -174,9 +170,9 @@ async function awaitProposal(handle: ScriptedHandle, label: string): Promise<voi
   expect(handle.requests.filter((r) => r.fault !== undefined), `${label}: the scripted model reported a fault`).toEqual([]);
 }
 
-async function driveGitHubWake(input: { ids: string; repo: string; issueNumber: number; prompt: string }): Promise<{ handle: ScriptedHandle; wakeAt: number }> {
+async function driveGitHubWake(input: { ids: string; repo: string; issueNumber: number; prompt: string }): Promise<{ handle: ScriptedHandle; cursor: AuditCursor }> {
   const handle = seatProposing(input.ids, input.prompt);
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   const res = await githubIssueCommentPost({
     owner: GITHUB_OWNER,
     repo: input.repo,
@@ -186,10 +182,10 @@ async function driveGitHubWake(input: { ids: string; repo: string; issueNumber: 
   });
   expect(res.status, `the GitHub front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
   await awaitProposal(handle, `github/${input.repo}`);
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
-async function driveNotionWake(input: { ids: string; pageId: string; prompt: string }): Promise<{ handle: ScriptedHandle; wakeAt: number }> {
+async function driveNotionWake(input: { ids: string; pageId: string; prompt: string }): Promise<{ handle: ScriptedHandle; cursor: AuditCursor }> {
   const handle = seatProposing(input.ids, input.prompt);
   const triggerId = `it-1894-trigger-${input.ids}`;
   notionComments.set(triggerId, {
@@ -200,15 +196,15 @@ async function driveNotionWake(input: { ids: string; pageId: string; prompt: str
     created_by: { id: `it-1894-author-${input.ids}`, type: "person" },
     created_time: new Date().toISOString(),
   });
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: triggerId });
   expect(res.status, `the Notion front refused the delivery: ${res.body.slice(0, 300)}`).toBe(200);
   await awaitProposal(handle, `notion/${input.pageId}`);
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
 async function expectLiftedNoticeOnVenue(input: {
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
   readonly label: string;
   readonly originSurfaceKey: string;
   readonly venueChannelId: string;
@@ -218,12 +214,12 @@ async function expectLiftedNoticeOnVenue(input: {
 }): Promise<void> {
   const rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(input.cursor, APPROVAL_ACTIONS);
       return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
     },
     label: `${input.label}: this turn's approval.autoapproved row to land`,
     actions: APPROVAL_ACTIONS,
-    wakeAt: input.wakeAt,
+    cursor: input.cursor,
   });
   const lifted = rows.filter((r) => r.action === "approval.autoapproved");
   expect(lifted, `${input.label}: expected exactly one lift row`).toHaveLength(1);
@@ -258,7 +254,7 @@ async function expectLiftedNoticeOnVenue(input: {
 }
 
 async function expectCardOnVenueAndNoNotice(input: {
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
   readonly label: string;
   readonly venueChannelId: string;
   readonly originCalls: readonly unknown[];
@@ -266,12 +262,12 @@ async function expectCardOnVenueAndNoNotice(input: {
 }): Promise<void> {
   const rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(input.wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(input.cursor, APPROVAL_ACTIONS);
       return got.some((r) => r.action === "approval.requested") ? got : undefined;
     },
     label: `${input.label}: this turn's approval.requested row to land`,
     actions: APPROVAL_ACTIONS,
-    wakeAt: input.wakeAt,
+    cursor: input.cursor,
   });
   expect(rows.filter((r) => r.action === "approval.autoapproved"), `${input.label}: something lifted with the judge off`).toEqual([]);
   expect(reasons.length, `${input.label}: the judge was consulted with the mode off`).toBe(input.consultsBefore);
@@ -293,10 +289,10 @@ test("① a judge lift on a GITHUB-origin routine posts its notice into the in-d
 
   const prompt = "post the ope1894 github standup digest every weekday morning";
   const consultsBefore = consultsSoFar();
-  const { wakeAt } = await driveGitHubWake({ ids: "gh-lift", repo: GITHUB_REPO_ENFORCE, issueNumber: 1894, prompt });
+  const { cursor } = await driveGitHubWake({ ids: "gh-lift", repo: GITHUB_REPO_ENFORCE, issueNumber: 1894, prompt });
 
   await expectLiftedNoticeOnVenue({
-    wakeAt,
+    cursor,
     label: "github/enforce",
     originSurfaceKey: `github/${GITHUB_OWNER}/${GITHUB_REPO_ENFORCE}`,
     venueChannelId: GITHUB_VENUE_CHANNEL_ID,
@@ -313,14 +309,14 @@ test("② 🔴 with the judge OFF the same GITHUB-origin proposal posts an ordin
   clearTransportLogs();
 
   const consultsBefore = consultsSoFar();
-  const { wakeAt } = await driveGitHubWake({
+  const { cursor } = await driveGitHubWake({
     ids: "gh-carded",
     repo: GITHUB_REPO_OFF,
     issueNumber: 1895,
     prompt: "post the ope1894 github release notes every weekday afternoon",
   });
 
-  await expectCardOnVenueAndNoNotice({ wakeAt, label: "github/off", venueChannelId: GITHUB_VENUE_CHANNEL_ID, originCalls: github.calls, consultsBefore });
+  await expectCardOnVenueAndNoNotice({ cursor, label: "github/off", venueChannelId: GITHUB_VENUE_CHANNEL_ID, originCalls: github.calls, consultsBefore });
 });
 
 test("③ a judge lift on a NOTION-origin routine posts its notice into the in-domain Discord venue, and nothing of it reaches api.notion.com", async () => {
@@ -331,10 +327,10 @@ test("③ a judge lift on a NOTION-origin routine posts its notice into the in-d
 
   const prompt = "post the ope1894 notion standup digest every weekday morning";
   const consultsBefore = consultsSoFar();
-  const { wakeAt } = await driveNotionWake({ ids: "nt-lift", pageId: NOTION_PAGE_ID, prompt });
+  const { cursor } = await driveNotionWake({ ids: "nt-lift", pageId: NOTION_PAGE_ID, prompt });
 
   await expectLiftedNoticeOnVenue({
-    wakeAt,
+    cursor,
     label: "notion/enforce",
     originSurfaceKey: `notion/${NOTION_WORKSPACE_ID}/${NOTION_PAGE_ID}`,
     venueChannelId: NOTION_VENUE_CHANNEL_ID,
@@ -353,14 +349,14 @@ test("④ 🔴 with the judge OFF the same NOTION-origin proposal posts an ordin
   clearTransportLogs();
 
   const consultsBefore = consultsSoFar();
-  const { wakeAt } = await driveNotionWake({
+  const { cursor } = await driveNotionWake({
     ids: "nt-carded",
     pageId: NOTION_PAGE_ID_2,
     prompt: "post the ope1894 notion release notes every weekday afternoon",
   });
 
   await expectCardOnVenueAndNoNotice({
-    wakeAt,
+    cursor,
     label: "notion/off",
     venueChannelId: NOTION_VENUE_CHANNEL_ID,
     originCalls: notion.calls,

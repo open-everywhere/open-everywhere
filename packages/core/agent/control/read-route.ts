@@ -144,7 +144,7 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     const scanned = views.reduce((n, v) => n + v.entries.length, 0);
     const merged = views
       .flatMap((v) => v.entries)
-      .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
+      .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : b.seq - a.seq))
       .slice(0, limit);
     return json(200, {
       root: views[0]!.root,

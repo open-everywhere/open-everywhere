@@ -3,19 +3,20 @@ import { afterAll, expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
+  auditCursor,
   bootAgent,
   discordMentionWake,
   disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
-  type AuditRow,
   type ScriptedHandle,
 } from "../harness";
 
@@ -108,11 +109,6 @@ async function customIdFor(rowId: string): Promise<string> {
   return buildDiscordApprovalCustomId(row!, "approve");
 }
 
-async function rowsSince(since: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(since - 1_000).toISOString(), limit: 300 });
-  return got.filter((r) => new Date(r.ts).getTime() >= since);
-}
-
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
 
 async function proposeRoutine(ids: string): Promise<{ id: string; handle: ScriptedHandle }> {
@@ -129,7 +125,7 @@ async function proposeRoutine(ids: string): Promise<{ id: string; handle: Script
     }),
   );
 
-  const wakeAt = Date.now();
+  const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${ids} parent's terminal step`);
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
@@ -144,11 +140,14 @@ async function proposeRoutine(ids: string): Promise<{ id: string; handle: Script
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
-  const requested = await waitFor(
-    async () => (await rowsSince(wakeAt, ["approval.requested"])).find((r) => r.detail?.kind === "routine.create"),
-    `the ${ids} approval.requested row to land`,
-    120_000,
-  );
+  const requested = await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(wakeCursor, ["approval.requested"], { limit: 300 })).find((r) => r.detail?.kind === "routine.create"),
+    label: `the ${ids} approval.requested row to land`,
+    actions: ["approval.requested"],
+    cursor: wakeCursor,
+    kind: "routine.create",
+    timeoutMs: 120_000,
+  });
   const id = requested.detail?.id;
   expect(typeof id).toBe("string");
   return { id: id as string, handle };
@@ -192,7 +191,7 @@ test("a worker dispatched from an INTERNAL-DISPATCH-woken turn binds the seat's 
   disposeLater(wake);
 
   seen.length = 0;
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await postGuildClick(customId);
   expect(res.status).toBe(200);
   expect((JSON.parse(res.body) as { type?: number }).type).toBe(7);
@@ -206,9 +205,9 @@ test("a worker dispatched from an INTERNAL-DISPATCH-woken turn binds the seat's 
   });
   disposeLater(drain.handle);
 
-  const diverged = (await rowsSince(clickAt, ["egress.policy"])).filter((r) => r.detail?.reason === "subagent-binding-divergence");
+  const diverged = (await rowsSinceCursor(clickCursor, ["egress.policy"], { limit: 300 })).filter((r) => r.detail?.reason === "subagent-binding-divergence");
   expect(diverged.map((r) => `${r.platform}/${r.workspace}/${r.surface}`)).toEqual([]);
-  expect((await rowsSince(clickAt, ["binding.refused"])).map((r) => r.detail?.reason)).toEqual([]);
+  expect((await rowsSinceCursor(clickCursor, ["binding.refused"], { limit: 300 })).map((r) => r.detail?.reason)).toEqual([]);
 
   expect(seen.length).toBe(1);
   expectBoundToTheDispatchingRoom(seen[0]!);

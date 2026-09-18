@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "vitest";
 
 import {
+  auditCursor,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   sleep,
   waitFor,
   type ScriptedHandle,
@@ -31,8 +32,7 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
     child: [{ say: CHILD_ANSWER }],
   }));
 
-  const wakeAt = Date.now();
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please delegate this" });
 
   const resumed = await waitFor(
@@ -57,11 +57,7 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
   live = registerScript({ parent: [{ say: "noted" }], child: [{ say: "noted" }] });
   await sleep(8_000);
 
-  const rows = await readAuditRows({
-    actions: ["taint.forward", "delegation.task_started", "delegation.task_settled"],
-    sinceIso,
-  });
-  const mine = rows.filter((r) => new Date(r.ts).getTime() >= wakeAt);
+  const mine = await rowsSinceCursor(cursor, ["taint.forward", "delegation.task_started", "delegation.task_settled"]);
 
   expect(mine.filter((r) => r.action === "taint.forward").map((r) => ({ leg: r.detail?.leg, session: r.detail?.session }))).toEqual([]);
 

@@ -94,6 +94,10 @@ export interface AuditEntry {
 
 export type AuditInput = Omit<AuditEntry, "ts"> & { readonly ts?: string };
 
+export interface AuditReadRow extends AuditEntry {
+  readonly seq: number;
+}
+
 export interface AuditChainRow {
   readonly seq: number;
   readonly ts: string;
@@ -812,7 +816,7 @@ export interface OperationalStore {
   listRoutinePromptRevisions(org: string, surfaceKey: string, routineId?: string): Promise<RoutinePromptRevisionRow[]>;
 
   appendAudit(entry: AuditEntry): Promise<void>;
-  readAudit(filter: AuditFilter): Promise<AuditEntry[]>;
+  readAudit(filter: AuditFilter): Promise<AuditReadRow[]>;
   listAuditOrgs(): Promise<string[]>;
   readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
   sealAuditChainEpoch(org: string, sealedBy: string): Promise<AuditChainEpochWritten | null>;

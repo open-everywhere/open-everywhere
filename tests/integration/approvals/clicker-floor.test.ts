@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
-import { bootAgent, readAuditRows, slackInteractivityPost, waitForAuditRows, type AuditRow } from "../harness";
+import { auditCursor, bootAgent, rowsSinceCursor, slackInteractivityPost, waitForAuditRows, type AuditCursor, type AuditRow } from "../harness";
 
 process.env.SLACK_BOT_TOKEN = "xoxb-integration-tier-placeholder-not-a-credential";
 
@@ -200,22 +200,17 @@ async function click(input: {
   );
 }
 
-async function rowsSince(since: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(since - 1_000).toISOString(), limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= since);
-}
-
 const DECIDE_ACTIONS = ["approval.denied", "approval.approved", "approval.rejected", "approval.failed"] as const;
 
-async function decideRows(clickAt: number, id: string): Promise<AuditRow[]> {
+async function decideRows(clickCursor: AuditCursor, id: string): Promise<AuditRow[]> {
   return waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(clickAt, [...DECIDE_ACTIONS, "routine.create"]);
+      const got = await rowsSinceCursor(clickCursor, [...DECIDE_ACTIONS, "routine.create"]);
       return got.some((r) => (DECIDE_ACTIONS as readonly string[]).includes(r.action) && r.detail?.id === id) ? got : undefined;
     },
     label: `a decide audit row for pending ${id}`,
     actions: [...DECIDE_ACTIONS, "routine.create"],
-    wakeAt: clickAt,
+    cursor: clickCursor,
     timeoutMs: 60_000,
   });
 }
@@ -266,11 +261,11 @@ test("Ⓒ a click from a room that is NOT the card's room is refused foreign-roo
   const PROMPT = "clicker-floor leg C — never armed";
   const id = await seedPending({ kind: "routine.create", channelId: CARD_ROOM, args: routineArgs(CARD_ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: CARD_ROOM, clickChannelId: OTHER_ROOM });
   expect(res.status).toBe(200);
 
-  await expectFloorRefusal({ rows: await decideRows(clickAt, id), id, reason: "foreign-room" });
+  await expectFloorRefusal({ rows: await decideRows(clickCursor, id), id, reason: "foreign-room" });
   expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
 });
 
@@ -280,11 +275,11 @@ test("Ⓐ a member-tier click in a POSITIVELY externally-shared room is refused 
   const PROMPT = "clicker-floor leg A — never armed";
   const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM });
   expect(res.status).toBe(200);
 
-  await expectFloorRefusal({ rows: await decideRows(clickAt, id), id, reason: "audience-floor" });
+  await expectFloorRefusal({ rows: await decideRows(clickCursor, id), id, reason: "audience-floor" });
   expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
 });
 
@@ -294,10 +289,10 @@ test("🔴 Ⓐ' the control: with is_ext_shared FALSE the same click APPROVES an
   const PROMPT = `clicker-floor leg A control — armed ${randomUUID()}`;
   const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM });
   expect(res.status).toBe(200);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
   expect(approved).toBeDefined();
@@ -316,11 +311,11 @@ test("Ⓑ a beneficiary-kind click in a room whose membership does NOT resolve i
   withSlackRooms({ [ROOM]: { infoFails: true } });
   const id = await seedPending({ kind: "webhook.rotate", channelId: ROOM, args: rotateArgs(ROOM) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM });
   expect(res.status).toBe(200);
 
-  await expectFloorRefusal({ rows: await decideRows(clickAt, id), id, reason: "unattested-room" });
+  await expectFloorRefusal({ rows: await decideRows(clickCursor, id), id, reason: "unattested-room" });
 });
 
 test("🔴 Ⓑ' the control: the SAME beneficiary kind in a room that DOES resolve passes the floor and decides", async () => {
@@ -328,10 +323,10 @@ test("🔴 Ⓑ' the control: the SAME beneficiary kind in a room that DOES resol
   withSlackRooms({ [ROOM]: { isPrivate: true, isExternal: false } });
   const id = await seedPending({ kind: "webhook.rotate", channelId: ROOM, args: rotateArgs(ROOM) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM });
   expect(res.status).toBe(200);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
@@ -352,11 +347,11 @@ test("Ⓓ a member-tier click by a clicker `users.info` POSITIVELY reports as a 
   const PROMPT = "clicker-floor leg D — never armed";
   const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: GUEST_CLICKER });
   expect(res.status).toBe(200);
 
-  await expectFloorRefusal({ rows: await decideRows(clickAt, id), id, reason: "guest-clicker", clickerId: GUEST_CLICKER });
+  await expectFloorRefusal({ rows: await decideRows(clickCursor, id), id, reason: "guest-clicker", clickerId: GUEST_CLICKER });
   expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
 });
 
@@ -368,10 +363,10 @@ test("🔴 Ⓓ' the control: the SAME clicker with is_restricted/is_ultra_restri
   const PROMPT = `clicker-floor leg D control — armed ${randomUUID()}`;
   const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: MEMBER_CLICKER });
   expect(res.status).toBe(200);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
   expect(approved).toBeDefined();
@@ -393,10 +388,10 @@ test("🔴 Ⓓ'' the anti-outage control: users.info answering ok:false (missing
   const PROMPT = `clicker-floor leg D anti-outage control — armed ${randomUUID()}`;
   const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: UNSCOPED_CLICKER });
   expect(res.status).toBe(200);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
   expect(approved).toBeDefined();

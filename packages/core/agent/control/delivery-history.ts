@@ -1,4 +1,4 @@
-import { appendAudit, readAudit, type AuditEntry, type AuditInput } from "../audit/audit.js";
+import { appendAudit, readAudit, type AuditEntry, type AuditFilter, type AuditInput } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { describeReadableBy, scopeGrantsRead, type ReadableBy } from "../access/read-grant.js";
@@ -84,7 +84,7 @@ export type DeliveryHistoryResult =
 export interface DeliveryHistoryDeps {
   readonly configHooks?: () => readonly WebhookHook[];
   readonly routines?: () => Promise<Routine[]>;
-  readonly read?: typeof readAudit;
+  readonly read?: (filter: AuditFilter) => Promise<readonly AuditEntry[]>;
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly resolve?: (p: Partition) => EffectiveAccess;
   readonly now?: () => Date;

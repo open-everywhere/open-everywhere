@@ -2,20 +2,21 @@ import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:cryp
 import { expect, test } from "vitest";
 
 import {
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
-  type AuditRow,
+  type AuditCursor,
   type ScriptedHandle,
 } from "../harness";
 
@@ -108,7 +109,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
     }),
   );
 
-  const wakeAt = Date.now();
+  const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
@@ -128,12 +129,13 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
 
   const requested = await waitForAuditRows({
     probe: async () => {
-      const rows = await rowsSince(wakeAt, ["approval.requested"]);
+      const rows = await rowsSinceCursor(wakeCursor, ["approval.requested"]);
       return rows.find((r) => r.detail?.kind === "routine.create");
     },
     label: "this turn's approval.requested row to land",
     actions: ["approval.requested"],
-    wakeAt,
+    cursor: wakeCursor,
+    kind: "routine.create",
     timeoutMs: 60_000,
   });
   const id = requested.detail?.id;
@@ -141,20 +143,15 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
   return { id: id as string, handle };
 }
 
-async function rowsSince(since: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(since - 1_000).toISOString(), limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= since);
-}
-
-async function waitForDecided(clickAt: number, id: string): Promise<void> {
+async function waitForDecided(clickCursor: AuditCursor, id: string): Promise<void> {
   await waitForAuditRows({
     probe: async () => {
-      const rows = await rowsSince(clickAt, ["approval.approved", "approval.failed", "approval.rejected"]);
+      const rows = await rowsSinceCursor(clickCursor, ["approval.approved", "approval.failed", "approval.rejected"]);
       return rows.find((r) => r.detail?.id === id);
     },
     label: `a terminal approval row for pending ${id}`,
     actions: ["approval.approved", "approval.failed", "approval.rejected"],
-    wakeAt: clickAt,
+    cursor: clickCursor,
     timeoutMs: 60_000,
   });
 }
@@ -164,13 +161,13 @@ test("🔴 the control: a click with NO guild_id decides the card and writes NO 
   const { id, handle } = await proposeRoutine("w1", `decision wake control (w1) ${randomUUID()}`);
   disposeLater(handle);
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await postClick({ customId: await customIdFor(id, "approve") });
   expect(res.status).toBe(200);
-  await waitForDecided(clickAt, id);
+  await waitForDecided(clickCursor, id);
 
   await new Promise((r) => setTimeout(r, 1_000));
-  const wakes = await rowsSince(clickAt, ["approval.decision_wake"]);
+  const wakes = await rowsSinceCursor(clickCursor, ["approval.decision_wake"]);
   expect(wakes.filter((r) => r.detail?.id === id).map((r) => r.action)).toEqual([]);
 
   const s = await getStore();
@@ -194,11 +191,11 @@ test("a guild-context click wakes the proposing window session with the decision
   });
   disposeLater(wake);
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const res = await postClick({ customId, guildId: DISCORD_GUILD_ID });
   expect(res.status).toBe(200);
   expect((JSON.parse(res.body) as { type?: number }).type).toBe(7);
-  await waitForDecided(clickAt, id);
+  await waitForDecided(clickCursor, id);
 
   const served = await waitFor(() => wake.requests.find((r) => r.role === "parent"), "the wake turn to reach the scripted model", 120_000);
   expect(served.stepIndex).toBe(0);
@@ -206,10 +203,10 @@ test("a guild-context click wakes the proposing window session with the decision
   expect(wake.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const row = await waitForAuditRows({
-    probe: async () => (await rowsSince(clickAt, ["approval.decision_wake"])).find((r) => r.detail?.id === id),
+    probe: async () => (await rowsSinceCursor(clickCursor, ["approval.decision_wake"])).find((r) => r.detail?.id === id),
     label: `an approval.decision_wake row for pending ${id}`,
     actions: ["approval.decision_wake"],
-    wakeAt: clickAt,
+    cursor: clickCursor,
     timeoutMs: 60_000,
   });
   expect(row.detail?.delivered).toBe(true);

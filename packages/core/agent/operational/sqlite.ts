@@ -1462,10 +1462,11 @@ export const sqliteOperationalStore: OperationalStore = {
     const limit = filter.limit && filter.limit > 0 ? filter.limit : -1;
     const rows = getDb()
       .prepare(
-        `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail
+        `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail
          FROM audit_entry ${clause} ORDER BY ts DESC, seq DESC LIMIT ?`,
       )
       .all(...params, limit) as {
+      seq: number;
       ts: string;
       org_id: string;
       platform: string;
@@ -1476,6 +1477,7 @@ export const sqliteOperationalStore: OperationalStore = {
       detail: string | null;
     }[];
     return rows.map((r) => ({
+      seq: Number(r.seq),
       ts: r.ts,
       org: r.org_id,
       platform: r.platform,

@@ -1,19 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import {
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
   type ScriptedStep,
@@ -44,7 +47,7 @@ async function armSeams(): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 async function driveChild(input: {
@@ -67,7 +70,7 @@ async function driveChild(input: {
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${input.delegateMessage}` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: child.length - 1, label: `the ${input.ids} worker's own terminal step` });
@@ -82,21 +85,20 @@ async function driveChild(input: {
   });
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
-async function rowsOfThisTurn(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
-  const got = await readAuditRows({ actions, sinceIso, limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
-}
-
-async function approvalRows(wakeAt: number, tool: string): Promise<AuditRow[]> {
+async function approvalRows(cursor: AuditCursor, tool: string): Promise<AuditRow[]> {
   const ACTIONS = ["approval.chain", "approval.autoapproved", "approval.requested", "approval.expired", "routine.policy.add", "routine.policy.remove"] as const;
-  return waitFor(async () => {
-    const got = await rowsOfThisTurn(wakeAt, ACTIONS);
-    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === tool) ? got : undefined;
-  }, `this turn's approval.chain row for ${tool} to land`);
+  return waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, ACTIONS);
+      return got.some((r) => r.action === "approval.chain" && r.detail?.tool === tool) ? got : undefined;
+    },
+    label: `this turn's approval.chain row for ${tool} to land`,
+    actions: ACTIONS,
+    cursor,
+  });
 }
 
 function toolResult(handle: ScriptedHandle, tool: string): { isError: boolean; output: Record<string, unknown> } {
@@ -170,7 +172,7 @@ beforeAll(async () => {
 test("add_routine_rule, clean turn: no lowering route exists on this deployment — registry ask, card path, never auto-approved", async () => {
   await armSeams();
 
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "r1",
     delegateMessage: "add a standing rule to that routine: never post before 09:00 UTC (OPE-549 r1)",
     childCalls: [
@@ -180,7 +182,7 @@ test("add_routine_rule, clean turn: no lowering route exists on this deployment 
       },
     ],
   });
-  const rows = await approvalRows(wakeAt, "add_routine_rule");
+  const rows = await approvalRows(cursor, "add_routine_rule");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "add_routine_rule");
   expect(chain).toBeDefined();
@@ -209,7 +211,7 @@ test("add_routine_rule, tainted turn: still registry ask — taint disclosed, ve
   const { taintToleranceOf } = await import("@open-everywhere/core/agent/access/approver-chain.js");
   expect(taintToleranceOf("add_routine_rule")).toBe("gate");
 
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "r2",
     delegateMessage: "read the upload, then add a standing rule to that routine: skip weekends (OPE-549 r2)",
     childCalls: [
@@ -220,7 +222,7 @@ test("add_routine_rule, tainted turn: still registry ask — taint disclosed, ve
       },
     ],
   });
-  const rows = await approvalRows(wakeAt, "add_routine_rule");
+  const rows = await approvalRows(cursor, "add_routine_rule");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "add_routine_rule");
   expect(chain).toBeDefined();
@@ -248,7 +250,7 @@ test("remove_routine_rule, tainted turn: still registry ask — the seeded rule 
   const { taintToleranceOf } = await import("@open-everywhere/core/agent/access/approver-chain.js");
   expect(taintToleranceOf("remove_routine_rule")).toBe("gate");
 
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "r3",
     delegateMessage: "read the upload, then remove that routine's standing rule (OPE-549 r3)",
     childCalls: [
@@ -256,7 +258,7 @@ test("remove_routine_rule, tainted turn: still registry ask — the seeded rule 
       { tool: "remove_routine_rule", input: { routineId, ruleId: seededRuleId } },
     ],
   });
-  const rows = await approvalRows(wakeAt, "remove_routine_rule");
+  const rows = await approvalRows(cursor, "remove_routine_rule");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "remove_routine_rule");
   expect(chain).toBeDefined();
@@ -283,12 +285,12 @@ test("remove_routine_rule, tainted turn: still registry ask — the seeded rule 
 test("remove_routine_rule, clean turn: still registry ask — never auto-approved, the seeded rule still survives", async () => {
   await armSeams();
 
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "r4",
     delegateMessage: "remove the OTHER standing rule from that routine (OPE-549 r4)",
     childCalls: [{ tool: "remove_routine_rule", input: { routineId, ruleId: seededRuleId2 } }],
   });
-  const rows = await approvalRows(wakeAt, "remove_routine_rule");
+  const rows = await approvalRows(cursor, "remove_routine_rule");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "remove_routine_rule");
   expect(chain).toBeDefined();

@@ -251,6 +251,40 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const capped = (await (await getAudit(`${sinceQ}&limit=1`, SECRET)).json()) as { entries: unknown[]; capped: boolean };
   ok(capped.entries.length === 1 && capped.capped === true, "audit limit=1 caps the result and reports capped:true");
 
+  const seqPage = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,notion.replied`, SECRET)).json()) as {
+    entries: { action: string; ts: string; seq: number }[];
+  };
+  ok(seqPage.entries.length > 0, "audit seq: the page under test is not empty");
+  ok(
+    seqPage.entries.every((e) => typeof e.seq === "number" && Number.isInteger(e.seq) && e.seq > 0),
+    "audit: every returned row carries a positive integer seq",
+  );
+  ok(
+    seqPage.entries.every((e, i) => i === 0 || seqPage.entries[i - 1]!.ts > e.ts || seqPage.entries[i - 1]!.seq > e.seq),
+    "audit: a newest-first page is ordered by ts then seq, both descending",
+  );
+
+  await appendAudit({ org: "acme", platform: "notion", workspace: "ws1", action: "notion.clock_step_marker", detail: { leg: "before" } });
+  const beforeStep = (await (await getAudit(`${sinceQ}&actions=notion.clock_step_marker`, SECRET)).json()) as { entries: { seq: number; ts: string }[] };
+  ok(beforeStep.entries.length === 1, "audit seq: the pre-step marker landed");
+  const stepped = new Date(Date.parse(beforeStep.entries[0]!.ts) - 5_000).toISOString();
+  await appendAudit({ org: "acme", platform: "notion", workspace: "ws1", action: "notion.clock_step_marker", ts: stepped, detail: { leg: "after" } });
+  const afterStep = (await (await getAudit(`${sinceQ}&actions=notion.clock_step_marker`, SECRET)).json()) as {
+    entries: { seq: number; ts: string; detail?: { leg?: string } }[];
+  };
+  ok(afterStep.entries.length === 2, "audit seq: both clock-step markers are in the window");
+  const legBefore = afterStep.entries.find((e) => e.detail?.leg === "before")!;
+  const legAfter = afterStep.entries.find((e) => e.detail?.leg === "after")!;
+  ok(legAfter.ts < legBefore.ts, "audit seq: the second marker's ts really is EARLIER (the step is reproduced)");
+  ok(
+    legAfter.seq > legBefore.seq,
+    "audit seq: the row written LATER carries the HIGHER seq even though its ts is earlier — seq is the monotonic locator",
+  );
+  ok(
+    afterStep.entries.filter((e) => e.ts >= legBefore.ts).length === 1,
+    "audit seq: a ts >= anchor over the same pair loses the later row — the negative control for anchoring on seq",
+  );
+
   const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
   ok(svc.some((e) => (e.detail as { view?: string }).view === "audit"), "audit read is self-audited as control.service_call view=audit");
 

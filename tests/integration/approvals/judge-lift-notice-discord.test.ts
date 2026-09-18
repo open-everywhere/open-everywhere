@@ -2,19 +2,20 @@ import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:cryp
 import { afterAll, expect, test } from "vitest";
 
 import {
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   disposeLater,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
-  type AuditRow,
+  type AuditCursor,
   type ScriptedHandle,
 } from "../harness";
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
@@ -90,7 +91,7 @@ async function postClick(customId: string): Promise<{ status: number; type: numb
   };
 }
 
-async function proposeRoutine(ids: string, prompt: string): Promise<number> {
+async function proposeRoutine(ids: string, prompt: string): Promise<AuditCursor> {
   const handle: ScriptedHandle = disposeLater(
     registerScript({
       parent: [
@@ -101,7 +102,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<number> {
     }),
   );
 
-  const wakeAt = Date.now();
+  const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
@@ -115,15 +116,10 @@ async function proposeRoutine(ids: string, prompt: string): Promise<number> {
   });
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
-  return wakeAt;
+  return wakeCursor;
 }
 
 const APPROVAL_ACTIONS = ["approval.autoapproved", "approval.requested", "approval.judge.contradicted"] as const;
-
-async function rowsSince(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(wakeAt - 1_000).toISOString(), limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
-}
 
 const NOTICE_MARK = "Ran without asking";
 const CARD_MARK = "Approval requested";
@@ -158,16 +154,16 @@ test("① an armed judge lift POSTS the notice into the Discord room, carrying t
   egressSpoof(false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
-  const wakeAt = await proposeRoutine("lift", "post the standup digest every weekday morning");
+  const wakeCursor = await proposeRoutine("lift", "post the standup digest every weekday morning");
 
   const rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(wakeCursor, APPROVAL_ACTIONS);
       return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
     },
     label: "this turn's approval.autoapproved row to land",
     actions: APPROVAL_ACTIONS,
-    wakeAt,
+    cursor: wakeCursor,
   });
   const lifted = rows.filter((r) => r.action === "approval.autoapproved");
   expect(lifted).toHaveLength(1);
@@ -198,7 +194,7 @@ test("① an armed judge lift POSTS the notice into the Discord room, carrying t
 
 test("② a signed click on THAT button records the contradiction, and a second click does not", async () => {
   expect(noticeButtonCustomId).not.toBe("");
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
 
   const first = await postClick(noticeButtonCustomId);
   expect(first.status).toBe(200);
@@ -209,12 +205,12 @@ test("② a signed click on THAT button records the contradiction, and a second 
 
   const recorded = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(clickAt, ["approval.judge.contradicted"]);
+      const got = await rowsSinceCursor(clickCursor, ["approval.judge.contradicted"]);
       return got.length > 0 ? got : undefined;
     },
     label: "the approval.judge.contradicted row to land",
     actions: ["approval.judge.contradicted"],
-    wakeAt: clickAt,
+    cursor: clickCursor,
   });
   expect(recorded).toHaveLength(1);
   expect(recorded[0]!.detail?.id).toBe(wedgeRowId);
@@ -227,7 +223,7 @@ test("② a signed click on THAT button records the contradiction, and a second 
   const second = await postClick(noticeButtonCustomId);
   expect(second.type).toBe(4);
   expect(second.content).toContain("already flagged");
-  expect(await rowsSince(clickAt, ["approval.judge.contradicted"])).toHaveLength(1);
+  expect(await rowsSinceCursor(clickCursor, ["approval.judge.contradicted"])).toHaveLength(1);
 });
 
 test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict click records nothing", async () => {
@@ -236,16 +232,16 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
   const consultsBefore = reasons.length;
 
-  const wakeAt = await proposeRoutine("carded", "post the release notes every weekday afternoon");
+  const wakeCursor = await proposeRoutine("carded", "post the release notes every weekday afternoon");
 
   const rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(wakeCursor, APPROVAL_ACTIONS);
       return got.some((r) => r.action === "approval.requested") ? got : undefined;
     },
     label: "this turn's approval.requested row to land",
     actions: APPROVAL_ACTIONS,
-    wakeAt,
+    cursor: wakeCursor,
   });
   expect(rows.filter((r) => r.action === "approval.autoapproved")).toEqual([]);
   expect(reasons.length).toBe(consultsBefore);
@@ -254,11 +250,11 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   expect(discord.messages.filter((m) => m.content.includes(CARD_MARK))).toHaveLength(1);
 
   const pendingId = String(rows.find((r) => r.action === "approval.requested")!.detail?.id);
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const refused = await postClick(`oe-approval:${pendingId}:contradict:${deploymentOrg}`);
   expect(refused.type).toBe(4);
   expect(refused.content).toContain("not auto-approved by the approval judge");
-  expect(await rowsSince(clickAt, ["approval.judge.contradicted"])).toEqual([]);
+  expect(await rowsSinceCursor(clickCursor, ["approval.judge.contradicted"])).toEqual([]);
 });
 
 test("④ 🔴 with OE_EGRESS_SPOOF armed and a real bot token present, the notice reaches NO vendor transport", async () => {
@@ -267,16 +263,16 @@ test("④ 🔴 with OE_EGRESS_SPOOF armed and a real bot token present, the noti
   egressSpoof(true);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
-  const wakeAt = await proposeRoutine("spoofed", "post the oncall handover every weekday evening");
+  const wakeCursor = await proposeRoutine("spoofed", "post the oncall handover every weekday evening");
 
   const rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(wakeCursor, APPROVAL_ACTIONS);
       return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
     },
     label: "the spoofed turn's approval.autoapproved row to land",
     actions: APPROVAL_ACTIONS,
-    wakeAt,
+    cursor: wakeCursor,
   });
   expect(rows.filter((r) => r.action === "approval.autoapproved")).toHaveLength(1);
   expect(rows.filter((r) => r.action === "approval.autoapproved")[0]!.detail?.resolvedBy).toBe("judge");

@@ -1,4 +1,5 @@
 export interface AuditWireEntry {
+  readonly seq?: number;
   readonly ts: string;
   readonly org: string;
   readonly platform: string;

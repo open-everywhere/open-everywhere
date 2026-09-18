@@ -1,18 +1,20 @@
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
   type ScriptedStep,
@@ -64,7 +66,7 @@ async function setJudgeMode(mode: "off" | "shadow" | "enforce"): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 async function driveProposal(input: { ids: string; prompt: string; readUpload?: boolean }): Promise<Driven> {
@@ -85,7 +87,7 @@ async function driveProposal(input: { ids: string; prompt: string; readUpload?: 
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, {
@@ -104,16 +106,10 @@ async function driveProposal(input: { ids: string; prompt: string; readUpload?: 
   });
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
-async function rowsOfThisTurn(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
-  const got = await readAuditRows({ actions, sinceIso, limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
-}
-
-async function approvalRows(wakeAt: number): Promise<AuditRow[]> {
+async function approvalRows(cursor: AuditCursor): Promise<AuditRow[]> {
   const ACTIONS = [
     "approval.chain",
     "approval.judge.verdict",
@@ -125,12 +121,13 @@ async function approvalRows(wakeAt: number): Promise<AuditRow[]> {
   ] as const;
   return waitForAuditRows({
     probe: async () => {
-      const got = await rowsOfThisTurn(wakeAt, ACTIONS);
+      const got = await rowsSinceCursor(cursor, ACTIONS);
       return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
     },
     label: "this turn's approval.chain row to land",
     actions: ACTIONS,
-    wakeAt,
+    cursor,
+    kind: "routine.create",
   });
 }
 
@@ -146,8 +143,8 @@ test("enforce + a judge ALLOW auto-approves a gated verb: chain allow via judge,
   scrutinyAnswer = "YES";
   verdictAnswer = "VERDICT: allow\nREASON: allowed by the integration test";
 
-  const { handle, wakeAt } = await driveProposal({ ids: "a1", prompt: "summarise the numbers every weekday morning (a1)" });
-  const rows = await approvalRows(wakeAt);
+  const { handle, cursor } = await driveProposal({ ids: "a1", prompt: "summarise the numbers every weekday morning (a1)" });
+  const rows = await approvalRows(cursor);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -200,12 +197,12 @@ test("the taint:ask floor clamps a judge allow: a NON-EMPTY transform ladder, an
   scrutinyAnswer = "YES";
   verdictAnswer = "VERDICT: allow\nREASON: allowed by the integration test";
 
-  const { handle, wakeAt } = await driveProposal({
+  const { handle, cursor } = await driveProposal({
     ids: "a2",
     prompt: "summarise the numbers every weekday morning (a2)",
     readUpload: true,
   });
-  const rows = await approvalRows(wakeAt);
+  const rows = await approvalRows(cursor);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -244,8 +241,8 @@ test("judgeMode shadow: an approval.judge.shadow row records a would-be allow wh
   scrutinyAnswer = "YES";
   verdictAnswer = "VERDICT: allow\nREASON: shadow would have allowed this";
 
-  const { handle, wakeAt } = await driveProposal({ ids: "a3", prompt: "summarise the numbers every weekday morning (a3)" });
-  const rows = await approvalRows(wakeAt);
+  const { handle, cursor } = await driveProposal({ ids: "a3", prompt: "summarise the numbers every weekday morning (a3)" });
+  const rows = await approvalRows(cursor);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -258,12 +255,12 @@ test("judgeMode shadow: an approval.judge.shadow row records a would-be allow wh
 
   const shadow = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsOfThisTurn(wakeAt, ["approval.judge.shadow"]);
+      const got = await rowsSinceCursor(cursor, ["approval.judge.shadow"]);
       return got.find((r) => r.detail?.tool === "create_routine");
     },
     label: "the detached approval.judge.shadow row to land",
     actions: ["approval.judge.shadow"],
-    wakeAt,
+    cursor,
     timeoutMs: 60_000,
   });
   expect(shadow.detail?.mode).toBe("shadow");
@@ -291,8 +288,8 @@ test("judgeMode off: the judge transport is never called, neither judge row is w
   verdictAnswer = "VERDICT: allow\nREASON: nothing should ever read this";
 
   const callsBefore = judgeCalls.length;
-  const { handle, wakeAt } = await driveProposal({ ids: "a4", prompt: "summarise the numbers every weekday morning (a4)" });
-  const rows = await approvalRows(wakeAt);
+  const { handle, cursor } = await driveProposal({ ids: "a4", prompt: "summarise the numbers every weekday morning (a4)" });
+  const rows = await approvalRows(cursor);
 
   expect(judgeCalls.length).toBe(callsBefore);
 

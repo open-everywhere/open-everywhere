@@ -6,13 +6,14 @@ import { __setStaleTurnParkMsForTest } from "../../../agent/model/scripted-model
 
 import {
   afterThisTest,
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   wrapToolExecute,
   type ScriptedStep,
@@ -21,6 +22,7 @@ import {
   armSettlement,
   consumeSettlement,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
 } from "../harness";
 
@@ -69,7 +71,7 @@ async function frozenSiloFilePath(silo: string, rel: string): Promise<string> {
 test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and both write fences hold for write_file and for bash", async () => {
   await bootAgent({ sharedSqlite: true });
 
-  const sinceIso = new Date(Date.now() - 1_000).toISOString();
+  const cursor = await auditCursor();
   const marker = `IT-MEMORY-FACT-${Date.now()}`;
   const content = `# Notes\n\n- ${marker}: integration coverage sentinel for OPE-551\n`;
   const shellMarker = `IT-MEMORY-SHELL-${Date.now()}`;
@@ -191,7 +193,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
   await waitFor(() => (existsSync(shellNotePath) ? true : undefined), "the delegated child's SHELL write into the owned silo to land on the DURABLE store");
   expect(readFileSync(shellNotePath, "utf-8")).toContain(shellMarker);
 
-  const writeRows = await readAuditRows({ actions: ["memory.write"], sinceIso });
+  const writeRows = await rowsSinceCursor(cursor, ["memory.write"]);
   const settled = writeRows.filter((r) => (r.detail as { outcome?: string; silo?: string }).outcome === "settled" && (r.detail as { silo?: string }).silo === "it-memory-brain");
   expect(settled.length).toBeGreaterThan(0);
 
@@ -292,7 +294,7 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
     }),
   );
 
-  const wakeAt = Date.now();
+  const purgeCursor = await auditCursor();
   await discordMentionWake({ channelId: IT_MEMORY_PURGE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please erase that test fact` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the purging worker's own terminal step" });
@@ -319,15 +321,19 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
-
-  const requested = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.requested", "approval.expired"], sinceIso, limit: 50 });
-    return got.find((r) => r.ts && new Date(r.ts).getTime() >= wakeAt && r.action === "approval.requested" && r.detail?.kind === "memory.purge");
-  }, "the approval.requested row for memory.purge to land");
-  expect(requested!.detail?.id).toBe(pendingId);
-  const expiredRows = await readAuditRows({ actions: ["approval.expired"], sinceIso, limit: 50 });
-  expect(expiredRows.filter((r) => new Date(r.ts).getTime() >= wakeAt).map((r) => r.detail?.cause)).toEqual([]);
+  const requested = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(purgeCursor, ["approval.requested", "approval.expired"], { limit: 50 });
+      return got.find((r) => r.action === "approval.requested" && r.detail?.kind === "memory.purge");
+    },
+    label: "the approval.requested row for memory.purge to land",
+    actions: ["approval.requested", "approval.expired"],
+    cursor: purgeCursor,
+    kind: "memory.purge",
+  });
+  expect(requested.detail?.id).toBe(pendingId);
+  const expiredRows = await rowsSinceCursor(purgeCursor, ["approval.expired"], { limit: 50 });
+  expect(expiredRows.map((r) => r.detail?.cause)).toEqual([]);
 
   expect(readFileSync(hostPath, "utf-8")).toContain("PURGE-TARGET-p1");
 
@@ -347,8 +353,7 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   expect(afterPurge).not.toContain(bullet);
   expect(afterPurge).toContain("# Purge fixture");
 
-  const purgeRows = await readAuditRows({ actions: ["memory.purge", "approval.approved"], sinceIso, limit: 50 });
-  const thisTurn = purgeRows.filter((r) => new Date(r.ts).getTime() >= wakeAt);
+  const thisTurn = await rowsSinceCursor(purgeCursor, ["memory.purge", "approval.approved"], { limit: 50 });
   expect(thisTurn.length).toBeGreaterThan(0);
   for (const row of thisTurn) {
     const blob = JSON.stringify(row.detail ?? {});
@@ -465,7 +470,7 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
     })),
   );
 
-  const sinceIso = new Date(Date.now() - 1_000).toISOString();
+  const cursor = await auditCursor();
   const stamp = Date.now();
   const marked = "provenance-fixture.md";
   const fenced = ["```sh", "- not a bullet, an argument", "```"].join("\n");
@@ -518,10 +523,15 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   expect(taintedResults.find((t) => t.name === "read_file_upload")?.isError).toBe(false);
   expect(taintedResults.find((t) => t.name === "write_file")?.isError).toBe(false);
 
-  const rows = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
-    return got.length > 0 ? got : undefined;
-  }, "the memory.provenance_marked audit row for the tainted worker turn");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, ["memory.provenance_marked"], { limit: 50 });
+      return got.length > 0 ? got : undefined;
+    },
+    label: "the memory.provenance_marked audit row for the tainted worker turn",
+    actions: ["memory.provenance_marked"],
+    cursor,
+  });
   expect(rows.length).toBe(1);
   const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: string[]; where?: string };
   expect(detail.bullets).toBe(2);
@@ -581,7 +591,7 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   });
   expect(clean.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file")?.isError).toBe(false);
 
-  const after = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
+  const after = await rowsSinceCursor(cursor, ["memory.provenance_marked"], { limit: 50 });
   expect(after.length).toBe(1);
   expect(JSON.stringify(after[0]!.detail)).not.toContain("clean-fixture.md");
 

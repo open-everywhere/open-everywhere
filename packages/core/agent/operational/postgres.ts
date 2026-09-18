@@ -1878,11 +1878,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         limitClause = `LIMIT $${params.length}`;
       }
       const { rows } = await client.query(
-        `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail
+        `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail
          FROM audit_entry ${clause} ORDER BY ts DESC, seq DESC ${limitClause}`,
         params,
       );
       return (rows as {
+        seq: number | string;
         ts: string;
         org_id: string;
         platform: string;
@@ -1892,6 +1893,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         action: string;
         detail: string | null;
       }[]).map((r) => ({
+        seq: Number(r.seq),
         ts: r.ts,
         org: r.org_id,
         platform: r.platform,

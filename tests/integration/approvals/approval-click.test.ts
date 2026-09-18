@@ -3,18 +3,20 @@ import { afterAll, expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
+  auditCursor,
   bootAgent,
   discordMentionWake,
   disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -134,7 +136,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
   });
   disposeLater(handle);
 
-  const wakeAt = Date.now();
+  const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
@@ -152,12 +154,13 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
 
   const requested = await waitForAuditRows({
     probe: async () => {
-      const rows = await rowsSince(wakeAt, ["approval.requested"]);
+      const rows = await rowsSinceCursor(wakeCursor, ["approval.requested"]);
       return rows.find((r) => r.detail?.kind === "routine.create");
     },
     label: "this turn's approval.requested row to land",
     actions: ["approval.requested"],
-    wakeAt,
+    cursor: wakeCursor,
+    kind: "routine.create",
     timeoutMs: 60_000,
   });
   const id = requested.detail?.id;
@@ -165,24 +168,19 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
   return id as string;
 }
 
-async function rowsSince(since: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const got = await readAuditRows({ actions, sinceIso: new Date(since - 1_000).toISOString(), limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= since);
-}
-
 const TERMINAL_ACTIONS = ["approval.approved", "approval.rejected", "approval.failed"] as const;
 
-async function decideRows(clickAt: number, id: string): Promise<AuditRow[]> {
+async function decideRows(clickCursor: AuditCursor, id: string): Promise<AuditRow[]> {
   const ACTIONS = [...TERMINAL_ACTIONS, "approval.denied", "approval.session_granted", "routine.create"];
   return waitForAuditRows({
     probe: async () => {
-      const got = await rowsSince(clickAt, ACTIONS);
+      const got = await rowsSinceCursor(clickCursor, ACTIONS);
       const terminal = got.some((r) => (TERMINAL_ACTIONS as readonly string[]).includes(r.action) && r.detail?.id === id);
       return terminal ? got : undefined;
     },
     label: `a terminal approval row for pending ${id}`,
     actions: ACTIONS,
-    wakeAt: clickAt,
+    cursor: clickCursor,
     timeoutMs: 60_000,
   });
 }
@@ -212,7 +210,7 @@ test("a signed Discord click approves a real proposal and the routine really arm
   expect(afterRefusal?.status).toBe("pending");
   expect(afterRefusal?.decidedBy).toBeNull();
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const ok = await postClick({ customId: approveId });
   expect(ok.status).toBe(200);
   const response = responseOf(ok.body);
@@ -221,7 +219,7 @@ test("a signed Discord click approves a real proposal and the routine really arm
   expect(response.content).toContain(`✅ Approved by <@${CLICKER_ID}>`);
   expect(response.content).toContain("armed");
 
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
   expect(approved).toBeDefined();
@@ -251,7 +249,7 @@ test("a reject click writes approval.rejected, strips the card, and arms NOTHING
   const PROMPT = "summarise the numbers every weekday morning (c2)";
   const id = await proposeRoutine("c2", PROMPT);
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const ok = await postClick({ customId: await customIdFor(id, "reject") });
   expect(ok.status).toBe(200);
   const response = responseOf(ok.body);
@@ -259,7 +257,7 @@ test("a reject click writes approval.rejected, strips the card, and arms NOTHING
   expect(response.components).toEqual([]);
   expect(response.content).toContain(`❌ Rejected by <@${CLICKER_ID}>`);
 
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
   const rejected = rows.find((r) => r.action === "approval.rejected" && r.detail?.id === id);
   expect(rejected).toBeDefined();
   expect(rejected!.detail?.kind).toBe("routine.create");
@@ -286,7 +284,7 @@ test("🔴 a verdict is final: an approve click on the row test ② REJECTED fli
   expect(before?.status).toBe("rejected");
   const decidedAtBefore = before?.decidedAt;
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const ok = await postClick({ customId: await customIdFor(id, "approve") });
   expect(ok.status).toBe(200);
   expect(responseOf(ok.body).type).toBe(6);
@@ -296,7 +294,7 @@ test("🔴 a verdict is final: an approve click on the row test ② REJECTED fli
   expect(after?.decidedBy).toBe(CLICKER_ID);
   expect(after?.decidedAt).toBe(decidedAtBefore);
 
-  const rows = await rowsSince(clickAt, [...TERMINAL_ACTIONS, "routine.create"]);
+  const rows = await rowsSinceCursor(clickCursor, [...TERMINAL_ACTIONS, "routine.create"]);
   expect(rows.filter((r) => r.detail?.id === id).map((r) => r.action)).toEqual([]);
   expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
 });
@@ -323,10 +321,10 @@ test("approve_session on a pr.open row writes the session memo and approval.sess
   const s = await getStore();
   expect(await s.getSessionApproval(org, sessionId, "pr.open", new Date().toISOString())).toBeNull();
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const ok = await postClick({ customId: await customIdFor(id, "approve_session") });
   expect(ok.status).toBe(200);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   const granted = rows.find((r) => r.action === "approval.session_granted" && r.detail?.id === id);
   expect(granted).toBeDefined();
@@ -373,11 +371,11 @@ test("approve_session on a routine.create row grants NOTHING and degrades to a o
     },
   });
 
-  const clickAt = Date.now();
+  const clickCursor = await auditCursor();
   const ok = await postClick({ customId: await customIdFor(id, "approve_session") });
   expect(ok.status).toBe(200);
   expect(responseOf(ok.body).type).toBe(7);
-  const rows = await decideRows(clickAt, id);
+  const rows = await decideRows(clickCursor, id);
 
   expect(rows.filter((r) => r.action === "approval.session_granted").map((r) => r.detail?.id)).toEqual([]);
   const s = await getStore();

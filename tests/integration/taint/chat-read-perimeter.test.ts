@@ -3,11 +3,12 @@ import { afterAll, expect, test } from "vitest";
 import {
   disposeLater,
   awaitTaskSettlement,
+  auditCursor,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   UNTRUSTED_CLOSE,
@@ -16,6 +17,7 @@ import {
   waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -65,7 +67,7 @@ async function armSeams(): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 async function driveArm(input: { ids: string; prompt: string }): Promise<Driven> {
@@ -83,7 +85,7 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please read and set up" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${input.ids} worker's own terminal step` });
@@ -101,50 +103,44 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-  return { handle, wakeAt };
-}
-
-async function rowsOfThisArm(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
-  const got = await readAuditRows({ actions, sinceIso, limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
+  return { handle, cursor };
 }
 
 const ROW_WAIT_MS = 45_000;
 
-async function armRows(wakeAt: number, want: { verdictRow: boolean; forwardRows: boolean }): Promise<AuditRow[]> {
+async function armRows(cursor: AuditCursor, want: { verdictRow: boolean; forwardRows: boolean }): Promise<AuditRow[]> {
   const ACTIONS = ["approval.chain", "taint.verdict", "taint.forward"];
   let rows = await waitForAuditRows({
     probe: async () => {
-      const got = await rowsOfThisArm(wakeAt, ACTIONS);
+      const got = await rowsSinceCursor(cursor, ACTIONS);
       return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
     },
     label: "this arm's create_routine approval.chain row to land",
     actions: ACTIONS,
-    wakeAt,
+    cursor,
   });
 
   if (want.verdictRow) {
     rows = await waitForAuditRows({
       probe: async () => {
-        const got = await rowsOfThisArm(wakeAt, ACTIONS);
+        const got = await rowsSinceCursor(cursor, ACTIONS);
         return readerVerdictRows(got).length > 0 ? got : undefined;
       },
       label: `this arm's ${READER_LABEL} taint.verdict row to land — the table wrote no divergence for this read`,
       actions: ACTIONS,
-      wakeAt,
+      cursor,
       timeoutMs: ROW_WAIT_MS,
     });
   }
   if (want.forwardRows) {
     rows = await waitForAuditRows({
       probe: async () => {
-        const got = await rowsOfThisArm(wakeAt, ACTIONS);
+        const got = await rowsSinceCursor(cursor, ACTIONS);
         return forwardLeg(got, "mark").length > 0 && forwardLeg(got, "adopt").length > 0 ? got : undefined;
       },
       label: "this arm's taint.forward mark AND adopt rows to land — the seat's taint did not propagate to its worker",
       actions: ACTIONS,
-      wakeAt,
+      cursor,
       timeoutMs: ROW_WAIT_MS,
     });
   }
@@ -205,13 +201,13 @@ test("a member-authored chat read is FENCED but does NOT mark: an over-taint tai
   authoredByNonMember = false;
   nonce = `oe-clean-${randomBytes(4).toString("hex")}`;
 
-  const { handle, wakeAt } = await driveArm({ ids: "cr1", prompt: `summarise the channel every weekday morning (${nonce})` });
+  const { handle, cursor } = await driveArm({ ids: "cr1", prompt: `summarise the channel every weekday morning (${nonce})` });
 
   expectReaderIsTheSeats(handle);
 
   expectBodyFenced(handle);
 
-  const rows = await armRows(wakeAt, { verdictRow: true, forwardRows: false });
+  const rows = await armRows(cursor, { verdictRow: true, forwardRows: false });
 
   const verdicts = readerVerdictRows(rows);
   expect(verdicts.length).toBe(1);
@@ -245,13 +241,13 @@ test("the same read returning a REFUTED non-member's message marks the SEAT's tu
   authoredByNonMember = true;
   nonce = `oe-marked-${randomBytes(4).toString("hex")}`;
 
-  const { handle, wakeAt } = await driveArm({ ids: "cr2", prompt: `summarise the channel every weekday evening (${nonce})` });
+  const { handle, cursor } = await driveArm({ ids: "cr2", prompt: `summarise the channel every weekday evening (${nonce})` });
 
   expectReaderIsTheSeats(handle);
 
   expectBodyFenced(handle);
 
-  const rows = await armRows(wakeAt, { verdictRow: false, forwardRows: true });
+  const rows = await armRows(cursor, { verdictRow: false, forwardRows: true });
 
   const marked = forwardLeg(rows, "mark");
   const seat = seatSessionId(handle);

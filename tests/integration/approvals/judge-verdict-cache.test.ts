@@ -1,18 +1,20 @@
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
   type ScriptedStep,
@@ -66,7 +68,7 @@ async function armEnforce(): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 async function driveProposals(input: { ids: string; steps: readonly ScriptedStep[] }): Promise<Driven> {
@@ -82,7 +84,7 @@ async function driveProposals(input: { ids: string; steps: readonly ScriptedStep
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routines" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, {
@@ -104,7 +106,7 @@ async function driveProposals(input: { ids: string; steps: readonly ScriptedStep
 
   const sessions = new Set(handle.requests.filter((r) => r.role === "child").map((r) => String(r.sessionId)));
   expect(sessions.size).toBe(1);
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
 function proposeStep(id: string, prompt: string): ScriptedStep {
@@ -125,22 +127,17 @@ const APPROVAL_ACTIONS = [
   "approval.denied",
 ] as const;
 
-async function rowsOfThisTurn(wakeAt: number, actions: readonly string[]): Promise<AuditRow[]> {
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
-  const got = await readAuditRows({ actions, sinceIso, limit: 200 });
-  return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
-}
-
-async function approvalRows(wakeAt: number, count: number): Promise<AuditRow[]> {
+async function approvalRows(cursor: AuditCursor, count: number): Promise<AuditRow[]> {
   return waitForAuditRows({
     probe: async () => {
-      const got = await rowsOfThisTurn(wakeAt, APPROVAL_ACTIONS);
+      const got = await rowsSinceCursor(cursor, APPROVAL_ACTIONS);
       const judged = got.filter((r) => r.action === "approval.judge.verdict" && r.detail?.tool === "create_routine");
       return judged.length >= count ? got : undefined;
     },
     label: `this turn's ${count} approval.judge.verdict row(s) for create_routine to land`,
     actions: APPROVAL_ACTIONS,
-    wakeAt,
+    cursor,
+    kind: "routine.create",
   });
 }
 
@@ -169,11 +166,11 @@ test("the enforce cache answers a second proposal in the SAME worker session: so
   verdictWord = "allow";
   const before = reasons.length;
 
-  const { handle, wakeAt } = await driveProposals({
+  const { handle, cursor } = await driveProposals({
     ids: "c1",
     steps: [proposeStep("c1-r1", "summarise the numbers every weekday morning (c1-a)"), proposeStep("c1-r2", "summarise the numbers every weekday morning (c1-b)")],
   });
-  const rows = await approvalRows(wakeAt, 2);
+  const rows = await approvalRows(cursor, 2);
   const judged = judgeRows(rows);
   const first = `consult ${before + 1}`;
 
@@ -216,11 +213,11 @@ test("the enforce cache does NOT cross sessions: a second delegation's worker co
   verdictWord = "allow";
   const before = reasons.length;
 
-  const { handle, wakeAt } = await driveProposals({
+  const { handle, cursor } = await driveProposals({
     ids: "c2",
     steps: [proposeStep("c2-r1", "summarise the numbers every weekday morning (c2-a)")],
   });
-  const rows = await approvalRows(wakeAt, 1);
+  const rows = await approvalRows(cursor, 1);
   const judged = judgeRows(rows);
   const fresh = `consult ${before + 1}`;
 
@@ -245,7 +242,7 @@ test("untrusted content mid-turn DROPS the cached allow: the same session re-con
   verdictWord = "allow";
   const before = reasons.length;
 
-  const { handle, wakeAt } = await driveProposals({
+  const { handle, cursor } = await driveProposals({
     ids: "c3",
     steps: [
       proposeStep("c3-r1", "summarise the numbers every weekday morning (c3-a)"),
@@ -253,7 +250,7 @@ test("untrusted content mid-turn DROPS the cached allow: the same session re-con
       proposeStep("c3-r2", "summarise the numbers every weekday morning (c3-b)"),
     ],
   });
-  const rows = await approvalRows(wakeAt, 2);
+  const rows = await approvalRows(cursor, 2);
   const judged = judgeRows(rows);
   const clean = `consult ${before + 1}`;
   const reJudged = `consult ${before + 2}`;

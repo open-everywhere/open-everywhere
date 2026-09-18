@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
 import {
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   disposeLater,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   slackDmWake,
   slackMentionWake,
@@ -16,6 +17,7 @@ import {
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -84,8 +86,8 @@ function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {
   return out;
 }
 
-async function notionMintRows(sinceIso: string): Promise<readonly AuditRow[]> {
-  const rows = await readAuditRows({ actions: ["connector.mint"], sinceIso });
+async function notionMintRows(cursor: AuditCursor): Promise<readonly AuditRow[]> {
+  const rows = await rowsSinceCursor(cursor, ["connector.mint"]);
   return rows.filter((r) => r.detail?.connector === "notion");
 }
 
@@ -151,33 +153,33 @@ test("a slackDmWake turn reaches the connector plane as mode \"dm\"; the same dr
   try {
     await armUserPrincipal(true);
 
-    const dmSince = new Date().toISOString();
+    const dmCursor = await auditCursor();
     await driveConnectorTurn({ label: "dm-ingress", origin: "dm" });
     const dmUse = await waitForAuditRows({
       probe: async () => {
-        const rows = await readAuditRows({ actions: ["connector.use"], sinceIso: dmSince });
+        const rows = await rowsSinceCursor(dmCursor, ["connector.use"]);
         return rows.find((r) => r.detail?.connection === "notion");
       },
       label: "the DM turn's own connector.use row",
       actions: ["connector.use"],
-      wakeAt: Date.parse(dmSince),
+      cursor: dmCursor,
     });
     expect(dmUse.detail?.mode, "the DM wake did not reach the connector plane as a DM — the helper produced a channel binding").toBe("dm");
 
-    const channelSince = new Date().toISOString();
+    const channelCursor = await auditCursor();
     const channelHandle = await driveConnectorTurn({ label: "channel-control", origin: "channel" });
     const refused = await waitForAuditRows({
       probe: async () => {
-        const rows = await readAuditRows({ actions: ["connector.refused"], sinceIso: channelSince });
+        const rows = await rowsSinceCursor(channelCursor, ["connector.refused"]);
         return rows.find((r) => r.detail?.connection === "notion");
       },
       label: "the channel turn's own connector.refused row",
       actions: ["connector.refused"],
-      wakeAt: Date.parse(channelSince),
+      cursor: channelCursor,
     });
     expect(refused.detail?.reason, "the channel control was refused for some other reason than the missing grant").toBe("ungranted");
     expect(
-      (await readAuditRows({ actions: ["connector.use"], sinceIso: channelSince })).filter((r) => r.detail?.connection === "notion"),
+      (await rowsSinceCursor(channelCursor, ["connector.use"])).filter((r) => r.detail?.connection === "notion"),
       "a CHANNEL-origin turn reached the notion connector's credential gate — the DM universe is not confining the principal binding",
     ).toEqual([]);
     expect(
@@ -195,7 +197,7 @@ test("connectors.userPrincipal ON selects userAwareProviderToken: the DM turn ta
   const stub = armSlackStub();
   try {
     await armUserPrincipal(true);
-    const sinceIso = new Date().toISOString();
+    const cursor = await auditCursor();
     const handle = await driveConnectorTurn({ label: "arm-on", origin: "dm" });
 
     const output = connectionSearchOutputs(handle).join("\n");
@@ -209,12 +211,12 @@ test("connectors.userPrincipal ON selects userAwareProviderToken: the DM turn ta
 
     const mints = await waitForAuditRows({
       probe: async () => {
-        const rows = await notionMintRows(sinceIso);
+        const rows = await notionMintRows(cursor);
         return rows.length > 0 ? rows : undefined;
       },
       label: "the ON arm's connector.mint row",
       actions: ["connector.mint"],
-      wakeAt: Date.parse(sinceIso),
+      cursor,
     });
     expect(mints.map((r) => r.detail?.subject), "the ON arm minted for something other than the user").toEqual(mints.map(() => "user"));
   } finally {
@@ -228,7 +230,7 @@ test("connectors.userPrincipal OFF selects appProviderToken: the SAME DM turn re
   const stub = armSlackStub();
   try {
     await armUserPrincipal(false);
-    const sinceIso = new Date().toISOString();
+    const cursor = await auditCursor();
     const handle = await driveConnectorTurn({ label: "arm-off", origin: "dm" });
 
     const output = connectionSearchOutputs(handle).join("\n");
@@ -240,7 +242,7 @@ test("connectors.userPrincipal OFF selects appProviderToken: the SAME DM turn re
       "no user-auth-flow provider is registered",
     );
 
-    expect(await notionMintRows(sinceIso), "the OFF arm minted a per-user token with connectors.userPrincipal off").toEqual([]);
+    expect(await notionMintRows(cursor), "the OFF arm minted a per-user token with connectors.userPrincipal off").toEqual([]);
   } finally {
     stub.uninstall();
   }

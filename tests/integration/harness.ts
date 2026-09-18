@@ -6,7 +6,17 @@ import { pathToFileURL } from "node:url";
 import { afterEach } from "vitest";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
-import { AUDIT_DUMP_LIMIT, AUDIT_DUMP_LOOKBACK_MS, formatAuditTimeoutDump, type AuditDumpRow } from "./audit-timeout-dump";
+import { AUDIT_DUMP_LIMIT, formatAuditTimeoutDump, type AuditDumpRow, type AuditDumpPendingRow } from "./audit-timeout-dump";
+import {
+  AUDIT_CURSOR_LOOKBACK_MS,
+  AUDIT_CURSOR_MARK_LIMIT,
+  auditCursorSinceIso,
+  cursorClockDriftMs,
+  markFromRows,
+  selectRowsAfterCursor,
+  type AuditCursor,
+} from "./audit-cursor";
+export type { AuditCursor } from "./audit-cursor";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
 import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
@@ -1001,6 +1011,7 @@ export async function teamsActivityPost(input: {
 }
 
 export interface AuditRow {
+  readonly seq: number;
   readonly ts: string;
   readonly platform: string;
   readonly workspace: string;
@@ -1022,36 +1033,109 @@ export async function readAuditRows(input: { actions: readonly string[]; sinceIs
   return parsed.entries ?? [];
 }
 
-export async function auditTimeoutDump(input: { actions: readonly string[]; wakeAt: number }): Promise<string> {
-  const sinceIso = new Date(input.wakeAt - AUDIT_DUMP_LOOKBACK_MS).toISOString();
-  const untilIso = new Date().toISOString();
+export async function auditCursor(): Promise<AuditCursor> {
+  const wallMs = Date.now();
+  const monoMs = performance.now();
+  if (booted === undefined) throw new Error("integration harness: auditCursor before bootAgent.");
+  const { buildAuditQuery } = await import("../../packages/core/scripts/e2e/audit-read");
+  const q = buildAuditQuery({ sinceIso: new Date(0).toISOString(), limit: AUDIT_CURSOR_MARK_LIMIT });
+  const res = await fetch(`${booted.base}/control/v1/audit?${q}`, {
+    headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`integration harness: the cursor read failed ${res.status} — a wait anchored on a guessed cursor would select an earlier test's rows.`);
+  const parsed = (await res.json()) as { entries?: { seq?: number }[] };
+  return { mark: markFromRows(parsed.entries ?? []), wallMs, monoMs };
+}
+
+export async function rowsSinceCursor(cursor: AuditCursor, actions: readonly string[], opts?: { readonly limit?: number }): Promise<AuditRow[]> {
+  const got = await readAuditRows({ actions, sinceIso: auditCursorSinceIso(cursor), limit: opts?.limit ?? 200 });
+  return selectRowsAfterCursor(got, cursor);
+}
+
+async function pendingRowsFor(scopeKey?: string, kind?: string): Promise<AuditDumpPendingRow[]> {
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+  const binding = await import("@open-everywhere/core/agent/identity/binding.js");
+  const rows = await provider.getOperationalStore().listPendingActions(binding.deploymentOrg());
+  return rows
+    .filter((r) => (scopeKey === undefined || r.scopeKey === scopeKey) && (kind === undefined || r.kind === kind))
+    .map((r) => ({ id: r.id, kind: r.kind, scopeKey: r.scopeKey, status: r.status, createdAt: r.createdAt }));
+}
+
+async function openedOperationalDbPath(): Promise<string> {
+  try {
+    const sqlite = await import("@open-everywhere/core/agent/operational/sqlite.js");
+    return sqlite._openedOperationalDbPathForTest() ?? "<no sqlite handle open (PGlite floor, or nothing read yet)>";
+  } catch (err) {
+    return `<unreadable: ${String(err)}>`;
+  }
+}
+
+export async function auditTimeoutDump(input: {
+  actions: readonly string[];
+  cursor: AuditCursor;
+  scopeKey?: string;
+  kind?: string;
+}): Promise<string> {
+  const sinceIso = new Date(input.cursor.wallMs - 2 * AUDIT_CURSOR_LOOKBACK_MS).toISOString();
+  const driftMs = cursorClockDriftMs(input.cursor, Date.now(), performance.now());
   try {
     if (booted === undefined) throw new Error("no booted host");
     const { buildAuditQuery } = await import("../../packages/core/scripts/e2e/audit-read");
-    const q = buildAuditQuery({ sinceIso, untilIso, actions: [...input.actions], limit: AUDIT_DUMP_LIMIT });
-    const res = await fetch(`${booted.base}/control/v1/audit?${q}`, {
-      headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) throw new Error(`audit re-read returned ${res.status}`);
-    const parsed = (await res.json()) as {
-      entries?: AuditDumpRow[];
-      capped?: boolean;
-      scanTruncated?: boolean;
-      scanned?: number;
+    const read = async (q: string) => {
+      const res = await fetch(`${booted!.base}/control/v1/audit?${q}`, {
+        headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`audit re-read returned ${res.status}`);
+      return (await res.json()) as {
+        entries?: AuditDumpRow[];
+        capped?: boolean;
+        scanTruncated?: boolean;
+        scanned?: number;
+      };
     };
+    const parsed = await read(buildAuditQuery({ sinceIso, actions: [...input.actions], limit: AUDIT_DUMP_LIMIT }));
+    let scopeRows: AuditDumpRow[] | undefined;
+    let scopeError: string | undefined;
+    let pending: AuditDumpPendingRow[] | undefined;
+    let pendingError: string | undefined;
+    if (input.scopeKey !== undefined || input.kind !== undefined) {
+      const parts = input.scopeKey === undefined ? [] : input.scopeKey.split("/");
+      const narrow = parts.length === 3 && parts.every((p) => p.length > 0) ? { platform: parts[0]!, workspace: parts[1]!, surface: parts[2]! } : {};
+      try {
+        const scoped = await read(buildAuditQuery({ sinceIso, limit: AUDIT_DUMP_LIMIT, ...narrow }));
+        scopeRows = scoped.entries ?? [];
+      } catch (err) {
+        scopeError = String(err);
+      }
+      try {
+        pending = await pendingRowsFor(input.scopeKey, input.kind);
+      } catch (err) {
+        pendingError = String(err);
+      }
+    }
     return formatAuditTimeoutDump({
       actions: input.actions,
       sinceIso,
-      untilIso,
       limit: AUDIT_DUMP_LIMIT,
       rows: parsed.entries ?? [],
+      cursorMark: input.cursor.mark,
+      cursorWallIso: new Date(input.cursor.wallMs).toISOString(),
+      clockDriftMs: driftMs,
+      sqlitePath: await openedOperationalDbPath(),
+      ...(input.scopeKey !== undefined ? { scopeKey: input.scopeKey } : {}),
+      ...(input.kind !== undefined ? { kind: input.kind } : {}),
+      ...(scopeRows !== undefined ? { scopeRows } : {}),
+      ...(scopeError !== undefined ? { scopeError } : {}),
+      ...(pending !== undefined ? { pending } : {}),
+      ...(pendingError !== undefined ? { pendingError } : {}),
       ...(parsed.capped !== undefined ? { capped: parsed.capped } : {}),
       ...(parsed.scanTruncated !== undefined ? { scanTruncated: parsed.scanTruncated } : {}),
       ...(parsed.scanned !== undefined ? { scanned: parsed.scanned } : {}),
     });
   } catch (err) {
-    return `--- OPE-1933 audit diagnostic UNAVAILABLE: the widened re-read (${sinceIso} … ${untilIso}) failed: ${String(err)} ---`;
+    return `--- OPE-1933 audit diagnostic UNAVAILABLE: the widened re-read (since ${sinceIso}, unbounded above, clock drift ${driftMs} ms) failed: ${String(err)} ---`;
   }
 }
 
@@ -1059,7 +1143,9 @@ export async function waitForAuditRows<T>(input: {
   readonly probe: () => T | undefined | Promise<T | undefined>;
   readonly label: string;
   readonly actions: readonly string[];
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
+  readonly scopeKey?: string;
+  readonly kind?: string;
   readonly timeoutMs?: number;
 }): Promise<T> {
   try {
@@ -1067,7 +1153,12 @@ export async function waitForAuditRows<T>(input: {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!message.startsWith(WAIT_TIMEOUT_PREFIX)) throw err;
-    const dump = await auditTimeoutDump({ actions: input.actions, wakeAt: input.wakeAt });
+    const dump = await auditTimeoutDump({
+      actions: input.actions,
+      cursor: input.cursor,
+      ...(input.scopeKey !== undefined ? { scopeKey: input.scopeKey } : {}),
+      ...(input.kind !== undefined ? { kind: input.kind } : {}),
+    });
     throw new Error(`${message}\n${dump}`);
   }
 }

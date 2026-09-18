@@ -1,8 +1,8 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { getSettings } from "../settings/settings.js";
-import type { AuditEntry, AuditInput, AuditFilter } from "../operational/store.js";
+import type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
 
-export type { AuditEntry, AuditInput, AuditFilter } from "../operational/store.js";
+export type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
 
 let auditDropCounter: ((action: string, platform: string) => void) | null = null;
 export function registerAuditDropCounter(fn: (action: string, platform: string) => void): void {
@@ -30,7 +30,7 @@ export function auditSilencesEnabled(): boolean {
   return getSettings().audit.silences;
 }
 
-export async function readAudit(filter: AuditFilter): Promise<AuditEntry[]> {
+export async function readAudit(filter: AuditFilter): Promise<AuditReadRow[]> {
   return getOperationalStore().readAudit(filter);
 }
 

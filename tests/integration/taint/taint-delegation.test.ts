@@ -1,19 +1,21 @@
 import { expect, test } from "vitest";
 import {
   afterThisTest,
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   redeliveryRecoveryNote,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
 } from "../harness";
@@ -67,7 +69,7 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
     }),
   );
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please handle the upload" });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's DISPATCH terminal step to be served");
@@ -173,10 +175,16 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
-  const rows = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.chain", "approval.judge.verdict", "reply.post", "taint.forward"], sinceIso });
-    return got.filter((r) => r.action === "reply.post").length >= 2 ? got : undefined;
-  }, "both turns' audit rows to land");
+  const ROWS_ACTIONS = ["approval.chain", "approval.judge.verdict", "reply.post", "taint.forward"];
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, ROWS_ACTIONS);
+      return got.filter((r) => r.action === "reply.post").length >= 2 ? got : undefined;
+    },
+    label: "both turns' audit rows to land",
+    actions: ROWS_ACTIONS,
+    cursor,
+  });
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -238,8 +246,7 @@ test("negative control: the same run without the upload — no refusal, no marki
     }),
   );
 
-  const wakeAt = Date.now();
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set things up" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: "the clean worker's own terminal step" });
@@ -267,13 +274,13 @@ test("negative control: the same run without the upload — no refusal, no marki
   expect(webhookText).not.toContain("external content");
   expect(webhookText).toContain("config-as-code webhook declarations aren't enabled");
 
-  const chain = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.chain"], sinceIso });
-    return got
-      .filter((r) => r.detail?.tool === "create_routine")
-      .sort((a, b) => (a.ts < b.ts ? 1 : -1))
-      .find((r) => new Date(r.ts).getTime() >= wakeAt);
-  }, "the clean chain row to land");
+  const chain = await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(cursor, ["approval.chain"])).find((r) => r.detail?.tool === "create_routine"),
+    label: "the clean chain row to land",
+    actions: ["approval.chain"],
+    cursor,
+    kind: "routine.create",
+  });
   expect(chain.detail?.tainted).toBe(false);
   expect(chain.detail?.registryVerdict).toBe("ask");
 
@@ -282,6 +289,6 @@ test("negative control: the same run without the upload — no refusal, no marki
   expect(parentTerminal!.tools).toContain("agent");
   expect(parentTerminal!.toolResults.some((t) => t.name === "agent" && !t.isError)).toBe(true);
 
-  const forwardRows = await readAuditRows({ actions: ["taint.forward"], sinceIso });
-  expect(forwardRows.filter((r) => new Date(r.ts).getTime() >= wakeAt).map((r) => r.detail?.leg)).toEqual([]);
+  const forwardRows = await rowsSinceCursor(cursor, ["taint.forward"]);
+  expect(forwardRows.map((r) => r.detail?.leg)).toEqual([]);
 });

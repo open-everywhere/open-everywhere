@@ -8,7 +8,7 @@ import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { describeBound } from "../routines/bound.js";
 import { describeStall } from "../routines/stall.js";
-import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
+import { readAudit, auditRoot, type AuditFilter, type AuditReadRow } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, windowIdFor, windowModeFor, resolveDomainForChannel, domainRoster } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
@@ -157,7 +157,7 @@ export interface AuditView {
   readonly root: string;
   readonly filter: AuditFilter;
   readonly capped: boolean;
-  readonly entries: readonly AuditEntry[];
+  readonly entries: readonly AuditReadRow[];
 }
 
 export async function auditView(filter: AuditFilter): Promise<AuditView> {

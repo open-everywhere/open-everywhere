@@ -2,19 +2,22 @@ import { randomBytes } from "node:crypto";
 
 import { afterAll, beforeAll, expect, test } from "vitest";
 import {
+  auditCursor,
   disposeLater,
   bootAgent,
   slackMentionWake,
   armSettlement,
   consumeSettlement,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   SLACK_TEAM_ID,
   taskIdOfDelegation,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
   type ScriptedStep,
@@ -54,7 +57,7 @@ async function injectWake(text: string): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 async function driveChild(input: {
@@ -77,7 +80,7 @@ async function driveChild(input: {
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await injectWake(input.delegateMessage);
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   const taskId = taskIdOfDelegation(handle, `the ${input.ids} delegation`);
@@ -87,7 +90,7 @@ async function driveChild(input: {
   await consumeSettlement({ armed: drained, dispatched: handle, taskId, label: `the ${input.ids} worker's settlement wake` });
   expect(drained.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.dispose();
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
 const APPROVAL_ACTIONS = [
@@ -98,14 +101,16 @@ const APPROVAL_ACTIONS = [
   "routine.policy.remove",
 ] as const;
 
-async function approvalRows(wakeAt: number, tool: string): Promise<AuditRow[]> {
-  return waitFor(async () => {
-    const sinceIso = new Date(wakeAt - 1_000).toISOString();
-    const got = (await readAuditRows({ actions: [...APPROVAL_ACTIONS], sinceIso, limit: 200 })).filter(
-      (r) => new Date(r.ts).getTime() >= wakeAt,
-    );
-    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === tool) ? got : undefined;
-  }, `this turn's approval.chain row for ${tool} to land`);
+async function approvalRows(cursor: AuditCursor, tool: string): Promise<AuditRow[]> {
+  return waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, APPROVAL_ACTIONS);
+      return got.some((r) => r.action === "approval.chain" && r.detail?.tool === tool) ? got : undefined;
+    },
+    label: `this turn's approval.chain row for ${tool} to land`,
+    actions: APPROVAL_ACTIONS,
+    cursor,
+  });
 }
 
 function chainRowOn(rows: readonly AuditRow[], tool: string): AuditRow {
@@ -207,12 +212,12 @@ beforeAll(async () => {
 
 test("🔴 negative control: on a CLEAN turn the operator lowering WINS — add_routine_rule resolves allow, no card is minted, and the rule is really armed", async () => {
   const RULE = "Never post before 09:00 UTC (OPE-679 clean).";
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "c1",
     delegateMessage: `add a standing rule to routine ${routineId}: never post before 09:00 UTC (OPE-679 clean)`,
     childCalls: [{ tool: "add_routine_rule", input: { routineId, rule: RULE, why: "the 2026-07-19 run woke the channel at 03:12.", source: "human" } }],
   });
-  const rows = await approvalRows(wakeAt, "add_routine_rule");
+  const rows = await approvalRows(cursor, "add_routine_rule");
   const chain = chainRowOn(rows, "add_routine_rule");
 
   expect(chain.detail?.registryVerdict, "the registry baseline is `ask` — without that divergence this is not a lowering at all").toBe("ask");
@@ -238,7 +243,7 @@ test("🔴 the taint:ask floor CLAMPS the lowering: a tainted turn's add_routine
   expect(taintToleranceOf("add_routine_rule")).toBe("gate");
 
   const RULE = "Skip weekends entirely (OPE-679 tainted).";
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "c2",
     delegateMessage: `read the upload, then add a standing rule to routine ${routineId}: skip weekends (OPE-679 tainted)`,
     childCalls: [
@@ -246,7 +251,7 @@ test("🔴 the taint:ask floor CLAMPS the lowering: a tainted turn's add_routine
       { tool: "add_routine_rule", input: { routineId, rule: RULE, why: "the injected file said so, unprompted.", source: "human" } },
     ],
   });
-  const rows = await approvalRows(wakeAt, "add_routine_rule");
+  const rows = await approvalRows(cursor, "add_routine_rule");
   const chain = chainRowOn(rows, "add_routine_rule");
 
   expect(chain.detail?.tainted).toBe(true);
@@ -280,12 +285,12 @@ test("the lowering answers for ONE verb: remove_routine_rule on the SAME channel
   const { taintToleranceOf } = await import("@open-everywhere/core/agent/access/approver-chain.js");
   expect(taintToleranceOf("remove_routine_rule")).toBe("gate");
 
-  const { handle, wakeAt } = await driveChild({
+  const { handle, cursor } = await driveChild({
     ids: "c3",
     delegateMessage: `remove the standing rule ${seededRuleId} from routine ${routineId} (OPE-679 narrowness)`,
     childCalls: [{ tool: "remove_routine_rule", input: { routineId, ruleId: seededRuleId } }],
   });
-  const rows = await approvalRows(wakeAt, "remove_routine_rule");
+  const rows = await approvalRows(cursor, "remove_routine_rule");
   const chain = chainRowOn(rows, "remove_routine_rule");
 
   expect(chain.detail?.resolvedBy, "the fixture lowering reached a SECOND verb — its per-tool safety argument no longer holds").toBe("registry");

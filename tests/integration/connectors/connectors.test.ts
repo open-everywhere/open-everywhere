@@ -2,20 +2,23 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
   afterThisTest,
+  auditCursor,
   disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   wrapToolExecute,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -86,7 +89,7 @@ test("connection_search mounts on the delegated worker; the lean conversational 
 async function driveConnectionSearchThenPropose(input: {
   readonly ids: string;
   readonly searchResult: unknown;
-}): Promise<{ handle: ScriptedHandle; wakeAt: number }> {
+}): Promise<{ handle: ScriptedHandle; cursor: AuditCursor }> {
   afterThisTest(wrapToolExecute("connection_search", async () => input.searchResult));
 
   const handle = disposeLater(
@@ -114,7 +117,7 @@ async function driveConnectionSearchThenPropose(input: {
     }),
   );
 
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please search notion then set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: `the ${input.ids} worker's own terminal step` });
@@ -128,7 +131,7 @@ async function driveConnectionSearchThenPropose(input: {
   });
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
 function assertConnectionSearchFenced(handle: ScriptedHandle): void {
@@ -142,17 +145,23 @@ function assertConnectionSearchFenced(handle: ScriptedHandle): void {
   expect(close).toBeGreaterThan(open);
 }
 
-async function createRoutineChainRow(wakeAt: number): Promise<AuditRow> {
-  return waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.chain"], sinceIso: new Date(wakeAt - 1_000).toISOString(), limit: 50 });
-    return got.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine" && new Date(r.ts).getTime() >= wakeAt);
-  }, "this turn's create_routine chain row to land");
+async function createRoutineChainRow(cursor: AuditCursor): Promise<AuditRow> {
+  return waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, ["approval.chain"], { limit: 50 });
+      return got.find((r) => r.detail?.tool === "create_routine");
+    },
+    label: "this turn's create_routine chain row to land",
+    actions: ["approval.chain"],
+    cursor,
+    kind: "routine.create",
+  });
 }
 
 test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the turn", async () => {
   await bootAgent();
 
-  const { handle, wakeAt } = await driveConnectionSearchThenPropose({
+  const { handle, cursor } = await driveConnectionSearchThenPropose({
     ids: "b1",
     searchResult: [
       { connection: "notion", tool: "search", qualifiedName: "notion__search", description: "Search the team's Notion workspace" },
@@ -161,7 +170,7 @@ test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the tur
 
   assertConnectionSearchFenced(handle);
 
-  const chain = await createRoutineChainRow(wakeAt);
+  const chain = await createRoutineChainRow(cursor);
   expect(chain.detail?.tainted).toBe(true);
   expect(chain.detail?.taintKinds).toEqual(["connector"]);
 });
@@ -169,14 +178,14 @@ test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the tur
 test("C — negative control: an eve-authored STATUS row (needsAuthorization) fences but does NOT taint", async () => {
   await bootAgent();
 
-  const { handle, wakeAt } = await driveConnectionSearchThenPropose({
+  const { handle, cursor } = await driveConnectionSearchThenPropose({
     ids: "c1",
     searchResult: [{ connection: "notion", description: "Notion workspace (MCP)", needsAuthorization: true }],
   });
 
   assertConnectionSearchFenced(handle);
 
-  const chain = await createRoutineChainRow(wakeAt);
+  const chain = await createRoutineChainRow(cursor);
   expect(chain.detail?.tainted).toBe(false);
   expect(chain.detail?.taintKinds ?? []).toEqual([]);
 });
@@ -215,8 +224,7 @@ test("D — request_access grant-connector for an ungranted connector mints a re
     ],
   });
 
-  const wakeAt = Date.now();
-  const sinceIso = new Date(wakeAt - 1_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please request the notion connector here" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the requesting worker's own terminal step" });
@@ -239,10 +247,16 @@ test("D — request_access grant-connector for an ungranted connector mints a re
   expect(output.autoApproved).toBeUndefined();
   expect(typeof output.pendingId).toBe("string");
 
-  const rows = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.requested", "approval.expired"], sinceIso, limit: 50 });
-    return got.some((r) => r.action === "approval.requested" && r.detail?.kind === "access.request") ? got : undefined;
-  }, "the access.request approval.requested row to land");
+  const rows = await waitForAuditRows({
+    probe: async () => {
+      const got = await rowsSinceCursor(cursor, ["approval.requested", "approval.expired"], { limit: 50 });
+      return got.some((r) => r.action === "approval.requested" && r.detail?.kind === "access.request") ? got : undefined;
+    },
+    label: "the access.request approval.requested row to land",
+    actions: ["approval.requested", "approval.expired"],
+    cursor,
+    kind: "access.request",
+  });
   const requested = rows.find((r) => r.action === "approval.requested" && r.detail?.kind === "access.request");
   expect(requested).toBeDefined();
   expect(requested!.detail?.id).toBe(output.pendingId);

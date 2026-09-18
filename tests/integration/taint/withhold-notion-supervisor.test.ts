@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   disposeLater,
   bootAgent,
   installNotionApiStub,
@@ -8,12 +9,14 @@ import {
   NOTION_PAGE_ID_2,
   NOTION_WORKSPACE_ID,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
   UNTRUSTED_OPEN,
   UNTRUSTED_CLOSE,
   waitFor,
+  waitForAuditRows,
+  type AuditCursor,
   type NotionApiCall,
   type ScriptedHandle,
 } from "../harness";
@@ -122,7 +125,7 @@ async function armAuthorTrust(): Promise<void> {
 
 interface Driven {
   readonly handle: ScriptedHandle;
-  readonly wakeAt: number;
+  readonly cursor: AuditCursor;
 }
 
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
@@ -141,13 +144,13 @@ async function driveNotionWake(input: { readonly ids: string; readonly pageId: s
     triggerId,
     comment({ id: triggerId, authorId: TRIGGER_AUTHOR_ID, text: `stand-up summary each weekday (${input.ids})`, sentAt: new Date().toISOString(), pageId: input.pageId }),
   );
-  const wakeAt = Date.now();
+  const cursor = await auditCursor();
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: triggerId });
   expect(res.status, `the Notion front refused the delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the Notion ambient wake's terminal step to be served");
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  return { handle, wakeAt };
+  return { handle, cursor };
 }
 
 function wakePrompt(handle: ScriptedHandle): string {
@@ -172,12 +175,14 @@ function expectElementFenced(element: string): void {
   expect(close, "no untrusted-data close tag inside this backscroll element").toBeGreaterThan(open);
 }
 
-async function chainRow(wakeAt: number) {
-  return waitFor(async () => {
-    const sinceIso = new Date(wakeAt - 1_000).toISOString();
-    const got = await readAuditRows({ actions: ["approval.chain"], sinceIso, limit: 200 });
-    return got.find((r) => new Date(r.ts).getTime() >= wakeAt && r.detail?.tool === "create_routine");
-  }, "this arm's approval.chain row for create_routine");
+async function chainRow(cursor: AuditCursor) {
+  return waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(cursor, ["approval.chain"])).find((r) => r.detail?.tool === "create_routine"),
+    label: "this arm's approval.chain row for create_routine",
+    actions: ["approval.chain"],
+    cursor,
+    kind: "routine.create",
+  });
 }
 
 test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment reaches the model as the arrived-marker, and a member's comment in the same wake does not", async () => {
@@ -186,7 +191,7 @@ test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment rea
   await setAuthorGrain("withhold");
   const nonce = `oe-withhold-${randomBytes(4).toString("hex")}`;
 
-  const { handle, wakeAt } = await driveNotionWake({ ids: "w1", pageId: NOTION_PAGE_ID, prompt: `stand-up summary (${nonce})` });
+  const { handle, cursor } = await driveNotionWake({ ids: "w1", pageId: NOTION_PAGE_ID, prompt: `stand-up summary (${nonce})` });
   const prompt = wakePrompt(handle);
 
   const listCalls = stub!.calls.filter((c) => c.method === "GET" && c.path === "/v1/comments");
@@ -203,7 +208,7 @@ test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment rea
   expectElementFenced(refutedElement);
   expectElementFenced(memberElement);
 
-  const chain = await chainRow(wakeAt);
+  const chain = await chainRow(cursor);
   expect(chain.detail?.tainted).toBe(false);
   expect(chain.detail?.taintKinds ?? []).toEqual([]);
 });
@@ -214,7 +219,7 @@ test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refute
   await setAuthorGrain("taint");
   const nonce = `oe-taint-${randomBytes(4).toString("hex")}`;
 
-  const { handle, wakeAt } = await driveNotionWake({ ids: "t1", pageId: NOTION_PAGE_ID_2, prompt: `stand-up summary evening (${nonce})` });
+  const { handle, cursor } = await driveNotionWake({ ids: "t1", pageId: NOTION_PAGE_ID_2, prompt: `stand-up summary evening (${nonce})` });
   const prompt = wakePrompt(handle);
 
   const refutedElement = messageElementFor(prompt, REFUTED_AUTHOR_ID);
@@ -223,6 +228,6 @@ test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refute
   expect(prompt, "the arrived-marker appeared on the shipped grain").not.toContain(WITHHELD_MARKER);
   expectElementFenced(refutedElement);
 
-  const chain = await chainRow(wakeAt);
+  const chain = await chainRow(cursor);
   expect(chain.detail?.tainted).toBe(true);
 });
