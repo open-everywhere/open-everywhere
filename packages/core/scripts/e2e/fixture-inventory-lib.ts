@@ -402,6 +402,18 @@ export function collectDeclaredRooms(domains: readonly DomainLike[], bindings: r
     .sort((a, b) => (a.surface === b.surface ? a.key.localeCompare(b.key) : SURFACE_ORDER.indexOf(a.surface) - SURFACE_ORDER.indexOf(b.surface)));
 }
 
+export interface SlackChannelInfo {
+  readonly name?: string;
+  readonly is_archived?: boolean;
+  readonly is_im?: boolean;
+  readonly is_mpim?: boolean;
+}
+
+export function slackRoomName(channel: SlackChannelInfo | undefined): string {
+  const base = channel?.is_im ? "(direct message)" : channel?.is_mpim ? "(group DM)" : `#${channel?.name ?? "?"}`;
+  return channel?.is_archived ? `${base} (archived)` : base;
+}
+
 export interface Resolution {
   readonly ok: boolean;
   readonly name?: string;
@@ -652,7 +664,10 @@ never reads outside the workspace it was minted in, so \`E2E_LINEAR_API_KEY\` ca
 an absent credential, and never writes a value nobody gave it.
 
 Column meanings: **id** is the vendor's own id (\`owner/repo\` on GitHub, empty on Teams). **name**
-is what the vendor calls the room today. **env var** is the \`E2E_*\` name that carries the id;
+is what the vendor calls the room today, except for a DM and a group DM: this table prints
+\`(direct message)\` and \`(group DM)\` there, because Slack names a group DM after the PEOPLE in it
+and this file is tracked in a source-open repository. The id column still identifies the room.
+**env var** is the \`E2E_*\` name that carries the id;
 \`—\` means the pack drives the room through config alone. **claimed by** names the memory domains
 and access bundles whose ROSTER spells the room; \`unclaimed\` means no roster does, so the room
 resolves through the criteria domains (\`org\`, \`dm\`, \`public\`) instead.`;

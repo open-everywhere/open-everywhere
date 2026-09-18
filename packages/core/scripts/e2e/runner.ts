@@ -173,14 +173,17 @@ async function main(): Promise<void> {
   const slackCapFixtureDriver = slackDriver && slackCapFixture.ok ? slackDriver.withChannel(slackCapFixture.cfg.channel) : undefined;
   const slackHaltDriver = slackDriver && slackHalt.ok ? slackDriver.withChannel(slackHalt.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
-  const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
-  const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
-  const postSlackUnifiedBurst = rawSlackDriver && slackUnified.ok
+  const slackUnifiedArmed = slackDriver && rawSlackDriver && slackUnified.ok
+    ? { driver: slackDriver, raw: rawSlackDriver, cfg: slackUnified.cfg }
+    : undefined;
+  const slackUnifiedADriver = slackUnifiedArmed?.driver.withChannel(slackUnifiedArmed.cfg.channelA);
+  const slackUnifiedBDriver = slackUnifiedArmed?.driver.withChannel(slackUnifiedArmed.cfg.channelB);
+  const postSlackUnifiedBurst = slackUnifiedArmed
     ? slackUnifiedCoalescingBurst({
         gate: pacing,
-        channelA: slackUnified.cfg.channelA,
-        channelB: slackUnified.cfg.channelB,
-        post: (channel, text) => rawSlackDriver.withChannel(channel).post(text),
+        channelA: slackUnifiedArmed.cfg.channelA,
+        channelB: slackUnifiedArmed.cfg.channelB,
+        post: (channel, text) => slackUnifiedArmed.raw.withChannel(channel).post(text),
       })
     : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;

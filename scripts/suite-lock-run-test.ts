@@ -399,9 +399,12 @@ async function main(): Promise<void> {
         `process.exit(process.argv.includes("--shard=2/4") ? 3 : 0);\n`,
       { mode: 0o755 },
     );
-    const out = await captureStdout(async () => {
-      const code = await runLocked(fake, ["run"], { manual: false, lockDir, maxWaitMs: 20_000, env: { OE_IT_SHARDS: "4" }, emitProof: true });
-      assert.equal(code, 3, "the tier takes the worst shard's code");
+    let out: string[] = [];
+    const logged = await captureStderr(async () => {
+      out = await captureStdout(async () => {
+        const code = await runLocked(fake, ["run"], { manual: false, lockDir, maxWaitMs: 20_000, env: { OE_IT_SHARDS: "4" }, emitProof: true });
+        assert.equal(code, 3, "the tier takes the worst shard's code");
+      });
     });
     assert.deepEqual(
       readFileSync(marks, "utf8").trim().split("\n"),
@@ -411,6 +414,12 @@ async function main(): Promise<void> {
     const proof = out.filter((l) => l.startsWith("OE_PROOF "));
     assert.equal(proof.length, 1, `exactly ONE tier line, after every shard — got ${JSON.stringify(proof)}`);
     assert.ok(/^OE_PROOF sha=[0-9a-f]{7,40} suite=test:integration exit=3$/.test(proof[0]!), `the tier line carries the worst exit — got ${proof[0]}`);
+    const shardLabels = logged.filter((l) => l.includes("--shard="));
+    assert.equal(shardLabels.length, 4, `each shard reports its own exit on STDERR — got ${JSON.stringify(shardLabels)}`);
+    assert.ok(
+      shardLabels.every((l) => l.startsWith("suite-lock-run: ") && !l.includes("OE_PROOF")),
+      `…as a human log label and never as an evidence line — got ${JSON.stringify(shardLabels)}`,
+    );
     assert.equal(existsSync(lockDir), false, "the lock is released after a sharded run like any other");
     rmSync(fakeDir, { recursive: true, force: true });
   });

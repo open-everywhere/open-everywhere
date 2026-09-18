@@ -349,6 +349,14 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const bareThenQualified = spendMaskVerdictOver(['the "(dms)" bucket aggregates DM spend', "slack/T_FIXTURE/(dms) 20"], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
   ok(bareThenQualified.bucket && !bareThenQualified.bareBucketOnly, "a qualified key in ANY message clears the ambiguous bare-(dms) state the second ask exists to resolve");
 
+  const disjoint = spendMaskVerdictOver([`${DM_KEY} 20`, "slack/T_FIXTURE/(dms) 20"], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  const overlapping = spendMaskVerdictOver([`${DM_KEY} 20`, `${DM_KEY} 20`, "slack/T_FIXTURE/(dms) 20"], { dmChannelId: "D0DRIVER", dmSurfaceKey: DM_KEY });
+  ok(
+    JSON.stringify(overlapping) === JSON.stringify(disjoint),
+    "🔴 re-reading a message the first collect already held changes no field of the verdict — which is what lets BOTH S-SPEND-DM-MASK collects floor at the ask",
+  );
+  ok(disjoint.leaks.length === 2 && disjoint.bucket, "NEGATIVE CONTROL: the fixture above really does carry both disclosures and the bucket, so the equality is not comparing two empty verdicts");
+
   const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-DM-MASK")!;
   ok(scenario.surface === "slack", "S-SPEND-DM-MASK drives SLACK (OPE-1914) — a launch surface, so a missing fixture scores RED rather than a declared gap");
   ok(scenario.requires.join("+") === "slack+syntheticDm", "…and it needs only the Slack driver plus the real DM channel — the Discord capability went with the old vehicle");

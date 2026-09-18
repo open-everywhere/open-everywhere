@@ -22,6 +22,7 @@ import {
   roomIdFor,
   roomName,
   roomsUnseen,
+  slackRoomName,
   teamsSegment,
   trackedRoomId,
   type BindingLike,
@@ -29,6 +30,7 @@ import {
   type PlannedRoom,
   type ProvisionDomain,
   type Resolution,
+  type SlackChannelInfo,
   type SurfaceKind,
 } from "./fixture-inventory-lib.js";
 import { DEFAULT_TEAMS_REFRESH_SINK, ENV, S24_DEFAULT_QUERY } from "./env.js";
@@ -274,11 +276,10 @@ async function resolveSlackRoom(ctx: ResolverContext, id: string): Promise<Resol
   const token = ctx.env[ENV.slackUserToken]!;
   const info = await slackApi(token, "conversations.info", { channel: id });
   if (info.ok === true) {
-    const channel = info.channel as { name?: string; is_archived?: boolean; is_im?: boolean } | undefined;
-    const name = channel?.is_im ? "(direct message)" : `#${channel?.name ?? "?"}`;
+    const channel = info.channel as SlackChannelInfo | undefined;
     return {
       ok: true,
-      name: channel?.is_archived ? `${name} (archived)` : name,
+      name: slackRoomName(channel),
       key: ctx.slackTeamId ? `slack/${ctx.slackTeamId}/${id}` : undefined,
       detail: "conversations.info",
     };

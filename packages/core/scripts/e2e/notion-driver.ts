@@ -341,10 +341,6 @@ export class NotionDriver {
     return (await this.allComments()).find((c) => c.id === commentId)?.discussionId;
   }
 
-  async commentById(commentId: string): Promise<NotionComment | undefined> {
-    return (await this.allComments()).find((c) => c.id === commentId);
-  }
-
   isBotComment(c: NotionComment): boolean {
     return c.authorId === this.cfg.botUserId;
   }

@@ -1716,20 +1716,25 @@ export const SCENARIOS: readonly Scenario[] = [
         "any row, and never replace a surfaceKey with a channel name.";
       const keys = { dmChannelId: dm.channelId, dmSurfaceKey };
       const posted: string[] = [];
-      const collectAfter = async (rootTs: string, afterTs: string): Promise<void> => {
+      const seenTs = new Set<string>();
+      const collectSinceAsk = async (askTs: string): Promise<void> => {
         await sleep(SILENCE_WINDOW);
-        posted.push(...(await room.collectBotMessagesAfter(rootTs, afterTs)).map((m) => m.text));
+        for (const m of await room.collectBotMessagesAfter(askTs, askTs)) {
+          if (seenTs.has(m.ts)) continue;
+          seenTs.add(m.ts);
+          posted.push(m.text);
+        }
       };
       const { ts: askTs } = await room.post(room.mention(surfaceRowAsk));
       await room.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
-      await collectAfter(askTs, askTs);
+      await collectSinceAsk(askTs);
       let verdict = spendMaskVerdictOver(posted, keys);
 
       if (!verdict.bucket && verdict.bareBucketOnly) {
         ctx.log(`S-SPEND-DM-MASK: the reply named "(dms)" but not ${bucketKey} — asking once for the keys verbatim`);
         const { ts: againTs } = await room.post("print the surfaceKey of every aggregate row in that report exactly as the tool returned it, one per line, and nothing else", askTs);
         await room.awaitThreadReply(askTs, { afterTs: againTs, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
-        await collectAfter(askTs, againTs);
+        await collectSinceAsk(askTs);
         verdict = spendMaskVerdictOver(posted, keys);
       }
 
@@ -3696,11 +3701,6 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
       const b = ctx.slackUnifiedB!;
-      if (!ctx.postSlackUnifiedBurst) {
-        ctx.fixtureMissing(
-          "S-APPROVAL-COALESCED needs the runner's tracked two-room pacing burst (`ctx.postSlackUnifiedBurst`); ordinary per-room pacing separates the deliveries by a full floor and cannot satisfy the coalescing precondition",
-        );
-      }
       const postBurst = ctx.postSlackUnifiedBurst!;
       const auditRead = ctx.auditRead;
       if (!auditRead) {

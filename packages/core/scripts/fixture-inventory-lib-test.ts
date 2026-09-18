@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { ENGAGED_ROOM_VARS, ENV, S24_DEFAULT_QUERY, TRACKED_ROOM_RESOLVERS } from "./e2e/env.js";
 import { notionBlockPhrases } from "./e2e/egress-evidence.js";
 import {
@@ -30,6 +31,7 @@ import {
   roomIdFor,
   roomName,
   roomsUnseen,
+  slackRoomName,
   surfaceOfKey,
   trackedRoomId,
   type BindingLike,
@@ -604,6 +606,31 @@ for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
     );
   }
   ok(surfaceOfKey("slack/T1/C1") === "slack" && surfaceOfKey("nowhere/T1/C1") === null, "NEGATIVE CONTROL: surfaceOfKey really refuses an unknown surface, so the join above can fail");
+}
+
+{
+  ok(
+    slackRoomName({ name: "mpdm-someone--test_slack_bot--someone_else-1", is_mpim: true }) === "(group DM)",
+    "🔴 a Slack GROUP DM renders as `(group DM)` — its member handles never reach the tracked table",
+  );
+  ok(
+    !slackRoomName({ name: "mpdm-someone--test_slack_bot--someone_else-1", is_mpim: true }).includes("mpdm"),
+    "…and no fragment of the member list survives, whatever Slack called the room",
+  );
+  ok(slackRoomName({ name: "watercooler" }) === "#watercooler", "NEGATIVE CONTROL: an ordinary channel still renders its own name — the mask is not a blanket redaction");
+  ok(slackRoomName({ is_im: true, name: "mpdm-should-not-be-read-1" }) === "(direct message)", "a DM still renders `(direct message)`, and its Slack name is not read either");
+  ok(
+    slackRoomName({ name: "mpdm-someone--test_slack_bot--someone_else-1", is_mpim: true, is_archived: true }) === "(group DM) (archived)",
+    "an archived group DM keeps the archived suffix — the mask replaces the NAME, not the row's other facts",
+  );
+  ok(slackRoomName({ name: "oe-e2e-b", is_archived: true }) === "#oe-e2e-b (archived)", "NEGATIVE CONTROL: the archived suffix is really appended, so the assertion above can fail");
+  ok(slackRoomName(undefined) === "#?", "a room the vendor returned no channel object for renders `#?` — unnamed, never invented");
+}
+
+{
+  const committed = readFileSync(new URL("../../../docs/dev/e2e-fixtures.md", import.meta.url), "utf-8");
+  ok(!committed.includes("mpdm-"), "🔴 `docs/dev/e2e-fixtures.md` names no Slack group DM by its members — no `mpdm-` handle list is tracked");
+  ok(committed.includes("| (group DM) |"), "NEGATIVE CONTROL: the group-DM row is present and masked, so the assertion above is not passing over an absent row");
 }
 
 console.log(`✓ fixture-inventory-lib: ${passed} assertions passed`);
