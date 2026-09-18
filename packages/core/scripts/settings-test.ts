@@ -5,6 +5,7 @@ import {
   getSettings,
   registerSettings,
   resetSettingsForTest,
+  overrideSettingsForTest,
   settingDocs,
   settingEnvNames,
 } from "../agent/settings/settings.js";
@@ -60,6 +61,22 @@ console.log("1 — precedence is two tiers: the registered override, then the sh
   eq(at({}).connectors.dmOnly, true, "[1] settings not overridden keep their shipped default");
   resetSettingsForTest();
   eq(at({}).window.topology, false, "[1] resetSettingsForTest() drops back to the shipped defaults");
+}
+
+console.log("1b — the test patch merges, and the boot registration replaces:");
+{
+  resetSettingsForTest();
+  registerSettings(defineSettings({ delegation: { oneshotAgent: false } }));
+  overrideSettingsForTest({ connectors: { dmOnly: false } });
+  eq(at({}).delegation.oneshotAgent, false, "[1b] a patch of ANOTHER group leaves the registered value alone — the whole point of the merge");
+  eq(at({}).connectors.dmOnly, false, "[1b] …and the patched key applies");
+  overrideSettingsForTest({ connectors: { opTiering: true } });
+  eq(at({}).connectors.dmOnly, false, "[1b] a second patch of the SAME group is key-wise, not group-wise");
+  eq(at({}).connectors.opTiering, true, "[1b] …and adds its own key");
+
+  registerSettings(defineSettings({ connectors: { dmOnly: false } }));
+  eq(at({}).delegation.oneshotAgent, true, "[1b] 🔴 registerSettings REPLACES — the earlier pin is gone, which is why a test must not use it to vary one flag");
+  resetSettingsForTest();
 }
 
 const DELETED_ENV_MIRRORS: ReadonlyArray<readonly [string, string]> = [
@@ -343,6 +360,28 @@ console.log("7 — every setting reaches the generated operator table:");
   );
   eq(new Set(settingEnvNames()).size, settingEnvNames().length, "[7] no env var name is claimed by two settings");
   eq(docs.filter((d) => d.env !== undefined).length, 1, "[7] 🔴 exactly ONE row renders an ops override; every other row renders as code-only");
+}
+
+console.log("7b — every declared setting is resolvable, not only documentable:");
+{
+  resetSettingsForTest();
+  const declared = SETTINGS as unknown as Record<string, Record<string, { path?: unknown; shipped?: unknown }>>;
+  const resolved = at({}) as unknown as Record<string, Record<string, unknown>>;
+  let checked = 0;
+  for (const [group, specs] of Object.entries(declared)) {
+    ok(Object.prototype.hasOwnProperty.call(resolved, group), `[7b] getSettings() resolves the group "${group}"`);
+    const resolvedGroup = resolved[group] ?? {};
+    for (const [key, spec] of Object.entries(specs)) {
+      if (typeof spec !== "object" || spec === null || typeof spec.path !== "string") continue;
+      checked++;
+      ok(Object.prototype.hasOwnProperty.call(resolvedGroup, key), `[7b] 🔴 getSettings() resolves ${group}.${key} — declared in SETTINGS and missing from the resolver is an unreadable knob`);
+      eq(resolvedGroup[key], spec.shipped, `[7b] …and with nothing registered it answers the spec's own shipped default (${group}.${key})`);
+    }
+    for (const key of Object.keys(resolvedGroup)) {
+      ok(Object.prototype.hasOwnProperty.call(specs, key), `[7b] every resolved key has a spec (${group}.${key} is resolved but undeclared)`);
+    }
+  }
+  eq(checked, settingDocs().length, "[7b] the two totality arms walked the same set — a spec count that disagrees with the doc count means one arm skipped a nesting level");
 }
 
 console.log("8 — a setting either has an env path or has none, with nothing in between:");

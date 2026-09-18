@@ -1,13 +1,28 @@
 import {
   SHIPPED_STACK,
   STACKS,
+  STACK_ALIASES,
   compactionThresholdTokens,
+  isStackAlias,
   resolveStack,
+  stackModelIds,
   type ModelRole,
   type ModelStack,
   type StackAlias,
 } from "../agent/model/stacks.js";
-import { MODEL_STACK, PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, allowListForStack } from "../agent/model/models.js";
+import {
+  JUDGE_MODEL,
+  MODELS,
+  MODEL_STACK,
+  PRIMARY_MODEL,
+  PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
+  SUPERVISOR_MODEL,
+  UTILITY_MODEL,
+  VISION_MODEL,
+  allowListForStack,
+  modelAllowList,
+} from "../agent/model/models.js";
+import { loadModelPolicy } from "../agent/model/policy.js";
 import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import {
@@ -195,6 +210,45 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   }
 
   ok(compactionThresholdTokens(1, 0.2) === 1, `a 1-token window must floor to a threshold of 1, got ${compactionThresholdTokens(1, 0.2)}.`);
+}
+
+{
+  ok([...STACK_ALIASES].sort().join(",") === Object.keys(STACKS).sort().join(","), `STACK_ALIASES enumerates exactly the shipped stacks (got ${STACK_ALIASES.join(", ")})`);
+  ok([...STACK_ALIASES].join(",") === [...STACK_ALIASES].sort().join(","), "…sorted, so the error message and the docs table read the same way every run");
+  for (const alias of STACK_ALIASES) ok(isStackAlias(alias), `isStackAlias accepts the shipped alias ${alias}`);
+  ok(!isStackAlias("american-close"), "isStackAlias refuses a near-miss typo (the failure the alias exists to catch)");
+  ok(!isStackAlias("toString"), "…and an inherited Object property, which a bare `in` check would admit");
+  ok(isStackAlias(SHIPPED_STACK), "SHIPPED_STACK names a shipped stack");
+
+  for (const [alias, stack] of Object.entries(STACKS)) {
+    const ids = stackModelIds(stack);
+    ok(new Set(ids).size === ids.length, `${alias}: stackModelIds dedupes (got ${ids.join(", ")})`);
+    ok([...ids].sort().join(",") === ids.join(","), `${alias}: stackModelIds is sorted`);
+    for (const role of Object.values(stack)) ok(ids.includes(role.id), `${alias}: stackModelIds carries every role's id (missing ${role.id})`);
+  }
+
+  const resolved = resolveStack(MODEL_STACK, {});
+  ok(isStackAlias(MODEL_STACK), `MODEL_STACK is a shipped alias (got ${MODEL_STACK})`);
+  ok(MODEL_STACK === getSettings(process.env, SETTINGS_OVERRIDES).models.stack, "MODEL_STACK is the alias the settings schema resolved — one source, not a second copy");
+  ok(MODELS.utility.id === resolved.utility.id, `UTILITY_MODEL/MODELS.utility is the stack's utility id (got ${MODELS.utility.id}, want ${resolved.utility.id})`);
+  ok(UTILITY_MODEL === MODELS.utility.id, "UTILITY_MODEL re-exports MODELS.utility.id");
+  ok(VISION_MODEL === resolved.vision.id, `VISION_MODEL is the stack's vision id (got ${VISION_MODEL}, want ${resolved.vision.id})`);
+  ok(SUPERVISOR_MODEL === resolved.supervisor.id, `SUPERVISOR_MODEL is the stack's supervisor id (got ${SUPERVISOR_MODEL}, want ${resolved.supervisor.id})`);
+  ok(JUDGE_MODEL === resolved.judge.id, `JUDGE_MODEL is the stack's judge id (got ${JUDGE_MODEL}, want ${resolved.judge.id})`);
+  ok(PRIMARY_MODEL === MODELS.primary.id, "PRIMARY_MODEL re-exports MODELS.primary.id");
+  ok(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS === MODELS.primary.contextWindowTokens, "the exported primary window is the primary role's own, never a literal beside it");
+  ok(VISION_MODEL !== PRIMARY_MODEL, "🔴 the describer is NOT the conversational model — a text turn on a vision model answers badly instead of erroring");
+
+  const mine = modelAllowList();
+  ok(mine.map((e) => e.id).join(",") === allowListForStack(MODELS).map((e) => e.id).join(","), "modelAllowList() is allowListForStack over the roles this process resolved");
+  const appPolicy = loadModelPolicy();
+  ok(appPolicy !== undefined, "loadModelPolicy() returns this deployment's declared envelope");
+  if (appPolicy !== undefined) {
+    assertModelPolicyValid(appPolicy);
+    const declaredAllow = appPolicy.allow ?? [];
+    ok(declaredAllow.map((e) => e.id).sort().join(",") === mine.map((e) => e.id).sort().join(","), "…and its allow-list is the derived one, not a hand-copied list that can drift");
+    for (const id of stackModelIds(resolved)) ok(isModelUsable(id, appPolicy), `…every role id of the resolved stack is usable under it (${id})`);
+  }
 }
 
 if (reds.length > 0) {

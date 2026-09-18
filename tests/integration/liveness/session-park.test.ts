@@ -26,7 +26,7 @@ function open(handle: ScriptedHandle): ScriptedHandle {
 
 const SESSION_INPUT_TOKEN_BUDGET = 30_000_000;
 
-const COMPACTION_THRESHOLD_TOKENS = 0.2 * 1_000_000;
+const COMPACTION_THRESHOLD_TOKENS = 0.5 * 1_050_000;
 
 const REPORTED_INPUT_TOKENS_PER_STEP = 180_000;
 

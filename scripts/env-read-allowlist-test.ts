@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -323,6 +323,53 @@ function main(): void {
     ok(folded.resolved.some((r) => r.name === "OE_THETA"), "scanComputedEnvReads FOLDS the dot arm in — the lint calls this, not scanAliasDotReads");
   }
 
+  {
+    const page = readFileSync(join(root, "docs", "inventory", "settings.md"), "utf8");
+    const cell = (s: string): string => s.trim().replace(/`/g, "");
+    const rowsOf = (prefix: string): { id: string; symbol: string; code: string }[] =>
+      page
+        .split("\n")
+        .map((l) => l.split("|"))
+        .filter((c) => c.length > 4 && new RegExp(`^${prefix}-\\d+$`, "u").test(c[1]!.trim()))
+        .map((c) => ({ id: c[1]!.trim(), symbol: cell(c[2]!), code: cell(c[3]!) }));
+
+    const envRows = rowsOf("ENV");
+    const dynRows = rowsOf("DYN");
+
+    ok(envRows.length > 100 && dynRows.length > 5, `the row parse reached both tables (${envRows.length} ENV, ${dynRows.length} DYN)`);
+
+    ok(
+      envRows.length === ENV_READ_ALLOWLIST.size,
+      `the page holds one ENV row per allowlist entry (${envRows.length} rows, ${ENV_READ_ALLOWLIST.size} entries)`,
+    );
+    const orphanNames = envRows.filter((r) => !ENV_READ_ALLOWLIST.has(r.symbol));
+    ok(orphanNames.length === 0, `every ENV row names a live allowlist entry (orphans: ${orphanNames.map((r) => `${r.id} ${r.symbol}`).join(", ")})`);
+    const unrowedNames = [...ENV_READ_ALLOWLIST.keys()].filter((n) => !envRows.some((r) => r.symbol === n));
+    ok(unrowedNames.length === 0, `every allowlist entry has a page row (unrowed: ${unrowedNames.join(", ")})`);
+
+    const siteKeys = new Set([...DYNAMIC_ENV_READ_SITES.keys()].map((k) => k.replace(/`/g, "")));
+    ok(
+      dynRows.length === DYNAMIC_ENV_READ_SITES.size,
+      `the page holds one DYN row per excused site (${dynRows.length} rows, ${DYNAMIC_ENV_READ_SITES.size} sites)`,
+    );
+    const orphanSites = dynRows.filter((r) => !siteKeys.has(dynamicSiteKey({ file: r.code, expr: r.symbol })));
+    ok(orphanSites.length === 0, `every DYN row composes a live excuse key (orphans: ${orphanSites.map((r) => `${r.id} ${r.code}::${r.symbol}`).join(", ")})`);
+    const unrowedSites = [...siteKeys].filter((k) => !dynRows.some((r) => dynamicSiteKey({ file: r.code, expr: r.symbol }) === k));
+    ok(unrowedSites.length === 0, `every excused site has a page row (unrowed: ${unrowedSites.join(", ")})`);
+  }
+
+  {
+    const r = lint(sourceFixture("export const v = process.env.OE_MODE;"));
+    ok(r.out.includes("UNDOCUMENTED ENV"), "arm 1 reds on a read that neither .env.example nor docs/ mentions");
+    ok(r.out.includes("process.env.OE_MODE"), "…naming the variable, so the author has somewhere to go");
+    const q = lint(fixture(["OE_MODE"]));
+    ok(!q.out.includes("UNDOCUMENTED ENV"), "…and stays silent once that read is documented");
+  }
+  {
+    const r = lint(sourceFixture("export const v = 1;", ["OE_DOCUMENTED_BUT_UNREAD"]));
+    ok(r.out.includes("STALE ROW"), "arm 2 reds on a documented variable nothing reads any more");
+    ok(r.out.includes("OE_DOCUMENTED_BUT_UNREAD"), "…naming the row that outlived its read");
+  }
 }
 
 try {

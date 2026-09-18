@@ -65,9 +65,9 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
   overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
   ok(stopAfterTurnEnabled(), "enabled by default");
   overrideSettingsForTest({ sandbox: { stopAfterTurn: false } });
-  ok(!stopAfterTurnEnabled(), "OE_SANDBOX_STOP_AFTER_TURN=0 disables");
+  ok(!stopAfterTurnEnabled(), "sandbox.stopAfterTurn=false disables it");
   overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
-  ok(stopAfterTurnEnabled(), "OE_SANDBOX_STOP_AFTER_TURN=1 keeps it on");
+  ok(stopAfterTurnEnabled(), "sandbox.stopAfterTurn=true keeps it on");
   overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
 }
 

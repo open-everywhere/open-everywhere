@@ -434,7 +434,7 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
       let secret = "OLD";
       const r = rig(async () => ({ allow: { "api.acme.test": [{ transform: [{ headers: { authorization: `Bearer ${secret}` } }] }] } }));
       await enforceEgress("session.started", r.deps as never);
-      ok(r.applied.length === 0, "G1 dry-run: OE_EGRESS_ENFORCE=0 still never touches the firewall");
+      ok(r.applied.length === 0, "G1 dry-run: egress.enforce=false still never touches the firewall");
       await enforceEgress("turn.started", r.deps as never);
       ok(r.audits.filter((a) => a.action === "egress.policy").length === 1, "G1 dry-run: an unchanged turn writes NO extra row (the skip gate engages in dry-run too, or a dry-run deployment gets a row every turn)");
       secret = "ROTATED";

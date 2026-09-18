@@ -361,6 +361,54 @@ for (const [rel, mod] of loaded) {
   }
 }
 
+{
+  const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
+  const settings = getSettings();
+  const declared: [string, unknown, unknown][] = [
+    ["approvals.judgeMode", settings.approvals.judgeMode, "off"],
+    ["window.topology", settings.window.topology, false],
+    ["connectors.dmOnly", settings.connectors.dmOnly, true],
+    ["connectors.userPrincipal", settings.connectors.userPrincipal, false],
+    ["connectors.opTiering", settings.connectors.opTiering, false],
+    ["browser.enabled", settings.browser.enabled, false],
+    ["identity.name", settings.identity.name, ""],
+  ];
+  const expected: Record<string, unknown> = {
+    "approvals.judgeMode": "enforce",
+    "window.topology": true,
+    "connectors.dmOnly": false,
+    "connectors.userPrincipal": true,
+    "connectors.opTiering": true,
+    "browser.enabled": true,
+    "identity.name": "Open Everywhere",
+  };
+  for (const [key, live, shipped] of declared) {
+    if (live !== expected[key]) {
+      problems.push(`SETTINGS: ${key} resolves to ${JSON.stringify(live)} after boot, but agent/settings/settings.ts declares ${JSON.stringify(expected[key])}.`);
+    }
+    if (live === shipped) {
+      problems.push(`SETTINGS: ${key} resolves to the SHIPPED default ${JSON.stringify(shipped)} — the deployment's override never reached getSettings().`);
+    }
+  }
+  const drivers = settings.wake.e2eDrivers;
+  if (drivers.length !== 4) problems.push(`SETTINGS: wake.e2eDrivers resolves ${drivers.length} identities after boot, not the four agent/settings/settings.ts declares.`);
+  for (const surface of ["slack", "discord", "notion"]) {
+    if (!drivers.some((d) => d.surface === surface)) problems.push(`SETTINGS: wake.e2eDrivers names no ${surface} driver after boot.`);
+  }
+
+  const { SETTINGS_OVERRIDES } = await import("../agent/settings/settings.js");
+  const declaredKeys = Object.entries(SETTINGS_OVERRIDES as Record<string, Record<string, unknown> | undefined>)
+    .flatMap(([group, values]) => (values === undefined ? [] : Object.keys(values).map((key) => `${group}.${key}`)))
+    .sort();
+  const watchedKeys = [...Object.keys(expected), "wake.e2eDrivers"].sort();
+  for (const key of declaredKeys) {
+    if (!watchedKeys.includes(key)) problems.push(`SETTINGS: agent/settings/settings.ts declares ${key} and nothing in this block watches it — add it to the list above.`);
+  }
+  for (const key of watchedKeys) {
+    if (!declaredKeys.includes(key)) problems.push(`SETTINGS: this block watches ${key}, which agent/settings/settings.ts no longer declares — the check now asserts a shipped default against itself.`);
+  }
+}
+
 rmSync(scratch, { recursive: true, force: true });
 
 if (problems.length > 0) {
