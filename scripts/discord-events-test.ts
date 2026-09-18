@@ -6,6 +6,9 @@ import {
 } from "@open-everywhere/provider-discord/agent/channels/discord-events.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
+import { pinSuiteStore } from "../packages/core/scripts/_suite-store.js";
+pinSuiteStore("discord-events");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

@@ -4,6 +4,9 @@ import { beginTaintTurn, markUntrustedIngestedThisTurn, untrustedIngestedThisTur
 import { openTaintTurn, TAINT_SEED_ATTRS } from "../agent/hooks/spawn-taint.js";
 import { renderChainResolution, resolveApproverChain, type ApprovalChainRequest } from "../agent/access/approver-chain.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("taint-signal");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

@@ -9,6 +9,9 @@ import {
 } from "../agent/channels/name-drop-wake-audit.js";
 import { CONSEQUENTIAL_AUDIT_ACTIONS } from "../agent/audit/action-registry.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("name-drop-wake-audit");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

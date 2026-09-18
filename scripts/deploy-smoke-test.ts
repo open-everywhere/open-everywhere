@@ -4,6 +4,13 @@ import { renderSmokeReport, runGithubInstallationSmoke, runLinearSignedDeliveryS
 import { WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WebhookDriver } from "../packages/core/scripts/e2e/webhook.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 
+import { tmpdir as __oeTmpdir } from "node:os";
+import { join as __oeJoin } from "node:path";
+import { rmSync as __oeRmSync } from "node:fs";
+const __oeSuiteStoreDir = __oeJoin(__oeTmpdir(), `open-everywhere-suite-deploy-smoke-${process.pid}`);
+__oeRmSync(__oeSuiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __oeJoin(__oeSuiteStoreDir, "ops.sqlite3");
+
 let checks = 0;
 const failures: string[] = [];
 async function check(label: string, fn: () => void | Promise<void>): Promise<void> {

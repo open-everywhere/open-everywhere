@@ -15,6 +15,9 @@ import {
 } from "./e2e/rotate-window-lib.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("rotate-window-org-validate");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

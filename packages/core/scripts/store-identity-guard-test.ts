@@ -9,6 +9,9 @@ import {
   type FetchAuditFn,
 } from "./store-identity-guard.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("store-identity-guard");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

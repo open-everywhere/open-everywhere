@@ -43,6 +43,13 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { tmpdir as __oeTmpdir } from "node:os";
+import { join as __oeJoin } from "node:path";
+import { rmSync as __oeRmSync } from "node:fs";
+const __oeSuiteStoreDir = __oeJoin(__oeTmpdir(), `open-everywhere-suite-teams-${process.pid}`);
+__oeRmSync(__oeSuiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __oeJoin(__oeSuiteStoreDir, "ops.sqlite3");
+
 registerTeamsProvider();
 
 let passed = 0;

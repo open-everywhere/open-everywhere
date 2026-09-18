@@ -1,5 +1,8 @@
 import notion from "../agent/connections/notion.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("connections");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

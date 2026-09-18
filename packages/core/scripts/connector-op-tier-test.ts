@@ -18,6 +18,9 @@ import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../agent/a
 import { connectorOpApproval, connectorApprovalPolicy } from "../agent/connections/connector-auth.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("connector-op-tier");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

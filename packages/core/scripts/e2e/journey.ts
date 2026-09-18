@@ -19,6 +19,13 @@ export function approveButton(m: SlackMessage): { pendingId: string; org: string
   return { pendingId: btn.actionId.slice(prefix.length), org: btn.value ?? "" };
 }
 
+export function contradictButton(m: SlackMessage): { pendingId: string; org: string } | undefined {
+  const prefix = `${APPROVAL_PREFIX}contradict:`;
+  const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));
+  if (!btn) return undefined;
+  return { pendingId: btn.actionId.slice(prefix.length), org: btn.value ?? "" };
+}
+
 const EVE_APPROVE_LABEL = /^(approve|allow)$/i;
 const EVE_DENY_LABEL = /^(reject|deny|cancel)$/i;
 const EVE_APPROVE_VALUES: ReadonlySet<string> = new Set(["approve"]);

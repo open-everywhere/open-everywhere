@@ -37,6 +37,9 @@ import type { Binding, Bundle } from "../agent/access/bundle.js";
 import { setConnectorContentOrigin, declaredContentOriginForConnection, declaredContentOriginForToolName } from "../agent/access/connector-content-origin-state.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("taint-tiers");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

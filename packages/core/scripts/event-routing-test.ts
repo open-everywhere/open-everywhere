@@ -1,5 +1,8 @@
 import { registerEventNormalizer, resetEventNormalizersForTest } from "../agent/routines/event-model.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("event-routing");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

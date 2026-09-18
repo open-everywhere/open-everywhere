@@ -14,6 +14,13 @@ import {
 } from "../agent/channels/linear-engagement.js";
 import type { EngagementRow, Partition } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { tmpdir as __oeTmpdir } from "node:os";
+import { join as __oeJoin } from "node:path";
+import { rmSync as __oeRmSync } from "node:fs";
+const __oeSuiteStoreDir = __oeJoin(__oeTmpdir(), `open-everywhere-suite-linear-engagement-${process.pid}`);
+__oeRmSync(__oeSuiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __oeJoin(__oeSuiteStoreDir, "ops.sqlite3");
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

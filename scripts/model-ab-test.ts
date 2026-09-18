@@ -4,6 +4,9 @@ import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
 
+import { pinSuiteStore } from "../packages/core/scripts/_suite-store.js";
+pinSuiteStore("model-ab");
+
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],

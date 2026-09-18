@@ -17,6 +17,9 @@ import { openTaintTurn, seedIfTainted, OE_PARENT_TURN_TAINTED_ATTR } from "../ag
 import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { resetSettingsForTest } from "../agent/settings/settings.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("taint-worker-plane");
+
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
   assert.ok(cond, label);

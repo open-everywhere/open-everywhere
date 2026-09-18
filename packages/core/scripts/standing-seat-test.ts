@@ -23,6 +23,9 @@ import { fetchedBackscroll, seatCatchUpSinceMs, type NormalizedMessage } from ".
 import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/ambient-skip.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("standing-seat");
+
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
   assert.ok(cond, label);

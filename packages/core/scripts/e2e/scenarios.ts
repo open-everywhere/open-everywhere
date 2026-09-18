@@ -21,7 +21,9 @@ import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import { isMissingChatScopeError } from "./teams-driver.js";
-import { engagedRepoSkipReason, githubCommentAtOrAfter, type GithubDriver } from "./github-driver.js";
+import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
+import { commentAtOrAfter } from "./comment-window.js";
+import { capDriveOutcome } from "./cap-drive-outcome.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
@@ -122,11 +124,12 @@ import {
   type ReplyJudge,
   type Rubric,
 } from "./judge.js";
-import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
+import { liveMeasurementSkipReason, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   APPROVAL_REQUEST_PROVENANCE_ACTIONS,
   approveButton,
+  contradictButton,
   approvalRequestForSlackAsk,
   assertAuditedSilence,
   awaitCard,
@@ -1632,22 +1635,15 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       const capFixture = capFixtureFor("channel");
-      const droveTheFixture = capFixture?.surfaceKey.endsWith(`/${channel}`) === true;
-      if (droveTheFixture && ctx.slackSecondary) {
-        ctx.gate(
-          false,
-          `the declared channel cap fixture (${capFixture!.surfaceKey}, fixture-inventory-lib.ts CAP_FIXTURES) refused nothing in 5 turns, driven by a non-admin identity — spend-cap enforcement regression`,
-        );
-      }
-      ctx.skip(
-        `cap never tripped within the 5-turn budget — ` +
-          (droveTheFixture
-            ? "the drive ran as the ADMIN driver (E2E_SLACK_SECONDARY_TOKEN unset), and spend/bypass.ts admits an org admin past every cap with a warning, so no refusal can post here; " +
-              "set the non-admin secondary identity to make this a hard failure"
-            : `this drive ran against ${channel}, which ` +
-              (capFixture ? `is not the room the declared cap fixture names (${capFixture.surfaceKey})` : "no declared cap fixture names (fixture-inventory-lib.ts CAP_FIXTURES)") +
-              ", so there is no cap here to trip"),
-      );
+      const outcome = capDriveOutcome({
+        droveTheFixture: capFixture?.surfaceKey.endsWith(`/${channel}`) === true,
+        droveAsNonAdmin: ctx.slackSecondary !== undefined,
+        channel,
+        capFixtureSurfaceKey: capFixture?.surfaceKey,
+      });
+      if (outcome.kind === "skip") ctx.skip(outcome.reason);
+      else ctx.gate(false, outcome.message);
+      ctx.gate(false, `S10 reached its own unreachable tail — neither ctx.skip nor the cap gate ended the leg (verdict: ${outcome.kind})`);
     },
   },
   {
@@ -3106,6 +3102,7 @@ export const SCENARIOS: readonly Scenario[] = [
           await lin.archive(issueC.id);
         }
 
+        const beforeOffTopic = new Set((await lin.comments(issueA.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
         const offTopicAt = new Date().toISOString();
         await lin.comment(issueA.id, "just a note for the humans — no agent needed here, thanks");
         if (ctx.auditRead) {
@@ -3120,7 +3117,7 @@ export const SCENARIOS: readonly Scenario[] = [
           });
         }
         await sleep(SILENCE_WINDOW);
-        const strays = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.createdAt > offTopicAt);
+        const strays = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && commentAtOrAfter(c.createdAt, offTopicAt) && !beforeOffTopic.has(c.id));
         ctx.gate(strays.length === 0, "audited silence (window): the off-topic note drew NO app reply within the silence window");
         const linSilence = await classifySilence(ctx.auditRead, runStart, { platform: "linear" });
         const linVerdict = silenceCauseGate(linSilence);
@@ -6293,6 +6290,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       const pendingCleanup: Array<{ pendingId: string; org: string; where: string }> = [];
+      const unmeasured: UnmeasuredArm[] = [];
 
       try {
         const refA = factToken("tainthttp");
@@ -6406,6 +6404,7 @@ export const SCENARIOS: readonly Scenario[] = [
               ctx.log(
                 `ARM B (github): the relayed context line is NOT a live measurement — "${contextLineG || "(no context: line found in the reply)"}". LOGGED, not gated (same OPE-789/799 demotion every other arm here applies): a worker-supplied \`tainted\` argument (or an unparseable reply) is a model-instruction-following miss, not a taint-plane defect. Reply: "${replyG.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
               );
+              unmeasured.push({ arm: "ARM B (github)", what: "the relayed context line was not a live measurement, so no real get_pr_feedback route reached the plane on this run" });
             } else if (expectTaint) {
               ctx.gate(
                 /tainted:\s*true/i.test(decisionG.line) && /\bgithub\b/i.test(decisionG.line),
@@ -6442,6 +6441,7 @@ export const SCENARIOS: readonly Scenario[] = [
             ctx.log(
               "ARM C (notion): the forge-replayed wake produced NO `taint.verdict` row for kind `notion` within the wait — the doc-supervisor did not re-read the page on this run. LOGGED, not gated: that is a model habit, not a taint-plane verdict, and gating on it aborted ARM D and ARM E (see this arm's header). S-TAINT-DRYRUN's Arm B is the leg that proves the Notion route reaches the plane.",
             );
+            unmeasured.push({ arm: "ARM C (notion)", what: "the forge-replayed wake produced no `taint.verdict` row for kind `notion`, so no real read_notion_page route reached the plane on this run" });
           }
           if (rowC) {
             const dC = rowC[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown };
@@ -6635,6 +6635,9 @@ export const SCENARIOS: readonly Scenario[] = [
             }
           }
         }
+
+        const unmeasuredSkip = liveMeasurementSkipReason(unmeasured);
+        if (unmeasuredSkip !== undefined) ctx.skip(unmeasuredSkip);
       } finally {
         if (!opStore) {
           if (pendingCleanup.length > 0) {
@@ -6652,6 +6655,94 @@ export const SCENARIOS: readonly Scenario[] = [
             }
           }
         }
+      }
+    },
+  },
+  {
+    id: "S-JUDGE-LIFT-NOTICE",
+    title: "OPE-1902: an act the ARMED JUDGE lifted posts NO card, and the room still gets a notice carrying the contradict affordance",
+    requires: ["github", "slack"],
+    surface: "cross",
+    suite: "core",
+    timeoutMs: 1_800_000,
+    judged: false,
+    run: async (ctx) => {
+      requireAuditRead(ctx);
+      const auditRead = ctx.auditRead!;
+      const github = ctx.github!;
+      const slack = ctx.slack!;
+      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const note = factToken("judgelift");
+      const issue = await github.createIssue(`(e2e) S-JUDGE-LIFT-NOTICE ${note}`, `A judge-lift probe for OPE-1902 (${note}). This issue is driven by the e2e pack and is closed on teardown.`);
+      try {
+        const askId = await github.comment(
+          issue,
+          github.mention(`schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron/interval — that posts exactly the word ${note}. Confirm you've scheduled it.`),
+        );
+        await github.awaitBotReply(issue, askId, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+
+        const lift = await pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso, actions: ["approval.autoapproved"] });
+            const mine = rows.filter((e) => {
+              const d = e.detail as { resolvedBy?: unknown; kind?: unknown; scopeKey?: unknown } | undefined;
+              return d?.resolvedBy === "judge" && String(d?.kind ?? "").startsWith("routine.") && String(d?.scopeKey ?? "").includes(github.repo);
+            });
+            return mine.length > 0 ? mine : undefined;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `an approval.autoapproved row resolved by the JUDGE for a routine act scoped to ${github.repo} (this leg's own lift)` },
+        );
+        if (lift === undefined) {
+          ctx.skip(
+            "the approval judge did not LIFT anything on this run — no `approval.autoapproved` row carries `resolvedBy: \"judge\"` in the window. " +
+              "The judge is armed (settings.ts `judgeMode: \"enforce\"`), so this is the judge's own scrutiny verdict on this act, which is a model " +
+              "judgement no offline knob drives: S23 measures the same `routine.create` arriving as a CARD on this deployment. Nothing about the " +
+              "notice road was measured either way — this is not a deployment verdict, and it is deliberately not a red.",
+          );
+          ctx.gate(false, "S-JUDGE-LIFT-NOTICE reached its own unreachable tail — ctx.skip did not end the leg on a run with no judge lift");
+          return;
+        }
+        const row = lift[0].detail as { id?: unknown; kind?: unknown };
+        const pendingId = typeof row.id === "string" ? row.id : "";
+        const liftedKind = String(row.kind ?? "");
+        ctx.gate(pendingId.length > 0, `S-JUDGE-LIFT-NOTICE: the lift row names the pending id the notice is keyed on (kind "${liftedKind}")`);
+
+        const posted = await pollOptional(
+          async () =>
+            (await slack.latest(50)).find(
+              (m) => slack.isBotReply(m) && (contradictButton(m)?.pendingId === pendingId || approveButton(m)?.pendingId === pendingId || m.text.includes(pendingId)),
+            ),
+          { timeoutMs: FILE_REPLY_WAIT, what: `any card or notice naming pending ${pendingId} in the frozen venue room` },
+        );
+        if (posted === undefined) {
+          ctx.skip(
+            `the lift happened (pending ${pendingId}) but no notice naming it is visible in the Slack room this driver holds. The venue is the FIRST ` +
+              `card-capable room in the acting domain (#911's finding), and e2e-unified reaches two Slack channels — so the notice may have landed in ` +
+              `the other one, which this leg has no driver for. Point E2E_SLACK_CHANNEL at the domain's frozen venue to make this a hard gate.`,
+          );
+          ctx.gate(false, "S-JUDGE-LIFT-NOTICE reached its own unreachable tail — ctx.skip did not end the leg on a run whose notice was not visible");
+          return;
+        }
+        const shown = posted.text.replace(/\s+/g, " ").trim().slice(0, 300);
+        ctx.gate(
+          approveButton(posted) === undefined,
+          `🔴 S-JUDGE-LIFT-NOTICE (hard): the post naming pending ${pendingId} carries NO approve button — the act already ran, so anything offering to approve it is an approval card rendered over a completed mutation. Text: "${shown}"`,
+        );
+        ctx.gate(
+          posted.text.includes(liftedKind),
+          `🔴 S-JUDGE-LIFT-NOTICE (hard): the notice NAMES the act that ran ("${liftedKind}") — a trace that reports an unnamed act tells a member nothing they can act on. Text: "${shown}"`,
+        );
+        const affordance = contradictButton(posted);
+        ctx.gate(
+          affordance?.pendingId === pendingId,
+          `🔴 S-JUDGE-LIFT-NOTICE (hard): the notice carries the CONTRADICT button for THIS pending row — the action_id whose click writes the \`approval.judge.contradicted\` row a reviewer reads. A notice with no button, or one naming another row, tells a member something ran and gives them no way to say it should not have. Text: "${shown}"`,
+        );
+        ctx.gate(
+          (affordance?.org.length ?? 0) > 0,
+          "🔴 S-JUDGE-LIFT-NOTICE (hard): the contradict button carries the org in its `value` — flow.ts refuses a click without it as malformed, so a button missing it is an affordance that cannot be used",
+        );
+      } finally {
+        await github.closeIssue(issue).catch(() => undefined);
       }
     },
   },
@@ -7430,7 +7521,7 @@ export const SCENARIOS: readonly Scenario[] = [
         await github.comment(issue, "and what's 5 plus 5?");
         await sleep(SILENCE_WINDOW);
         const after = await github.comments(issue);
-        const observedSilent = after.filter((c) => github.isBotComment(c) && githubCommentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
+        const observedSilent = after.filter((c) => github.isBotComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", observedSilent });
 
         const idleMarker = factToken("gh-idle");
@@ -7491,11 +7582,12 @@ export const SCENARIOS: readonly Scenario[] = [
         await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear" });
 
+        const beforeStop = new Set((await linear.comments(issue.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
         const silenceFrom = new Date().toISOString();
         await linear.comment(issue.id, "and what's 5 plus 5?");
         await sleep(SILENCE_WINDOW);
         const after = await linear.comments(issue.id);
-        const observedSilent = after.filter((c) => linear.isAppComment(c) && c.createdAt > silenceFrom).length === 0;
+        const observedSilent = after.filter((c) => linear.isAppComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", observedSilent });
 
         const idleMarker = factToken("lin-idle");

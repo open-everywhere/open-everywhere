@@ -108,6 +108,7 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "S-LINK-teams", requirement: "NON_LAUNCH", reason: "Teams-only identity-link transport is deferred for this release." },
   { id: "J-ENGAGED-discord", requirement: "NON_LAUNCH", reason: "Discord-only engaged routing is deferred for this release." },
   { id: "J-ENGAGED-linear", requirement: "NON_LAUNCH", reason: "Linear-only engaged routing is deferred for this release." },
+  { id: "S-JUDGE-LIFT-NOTICE", requirement: "NON_LAUNCH", reason: "The judge's decision to LIFT is a model judgement this tier cannot drive, so the leg's green is not a release signal — its hard gates are." },
 ] as const;
 
 export const LAUNCH_RELEASE_SCOPE: readonly ReleaseScopeRow[] = [

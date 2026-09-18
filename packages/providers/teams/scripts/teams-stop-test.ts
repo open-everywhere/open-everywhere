@@ -4,6 +4,13 @@ import { buildTeamsFrontHandler, PUBLIC_TEAMS_ROUTE } from "../agent/channels/te
 import { bindTeams, buildTeamsAuth } from "../agent/channels/teams-identity.js";
 import type { CancelAnchoredTurnInput, CancelResult } from "@open-everywhere/core/agent/adapter-api.js";
 
+import { tmpdir as __oeTmpdir } from "node:os";
+import { join as __oeJoin } from "node:path";
+import { rmSync as __oeRmSync } from "node:fs";
+const __oeSuiteStoreDir = __oeJoin(__oeTmpdir(), `open-everywhere-suite-teams-stop-${process.pid}`);
+__oeRmSync(__oeSuiteStoreDir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = __oeJoin(__oeSuiteStoreDir, "ops.sqlite3");
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

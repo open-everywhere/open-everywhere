@@ -54,8 +54,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "approvals",
     globs: ["packages/core/agent/approvals/**", "packages/core/agent/access/approver-chain.ts", "packages/core/agent/access/approval-*.ts", "packages/core/agent/access/pre-approval-rules.ts"],
-    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC", "S-APPROVAL-COALESCED", "S-SUSPENDED-slack", "S-SUSPENDED-discord", "S-SUSPENDED-teams", "S-SUSPENDED-linear", "S-SUSPENDED-github"],
-    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056).",
+    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC", "S-APPROVAL-COALESCED", "S-JUDGE-LIFT-NOTICE", "S-SUSPENDED-slack", "S-SUSPENDED-discord", "S-SUSPENDED-teams", "S-SUSPENDED-linear", "S-SUSPENDED-github"],
+    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056). S-JUDGE-LIFT-NOTICE (OPE-1902) belongs here because it is the only leg on the road a lift takes INSTEAD of a card: `approvals/flow.ts` posts the notice off the row's frozen `postedTo` and `approvals/card.ts` renders it, so a change under this glob decides whether an act that ran without asking leaves any trace in the room at all.",
   },
   {
     area: "taint",

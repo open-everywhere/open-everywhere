@@ -5,6 +5,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createAdminHttpServer } from "../agent/control/http.js";
 import { CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("control-http");
+
 let n = 0;
 const ok = (label: string, cond: boolean) => {
   assert.ok(cond, label);

@@ -18,6 +18,9 @@ import { classifyIngestion } from "../agent/access/taint-tiers.js";
 import { decideIngestion } from "../agent/access/taint-enforcement.js";
 import type { WakeTrust } from "../agent/channels/wake-envelope.js";
 
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("chat-nonmember-taint");
+
 let passed = 0;
 function ok(cond: boolean, msg: string): void {
   assert.ok(cond, msg);
