@@ -42,6 +42,7 @@ import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type Scenario, type ScenarioContext } from "./scenarios.js";
+import { replyExcerpt } from "./coalesced-ask.js";
 import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
 import { boardGaps, isDeclaredGap, releaseBoardProblems, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
 import {
@@ -90,10 +91,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 function replyTail(reply: string, max = 320): string {
-  const flat = reply.replace(/\s+/g, " ").trim();
-  if (!flat) return `\n    ↳ reply: <empty>`;
-  const shown = flat.length > max ? `${flat.slice(0, max)}…` : flat;
-  return `\n    ↳ reply: ${shown}`;
+  return `\n    ↳ reply: ${replyExcerpt(reply, max)}`;
 }
 
 async function main(): Promise<void> {

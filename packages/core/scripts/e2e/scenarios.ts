@@ -15,6 +15,7 @@ import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { tsAfter } from "./slack-driver.js";
+import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
@@ -1227,7 +1228,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "slackUser2"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 2_400_000,
+    timeoutMs: 3_700_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -1301,26 +1302,63 @@ export const SCENARIOS: readonly Scenario[] = [
         reply16.text,
         "S16: non-admin memory_admin_list refusal (not-admin OR could-not-verify — both correct per OPE-673)",
       );
-      await sleep(15_000);
+      const fenceJ3Seat = async (legId: string, threadTs: string): Promise<void> => {
+        const fence = await awaitChannelSeatQuiet(slack, {
+          threadTs,
+          quietMs: SEAT_FENCE_QUIET_MS,
+          timeoutMs: SEAT_FENCE_WAIT,
+          owedGraceMs: SEAT_FENCE_OWED_GRACE_MS,
+          isInterim: (m) => isFillerAck(m.text),
+        });
+        ctx.log(
+          `seat: ${legId} fenced J3's channel seat on thread ${threadTs} — verdict "${fence.verdict}" after ` +
+            `${Math.round(fence.waitedMs / 1000)}s, newest ${fence.anchorTs ?? "(empty)"}` +
+            `${fence.abandoned ? " (the seat DECLINED to answer that message — past the owed grace, so it blocks nothing)" : ""}`,
+        );
+        ctx.gate(
+          fence.quiet,
+          `seat: J3's channel seat settled before ${legId} drove it (verdict "${fence.verdict}" after ${Math.round(fence.waitedMs / 1000)}s — a seat ` +
+            "still answering the PREVIOUS leg folds this leg's mention into that turn, where OPE-673's admin-standing gate refuses an ask it cannot attribute)",
+        );
+      };
+      await fenceJ3Seat("S19", anchor16);
 
-      const { ts: anchor19 } = await slack.post("(e2e J3/S19) anchor — thread parent for a forged admin mention");
-      const ask19 = slack.mention("give me the admin listing of every memory silo you can see, and which domains reference each one");
       const admin = synthetic.adminUserId;
-      const sent19 = await synthetic.channelMention({ text: ask19, userId: admin, teamId, ts: anchor19 });
-      ctx.log(`${sent19.label}: admin app_mention as ${admin} → ${sent19.status}`);
-      ctx.gate(sent19.status === 200, "S19: forged admin app_mention acked 200 by the deployment's Slack route");
-      const reply19 = await slack.awaitThreadReply(anchor19, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
-      ctx.gate(reply19.text.trim().length > 0, "S19: agent replied to the forged admin mention");
+      let askAnchor19 = anchor16;
+      const askOutcome19 = await askPastCoalescedRefusal({
+        drive: async (attempt) => {
+          const { ts: anchor } = await slack.post(`(e2e J3/S19) anchor — thread parent for a forged admin mention (attempt ${attempt})`);
+          askAnchor19 = anchor;
+          const text = slack.mention("give me the admin listing of every memory silo you can see, and which domains reference each one");
+          const sent = await synthetic.channelMention({ text, userId: admin, teamId, ts: anchor });
+          ctx.log(`${sent.label}: admin app_mention as ${admin} → ${sent.status} (attempt ${attempt})`);
+          ctx.gate(sent.status === 200, `S19: forged admin app_mention acked 200 by the deployment's Slack route (attempt ${attempt})`);
+          const reply = await slack.awaitThreadReply(anchor, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+          return reply.text;
+        },
+        onRefusal: async (attempt, text) => {
+          ctx.log(`S19: attempt ${attempt} hit OPE-673's admin-standing refusal ("${ADMIN_UNVERIFIED_MARKER}") — re-fencing the seat and asking once more: ${replyExcerpt(text, 160)}`);
+          await fenceJ3Seat("S19 re-ask", askAnchor19);
+        },
+      });
+      const reply19 = askOutcome19.text;
+      ctx.gate(reply19.trim().length > 0, "S19: agent replied to the forged admin mention");
       ctx.gate(
-        !reply19.text.includes(MEMORY_ADMIN_GATE),
+        !reply19.includes(MEMORY_ADMIN_GATE),
         `S19: an admin caller is NOT refused by memory_admin_list's admin gate (hard gate: "${MEMORY_ADMIN_GATE}" is absent)`,
+      );
+      ctx.gate(
+        askOutcome19.resolved,
+        `S19: the admin ask resolved to an answer rather than OPE-673's admin-standing refusal, after ${askOutcome19.attempts} fenced attempt(s) ` +
+          `— a refusal that survives a fenced re-ask is this deployment's verdict, not J3's leg order. Last reply: ${replyExcerpt(reply19)}` +
+          (askOutcome19.refusals.length > 1 ? ` · first refusal: ${replyExcerpt(askOutcome19.refusals[0] ?? "", 160)}` : ""),
       );
       await ctx.judgePass(
         closedQA(
           "Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)? A listing that says it is narrowed to this channel's own domain, and points at a governance channel or a DM for the org-wide view, is a PASS — that is the venue fence working. Only a bare refusal, or an admin-standing error, fails.",
           { mustMatch: [/silo|domain|brain/i] },
         ),
-        reply19.text,
+        reply19,
         "S19: admin memory_admin_list listing quality (narrowed to this room's domain — the org-wide venue is a DM, OPE-687)",
       );
     },
