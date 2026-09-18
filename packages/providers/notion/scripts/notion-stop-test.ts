@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { notionCommentIsStopDirective, routeNotionStopComment, type NotionStopDeps } from "../agent/channels/notion-stop.js";
+import type { NotionOwnBotIds } from "../agent/channels/notion-bot-user.js";
 import { bindNotion, buildNotionAuth, notionConversationKey } from "../agent/channels/notion-identity.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
 import { registerNotionProvider } from "../agent/register.js";
@@ -49,30 +50,45 @@ function recordingDeps(): { deps: NotionStopDeps; calls: CancelAnchoredTurnInput
   };
 }
 
-{
-  ok(notionCommentIsStopDirective(stopComment(), BOT), "a bare `stop` comment from a real, resolved human IS a stop directive");
-  ok(!notionCommentIsStopDirective(stopComment({ text: "please stop" }), BOT), "`please stop` is a MESSAGE, not a directive");
-  ok(!notionCommentIsStopDirective(stopComment({ text: "stop, wrong page" }), BOT), "a stop word inside a sentence is a MESSAGE");
+const own = (primary: string | undefined, siblings: readonly string[] = [], complete = true): NotionOwnBotIds => ({
+  primary,
+  all: new Set([...(primary ? [primary] : []), ...siblings]),
+  complete,
+});
 
-  ok(!notionCommentIsStopDirective(stopComment(), undefined), "🔴 an UNRESOLVED bot id fails closed — can't rule out self, so nothing is treated as a stop");
-  ok(!notionCommentIsStopDirective(stopComment({ authorId: BOT }), BOT), "a SELF-authored comment (our own reply) never cancels");
-  ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), BOT), "a BOT/integration-authored comment never cancels");
-  ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), undefined), "…and stays refused even with an unresolved bot id (both guards agree)");
+{
+  ok(notionCommentIsStopDirective(stopComment(), own(BOT)), "a bare `stop` comment from a real, resolved human IS a stop directive");
+  ok(!notionCommentIsStopDirective(stopComment({ text: "please stop" }), own(BOT)), "`please stop` is a MESSAGE, not a directive");
+  ok(!notionCommentIsStopDirective(stopComment({ text: "stop, wrong page" }), own(BOT)), "a stop word inside a sentence is a MESSAGE");
+
+  ok(!notionCommentIsStopDirective(stopComment(), own(undefined)), "🔴 an UNRESOLVED bot id fails closed — can't rule out self, so nothing is treated as a stop");
+  ok(!notionCommentIsStopDirective(stopComment({ authorId: BOT }), own(BOT)), "a SELF-authored comment (our own reply) never cancels");
+  ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), own(BOT)), "a BOT/integration-authored comment never cancels");
+  ok(!notionCommentIsStopDirective(stopComment({ authorType: "bot" }), own(undefined)), "…and stays refused even with an unresolved bot id (both guards agree)");
 
   ok(
-    !notionCommentIsStopDirective({ ...stopComment(), created_by: { object: "user" } }, BOT),
+    !notionCommentIsStopDirective({ ...stopComment(), created_by: { object: "user" } }, own(BOT)),
     "🔴 an author with NO created_by.id never cancels — fail closed, the same posture as the classifier",
   );
   ok(
-    !notionCommentIsStopDirective({ ...stopComment(), created_by: undefined }, BOT),
+    !notionCommentIsStopDirective({ ...stopComment(), created_by: undefined }, own(BOT)),
     "🔴 …and a comment with NO created_by at all never cancels either",
   );
 
-  ok(notionCommentIsStopDirective(stopComment({ authorId: "some-other-human" }), BOT), "negative control: a DIFFERENT resolved human's bare `stop` DOES pass");
+  ok(notionCommentIsStopDirective(stopComment({ authorId: "some-other-human" }), own(BOT)), "negative control: a DIFFERENT resolved human's bare `stop` DOES pass");
   ok(
-    notionCommentIsStopDirective({ ...stopComment(), created_by: { id: "some-other-human", object: "user" } }, BOT),
+    notionCommentIsStopDirective({ ...stopComment(), created_by: { id: "some-other-human", object: "user" } }, own(BOT)),
     "negative control: an identified human with NO created_by.type still cancels — the drop above is the missing id",
   );
+
+  const SIBLING = "bot-of-integration-A";
+  const siblingStop = { ...stopComment(), created_by: { id: SIBLING, object: "user" } };
+  ok(!notionCommentIsStopDirective(siblingStop, own(BOT, [SIBLING])), "🔴 OPE-1921: a `stop` authored by a SIBLING integration's bot never cancels — our own words are recognised across every configured integration");
+  ok(notionCommentIsStopDirective(siblingStop, own(BOT)), "🔴 OPE-1921 CONTROL: the SAME comment against the verifying integration's id ALONE DOES cancel — the pre-fix self-cancel");
+  const untypedHuman = { ...stopComment(), created_by: { id: "some-other-human", object: "user" } };
+  ok(!notionCommentIsStopDirective(untypedHuman, own(BOT, [], false)), "🔴 OPE-1921: with one configured integration's id unresolved, an author of unstated type cannot cancel — the self-check did not run, so the answer is refuse");
+  ok(notionCommentIsStopDirective(untypedHuman, own(BOT)), "🔴 OPE-1921 CONTROL: the identical comment with a COMPLETE own-id set DOES cancel, so the refusal above is driven by `complete` alone");
+  ok(notionCommentIsStopDirective({ ...stopComment(), created_by: { id: "some-other-human", object: "user", type: "person" } }, own(BOT, [], false)), "🔴 OPE-1921: …and an author Notion STATES is a person still cancels, so the refusal above is the ambiguity and not a blanket deafness");
 }
 
 {

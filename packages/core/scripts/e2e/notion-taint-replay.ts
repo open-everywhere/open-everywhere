@@ -3,7 +3,9 @@ import type { AuditWireEntry } from "./audit-read.js";
 import type { NotionComment } from "./notion-driver.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 
-export const NOTION_TAINT_ANCHOR_MAX_AGE_MS = 168 * 60 * 60 * 1_000;
+export const NOTION_TAINT_ANCHOR_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1_000;
+
+const NOTION_TAINT_ANCHOR_MAX_AGE_DAYS = NOTION_TAINT_ANCHOR_MAX_AGE_MS / 86_400_000;
 
 const NOTION_TAINT_ANCHOR_MAX_SKEW_MS = 5 * 60_000;
 
@@ -35,8 +37,8 @@ export function notionTaintAnchorProblem(input: NotionTaintAnchorInput): string 
   if (age < -NOTION_TAINT_ANCHOR_MAX_SKEW_MS) return "the comment is dated more than five minutes in the future — a clock fault, not a fresh ask";
   if (age > NOTION_TAINT_ANCHOR_MAX_AGE_MS) {
     return (
-      `the comment is out of reach (${Math.floor(age / 3_600_000)}h old; this leg reaches back ${NOTION_TAINT_ANCHOR_MAX_AGE_MS / 3_600_000}h). ` +
-      "That bound is THIS LEG's, not the product's — the `direct` path reads no created_time at all — and it mirrors the catch-up reach-back so the leg re-seeds its fixture rather than replaying a conversation nobody is having"
+      `the comment is out of reach (${Math.floor(age / 86_400_000)}d old; this leg reaches back ${NOTION_TAINT_ANCHOR_MAX_AGE_DAYS}d). ` +
+      "That bound is THIS LEG's, not the product's — the `direct` path reads no created_time at all — and it exists so the leg re-seeds its fixture rather than replaying a conversation nobody is having"
     );
   }
   if (!matchesAgentName(comment.text, botName)) {
@@ -53,7 +55,7 @@ export function notionTaintFixtureRemedy(pageId: string): string {
     "REMEDY, one action (a person must type it — a comment this driver creates is always Notion `bot` and can never wake the classifier): " +
     `add a comment on Notion page ${pageId}, in your own account, whose text NAMES the agent and ASKS FOR THE PAGE — ` +
     'for example "Open Everywhere — please read this page and summarise its current contents." ' +
-    `The leg picks up the newest comment that qualifies, so nothing else needs setting. It reaches back ${NOTION_TAINT_ANCHOR_MAX_AGE_MS / 3_600_000}h, so one comment covers a week of runs.`
+    `The leg picks up the newest comment that qualifies, so nothing else needs setting. It reaches back ${NOTION_TAINT_ANCHOR_MAX_AGE_DAYS} days, so one comment lasts a quarter.`
   );
 }
 

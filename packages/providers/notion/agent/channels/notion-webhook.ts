@@ -20,6 +20,7 @@ import {
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ancestry-trust.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
+import { collectNotionOwnBotIds, type NotionOwnBotIds } from "./notion-bot-user.js";
 import { notionPageDomain, notionReachWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
@@ -180,6 +181,14 @@ async function deliver(
   const botUserId = deps.timing
     ? await deps.timing.measure("botTriggerPage", () => deps.resolveBotUserId(credentialId))
     : await deps.resolveBotUserId(credentialId);
+  const siblingCredentialIds = deps.signingKeys.map((k) => k.credentialId).filter((id) => id !== credentialId);
+  const collectOwn = () => collectNotionOwnBotIds(
+    botUserId,
+    siblingCredentialIds,
+    deps.resolveBotUserId,
+    async (id) => (await deps.credentialFor(id)) !== undefined,
+  );
+  const ownBotIds = deps.timing ? await deps.timing.measure("botTriggerPage", collectOwn) : await collectOwn();
   const botName = deps.resolveBotName
     ? deps.timing
       ? await deps.timing.measure("botTriggerPage", () => deps.resolveBotName!(credentialId))
@@ -214,7 +223,7 @@ async function deliver(
 
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 
-  if (notionCommentIsStopDirective(comment, botUserId)) {
+  if (notionCommentIsStopDirective(comment, ownBotIds)) {
     const stop = () => routeNotionStopComment(
       { workspaceId, pageId, discussionId: discussionId || undefined, credentialId, requesterId: comment.created_by?.id },
       { attachSession: deps.attachSession },
@@ -230,7 +239,7 @@ async function deliver(
     };
   }
 
-  const classification = classifyNotionComment(comment, botUserId, botName);
+  const classification = classifyNotionComment(comment, ownBotIds, botName);
   const seamFacts: NotionSeamFacts = {
     workspaceId,
     pageId,
@@ -274,7 +283,7 @@ async function deliver(
     text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",
     ...(comment.parent?.block_id ? { anchorId: comment.parent.block_id } : {}),
   };
-  const loadSiblings = () => loadThreadSiblings(comment, pageId, discussionId, botUserId, ingressCallOpts(cred, deps));
+  const loadSiblings = () => loadThreadSiblings(comment, pageId, discussionId, ownBotIds, ingressCallOpts(cred, deps));
   const threadComments = deps.timing
     ? await deps.timing.measure("ancestorSiblingTrust", loadSiblings)
     : await loadSiblings();
@@ -351,7 +360,7 @@ async function loadThreadSiblings(
   trigger: NotionComment,
   pageId: string,
   discussionId: string,
-  botUserId: string | undefined,
+  own: NotionOwnBotIds,
   opts: NotionCallOpts,
 ): Promise<NotionUntieredWakeMessage[]> {
   try {
@@ -360,7 +369,7 @@ async function loadThreadSiblings(
       .filter((c) => c.id !== trigger.id && (discussionId ? c.discussion_id === discussionId : true))
       .map((c) => {
         const authorId = c.created_by?.id;
-        const isSelf = Boolean(authorId && botUserId && authorId === botUserId);
+        const isSelf = Boolean(authorId !== undefined && own.all.has(authorId));
         const isPerson = c.created_by?.type === "person";
         return {
           from: isSelf ? ("self" as const) : ("human" as const),

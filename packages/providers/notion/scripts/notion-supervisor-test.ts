@@ -14,6 +14,7 @@ import {
   type NotionSupervisorSession,
   type NotionWakeMessage,
 } from "../agent/channels/notion-supervisor.js";
+import type { NotionOwnBotIds } from "../agent/channels/notion-bot-user.js";
 import {
   singleWindowMentionPolicy,
   registerSurfaces,
@@ -61,12 +62,18 @@ const plainRT = [{ type: "text", plain_text: "looks good to me", text: { content
 
 const base: NotionComment = { id: "c1", discussion_id: DISCUSSION, created_by: { id: AUTHOR, object: "user", type: "person" }, rich_text: plainRT };
 
-ok(classifyNotionComment({ ...base, rich_text: mentionRT }, BOT).addressing === "direct", "structured bot @mention -> direct (guaranteed engage)");
-ok(classifyNotionComment(base, BOT).addressing === "channel-watch", "plain comment -> channel-watch (judged)");
-ok(classifyNotionComment({ ...base, rich_text: nameDropRT }, BOT).addressing === "direct", "brand name-drop ('Open Everywhere') -> direct (synthetic mention)");
-ok(classifyNotionComment({ ...base, rich_text: oeTokenRT }, BOT).addressing === "direct", "bare 'oe' token name-drop -> direct");
-ok(classifyNotionComment({ ...base, rich_text: botNameRT }, BOT, "Aria").addressing === "direct", "configured botName name-drop -> direct");
-ok(classifyNotionComment({ ...base, rich_text: botNameRT }, BOT).addressing === "channel-watch", "botName name-drop with NO configured name -> stays channel-watch");
+const own = (primary: string | undefined, siblings: readonly string[] = [], complete = true): NotionOwnBotIds => ({
+  primary,
+  all: new Set([...(primary ? [primary] : []), ...siblings]),
+  complete,
+});
+
+ok(classifyNotionComment({ ...base, rich_text: mentionRT }, own(BOT)).addressing === "direct", "structured bot @mention -> direct (guaranteed engage)");
+ok(classifyNotionComment(base, own(BOT)).addressing === "channel-watch", "plain comment -> channel-watch (judged)");
+ok(classifyNotionComment({ ...base, rich_text: nameDropRT }, own(BOT)).addressing === "direct", "brand name-drop ('Open Everywhere') -> direct (synthetic mention)");
+ok(classifyNotionComment({ ...base, rich_text: oeTokenRT }, own(BOT)).addressing === "direct", "bare 'oe' token name-drop -> direct");
+ok(classifyNotionComment({ ...base, rich_text: botNameRT }, own(BOT), "Aria").addressing === "direct", "configured botName name-drop -> direct");
+ok(classifyNotionComment({ ...base, rich_text: botNameRT }, own(BOT)).addressing === "channel-watch", "botName name-drop with NO configured name -> stays channel-watch");
 
 ok(notionNameDrop("hey Open Everywhere please help") === true, "matches the brand phrase");
 ok(notionNameDrop("openeverywhere can you summarise") === true, "matches the no-space brand token");
@@ -105,15 +112,33 @@ ok(notionNameDrop("") === false, "empty text never matches");
     if (savedFull === undefined) delete process.env.OE_AGENT_NAME; else process.env.OE_AGENT_NAME = savedFull;
   }
 }
-ok(classifyNotionComment(base, undefined).addressing === "drop", "unresolved bot user id -> DROP (fail-closed loop guard — the critical hardening)");
-ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user", type: "person" } }, BOT).addressing === "drop", "self-authored -> DROP (our own reply)");
-ok(classifyNotionComment({ ...base, created_by: { id: "other-bot", object: "user", type: "bot" } }, BOT).addressing === "drop", "bot/integration-authored -> DROP (created_by.type != person)");
-ok(classifyNotionComment({ ...base, rich_text: mentionRT }, undefined).addressing === "drop", "@mention with unresolved bot id still DROPs (fail closed)");
-ok(classifyNotionComment({ ...base, created_by: { object: "user" } }, BOT).addressing === "drop", "author with NO created_by.id -> DROP (fail-closed loop guard)");
-ok(classifyNotionComment({ ...base, created_by: undefined }, BOT).addressing === "drop", "comment with NO created_by at all -> DROP (fail-closed loop guard)");
-ok(classifyNotionComment({ ...base, created_by: { object: "user" }, rich_text: nameDropRT }, BOT).addressing === "drop", "a NAME-DROP from an unidentified author still DROPs — the guard outranks the addressed path");
-ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, BOT).addressing === "channel-watch", "identified author with NO created_by.type -> channel-watch (the drop above is the missing id, not the missing type)");
-ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user" } }, BOT).addressing === "drop", "self-authored with NO created_by.type -> DROP (the id is what recognises our own words)");
+ok(classifyNotionComment(base, own(undefined)).addressing === "drop", "unresolved bot user id -> DROP (fail-closed loop guard — the critical hardening)");
+ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user", type: "person" } }, own(BOT)).addressing === "drop", "self-authored -> DROP (our own reply)");
+ok(classifyNotionComment({ ...base, created_by: { id: "other-bot", object: "user", type: "bot" } }, own(BOT)).addressing === "drop", "bot/integration-authored -> DROP (created_by.type != person)");
+ok(classifyNotionComment({ ...base, rich_text: mentionRT }, own(undefined)).addressing === "drop", "@mention with unresolved bot id still DROPs (fail closed)");
+ok(classifyNotionComment({ ...base, created_by: { object: "user" } }, own(BOT)).addressing === "drop", "author with NO created_by.id -> DROP (fail-closed loop guard)");
+ok(classifyNotionComment({ ...base, created_by: undefined }, own(BOT)).addressing === "drop", "comment with NO created_by at all -> DROP (fail-closed loop guard)");
+ok(classifyNotionComment({ ...base, created_by: { object: "user" }, rich_text: nameDropRT }, own(BOT)).addressing === "drop", "a NAME-DROP from an unidentified author still DROPs — the guard outranks the addressed path");
+ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, own(BOT)).addressing === "channel-watch", "identified author with NO created_by.type -> channel-watch (the drop above is the missing id, not the missing type)");
+ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user" } }, own(BOT)).addressing === "drop", "self-authored with NO created_by.type -> DROP (the id is what recognises our own words)");
+
+{
+  const SIBLING = "bot-of-integration-A";
+  const siblingReply: NotionComment = { ...base, created_by: { id: SIBLING, object: "user" } };
+  const verifiedUnderB = own(BOT, [SIBLING]);
+
+  ok(classifyNotionComment(siblingReply, verifiedUnderB).addressing === "drop", "🔴 OPE-1921: a comment authored by integration A's bot, on a delivery verified under B, DROPS — the deployment's own words are recognised across every configured integration");
+  ok(classifyNotionComment(siblingReply, verifiedUnderB).reason.includes("sibling integration"), "…and the reason NAMES the sibling, so an operator reading the row can tell this from our own verifying integration's reply coming back");
+  ok(classifyNotionComment(siblingReply, own(BOT)).addressing === "channel-watch", "🔴 OPE-1921 CONTROL: the SAME comment against the verifying integration's id ALONE reads as a person and is judged — the pre-fix behaviour, and the loop");
+  ok(classifyNotionComment({ ...siblingReply, rich_text: nameDropRT }, verifiedUnderB).addressing === "drop", "🔴 OPE-1921: a sibling integration's comment that NAMES the agent still DROPs — the guard outranks the addressed path");
+  ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, verifiedUnderB).addressing === "channel-watch", "NEGATIVE CONTROL: a person's comment on a two-integration deployment is still judged — the set drops OUR ids, not every id");
+
+  const incomplete = own(BOT, [], false);
+  ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, incomplete).addressing === "drop", "🔴 OPE-1921: an unresolvable sibling fails CLOSED — an author with no stated type is unattributable, so it drops rather than risk the loop");
+  ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, incomplete).reason.includes("did not resolve"), "…and the reason names the unresolved integration rather than blaming the author");
+  ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user", type: "person" } }, incomplete).addressing === "channel-watch", "🔴 OPE-1921: …and an author Notion STATES is a person is still judged — the fail-closed arm is the ambiguity, not a blanket deafness");
+  ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, own(BOT)).addressing === "channel-watch", "NEGATIVE CONTROL: the identical comment with a COMPLETE set is judged, so the drop above is driven by `complete` and by nothing else");
+}
 
 const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-03-24T18:51:00Z", text: "does section 2 still hold?", trust: "peer" };
 const siblings: NotionWakeMessage[] = [

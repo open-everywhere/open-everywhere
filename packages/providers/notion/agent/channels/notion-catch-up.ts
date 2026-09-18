@@ -1,5 +1,5 @@
 import { readNotionComments, resolveNotionCredential, type NotionCommentSummary, type ResolvedNotionCredential } from "./notion-api.js";
-import { notionChannelCredentialForSurface, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
+import { notionChannelCredentialForSurface, notionIntegrations, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { resolveNotionBotUser } from "./notion-bot-user.js";
 import { catchUpSender, getConfig, type Domain, type NormalizedMessage, type SeatCatchUpFetch } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -17,12 +17,12 @@ const CATCH_UP_MAX_BLOCK_SCANS = 80;
 
 const CATCH_UP_MAX_COMMENT_PAGES = 5;
 
-function normalizeComment(c: NotionCommentSummary, selfActorId: string | undefined): NormalizedMessage | undefined {
+function normalizeComment(c: NotionCommentSummary, selfActorIds: ReadonlySet<string>): NormalizedMessage | undefined {
   const text = c.text.trim();
   if (text.length === 0 || !c.authorId || !c.discussionId) return undefined;
   const ms = Date.parse(c.createdTime ?? "");
   if (!Number.isFinite(ms)) return undefined;
-  const isSelf = selfActorId !== undefined && c.authorId === selfActorId;
+  const isSelf = selfActorIds.has(c.authorId);
   return {
     id: c.id ?? `${c.discussionId}:${c.createdTime ?? ms}`,
     ms,
@@ -39,35 +39,62 @@ export interface NotionCatchUpDeps {
   readonly resolveCredential: typeof resolveNotionCredential;
   readonly domains?: readonly Domain[];
   readonly selfActorId?: string;
-  readonly selfActorIdFor?: (credentialId: string, credential: ResolvedNotionCredential) => Promise<string | undefined>;
+  readonly selfActorIdFor?: (credentialId: string, credential: () => Promise<ResolvedNotionCredential | undefined>) => Promise<string | undefined>;
 }
 
 const liveDeps: NotionCatchUpDeps = {
   readComments: readNotionComments,
   resolveCredential: resolveNotionCredential,
-  selfActorIdFor: async (credentialId, credential) => (await resolveNotionBotUser(credentialId, async () => credential)()).id,
+  selfActorIdFor: async (credentialId, credential) => (await resolveNotionBotUser(credentialId, credential)()).id,
 };
+
+async function collectCatchUpSelfIds(
+  readingCredentialId: string,
+  readingCredential: ResolvedNotionCredential,
+  domains: readonly Domain[],
+  deps: NotionCatchUpDeps,
+): Promise<ReadonlySet<string>> {
+  const ids = new Set<string>();
+  const add = async (credentialId: string, credential: () => Promise<ResolvedNotionCredential | undefined>): Promise<void> => {
+    try {
+      const id = await deps.selfActorIdFor?.(credentialId, credential);
+      if (id) ids.add(id);
+    } catch {
+    }
+  };
+  await add(readingCredentialId, async () => readingCredential);
+  for (const integration of notionIntegrations(domains)) {
+    if (integration.credentialId === readingCredentialId) continue;
+    await add(integration.credentialId, () => deps.resolveCredential(integration.credentialId));
+  }
+  return ids;
+}
 
 export async function fetchNotionCatchUpWindow(
   req: { container: string; threadRoot?: string; threadAnchor?: string; sinceMs: number; channelKey?: string },
   deps: NotionCatchUpDeps = liveDeps,
 ): Promise<readonly NormalizedMessage[]> {
-  const credentialId = req.channelKey ? notionChannelCredentialForSurface(req.channelKey, deps.domains ?? safeDomains()) : undefined;
+  const domains = deps.domains ?? safeDomains();
+  const credentialId = req.channelKey ? notionChannelCredentialForSurface(req.channelKey, domains) : undefined;
   const cred = await deps.resolveCredential(credentialId);
   if (!cred) return [];
-  const selfActorId = deps.selfActorId ?? (await deps.selfActorIdFor?.(credentialId ?? NOTION_CHANNEL_CREDENTIAL, cred));
+  const readingCredentialId = credentialId ?? NOTION_CHANNEL_CREDENTIAL;
+  const selfActorIds = deps.selfActorId !== undefined
+    ? new Set([deps.selfActorId])
+    : await collectCatchUpSelfIds(readingCredentialId, cred, domains, deps);
   const res = await deps.readComments(req.container, {
     apiKey: cred.apiKey, endpoints: cred.endpoints,
     maxComments: CATCH_UP_MAX_COMMENTS,
     maxBlockScans: CATCH_UP_MAX_BLOCK_SCANS,
     sinceMs: req.sinceMs,
     maxCommentPages: CATCH_UP_MAX_COMMENT_PAGES,
+    blockScanOrder: "newest-first",
     ...(req.threadAnchor ? { block: req.threadAnchor } : {}),
   });
   const out: NormalizedMessage[] = [];
   for (const c of res.comments) {
     if (req.threadRoot !== undefined && c.discussionId !== req.threadRoot) continue;
-    const n = normalizeComment(c, selfActorId);
+    const n = normalizeComment(c, selfActorIds);
     if (n && n.ms >= req.sinceMs) out.push(n);
   }
   return out;

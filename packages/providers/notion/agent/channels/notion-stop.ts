@@ -8,14 +8,16 @@ import {
 import { isStopDirective } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildNotionAuth, notionConversationKey } from "./notion-identity.js";
 import { richTextToPlainText, type NotionComment } from "./notion-api.js";
+import type { NotionOwnBotIds } from "./notion-bot-user.js";
 
-export function notionCommentIsStopDirective(comment: NotionComment, botUserId: string | undefined): boolean {
+export function notionCommentIsStopDirective(comment: NotionComment, own: NotionOwnBotIds): boolean {
   if (!isStopDirective(richTextToPlainText(comment.rich_text))) return false;
-  if (!botUserId) return false;
+  if (!own.primary) return false;
   const author = comment.created_by;
-  if (author?.id === botUserId) return false;
+  if (author?.id !== undefined && own.all.has(author.id)) return false;
   if (!author?.id) return false;
   if (author.type && author.type !== "person") return false;
+  if (!own.complete && author.type !== "person") return false;
   return true;
 }
 

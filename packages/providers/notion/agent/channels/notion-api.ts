@@ -364,6 +364,8 @@ export async function readNotionComments(
     readonly maxBlockScans?: number;
     readonly sinceMs?: number;
     readonly maxCommentPages?: number;
+    readonly blockScanOrder?: "document" | "newest-first";
+    readonly maxChildPages?: number;
   },
 ): Promise<{ readonly comments: NotionCommentSummary[]; readonly discussionCount: number; readonly blocksScanned: number; readonly truncated: boolean }> {
   const maxComments = opts.maxComments ?? 100;
@@ -405,6 +407,30 @@ export async function readNotionComments(
   }
 
   if (take(await listBlockComments(pageId, listOpts), pageId)) {
+    return { comments, discussionCount: discussions.size, blocksScanned, truncated };
+  }
+
+  if (opts.blockScanOrder === "newest-first") {
+    const maxChildPages = opts.maxChildPages ?? 10;
+    const children: NotionBlock[] = [];
+    let childCursor: string | undefined;
+    let pagesRead = 0;
+    do {
+      const { blocks, nextCursor } = await getBlockChildren(pageId, { ...opts, startCursor: childCursor });
+      children.push(...blocks);
+      pagesRead += 1;
+      childCursor = nextCursor && pagesRead < maxChildPages ? nextCursor : undefined;
+      if (nextCursor && childCursor === undefined) truncated = true;
+    } while (childCursor);
+    if (children.length > maxBlockScans) truncated = true;
+    const tail = children.slice(Math.max(0, children.length - maxBlockScans));
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const b = tail[i]!;
+      blocksScanned += 1;
+      const id = typeof b.id === "string" ? b.id : undefined;
+      if (!id) continue;
+      if (take(await listBlockComments(id, listOpts), id, blockPlainText(b))) break;
+    }
     return { comments, discussionCount: discussions.size, blocksScanned, truncated };
   }
 

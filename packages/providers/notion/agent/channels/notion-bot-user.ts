@@ -1,4 +1,48 @@
 import { retrieveBotUser, NOTION_INGRESS_RETRY, type ResolvedNotionCredential } from "./notion-api.js";
+import { NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
+
+export interface NotionOwnBotIds {
+  readonly primary: string | undefined;
+  readonly all: ReadonlySet<string>;
+  readonly complete: boolean;
+}
+
+export async function collectNotionOwnBotIds(
+  primary: string | undefined,
+  siblingCredentialIds: readonly string[],
+  resolve: (credentialId: string) => Promise<string | undefined>,
+  canPost?: (credentialId: string) => Promise<boolean>,
+): Promise<NotionOwnBotIds> {
+  const all = new Set<string>();
+  if (primary) all.add(primary);
+  let complete = primary !== undefined;
+  for (const credentialId of new Set(siblingCredentialIds)) {
+    let id: string | undefined;
+    try {
+      id = await resolve(credentialId);
+    } catch {
+      id = undefined;
+    }
+    if (id) {
+      all.add(id);
+      continue;
+    }
+    let reachable = true;
+    if (canPost) reachable = await reachableOnce(credentialId, canPost);
+    if (reachable) complete = false;
+  }
+  return { primary, all, complete };
+}
+
+const reachableCache = new Map<string, Promise<boolean>>();
+
+function reachableOnce(credentialId: string, canPost: (credentialId: string) => Promise<boolean>): Promise<boolean> {
+  const hit = reachableCache.get(credentialId);
+  if (hit) return hit;
+  const verdict = canPost(credentialId).catch(() => true);
+  reachableCache.set(credentialId, verdict);
+  return verdict;
+}
 
 const botUserCache = new Map<string, Promise<{ id?: string; name?: string }>>();
 
@@ -13,7 +57,7 @@ export function resolveNotionBotUser(
   return () => {
     const cached = botUserCache.get(credentialId);
     if (cached) return cached;
-    const overrideId = process.env.NOTION_BOT_USER_ID;
+    const overrideId = credentialId === NOTION_CHANNEL_CREDENTIAL ? process.env.NOTION_BOT_USER_ID : undefined;
     const overrideName = process.env.NOTION_BOT_NAME;
     const named = (u: { id?: string; name?: string }) => ({ id: u.id, name: overrideName && overrideName.length > 0 ? overrideName : u.name });
     const resolved =
@@ -32,4 +76,5 @@ export function resolveNotionBotUser(
 
 export function _resetNotionBotUserCache(): void {
   botUserCache.clear();
+  reachableCache.clear();
 }

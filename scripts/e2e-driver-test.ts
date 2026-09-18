@@ -4411,9 +4411,12 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(problem({ authorType: "bot" })?.includes("bot-authored") === true, "a REST-created bot comment cannot masquerade as the human replay fixture");
   ok(problem({ authorId: "bot-1" })?.includes("OWN reply") === true, "🔴 the agent's own reply is refused — the self-authored loop guard drops it, so replaying it would spend a wake on nothing");
   ok(problem({ authorId: "" })?.includes("created_by.id") === true, "an author the harness cannot identify is refused, the same direction the classifier fails closed in");
-  ok(problem({ createdTime: "2026-08-16T01:23:00.000Z" })?.includes("out of reach") === true, "the ship #217 31-day-old anchor is outside the leg's 168h reach-back and is refused BEFORE a webhook is forged");
-  ok(NOTION_TAINT_ANCHOR_MAX_AGE_MS === 168 * 60 * 60 * 1_000, "the anchor reach-back is 168h, the same floor notion-supervisor.ts's catch-up uses");
-  ok(problem({ createdTime: "2026-09-13T12:00:00.000Z" }) === undefined, "🔴 a four-day-old anchor still qualifies — a 24h bound would have re-imposed a daily re-seed the product never asked for");
+  ok(NOTION_TAINT_ANCHOR_MAX_AGE_MS === 90 * 24 * 60 * 60 * 1_000, "the anchor reach-back is 90 days — a human-typed fixture's staleness bound, not the catch-up's context window");
+  ok(problem({ createdTime: "2026-06-25T01:00:00.000Z" })?.includes("out of reach") === true, "🔴 an anchor past 90 days IS refused BEFORE a webhook is forged — the floor is still a floor, only a wider one");
+  ok(problem({ createdTime: "2026-06-25T01:00:00.000Z" })?.includes("91d old") === true, "…and the refusal states the age and the reach in DAYS, the unit a 90-day bound is read in");
+  ok(problem({ createdTime: "2026-06-20T12:00:00.000Z" }) === undefined, "NEGATIVE CONTROL: an 89-day-old anchor qualifies, so the assertion above is driven by the bound and not by the date's shape");
+  ok(problem({ createdTime: "2026-08-16T01:23:00.000Z" }) === undefined, "🔴 the ship #217 31-day-old anchor now qualifies on AGE — its red was the missing name-drop, and the old 168h floor refused it for the wrong reason");
+  ok(problem({ createdTime: "2026-09-13T12:00:00.000Z" }) === undefined, "a four-day-old anchor still qualifies — widening the ceiling never narrowed the floor");
   ok(problem({ createdTime: "2026-09-19T00:30:00.000Z" })?.includes("future") === true, "a comment stamped an hour ahead is a clock fault, not a fresh ask");
   ok(problem({ text: "e2e anchor: please summarise this page" })?.includes("does not NAME") === true, "🔴 the old unaddressed anchor is refused before it can become a thread-follow no_reply");
   ok(problem({ text: "Open Everywhere — how are you today?" })?.includes("read, review or summarise") === true, "an addressed comment that asks for no page read is refused — nothing in that turn need call read_notion_page");
@@ -4436,6 +4439,10 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     ok(picked.ok && picked.comment.createdTime === "2026-05-26T05:32:00.000Z", "🔴 the NEWEST QUALIFYING comment wins — a newer comment that does not qualify is skipped, not taken and then failed");
     ok(picked.ok && picked.considered === 4, "the choice reports how many comments it looked at, so a thin page is distinguishable from a fussy predicate");
     ok(chooseNotionTaintAnchor([...page].reverse(), { botUserId: "bot-1", nowMs: now }).ok, "read order does not decide the pick — the sort does");
+    const withAncient = chooseNotionTaintAnchor([at("2026-07-01T09:00:00.000Z", { text: good }), ...page], { botUserId: "bot-1", nowMs: now });
+    ok(withAncient.ok && withAncient.comment.createdTime === "2026-05-26T05:32:00.000Z", "🔴 an in-window 78-day-old comment never outranks a fresher qualifying one — newest-qualifying semantics are unchanged by the wider floor");
+    const onlyAncient = chooseNotionTaintAnchor([at("2026-07-01T09:00:00.000Z", { text: good })], { botUserId: "bot-1", nowMs: now });
+    ok(onlyAncient.ok, "NEGATIVE CONTROL: …and that same 78-day-old comment IS taken when it is the only one, so the line above measures the ORDER and not a rejection");
 
     const none = chooseNotionTaintAnchor(page.filter((c) => !c.text.startsWith("Open Everywhere")), { botUserId: "bot-1", nowMs: now });
     ok(!none.ok && none.reason.includes("does not NAME"), "🔴 when nothing qualifies the reason is the NEWEST PERSON-authored comment's own problem — 'your newest comment does not name the agent' sends someone to the right place");

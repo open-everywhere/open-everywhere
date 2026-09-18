@@ -198,6 +198,46 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(out.every((m) => m.type === "thread" && m.threadId === "D1"), "notion: every comment is thread-scoped — a Notion wake is thread-first");
   ok(out.every((m) => m.text !== "a different discussion"), "notion: another discussion on the same page never enters the seat's context");
   ok(out.some((m) => m.sender === "bot"), "notion: an integration author is MARKED AWARENESS, not silently dropped");
+
+  {
+    const READER = "channel-key";
+    const SIBLING_CRED = "payments-channel-key";
+    const BOT_READER = "U_BOT_READER";
+    const BOT_SIBLING = "U_BOT_SIBLING";
+    const resolvedFor: string[] = [];
+    const ourOwnWords = (async () => ({
+      discussionCount: 1,
+      blocksScanned: 1,
+      truncated: false,
+      comments: [
+        { id: "s-1", discussionId: "D1", authorId: BOT_SIBLING, createdTime: AFTER, text: "posted by our SIBLING integration" },
+        { id: "s-2", discussionId: "D1", authorId: BOT_READER, createdTime: AFTER, text: "posted by the READING integration" },
+        { id: "s-3", discussionId: "D1", authorId: "N-HUMAN", createdTime: AFTER, text: "a person said this" },
+      ],
+    })) as never;
+    const twoIntegrations = [{ name: "payments", credentials: [{ connector: "notion", credential: "channel-key", use: SIBLING_CRED }] }] as never;
+    const siblingAware: NotionCatchUpDeps = {
+      readComments: ourOwnWords,
+      resolveCredential: (async () => ({ apiKey: "k" })) as never,
+      domains: twoIntegrations,
+      selfActorIdFor: async (credentialId) => {
+        resolvedFor.push(credentialId);
+        return credentialId === SIBLING_CRED ? BOT_SIBLING : BOT_READER;
+      },
+    };
+    const withSet = await fetchNotionCatchUpWindow({ container: "page-1", threadRoot: "D1", sinceMs: SINCE }, siblingAware);
+    ok(resolvedFor.includes(READER) && resolvedFor.includes(SIBLING_CRED), "🔴 OPE-1921: the catch-up resolves EVERY configured integration's bot id, not only the one this read runs under");
+    ok(withSet.find((m) => m.id === "s-1")?.sender === "self", "🔴 OPE-1921: a reply the SIBLING integration posted reads as `self` — the seat's own words, whichever integration wrote them");
+    ok(withSet.find((m) => m.id === "s-1")?.authorId === undefined, "…and carries NO author id, exactly as our own reply always has — so wake-trust cannot hand it a human standing");
+    ok(withSet.find((m) => m.id === "s-2")?.sender === "self", "the READING integration's own reply still reads as `self` — the set is an addition, not a replacement");
+    ok(withSet.find((m) => m.id === "s-3")?.sender === "human" && withSet.find((m) => m.id === "s-3")?.authorId === "N-HUMAN", "NEGATIVE CONTROL: a real person is untouched — the set marks OUR ids self, not every id");
+
+    const oneId = await fetchNotionCatchUpWindow({ container: "page-1", threadRoot: "D1", sinceMs: SINCE }, { ...siblingAware, selfActorId: BOT_READER });
+    ok(oneId.find((m) => m.id === "s-1")?.sender === "human", "🔴 OPE-1921 CONTROL: with ONE id, the sibling integration's reply reads as a PERSON's — the seat answering from its own words as if someone else wrote them");
+    ok(oneId.find((m) => m.id === "s-1")?.authorId === BOT_SIBLING, "…and carries an author id, which is what puts it at the `unauth` sender floor rather than `self`");
+    ok(oneId.find((m) => m.id === "s-2")?.sender === "self", "…while the READING integration's own reply is recognised either way, so the control differs in exactly one thing");
+  }
+
   asked.length = 0;
   await fetchNotionCatchUpWindow(
     { container: "page-1", threadRoot: "D1", threadAnchor: "block-80-plus", sinceMs: SINCE },
@@ -322,6 +362,87 @@ const byId = (ms: readonly NormalizedMessage[], id: string) => ms.find((m) => m.
   ok(cut.truncated, "🔴 notion/OPE-1831: an anchor the PAGE BOUND cut off reports `truncated` — a short list that looks complete is a false claim about what the sweep saw");
   const whole = await readNotionComments(PAGE, { apiKey: "k", fetch: small, maxComments: 1000, maxBlockScans: 80, maxCommentPages: 2 } as never);
   ok(!whole.truncated, "notion/OPE-1831: NEGATIVE CONTROL — an anchor Notion finished reports `truncated` false, so the bit above is driven and not a constant");
+}
+
+{
+  const PAGE = "page-long";
+  const SAID_ON_A_NEW_BLOCK = "said on a block appended after the page passed 80 children";
+  const children = Array.from({ length: 120 }, (_, i) => ({ id: `blk-${i}`, type: "paragraph", paragraph: { rich_text: [] } }));
+  const recent = { id: "new-1", discussion_id: "D1", created_time: AFTER, created_by: { id: "N1", type: "person" }, rich_text: [{ plain_text: SAID_ON_A_NEW_BLOCK }] };
+
+  const calls: string[] = [];
+  const longPage = (async (url: string) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes("/children")) {
+      const second = u.includes("start_cursor=children-2");
+      const slice = second ? children.slice(100) : children.slice(0, 100);
+      return new Response(JSON.stringify({ results: slice, has_more: !second, next_cursor: second ? null : "children-2" }), { status: 200 });
+    }
+    const onLast = u.includes(`block_id=${children[119]!.id}`);
+    return new Response(JSON.stringify({ results: onLast ? [recent] : [], has_more: false, next_cursor: null }), { status: 200 });
+  }) as never;
+
+  const notionDeps = (over: Record<string, unknown> = {}): NotionCatchUpDeps => ({
+    readComments: ((pageId: string, opts: Record<string, unknown>) => readNotionComments(pageId, { ...opts, ...over, fetch: longPage } as never)) as never,
+    resolveCredential: (async () => ({ apiKey: "k" })) as never,
+    domains: [],
+  });
+
+  calls.length = 0;
+  const read = await fetchNotionCatchUpWindow({ container: PAGE, sinceMs: SINCE }, notionDeps());
+  ok(read.length === 1 && read[0]!.text === SAID_ON_A_NEW_BLOCK, "🔴 notion/OPE-1843: a PAGE-LEVEL seat on a 120-block page READS the discussion on the newest block — the scan budget is spent at the end of the page, where an append-only doc's live conversation is");
+  ok(calls.filter((c) => /block_id=blk-/.test(c)).length === 80, "notion/OPE-1843: …within the SAME 80-block budget — the order changed, the cost did not");
+  ok(calls.filter((c) => c.includes("/children")).length === 2, "notion/OPE-1843: finding the page's last child costs one `getBlockChildren` call per hundred blocks — two here, against the eighty comment-list calls the scan itself spends");
+
+  calls.length = 0;
+  const documentOrder = await readNotionComments(PAGE, { apiKey: "k", fetch: longPage, maxComments: 100, maxBlockScans: 80, sinceMs: SINCE } as never);
+  ok(documentOrder.comments.length === 0, "🔴 notion/OPE-1843 CONTROL: the SAME page swept in DOCUMENT order reads NOTHING — the budget is spent on blocks 0-79 and the discussion is on block 119");
+  ok(documentOrder.truncated, "notion/OPE-1843 CONTROL: …and the sweep DID know it was partial, so the coverage miss existed as a fact the read could not deliver anywhere");
+
+  const shortChildren = [{ id: "blk-a", type: "paragraph", paragraph: { rich_text: [] } }, { id: "blk-b", type: "paragraph", paragraph: { rich_text: [] } }];
+  const shortPage = (async (url: string) => {
+    const u = String(url);
+    if (u.includes("/children")) return new Response(JSON.stringify({ results: shortChildren, has_more: false, next_cursor: null }), { status: 200 });
+    return new Response(JSON.stringify({ results: u.includes("block_id=blk-b") ? [recent] : [], has_more: false, next_cursor: null }), { status: 200 });
+  }) as never;
+  const inOrder = await readNotionComments(PAGE, { apiKey: "k", fetch: shortPage, maxComments: 100, maxBlockScans: 80, sinceMs: SINCE } as never);
+  const reversed = await readNotionComments(PAGE, { apiKey: "k", fetch: shortPage, maxComments: 100, maxBlockScans: 80, sinceMs: SINCE, blockScanOrder: "newest-first" } as never);
+  ok(inOrder.comments.length === 1 && reversed.comments.length === 1 && !inOrder.truncated && !reversed.truncated, "notion/OPE-1843: a page INSIDE the cap reads identically under both orders — only an over-cap page gains or pays anything");
+
+  const rows: AuditInput[] = [];
+  const audit = async (e: AuditInput): Promise<void> => { rows.push(e); };
+  const req: SeatCatchUpRequest = { container: PAGE, sinceMs: SINCE, channelKey: "notion/ws-1/page-long" };
+  const declared = { timestampPrecisionMs: NOTION_TIMESTAMP_PRECISION_MS };
+
+  registerSeatCatchUp("notion", ((r: SeatCatchUpRequest) => fetchNotionCatchUpWindow({ container: r.container, sinceMs: r.sinceMs }, notionDeps())) as SeatCatchUpFetch, declared);
+  rows.length = 0;
+  const longRow = await seatCatchUp("notion", req, { audit, admit: () => true });
+  const longDetail = JSON.stringify(rows[0]?.detail ?? {});
+
+  const quietPage = (async (url: string) => {
+    const u = String(url);
+    if (u.includes("/children")) {
+      const second = u.includes("start_cursor=children-2");
+      return new Response(JSON.stringify({ results: second ? children.slice(100) : children.slice(0, 100), has_more: !second, next_cursor: second ? null : "children-2" }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), { status: 200 });
+  }) as never;
+  registerSeatCatchUp("notion", ((r: SeatCatchUpRequest) => fetchNotionCatchUpWindow({ container: r.container, sinceMs: r.sinceMs }, {
+    readComments: ((pageId: string, opts: Record<string, unknown>) => readNotionComments(pageId, { ...opts, fetch: quietPage } as never)) as never,
+    resolveCredential: (async () => ({ apiKey: "k" })) as never,
+    domains: [],
+  })) as SeatCatchUpFetch, declared);
+  rows.length = 0;
+  await seatCatchUp("notion", req, { audit, admit: () => true });
+  const quietDetail = JSON.stringify(rows[0]?.detail ?? {});
+
+  ok(longRow.messages.length === 1, "🔴 notion/OPE-1843: the shared road hands the seat the comment from the 120-block page — the coverage miss is closed at the road, not only inside the provider");
+  ok(longDetail !== quietDetail, "🔴 notion/OPE-1843: …so the `seat.catch_up` row for a >80-block page carrying a discussion is NOT byte-identical to a quiet page's. This is the ticket's acceptance, and before the fix the two rows agreed exactly");
+  ok(quietDetail.includes('"outcome":"empty"') && quietDetail.includes('"raw":0'), "notion/OPE-1843 CONTROL: the quiet page really does write `outcome=empty raw=0` — the row the over-cap page used to write too");
+  ok(longDetail.includes('"outcome":"read"') && longDetail.includes('"kept":1'), "notion/OPE-1843: …and the read page writes `outcome=read kept=1`, which is a different row on the two keys a triage query reads first");
+
+  _resetSeatCatchUp("notion");
 }
 
 {

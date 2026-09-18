@@ -27,6 +27,7 @@ import {
   engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
+import type { NotionOwnBotIds } from "./notion-bot-user.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionDeliveryTrust } from "./notion-ancestry-trust.js";
 import type { NotionSessionState } from "./notion-webhook.js";
@@ -54,13 +55,19 @@ export function notionNameDrop(text: string, botName?: string): boolean {
   return matchesAgentName(text, botName);
 }
 
-export function classifyNotionComment(comment: NotionComment, botUserId: string | undefined, botName?: string): NotionClassification {
-  if (!botUserId) return { addressing: "drop", reason: "unresolved bot user id — fail-closed loop guard" };
+export function classifyNotionComment(comment: NotionComment, own: NotionOwnBotIds, botName?: string): NotionClassification {
+  if (!own.primary) return { addressing: "drop", reason: "unresolved bot user id — fail-closed loop guard" };
   const author = comment.created_by;
-  if (author?.id === botUserId) return { addressing: "drop", reason: "self-authored comment (our own reply)" };
+  if (author?.id !== undefined && own.all.has(author.id)) {
+    const sibling = author.id !== own.primary;
+    return { addressing: "drop", reason: sibling ? "self-authored comment (a sibling integration of this deployment)" : "self-authored comment (our own reply)" };
+  }
   if (!author?.id) return { addressing: "drop", reason: "unidentified author (no created_by.id) — fail-closed loop guard" };
   if (author.type && author.type !== "person") return { addressing: "drop", reason: `bot/integration-authored (${author.type})` };
-  if (mentionsUser(comment.rich_text, botUserId)) return { addressing: "direct", reason: "structured bot @mention" };
+  if (!own.complete && author.type !== "person") {
+    return { addressing: "drop", reason: "a configured integration's bot user id did not resolve, and this author is unattributable — fail-closed loop guard" };
+  }
+  if (mentionsUser(comment.rich_text, own.primary)) return { addressing: "direct", reason: "structured bot @mention" };
   if (notionNameDrop(richTextToPlainText(comment.rich_text), botName)) {
     return { addressing: "direct", reason: "bot name-drop (synthetic mention — Notion has no @mention for integrations)" };
   }

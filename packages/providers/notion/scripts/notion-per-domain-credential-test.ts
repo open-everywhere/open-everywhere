@@ -24,6 +24,7 @@ import {
   notionSignerServesDomain,
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
+import { collectNotionOwnBotIds, resolveNotionBotUser, _resetNotionBotUserCache } from "../agent/channels/notion-bot-user.js";
 import { notionReachWorkspace } from "../agent/channels/notion-scope.js";
 import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
@@ -812,6 +813,132 @@ async function deliverFor(
     "…on its own unreached key, never on the container domain's recorded workspace — config's answer is never invented for a page config does not know",
   );
   ok(mismatchedSingle.surfaceKey !== honestSingle.surfaceKey, "negative control: the two runs really do land on different keys, so the assertion above is not vacuous");
+}
+
+{
+  const BOT_A = "U_BOT_INTEGRATION_A";
+  const BOT_B = "U_BOT_INTEGRATION_B";
+  const BOT_FOR: Readonly<Record<string, string>> = { [NOTION_CHANNEL_CREDENTIAL]: BOT_A, [PAY_CRED]: BOT_B };
+
+  async function deliverAuthoredBy(
+    authorId: string,
+    resolveBotUserId: (credentialId: string) => Promise<string | undefined>,
+    hasKey: (credentialId: string) => boolean = () => true,
+  ): Promise<{ action: string; detail?: string; resolved: string[] }> {
+    _resetNotionBotUserCache();
+    const body = commentEvent(PAGE_PAY, `cmt-loop-${authorId}-${Math.random()}`);
+    const resolved: string[] = [];
+    const out = await handleNotionDelivery(body, sign(PAY_SECRET, body), {
+      signingKeys: [
+        { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
+        { credentialId: PAY_CRED, secret: PAY_SECRET },
+      ],
+      allowUnverified: false,
+      credentialFor: async (id) => (hasKey(id) ? resolveNotionCredential(id) : undefined),
+      credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
+      domains: DOMAINS,
+      resolveBotUserId: async (id) => {
+        resolved.push(id);
+        return resolveBotUserId(id);
+      },
+      ambientEnabled: () => true,
+      fetch: async (url, init) => {
+        if (url.includes("/v1/comments/")) {
+          return new Response(
+            JSON.stringify({
+              id: "cmt-loop",
+              discussion_id: "disc-1",
+              parent: { type: "page_id", page_id: PAGE_PAY },
+              created_by: { id: authorId, object: "user" },
+              created_time: "2026-08-13T10:00:00.000Z",
+              rich_text: [{ type: "text", plain_text: "I have summarised the page above." }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return recordingFetch([])(url, init);
+      },
+      engagement: FIRST_SIGHTING,
+      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+      dispatch: async () => {},
+    });
+    return { action: out.action, ...(out.detail ? { detail: out.detail } : {}), resolved };
+  }
+
+  const perIntegration = async (id: string): Promise<string | undefined> => BOT_FOR[id];
+
+  const siblingReply = await deliverAuthoredBy(BOT_A, perIntegration);
+  ok(siblingReply.action === "skipped-self", "🔴 OPE-1921: a comment authored by integration A's bot, delivered and verified under integration B, is dropped as `skipped-self` — the deployment's own words are recognised across every configured integration");
+  ok(siblingReply.detail?.includes("sibling integration") === true, "…and the drop reason names the SIBLING, so the audit row tells this apart from our own verifying integration's reply coming back");
+  ok(siblingReply.resolved.includes(NOTION_CHANNEL_CREDENTIAL), "…because the core resolved the OTHER configured integration's bot id, which it reads off `signingKeys` — a required dep, so no caller can omit it and reopen the loop");
+
+  const preFix = await deliverAuthoredBy(BOT_A, async () => BOT_B);
+  ok(preFix.action === "dispatched", "🔴 OPE-1921 CONTROL: the SAME delivery against the verifying integration's id ALONE DISPATCHES — a turn woken on our own reply, which is the loop");
+
+  const human = await deliverAuthoredBy("U_A_REAL_PERSON", perIntegration);
+  ok(human.action === "dispatched", "NEGATIVE CONTROL: a person's comment on the same two-integration deployment still dispatches — the guard widened, it did not close the door");
+
+  const ownReply = await deliverAuthoredBy(BOT_B, perIntegration);
+  ok(ownReply.action === "skipped-self" && ownReply.detail?.includes("our own reply") === true, "our own verifying integration's reply still DROPs under the pre-existing reason — the sibling arm is an addition, not a replacement");
+
+  const blind = await deliverAuthoredBy("U_A_REAL_PERSON", async (id) => (id === PAY_CRED ? BOT_B : undefined));
+  ok(blind.action === "dropped", "🔴 OPE-1921: one configured integration whose bot id will not resolve makes an unattributable author DROP — the loop guard fails CLOSED, and this is the availability cost of that posture");
+  ok(blind.detail?.includes("did not resolve") === true, "…and the reason names the unresolved integration rather than blaming the author, so the operator is sent to the credential");
+
+  const noKey = await deliverAuthoredBy("U_A_REAL_PERSON", async (id) => (id === PAY_CRED ? BOT_B : undefined), (id) => id === PAY_CRED);
+  ok(noKey.action === "dispatched", "🔴 OPE-1921: a sibling with no usable API key is SKIPPED, not fenced against — it cannot have posted, so a person's comment still dispatches and the deployment stays awake");
+  ok(blind.action !== noKey.action, "NEGATIVE CONTROL: the two unresolved-sibling faults really do part — a reachable sibling drops, an unreachable one does not — so (e) is not simply the same drop twice");
+
+  {
+    _resetNotionBotUserCache();
+    const unknown = await collectNotionOwnBotIds("BOT_B", [PAY_CRED], async () => undefined, async () => {
+      throw new Error("operational store timed out");
+    });
+    ok(unknown.complete === false, "🔴 OPE-1921: a `canPost` that THROWS leaves the own-id set INCOMPLETE — an unknown credential state counts as able to post, so the guard still fails closed");
+    _resetNotionBotUserCache();
+    const known = await collectNotionOwnBotIds("BOT_B", [PAY_CRED], async () => undefined, async () => false);
+    ok(known.complete === true, "NEGATIVE CONTROL: a `canPost` that ANSWERS false really does leave the set complete, so the line above is driven by the throw and not by the unresolved id");
+    _resetNotionBotUserCache();
+    const absent = await collectNotionOwnBotIds("BOT_B", [PAY_CRED], async () => undefined);
+    ok(absent.complete === false, "…and a throw agrees with the absent-`canPost` default rather than being stricter or looser than it");
+  }
+
+  {
+    _resetNotionBotUserCache();
+    let asked = 0;
+    const probe = async (): Promise<boolean> => {
+      asked += 1;
+      return true;
+    };
+    for (let i = 0; i < 3; i++) await collectNotionOwnBotIds("BOT_B", [PAY_CRED], async () => undefined, probe);
+    ok(asked === 1, "🔴 OPE-1921: three deliveries with the same unresolved sibling ask the credential store ONCE — the reachability verdict is memoised for the process lifetime, like the bot user beside it");
+    _resetNotionBotUserCache();
+    await collectNotionOwnBotIds("BOT_B", [PAY_CRED], async () => undefined, probe);
+    ok(asked === 2, "NEGATIVE CONTROL: the reset really does clear that memo, so the count above measures caching and not a probe that stopped being called");
+  }
+
+  {
+    const saved = process.env.NOTION_BOT_USER_ID;
+    try {
+      process.env.NOTION_BOT_USER_ID = "U_PINNED";
+      _resetNotionBotUserCache();
+      const orgDefault = await resolveNotionBotUser(NOTION_CHANNEL_CREDENTIAL, async () => undefined)();
+      const sibling = await resolveNotionBotUser(PAY_CRED, async () => undefined)();
+      ok(orgDefault.id === "U_PINNED", "NOTION_BOT_USER_ID answers for the ORG-DEFAULT integration, resolving no credential at all");
+      ok(sibling.id === undefined, "🔴 OPE-1921: …and does NOT answer for a SECOND integration — one pinned id cannot stand for a bot user it is not");
+      const own = await collectNotionOwnBotIds(
+        "U_PINNED",
+        [PAY_CRED],
+        async (id) => (await resolveNotionBotUser(id, async () => undefined)()).id,
+        async () => true,
+      );
+      ok(own.complete === false, "🔴 OPE-1921: an override that cannot cover the sibling leaves the own-id set INCOMPLETE, so the fail-closed arm still fires — the loop does not reopen behind a pinned id");
+      ok(own.all.size === 1 && own.all.has("U_PINNED"), "…and the set holds exactly the one id the override really does account for, never the sibling's");
+    } finally {
+      if (saved === undefined) delete process.env.NOTION_BOT_USER_ID; else process.env.NOTION_BOT_USER_ID = saved;
+      _resetNotionBotUserCache();
+    }
+  }
 }
 
 resetRegisteredConnectorCredentials();
