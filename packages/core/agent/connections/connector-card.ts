@@ -14,7 +14,7 @@ import {
 } from "./connector-auth.js";
 import { requestCredentialIntake, type CredentialIntakeDeps } from "../credentials/intake.js";
 import { deriveCredentialRef } from "../credentials/ref.js";
-import { offerableCredential, optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
+import { offerableCredential, optionLabel, unqualifiedAppRowMintHome, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -156,7 +156,13 @@ function slackIdPrefixMode(channelId: string | undefined): "dm" | "channel" {
   return channelId?.startsWith("D") ? "dm" : "channel";
 }
 
-function clickerRole(org: string, teamId: string | undefined, channelId: string, clickerId: string, domains: readonly Domain[]): { isAdmin: boolean; domain?: string } {
+function clickerRole(
+  org: string,
+  teamId: string | undefined,
+  channelId: string,
+  clickerId: string,
+  domains: readonly Domain[],
+): { isAdmin: boolean; isOrgAdmin: boolean; domain?: string } {
   const binding: SurfaceBinding = {
     org,
     platform: "slack",
@@ -168,7 +174,7 @@ function clickerRole(org: string, teamId: string | undefined, channelId: string,
     principalId: clickerId,
   };
   const role = roleForBinding(binding, domains);
-  return { isAdmin: role.isDomainAdmin, ...(role.domain ? { domain: role.domain } : {}) };
+  return { isAdmin: role.isDomainAdmin, isOrgAdmin: role.isOrgAdmin, ...(role.domain ? { domain: role.domain } : {}) };
 }
 
 export async function handleConnectClick(payload: unknown, deps: ConnectorCardDeps = {}): Promise<boolean> {
@@ -221,15 +227,26 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
     }
 
     if (type === "service-oauth") {
-      if (!clickerRole(org, teamId, channelId, clickerId, domains).isAdmin) {
+      const orgRole = clickerRole(org, teamId, channelId, clickerId, domains);
+      if (!orgRole.isAdmin) {
         await ephemeral(post, channelId, clickerId, "Connecting the *org* account is admin-only — your id isn't listed as an admin for this workspace/domain.");
         return true;
       }
       const dash = cred.dashboardUrl;
-      const orgConnector = vercelConnectorOf(cred);
-      if (!dash && orgConnector) {
+      const mintHome = unqualifiedAppRowMintHome(type, cred);
+      if (mintHome) {
+        if (!orgRole.isOrgAdmin) {
+          await ephemeral(
+            post,
+            channelId,
+            clickerId,
+            "Connecting the *org* account binds one credential for the whole deployment, so it takes an ORG admin — " +
+              "your id is listed as an admin for this domain only. Ask an org admin to click it.",
+          );
+          return true;
+        }
         return await mintAndDeliverOAuth(post, startAuth, {
-          org, teamId, channelId, clickerId, connectorName, vercelConnector: orgConnector,
+          org, teamId, channelId, clickerId, connectorName, vercelConnector: mintHome,
           subject: { type: "app" }, subjectLabel: "app",
         });
       }

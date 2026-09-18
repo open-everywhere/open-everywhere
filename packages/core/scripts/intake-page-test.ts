@@ -269,24 +269,24 @@ console.log("5. resolver page route:");
   const kinds = (opts: readonly ConnectorOption[]): string[] => opts.map((o) => `${optionLabel(o)}:${o.route.kind}`);
 
   eq(
-    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, isOrgAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
     ["Set API key:page"],
     "discord + page armed ⇒ api-key routes to the intake page",
   );
   eq(
-    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: false })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, isOrgAdmin: true, hostWriteBroker: true, intakePageAvailable: false })),
     ["Set API key:text-degrade"],
     "discord + page NOT armed ⇒ api-key degrades to text (no dead link)",
   );
 
   eq(
-    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "slack", mode: "channel", isAdmin: true, isOrgAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
     ["Set API key:modal"],
     "slack + page armed ⇒ still the native modal (page is the fallback for everyone else)",
   );
 
   eq(
-    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: false, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, isOrgAdmin: true, hostWriteBroker: false, intakePageAvailable: true })),
     ["Set API key:unavailable"],
     "no host-write broker ⇒ api-key unavailable even with the page armed",
   );

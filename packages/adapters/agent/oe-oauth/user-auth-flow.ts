@@ -44,8 +44,8 @@ export function makeOeOauth(
 
   const completer: OeOauthCallbackCompleter = async ({ state, code }) => {
     try {
-      const { providerRef, consent } = await vault.completeAuthorization(state, code);
-      return { ok: true, connectionName: providerRef, ...(consent ? { consent } : {}) };
+      const { providerRef, subject, rebound, consent } = await vault.completeAuthorization(state, code);
+      return { ok: true, connectionName: providerRef, subject, rebound, ...(consent ? { consent } : {}) };
     } catch (err) {
       return { ok: false, detail: err instanceof Error ? err.message : String(err) };
     }

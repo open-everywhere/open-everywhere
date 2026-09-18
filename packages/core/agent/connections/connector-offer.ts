@@ -61,11 +61,17 @@ export interface ConnectorOption {
 
 export type ConnectMode = "dm" | "channel";
 
+export function unqualifiedAppRowMintHome(type: ConnectorCredentialType, cred: ConnectorCredential): string | undefined {
+  if (type !== "service-oauth" || cred.dashboardUrl) return undefined;
+  return vercelConnectorOf(cred);
+}
+
 export interface ResolveConnectorInput {
   readonly catalogue: ConnectorCredentials;
   readonly platform: string;
   readonly mode: ConnectMode;
   readonly isAdmin: boolean;
+  readonly isOrgAdmin: boolean;
   readonly hostWriteBroker: boolean;
   readonly intakePageAvailable?: boolean;
   readonly declarations?: SurfaceIntakeDeclarations;
@@ -90,6 +96,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
 
     if (principal === "user" && input.mode !== "dm") continue;
     if (principal === "app" && !input.isAdmin) continue;
+    if (unqualifiedAppRowMintHome(type, cred) && !input.isOrgAdmin) continue;
 
     let route: ConnectRoute;
     if (type === "user-oauth" || type === "service-oauth") {

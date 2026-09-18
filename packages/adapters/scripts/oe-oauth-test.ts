@@ -115,6 +115,8 @@ function makeMockFetch(s: MockState) {
   const done = await completer({ state: "STATE-A", code: "AUTHCODE" });
   ok(done.ok && done.connectionName === "notion", "callback completer exchanges the code and reports the connection");
   ok(s.exchanges === 1, "code was exchanged exactly once");
+  ok(done.subject?.type === "user" && done.subject.id === "U1", "…and hands back the SUBJECT it bound, which core audits");
+  ok(done.rebound === false, "…and the rebind flag — false here, because nothing was bound for U1 before this");
 
   await flow.startAuthorization("notion", { subject: { type: "user", id: "U1" } }, {});
   ok(s.registrations === 1, "DCR client is persisted + reused (still one registration)");
@@ -849,6 +851,39 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   await vault2.startAuthorization("notion", { type: "user", id: "U1" }, {});
   const bare = await vault2.completeAuthorization("STATE-D", "CODE-2");
   ok(bare.consent === undefined, "an authorization started with no carriage completes with none — nothing to resume, and no error");
+}
+
+{
+  const clock = { t: 1_000_000_000 };
+  const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "RT-0", seq: 0, exchangeExpiresIn: 3600 };
+  const v = memVault();
+  let state = "STATE-E1";
+  const vault = makeOeOauthTokenVault(providers, {
+    vault: v,
+    fetch: makeMockFetch(s),
+    now: () => clock.t,
+    newState: () => state,
+    newPkce: () => ({ verifier: "VER-E", challenge: "CHAL-E" }),
+    redirectUri: () => REDIRECT,
+  });
+
+  await vault.startAuthorization("notion", { type: "app" }, {});
+  const firstBind = await vault.completeAuthorization(state, "CODE-E1");
+  ok(firstBind.subject.type === "app", "the completion names the APP subject it bound — the deployment-wide row, keyed to no principal");
+  ok(firstBind.rebound === false, "🔴 …and reports rebound FALSE on a first bind (the negative control for the flag below)");
+
+  state = "STATE-E2";
+  await vault.startAuthorization("notion", { type: "app" }, {});
+  const secondBind = await vault.completeAuthorization(state, "CODE-E2");
+  ok(secondBind.rebound === true, "🔴 a SECOND consent for the same subject reports rebound TRUE — the swap the audit row exists to witness");
+
+  state = "STATE-E3";
+  await vault.startAuthorization("notion", { type: "user", id: "U-NEW" }, {});
+  const userBind = await vault.completeAuthorization(state, "CODE-E3");
+  ok(userBind.subject.type === "user" && (userBind.subject as { id: string }).id === "U-NEW", "…and a user-subject completion names that subject");
+  ok(userBind.rebound === false, "🔴 …with rebound FALSE: the flag is per (provider, SUBJECT) row, not 'the second completion on this vault'");
+
+  ok(!JSON.stringify(firstBind).includes(s.access) && !JSON.stringify(secondBind).includes("RT-"), "🔴 the returned facts carry no access or refresh token");
 }
 
 console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, DCR endpoint backfill, consent carriage single-use + scrub, typed errors)`);

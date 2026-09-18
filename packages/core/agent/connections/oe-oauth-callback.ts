@@ -1,5 +1,7 @@
 import { asConsentResumeRecord, resumeAfterConsent, type ConsentResumeOutcome } from "./consent-resume.js";
 import type { ConsentCarriage } from "./user-auth-flow.js";
+import { appendAudit } from "../audit/audit.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 export const OE_OAUTH_CALLBACK_PATH = "/oauth/v1/callback";
 
@@ -12,6 +14,8 @@ export interface OeOauthCallbackResult {
   readonly ok: boolean;
   readonly connectionName?: string;
   readonly detail?: string;
+  readonly subject?: { readonly type: "app" } | { readonly type: "user"; readonly id: string };
+  readonly rebound?: boolean;
   readonly consent?: ConsentCarriage;
 }
 
@@ -81,6 +85,7 @@ export async function handleOeOauthCallback(
   if (!result.ok) {
     return page(502, "Could not complete the connection", `The authorization exchange was rejected${result.detail ? `: ${esc(result.detail)}` : ""}.`);
   }
+  await auditCredentialBound(result, deps);
   const resumed = await runConsentResume(result, deps);
   return page(
     200,
@@ -92,6 +97,27 @@ export async function handleOeOauthCallback(
 
 export interface OeOauthCallbackDeps {
   readonly resume?: typeof resumeAfterConsent;
+  readonly audit?: typeof appendAudit;
+  readonly org?: () => string;
+}
+
+async function auditCredentialBound(result: OeOauthCallbackResult, deps: OeOauthCallbackDeps): Promise<void> {
+  const subject = result.subject;
+  if (!subject) return;
+  try {
+    await (deps.audit ?? appendAudit)({
+      org: (deps.org ?? deploymentOrg)(),
+      platform: "oauth",
+      workspace: "callback",
+      action: "connector.credential_bound",
+      detail: {
+        connector: result.connectionName ?? "unknown",
+        subject: subject.type,
+        rebound: result.rebound === true,
+      },
+    });
+  } catch {
+  }
 }
 
 async function runConsentResume(

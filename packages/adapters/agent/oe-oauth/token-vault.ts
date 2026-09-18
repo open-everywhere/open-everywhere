@@ -397,19 +397,20 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       return { url };
     },
 
-    async completeAuthorization(state: string, code: string): Promise<{ providerRef: string; consent?: unknown }> {
+    async completeAuthorization(state: string, code: string): Promise<{ providerRef: string; subject: OeOauthSubject; rebound: boolean; consent?: unknown }> {
       const pending = await readJson<PendingRecord>(pendRef(state));
       if (!pending) throw new Error("unknown or expired authorization state");
       if (pending.consumed) throw new Error("authorization state already used");
       if (now() > pending.expiresAt) throw new Error("authorization state expired");
       const tok = await exchangeForPending(pending, code);
+      const rebound = (await readJson<TokenRecord>(tokRef(pending.providerRef, pending.subject))) !== null;
       await storeToken(pending.providerRef, pending.subject, tok);
       await vault.write(
         pendRef(state),
         JSON.stringify({ ...pending, consumed: true, pkceVerifier: "", consent: undefined }),
         { connector: pending.providerRef },
       );
-      return { providerRef: pending.providerRef, ...(pending.consent ? { consent: pending.consent } : {}) };
+      return { providerRef: pending.providerRef, subject: pending.subject, rebound, ...(pending.consent ? { consent: pending.consent } : {}) };
     },
 
     async accessTokenFor(providerRef: string, subject: OeOauthSubject): Promise<string> {

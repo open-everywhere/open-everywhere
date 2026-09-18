@@ -219,7 +219,7 @@ throwsWith(
 
   for (const mode of ["dm", "channel"] as const) {
     for (const isAdmin of [true, false]) {
-      const opts = resolveConnectorOptions({ catalogue: capable, platform: "slack", mode, isAdmin, hostWriteBroker: true });
+      const opts = resolveConnectorOptions({ catalogue: capable, platform: "slack", mode, isAdmin, isOrgAdmin: isAdmin, hostWriteBroker: true });
       ok(
         opts.every((o) => o.credentialId !== "as-me"),
         `the connector card never offers the human-acting credential (mode=${mode}, admin=${isAdmin})`,

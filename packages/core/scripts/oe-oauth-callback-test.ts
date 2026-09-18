@@ -84,6 +84,49 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
+  const P = cb.OE_OAUTH_CALLBACK_PATH;
+  type Row = Parameters<typeof import("../agent/audit/audit.js").appendAudit>[0];
+  const rows: Row[] = [];
+  const deps = { audit: async (e: Row) => void rows.push(e), org: () => "test-org" };
+  const call = (completer: OeOauthCallbackCompleter) =>
+    cb.handleOeOauthCallback(new Request(`https://oe.example${P}?state=s&code=CODE-SECRET`), completer, deps);
+
+  const appRes = await call(async () => ({ ok: true, connectionName: "mcp.notion.com/notion-mcp", subject: { type: "app" as const }, rebound: false }));
+  ok(appRes.status === 200, "an app-subject completion still renders 200");
+  ok(rows.length === 1 && rows[0].action === "connector.credential_bound", "🔴 a completion writes exactly one connector.credential_bound row");
+  ok(rows[0].org === "test-org" && rows[0].platform === "oauth" && rows[0].workspace === "callback", "…addressed to the deployment's org on the callback's own platform/workspace");
+  ok(rows[0].detail?.connector === "mcp.notion.com/notion-mcp", "…naming the connector that was bound");
+  ok(rows[0].detail?.subject === "app", "🔴 …and the SUBJECT TYPE — `app` is the deployment-wide row every granting domain spends");
+  ok(rows[0].detail?.rebound === false, "…with rebound FALSE on a first bind (the negative control for the flag below)");
+  ok(rows[0].principalId === undefined, "🔴 …and NO principalId on an app subject: the callback authenticates nobody, so naming one would be a guess");
+  ok(!JSON.stringify(rows[0]).includes("mcp.notion.com/notion-mcp:app"), "…and no vault KEY is written into the row either");
+  ok(!JSON.stringify(rows[0]).includes("CODE-SECRET"), "🔴 …and no authorization code reaches the ledger");
+
+  rows.length = 0;
+  await call(async () => ({ ok: true, connectionName: "mcp.notion.com/notion-mcp", subject: { type: "app" as const }, rebound: true }));
+  ok(rows.length === 1 && rows[0].detail?.rebound === true, "🔴 a REBIND is recorded as rebound:true — the second admin's silent replacement is now in the ledger");
+
+  rows.length = 0;
+  await call(async () => ({ ok: true, connectionName: "notion", subject: { type: "user" as const, id: "p:default/slack/T1/U9" }, rebound: false }));
+  ok(rows.length === 1 && rows[0].detail?.subject === "user", "a user-subject completion is audited as subject `user`");
+  ok(rows[0].principalId === undefined, "🔴 …and names NO principal either: the only id in reach is the VAULT SUBJECT, and the ledger's principal_id holds the BARE vendor id with the platform in its own column");
+  ok(!JSON.stringify(rows[0]).includes("p:default/slack/T1/U9"), "🔴 …so the qualified vault subject reaches no column of the row — a row keyed by it would bucket away from every other row that person produced");
+
+  rows.length = 0;
+  ok((await call(async () => ({ ok: false, detail: "exchange rejected", subject: { type: "app" as const }, rebound: true }))).status === 502, "a rejected exchange still renders 502");
+  ok(rows.length === 0, "🔴 a FAILED completion writes NO credential_bound row — nothing was bound");
+  ok((await call(async () => ({ ok: true, connectionName: "notion" }))).status === 200, "a completer that reports no subject still renders 200");
+  ok(rows.length === 0, "🔴 …and writes NO row either — the route never guesses a subject it was not told");
+
+  const throwing = await cb.handleOeOauthCallback(
+    new Request(`https://oe.example${P}?state=s&code=c`),
+    async () => ({ ok: true, connectionName: "notion", subject: { type: "app" as const }, rebound: false }),
+    { audit: async () => { throw new Error("store down"); }, org: () => "test-org" },
+  );
+  ok(throwing.status === 200, "an audit-write failure never breaks the callback page");
+}
+
+{
   cb.resetOeOauthCallbackCompleter();
   ok(cb.resolveOeOauthCallbackCompleter() === null, "resolve is null after reset (fail closed)");
   const c: OeOauthCallbackCompleter = async () => ({ ok: true });

@@ -50,6 +50,7 @@ const connectorEntry = defineTool({
     const mode = connectModeOf(binding.mode);
     const role = resolveRole(ctx as BindableContext);
     const isAdmin = role.unverified === undefined && role.isDomainAdmin;
+    const isOrgAdmin = role.unverified === undefined && role.isOrgAdmin;
     const unverifiedNote =
       role.unverified === undefined
         ? ""
@@ -64,7 +65,7 @@ const connectorEntry = defineTool({
         return { action: "none" as const, options: [], note: "No connectors are configured on this deployment." };
       }
       const lines = catalogues.map((p) => {
-        const labels = resolveConnectorOptions({ catalogue: p, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed })
+        const labels = resolveConnectorOptions({ catalogue: p, platform, mode, isAdmin, isOrgAdmin, hostWriteBroker, intakePageAvailable: pageArmed })
           .filter((o) => o.route.kind !== "unavailable")
           .map(optionLabel);
         return `- ${p.connector}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
@@ -83,7 +84,7 @@ const connectorEntry = defineTool({
       );
     }
 
-    const options = resolveConnectorOptions({ catalogue, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed }).filter(
+    const options = resolveConnectorOptions({ catalogue, platform, mode, isAdmin, isOrgAdmin, hostWriteBroker, intakePageAvailable: pageArmed }).filter(
       (o) => o.route.kind !== "unavailable",
     );
     const labels = options.map(optionLabel);

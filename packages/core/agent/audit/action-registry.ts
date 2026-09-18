@@ -241,6 +241,13 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["askRecognised", "connector", "identity", "reason", "refused", "requiredIdentity", "tool"],
     proves: "which credential identity one gated connector read acted under, and — on `refused: true` — that an own-account ask was not silently answered on the team integration",
   },
+  {
+    action: "connector.credential_bound",
+    fields: ["connector", "rebound", "subject"],
+    proves: "a consent completion BOUND a credential — which connector, for the app row or one person's, and whether it replaced an existing row (the silent-rebind case)",
+    notExercised:
+      "no e2e leg completes a real provider consent: the callback needs a vendor-issued `code` against a live pending row, which no deterministic pack can mint. Driving it would take a stub authorization server the pack owns.",
+  },
 
   { action: "docs.read", fields: ["path"], proves: "which document the agent actually read", notExercised: "RED-until-leg: lane A run 2 — a read_docs cell. No leg asks the agent to read the deployment's own manual, so none of the three docs.* rows is exercised." },
   { action: "docs.index", fields: ["count"], proves: "the agent listed the doc index, and how large it was", notExercised: "RED-until-leg: lane A run 2 — the read_docs cell's index arm." },
