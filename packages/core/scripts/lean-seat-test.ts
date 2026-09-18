@@ -13,6 +13,7 @@ import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, chatArmGrain, restrictTools
 import { setWorkerWake, currentWorkerWake } from "../agent/access/worker-seat-state.js";
 import { renderSupervisorPersona } from "../agent/instructions/access.js";
 import { markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
+import { HARNESS_INTERNAL_TOOLS, allowedOnRestrictedJobWake } from "../agent/access/job-posture.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
@@ -529,5 +530,12 @@ ok(!leanPreview.member.includes("purge_memory") && leanPreview.elsewhere.include
 ok(leanPreview.member.length === 0 || leanPreview.member.every((t) => allowedOnLeanSeat(t)), "a delegating seat's preview only claims verbs the lean roster actually holds");
 const dmPreview = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
 ok(dmPreview.member.includes("purge_memory"), "a NON-delegating standing seat's preview still holds `purge_memory` — the preview never contradicts the filter");
+
+ok(HARNESS_INTERNAL_TOOLS.size === 1 && HARNESS_INTERNAL_TOOLS.has("final_output"), "the harness-internal set is exactly { final_output } — eve's structured-output sink");
+for (const name of HARNESS_INTERNAL_TOOLS) {
+  ok(allowedOnLeanSeat(name), `the lean filter admits harness-internal "${name}" (a lean turn must still be able to return)`);
+  ok(allowedOnRestrictedJobWake(name), `the job filter admits the SAME harness-internal "${name}" — one list, so the two cannot drift`);
+}
+ok(!allowedOnLeanSeat("final_output_sink") && !allowedOnRestrictedJobWake("final_output_sink"), "a name outside the harness-internal set is withheld by BOTH filters");
 
 console.log(`\n✓ lean-seat (OPE-301 + the OPE-420 worker subtraction): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);

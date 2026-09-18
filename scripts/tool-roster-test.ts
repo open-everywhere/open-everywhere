@@ -21,6 +21,7 @@ import {
 } from "@open-everywhere/core/agent/scaffold/tool-roster-read.js";
 import { diffConfigSnapshots, renderConfigDiff, toolRosterFindings, type ConfigSnapshot } from "./config-snapshot-diff.js";
 import { readEveFrameworkTools } from "../packages/core/scripts/eve-framework-tools.js";
+import { readAuthoredTools, readFrameworkToolNames, readMountedToolNames, readSubagentToolNames } from "./read-mounted-tools.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -222,6 +223,28 @@ try {
     subagentRoster.filter((e) => e.classification === PRIMITIVE_DISABLED).length === subagentRoster.length - required.length,
     "…and every other file is classified declined, not merely absent from the mounted list",
   );
+}
+
+{
+  const appToolsDir = join(repoRoot, "agent", "tools");
+  if (existsSync(appToolsDir)) {
+    const authored = [...readAuthoredTools(repoRoot).keys()];
+    const framework = await readFrameworkToolNames();
+    const subagents = readSubagentToolNames(repoRoot);
+    const mountedNames = await readMountedToolNames(repoRoot);
+    const surface = new Set(mountedNames);
+
+    ok(authored.length > 0 && framework.length > 0 && subagents.length > 0, `all three sources are non-empty (authored ${authored.length}, framework ${framework.length}, subagents ${subagents.length}) — an empty one would make the union vacuously complete`);
+    for (const [label, names] of [["authored", authored], ["framework", framework], ["subagent", subagents]] as const) {
+      const missing = names.filter((n) => !surface.has(n));
+      ok(missing.length === 0, `every ${label} name is in the mounted surface (missing ${JSON.stringify(missing)})`);
+    }
+    const known = new Set([...authored, ...framework, ...subagents]);
+    ok(mountedNames.every((n) => known.has(n)), "the mounted surface holds nothing the three sources did not supply");
+    ok(mountedNames.length === surface.size, "the mounted surface is de-duplicated");
+    ok(JSON.stringify(mountedNames) === JSON.stringify([...mountedNames].sort()), "the mounted surface is sorted");
+    ok(surface.has("agent") && !authored.includes("agent"), "`agent` reaches the surface through the FRAMEWORK leg alone");
+  }
 }
 
 console.log(`✓ ${passed} tool-roster assertions passed`);
