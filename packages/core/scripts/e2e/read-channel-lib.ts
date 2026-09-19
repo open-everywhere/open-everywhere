@@ -1,4 +1,5 @@
 import type { AuditWireEntry } from "./audit-read.js";
+import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 
 export const GENERIC_READ_VERBS_SHA = "ea1b3c670d495466cb1bfc02c002c32a152e7f13";
 
@@ -190,4 +191,120 @@ export function classifyDelegatedReadEvidence(
     };
   }
   return { kind: "none", detail: `delegation.task_started row(s) exist for session ${sessionId} but none carry a usable taskId` };
+}
+
+export interface OwnWakeCandidate {
+  readonly id: string;
+  readonly atMs: number;
+  readonly substantive: boolean;
+}
+
+export type OwnWakeReplyOutcome =
+  | { readonly kind: "own-wake"; readonly id: string; readonly wakeId: string; readonly detail: string }
+  | { readonly kind: "unattributed"; readonly id: string; readonly wakeId: string; readonly detail: string }
+  | { readonly kind: "no-wake"; readonly detail: string }
+  | { readonly kind: "timeout"; readonly wakeId: string; readonly detail: string };
+
+export interface OwnWakeReplyDeps extends SettlePollDeps {
+  readonly fetchCandidates: () => Promise<readonly OwnWakeCandidate[]>;
+}
+
+export interface OwnWakeDriverPost {
+  readonly vendorMs: number;
+  readonly surfaceKey?: string;
+}
+
+function ingressOfDriverPost(rows: readonly AuditWireEntry[], post: OwnWakeDriverPost): AuditWireEntry | undefined {
+  return rows.find((r) => {
+    if (r.action !== WAKE_INGRESS_ACTION) return false;
+    if ((dS(r, "wakeId") ?? "").length === 0) return false;
+    if (post.surfaceKey !== undefined && dS(r, "surfaceKey") !== post.surfaceKey) return false;
+    const vendorTs = dS(r, "vendorTs");
+    return vendorTs !== undefined && Date.parse(vendorTs) === post.vendorMs;
+  });
+}
+
+function replyIdsByWake(rows: readonly AuditWireEntry[], wakeId: string): { readonly mine: ReadonlySet<string>; readonly foreign: ReadonlySet<string> } {
+  const mine = new Set<string>();
+  const foreign = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    const id = dS(r, "id");
+    const rowWake = dS(r, "wakeId");
+    if (id === undefined || id.length === 0 || rowWake === undefined || rowWake.length === 0) continue;
+    (rowWake === wakeId ? mine : foreign).add(id);
+  }
+  return { mine, foreign };
+}
+
+export async function pollForOwnWakeReply(
+  deps: OwnWakeReplyDeps,
+  post: OwnWakeDriverPost,
+  opts: { readonly timeoutMs: number; readonly pollMs: number },
+): Promise<OwnWakeReplyOutcome> {
+  const deadline = deps.now() + opts.timeoutMs;
+  let wakeId: string | undefined;
+  let floorMs: number | undefined;
+  let standing = 0;
+  let foreignSeen = 0;
+  for (;;) {
+    const rows = await deps.fetchRows();
+    if (wakeId === undefined) {
+      const ingress = ingressOfDriverPost(rows, post);
+      if (ingress) wakeId = dS(ingress, "wakeId");
+    }
+    if (wakeId !== undefined) {
+      if (floorMs === undefined) {
+        const turnStart = rows.find((r) => r.action === WAKE_TURN_START_ACTION && dS(r, "wakeId") === wakeId);
+        const parsed = turnStart === undefined ? Number.NaN : Date.parse(turnStart.ts);
+        if (Number.isFinite(parsed)) floorMs = parsed;
+      }
+      const { mine, foreign } = replyIdsByWake(rows, wakeId);
+      const candidates = await deps.fetchCandidates();
+      standing = candidates.length;
+      foreignSeen = candidates.filter((c) => foreign.has(c.id)).length;
+      for (const c of candidates) {
+        if (!c.substantive) continue;
+        if (mine.has(c.id)) {
+          return {
+            kind: "own-wake",
+            id: c.id,
+            wakeId,
+            detail: `a ${REPLY_POST_ACTION} row for wake ${wakeId} names message ${c.id} — this leg's own turn posted it`,
+          };
+        }
+        if (!foreign.has(c.id) && floorMs !== undefined && c.atMs >= floorMs) {
+          return {
+            kind: "unattributed",
+            id: c.id,
+            wakeId,
+            detail:
+              `message ${c.id} is attributed to no wake by any ${REPLY_POST_ACTION} row and stands at or after wake ${wakeId}'s own ` +
+              `${WAKE_TURN_START_ACTION} — a host-posted answer, or a reply row that carried no wake`,
+          };
+        }
+      }
+    }
+    if (deps.now() >= deadline) break;
+    await deps.sleep(opts.pollMs);
+  }
+  if (wakeId === undefined) {
+    return {
+      kind: "no-wake",
+      detail:
+        `no ${WAKE_INGRESS_ACTION} row for this leg's own driver message (vendor instant ${new Date(post.vendorMs).toISOString()}` +
+        `${post.surfaceKey !== undefined ? `, surface ${post.surfaceKey}` : ""}) was VISIBLE in the rows this read returned, within ` +
+        `${opts.timeoutMs}ms. That is a statement about what was read, never about the deployment: the wake may have been declined ` +
+        "before the ingress append (the window spend gate), the row may sit behind a capped page, or the best-effort append may have " +
+        "been dropped. Either way there is no key, so nothing standing in the room can be attributed to this leg, and the " +
+        "caller (`awaitOwnWakeReply`, scenarios.ts) scores the leg RED on this read",
+    };
+  }
+  return {
+    kind: "timeout",
+    wakeId,
+    detail:
+      `wake ${wakeId} produced no reply row and no unattributed post after its turn start within ${opts.timeoutMs}ms ` +
+      `(${standing} bot message(s) stood in the room, ${foreignSeen} of them attributed to ANOTHER wake — those never end this wait)`,
+  };
 }

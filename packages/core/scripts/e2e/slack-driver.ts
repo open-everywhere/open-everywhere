@@ -110,7 +110,7 @@ export function isQualifyingEdit(m: SlackMessage, maxDelayMs: number = DEFAULT_Q
   return delayMs >= 0 && delayMs <= maxDelayMs;
 }
 
-function passesSkip(m: SlackMessage, skip: ((m: SlackMessage) => boolean) | undefined): boolean {
+export function passesSkip(m: SlackMessage, skip: ((m: SlackMessage) => boolean) | undefined): boolean {
   return !(skip?.(m) ?? false) || isQualifyingEdit(m);
 }
 

@@ -15,7 +15,8 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { tsAfter } from "./slack-driver.js";
+import { passesSkip, tsAfter } from "./slack-driver.js";
+import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
@@ -110,7 +111,7 @@ import {
 import type { TimingsRecord } from "./timings-record.js";
 import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
-import { pollOptional, pollUntil, sleep } from "./poll.js";
+import { pollOptional, pollUntil, PollTimeout, sleep } from "./poll.js";
 import { ControlWriteDriver, type ControlWriteConfig, type SpendOwnershipHandle, type HaltOwnershipHandle } from "./control-write-driver.js";
 import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
 import { deployedSpendReportReaderPreflight, dmSpendPresence, spendMaskVerdictOver } from "./spend-dm-mask.js";
@@ -118,7 +119,7 @@ import { dmBucketKey } from "../../agent/spend/dm-mask.js";
 import { fetchRunUsage } from "./cost.js";
 import { deployedRoutineConnectorFixture, NOTION_MCP_HOST } from "./routine-connector-fixture.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, REPLY_EDIT_ACTION } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -380,6 +381,72 @@ async function fenceDmSeat(ctx: ScenarioContext, legId: string, drivenDm: SlackD
     `seat: ${legId} drives DM ${dm.channelId} — drained to ts ${fence.anchorTs ?? "(empty)"} in ${Math.round(fence.waitedMs / 1000)}s` +
       `${fence.abandoned ? " (the seat DECLINED to answer that message — past the owed grace, so it blocks nothing)" : ""}, conversation ${generation}`,
   );
+}
+
+const OWN_WAKE_REPLY_POLL_MS = 5_000;
+const OWN_WAKE_AUDIT_PAGE = 200;
+
+async function awaitOwnWakeReply(
+  ctx: ScenarioContext,
+  driver: SlackDriver,
+  anchorTs: string,
+  opts: {
+    readonly what: string;
+    readonly timeoutMs: number;
+    readonly skip?: (m: SlackMessage) => boolean;
+  },
+): Promise<SlackMessage> {
+  const read = ctx.auditRead;
+  const vendor = slackVendorEventTime(anchorTs);
+  if (!read || !vendor) {
+    ctx.log(
+      `reply-wait ${opts.what}: UNATTRIBUTED — ${read ? `the driver's own post ts ${anchorTs} carries no readable vendor instant` : "no control-plane audit reader (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN unset)"}, ` +
+        "so this wait runs the old first-bot-message rule and a previous leg's late post can still satisfy it (OPE-1957)",
+    );
+    return driver.awaitAnyReply(anchorTs, { timeoutMs: opts.timeoutMs, ...(opts.skip ? { skip: opts.skip } : {}) });
+  }
+  const { teamId } = await driver.identity();
+  const surfaceKey = `slack/${teamId}/${driver.channelId}`;
+  const sinceIso = new Date(vendor.ms - 5_000).toISOString();
+  const actions = [WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION, REPLY_POST_ACTION];
+  const seen = new Map<string, SlackMessage>();
+  let lastRows: readonly AuditWireEntry[] = [];
+  let readFailures = 0;
+  const outcome = await pollForOwnWakeReply(
+    {
+      now: () => Date.now(),
+      sleep,
+      fetchRows: async () => {
+        try {
+          lastRows = await read({ sinceIso, actions, limit: OWN_WAKE_AUDIT_PAGE });
+          readFailures = 0;
+        } catch (err) {
+          if (++readFailures >= 2) throw err;
+        }
+        return lastRows;
+      },
+      fetchCandidates: async (): Promise<readonly OwnWakeCandidate[]> => {
+        const msgs = await driver.collectBotMessagesAfter(anchorTs, anchorTs);
+        const out: OwnWakeCandidate[] = [];
+        for (const m of msgs) {
+          seen.set(m.ts, m);
+          out.push({ id: m.ts, atMs: slackVendorEventTime(m.ts)?.ms ?? Number.NaN, substantive: passesSkip(m, opts.skip) });
+        }
+        return out;
+      },
+    },
+    { vendorMs: vendor.ms, surfaceKey },
+    { timeoutMs: opts.timeoutMs, pollMs: OWN_WAKE_REPLY_POLL_MS },
+  );
+  if (outcome.kind === "own-wake" || outcome.kind === "unattributed") {
+    const message = seen.get(outcome.id);
+    if (message) {
+      ctx.log(`reply-wait ${opts.what}: ${outcome.kind} — ${outcome.detail}`);
+      return message;
+    }
+    throw new Error(`reply-wait ${opts.what}: the match named message ${outcome.id} (${outcome.kind}) but the room read no longer holds it`);
+  }
+  throw new PollTimeout(`${opts.what}: ${outcome.kind} — ${outcome.detail}`, opts.timeoutMs);
 }
 
 async function archiveNotionPageFromDm(
@@ -1688,7 +1755,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       const { ts: dmTs } = await dm.post("quick one — what's 7*6? reply with just the number");
-      await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      await awaitOwnWakeReply(ctx, dm, dmTs, { what: "S-SPEND-DM-MASK", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.log(`S-SPEND-DM-MASK: drove one DM turn in ${dm.channelId} — its ledger row is this window's DM spend`);
 
       const presence = await pollOptional(
@@ -1952,7 +2019,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const text = "quick one — what's 9*9? reply with just the number";
       const { ts: anchorTs } = await dm.post(text);
-      const reply = await dm.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const reply = await awaitOwnWakeReply(ctx, dm, anchorTs, { what: "S13", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(reply.text.trim().length > 0, "agent replied in the real DM channel");
       await assertDmDoorAdmitted(ctx, sinceIso, "S13");
       await ctx.judgePass(
@@ -1980,11 +2047,11 @@ export const SCENARIOS: readonly Scenario[] = [
       const batch = factToken("tasting");
       const teach = `remember: my favourite cheese from ${batch} is ${cheese}`;
       const { ts: teachTs } = await dm.post(teach);
-      await dm.awaitAnyReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await awaitOwnWakeReply(ctx, dm, teachTs, { what: "S14 (teach)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await assertDmDoorAdmitted(ctx, sinceIso, "S14 (teach)");
       const askDm = `what's my favourite cheese from ${batch}? give its exact name as stored; if you don't know, say so plainly`;
       const { ts: askTs } = await dm.post(askDm);
-      const recall = await dm.awaitAnyReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const recall = await awaitOwnWakeReply(ctx, dm, askTs, { what: "S14 (recall)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(
         recall.text.toLowerCase().includes(cheese.toLowerCase()),
         "DM recall HITS from the personal silo (hard gate: taught token present)",
@@ -2047,7 +2114,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const runStart = new Date(Date.now() - 5_000).toISOString();
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
-      const mintReply = await dm.awaitAnyReply(mintTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const mintReply = await awaitOwnWakeReply(ctx, dm, mintTs, { what: "S-LINK-SLACK (mint)", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (mint)");
       const code = parseLinkCode(mintReply.text);
       const issuedRows = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_issued"] });
@@ -2112,7 +2179,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const secondaryDm = ctx.slackSecondary!.withChannel(secondaryDmChannel);
       const claimAsk = `link ${code!}`;
       const { ts: claimTs } = await secondaryDm.post(claimAsk);
-      const claimReply = await secondaryDm.awaitAnyReply(claimTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const claimReply = await awaitOwnWakeReply(ctx, secondaryDm, claimTs, { what: "S-LINK-SLACK (own-dm claim)", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (own-dm claim)");
       const code2 = parseLinkCode(claimReply.text);
       ctx.gate(
@@ -2140,7 +2207,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const confirmAsk = `confirm — the code is ${code2!}.`;
       const { ts: confirmTs } = await dm.post(confirmAsk);
-      const confirmReply = await dm.awaitAnyReply(confirmTs, { timeoutMs: REPLY_WAIT });
+      const confirmReply = await awaitOwnWakeReply(ctx, dm, confirmTs, { what: "S-LINK-SLACK (confirm)", timeoutMs: REPLY_WAIT });
       ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the code-back turn");
       await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (confirm)");
       const confirmedRows = await pollOptional(
@@ -2277,7 +2344,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "I mean the channel's own access.";
       const dmSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: dmTs } = await dm.post(dmAsk);
-      const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const dmReply = await awaitOwnWakeReply(ctx, dm, dmTs, { what: "J4 (channel-target DM ask)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(dmReply.text.trim().length > 0, "S18: agent replied to the DM channel-target access ask");
       ctx.gate(approveButton(dmReply) === undefined, "S18: NO access-request card is posted for a CHANNEL-target ask made from a DM (hard gate)");
       await assertDmDoorAdmitted(ctx, dmSinceIso, "J4 (channel-target DM ask)");
@@ -2318,7 +2385,7 @@ export const SCENARIOS: readonly Scenario[] = [
         `(not this or any channel's access, and not a group). Add POST to a connection I have here (this ask is from test run ${personalNonce}).`;
       const personalSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: personalTs } = await dm.post(personalAsk);
-      const personalReply = await dm.awaitAnyReply(personalTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const personalReply = await awaitOwnWakeReply(ctx, dm, personalTs, { what: "J4 (target=personal DM ask)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await assertDmDoorAdmitted(ctx, personalSinceIso, "J4 (target=personal DM ask)");
       const personalCard =
         approveButton(personalReply) !== undefined

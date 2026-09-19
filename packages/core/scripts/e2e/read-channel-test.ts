@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
-import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, shouldAssertShaAncestry, type DelegatedReadVerdict } from "./read-channel-lib.js";
+import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, shouldAssertShaAncestry, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -350,6 +350,120 @@ const gitStdout = (args: readonly string[]): string => {
     ok(o.kind === "quiet", `a settlement with no reply after it still reaches "quiet" — the restart is one-shot (got "${o.kind}": ${o.detail})`);
     ok(sleepCount() === 5, `…after holding the full 12000ms from the SETTLEMENT, not from the ack (got ${sleepCount()} polls; 4 would mean no restart, >5 a repeating one)`);
     ok(o.detail.includes("clock measured from the settlement"), `…and the detail says which instant the clock ran from (got: ${o.detail})`);
+  }
+}
+
+{
+  const ms = (iso: string): number => Date.parse(iso);
+  const SURFACE = "slack/T0AAAA/D0EXDMCH001";
+  const slackTs = (iso: string): string => (ms(iso) / 1000).toFixed(6);
+  const msg = (iso: string, substantive = true): OwnWakeCandidate => ({ id: slackTs(iso), atMs: ms(iso), substantive });
+
+  const row = (action: string, iso: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: iso, org: "default", platform: "slack", workspace: "dm", action, detail,
+  });
+
+  const ASK = "2026-05-15T11:00:24.665Z";
+  const CARD = "2026-05-15T11:00:24.671Z";
+  const REAL = "2026-05-15T11:00:35.500Z";
+  const NARRATION = "2026-05-15T11:00:36.900Z";
+
+  const ingress = row("wake.ingress", "2026-05-15T11:00:24.910Z", { wakeId: "w-mine", surfaceKey: SURFACE, vendorTs: ASK });
+  const turnStart = row("wake.turn_start", "2026-05-15T11:00:25.100Z", { wakeId: "w-mine" });
+  const narrationRow = row("reply.post", NARRATION, { wakeId: "w-prev", id: slackTs(NARRATION), chars: 64 });
+  const realRow = row("reply.post", REAL, { wakeId: "w-mine", id: slackTs(REAL), chars: 240 });
+
+  const post = { vendorMs: ms(ASK), surfaceKey: SURFACE } as const;
+
+  function makeDeps(
+    rowsSeq: readonly (readonly AuditWireEntry[])[],
+    msgSeq: readonly (readonly OwnWakeCandidate[])[],
+  ): { deps: { sleep: (ms: number) => Promise<void>; now: () => number; fetchRows: () => Promise<readonly AuditWireEntry[]>; fetchCandidates: () => Promise<readonly OwnWakeCandidate[]> }; polls: () => number } {
+    let now = 1_000_000;
+    let rowCall = 0;
+    let msgCall = 0;
+    let polls = 0;
+    const at = <T,>(seq: readonly (readonly T[])[], i: number): readonly T[] => seq[Math.min(i, seq.length - 1)] ?? [];
+    return {
+      deps: {
+        now: () => now,
+        sleep: async (d: number) => { polls++; now += d; },
+        fetchRows: async () => at(rowsSeq, rowCall++),
+        fetchCandidates: async () => at(msgSeq, msgCall++),
+      },
+      polls: () => polls,
+    };
+  }
+
+  {
+    const { deps, polls } = makeDeps(
+      [[ingress, turnStart], [ingress, turnStart], [ingress, turnStart, realRow]],
+      [[msg(CARD)], [msg(CARD)], [msg(CARD), msg(REAL)]],
+    );
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 100_000, pollMs: 5_000 });
+    ok(o.kind === "own-wake", `the previous leg's approval card is not this leg's reply — the wake-keyed answer is (got "${o.kind}": ${o.detail})`);
+    ok(o.kind === "own-wake" && o.id === slackTs(REAL), `…and the message returned is the one wake w-mine posted (got "${o.kind === "own-wake" ? o.id : "n/a"}", the card is ${slackTs(CARD)})`);
+    ok(polls() === 2, `…after holding the wait open for it rather than returning on the card's read (got ${polls()} polls)`);
+  }
+
+  {
+    const late = "2026-05-15T11:00:26.000Z";
+    const { deps } = makeDeps([[ingress, turnStart]], [[msg(late)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "unattributed" && o.id === slackTs(late), `an unattributed post from AFTER this turn started is admitted — the floor is what excluded the card (got "${o.kind}")`);
+  }
+
+  {
+    const { deps } = makeDeps([[ingress, turnStart, narrationRow]], [[msg(NARRATION)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "timeout", `a reply.post row on ANOTHER wake is never this leg's reply, on either arm (got "${o.kind}": ${o.detail})`);
+    ok(o.detail.includes("1 of them attributed to ANOTHER wake"), `…and the timeout says so, so a red names the cause instead of "no reply" (got: ${o.detail})`);
+  }
+
+  {
+    const { deps } = makeDeps([[ingress, turnStart]], [[msg(REAL)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "unattributed" && o.id === slackTs(REAL), `a host-delivered answer that no reply.post row names is admitted from this turn's start (got "${o.kind}")`);
+
+    const { deps: d2 } = makeDeps([[ingress]], [[msg(REAL)]]);
+    const o2 = await pollForOwnWakeReply(d2, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o2.kind === "timeout", `…and with no ${"wake.turn_start"} row for this wake there is no floor, so the arm stays closed (got "${o2.kind}")`);
+  }
+
+  {
+    const wakeless = row("reply.post", REAL, { id: slackTs(REAL), chars: 240 });
+    const { deps } = makeDeps([[ingress, turnStart, wakeless]], [[msg(REAL)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "unattributed", `a reply.post row with NO wakeId leaves its message unattributed, never foreign (got "${o.kind}": ${o.detail})`);
+
+    const foreign = row("reply.post", REAL, { wakeId: "w-prev", id: slackTs(REAL), chars: 240 });
+    const { deps: d2 } = makeDeps([[ingress, turnStart, foreign]], [[msg(REAL)]]);
+    const o2 = await pollForOwnWakeReply(d2, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o2.kind === "timeout", `…while the SAME row carrying another wake makes it foreign (got "${o2.kind}")`);
+  }
+
+  {
+    const { deps } = makeDeps([[]], [[msg(REAL)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "no-wake", `with no wake.ingress row for the driver's own post there is no key, so nothing in the room is the reply (got "${o.kind}")`);
+    ok(!o.detail.includes("never admitted"), `…and it does not assert an absence the read cannot earn — the row may sit behind a capped page (got: ${o.detail})`);
+  }
+
+  for (const [label, wrong] of [
+    ["another message's ingress row", row("wake.ingress", "2026-05-15T10:59:55.100Z", { wakeId: "w-prev", surfaceKey: SURFACE, vendorTs: "2026-05-15T10:59:55.000Z" })],
+    ["this message's instant on another surface", row("wake.ingress", "2026-05-15T11:00:24.910Z", { wakeId: "w-elsewhere", surfaceKey: "slack/T0AAAA/C0OTHER", vendorTs: ASK })],
+  ] as const) {
+    const { deps } = makeDeps([[wrong]], [[msg(REAL)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "no-wake", `${label} does not supply this leg's wake (got "${o.kind}")`);
+  }
+
+  {
+    const ACK = "2026-05-15T11:00:26.000Z";
+    const ackRow = row("reply.post", ACK, { wakeId: "w-mine", id: slackTs(ACK), chars: 18 });
+    const { deps } = makeDeps([[ingress, turnStart, ackRow, realRow]], [[msg(ACK, false), msg(REAL)]]);
+    const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
+    ok(o.kind === "own-wake" && o.id === slackTs(REAL), `an interim ack on this leg's own wake is stepped over for the substantive reply (got "${o.kind}": ${o.detail})`);
   }
 }
 
