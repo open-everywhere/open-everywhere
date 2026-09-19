@@ -92,17 +92,18 @@ import {
   WAKE_INGRESS_ACTION,
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
+import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
+import { slackUnifiedPrimedCoalescingBurst } from "./coalesced-burst.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
+  auditSessionIds,
   decomposeSession,
   delegationJoinTargets,
   joinDelegations,
   renderDelegationTiming,
   renderSessionTiming,
-  TASK_RETURNED_ACTION,
-  TASK_SPAWNED_ACTION,
 } from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
 import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
@@ -115,7 +116,7 @@ import { dmBucketKey } from "../../agent/spend/dm-mask.js";
 import { fetchRunUsage } from "./cost.js";
 import { deployedRoutineConnectorFixture, NOTION_MCP_HOST } from "./routine-connector-fixture.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, REPLY_EDIT_ACTION } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -322,6 +323,7 @@ async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, labe
   );
 }
 const UNIFIED_REPLY_WAIT = 420_000;
+const COALESCE_PRIME_WAIT = 60_000;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
@@ -432,19 +434,10 @@ async function archiveNotionPageFromDm(
 }
 
 export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean {
-  const nativeStarted = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION);
-  if (
-    nativeStarted.some((s) => {
-      const taskId = dS(s, "task");
-      return taskId !== undefined && rows.some((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "task") === taskId);
-    })
-  ) {
-    return true;
-  }
-  const rollSpawned = rows.filter((r) => r.action === TASK_SPAWNED_ACTION);
-  return rollSpawned.some((s) => {
-    const taskId = dS(s, "taskId");
-    return taskId !== undefined && rows.some((r) => r.action === TASK_RETURNED_ACTION && dS(r, "taskId") === taskId);
+  const started = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION);
+  return started.some((s) => {
+    const taskId = dS(s, "task");
+    return taskId !== undefined && rows.some((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "task") === taskId);
   });
 }
 
@@ -508,6 +501,8 @@ export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive"
   return undefined;
 }
 
+export const DELEGATED_TURN_SURFACE_ACTIONS = [REPLY_POST_ACTION, REPLY_EDIT_ACTION] as const;
+
 async function gateDelegatedTurn(
   ctx: ScenarioContext,
   opts: {
@@ -537,7 +532,7 @@ async function gateDelegatedTurn(
   const wakeId = String(anchor?.detail?.["wakeId"] ?? "");
 
   const readTurnRows = async () => [
-    ...(await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION] })),
+    ...(await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [...DELEGATED_TURN_SURFACE_ACTIONS] })),
     ...(await read({ sinceIso: opts.sinceIso, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] })),
   ];
   const outcome = await pollForFinalReply(
@@ -1151,14 +1146,8 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const rows = await auditRead({ sinceIso: askStart, limit: 1000 });
-      const sessionIds = new Set<string>();
-      for (const row of rows) {
-        for (const key of ["sessionId", "parentSessionId"] as const) {
-          const v = row.detail?.[key];
-          if (typeof v === "string" && v.length > 0) sessionIds.add(v);
-        }
-      }
-      const delegations = rows.filter((r) => r.action === "task.spawned").length;
+      const sessionIds = new Set<string>(auditSessionIds(rows));
+      const delegations = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION).length;
       ctx.log(`recall evidence: ${rows.length} audit row(s), ${sessionIds.size} distinct session(s), ${delegations} delegation(s) since the ask`);
       ctx.gate(
         sessionIds.size > 0,
@@ -1166,14 +1155,23 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const reads: string[] = [];
+      const readingSessions: string[] = [];
       const replays = new Map<string, readonly TranscriptWireEvent[]>();
       for (const sessionId of sessionIds) {
         const events = await transcriptRead(sessionId);
         replays.set(sessionId, events);
         const found = extractMemoryPathReads(events);
-        if (found.length > 0) ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
+        if (found.length > 0) {
+          ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
+          readingSessions.push(sessionId);
+        }
         reads.push(...found);
       }
+      ctx.log(
+        readingSessions.length > 0
+          ? `reads came from session(s): ${readingSessions.join(", ")} (of ${sessionIds.size} joined)`
+          : `NO session held a memory-path read (${sessionIds.size} joined: ${[...sessionIds].join(", ") || "none"})`,
+      );
       const silosTouched = [...new Set(reads.map(siloOfPath).filter((s): s is string => s !== null))];
       ctx.gate(
         reads.length > 0,
@@ -3497,13 +3495,13 @@ export const SCENARIOS: readonly Scenario[] = [
             async () => {
               const rows = await auditRead({
                 sinceIso: browserStart,
-                actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION, TASK_SPAWNED_ACTION, TASK_RETURNED_ACTION],
+                actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION],
               });
               return delegationHasReturned(rows) ? true : undefined;
             },
             {
               timeoutMs: remaining(),
-              what: "the delegated browser-QA worker's task to settle (delegation.task_settled / task.returned) before reading the browser.* audit trail — OPE-1076",
+              what: "the delegated browser-QA worker's task to settle (delegation.task_settled) before reading the browser.* audit trail — OPE-1076",
             },
           );
           ctx.log(
@@ -3714,12 +3712,33 @@ export const SCENARIOS: readonly Scenario[] = [
       type ProposeDetail = { readonly kind?: unknown; readonly scopeKey?: unknown; readonly id?: unknown };
       type UnaccountedDetail = { readonly turnId?: unknown; readonly count?: unknown; readonly unaccounted?: readonly unknown[] };
 
-      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean }> => {
+      const awaitTurnStart = async (sinceIso: string): Promise<boolean> =>
+        (await pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION] });
+            return rows.length > 0 ? rows : undefined;
+          },
+          { timeoutMs: COALESCE_PRIME_WAIT, what: "a wake.turn_start row for the priming post — the seat is now inside a turn" },
+        )) !== undefined;
+
+      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean }> => {
         const sinceIso = new Date(Date.now() - 30_000).toISOString();
         const marker = factToken(`coalesce${n}`);
         const askText = `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`;
         const asideText = `(aside, no reply needed) filing the ${marker} notes from the other room for later.`;
-        const { askTs } = await postBurst(askText, asideText);
+        const primeStart = new Date().toISOString();
+        const drive = slackUnifiedPrimedCoalescingBurst({
+          primePost: async (text) => void (await a.post(text)),
+          awaitTurnStart: () => awaitTurnStart(primeStart),
+          burst: postBurst,
+        });
+        const primeText = `${a.mention("a quick one first")} — reply with just the word ready, nothing else.`;
+        const { askTs, primed } = await drive(primeText, askText, asideText);
+        ctx.log(
+          primed
+            ? `attempt ${n}: the priming turn STARTED before the burst (a wake.turn_start row landed). Whether it was still running when the two deliveries queued is NOT observable here — there is no turn-END row on this road`
+            : `attempt ${n}: the priming turn did NOT start inside ${COALESCE_PRIME_WAIT}ms — the burst fired onto a possibly-idle seat`,
+        );
         const reply = await pollOptional(
           async () => {
             try {
@@ -3728,9 +3747,9 @@ export const SCENARIOS: readonly Scenario[] = [
               return undefined;
             }
           },
-          { timeoutMs: UNIFIED_REPLY_WAIT, what: `a reply in the ASKING room (${a.channelId}) to attempt ${n}'s routine ask` },
+          { timeoutMs: UNIFIED_REPLY_WAIT, what: `any reply in the ASKING room (${a.channelId}) after attempt ${n}'s routine ask — the liveness signal, not a content match` },
         );
-        return { sinceIso, replied: reply !== undefined };
+        return { sinceIso, replied: reply !== undefined, primed };
       };
 
       const approvalRows = async (sinceIso: string) =>
@@ -3756,10 +3775,12 @@ export const SCENARIOS: readonly Scenario[] = [
       let sinceIso: string | undefined;
       let merged: Awaited<ReturnType<typeof coalescedRows>>;
       let replied = false;
+      let anyPrimed = false;
       for (const n of [1, 2]) {
         const run = await attempt(n);
         sinceIso = run.sinceIso;
         replied = replied || run.replied;
+        anyPrimed = anyPrimed || run.primed;
         merged = await coalescedRows(run.sinceIso);
         if (merged !== undefined) {
           ctx.log(`attempt ${n}: the turn coalesced — ${merged.length} turn.unaccounted_wakes row(s)`);
@@ -3769,11 +3790,12 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.gate(
         replied,
-        `the ASKING room (${a.channelId}) got a reply to the routine ask — without one the turn never ran and nothing below could be scoped either way`,
+        `the ASKING room (${a.channelId}) produced a reply in this window — the turn RAN. Without one nothing below could be scoped either way`,
       );
       ctx.gate(
         merged !== undefined,
-        `🔴 (hard): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything`,
+        `🔴 (hard): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything. ` +
+          `Seat priming (OPE-1948): ${anyPrimed ? "at least one attempt saw its priming turn's wake.turn_start row land BEFORE the burst. That proves the turn STARTED — NOT that it was still in flight when the two deliveries queued, which is the condition that matters and which no row on this road reports (there is no turn-END anchor). The priming ask is deliberately trivial, so a turn that finished inside the gap would leave an idle seat and this same red. Read the priming turn's own length before calling this the product failing to fold" : "NO attempt observed its priming turn start, so the burst may have landed on an idle seat — the harness did not reproduce the precondition, and the priming wait is where to look"}`,
       );
 
       const rows = await approvalRows(sinceIso!);

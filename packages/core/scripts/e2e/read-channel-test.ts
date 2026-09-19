@@ -303,6 +303,54 @@ const gitStdout = (args: readonly string[]): string => {
     const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
     ok(o.kind !== "settled-relay", `an unparseable reply ts never counts as the relay answer (got "${o.kind}")`);
   }
+
+  {
+    const idAck = rowAt("reply.post", "2026-04-15T09:30:02.000Z", { sessionId: "s1", wakeId: "w1", chars: 24, id: "c5737095823" });
+    const foldEdit = rowAt("reply.edit", "2026-04-15T09:30:50.000Z", { sessionId: "s1", wakeId: "w1", chars: 640, id: "c5737095823" });
+    const { deps } = makeDeps([[idAck, started], [idAck, started, settled, foldEdit]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "settled-relay", `a reply.edit of the turn's OWN ack id at/after the settle row ⇒ "settled-relay" (got "${o.kind}": ${o.detail})`);
+    ok(o.detail.includes("reply.edit") && o.detail.includes("c5737095823"), `…and the detail names the edit and the id it rewrote, so the log says WHICH shape settled (got: ${o.detail})`);
+    ok(o.replyCount === 1, `…while the reply COUNT still counts posts only — an edit creates no new message (got ${o.replyCount})`);
+
+    const foreignEdit = rowAt("reply.edit", "2026-04-15T09:30:50.000Z", { sessionId: "s1", wakeId: "w1", chars: 640, id: "c-SOMEONE-ELSE" });
+    const { deps: d2 } = makeDeps([[idAck, started, settled, foreignEdit]]);
+    const o2 = await pollForFinalReply(d2, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o2.kind !== "settled-relay", `an edit of an id this turn never posted is NOT this turn's settlement (got "${o2.kind}")`);
+
+    const earlyEdit = rowAt("reply.edit", "2026-04-15T09:30:05.000Z", { sessionId: "s1", wakeId: "w1", chars: 30, id: "c5737095823" });
+    const { deps: d3 } = makeDeps([[idAck, started, settled, earlyEdit]]);
+    const o3 = await pollForFinalReply(d3, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o3.kind !== "settled-relay", `an edit made BEFORE delegation.task_settled is not the settlement (got "${o3.kind}")`);
+
+    const otherTurnEdit = rowAt("reply.edit", "2026-04-15T09:30:50.000Z", { sessionId: "OTHER", wakeId: "wX", chars: 640, id: "c5737095823" });
+    const { deps: d4 } = makeDeps([[idAck, started, settled, otherTurnEdit]]);
+    const o4 = await pollForFinalReply(d4, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o4.kind !== "settled-relay", `an edit carrying ANOTHER session and wake never fires the relay exit (got "${o4.kind}")`);
+  }
+
+  {
+    const rows: readonly AuditWireEntry[][] = [
+      [ack, started], [ack, started], [ack, started], [ack, started],
+      [ack, started, settled],
+      [ack, started, settled, relay],
+    ];
+    const { deps } = makeDeps(rows);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(
+      o.kind === "settled-relay",
+      `a settlement that lands AFTER the ack has been quiet for longer than quietMs still gets its own window ⇒ "settled-relay" (got "${o.kind}": ${o.detail})`,
+    );
+    ok(o.replyCount === 2, `…and the settlement reply is counted (got ${o.replyCount})`);
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([[ack, started], [ack, started, settled]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "quiet", `a settlement with no reply after it still reaches "quiet" — the restart is one-shot (got "${o.kind}": ${o.detail})`);
+    ok(sleepCount() === 5, `…after holding the full 12000ms from the SETTLEMENT, not from the ack (got ${sleepCount()} polls; 4 would mean no restart, >5 a repeating one)`);
+    ok(o.detail.includes("clock measured from the settlement"), `…and the detail says which instant the clock ran from (got: ${o.detail})`);
+  }
 }
 
 console.log(`✓ ${n} read-channel-e2e assertions passed`);

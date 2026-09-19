@@ -12,6 +12,29 @@ export function engagedRepoSkipReason(repo: string, isPrivate: boolean | undefin
   );
 }
 
+export const GITHUB_PAGE_SIZE = 100;
+
+export const GITHUB_MAX_PAGES = 20;
+
+export async function walkGithubPages<T>(
+  what: string,
+  fetchPage: (page: number) => Promise<readonly T[]>,
+  opts: { readonly pageSize?: number; readonly maxPages?: number } = {},
+): Promise<readonly T[]> {
+  const pageSize = opts.pageSize ?? GITHUB_PAGE_SIZE;
+  const maxPages = opts.maxPages ?? GITHUB_MAX_PAGES;
+  const out: T[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const items = await fetchPage(page);
+    out.push(...items);
+    if (items.length < pageSize) return out;
+  }
+  throw new Error(
+    `github ${what}: page ${maxPages} came back FULL (${pageSize} items, ${out.length} read in total) — the walk refuses ` +
+      `to return a silently truncated list. Raise maxPages, or narrow the read.`,
+  );
+}
+
 export interface GithubComment {
   readonly id: number;
   readonly body: string;
@@ -95,8 +118,13 @@ export class GithubDriver {
   }
 
   async comments(issueNumber: number): Promise<readonly GithubComment[]> {
-    const json = (await this.api("GET", `/repos/${this.cfg.repo}/issues/${issueNumber}/comments?per_page=100`)) as unknown as GithubApiComment[];
-    const arr = Array.isArray(json) ? json : [];
+    const arr = await walkGithubPages(`issues/${issueNumber}/comments`, async (page) => {
+      const json = (await this.api(
+        "GET",
+        `/repos/${this.cfg.repo}/issues/${issueNumber}/comments?per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
+      )) as unknown as GithubApiComment[];
+      return Array.isArray(json) ? json : [];
+    });
     return arr.map((c) => ({ id: c.id ?? 0, body: c.body ?? "", authorLogin: c.user?.login ?? "", authorType: c.user?.type ?? "", createdAt: c.created_at ?? "" }));
   }
 

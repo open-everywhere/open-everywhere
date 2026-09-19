@@ -7,7 +7,7 @@ import {
   renderPacingLine,
   type PacingClock,
 } from "../packages/core/scripts/e2e/pacing.js";
-import { slackUnifiedCoalescingBurst } from "../packages/core/scripts/e2e/coalesced-burst.js";
+import { slackUnifiedCoalescingBurst, slackUnifiedPrimedCoalescingBurst } from "../packages/core/scripts/e2e/coalesced-burst.js";
 import { PACING_CHANNEL_FLOOR_MS, PACING_MAX_CONCURRENT_PER_SURFACE } from "../packages/core/scripts/e2e/env.js";
 import { SlackDriver } from "../packages/core/scripts/e2e/slack-driver.js";
 import { DiscordDriver } from "../packages/core/scripts/e2e/discord-driver.js";
@@ -254,6 +254,52 @@ ok(PACING_MAX_CONCURRENT_PER_SURFACE === 2, "the shipped per-surface cap is 2, w
   ok(startedAt[0] === 0 && startedAt[1] === 0, "attempt 1's two posts are back-to-back");
   ok(startedAt[2] === 1_000 && startedAt[3] === 1_000, "🔴 attempt 2 waits a full floor — the retry the leg makes when the first interleave did not coalesce is still paced");
   ok(gate.stats().waitedMs === 1_000, "…and the cost of that wait is reported");
+}
+
+{
+  const order: string[] = [];
+  let burstRanBeforeTurnStart = false;
+  let turnStartResolved = false;
+  let releaseTurnStart: (() => void) | undefined;
+  const turnStarted = new Promise<void>((r) => { releaseTurnStart = r; });
+
+  const drive = slackUnifiedPrimedCoalescingBurst({
+    primePost: async (text) => { order.push(`prime:${text}`); },
+    awaitTurnStart: async () => { order.push("await-turn-start"); await turnStarted; turnStartResolved = true; return true; },
+    burst: async (askText, asideText) => {
+      if (!turnStartResolved) burstRanBeforeTurnStart = true;
+      order.push(`burst:${askText}|${asideText}`);
+      return { askTs: "ts-CASK" };
+    },
+  });
+
+  const work = drive("ready?", "the routine ask", "the aside");
+  await new Promise((r) => setImmediate(r));
+  ok(order.length === 2, `the drive primes and then WAITS — nothing else has run yet (got ${JSON.stringify(order)})`);
+  ok(!burstRanBeforeTurnStart, "🔴 the burst has NOT fired while the priming turn's wake.turn_start row is still unseen — an idle-seat burst is the very shape OPE-1948 removes");
+
+  releaseTurnStart!();
+  const out = await work;
+
+  ok(order[0] === "prime:ready?", "🔴 the PRIMING post goes first, into the asking room — it is what occupies the seat");
+  ok(order[1] === "await-turn-start", "🔴 …then the drive waits for the priming turn's own wake.turn_start row, rather than sleeping and hoping");
+  ok(order[2] === "burst:the routine ask|the aside", "🔴 …and only THEN the two-room burst, so both deliveries queue behind a RUNNING turn");
+  ok(order.length === 3, `exactly three steps, no more (got ${JSON.stringify(order)})`);
+  ok(out.askTs === "ts-CASK", "the drive returns the burst's ASK ts — the reply the leg waits for is still the one in the asking room");
+  ok(out.primed === true, "…and reports that the seat was primed, which is what tells a product red from a harness one");
+}
+
+{
+  const order: string[] = [];
+  const drive = slackUnifiedPrimedCoalescingBurst({
+    primePost: async () => { order.push("prime"); },
+    awaitTurnStart: async () => { order.push("await-turn-start"); return false; },
+    burst: async () => { order.push("burst"); return { askTs: "ts-CASK" }; },
+  });
+  const out = await drive("ready?", "ask", "aside");
+  ok(order.join(",") === "prime,await-turn-start,burst", `a priming turn that never started still reaches the burst (got ${JSON.stringify(order)})`);
+  ok(out.primed === false, "…and `primed` reports FALSE, so the leg's red names the harness rather than blaming the product");
+  ok(out.askTs === "ts-CASK", "…and the ask ts still comes back, so the leg can still poll for its reply");
 }
 {
   const clock = fakeClock();

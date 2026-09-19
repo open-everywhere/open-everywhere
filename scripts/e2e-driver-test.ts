@@ -143,6 +143,7 @@ const {
 } = await import("../packages/core/scripts/e2e/judge.js");
 const {
   SCENARIOS, skipCategory, skipReason, ScenarioSkip, FixtureMissing, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
+  DELEGATED_TURN_SURFACE_ACTIONS,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
 } = await import("../packages/core/scripts/e2e/scenarios.js");
@@ -2238,6 +2239,72 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { GithubDriver, GITHUB_PAGE_SIZE, GITHUB_MAX_PAGES, walkGithubPages } = await import(
+    "../packages/core/scripts/e2e/github-driver.js"
+  );
+  const realFetch = globalThis.fetch;
+  try {
+    const driver = new GithubDriver({ repo: "acme/fixture", token: "driver-token", appSlug: "open-everywhere", issue: "1" } as never);
+
+    const all = Array.from({ length: 101 }, (_, i) => ({
+      id: 5_609_000_000 + i,
+      body: i === 100 ? "gh-20698 — the answer the leg is waiting for" : `human chatter ${i}`,
+      user: { login: i === 100 ? "open-everywhere[bot]" : "example-owner", type: i === 100 ? "Bot" : "User" },
+      created_at: `2026-09-09T22:${String(10 + Math.floor(i / 10)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`,
+    }));
+    const pagesServed: number[] = [];
+    globalThis.fetch = (async (input: unknown) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "30");
+      pagesServed.push(page);
+      return new Response(JSON.stringify(all.slice((page - 1) * perPage, page * perPage)), { status: 200 });
+    }) as typeof fetch;
+
+    const comments = await driver.comments(1);
+    ok(comments.length === 101, `🔴 the walk surfaces ALL 101 comments, not the first page (got ${comments.length})`);
+    ok(comments[100]?.id === 5_609_000_100, `🔴 …and the 101st is present — the exact comment a single-page read drops (got ${comments[100]?.id})`);
+    ok(pagesServed.length === 2 && pagesServed[0] === 1 && pagesServed[1] === 2, `…having read page 1 then page 2 and STOPPED on the short page (got ${JSON.stringify(pagesServed)})`);
+    ok(comments[100]?.authorLogin === "open-everywhere[bot]" && driver.isBotComment(comments[100]!), "…and the 101st maps as a BOT comment, so awaitBotReply's predicate can match it");
+
+    const found = await driver.awaitBotReply(1, 5_609_000_099, { timeoutMs: 5_000 });
+    ok(found.id === 5_609_000_100, `🔴 awaitBotReply finds a bot reply that sits on PAGE 2 (got ${found.id})`);
+
+    pagesServed.length = 0;
+    const hundred = all.slice(0, 100);
+    globalThis.fetch = (async (input: unknown) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get("page") ?? "1");
+      pagesServed.push(page);
+      return new Response(JSON.stringify(page === 1 ? hundred : []), { status: 200 });
+    }) as typeof fetch;
+    const exact = await driver.comments(1);
+    ok(exact.length === 100 && pagesServed.length === 2, `an exactly-full first page is followed by ONE confirming read and no more (got ${exact.length} comments over ${pagesServed.length} page(s))`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  ok(GITHUB_PAGE_SIZE === 100, "the page size is GitHub's own maximum for these endpoints");
+  const shortFirst = await walkGithubPages("t", async () => [1, 2, 3], { pageSize: 100 });
+  ok(shortFirst.length === 3, "a short first page ends the walk immediately");
+  const twoPages = await walkGithubPages("t", async (p) => (p === 1 ? [1, 2] : [3]), { pageSize: 2 });
+  ok(twoPages.join(",") === "1,2,3", "pages are concatenated in page order, oldest page first");
+
+  let capped: unknown;
+  try {
+    await walkGithubPages("issues/1/comments", async () => [1, 2], { pageSize: 2, maxPages: 3 });
+  } catch (error) {
+    capped = error;
+  }
+  ok(capped instanceof Error, "🔴 a list still FULL at the last page THROWS rather than returning a silently truncated answer");
+  ok(
+    capped instanceof Error && capped.message.includes("issues/1/comments") && capped.message.includes("refuses"),
+    `…and the message names the endpoint and says it refused, so the red reads as itself (got: ${capped instanceof Error ? capped.message : String(capped)})`,
+  );
+  ok(GITHUB_MAX_PAGES > 1, "the default cap leaves room for a real fixture issue to grow past one page");
+}
+
+{
   const { buildAgentSessionEvent, FORGE_SESSION_ID, FORGE_ORGANIZATION_ID, FORGE_ISSUE_ID, FORGE_CREATOR_ID } = await import(
     "../packages/core/scripts/e2e/linear-driver.js"
   );
@@ -3677,40 +3744,88 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(unknownType.turns.length === 0 && unknownType.coverage.events === 1, "an unrecognised eve event type is counted but never invents a phase");
 
   const spawned = {
-    ts: "2026-03-29T01:10:06.000Z", org: "o", platform: "unified", workspace: "d", action: "task.spawned",
-    detail: { taskId: "T1", oneshot: true, parentSessionId: "wrun_caller", parentWakeId: "w0", wakeId: "w1", briefLen: 347 },
+    ts: "2026-03-29T01:10:06.000Z", org: "o", platform: "ingest", workspace: "delegation", action: "delegation.task_started",
+    detail: { task: "T1", call: "call_abc", agent: "memory-reader", session: "wrun_caller", continuation: false },
   };
   const returned = {
-    ts: "2026-03-29T01:10:25.500Z", org: "o", platform: "unified", workspace: "d", action: "task.returned",
-    detail: { taskId: "T1", mode: "async", sessionId: "wrun_worker", summaryLen: 165, hasError: false, delivered: true },
+    ts: "2026-03-29T01:10:25.500Z", org: "o", platform: "ingest", workspace: "delegation", action: "delegation.task_settled",
+    detail: { task: "T1", status: "completed", session: "wrun_caller", agent: "memory-reader", marker: "clean", adopted: false, kinds: [] },
   };
-  const rows = [returned, spawned];
+  const toolset = {
+    ts: "2026-03-29T01:10:09.000Z", org: "o", platform: "unified", workspace: "d", action: "worker.toolset",
+    detail: { worker: "wrun_worker", parentSession: "wrun_caller", parentCallId: "call_abc", rootSession: "wrun_caller", turn: "t0", grain: "task", toolCount: 7 },
+  };
+  const rows = [returned, toolset, spawned];
   const targets = delegationJoinTargets(rows);
   ok(targets.length === 1 && targets[0].workerSessionId === "wrun_worker" && targets[0].parentSessionId === "wrun_caller", "delegationJoinTargets names both sides BEFORE any transcript is paid for");
+  ok(targets[0].taskId === "T1", "…keyed off `detail.task`, the dispatch row's real task key");
 
   const [d] = joinDelegations(rows, new Map([["wrun_worker", worker]]));
   ok(d.gaps.length === 0, `a complete join reports NO gaps; got ${JSON.stringify(d.gaps)}`);
-  ok(d.wallMs === 19500, `wall = task.spawned → task.returned (what the caller waits out); got ${d.wallMs}`);
+  ok(d.wallMs === 19500, `wall = delegation.task_started → delegation.task_settled (what the caller waits out); got ${d.wallMs}`);
   ok(d.dispatchMs === 2677, `dispatch = spawn row → the worker's first recorded event (workflow cold-start); got ${d.dispatchMs}`);
   ok(d.bootMs === 2226, "boot carries the worker's whole session.started hook-chain window through to the delegation view (a ceiling — the sandbox create inside it is ≤5.7s measured, OPE-126)");
   ok(d.ttftMs === 6033, "ttft is the worker's FIRST model call's time to first token — the number a 'viable in a conversational turn?' argument is about");
   ok(d.workMs === 13797, `work = worker turn.started → last turn end; got ${d.workMs}`);
-  ok(d.returnMs === 700, `return = worker's last recorded event → the task.returned row (result persist + caller wake); got ${d.returnMs}`);
+  ok(d.returnMs === 700, `return = worker's last recorded event → the settle row (result persist + caller wake); got ${d.returnMs}`);
   ok(d.unaccountedMs === 100, `phases + unaccounted reconstruct the wall exactly; got ${d.unaccountedMs}`);
   ok(d.worker !== null && d.worker.totals.toolCalls === 1, "the worker's whole session decomposition rides along");
+  ok(d.status === "completed" && d.hasError === false, "the settlement's own `status` is carried through, and `completed` is not an error");
 
-  const noStamp = joinDelegations([{ ...returned, detail: { taskId: "T1", mode: "async" } }, spawned], new Map());
-  ok(noStamp[0].gaps.some((g) => g.includes("no sessionId")), "a task.returned that loses its sessionId stamp is a NAMED gap (the pre-OPE-121 shape) — the worker's work would be unobservable");
+  {
+    const spawn2 = { ...spawned, ts: "2026-03-29T01:10:07.000Z", detail: { ...spawned.detail, task: "T2", call: "call_xyz" } };
+    const settle2 = { ...returned, ts: "2026-03-29T01:10:30.000Z", detail: { ...returned.detail, task: "T2" } };
+    const toolset2 = { ...toolset, detail: { ...toolset.detail, worker: "wrun_worker2", parentCallId: "call_xyz" } };
+    const two = delegationJoinTargets([settle2, returned, toolset2, toolset, spawn2, spawned]);
+    ok(two.length === 2, `both dispatches are found (got ${two.length})`);
+    ok(two.find((t) => t.taskId === "T1")?.workerSessionId === "wrun_worker", "🔴 task T1 keeps ITS worker — matched on parentCallId, not on the shared caller session");
+    ok(two.find((t) => t.taskId === "T2")?.workerSessionId === "wrun_worker2", "🔴 …and task T2 keeps its own");
+  }
+
+  {
+    const noCall = { ...spawned, detail: { task: "T1", session: "wrun_caller" } };
+    const [one] = delegationJoinTargets([returned, toolset, noCall]);
+    ok(one.workerSessionId === "wrun_worker", "a dispatch with no `call` still resolves when exactly ONE worker.toolset row names its caller");
+    const rival = { ...toolset, detail: { ...toolset.detail, worker: "wrun_other", parentCallId: "call_other" } };
+    const [ambiguous] = delegationJoinTargets([returned, toolset, rival, noCall]);
+    ok(ambiguous.workerSessionId === null, "🔴 …and it refuses to pick when TWO do — an arbitrary worker is worse than a named gap");
+  }
+
+  const noStamp = joinDelegations([returned, spawned], new Map());
+  ok(noStamp[0].gaps.some((g) => g.includes("worker.toolset")), "a delegation with NO worker.toolset row is a NAMED gap — the worker's work would be unobservable");
   ok(noStamp[0].wallMs === 19500, "…and the caller-visible wall-clock is still derivable from the audit rows alone");
-  const noReturn = joinDelegations([spawned], new Map());
-  ok(noReturn[0].gaps.some((g) => g.includes("no task.returned")), "a spawn with no return inside the window is a NAMED gap, not a hidden null");
+  const noReturn = joinDelegations([toolset, spawned], new Map([["wrun_worker", worker]]));
+  ok(noReturn[0].gaps.some((g) => g.includes("no delegation.task_settled")), "a dispatch with no settlement inside the window is a NAMED gap, not a hidden null");
+  ok(noReturn[0].status === null && noReturn[0].hasError === false, "…and an UNSETTLED delegation has no status and is NOT reported as an error");
+  const failed = joinDelegations([{ ...returned, detail: { ...returned.detail, status: "failed" } }, toolset, spawned], new Map([["wrun_worker", worker]]));
+  ok(failed[0].status === "failed" && failed[0].hasError === true, "a settlement whose status is `failed` IS an error");
+  const reaped = joinDelegations([{ ...returned, detail: { ...returned.detail, status: "cancelled" } }, toolset, spawned], new Map([["wrun_worker", worker]]));
+  ok(reaped[0].status === "cancelled", "a reaped delegation carries its `cancelled` status through");
+  ok(reaped[0].hasError === false, "🔴 …and is NOT an error — `cancelled` on the settlement edge is the deployment's own reaper");
+  ok(!renderDelegationTiming(reaped[0]).some((l) => l.includes("ERROR")), "…so the render never prints ERROR for it");
   const emptyReplay = joinDelegations(rows, new Map([["wrun_worker", []]]));
   ok(emptyReplay[0].gaps.some((g) => g.includes("EMPTY")), "an expired/unreadable worker session is a NAMED gap — the S-MEM-READ precedent that an observability failure must not read as a product result");
 
   const lateSpawnRow = { ...spawned, ts: "2026-03-29T01:10:09.500Z" };
-  const [raced] = joinDelegations([returned, lateSpawnRow], new Map([["wrun_worker", worker]]));
+  const [raced] = joinDelegations([returned, toolset, lateSpawnRow], new Map([["wrun_worker", worker]]));
   ok(raced.dispatchMs === -823, `a worker that beats the spawn row yields a NEGATIVE dispatch, not a clamp to 0; got ${raced.dispatchMs}`);
   ok(raced.gaps.length === 0, "…and that race is NOT a gap — the join is still complete");
+
+  const { auditSessionIds } = await import("../packages/core/scripts/e2e/transcript-timings.js");
+  {
+    const replyRow = { ts: "2026-03-29T01:10:02.000Z", org: "o", platform: "slack", workspace: "d", action: "reply.post", detail: { sessionId: "wrun_caller", id: "1.0", chars: 97 } };
+    const ids = auditSessionIds([replyRow, returned, toolset, spawned]);
+    ok(ids.length === 2, `🔴 a row set holding a worker.toolset row yields TWO session ids, not one (got ${ids.length}: ${JSON.stringify(ids)})`);
+    ok(ids.includes("wrun_caller") && ids.includes("wrun_worker"), "🔴 …the standing seat AND the delegated worker — the worker is where a delegated read happens");
+
+    const withoutToolset = auditSessionIds([replyRow, returned, spawned]);
+    ok(withoutToolset.length === 1 && withoutToolset[0] === "wrun_caller", `🔴 without a worker.toolset row NO worker session is recoverable (got ${JSON.stringify(withoutToolset)}) — the delegation rows genuinely do not carry it`);
+
+    const noisy = auditSessionIds([toolset, toolset, { ...replyRow, detail: { sessionId: "", parentSessionId: 42 } }]);
+    ok(noisy.length === 2 && new Set(noisy).size === 2, `ids are deduplicated within a row AND across rows (got ${JSON.stringify(noisy)})`);
+    ok(!noisy.includes(""), "…and an empty-string id is never collected");
+    ok(auditSessionIds([]).length === 0, "an empty window yields no ids rather than throwing");
+  }
 
   const { attributeBoot, projectMemorySync, renderBootAttribution, MEMORY_SYNC_TIMING_ACTION } = await import(
     "../packages/core/scripts/e2e/transcript-timings.js"
@@ -3786,7 +3901,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(summariseTimings([]).delegationWallMs.p50 === null, "an empty run summarises to nulls, not zeros");
 
   const [dupeDelegation] = joinDelegations(
-    [{ ...returned, detail: { ...returned.detail, sessionId: "wrun_dense" } }, spawned],
+    [returned, { ...toolset, detail: { ...toolset.detail, worker: "wrun_dense" } }, spawned],
     new Map([["wrun_dense", compacting]]),
   );
   const dupeSum = summariseTimings([{
@@ -3966,13 +4081,16 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "delegationHasReturned: a settled row for a different task id does not satisfy the started row's join",
   );
 
+  {
+    const surfaceActions = [...DELEGATED_TURN_SURFACE_ACTIONS];
+    ok(surfaceActions.includes("reply.post"), "the delegated-turn surface read asks for reply.post");
+    ok(surfaceActions.includes("reply.edit"), "🔴 …AND for reply.edit — without it a settlement folded into the ack is invisible to the wait, and S-DELEGATED-github reds on a correct deployment");
+    ok(surfaceActions.length === 2, `…and asks for exactly those two on the surface's platform; the delegation pair is read UNSCOPED because it is written on platform "ingest" (got ${JSON.stringify(surfaceActions)})`);
+  }
+
   ok(
-    delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" }), row("task.returned", { taskId: "rt1", sessionId: "w1" })]),
-    "delegationHasReturned: roll-own spawned+returned pair (same taskId) returns true",
-  );
-  ok(
-    !delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" })]),
-    "delegationHasReturned: a roll-own spawned row with no matching returned row is NOT a return",
+    !delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" }), row("task.returned", { taskId: "rt1", sessionId: "w1" })]),
+    "delegationHasReturned: the emitterless roll-own pair is NOT a return — only delegation.task_started/settled is evidence",
   );
 
   ok(!delegationHasReturned([]), "delegationHasReturned: an empty row set is not a return");

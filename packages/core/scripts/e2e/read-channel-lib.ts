@@ -14,6 +14,7 @@ export function shouldAssertShaAncestry(probe: ShaAncestryProbe): boolean {
 export const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
 export const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
 export const REPLY_POST_ACTION = "reply.post";
+export const REPLY_EDIT_ACTION = "reply.edit";
 
 export const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
 
@@ -61,13 +62,30 @@ export type FinalReplyOutcome = {
   readonly detail: string;
 };
 
-const turnReplies = (rows: readonly AuditWireEntry[], wakeId: string, sessionId: string): readonly AuditWireEntry[] =>
-  rows.filter((r) => r.action === REPLY_POST_ACTION && (dS(r, "sessionId") === sessionId || dS(r, "wakeId") === wakeId));
-
 const atOrAfter = (a: string, b: string): boolean => {
   const [x, y] = [Date.parse(a), Date.parse(b)];
   return Number.isFinite(x) && Number.isFinite(y) && x >= y;
 };
+
+const turnReplies = (rows: readonly AuditWireEntry[], wakeId: string, sessionId: string): readonly AuditWireEntry[] =>
+  rows.filter((r) => r.action === REPLY_POST_ACTION && (dS(r, "sessionId") === sessionId || dS(r, "wakeId") === wakeId));
+
+const turnEdits = (rows: readonly AuditWireEntry[], wakeId: string, sessionId: string): readonly AuditWireEntry[] =>
+  rows.filter((r) => r.action === REPLY_EDIT_ACTION && (dS(r, "sessionId") === sessionId || dS(r, "wakeId") === wakeId));
+
+function settlementEditOf(
+  rows: readonly AuditWireEntry[],
+  wakeId: string,
+  sessionId: string,
+  settledAt: string,
+): AuditWireEntry | undefined {
+  const ownIds = new Set(turnReplies(rows, wakeId, sessionId).map((r) => dS(r, "id")).filter((id): id is string => id !== undefined && id.length > 0));
+  if (ownIds.size === 0) return undefined;
+  return turnEdits(rows, wakeId, sessionId).find((e) => {
+    const id = dS(e, "id");
+    return id !== undefined && ownIds.has(id) && atOrAfter(e.ts, settledAt);
+  });
+}
 
 export async function pollForFinalReply(
   deps: SettlePollDeps,
@@ -81,16 +99,32 @@ export async function pollForFinalReply(
   const deadline = start + timeoutMs;
   let count = -1;
   let lastChangeAt = start;
+  let settledFirstSeenAt: number | undefined;
   while (deps.now() < deadline) {
     await deps.sleep(pollMs);
     const rows = await deps.fetchRows();
     const replies = turnReplies(rows, wakeId, sessionId);
     const settled = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "session") === sessionId);
+    if (settled && settledFirstSeenAt === undefined) {
+      settledFirstSeenAt = deps.now();
+      lastChangeAt = settledFirstSeenAt;
+    }
     if (settled && replies.some((r) => atOrAfter(r.ts, settled.ts))) {
       return {
         kind: "settled-relay",
         replyCount: replies.length,
         detail: `a reply.post landed at or after delegation.task_settled for session ${sessionId} — the worker's answer, not the interim ack (${replies.length} reply row(s) this turn)`,
+      };
+    }
+    const foldEdit = settled ? settlementEditOf(rows, wakeId, sessionId, settled.ts) : undefined;
+    if (foldEdit) {
+      return {
+        kind: "settled-relay",
+        replyCount: replies.length,
+        detail:
+          `a reply.edit of this turn's own reply id ${dS(foldEdit, "id") ?? "(none)"} landed at or after ` +
+          `delegation.task_settled for session ${sessionId} — the settlement FOLDED into the ack, the product's ` +
+          `designed shape while the ack is still the newest message (${replies.length} reply row(s) this turn)`,
       };
     }
     if (replies.length !== count) {
@@ -103,7 +137,10 @@ export async function pollForFinalReply(
       return {
         kind: "quiet",
         replyCount: count,
-        detail: `the reply count for session ${sessionId} held at ${count} for ${quietMs}ms with no delegation outstanding — the seat has stopped posting`,
+        detail:
+          `the reply count for session ${sessionId} held at ${count} for ${quietMs}ms with no delegation outstanding ` +
+          `and no settlement edit of its own reply — the seat has stopped posting` +
+          `${settledFirstSeenAt !== undefined ? " (clock measured from the settlement, not from the ack)" : ""}`,
       };
     }
   }

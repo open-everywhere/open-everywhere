@@ -394,18 +394,32 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
   };
 }
 
-export const TASK_SPAWNED_ACTION = "task.spawned";
-export const TASK_RETURNED_ACTION = "task.returned";
+const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
+const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
+const WORKER_TOOLSET_ACTION = "worker.toolset";
+
+const AUDIT_SESSION_ID_KEYS = ["sessionId", "parentSessionId", "session", "worker", "parentSession", "rootSession"] as const;
+
+export function auditSessionIds(rows: readonly AuditWireEntry[]): readonly string[] {
+  const out = new Set<string>();
+  for (const row of rows) {
+    for (const key of AUDIT_SESSION_ID_KEYS) {
+      const v = row.detail?.[key];
+      if (typeof v === "string" && v.length > 0) out.add(v);
+    }
+  }
+  return [...out];
+}
 
 export interface DelegationTiming {
   readonly taskId: string;
   readonly parentSessionId: string | null;
   readonly workerSessionId: string | null;
-  readonly mode: string | null;
+  readonly status: string | null;
   readonly spawnedAt: string;
   readonly returnedAt: string | null;
   readonly hasError: boolean;
-  readonly delivered: boolean | null;
+  readonly adopted: boolean | null;
   readonly wallMs: number | null;
   readonly dispatchMs: number | null;
   readonly bootMs: number | null;
@@ -432,34 +446,49 @@ export function delegationJoinTargets(rows: readonly AuditWireEntry[]): {
   readonly parentSessionId: string | null;
   readonly workerSessionId: string | null;
 }[] {
-  const spawns = rows.filter((r) => r.action === TASK_SPAWNED_ACTION);
-  return spawns.map((s) => {
-    const taskId = detailStr(s, "taskId") ?? "";
-    const ret = rows.find((r) => r.action === TASK_RETURNED_ACTION && detailStr(r, "taskId") === taskId);
+  const starts = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION);
+  return starts.map((s) => {
+    const taskId = detailStr(s, "task") ?? "";
     return {
       taskId,
-      parentSessionId: detailStr(s, "parentSessionId"),
-      workerSessionId: ret ? detailStr(ret, "sessionId") : null,
+      parentSessionId: detailStr(s, "session"),
+      workerSessionId: workerSessionFor(rows, s),
     };
   }).filter((t) => t.taskId.length > 0);
+}
+
+function workerSessionFor(rows: readonly AuditWireEntry[], start: AuditWireEntry): string | null {
+  const toolsets = rows.filter((r) => r.action === WORKER_TOOLSET_ACTION && detailStr(r, "worker") !== null);
+  const callId = detailStr(start, "call");
+  if (callId !== null) {
+    const exact = toolsets.find((r) => detailStr(r, "parentCallId") === callId);
+    if (exact) return detailStr(exact, "worker");
+  }
+  const session = detailStr(start, "session");
+  if (session === null) return null;
+  const loose = toolsets.filter((r) => detailStr(r, "parentSession") === session || detailStr(r, "rootSession") === session);
+  return loose.length === 1 ? detailStr(loose[0], "worker") : null;
 }
 
 export function joinDelegations(
   rows: readonly AuditWireEntry[],
   workerTranscripts: ReadonlyMap<string, readonly TranscriptWireEvent[]>,
 ): DelegationTiming[] {
-  const spawns = rows.filter((r) => r.action === TASK_SPAWNED_ACTION && detailStr(r, "taskId") !== null);
+  const spawns = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION && detailStr(r, "task") !== null);
   const out: DelegationTiming[] = [];
 
   for (const spawn of spawns) {
-    const taskId = detailStr(spawn, "taskId")!;
-    const ret = rows.find((r) => r.action === TASK_RETURNED_ACTION && detailStr(r, "taskId") === taskId) ?? null;
+    const taskId = detailStr(spawn, "task")!;
+    const ret = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && detailStr(r, "task") === taskId) ?? null;
     const gaps: string[] = [];
 
-    if (!ret) gaps.push("no task.returned row for this taskId (the worker never reported back inside the read window)");
-    const workerSessionId = ret ? detailStr(ret, "sessionId") : null;
-    if (ret && !workerSessionId) {
-      gaps.push("task.returned carries no sessionId (pre-OPE-121 row, or the worker had no session context) — the worker's own work is unobservable");
+    if (!ret) gaps.push("no delegation.task_settled row for this task (the worker never reached a terminal state inside the read window)");
+    const workerSessionId = workerSessionFor(rows, spawn);
+    if (!workerSessionId) {
+      gaps.push(
+        "no worker.toolset row names this dispatch's worker session (the row is best-effort and deduplicated by roster key, " +
+          "and no delegation row carries the worker's session id) — the worker's own work is unobservable",
+      );
     }
     const events = workerSessionId ? workerTranscripts.get(workerSessionId) ?? null : null;
     if (workerSessionId && !events) gaps.push(`no transcript supplied for worker session ${workerSessionId}`);
@@ -489,15 +518,16 @@ export function joinDelegations(
     const accounted = sumKnown([dispatchMs, bootMs, workMs, returnMs]);
     const unaccountedMs = wallMs !== null && accounted !== null ? wallMs - accounted : null;
 
+    const status = ret ? detailStr(ret, "status") : null;
     out.push({
       taskId,
-      parentSessionId: detailStr(spawn, "parentSessionId"),
+      parentSessionId: detailStr(spawn, "session"),
       workerSessionId,
-      mode: ret ? detailStr(ret, "mode") : null,
+      status,
       spawnedAt: spawn.ts,
       returnedAt: ret?.ts ?? null,
-      hasError: ret ? detailBool(ret, "hasError") === true : false,
-      delivered: ret ? detailBool(ret, "delivered") : null,
+      hasError: status !== null && status !== "completed" && status !== "cancelled",
+      adopted: ret ? detailBool(ret, "adopted") : null,
       wallMs,
       dispatchMs,
       bootMs,
@@ -642,7 +672,7 @@ export function renderCompaction(c: CompactionTiming): string | null {
 export function renderDelegationTiming(d: DelegationTiming): string[] {
   const lines = [
     `delegation ${d.taskId.slice(-24)} — wall ≥${fmtMs(d.wallMs)}` +
-      `${d.mode ? ` (${d.mode})` : ""}${d.hasError ? " ERROR" : ""}`,
+      `${d.status ? ` (${d.status})` : ""}${d.hasError ? " ERROR" : ""}`,
     `  dispatch ${fmtMs(d.dispatchMs)}${d.dispatchMs !== null && d.dispatchMs < 0 ? " (worker beat the spawn row — benign race)" : ""}` +
       ` → boot(sandbox+memory) ${fmtMs(d.bootMs)} → ttft ${fmtMs(d.ttftMs)}` +
       ` → work ${fmtMs(d.workMs)} → return ${fmtMs(d.returnMs)} | unaccounted ${fmtMs(d.unaccountedMs)}`,
