@@ -2,14 +2,15 @@ import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 import {
-  disposeLater,
+  auditCursor,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   discordOeCommandPost,
   discordOeStopInteraction,
-  DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   waitFor,
 } from "../harness";
 
@@ -23,7 +24,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const handle = disposeLater(
     registerScript({
@@ -51,7 +52,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   expect(stop.body).toContain("the outcome in the thread");
 
   const requested = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancel_requested"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancel_requested"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancel_requested row the ingress writes");
   expect(requested).toHaveLength(1);
@@ -63,11 +64,11 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   handle.releaseHolds();
 
   const evidence = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled", "turn.stop_ignored"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
     return rows.length > 0 ? rows : undefined;
   }, "the cancel evidence row — turn.cancelled if eve settled the cancel, turn.stop_ignored if it dropped it");
   await new Promise((r) => setTimeout(r, SETTLE_WATCH_MS));
-  const settled = await readAuditRows({ actions: ["turn.cancelled", "turn.stop_ignored"], sinceIso });
+  const settled = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
   expect(
     settled,
     `an accepted stop produced ${settled.length} evidence rows: ${JSON.stringify(settled.map((r) => ({ action: r.action, ts: r.ts, turnId: r.detail?.turnId })))}`,
@@ -86,7 +87,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   } else {
     expect(row.action).toBe("turn.cancelled");
     expect(row.detail?.ran, "a settled cancel names the work it interrupted").toEqual([RAN_TOOL]);
-    expect(await readAuditRows({ actions: ["turn.stop_ignored"], sinceIso }), "a settled cancel must not ALSO be recorded as an ignored stop").toEqual([]);
+    expect(await rowsSinceCursor(cursor, ["turn.stop_ignored"]), "a settled cancel must not ALSO be recorded as an ignored stop").toEqual([]);
   }
 
   expect(handle.holdsCutShort()).toBe(1);

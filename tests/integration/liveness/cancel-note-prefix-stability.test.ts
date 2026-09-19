@@ -3,14 +3,15 @@ import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 import { CONTROL_WRITE_TOOL_NAMES, registerControlWriteTools } from "@open-everywhere/core/agent/control/writes.js";
 import {
-  disposeLater,
+  auditCursor,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   discordOeCommandPost,
   discordOeStopInteraction,
-  DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   waitFor,
   type RecordedRequest,
 } from "../harness";
@@ -65,7 +66,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const a = disposeLater(registerScript({ parent: [{ say: "ack ope693a" }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693a`, messageId: "ope693-a" });
@@ -116,7 +117,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   b.dispose();
 
   await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled", "turn.stop_ignored"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
     const ignored = rows.find((r) => r.action === "turn.stop_ignored" && r.detail?.turnId === cancelledTurnId);
     if (ignored !== undefined) {
       throw new Error(

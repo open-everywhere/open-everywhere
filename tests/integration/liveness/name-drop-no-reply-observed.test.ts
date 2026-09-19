@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SLACK_NAME_DROP_CHANNEL_ID,
   SLACK_TEAM_ID,
   slackMessageEventPost,
@@ -83,6 +84,7 @@ test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_repl
   try {
     const at = Date.now();
     const ts = slackTs(at, 1);
+    const cursor = await auditCursor();
     const res = await slackMessageEventPost({
       channelId: SLACK_NAME_DROP_CHANNEL_ID,
       userId: TRIGGER_USER_ID,
@@ -98,10 +100,9 @@ test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_repl
     expect(last, "the name-drop wake's model never got a no_reply result at all").toBeDefined();
     expect(last?.isError, `the name-drop wake's no_reply TOOL was refused: ${JSON.stringify(last?.output)}`).toBe(false);
 
-    const sinceIso = new Date(at - 2_000).toISOString();
     const observed = await waitFor(
       async () => {
-        const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+        const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
         return rows.find((r) => r.platform === "slack" && r.surface === SLACK_NAME_DROP_CHANNEL_ID);
       },
       "a reply.no_reply_observed row for the name-drop wake's silence",
@@ -111,7 +112,7 @@ test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_repl
     expect(observed.detail?.reason).toBe("not_relevant");
     expect(observed.detail?.explanation, "the minimal row carries no free-text explanation").toBeUndefined();
 
-    const gated = await readAuditRows({ actions: ["reply.no_reply"], sinceIso, limit: 50 });
+    const gated = await rowsSinceCursor(cursor, ["reply.no_reply"], { limit: 50 });
     expect(
       gated.find((r) => r.platform === "slack" && r.surface === SLACK_NAME_DROP_CHANNEL_ID),
       "the gated reply.no_reply row must be ABSENT with audit.silences OFF — otherwise this run does not prove the new row is independently ungated",

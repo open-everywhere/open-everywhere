@@ -4,13 +4,14 @@ import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 
 import {
+  auditCursor,
   bootAgent,
   installNotionApiStub,
   NOTION_PAGE_ID,
   NOTION_WORKSPACE_ID,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
   waitFor,
   type NotionApiCall,
@@ -67,7 +68,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("notion", `${NOTION_WORKSPACE_ID}/${NOTION_PAGE_ID}`)!;
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const triggerComments = new Map<string, StubComment>();
   const calls: NotionApiCall[] = [];
@@ -119,8 +120,8 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   const botStopPosted = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: botStopId });
   expect(botStopPosted.status).toBe(200);
   expect(await resolveTurnAnchor(org, { channelKey }), "a bot-authored `stop` must never clear the anchor").not.toBeNull();
-  expect(await readAuditRows({ actions: ["turn.cancel_requested"], sinceIso })).toEqual([]);
-  expect(await readAuditRows({ actions: ["turn.cancelled"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.cancel_requested"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.cancelled"])).toEqual([]);
 
   const stopId = "it-ope-989-human-stop";
   triggerComments.set(stopId, comment({ id: stopId, authorId: STOPPER_ID, text: "stop" }));
@@ -129,7 +130,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(stopPosted.body).toBe("ok");
 
   const requested = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancel_requested"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancel_requested"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancel_requested row the ingress writes");
   expect(requested).toHaveLength(1);
@@ -141,7 +142,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);

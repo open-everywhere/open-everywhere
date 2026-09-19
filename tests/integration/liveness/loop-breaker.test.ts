@@ -1,12 +1,13 @@
 import { expect, test } from "vitest";
 import {
   afterThisTest,
-  disposeLater,
+  auditCursor,
   bootAgent,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  discordMentionWake,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   taskIdOfDelegation,
   waitFor,
   wrapToolExecute,
@@ -22,7 +23,7 @@ function readChannelCall(id: string): { tool: string; input: unknown; id: string
 
 test("a worker's identical read repeats trip the loop breaker within a turn, and a RESUMED turn starts fresh", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   afterThisTest(
     wrapToolExecute(READER, async () => ({
@@ -76,7 +77,7 @@ test("a worker's identical read repeats trip the loop breaker within a turn, and
   expect(thirdReadCarrier.text).toContain(NUDGE_MARKER);
 
   const bridged = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.question_bridged"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.question_bridged"]);
     return rows.length > 0 ? rows : undefined;
   }, "the question bridge's turn.question_bridged row — the worker parked on ask_question");
   expect(String(bridged[0]!.detail?.requestId ?? "").startsWith(`${taskId}:`)).toBe(true);
@@ -92,7 +93,7 @@ test("a worker's identical read repeats trip the loop breaker within a turn, and
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> stop checking" });
 
   const routed = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["input_response.routed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
     return rows.length > 0 ? rows : undefined;
   }, "the input_response.routed row — the room's message delivered as the answer");
   expect(routed[0]!.detail?.taskId).toBe(taskId);

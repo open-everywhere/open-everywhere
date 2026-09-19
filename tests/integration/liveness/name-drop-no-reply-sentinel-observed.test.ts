@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SLACK_NAME_DROP_CHANNEL_ID,
   SLACK_TEAM_ID,
   slackMessageEventPost,
@@ -83,6 +84,7 @@ test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNG
   try {
     const at = Date.now();
     const ts = slackTs(at, 1);
+    const cursor = await auditCursor();
     const res = await slackMessageEventPost({
       channelId: SLACK_NAME_DROP_CHANNEL_ID,
       userId: TRIGGER_USER_ID,
@@ -94,11 +96,10 @@ test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNG
 
     await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the name-drop wake's turn", 180_000);
 
-    const sinceIso = new Date(at - 2_000).toISOString();
     const namesThisRoom = (surface: string | undefined): boolean => (surface ?? "").includes(SLACK_NAME_DROP_CHANNEL_ID);
     const observed = await waitFor(
       async () => {
-        const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+        const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
         return rows.find((r) => namesThisRoom(r.surface));
       },
       "a reply.no_reply_observed row for the name-drop wake's sentinel silence",
@@ -110,7 +111,7 @@ test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNG
     expect(observed.detail?.reason, "the sentinel carries no closed reason the way the tool call does").toBeUndefined();
     expect(typeof observed.detail?.wakeId, "a standing-seat sentinel row carries the wake id").toBe("string");
 
-    const gated = await readAuditRows({ actions: ["reply.no_reply"], sinceIso, limit: 50 });
+    const gated = await rowsSinceCursor(cursor, ["reply.no_reply"], { limit: 50 });
     expect(gated.find((r) => namesThisRoom(r.surface)), "the gated reply.no_reply row must be ABSENT with audit.silences OFF").toBeUndefined();
   } finally {
     handle.dispose();

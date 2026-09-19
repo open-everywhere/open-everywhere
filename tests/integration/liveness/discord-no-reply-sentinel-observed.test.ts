@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
-import { bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, type ScriptedHandle } from "../harness";
+import { auditCursor, bootAgent, discordMentionWake, registerScript, rowsSinceCursor, waitFor, type ScriptedHandle } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
 
@@ -30,6 +30,7 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
     parent: [{ calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: callId }] }, { say: NO_REPLY_SENTINEL }],
   });
   try {
+    const cursor = await auditCursor();
     await discordMentionWake({ channelId, text: `${BOT_MENTION} ope890 stay quiet on this one`, messageId: `ope890tool${at}` });
 
     await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the mention wake's trailing step", 180_000);
@@ -37,10 +38,9 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
     expect(last, "the wake's model never got a no_reply result at all").toBeDefined();
     expect(last?.isError, "the wake's no_reply TOOL call was refused").toBe(false);
 
-    const sinceIso = new Date(at - 2_000).toISOString();
     const rows = await waitFor(
       async () => {
-        const found = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+        const found = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
         const mine = found.filter((r) => r.platform === "discord" && r.surface === channelId);
         return mine.length > 0 ? mine : undefined;
       },
@@ -69,13 +69,13 @@ test("Discord: a bare NO_REPLY sentinel with NO tool call writes the sentinel ro
     parent: [{ say: NO_REPLY_SENTINEL }],
   });
   try {
+    const cursor = await auditCursor();
     await discordMentionWake({ channelId, text: `${BOT_MENTION} ope890 stay quiet, sentinel only`, messageId: `ope890sent${at}` });
     await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the mention wake's turn", 180_000);
 
-    const sinceIso = new Date(at - 2_000).toISOString();
     const observed = await waitFor(
       async () => {
-        const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+        const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
         return rows.find((r) => r.platform === "discord" && r.surface === channelId);
       },
       "a reply.no_reply_observed row for the bare-sentinel wake",

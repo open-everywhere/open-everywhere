@@ -2,12 +2,13 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
   afterThisTest,
-  disposeLater,
+  auditCursor,
   bootAgent,
-  discordMentionWake,
   DISCORD_GUILD_ID,
-  readAuditRows,
+  discordMentionWake,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   runRoutineDispatchTick,
   seedDueRoutine,
   waitFor,
@@ -43,11 +44,11 @@ test("a real turn's step count is stored under the (session, turn) key the bound
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: "<@9000000000000000001> loop please" });
 
   const hard = await waitFor(async () => {
-    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    const found = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
     return found.find((r) => (r.detail ?? {}).tier === "hard");
   }, "a hard turn.step_boundary audit row");
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -94,7 +95,7 @@ test("a scheduled routine fire carries an eve session id at the step-boundary se
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await seedDueRoutine({
     surfaceKey: `discord/${DISCORD_GUILD_ID}/${channelId}`,
     channelId,
@@ -104,7 +105,7 @@ test("a scheduled routine fire carries an eve session id at the step-boundary se
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
   const hard = await waitFor(async () => {
-    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    const found = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
     return found.find((r) => (r.detail ?? {}).tier === "hard");
   }, "a hard turn.step_boundary audit row from the routine fire");
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);

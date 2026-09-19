@@ -9,16 +9,17 @@ import { grantOwnerNoticeText } from "@open-everywhere/core/agent/access/credent
 import { isGrantToolName, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
 
 import {
+  auditCursor,
   bootAgent,
-  disposeLater,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  disposeLater,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   setEnvForRunningAgent,
-  slackInteractivityPost,
   SLACK_TEAM_ID,
+  slackInteractivityPost,
   waitFor,
   type ScriptedStep,
 } from "../harness";
@@ -150,7 +151,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const slack = installSlackWebApiStub((method, params) => {
     switch (method) {
@@ -207,7 +208,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   );
 
   const asked = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["grant.asked"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
     return rows.length > 0 ? rows : undefined;
   }, "a grant.asked audit row");
   const askId = String((asked[0]!.detail as { askId?: unknown }).askId ?? "");
@@ -236,7 +237,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(tap.status, `the owner's tap was refused at the ingress: ${tap.body}`).toBe(200);
 
   const granted = await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: ["grant.granted"], sinceIso })).filter((r) => (r.detail as { askId?: unknown }).askId === askId);
+    const rows = (await rowsSinceCursor(cursor, ["grant.granted"])).filter((r) => (r.detail as { askId?: unknown }).askId === askId);
     return rows.length > 0 ? rows : undefined;
   }, `a grant.granted audit row for ask ${askId}`);
   const grants = await store.credentialGrantsForScope(org, scopeKey!);
@@ -308,7 +309,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(rendered, "the owner's token leaked into the tool result the model reads").not.toContain(OWNER_ACCESS_TOKEN);
 
   const used = await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: ["grant.used"], sinceIso })).filter((r) => (r.detail as { grantId?: unknown }).grantId === grant.id);
+    const rows = (await rowsSinceCursor(cursor, ["grant.used"])).filter((r) => (r.detail as { grantId?: unknown }).grantId === grant.id);
     return rows.length > 0 ? rows : undefined;
   }, `a grant.used audit row for ${grant.id}`);
   const detail = used[0]!.detail ?? {};
@@ -317,7 +318,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(detail["mode"]).toBe("session");
   expect(JSON.stringify(used[0]), "a credential value reached the audit chain").not.toContain(OWNER_ACCESS_TOKEN);
   const firstUseNotice = await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: ["grant.notified"], sinceIso })).filter(
+    const rows = (await rowsSinceCursor(cursor, ["grant.notified"])).filter(
       (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
     );
     const posts = ownerNoticePosts();
@@ -331,7 +332,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(notifiedDetail["owner"]).toBe(OWNER_PRINCIPAL);
   expect(notifiedDetail["requester"]).toBe(REQUESTER_PRINCIPAL);
   expect(JSON.stringify(firstUseNotice.rows[0]), "a credential value reached the owner-notice audit row").not.toContain(OWNER_ACCESS_TOKEN);
-  expect((await readAuditRows({ actions: ["grant.refused"], sinceIso })).filter((r) => (r.detail as { grantId?: unknown }).grantId === grant.id)).toEqual([]);
+  expect((await rowsSinceCursor(cursor, ["grant.refused"])).filter((r) => (r.detail as { grantId?: unknown }).grantId === grant.id)).toEqual([]);
 
   expect(vendorRequests(vendor, "notifications/initialized").length, "the SDK never sent `notifications/initialized`, so it never tried to open the SSE stream").toBeGreaterThan(0);
   const vendorGets = vendor.calls.filter((c) => (c.init?.method ?? "GET").toUpperCase() === "GET");
@@ -373,7 +374,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(JSON.stringify(postDeploy.output), "the grant stopped working after turn 3's refusal, so that refusal spent it").toContain(VENDOR_BODY_MARKER);
   expect(vendorRequests(vendor, "tools/call"), "the post-deploy granted call never reached the vendor").toHaveLength(beforeRedeploy + 1);
   const usedTwice = await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: ["grant.used"], sinceIso })).filter(
+    const rows = (await rowsSinceCursor(cursor, ["grant.used"])).filter(
       (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
     );
     return rows.length >= 2 ? rows : undefined;
@@ -381,7 +382,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(usedTwice, "the session grant was used more than twice before the retry leg").toHaveLength(2);
   expect(ownerNoticePosts(), "the second successful use sent the owner another first-use notice").toHaveLength(1);
   expect(
-    (await readAuditRows({ actions: ["grant.notified"], sinceIso })).filter(
+    (await rowsSinceCursor(cursor, ["grant.notified"])).filter(
       (r) => (r.detail as { grantId?: unknown }).grantId === grant.id,
     ),
     "the second successful use wrote another grant.notified row",

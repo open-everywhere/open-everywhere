@@ -1,5 +1,16 @@
 import { afterAll, expect, test } from "vitest";
-import { bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, waitFor, type AuditRow, type ScriptedHandle } from "../harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  readAuditRows,
+  registerScript,
+  rowsSinceCursor,
+  waitFor,
+  type AuditRow,
+  type ScriptedHandle,
+} from "../harness";
 
 afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
@@ -30,7 +41,7 @@ test("unified: a bare NO_REPLY sentinel writes the sentinel route's reply.no_rep
 
   const before = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);
   const at = Date.now();
-  const sinceIso = new Date(at - 2_000).toISOString();
+  const cursor = await auditCursor();
   const handle: ScriptedHandle = registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] });
   try {
     await discordMentionWake({
@@ -41,7 +52,7 @@ test("unified: a bare NO_REPLY sentinel writes the sentinel route's reply.no_rep
     await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the unified wake's turn", 180_000);
 
     const observed: AuditRow = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+      const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
       return rows.find((r) => {
         const w = (r.detail as { wakeId?: unknown } | undefined)?.wakeId;
         return r.platform === "unified" && isSentinelRoute(r.detail) && typeof w === "string" && !before.has(w);
@@ -51,7 +62,7 @@ test("unified: a bare NO_REPLY sentinel writes the sentinel route's reply.no_rep
     const wakeId = (observed.detail as { wakeId?: unknown }).wakeId;
     expect(typeof wakeId).toBe("string");
 
-    const gated = await readAuditRows({ actions: ["unified.no_reply"], sinceIso });
+    const gated = await rowsSinceCursor(cursor, ["unified.no_reply"]);
     expect(
       gated.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === wakeId),
       "unified.no_reply stays gated behind audit.silences — off means off",
@@ -70,7 +81,7 @@ test("unified: with audit.silences ON, the full-detail unified.no_reply row fire
 
   const before = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);
   const at = Date.now();
-  const sinceIso = new Date(at - 2_000).toISOString();
+  const cursor = await auditCursor();
   const handle: ScriptedHandle = registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] });
   try {
     await discordMentionWake({
@@ -81,7 +92,7 @@ test("unified: with audit.silences ON, the full-detail unified.no_reply row fire
     await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the unified wake's turn", 180_000);
 
     const observed: AuditRow = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+      const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
       return rows.find((r) => {
         const w = (r.detail as { wakeId?: unknown } | undefined)?.wakeId;
         return r.platform === "unified" && isSentinelRoute(r.detail) && typeof w === "string" && !before.has(w);
@@ -91,7 +102,7 @@ test("unified: with audit.silences ON, the full-detail unified.no_reply row fire
     const wakeId = (observed.detail as { wakeId?: unknown }).wakeId;
 
     const full = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["unified.no_reply"], sinceIso, limit: 50 });
+      const rows = await rowsSinceCursor(cursor, ["unified.no_reply"], { limit: 50 });
       return rows.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === wakeId);
     }, "the gated full-detail unified.no_reply row, now visible with the gate ON", 120_000);
     expect(full.detail?.reason).toBe("NO_REPLY sentinel — judged not warranted");
@@ -109,7 +120,7 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
   const beforeToolRows = await knownWakeIds("reply.no_reply_observed", (d) => (d as { reason?: unknown } | undefined)?.reason === "not_relevant");
   const beforeSentinelRows = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);
   const at = Date.now();
-  const sinceIso = new Date(at - 2_000).toISOString();
+  const cursor = await auditCursor();
   const callId = `ope895-tool-${at}`;
   const handle: ScriptedHandle = registerScript({
     parent: [{ calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: callId }] }, { say: NO_REPLY_SENTINEL }],
@@ -126,7 +137,7 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
     expect(last?.isError, "the wake's no_reply TOOL call was refused").toBe(false);
 
     const toolRow = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+      const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
       return rows.find((r) => {
         const d = r.detail as { reason?: unknown; wakeId?: unknown } | undefined;
         const w = d?.wakeId;
@@ -136,7 +147,7 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
     expect(toolRow.detail?.route, "the tool route's row carries no `route` field").toBeUndefined();
     const wakeId = (toolRow.detail as { wakeId?: unknown }).wakeId;
 
-    const rows = await readAuditRows({ actions: ["reply.no_reply_observed"], sinceIso, limit: 50 });
+    const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
     const newSentinelRows = rows.filter((r) => {
       const w = (r.detail as { wakeId?: unknown } | undefined)?.wakeId;
       return isSentinelRoute(r.detail) && (w === wakeId || (typeof w === "string" && !beforeSentinelRows.has(w)));

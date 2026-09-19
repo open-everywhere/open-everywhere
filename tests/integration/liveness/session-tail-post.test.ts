@@ -2,7 +2,17 @@ import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 
-import { bootAgent, disposeLater, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, sleep, waitFor } from "../harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  disposeLater,
+  registerScript,
+  rowsSinceCursor,
+  sleep,
+  waitFor,
+} from "../harness";
 
 interface TailRow {
   readonly surface_key: string;
@@ -34,7 +44,7 @@ function readTailRows(): readonly (TailRow & { readonly entry: TailEntry })[] {
 
 test("a standing seat's own reply reaches its generation's tail ring", async () => {
   await bootAgent({ sharedSqlite: true });
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   const marker = randomBytes(4).toString("hex");
   const question = `tail probe ${marker}`;
   const answer = `answered ${marker}`;
@@ -43,7 +53,7 @@ test("a standing seat's own reply reaches its generation's tail ring", async () 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: question, messageId: `it-tail-${marker}` });
 
   const postRow = await waitFor(
-    async () => (await readAuditRows({ actions: ["reply.post"], sinceIso })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
+    async () => (await rowsSinceCursor(cursor, ["reply.post"])).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
     "a reply.post audit row for this turn's scripted say",
   );
   await sleep(2_000);

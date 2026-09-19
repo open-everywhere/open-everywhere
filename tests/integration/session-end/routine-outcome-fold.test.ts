@@ -2,13 +2,14 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
   afterThisTest,
-  disposeLater,
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   runRoutineDispatchTick,
   taskIdOfDelegation,
   waitFor,
@@ -22,7 +23,7 @@ const SURFACE_KEY = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
 
 test("a windowed routine fire whose delegated worker settles folds its run outcome", async () => {
   await bootAgent({ sharedSqlite: true });
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const { addRoutine, getRoutine } = await import("@open-everywhere/core/agent/routines/store.js");
   const id = `r-it-581-${randomBytes(4).toString("hex")}`;
@@ -88,7 +89,7 @@ test("a windowed routine fire whose delegated worker settles folds its run outco
   expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const rows = await waitFor(async () => {
-    const found = await readAuditRows({ actions: [FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION], sinceIso, limit: 100 });
+    const found = await rowsSinceCursor(cursor, [FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION], { limit: 100 });
     return found.some((r) => r.action === ROUTINE_FIRE_ACTION) ? found : undefined;
   }, `a ${ROUTINE_FIRE_ACTION} join row for this fire — the fold running on the turn edge`);
 

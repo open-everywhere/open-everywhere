@@ -5,16 +5,18 @@ import { encryptedKvVault } from "@open-everywhere/core/agent/credentials/kv-vau
 import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connections/connector-auth.js";
 
 import {
+  auditCursor,
   bootAgent,
   disposeLater,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
+  SLACK_TEAM_ID,
   slackDmWake,
   slackTs,
-  SLACK_TEAM_ID,
   waitFor,
   waitForChildren,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -199,8 +201,8 @@ async function pinConnectorFlagsAndTiers(): Promise<void> {
   ).toBe("write");
 }
 
-async function inputRequestRows(sinceIso: string): Promise<readonly AuditRow[]> {
-  return readAuditRows({ actions: ["turn.question_bridged", "turn.native_input_requested"], sinceIso, limit: 50 });
+async function inputRequestRows(cursor: AuditCursor): Promise<readonly AuditRow[]> {
+  return rowsSinceCursor(cursor, ["turn.question_bridged", "turn.native_input_requested"], { limit: 50 });
 }
 
 function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {
@@ -225,7 +227,7 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
     JSON.stringify({ accessToken: OPERATOR_ACCESS_TOKEN, obtainedAt: Date.now() }),
   );
 
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const handle = disposeLater(
     registerScript({
@@ -301,7 +303,7 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
   ).toContain(OPERATOR_ACCESS_TOKEN);
 
   const outcome = await waitFor(async () => {
-    const card = (await inputRequestRows(sinceIso)).find((r) => r.detail?.toolName === WRITE_TOOL);
+    const card = (await inputRequestRows(cursor)).find((r) => r.detail?.toolName === WRITE_TOOL);
     if (card !== undefined) return { card };
     const wrote = vendorRequests(vendor, "tools/call").find((c) => c.rpc.params["name"] === WRITE_VENDOR_TOOL);
     if (wrote !== undefined) return { wrote };
@@ -317,7 +319,7 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
     `the request raised for ${WRITE_TOOL} was not eve's tool-approval — the connector op was gated as something else`,
   ).toBe("tool-approval");
   expect(
-    (await inputRequestRows(sinceIso)).filter((r) => r.detail?.toolName === READ_TOOL),
+    (await inputRequestRows(cursor)).filter((r) => r.detail?.toolName === READ_TOOL),
     `🔴 the READ op ${READ_TOOL} also raised an input request — the tiering is not distinguishing the two arms`,
   ).toEqual([]);
 

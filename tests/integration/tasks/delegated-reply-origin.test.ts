@@ -3,18 +3,19 @@ import { expect, test } from "vitest";
 import {
   afterThisTest,
   armSettlement,
+  auditCursor,
   bootAgent,
   consumeSettlement,
   disposeLater,
   installNotionApiStub,
   installSlackWebApiStub,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
+  SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  SLACK_TEAM_ID,
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
@@ -49,7 +50,6 @@ function promptOf(request: RecordedRequest): string {
 }
 
 test("a delayed Slack delegation settles back into its original Slack thread after a later Notion turn", async () => {
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const slackThreadTs = slackTs(Date.now() - 1_000, 19180);
   const slackMessageTs = slackTs(Date.now(), 19181);
 
@@ -112,6 +112,7 @@ test("a delayed Slack delegation settles back into its original Slack thread aft
 
   await bootAgent({ sharedSqlite: true, selfBaseUrl: true, stubbedProviderTransport: true });
   await seedNotionChannelKey();
+  const cursor = await auditCursor();
 
   const [{ loadDomains }, { loadBindings }] = await Promise.all([
     import("../../../agent/memory/config/domains"),
@@ -170,7 +171,7 @@ test("a delayed Slack delegation settles back into its original Slack thread aft
   const pending = resultById(dispatched.requests, "ope1918-pending-reply");
   expect(pending?.isError, `the dispatch reply was refused: ${JSON.stringify(pending?.output)}`).toBe(false);
   const slackWake = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["wake.ingress"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["wake.ingress"]);
     return rows.find((row) => row.detail?.surfaceKey === slackKey);
   }, "the original Slack wake.ingress row");
   const slackWakeId = slackWake.detail?.wakeId;
@@ -253,7 +254,7 @@ test("a delayed Slack delegation settles back into its original Slack thread aft
   expect(String(finalOutput?.id ?? ""), "the provider transport override did not survive agent boot").not.toMatch(/^spoof-/);
 
   const started = await waitFor(
-    async () => (await readAuditRows({ actions: ["delegation.task_started"], sinceIso })).find((row) => row.detail?.task === taskId),
+    async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((row) => row.detail?.task === taskId),
     "the delegation.task_started row joined to the settled task",
   );
   expect(started.detail?.session).toBe(seatSessionId);
@@ -261,7 +262,7 @@ test("a delayed Slack delegation settles back into its original Slack thread aft
   expect(heldWorker.sessionId).not.toBe(seatSessionId);
 
   const postRow = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((row) => row.detail?.chars === FINAL_REPLY.length);
   }, "the final settlement reply.post row");
 

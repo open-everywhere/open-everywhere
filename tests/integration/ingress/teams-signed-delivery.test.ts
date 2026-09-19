@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
-import { bootAgent, installTeamsJwksStub, readAuditRows, signTeamsJwt, teamsActivityPost, waitFor } from "../harness";
+import { auditCursor, bootAgent, installTeamsJwksStub, rowsSinceCursor, signTeamsJwt, teamsActivityPost, waitFor } from "../harness";
 
 afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
@@ -41,19 +41,19 @@ test("a signed Teams Activity is accepted (200) and a register-refuted author's 
   const authorId = `it-teams-refuted-${nonce}`;
   const jwks = await armSeams(tenantId, `it-teams-internal-${nonce}`);
   try {
-    const sinceIso = new Date(Date.now() - 10_000).toISOString();
+    const cursor = await auditCursor();
     const res = await teamsActivityPost({ activity: dmActivity({ tenantId, authorId, conversationId: `it-teams-conv-${nonce}` }) });
     expect(res.status, `the Teams front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
     const row = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["teams.external_policy_suppressed"], sinceIso });
+      const rows = await rowsSinceCursor(cursor, ["teams.external_policy_suppressed"]);
       return rows.find((r) => r.principalId === authorId);
     }, "the teams.external_policy_suppressed row for this refuted author");
 
     expect(row.platform).toBe("teams");
     expect(row.detail?.verdict).toBe("withheld-addressed");
 
-    const dispatched = await readAuditRows({ actions: ["teams.dispatched"], sinceIso });
+    const dispatched = await rowsSinceCursor(cursor, ["teams.dispatched"]);
     expect(dispatched.find((r) => r.principalId === authorId)).toBeUndefined();
   } finally {
     jwks.uninstall();
@@ -66,12 +66,12 @@ test("an UNSIGNED Teams Activity (no bearer token at all) is refused (401) and w
   const authorId = `it-teams-unsigned-${nonce}`;
   const jwks = await armSeams(tenantId, `it-teams-internal-${nonce}`);
   try {
-    const sinceIso = new Date(Date.now() - 10_000).toISOString();
+    const cursor = await auditCursor();
     const res = await teamsActivityPost({ activity: dmActivity({ tenantId, authorId, conversationId: `it-teams-conv-${nonce}` }), bearer: null });
     expect(res.status).toBe(401);
 
     await new Promise((r) => setTimeout(r, 500));
-    const rows = await readAuditRows({ actions: ["teams.external_policy_suppressed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["teams.external_policy_suppressed"]);
     expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   } finally {
     jwks.uninstall();
@@ -84,7 +84,7 @@ test("a TAMPERED Teams Activity JWT (well-formed, wrong signature) is refused (4
   const authorId = `it-teams-tampered-${nonce}`;
   const jwks = await armSeams(tenantId, `it-teams-internal-${nonce}`);
   try {
-    const sinceIso = new Date(Date.now() - 10_000).toISOString();
+    const cursor = await auditCursor();
     const good = signTeamsJwt();
     const parts = good.split(".");
     const tampered = `${parts[0]}.${parts[1]}.${parts[2]!.slice(0, -4)}${parts[2]!.slice(-4) === "AAAA" ? "BBBB" : "AAAA"}`;
@@ -92,7 +92,7 @@ test("a TAMPERED Teams Activity JWT (well-formed, wrong signature) is refused (4
     expect(res.status).toBe(401);
 
     await new Promise((r) => setTimeout(r, 500));
-    const rows = await readAuditRows({ actions: ["teams.external_policy_suppressed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["teams.external_policy_suppressed"]);
     expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   } finally {
     jwks.uninstall();
@@ -105,13 +105,13 @@ test("a WRONG-AUDIENCE Teams Activity JWT (correctly signed, wrong `aud`) is ref
   const authorId = `it-teams-wrongaud-${nonce}`;
   const jwks = await armSeams(tenantId, `it-teams-internal-${nonce}`);
   try {
-    const sinceIso = new Date(Date.now() - 10_000).toISOString();
+    const cursor = await auditCursor();
     const wrongAud = signTeamsJwt({ aud: "some-other-app-id" });
     const res = await teamsActivityPost({ activity: dmActivity({ tenantId, authorId, conversationId: `it-teams-conv-${nonce}` }), bearer: wrongAud });
     expect(res.status).toBe(401);
 
     await new Promise((r) => setTimeout(r, 500));
-    const rows = await readAuditRows({ actions: ["teams.external_policy_suppressed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["teams.external_policy_suppressed"]);
     expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   } finally {
     jwks.uninstall();

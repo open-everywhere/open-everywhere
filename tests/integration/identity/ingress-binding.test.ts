@@ -1,6 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { bootAgent, disposeLater, DISCORD_LISTED_CHANNEL_ID, discordMentionWake, DISCORD_USER_ID, readAuditRows, registerScript, waitFor, type RecordedRequest, type ScriptedHandle } from "../harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
+  DISCORD_USER_ID,
+  discordMentionWake,
+  disposeLater,
+  registerScript,
+  rowsSinceCursor,
+  waitFor,
+  type RecordedRequest,
+  type ScriptedHandle,
+} from "../harness";
 
 const SECOND_DISCORD_USER_ID = "300000000000000104";
 
@@ -29,7 +41,7 @@ test("a signed relay mention binds to its author's EXACT principal id, on the mo
   await bootAgent();
   const handle = disposeLater(registerScript({ parent: [{ say: `oe-bind-ok ${randomBytes(4).toString("hex")}` }] }));
   const nonce = randomBytes(4).toString("hex");
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
@@ -49,7 +61,7 @@ test("a signed relay mention binds to its author's EXACT principal id, on the mo
   expect(trigger).toContain('from="human"');
 
   const row = await waitFor(
-    async () => (await readAuditRows({ actions: ["egress.policy"], sinceIso })).find((r) => r.principalId !== undefined),
+    async () => (await rowsSinceCursor(cursor, ["egress.policy"])).find((r) => r.principalId !== undefined),
     "a session-start egress.policy row carrying a principal id",
   );
   expect(row.principalId).toBe(DISCORD_USER_ID);

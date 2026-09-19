@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "vitest";
-import { bootAgent, NOTION_WORKSPACE_ID, notionCommentEventPost, readAuditRows, waitFor } from "../harness";
+import { auditCursor, bootAgent, NOTION_WORKSPACE_ID, notionCommentEventPost, rowsSinceCursor, waitFor } from "../harness";
 
 const CHANNEL_KEY_REF = "db:notion:channel-key";
 
@@ -12,7 +12,7 @@ afterAll(async () => {
 
 test("an ABSENT db credential row: the delivery still acks 200, and the deployment names the ref it could not resolve", async () => {
   await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: "it-ope-639-comment-1" });
 
@@ -20,7 +20,7 @@ test("an ABSENT db credential row: the delivery still acks 200, and the deployme
 
   const rows = await waitFor(
     async () => {
-      const found = (await readAuditRows({ actions: [UNRESOLVED], sinceIso })).filter(
+      const found = (await rowsSinceCursor(cursor, [UNRESOLVED])).filter(
         (r) => (r.detail as { ref?: unknown } | undefined)?.ref === CHANNEL_KEY_REF,
       );
       return found.length > 0 ? found : undefined;

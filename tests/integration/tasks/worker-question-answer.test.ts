@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "vitest";
 
 import {
+  auditCursor,
   bootAgent,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  discordMentionWake,
   registerScript,
+  rowsSinceCursor,
   taskIdOfDelegation,
   waitFor,
   type ScriptedHandle,
@@ -31,7 +32,7 @@ const CHILD_DONE = "understood, wrote it to staging and finished";
 
 test("a worker's question reaches the room, and the room's answer reaches the worker", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const asking = open(
     registerScript({
@@ -63,13 +64,13 @@ test("a worker's question reaches the room, and the room's answer reaches the wo
   expect(childCall.tools).toContain("ask_question");
 
   const bridged = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.question_bridged"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.question_bridged"]);
     return rows.length > 0 ? rows : undefined;
   }, "the question bridge's turn.question_bridged row — the worker's question posted into the room");
   const requestId = String(bridged[0]!.detail?.requestId ?? "");
   expect(requestId.startsWith(`${taskId}:`)).toBe(true);
   expect(JSON.stringify(bridged)).not.toContain(QUESTION_PROMPT);
-  expect(await readAuditRows({ actions: ["turn.question_dropped"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.question_dropped"])).toEqual([]);
 
   close(asking);
   const answering = open(registerScript({ parent: [{ say: "acknowledged" }], child: [{ say: CHILD_DONE }] }));
@@ -77,7 +78,7 @@ test("a worker's question reaches the room, and the room's answer reaches the wo
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${ANSWER_TEXT}` });
 
   const routed = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["input_response.routed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
     return rows.length > 0 ? rows : undefined;
   }, "the input_response.routed row — the room's message delivered as an answer");
   expect(routed).toHaveLength(1);
@@ -86,8 +87,8 @@ test("a worker's question reaches the room, and the room's answer reaches the wo
   expect(typeof routed[0]!.detail?.floor).toBe("string");
   expect(String(routed[0]!.detail?.floor).length).toBeGreaterThan(0);
   expect(JSON.stringify(routed)).not.toContain(ANSWER_TEXT);
-  expect(await readAuditRows({ actions: ["input_response.denied"], sinceIso })).toEqual([]);
-  expect(await readAuditRows({ actions: ["input_response.dropped"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["input_response.denied"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["input_response.dropped"])).toEqual([]);
 
   const resumedChild = await waitFor(
     () => answering.requests.find((r) => r.role === "child" && r.toolResults.some((t) => t.name === "ask_question")),

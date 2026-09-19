@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
-  DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   sleep,
   waitFor,
   waitForChildren,
@@ -27,7 +28,7 @@ test("a delegated worker's mounted toolset is written to the audit trail, once, 
     }),
   );
 
-  const sinceIso = new Date(Date.now() - 1_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> count the files" });
 
   await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
@@ -48,14 +49,14 @@ test("a delegated worker's mounted toolset is written to the audit trail, once, 
 
   await waitFor(
     async () => {
-      const found = await readAuditRows({ actions: ["worker.toolset"], sinceIso });
+      const found = await rowsSinceCursor(cursor, ["worker.toolset"]);
       return found.some((r) => (r.detail ?? {}).worker === childSessionId) ? true : undefined;
     },
     "the worker's `worker.toolset` evidence row",
     90_000,
   );
   await sleep(3_000);
-  const settled = await readAuditRows({ actions: ["worker.toolset"], sinceIso });
+  const settled = await rowsSinceCursor(cursor, ["worker.toolset"]);
   const ours = settled.filter((r) => (r.detail ?? {}).worker === childSessionId);
 
   expect(ours.length).toBe(1);

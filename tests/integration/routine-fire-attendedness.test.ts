@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
 import {
   afterThisTest,
-  disposeLater,
+  auditCursor,
   bootAgent,
   discordMentionWake,
-  readAuditRows,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   runRoutineDispatchTick,
   seedDueRoutine,
   waitFor,
@@ -48,7 +49,7 @@ function chainRowFor(rows: readonly AuditRow[], tool: string): AuditRow | undefi
 test("a REAL routine fire arrives with NO acting sender — the presence fence refuses its proposal", async () => {
   await bootAgent({ sharedSqlite: true });
   const handle = disposeLater(registerScript(proposeSpendLimit()));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const routineId = await seedDueRoutine({
     surfaceKey: `slack/${TEAM}/${CHANNEL}`,
@@ -64,7 +65,7 @@ test("a REAL routine fire arrives with NO acting sender — the presence fence r
   expect(result.isError).toBe(true);
   expect(JSON.stringify(result.output)).toContain("no acting sender");
 
-  const requested = await readAuditRows({ actions: ["approval.requested"], sinceIso });
+  const requested = await rowsSinceCursor(cursor, ["approval.requested"]);
   expect(requested.find((r) => r.surface === CHANNEL)).toBeUndefined();
 
   expect(routineId).toMatch(/^r-it-/);
@@ -73,7 +74,7 @@ test("a REAL routine fire arrives with NO acting sender — the presence fence r
 test("the fired session binds as its routine's ATTESTED creator", async () => {
   await bootAgent({ sharedSqlite: true });
   disposeLater(registerScript({ parent: [{ say: "nothing to report" }] }));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   await seedDueRoutine({
     surfaceKey: `slack/${TEAM}/${CHANNEL}`,
@@ -84,7 +85,7 @@ test("the fired session binds as its routine's ATTESTED creator", async () => {
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
   const started = await waitFor(
-    async () => (await readAuditRows({ actions: ["egress.policy"], sinceIso })).find((r) => r.surface === CHANNEL),
+    async () => (await rowsSinceCursor(cursor, ["egress.policy"])).find((r) => r.surface === CHANNEL),
     "a session.started egress.policy row for the fire",
     150_000,
   );
@@ -101,7 +102,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   expect(settings.getSettings().window.topology).toBe(false);
   const sayText = "oe-660 terminal route fire reply";
   disposeLater(registerScript({ parent: [{ say: sayText }] }));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   await seedDueRoutine({
     surfaceKey: `slack/${TEAM}/${CHANNEL}`,
@@ -112,7 +113,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
   const reply = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.detail?.chars === sayText.length && r.surface === CHANNEL);
   }, "the routine fire's reply.post row (terminal route)", 150_000);
 
@@ -125,7 +126,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   await bootAgent({ sharedSqlite: true });
   const sayText = "oe-660 bridge route fire reply, deliberately longer";
   disposeLater(registerScript({ parent: [{ say: sayText }] }));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   await seedDueRoutine({
     surfaceKey: `slack/T0EXAMPLE/${BRIDGE_CHANNEL}`,
@@ -136,7 +137,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
   const reply = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.detail?.chars === sayText.length && isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL));
   }, "the routine fire's reply.post row (bridge route)", 150_000);
 
@@ -147,7 +148,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
 
 test("OPE-702 — a chars-only reply.post match is ambiguous across channels; surface scoping resolves it", async () => {
   await bootAgent({ sharedSqlite: true });
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const decoyCore = "oe-702 decoy (unlisted channel, fired first)";
   const realCore = "oe-702 real reply (listed channel, fired second)";
@@ -160,7 +161,7 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   await seedDueRoutine({ surfaceKey: `slack/${TEAM}/${CHANNEL}`, channelId: CHANNEL, prompt: "say something", createdBy: CREATOR });
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
   const decoyRow = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.chars === decoyText.length);
   }, "the decoy fire's reply.post row on its own channel", 150_000);
   expect(decoyRow.detail?.route).toBe("bridge");
@@ -175,12 +176,12 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   });
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
   const realRow = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
   }, "the real bridge-route reply.post row", 150_000);
   expect(realRow.detail?.route).toBe("bridge");
 
-  const allRows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+  const allRows = await rowsSinceCursor(cursor, ["reply.post"]);
   const chansOnlyMatches = allRows.filter((r) => r.detail?.chars === realText.length);
   expect(chansOnlyMatches.length).toBeGreaterThanOrEqual(2);
   expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.route === "bridge")).toBe(true);
@@ -198,12 +199,12 @@ test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the f
   settings.overrideSettingsForTest({ window: { topology: false } });
   expect(settings.getSettings().window.topology).toBe(false);
   disposeLater(registerScript(proposeSpendLimit()));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   await discordMentionWake({ channelId: DISCORD_UNLISTED, text: `<@9000000000000000001> please raise the monthly cap` });
 
   const chain = await waitFor(
-    async () => chainRowFor(await readAuditRows({ actions: ["approval.chain"], sinceIso }), "set_spend_limit"),
+    async () => chainRowFor(await rowsSinceCursor(cursor, ["approval.chain"]), "set_spend_limit"),
     "an approval.chain row for the human's set_spend_limit proposal",
     150_000,
   );
@@ -222,7 +223,7 @@ function keysOf(row: AuditRow): readonly string[] {
 test("the carriage probe records the SAME key set on both sides of the session hop", async () => {
   await bootAgent({ sharedSqlite: true });
   disposeLater(registerScript({ parent: [{ say: "carriage probe" }] }));
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const routineId = await seedDueRoutine({
     surfaceKey: `slack/${TEAM}/${CHANNEL}`,
@@ -234,14 +235,14 @@ test("the carriage probe records the SAME key set on both sides of the session h
 
   const sent = await waitFor(
     async () =>
-      (await readAuditRows({ actions: ["routine.fire_attrs_sent"], sinceIso })).find(
+      (await rowsSinceCursor(cursor, ["routine.fire_attrs_sent"])).find(
         (r) => (r.detail as { routineId?: string }).routineId === routineId,
       ),
     `a routine.fire_attrs_sent row for ${routineId}`,
     150_000,
   );
   const seen = await waitFor(
-    async () => (await readAuditRows({ actions: ["routine.fire_attrs_seen"], sinceIso })).find((r) => r.surface === CHANNEL),
+    async () => (await rowsSinceCursor(cursor, ["routine.fire_attrs_seen"])).find((r) => r.surface === CHANNEL),
     "a routine.fire_attrs_seen row for the fired session",
     150_000,
   );

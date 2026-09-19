@@ -1,10 +1,11 @@
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   CREDENTIAL_ENCRYPTION_KEY,
   NOTION_WORKSPACE_ID,
   notionCommentEventPost,
-  readAuditRows,
+  rowsSinceCursor,
   setEnvForRunningAgent,
   waitFor,
 } from "../harness";
@@ -23,7 +24,7 @@ afterAll(async () => {
 test("an UNREGISTERED db broker: the delivery still acks 200, and the deployment names the broker nobody registered", async () => {
   await bootAgent({ sharedSqlite: true, selfBaseUrl: true });
   setEnvForRunningAgent("OE_CREDENTIAL_ENCRYPTION_KEY", CREDENTIAL_ENCRYPTION_KEY);
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: "it-ope-776-comment-1" });
 
@@ -31,7 +32,7 @@ test("an UNREGISTERED db broker: the delivery still acks 200, and the deployment
 
   const rows = await waitFor(
     async () => {
-      const found = (await readAuditRows({ actions: [UNRESOLVED], sinceIso })).filter(
+      const found = (await rowsSinceCursor(cursor, [UNRESOLVED])).filter(
         (r) => (r.detail as { ref?: unknown } | undefined)?.ref === CHANNEL_KEY_REF,
       );
       return found.length > 0 ? found : undefined;

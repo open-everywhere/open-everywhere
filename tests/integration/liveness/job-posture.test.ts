@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, readAuditRows, registerScript, runRoutineDispatchTick, waitFor } from "../harness";
+import { auditCursor, bootAgent, disposeLater, registerScript, rowsSinceCursor, runRoutineDispatchTick, waitFor } from "../harness";
 
 async function seedRoutine(input: {
   readonly surfaceKey: string;
@@ -48,7 +48,7 @@ test("a durable-JOB fire, un-escalated, narrows and writes the turn.tool_gated(j
   await bootAgent({ sharedSqlite: true });
   const TEAM = "T0JOBPOST1";
   const CHANNEL = "C0JOBPOST1";
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   disposeLater(registerScript({ parent: [{ say: "job fire ran, nothing to report" }] }));
 
@@ -64,7 +64,7 @@ test("a durable-JOB fire, un-escalated, narrows and writes the turn.tool_gated(j
 
   const surfaceKey = `slack/${TEAM}/${CHANNEL}`;
   const gated = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.tool_gated"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.tool_gated"]);
     return rows.find((r) => r.workspace === surfaceKey && (r.detail as { reason?: unknown } | undefined)?.reason === "job-wake");
   }, "a turn.tool_gated row with reason=job-wake for the job fire");
 
@@ -79,7 +79,7 @@ test("NEGATIVE CONTROL — an ORDINARY (non-job) fire, same tick shape, never wr
   await bootAgent({ sharedSqlite: true });
   const TEAM = "T0JOBPOST2";
   const CHANNEL = "C0JOBPOST2";
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   disposeLater(registerScript({ parent: [{ say: "ordinary fire ran, nothing to report" }] }));
 
@@ -93,10 +93,10 @@ test("NEGATIVE CONTROL — an ORDINARY (non-job) fire, same tick shape, never wr
   expect(sessionIds.length).toBeGreaterThan(0);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["routine.fire"], sinceIso })).find((r) => (r.detail as { routineId?: unknown } | undefined)?.routineId === routineId),
+    async () => (await rowsSinceCursor(cursor, ["routine.fire"])).find((r) => (r.detail as { routineId?: unknown } | undefined)?.routineId === routineId),
     "a routine.fire outcome row for the ordinary fire — proof the turn actually ran",
   );
   const surfaceKey = `slack/${TEAM}/${CHANNEL}`;
-  const gated = await readAuditRows({ actions: ["turn.tool_gated"], sinceIso });
+  const gated = await rowsSinceCursor(cursor, ["turn.tool_gated"]);
   expect(gated.find((r) => r.workspace === surfaceKey && (r.detail as { reason?: unknown } | undefined)?.reason === "job-wake")).toBeUndefined();
 });

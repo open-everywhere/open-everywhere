@@ -3,14 +3,15 @@ import { expect, test } from "vitest";
 
 import {
   armSettlement,
+  auditCursor,
   bootAgent,
   consumeSettlement,
-  discordMentionWake,
-  disposeLater,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
-  readAuditRows,
+  discordMentionWake,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   seatReply,
   taskIdOfDelegation,
   waitFor,
@@ -27,7 +28,7 @@ const TOOL_SAY = "oe-659 tool route answer, a third length";
 const BRIDGE_SAY = "oe-659 bridge route answer, a deliberately different length that is longer";
 
 async function replyRowFor(input: { channelId: string; say: string; route: "tool" | "bridge" | "terminal" }): Promise<AuditRow> {
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const topologyBefore = settings.getSettings().window.topology;
   if (input.route === "terminal") {
@@ -41,7 +42,7 @@ async function replyRowFor(input: { channelId: string; say: string; route: "tool
     await discordMentionWake({ channelId: input.channelId, text: `<@9000000000000000001> please answer` });
     await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the scripted model to see the wake");
     const row = await waitFor(async () => {
-      const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+      const rows = await rowsSinceCursor(cursor, ["reply.post"]);
       return rows.find((r) => r.detail?.chars === input.say.length);
     }, `a reply.post audit row whose reply was ${input.say.length} chars`);
     if (input.route === "tool") await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
@@ -108,7 +109,7 @@ const REGRESSION_SETTLEMENT_SAY = "oe-734 regression settlement reply, a fifth l
 
 test("a HOST-WOKEN settlement reply names the human whose seat it is — the auth the turn inherits (OPE-659)", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const handle = disposeLater(
     registerScript({
@@ -139,7 +140,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
 
   const rows = await waitFor(
     async () => {
-      const got = (await readAuditRows({ actions: ["reply.post"], sinceIso })).filter((r) => r.detail?.route === "bridge");
+      const got = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "bridge");
       return got.some((r) => r.detail?.chars === SETTLEMENT_SAY.length) ? got : undefined;
     },
     "the settlement turn's bridged reply row",
@@ -159,7 +160,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
 
 test("OPE-734 — arming the settlement script under the dispatch turn's session id wins even if the stale ANY_SESSION entry is never disposed", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const handle = disposeLater(
     registerScript({
@@ -192,7 +193,7 @@ test("OPE-734 — arming the settlement script under the dispatch turn's session
   await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the settlement turn's terminal step");
   const rows = await waitFor(
     async () => {
-      const got = (await readAuditRows({ actions: ["reply.post"], sinceIso })).filter((r) => r.detail?.route === "bridge");
+      const got = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "bridge");
       return got.some((r) => r.detail?.chars === say.length) ? got : undefined;
     },
     "the settlement turn's bridged reply row",

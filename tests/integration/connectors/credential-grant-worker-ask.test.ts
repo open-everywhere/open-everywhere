@@ -9,16 +9,17 @@ import type { CredentialGrantRow } from "@open-everywhere/core/agent/operational
 
 import {
   armSettlement,
+  auditCursor,
   bootAgent,
   consumeSettlement,
-  disposeLater,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  disposeLater,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
-  slackInteractivityPost,
+  rowsSinceCursor,
   SLACK_TEAM_ID,
+  slackInteractivityPost,
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
@@ -74,7 +75,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, an
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const slack = installSlackWebApiStub((method, params) => {
     switch (method) {
@@ -146,7 +147,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, an
   armed.dispose();
 
   const asked = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["grant.asked"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
     return rows.length > 0 ? rows : undefined;
   }, "a grant.asked audit row — the worker's ask reaching the store");
   const askId = String((asked[0]!.detail as { askId?: unknown }).askId ?? "");
@@ -195,7 +196,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, an
   expect(tap.status, `the owner's tap was refused at the ingress: ${tap.body}`).toBe(200);
 
   await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: ["grant.granted"], sinceIso })).filter((r) => (r.detail as { askId?: unknown }).askId === askId);
+    const rows = (await rowsSinceCursor(cursor, ["grant.granted"])).filter((r) => (r.detail as { askId?: unknown }).askId === askId);
     return rows.length > 0 ? rows : undefined;
   }, `a grant.granted audit row for ask ${askId}`);
   const grants = await store.credentialGrantsForScope(org, seatSessionId);

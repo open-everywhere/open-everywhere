@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
 import {
   afterThisTest,
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   disposeLater,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   slackDmWake,
   slackTs,
@@ -23,7 +24,7 @@ const CHILD_ANSWER = "ope1751 the worker finished its arm";
 test("a DM seat's delegated worker settles completed, with no delegation.task_failed row", async () => {
   await bootAgent();
 
-  const sinceIso = new Date(Date.now() - 60_000).toISOString();
+  const cursor = await auditCursor();
 
   const dispatched = disposeLater(
     registerScript({
@@ -59,18 +60,18 @@ test("a DM seat's delegated worker settles completed, with no delegation.task_fa
   expect(drain.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["delegation.task_started"], sinceIso })).find((r) => r.detail?.task === taskId),
+    async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((r) => r.detail?.task === taskId),
     "the DM seat's delegation.task_started row",
   );
   const settled = await waitFor(
     async () => {
-      const rows = (await readAuditRows({ actions: ["delegation.task_settled"], sinceIso })).filter((r) => r.detail?.task === taskId);
+      const rows = (await rowsSinceCursor(cursor, ["delegation.task_settled"])).filter((r) => r.detail?.task === taskId);
       return rows.length > 0 ? rows : undefined;
     },
     "the DM seat's delegation.task_settled row",
   );
 
-  const failures = await readAuditRows({ actions: ["delegation.task_failed"], sinceIso });
+  const failures = await rowsSinceCursor(cursor, ["delegation.task_failed"]);
   expect(
     failures.map((r) => ({ task: r.detail?.task, errorClass: r.detail?.errorClass, error: r.detail?.error, outcome: r.detail?.outcome })),
     "🔴 the DM seat's delegated worker DIED — this is the two live runs shape (SUBAGENT_EXECUTION_FAILED)",

@@ -2,19 +2,20 @@ import { expect, test } from "vitest";
 
 import {
   afterThisTest,
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   disposeLater,
   installNotionApiStub,
   installSlackWebApiStub,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
   SETTLEMENT_DRAIN_SCRIPT,
+  SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  SLACK_TEAM_ID,
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
@@ -46,7 +47,6 @@ function promptOf(request: RecordedRequest): string {
 }
 
 test("a delayed Slack worker posts its artifact to the original Slack thread after a later Notion turn", async () => {
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const slackThreadTs = slackTs(Date.now() - 1_000, 19170);
   const slackMessageTs = slackTs(Date.now(), 19171);
   let laterSeat: ReturnType<typeof registerScript> | undefined;
@@ -118,6 +118,7 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
 
   await bootAgent({ sharedSqlite: true, selfBaseUrl: true, stubbedProviderTransport: true });
   await seedNotionChannelKey();
+  const cursor = await auditCursor();
 
   const [{ loadDomains }, { loadBindings }] = await Promise.all([
     import("../../../agent/memory/config/domains"),
@@ -218,7 +219,7 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
 
   const taskId = taskIdOfDelegation(laterSeat, "the OPE-1917 delayed delegation");
   const started = await waitFor(
-    async () => (await readAuditRows({ actions: ["delegation.task_started"], sinceIso })).find((row) => row.detail?.task === taskId),
+    async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((row) => row.detail?.task === taskId),
     "the delegation.task_started row joined to the artifact worker",
   );
   expect(started.detail?.session).toBe(seatSessionId);
@@ -241,11 +242,11 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
   expect(notion.calls.filter((call) => call.method === "POST" && call.path === "/v1/comments")).toEqual([]);
 
   const slackRows = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["slack.post_file"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["slack.post_file"]);
     return rows.length > 0 ? rows : undefined;
   }, "the successful Slack post_file audit row");
   expect(slackRows.some((row) => row.platform === "slack" && row.surface === SLACK_CHANNEL && row.detail?.attached === 1 && row.detail?.hosted === 0)).toBe(true);
-  expect(await readAuditRows({ actions: ["notion.post_file"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["notion.post_file"])).toEqual([]);
   expect(dispatched.requests.filter((request) => request.fault !== undefined)).toEqual([]);
   expect(laterSeat.requests.filter((request) => request.fault !== undefined)).toEqual([]);
 }, 420_000);

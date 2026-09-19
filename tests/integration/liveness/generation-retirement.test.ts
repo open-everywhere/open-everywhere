@@ -9,13 +9,21 @@ import {
   generationOwedDelegation,
 } from "@open-everywhere/core/agent/channels/generation-retirement.js";
 
-import { bootAgent, DISCORD_LISTED_CHANNEL_ID, discordMentionWake, readAuditRows, registerScript, waitFor } from "../harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  registerScript,
+  rowsSinceCursor,
+  waitFor,
+} from "../harness";
 
 test("a real window rotation terminally retires the outgoing generation, and leaves the incoming one alone", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const first = registerScript({ parent: [{ say: "generation one, answering" }] });
   await discordMentionWake({
@@ -26,7 +34,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   await waitFor(() => first.requests.find((r) => r.role === "parent"), "generation one's model call");
   expect(first.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.length > 0 ? rows : undefined;
   }, "generation one's reply — the turn is over");
 
@@ -38,7 +46,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   const outgoingToken = seated.token;
   expect(outgoingToken.length).toBeGreaterThan(0);
 
-  expect(await readAuditRows({ actions: [GENERATION_RETIRED_AUDIT_ACTION], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, [GENERATION_RETIRED_AUDIT_ACTION])).toEqual([]);
 
   const marked = await store.markChannelSessionRotation(org, registryKey, new Date().toISOString());
   expect(marked).toBe(true);
@@ -62,7 +70,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   second.dispose();
 
   const retired = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: [GENERATION_RETIRED_AUDIT_ACTION], sinceIso });
+    const rows = await rowsSinceCursor(cursor, [GENERATION_RETIRED_AUDIT_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, `a ${GENERATION_RETIRED_AUDIT_ACTION} row — the rotated generation was terminally retired`);
   expect(retired).toHaveLength(1);
@@ -77,18 +85,18 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   expect(live!.token).not.toBe(outgoingToken);
   expect(live!.generation).toBe(seated.generation + 1);
   const allRetirementRows = [
-    ...(await readAuditRows({ actions: [GENERATION_RETIRED_AUDIT_ACTION], sinceIso })),
-    ...(await readAuditRows({ actions: [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION], sinceIso })),
+    ...(await rowsSinceCursor(cursor, [GENERATION_RETIRED_AUDIT_ACTION])),
+    ...(await rowsSinceCursor(cursor, [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION])),
   ];
   expect(allRetirementRows.filter((r) => (r.detail ?? {})["token"] === live!.token)).toEqual([]);
-  expect(await readAuditRows({ actions: [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION])).toEqual([]);
 });
 
 test("a rotation SKIPS a generation that still owes a live delegation, and does not retire it", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 1_000).toISOString();
+  const cursor = await auditCursor();
 
   const dispatch = registerScript({
     parent: [{ calls: [{ tool: "agent", input: { message: "look this up and report back" }, id: "ope1620-delegate" }] }, { say: "on it — I have started a worker" }],
@@ -129,14 +137,14 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
   await waitFor(() => rotating.requests.find((r) => r.role === "parent"), "the rotating generation's model call");
 
   const skipped = await waitFor(async () => {
-    const rows = (await readAuditRows({ actions: [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION], sinceIso })).filter(
+    const rows = (await rowsSinceCursor(cursor, [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION])).filter(
       (r) => (r.detail ?? {})["token"] === outgoingToken,
     );
     return rows.length > 0 ? rows : undefined;
   }, `a ${GENERATION_RETIRE_SKIPPED_AUDIT_ACTION} row for the generation that still owes a worker`);
   expect(skipped).toHaveLength(1);
   expect((skipped[0]!.detail ?? {})["skipped"]).toBe("skip-owed-delegation");
-  const retired = (await readAuditRows({ actions: [GENERATION_RETIRED_AUDIT_ACTION], sinceIso })).filter((r) => (r.detail ?? {})["token"] === outgoingToken);
+  const retired = (await rowsSinceCursor(cursor, [GENERATION_RETIRED_AUDIT_ACTION])).filter((r) => (r.detail ?? {})["token"] === outgoingToken);
   expect(retired).toEqual([]);
 
   dispatch.releaseHolds();
@@ -146,8 +154,8 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
   const live = await store.getChannelSession(org, registryKey);
   expect(live!.token).not.toBe(outgoingToken);
   const rowsForLive = [
-    ...(await readAuditRows({ actions: [GENERATION_RETIRED_AUDIT_ACTION], sinceIso })),
-    ...(await readAuditRows({ actions: [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION], sinceIso })),
+    ...(await rowsSinceCursor(cursor, [GENERATION_RETIRED_AUDIT_ACTION])),
+    ...(await rowsSinceCursor(cursor, [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION])),
   ].filter((r) => (r.detail ?? {})["token"] === live!.token);
   expect(rowsForLive).toEqual([]);
 });

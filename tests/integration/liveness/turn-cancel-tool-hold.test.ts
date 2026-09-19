@@ -1,15 +1,16 @@
 import { expect, test } from "vitest";
 
 import {
+  afterThisTest,
+  auditCursor,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   discordOeCommandPost,
   discordOeStopInteraction,
   disposeLater,
-  DISCORD_LISTED_CHANNEL_ID,
-  afterThisTest,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   sleep,
   waitFor,
   wrapToolExecute,
@@ -27,7 +28,7 @@ const SETTLE_MS = 500;
 
 test("a stop that lands while the second tool of a step is still running still names the first", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   let heldEnteredAt: number | undefined;
   let released = false;
@@ -78,7 +79,7 @@ test("a stop that lands while the second tool of a step is still running still n
   expect(stop.body).not.toContain("Nothing running here right now");
 
   const cancelled = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);
@@ -91,7 +92,7 @@ test("a stop that lands while the second tool of a step is still running still n
   released = true;
 
   const requested = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancel_requested"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancel_requested"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancel_requested row the ingress writes");
   expect(requested).toHaveLength(1);

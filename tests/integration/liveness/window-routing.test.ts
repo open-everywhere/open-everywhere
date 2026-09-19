@@ -1,6 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, DISCORD_GUILD_ID, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, runRoutineDispatchTick, waitFor } from "../harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_GUILD_ID,
+  DISCORD_LISTED_CHANNEL_ID,
+  disposeLater,
+  registerScript,
+  rowsSinceCursor,
+  runRoutineDispatchTick,
+  waitFor,
+} from "../harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -43,7 +53,7 @@ async function seedFire(input: { readonly id: string; readonly channelId: string
 test("a fire missing guild evidence on a WINDOWING channel lands native-degraded, and the hook audits it", async () => {
   await bootAgent({ sharedSqlite: true });
   const id = `r-it-wr-${randomBytes(4).toString("hex")}`;
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   disposeLater(registerScript({ parent: [{ say: "nothing to report" }] }));
 
   await seedFire({ id, channelId: DISCORD_LISTED_CHANNEL_ID, withGuildEvidence: false });
@@ -52,7 +62,7 @@ test("a fire missing guild evidence on a WINDOWING channel lands native-degraded
 
   const domainKey = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
   const degraded = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["window.routing_degraded"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["window.routing_degraded"]);
     return rows.find((r) => (r.detail as { domainKey?: unknown } | undefined)?.domainKey === domainKey);
   }, "a window.routing_degraded row for the guild-evidence-less fire on the windowing channel");
 
@@ -63,7 +73,7 @@ test("a fire missing guild evidence on a WINDOWING channel lands native-degraded
 test("NEGATIVE CONTROL — the same fire WITH guild evidence windows, and never writes the row", async () => {
   await bootAgent({ sharedSqlite: true });
   const id = `r-it-wr-${randomBytes(4).toString("hex")}`;
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   disposeLater(registerScript({ parent: [{ say: "nothing to report" }] }));
 
   const channelId = freshUnlistedChannelId();
@@ -72,10 +82,10 @@ test("NEGATIVE CONTROL — the same fire WITH guild evidence windows, and never 
   expect(sessionIds.length).toBeGreaterThan(0);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["egress.policy"], sinceIso })).find((r) => (r.surface ?? "").includes(channelId)),
+    async () => (await rowsSinceCursor(cursor, ["egress.policy"])).find((r) => (r.surface ?? "").includes(channelId)),
     "a session.started egress.policy row for the windowed fire — proof the turn actually ran",
   );
   const domainKey = `discord/${DISCORD_GUILD_ID}/${channelId}`;
-  const degraded = await readAuditRows({ actions: ["window.routing_degraded"], sinceIso });
+  const degraded = await rowsSinceCursor(cursor, ["window.routing_degraded"]);
   expect(degraded.find((r) => (r.detail as { domainKey?: unknown } | undefined)?.domainKey === domainKey)).toBeUndefined();
 });

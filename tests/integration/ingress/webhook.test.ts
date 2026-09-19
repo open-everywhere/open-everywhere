@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
-  disposeLater,
+  auditCursor,
   bootAgent,
-  readAuditRows,
+  disposeLater,
   registerScript,
   REPLAYED_DELIVERY_CALLER_BODY,
+  rowsSinceCursor,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
@@ -19,14 +20,14 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
   const replyText = `oe-webhook-it-ok ${nonce}`;
   const handle = disposeLater(registerScript({ parent: [{ say: replyText }] }));
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   const res = await webhookDeliveryPost({ note: nonce }, { deliveryId });
   expect(res.status).toBe(200);
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the scripted model to see the wake");
 
   const fired = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["webhook.fired"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["webhook.fired"]);
     return rows.find((r) => r.detail?.hookId === "e2e-smoke" && r.detail?.deliveryId === deliveryId);
   }, "the webhook.fired row for this delivery id");
   expect(fired.detail?.source).toBe("oe-standard-webhook");
@@ -35,7 +36,7 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
   expect((fired.detail?.wakeId as string).length).toBeGreaterThan(0);
 
   const reply = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.detail?.wakeId === fired.detail?.wakeId);
   }, "the reply.post row this delivery's wakeId joins to");
   expect(String(reply.detail?.id)).toMatch(/^spoof-/);
@@ -48,7 +49,7 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
 
 test("an unsigned delivery is refused 401, and writes NO webhook.fired row", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   const nonce = randomBytes(6).toString("hex");
   const deliveryId = `it-unsigned-${nonce}`;
 
@@ -56,7 +57,7 @@ test("an unsigned delivery is refused 401, and writes NO webhook.fired row", asy
   expect(res.status).toBe(401);
 
   await new Promise((r) => setTimeout(r, 500));
-  const rows = await readAuditRows({ actions: ["webhook.fired"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["webhook.fired"]);
   expect(rows.find((r) => r.detail?.deliveryId === deliveryId)).toBeUndefined();
 });
 
@@ -67,7 +68,7 @@ test("a replayed delivery id is refused 409 on the second POST, and only the fir
   const replyText = `oe-webhook-it-replay ${nonce}`;
   const handle = disposeLater(registerScript({ parent: [{ say: replyText }] }));
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   const first = await webhookDeliveryPost({ note: nonce }, { deliveryId });
   expect(first.status).toBe(200);
 
@@ -78,7 +79,7 @@ test("a replayed delivery id is refused 409 on the second POST, and only the fir
   expect(second.body).toBe(REPLAYED_DELIVERY_CALLER_BODY);
 
   const fired = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["webhook.fired"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["webhook.fired"]);
     const matching = rows.filter((r) => r.detail?.deliveryId === deliveryId);
     return matching.length > 0 ? matching : undefined;
   }, "the first delivery's webhook.fired row");

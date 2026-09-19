@@ -5,11 +5,12 @@ import { getOperationalStore } from "@open-everywhere/core/agent/operational/pro
 import { parkRotateDelta, SESSION_PARK_AUDIT_ACTION } from "@open-everywhere/core/agent/channels/session-park.js";
 
 import {
+  auditCursor,
   bootAgent,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  discordMentionWake,
   registerScript,
+  rowsSinceCursor,
   waitFor,
   type ScriptedHandle,
 } from "../harness";
@@ -46,7 +47,7 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const burning = open(
     registerScript({
@@ -71,7 +72,7 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   expect(lastBurn.tools).toContain(LOOP_TOOL);
 
   const park = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: [SESSION_PARK_AUDIT_ACTION], sinceIso });
+    const rows = await rowsSinceCursor(cursor, [SESSION_PARK_AUDIT_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, "the session.token_limit_park row — eve parked the seat and OE saw it");
   expect(park).toHaveLength(1);
@@ -85,8 +86,8 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   const registryKey = String(detail["registryKey"] ?? "");
   expect(registryKey.length).toBeGreaterThan(0);
 
-  expect(await readAuditRows({ actions: ["turn.question_bridged"], sinceIso })).toEqual([]);
-  expect(await readAuditRows({ actions: ["turn.question_dropped"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.question_bridged"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.question_dropped"])).toEqual([]);
 
   const parked = await store.getChannelSession(org, registryKey);
   expect(parked).not.toBeNull();

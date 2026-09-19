@@ -4,7 +4,7 @@ import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import type { CredentialGrantAskRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
 
-import { bootAgent, readAuditRows, runScheduleTask } from "../harness";
+import { auditCursor, bootAgent, rowsSinceCursor, runScheduleTask } from "../harness";
 import { installHostFetchStub } from "../fetch-stub";
 
 const DISCORD_API = "https://discord.com/api/v10/";
@@ -53,7 +53,7 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const posts: { channelId: string; content: string }[] = [];
   const edits: { channelId: string; messageId: string; content: string }[] = [];
@@ -151,7 +151,7 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
   expect(edits.some((e) => e.channelId === ANSWERED_CARD_DM), "NEGATIVE CONTROL: the answered ask's card is left alone").toBe(false);
   expect(edits.some((e) => e.channelId === STALE_CARD_DM), "NEGATIVE CONTROL: nor is a backlog ask's card rewritten").toBe(false);
 
-  const rows = await readAuditRows({ actions: ["grant.expired"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["grant.expired"]);
   const mine = rows.filter((r) => r.detail?.["askId"] === lapsed.id);
   expect(mine.length, "the sweep must write exactly one `grant.expired` row for the lapsed ask").toBe(1);
   expect(mine[0]?.detail?.["cause"]).toBe("ttl");

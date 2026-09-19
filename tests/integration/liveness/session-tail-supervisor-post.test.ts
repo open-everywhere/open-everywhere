@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, expect, test } from "vitest";
 
 import {
+  auditCursor,
   bootAgent,
   disposeLater,
   installNotionApiStub,
@@ -10,8 +11,8 @@ import {
   NOTION_PAGE_ID_2,
   NOTION_WORKSPACE_ID,
   notionCommentEventPost,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seedNotionChannelKey,
   sleep,
   waitFor,
@@ -99,7 +100,7 @@ async function armSeams(): Promise<void> {
 
 test("a ticketing supervisor's `reply` reaches the room and its generation's tail ring", async () => {
   await armSeams();
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   const marker = randomBytes(4).toString("hex");
   const question = `supervisor tail probe ${marker}`;
   const answer = `supervisor answered ${marker}`;
@@ -120,7 +121,7 @@ test("a ticketing supervisor's `reply` reaches the room and its generation's tai
 
   const posted = await waitFor(
     async () =>
-      (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).find(
+      (await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 })).find(
         (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
       ),
     "a reply.post audit row for this turn's scripted `reply` call",
@@ -128,11 +129,11 @@ test("a ticketing supervisor's `reply` reaches the room and its generation's tai
   expect(posted.detail?.route, "the reply did not travel the TOOL route").toBe("tool");
 
   const replied = await waitFor(
-    async () => (await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).find((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID),
+    async () => (await rowsSinceCursor(cursor, ["notion.replied"], { limit: 200 })).find((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID),
     "a notion.replied lifecycle row closing this turn's notion.dispatched row",
   );
   expect(replied.detail?.route, "the lifecycle row does not name the tool route").toBe("tool");
-  expect((await readAuditRows({ actions: ["turn.supervisor_prose_dropped"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === "done".length)).toEqual([]);
+  expect((await rowsSinceCursor(cursor, ["turn.supervisor_prose_dropped"], { limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === "done".length)).toEqual([]);
 
   await sleep(2_000);
 
@@ -159,7 +160,7 @@ test("a ticketing supervisor's `reply` reaches the room and its generation's tai
 
 test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room nor the ring", async () => {
   await armSeams();
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   const marker = randomBytes(4).toString("hex");
   const question = `dropped-prose probe ${marker}`;
   const answer = `never posted ${marker}`;
@@ -180,14 +181,14 @@ test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room n
   expect(res.status, `the Notion front refused the delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
   const dropped = await waitFor(
-    async () => (await readAuditRows({ actions: ["turn.supervisor_prose_dropped"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
+    async () => (await rowsSinceCursor(cursor, ["turn.supervisor_prose_dropped"], { limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
     "a turn.supervisor_prose_dropped audit row for this turn's scripted say",
   );
   expect(JSON.stringify(dropped.detail), "the dropped answer's TEXT reached an audit row — the family is taint-clean by contract").not.toContain(marker);
   await sleep(2_000);
 
-  expect((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_2)).toEqual([]);
-  expect((await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length)).toEqual([]);
+  expect((await rowsSinceCursor(cursor, ["notion.replied"], { limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_2)).toEqual([]);
+  expect((await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length)).toEqual([]);
 
   const rows = readTailRows();
   expect(rows.filter((r) => r.entry.kind === "post" && r.entry.text === answer)).toEqual([]);
@@ -198,7 +199,7 @@ test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room n
 
 test("🔴 a dedupe-suppressed repost writes no second tail-ring row and no second reply.post row", async () => {
   await armSeams();
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   const marker = randomBytes(4).toString("hex");
   const answer = `duplicate-safe answer ${marker}`;
 
@@ -218,7 +219,7 @@ test("🔴 a dedupe-suppressed repost writes no second tail-ring row and no seco
 
   await waitFor(
     async () =>
-      (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).find(
+      (await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 })).find(
         (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
       ),
     "a reply.post audit row for the first turn's `reply` call",
@@ -242,13 +243,13 @@ test("🔴 a dedupe-suppressed repost writes no second tail-ring row and no seco
   expect(res2.status, `the Notion front refused the second delivery: ${res2.body.slice(0, 300)}`).toBe(200);
 
   await waitFor(
-    async () => ((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_3).length >= 2 ? true : undefined),
+    async () => ((await rowsSinceCursor(cursor, ["notion.replied"], { limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_3).length >= 2 ? true : undefined),
     "two notion.replied lifecycle rows — the second turn ran and delivered through the tool",
   );
   await sleep(1_000);
 
   expect(
-    (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).filter(
+    (await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 })).filter(
       (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
     ).length,
   ).toBe(1);

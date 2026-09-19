@@ -4,13 +4,14 @@ import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 
 import {
+  auditCursor,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   discordOeCommandPost,
   discordOeStopInteraction,
-  DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   waitFor,
   type ScriptedHandle,
 } from "../harness";
@@ -35,7 +36,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const handle = open(
     registerScript({
@@ -75,7 +76,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(unsigned.status).toBe(401);
   expect(unsigned.body).not.toContain("Standing down");
   expect(await resolveTurnAnchor(org, { channelKey })).not.toBeNull();
-  expect(await readAuditRows({ actions: ["turn.cancelled"], sinceIso })).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.cancelled"])).toEqual([]);
 
   const stop = await discordOeCommandPost(discordOeStopInteraction({ channelId: DISCORD_LISTED_CHANNEL_ID, userId: STOPPER_ID }));
   expect(stop.status).toBe(200);
@@ -83,7 +84,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(stop.body).not.toContain("Nothing running here right now");
 
   const requested = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancel_requested"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancel_requested"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancel_requested row the ingress writes");
   expect(requested).toHaveLength(1);
@@ -95,7 +96,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);

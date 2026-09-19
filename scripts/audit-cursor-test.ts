@@ -93,4 +93,61 @@ const CURSOR: AuditCursor = { mark: 4200, wallMs: WAKE_WALL_MS, monoMs: 1_000 };
   ok(cursorClockDriftMs(CURSOR, WAKE_WALL_MS + 7_000, CURSOR.monoMs + 5_000) === 2_000, "a forward step reads as a POSITIVE drift");
 }
 
+{
+  const STEP_BACK_MS = 2_300;
+  const STEP_EVERY_MS = 28_000;
+  const APPEND_EVERY_MS = 900;
+
+  let monoMs = 0;
+  let wallMs = WAKE_WALL_MS;
+  let nextStepAtMono = STEP_EVERY_MS;
+  let seq = 0;
+
+  function append(): { seq: number; ts: string } {
+    monoMs += APPEND_EVERY_MS;
+    wallMs += APPEND_EVERY_MS;
+    if (monoMs >= nextStepAtMono) {
+      wallMs -= STEP_BACK_MS;
+      nextStepAtMono += STEP_EVERY_MS;
+    }
+    seq += 1;
+    return { seq, ts: new Date(wallMs).toISOString() };
+  }
+
+  const beforeCursor: { seq: number; ts: string }[] = [];
+  while (monoMs + APPEND_EVERY_MS < nextStepAtMono) beforeCursor.push(append());
+  const cursor: AuditCursor = { mark: markFromRows(beforeCursor), wallMs, monoMs };
+  const afterCursor = Array.from({ length: 60 }, append);
+  const page = [...beforeCursor, ...afterCursor];
+
+  const selected = selectRowsAfterCursor(page, cursor);
+  ok(selected.length === afterCursor.length, "the cursor selects every row appended after it, under a clock that steps backward");
+  ok(
+    selected.every((row, i) => row === afterCursor[i]),
+    "…and exactly those rows, in the store's own insert order",
+  );
+
+  const byWallClock = afterCursor.filter((r) => Date.parse(r.ts) >= cursor.wallMs);
+  ok(byWallClock.length < afterCursor.length, "the OLD `ts >= wakeAt` predicate DROPS rows the wait wanted — the defect this migration removes");
+
+  const routeOrdered = [...page].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts) || b.seq - a.seq);
+  ok(
+    routeOrdered.at(-1)!.seq !== page.length,
+    "the route's order really does disagree with the insert order — otherwise the next assertion proves nothing",
+  );
+  ok(markFromRows(routeOrdered) === page.length, "the mark is the page's MAXIMUM seq, whatever position the route served it in");
+
+  let previousMark = 0;
+  for (let i = 1; i <= page.length; i++) {
+    const mark = markFromRows(page.slice(0, i));
+    ok(mark >= previousMark, "the mark a growing log establishes never decreases");
+    previousMark = mark;
+  }
+
+  ok(
+    page.some((row, i) => i > 0 && Date.parse(row.ts) < Date.parse(page[i - 1]!.ts)),
+    "the fake clock really did lose time — otherwise this whole block runs against a clock that never stepped",
+  );
+}
+
 console.log(`✓ audit-cursor: ${passed} assertions passed`);

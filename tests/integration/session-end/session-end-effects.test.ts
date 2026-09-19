@@ -2,13 +2,14 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
   afterThisTest,
-  disposeLater,
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
+  discordMentionWake,
+  disposeLater,
   registerScript,
+  rowsSinceCursor,
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
@@ -24,7 +25,7 @@ function observationSig(detail: Record<string, unknown> | undefined): string {
 
 test("the dream cycle fingerprints the seat's own request and never the worker's brief", async () => {
   await bootAgent();
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
 
   const seatNonce = `seatask${randomBytes(4).toString("hex")}`;
   const workerNonce = `workertask${randomBytes(4).toString("hex")}`;
@@ -90,7 +91,7 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
   ).toEqual([]);
 
   const rows = await waitFor(async () => {
-    const found = await readAuditRows({ actions: [SETTLEMENT_FLUSH_ACTION, OBSERVATION_ACTION], sinceIso, limit: 200 });
+    const found = await rowsSinceCursor(cursor, [SETTLEMENT_FLUSH_ACTION, OBSERVATION_ACTION], { limit: 200 });
     return found.some((r) => r.action === OBSERVATION_ACTION && seatDigests.includes(observationSig(r.detail))) ? found : undefined;
   }, `a ${OBSERVATION_ACTION} row fingerprinting the SEAT's own request — the cycle running on the turn edge`);
 

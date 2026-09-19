@@ -3,12 +3,13 @@ import { afterAll, expect, test } from "vitest";
 import { linearSmokeSurfaceKey, linearSmokeTeamId, LINEAR_SMOKE_ORG } from "../../../scripts/deploy/linear-smoke-keys.js";
 import {
   afterThisTest,
+  auditCursor,
   bootAgent,
   installLinearApiStub,
-  linearAgentSessionPost,
   LINEAR_UNIFIED_ORG_ID,
   LINEAR_UNIFIED_TEAM_ID,
-  readAuditRows,
+  linearAgentSessionPost,
+  rowsSinceCursor,
   waitFor,
   type LinearApiCall,
 } from "../harness";
@@ -56,7 +57,7 @@ test("a signed Linear agent-session delivery is accepted (200) and a refuted aut
   const { calls } = await armSeams(authorId);
   const agentSessionId = `it-linear-session-${nonce}`;
   const commentId = `it-linear-comment-${nonce}`;
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await linearAgentSessionPost({
     agentSessionId,
@@ -68,7 +69,7 @@ test("a signed Linear agent-session delivery is accepted (200) and a refuted aut
   expect(res.status, `the Linear front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
   const row = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["linear.external_policy_suppressed"]);
     return rows.find((r) => r.principalId === authorId);
   }, "the linear.external_policy_suppressed row for this refuted author");
 
@@ -79,7 +80,7 @@ test("a signed Linear agent-session delivery is accepted (200) and a refuted aut
 
   expect(calls.some((c) => c.operation === "OeAmbientComment")).toBe(true);
 
-  const dispatched = await readAuditRows({ actions: ["linear.dispatched"], sinceIso });
+  const dispatched = await rowsSinceCursor(cursor, ["linear.dispatched"]);
   expect(dispatched.find((r) => r.surface === `linear/${LINEAR_UNIFIED_ORG_ID}/${LINEAR_UNIFIED_TEAM_ID}`)).toBeUndefined();
 });
 
@@ -87,7 +88,7 @@ test("an unsigned Linear agent-session delivery is refused (401) and writes NO l
   const nonce = randomBytes(6).toString("hex");
   const authorId = `it-linear-unsigned-${nonce}`;
   const { calls } = await armSeams(authorId);
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await linearAgentSessionPost({
     agentSessionId: `it-linear-session-${nonce}`,
@@ -100,7 +101,7 @@ test("an unsigned Linear agent-session delivery is refused (401) and writes NO l
   expect(res.status).toBe(401);
 
   await new Promise((r) => setTimeout(r, 500));
-  const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["linear.external_policy_suppressed"]);
   expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   expect(calls.length).toBe(0);
 });
@@ -120,7 +121,7 @@ test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the
 
   const teamId = linearSmokeTeamId(Date.now());
   const surfaceKey = linearSmokeSurfaceKey(teamId);
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await linearAgentSessionPost({
     agentSessionId: `oe-smoke-session-${teamId}`,
@@ -132,7 +133,7 @@ test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the
   expect(res.status, `the Linear front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
   const row = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["linear.external_policy_suppressed"]);
     return rows.find((r) => r.surface === surfaceKey);
   }, `the linear.external_policy_suppressed row for scratch surface ${surfaceKey}`);
 
@@ -140,7 +141,7 @@ test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the
   expect(row.workspace).toBe(LINEAR_SMOKE_ORG);
   expect(row.detail?.verdict).toBe("silent-room");
 
-  const dispatched = await readAuditRows({ actions: ["linear.dispatched"], sinceIso });
+  const dispatched = await rowsSinceCursor(cursor, ["linear.dispatched"]);
   expect(dispatched.find((r) => r.surface === surfaceKey)).toBeUndefined();
 
   const activities = stub.calls.filter((c) => c.operation === "AgentActivityCreate");
@@ -159,7 +160,7 @@ test("a TAMPERED Linear agent-session delivery (a wrong-but-well-formed signatur
   const nonce = randomBytes(6).toString("hex");
   const authorId = `it-linear-tampered-${nonce}`;
   const { calls } = await armSeams(authorId);
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await linearAgentSessionPost({
     agentSessionId: `it-linear-session-${nonce}`,
@@ -172,7 +173,7 @@ test("a TAMPERED Linear agent-session delivery (a wrong-but-well-formed signatur
   expect(res.status).toBe(401);
 
   await new Promise((r) => setTimeout(r, 500));
-  const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["linear.external_policy_suppressed"]);
   expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   expect(calls.length).toBe(0);
 });

@@ -1,12 +1,13 @@
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
+  SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  SLACK_TEAM_ID,
   waitFor,
   type SlackWebApiStub,
 } from "../harness";
@@ -79,7 +80,7 @@ function detailOf(row: { detail?: unknown } | undefined): Record<string, unknown
 
 test("a real Slack mention writes the ingress anchor and the turn-start anchor, and they bracket the reply", async () => {
   await armSeams();
-  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const cursor = await auditCursor();
   const vendorMs = Date.now() - 4_000;
   const ts = slackTs(vendorMs, (tsCounter += 1));
   registerScript({ parent: [{ say: "the anchors are in place" }, { say: "ack" }] });
@@ -94,7 +95,7 @@ test("a real Slack mention writes the ingress anchor and the turn-start anchor, 
   expect(res.status, `the Slack front refused the mention: ${res.body.slice(0, 200)}`).toBe(200);
 
   const ingress = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["wake.ingress"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["wake.ingress"]);
     return rows.find((r) => detailOf(r).surfaceKey === `slack/${SLACK_TEAM_ID}/${SLACK_WINDOW_CHANNEL_ID}`);
   }, "a wake.ingress audit row for the driven mention");
   const ingressDetail = detailOf(ingress);
@@ -109,7 +110,7 @@ test("a real Slack mention writes the ingress anchor and the turn-start anchor, 
   expect(JSON.stringify(ingress), "the ingress row carries ids and timestamps only — never the message text").not.toContain("ope1716 anchors");
 
   const turnStart = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["wake.turn_start"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["wake.turn_start"]);
     return rows.find((r) => detailOf(r).wakeId === wakeId);
   }, `a wake.turn_start audit row joined to wake ${wakeId}`);
   const startDetail = detailOf(turnStart);

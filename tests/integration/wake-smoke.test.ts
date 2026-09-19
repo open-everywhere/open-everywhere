@@ -1,6 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, discordMentionWake, DISCORD_GUILD_ID, rawDiscordRelayPost, readAuditRows, registerScript, seatReply, waitFor } from "./harness";
+import {
+  auditCursor,
+  bootAgent,
+  DISCORD_GUILD_ID,
+  discordMentionWake,
+  disposeLater,
+  rawDiscordRelayPost,
+  registerScript,
+  rowsSinceCursor,
+  seatReply,
+  waitFor,
+} from "./harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -15,13 +26,13 @@ test("bootAgent refuses a second boot with DIFFERENT options, rather than silent
 test("an unsigned Discord relay POST is refused 401, with no audit trace", async () => {
   await bootAgent();
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   const res = await rawDiscordRelayPost({ channelId, text: `<@9000000000000000001> unsigned decoy` }, null);
   expect(res.status).toBe(401);
 
   await new Promise((r) => setTimeout(r, 500));
-  const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["reply.post"]);
   expect(rows.find((r) => r.surface === channelId)).toBeUndefined();
 });
 
@@ -41,13 +52,13 @@ test("a signed Discord relay mention wakes the channel's STANDING SEAT and its r
 
   const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "wake-smoke-reply"), { say: "done" }] }));
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the scripted model to see the wake");
 
   const row = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.action === "reply.post" && r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
 

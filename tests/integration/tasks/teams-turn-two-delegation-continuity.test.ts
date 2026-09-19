@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
   disposeLater,
   installTeamsJwksStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   teamsActivityPost,
@@ -102,7 +103,7 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   const seatOneFirst = seatOne[0];
   one.dispose();
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   const two = await driveTeamsTurn({
     text: TURN_TWO_ASK,
     steps: [{ calls: [{ tool: "agent", input: { message: DELEGATION_BRIEF }, id: "ope1646-delegate" }] }, { say: "handed off" }],
@@ -134,7 +135,7 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
 
   const taskId = taskIdOfDelegation(two, "the OPE-1646 turn-2 delegation");
   const started = await waitFor(
-    async () => (await readAuditRows({ actions: ["delegation.task_started"], sinceIso })).find((r) => r.detail?.task === taskId),
+    async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((r) => r.detail?.task === taskId),
     "turn 2's delegation.task_started row",
   );
   expect(started.detail?.session, "the row is not this seat's dispatch, so its `continuation` says nothing about turn 2").toBe(seatTwo[0]!.sessionId);

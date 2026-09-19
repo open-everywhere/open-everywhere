@@ -1,12 +1,13 @@
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
+  SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  SLACK_TEAM_ID,
   waitFor,
   type ScriptedHandle,
   type SlackWebApiStub,
@@ -110,6 +111,7 @@ test("a thread seat completes its own thread — the completer reads the host-st
   const at = Date.now();
   const rootTs = slackTs(at, (tsCounter += 1));
   const ts = slackTs(at, (tsCounter += 1));
+  const cursor = await auditCursor();
 
   const standing = registerScript(
     {
@@ -154,7 +156,7 @@ test("a thread seat completes its own thread — the completer reads the host-st
 
   const row = await waitFor(
     async () => {
-      const rows = await readAuditRows({ actions: ["thread_seat.completed"], sinceIso: new Date(at - 5_000).toISOString(), limit: 100 });
+      const rows = await rowsSinceCursor(cursor, ["thread_seat.completed"], { limit: 100 });
       return rows.find((r) => r.detail?.hasSummary === true);
     },
     "the seat's own thread_seat.completed audit row",

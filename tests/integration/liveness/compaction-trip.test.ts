@@ -1,7 +1,19 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { afterThisTest,
-  disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, seatReply, waitFor, wrapToolExecute, type ScriptedHandle } from "../harness";
+import {
+  afterThisTest,
+  auditCursor,
+  bootAgent,
+  discordMentionWake,
+  disposeLater,
+  registerScript,
+  rowsSinceCursor,
+  seatReply,
+  waitFor,
+  wrapToolExecute,
+  type AuditCursor,
+  type ScriptedHandle,
+} from "../harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -22,7 +34,7 @@ function toolResultTextAt(handle: ScriptedHandle, stepIndex: number): string {
   return JSON.stringify(request?.toolResults ?? []);
 }
 
-async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ handle: ScriptedHandle; channelId: string; sinceIso: string }> {
+async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ handle: ScriptedHandle; channelId: string; cursor: AuditCursor }> {
   await bootAgent();
   afterThisTest(wrapToolExecute("update_status", () => statusResult(note)));
 
@@ -37,17 +49,17 @@ async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ 
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: `<@9000000000000000001> what has this conversation cost` });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the step after the compaction trip");
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the turn's last step");
-  return { handle, channelId, sinceIso };
+  return { handle, channelId, cursor };
 }
 
 test("a turn whose prompt crosses the compaction threshold completes, and eve compacted its transcript", async () => {
   const replyText = `oe-670-compaction-ok ${randomBytes(4).toString("hex")}`;
-  const { handle, channelId, sinceIso } = await driveOneToolCallTurn(OVERSIZED_NOTE, replyText);
+  const { handle, channelId, cursor } = await driveOneToolCallTurn(OVERSIZED_NOTE, replyText);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
@@ -57,7 +69,7 @@ test("a turn whose prompt crosses the compaction threshold completes, and eve co
   expect(terminalToolResults.length).toBeLessThan(OVERSIZED_NOTE.length / 100);
 
   const row = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.action === "reply.post" && r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
   expect(row.platform).toBe("discord");
@@ -67,7 +79,7 @@ test("a turn whose prompt crosses the compaction threshold completes, and eve co
 
 test("a turn UNDER the compaction threshold is not compacted — the marker is absent and the tool result survives whole", async () => {
   const replyText = `oe-670-no-compaction ${randomBytes(4).toString("hex")}`;
-  const { handle, channelId, sinceIso } = await driveOneToolCallTurn(ORDINARY_NOTE, replyText);
+  const { handle, channelId, cursor } = await driveOneToolCallTurn(ORDINARY_NOTE, replyText);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
@@ -76,7 +88,7 @@ test("a turn UNDER the compaction threshold is not compacted — the marker is a
   expect(terminalToolResults.includes(EVE_TRUNCATION_MARKER)).toBe(false);
 
   const row = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.action === "reply.post" && r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
   expect(row.detail?.chars).toBe(replyText.length);

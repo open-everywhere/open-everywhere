@@ -1,18 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  auditCursor,
   bootAgent,
   installSlackWebApiStub,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   seatReply,
   SLACK_NAME_DROP_CHANNEL_ID,
   SLACK_TEAM_ID,
-  WAKE_FROM_ENVELOPE,
   slackChannelJoinEventPost,
   slackMessageEventPost,
   slackTs,
   waitFor,
+  WAKE_FROM_ENVELOPE,
+  type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
   type SlackWebApiStub,
@@ -106,10 +108,10 @@ async function expectToolAccepted(handle: ScriptedHandle, label: string): Promis
   expect(last?.isError, `🔴 the ${label} wake's reply TOOL was refused: ${JSON.stringify(last?.output)}`).toBe(false);
 }
 
-async function toolReplyRow(sinceMs: number, text: string): Promise<AuditRow> {
+async function toolReplyRow(cursor: AuditCursor, text: string): Promise<AuditRow> {
   return waitFor(
     async () => {
-      const rows = await readAuditRows({ actions: ["reply.post"], sinceIso: new Date(sinceMs - 2_000).toISOString(), limit: 200 });
+      const rows = await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 });
       return rows.find((r) => r.detail?.route === "tool" && r.detail?.chars === text.length);
     },
     `the reply TOOL's own reply.post row (route "tool", ${text.length} chars)`,
@@ -129,6 +131,7 @@ test("① NAME-DROP WAKE — the reply TOOL resolves the real Slack surface", as
   try {
     const at = Date.now();
     const ts = slackTs(at, (tsCounter += 1));
+    const cursor = await auditCursor();
     const res = await slackMessageEventPost({
       channelId: SLACK_NAME_DROP_CHANNEL_ID,
       userId: TRIGGER_USER_ID,
@@ -138,7 +141,7 @@ test("① NAME-DROP WAKE — the reply TOOL resolves the real Slack surface", as
     });
     expect(res.status, `the Slack front refused the message event: ${res.body.slice(0, 200)}`).toBe(200);
     await expectToolAccepted(handle, "name-drop");
-    const row = await toolReplyRow(at, NAME_DROP_TEXT);
+    const row = await toolReplyRow(cursor, NAME_DROP_TEXT);
     expectBoundTo(row, SLACK_NAME_DROP_CHANNEL_ID, "name-drop");
   } finally {
     handle.dispose();
@@ -150,7 +153,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
   const rootTs = slackTs(Date.now(), (tsCounter += 1));
   const seed = replyThen(ENGAGE_SEED_TEXT, "ope717-seed");
   try {
-    const seedAt = Date.now();
+    const seedCursor = await auditCursor();
     const seedRes = await slackMessageEventPost({
       channelId: SLACK_NAME_DROP_CHANNEL_ID,
       userId: TRIGGER_USER_ID,
@@ -160,7 +163,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
     });
     expect(seedRes.status, `the Slack front refused the seed event: ${seedRes.body.slice(0, 200)}`).toBe(200);
     await expectToolAccepted(seed, "engage-seed");
-    await toolReplyRow(seedAt, ENGAGE_SEED_TEXT);
+    await toolReplyRow(seedCursor, ENGAGE_SEED_TEXT);
   } finally {
     seed.dispose();
   }
@@ -169,6 +172,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
   try {
     const at = Date.now();
     const ts = slackTs(at, (tsCounter += 1));
+    const cursor = await auditCursor();
     const res = await slackMessageEventPost({
       channelId: SLACK_NAME_DROP_CHANNEL_ID,
       userId: TRIGGER_USER_ID,
@@ -179,7 +183,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
     });
     expect(res.status, `the Slack front refused the in-thread event: ${res.body.slice(0, 200)}`).toBe(200);
     await expectToolAccepted(handle, "engaged-thread");
-    const row = await toolReplyRow(at, ENGAGED_TEXT);
+    const row = await toolReplyRow(cursor, ENGAGED_TEXT);
     expectBoundTo(row, SLACK_NAME_DROP_CHANNEL_ID, "engaged-thread");
   } finally {
     handle.dispose();
@@ -192,6 +196,7 @@ test("③ CHANNEL-JOIN INTRO — the reply TOOL resolves the real Slack surface"
   try {
     const at = Date.now();
     const ts = slackTs(at, (tsCounter += 1));
+    const cursor = await auditCursor();
     const res = await slackChannelJoinEventPost({
       channelId: JOIN_CHANNEL_ID,
       userId: BOT_USER_ID,
@@ -201,7 +206,7 @@ test("③ CHANNEL-JOIN INTRO — the reply TOOL resolves the real Slack surface"
     });
     expect(res.status, `the Slack front refused the join event: ${res.body.slice(0, 200)}`).toBe(200);
     await expectToolAccepted(handle, "channel-join intro");
-    const row = await toolReplyRow(at, JOIN_TEXT);
+    const row = await toolReplyRow(cursor, JOIN_TEXT);
     expectBoundTo(row, JOIN_CHANNEL_ID, "channel-join intro");
     expect(row.surface, "the join intro must NOT bind the name-drop channel").not.toBe(SLACK_NAME_DROP_CHANNEL_ID);
     expect(JSON.stringify(row.detail), "the join row must not carry the refusal").not.toContain(REFUSAL);

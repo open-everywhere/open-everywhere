@@ -1,7 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
-import { afterThisTest,
-  disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, wrapToolExecute } from "./harness";
+import {
+  afterThisTest,
+  auditCursor,
+  bootAgent,
+  discordMentionWake,
+  disposeLater,
+  registerScript,
+  rowsSinceCursor,
+  waitFor,
+  wrapToolExecute,
+} from "./harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -34,11 +43,11 @@ test("a turn that runs past its step budget trips the soft and then the hard bou
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: "<@9000000000000000001> loop please" });
 
   const rows = await waitFor(async () => {
-    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    const found = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
     return found.length > 0 ? found : undefined;
   }, "at least one turn.step_boundary audit row");
 
@@ -50,7 +59,7 @@ test("a turn that runs past its step budget trips the soft and then the hard bou
   expect(soft.detail?.backstop).toBe(4);
 
   const hard = await waitFor(async () => {
-    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    const found = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
     return found.find((r) => (r.detail ?? {}).tier === "hard");
   }, "a hard turn.step_boundary audit row");
   expect(hard.detail?.steps).toBe(5);
@@ -82,14 +91,14 @@ test("a turn that stays within budget never writes a turn.step_boundary row", as
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: "<@9000000000000000001> short please" });
 
   await waitFor(() => handle.requests.find((r) => r.stepIndex === 2), "the parent's terminal step to be served");
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   await new Promise((r) => setTimeout(r, 500));
-  const rows = await readAuditRows({ actions: ["turn.step_boundary"], sinceIso });
+  const rows = await rowsSinceCursor(cursor, ["turn.step_boundary"]);
   expect(rows.filter((r) => r.surface === channelId)).toEqual([]);
 });
 
@@ -115,11 +124,11 @@ test("a turn that closes its reply obligation and keeps stepping is ended by the
   );
 
   const channelId = freshUnlistedChannelId();
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: "<@9000000000000000001> quiet please" });
 
   const closed = await waitFor(async () => {
-    const found = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+    const found = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
     return found.find((r) => (r.detail ?? {}).tier === "closed");
   }, "a closed turn.step_boundary audit row");
 
@@ -127,7 +136,7 @@ test("a turn that closes its reply obligation and keeps stepping is ended by the
   expect(closed.detail?.steps).toBe(3);
   expect(closed.detail?.budget).toBe(120);
 
-  const all = (await readAuditRows({ actions: ["turn.step_boundary"], sinceIso })).filter((r) => r.surface === channelId);
+  const all = (await rowsSinceCursor(cursor, ["turn.step_boundary"])).filter((r) => r.surface === channelId);
   expect(all.map((r) => (r.detail ?? {}).tier).sort()).toEqual(["closed"]);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);

@@ -5,7 +5,7 @@ import { auditRowSha, findChainBreak } from "@open-everywhere/core/agent/audit/c
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import type { AuditChainRow } from "@open-everywhere/core/agent/operational/store.js";
-import { disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, seatReply, waitFor } from "../harness";
+import { auditCursor, bootAgent, discordMentionWake, disposeLater, registerScript, rowsSinceCursor, seatReply, waitFor } from "../harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -90,12 +90,12 @@ async function turnOnce(): Promise<DrivenTurn> {
   const nonce = randomBytes(6).toString("hex");
   const replyText = `oe-audit-chain-ok ${nonce}`;
   const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "audit-chain-reply"), { say: "done" }] }));
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
 
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the scripted model to see the wake");
   const posted = await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");

@@ -1,13 +1,14 @@
 import { expect, test } from "vitest";
 
 import {
+  auditCursor,
   awaitTaskSettlement,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
-  DISCORD_LISTED_CHANNEL_ID,
-  readAuditRows,
   registerScript,
+  rowsSinceCursor,
   sleep,
   taskIdOfDelegation,
   waitFor,
@@ -47,7 +48,7 @@ test("a settlement turn holds the task's own address from the notification, befo
     }),
   );
 
-  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please delegate the long job" });
 
   const resumed = await waitFor(
@@ -121,17 +122,17 @@ test("a settlement turn holds the task's own address from the notification, befo
   expect(recoveredWake).toBe(earlyWake);
 
   await sleep(1_500);
-  const refusals = await readAuditRows({ actions: ["reply.refused"], sinceIso });
+  const refusals = await rowsSinceCursor(cursor, ["reply.refused"]);
   const reasons = refusals.map((r) => String(r.detail?.reason));
   expect(reasons.filter((r) => r === "task-wake-unread").length).toBe(0);
   expect(reasons.filter((r) => r === "mismatch").length).toBeGreaterThanOrEqual(3);
 
-  const posts = await readAuditRows({ actions: ["reply.post"], sinceIso });
+  const posts = await rowsSinceCursor(cursor, ["reply.post"]);
   const postWakes = [...new Set(posts.map((r) => String(r.detail?.wakeId)))].sort();
   expect(postWakes).toEqual([dispatchWake!, earlyWake!].sort());
   expect(posts.map((r) => String(r.detail?.id)).filter((id) => !id.startsWith("spoof-unified-"))).toEqual([]);
 
-  const wakeRows = await readAuditRows({ actions: ["unified.task_wake"], sinceIso });
+  const wakeRows = await rowsSinceCursor(cursor, ["unified.task_wake"]);
   const mine = wakeRows.filter((r) => String(r.detail?.task) === taskId);
   expect(mine.length).toBeGreaterThanOrEqual(1);
   expect(mine.map((r) => String(r.detail?.outcome))).toContain("installed");
