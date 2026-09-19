@@ -189,8 +189,8 @@ export async function getOperatorSecret(name: string, opts: OperatorSecretOption
     return { value: decryptCredential(row.ciphertext), source: "db" };
   }
 
-  const fromEnv = process.env[name];
-  if (fromEnv !== undefined && fromEnv !== "") {
+  const fromEnv = envFallbackValue(name, process.env);
+  if (fromEnv !== undefined) {
     noticeOnce(
       name,
       `[open-everywhere:credentials] secret "${name}" resolved from the environment — the db credential store is its default home. ` +
@@ -203,6 +203,15 @@ export async function getOperatorSecret(name: string, opts: OperatorSecretOption
     `secret "${name}" is not set: no row in the db credential store for org "${org}", and no environment variable of that name. ` +
       `Store it with \`oe secret set ${name}\` (value on stdin).`,
   );
+}
+
+function envFallbackValue(name: string, env: NodeJS.ProcessEnv): string | undefined {
+  const value = env[name];
+  return value !== undefined && value !== "" ? value : undefined;
+}
+
+export function operatorSecretEnvFallbackPresent(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFallbackValue(name, env) !== undefined;
 }
 
 function noticeOnce(name: string, message: string): void {

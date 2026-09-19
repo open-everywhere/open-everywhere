@@ -22,8 +22,12 @@ import {
   _resetSurfaceAppManifestsForTest,
 } from "../agent/ops/surface-manifest.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
+import { registerDeploymentIdentity, deploymentOrg, seg, _resetDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { pinSuiteStore } from "./_suite-store.js";
+
+pinSuiteStore("ops");
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -449,4 +453,128 @@ const ok = (label: string, cond: boolean) => {
   _resetSurfaceAppManifestsForTest();
 }
 
-console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest)\n`);
+{
+  const outerProject = process.env.CLAUDE_PROJECT_DIR;
+  const dir = mkdtempSync(join(tmpdir(), "open-everywhere-ops-org-"));
+  process.env.CLAUDE_PROJECT_DIR = dir;
+
+  const withoutOrg: Record<string, Record<string, unknown>> = {
+    secret_set: { secrets: { OPS_TEST_ORG_GUARD: "fixture-value" } },
+    secret_list: {},
+    secret_rm: { name: "OPS_TEST_ORG_GUARD" },
+  };
+
+  let connects = 0;
+  const fixtureConnect = async (_envPath: string, org: string | undefined) => {
+    connects++;
+    if (org !== undefined && org.trim().length > 0) registerDeploymentIdentity({ org });
+    return { label: "fixture-store" };
+  };
+
+  const openServer = async (label: string) => {
+    const server = buildOpsServer({ connectStore: fixtureConnect });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await server.connect(st);
+    const client = new Client({ name: label, version: "0" });
+    await client.connect(ct);
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const res = await client.callTool({ name, arguments: args });
+      return JSON.parse((res.content as { type: string; text: string }[])[0].text) as Record<string, unknown>;
+    };
+    return { client, call };
+  };
+
+  _resetDeploymentIdentityForTest();
+  const core = await openServer("ops-org-core-entry");
+  for (const [tool, args] of Object.entries(withoutOrg)) {
+    for (const [spelling, extra] of [
+      ["absent", {}],
+      ["empty", { org: "" }],
+    ] as const) {
+      const refused = await core.call(tool, { ...args, ...extra });
+      ok(`${tool} refuses to infer an org this process never learned (${spelling} org)`, refused.ok === false);
+      ok(`…and the refusal names the declaration it is missing (${spelling})`, String(refused.note).includes("agent/identity/surfaces.ts"));
+      ok(`…and names both ways out (${spelling})`, String(refused.note).includes("scripts/ops-mcp.ts") && String(refused.note).includes("org"));
+    }
+  }
+  ok("a refused call opens no store at all", connects === 0);
+
+  const named = await core.call("secret_rm", { name: "OPS_TEST_ORG_GUARD", org: "opstest-named" });
+  ok("naming `org` passes the guard", named.ok === false && String(named.note ?? "").includes("no secret named"));
+  ok("…and the store WAS opened for it", connects === 1);
+  ok("…and the reply echoes the tenant it acted on", named.org === "opstest-named");
+
+  const RAW_ORG: string = "Acme Corp";
+  const SANITISED_ORG: string = "Acme-Corp";
+  ok("the fixture org is one seg() would change", seg(RAW_ORG, "default") === SANITISED_ORG && RAW_ORG !== SANITISED_ORG);
+  const rawEcho = await core.call("secret_rm", { name: "OPS_TEST_ORG_GUARD", org: RAW_ORG });
+  ok("the echo is the RAW org the rows are keyed by", rawEcho.org === RAW_ORG);
+  ok("…not the seg()-sanitised deploymentOrg() spelling", rawEcho.org !== SANITISED_ORG && deploymentOrg() === SANITISED_ORG);
+  ok("…and the store WAS opened for it", connects === 2);
+
+  const afterNamed = await core.call("secret_rm", { name: "OPS_TEST_ORG_GUARD" });
+  ok("an `org`-named call does not disarm the guard for later bare calls", afterNamed.ok === false);
+  ok("…and the bare call is still REFUSED, not merely unsuccessful", String(afterNamed.note).includes("agent/identity/surfaces.ts"));
+  ok("…and it opened no store", connects === 2);
+  await core.client.close();
+
+  _resetDeploymentIdentityForTest();
+  registerDeploymentIdentity({});
+  const app = await openServer("ops-org-app-entry");
+  const declared = await app.call("secret_rm", { name: "OPS_TEST_ORG_GUARD" });
+  ok("a boot-declared identity passes the guard with no `org` on the call", declared.ok === false && String(declared.note ?? "").includes("no secret named"));
+  ok("…and the store WAS opened for it", connects === 3);
+  ok("…and the reply echoes the shipped default it acted on", declared.org === "default");
+  await app.client.close();
+
+  rmSync(dir, { recursive: true, force: true });
+  if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+  else process.env.CLAUDE_PROJECT_DIR = outerProject;
+}
+
+{
+  const FALLBACK_NAME = "OPS_TEST_FALLBACK_SECRET";
+  const FALLBACK_VALUE = "fixture-value-that-must-never-be-echoed";
+  const outerFallback = process.env[FALLBACK_NAME];
+  const outerProject = process.env.CLAUDE_PROJECT_DIR;
+  const dir = mkdtempSync(join(tmpdir(), "open-everywhere-ops-fallback-"));
+  process.env.CLAUDE_PROJECT_DIR = dir;
+  registerDeploymentIdentity({ org: "opstest-fallback" });
+
+  const server = buildOpsServer({ connectStore: async () => ({ label: "fixture-store" }) });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  const client = new Client({ name: "ops-fallback-test", version: "0" });
+  await client.connect(ct);
+  const rm = async () => {
+    const res = await client.callTool({ name: "secret_rm", arguments: { name: FALLBACK_NAME } });
+    const text = (res.content as { type: string; text: string }[])[0].text;
+    return { body: JSON.parse(text) as Record<string, unknown>, text };
+  };
+
+  delete process.env[FALLBACK_NAME];
+  const closed = await rm();
+  ok("no env var of the name ⇒ envFallbackPresent is false", closed.body.envFallbackPresent === false);
+  ok("…and the reply raises no fallback note", !String(closed.body.note ?? "").includes("environment variable"));
+
+  process.env[FALLBACK_NAME] = FALLBACK_VALUE;
+  const reverted = await rm();
+  ok("an env var of the name ⇒ envFallbackPresent is true", reverted.body.envFallbackPresent === true);
+  ok("…and the note says the name still resolves", String(reverted.body.note).includes("still resolves"));
+  ok("…and names the variable to delete", String(reverted.body.note).includes(FALLBACK_NAME));
+  ok("…and NO part of the value reaches the reply", !reverted.text.includes(FALLBACK_VALUE) && !reverted.text.includes("fixture-value"));
+
+  process.env[FALLBACK_NAME] = "";
+  const empty = await rm();
+  ok("an EMPTY env var is not a fallback", empty.body.envFallbackPresent === false);
+
+  await client.close();
+  rmSync(dir, { recursive: true, force: true });
+  if (outerFallback === undefined) delete process.env[FALLBACK_NAME];
+  else process.env[FALLBACK_NAME] = outerFallback;
+  if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+  else process.env.CLAUDE_PROJECT_DIR = outerProject;
+  _resetDeploymentIdentityForTest();
+}
+
+console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback)\n`);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   SET_BY_CLI,
   listOperatorSecrets,
+  operatorSecretEnvFallbackPresent,
   parseSecretEnvFile,
   removeOperatorSecret,
   setOperatorSecret,
@@ -187,8 +188,16 @@ async function runRemove(args: readonly string[], io: SecretCliIo, opts: { json:
   const name = names[0]!;
   const target = await connectOperatorStore();
   const removed = await removeOperatorSecret(name, opts.org ? { org: opts.org } : {});
-  if (opts.json) io.out(JSON.stringify({ ok: removed, store: target.label, removed: removed ? [name] : [] }, null, 2));
-  else if (removed) io.out(`✓ removed "${name}" from ${target.label} — the ciphertext row is DELETED, not retired. Anything still resolving it will now fail closed.`);
+  const envFallbackPresent = operatorSecretEnvFallbackPresent(name);
+  if (opts.json) io.out(JSON.stringify({ ok: removed, store: target.label, removed: removed ? [name] : [], envFallbackPresent }, null, 2));
+  else if (removed && envFallbackPresent)
+    io.out(
+      `✓ removed "${name}" from ${target.label} — the ciphertext row is DELETED, not retired. ⚠ An environment variable named "${name}" is set in THIS process, so the name still resolves here, from the environment. Delete the variable too to retire the value; the deployment's own host may hold one as well.`,
+    );
+  else if (removed)
+    io.out(
+      `✓ removed "${name}" from ${target.label} — the ciphertext row is DELETED, not retired. Anything still resolving it fails closed, unless the process that resolves it holds an environment variable of the same name (this one does not).`,
+    );
   else io.out(`· nothing to remove: no secret named "${name}" in ${target.label}.`);
   return removed ? 0 : 1;
 }

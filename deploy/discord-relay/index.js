@@ -5,6 +5,7 @@ import {
   GatewayIntentBits,
   Partials,
 } from "discord.js";
+import { proofContent } from "./proof-log.js";
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const INGEST_URL = process.env.OE_INGEST_URL;
@@ -235,7 +236,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!INGEST_URL) {
     const where = message.guildId ? `guild ${message.guildId}#${message.channelId}` : `DM ${message.channelId}`;
-    const content = message.content?.length ? message.content : "(empty — is Message Content Intent enabled?)";
+    const content = proofContent(message.content, Boolean(LOG_SHIP_URL));
     console.log(`[oe-discord-relay] ${where} @${message.author.username}: ${content}`);
     return;
   }

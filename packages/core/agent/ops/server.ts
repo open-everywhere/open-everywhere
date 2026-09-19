@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { quickstartPlan, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
+import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
 import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces } from "./surface-manifest.js";
 
 export const OPS_TOOL_NAMES = [
@@ -60,12 +61,27 @@ function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }
 
+const CORE_ENTRY_ORG_REFUSAL =
+  'refusing to resolve the default org: this process never loaded the deployment\'s declared identity (agent/identity/surfaces.ts), so the org would silently be the shipped "default" — and rows written under the wrong tenant are invisible to the running agent. Run the shipped ops entry instead (the "open-everywhere-ops" server in .mcp.json, `npx tsx scripts/ops-mcp.ts`), which loads it, or name the tenant explicitly with `org`.';
+
+function actingOrg(org: string | undefined): string {
+  return org ? org : deploymentOrg();
+}
+
+const ORG_INPUT_DESCRIPTION =
+  'the org the rows are keyed by. The default is the org this deployment declares in agent/identity/surfaces.ts. A process that never LOADED that declaration at boot (the core-only `npm run ops` entry) has no default: the call is refused rather than keyed under the shipped "default". Every reply echoes the org it acted on.';
+
 export interface OpsServerDeps {
   connectStore?: (envPath: string, org: string | undefined) => Promise<{ label: string }>;
 }
 
 export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
   const server = new McpServer({ name: "open-everywhere-ops", version: "0.1.0" });
+  const identityDeclaredAtBoot = registeredDeploymentIdentity() !== undefined;
+  const defaultOrgRefusal = (org: string | undefined): string | undefined => {
+    if (org) return undefined;
+    return identityDeclaredAtBoot ? undefined : CORE_ENTRY_ORG_REFUSAL;
+  };
   const connectStore =
     deps.connectStore ??
     (async (envPath: string, org: string | undefined) => {
@@ -247,11 +263,13 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         secrets: z
           .record(z.string(), z.string())
           .describe("name → value, e.g. { ACME_API_TOKEN: '<the token>' }. The name is the secretRef a credential points at."),
-        org: z.string().optional().describe("override the org the rows are keyed by (default: the org this deployment declares in agent/identity/surfaces.ts)"),
+        org: z.string().optional().describe(ORG_INPUT_DESCRIPTION),
         envPath: z.string().optional(),
       },
     },
     async (a) => {
+      const orgRefusal = defaultOrgRefusal(a.org);
+      if (orgRefusal) return json({ ok: false, set: [], note: orgRefusal });
       const store = await connectStore(envFilePath(a.envPath), a.org);
       const { setOperatorSecret, SET_BY_OPS_MCP } = await import("../credentials/operator-secrets.js");
       const set: unknown[] = [];
@@ -259,7 +277,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         const r = await setOperatorSecret({ name, value, setBy: SET_BY_OPS_MCP, ...(a.org ? { org: a.org } : {}) });
         set.push({ name: r.name, bytes: r.bytes, at: r.at, replaced: r.replaced });
       }
-      return json({ ok: true, store: store.label, set, note: "Values are write-only — nothing can read them back out." });
+      return json({ ok: true, store: store.label, org: actingOrg(a.org), set, note: "Values are write-only — nothing can read them back out." });
     },
   );
 
@@ -270,15 +288,17 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       description: "Names, who set them and when — NEVER values or any part of one. Use it to check what a deployment already holds before setting more.",
       inputSchema: {
         includeInternal: z.boolean().optional().describe("also list host-minted internal refs (hook:/oe-oauth:/notion-handshake:)"),
-        org: z.string().optional(),
+        org: z.string().optional().describe(ORG_INPUT_DESCRIPTION),
         envPath: z.string().optional(),
       },
     },
     async (a) => {
+      const orgRefusal = defaultOrgRefusal(a.org);
+      if (orgRefusal) return json({ ok: false, secrets: [], note: orgRefusal });
       const store = await connectStore(envFilePath(a.envPath), a.org);
       const { listOperatorSecrets } = await import("../credentials/operator-secrets.js");
       const secrets = await listOperatorSecrets({ ...(a.includeInternal ? { includeInternal: true } : {}), ...(a.org ? { org: a.org } : {}) });
-      return json({ store: store.label, secrets });
+      return json({ store: store.label, org: actingOrg(a.org), secrets });
     },
   );
 
@@ -286,14 +306,32 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
     "secret_rm",
     {
       title: "Delete a stored secret",
-      description: "Remove one secret from the credential store. The ciphertext row is DELETED, not retired — anything still resolving that name fails closed afterwards.",
-      inputSchema: { name: z.string(), org: z.string().optional(), envPath: z.string().optional() },
+      description:
+        "Remove one secret from the credential store. The ciphertext row is DELETED, not retired — anything still resolving that name fails closed afterwards, UNLESS the process that RESOLVES it holds an environment variable of the same name, which resolution falls back to by design. `envFallbackPresent` reports whether THIS ops process holds one — presence only, never any part of a value. It cannot see the deployment's own host, so check that host's variables too when the deployment runs elsewhere.",
+      inputSchema: { name: z.string(), org: z.string().optional().describe(ORG_INPUT_DESCRIPTION), envPath: z.string().optional() },
     },
     async (a) => {
+      const orgRefusal = defaultOrgRefusal(a.org);
+      if (orgRefusal) return json({ ok: false, removed: [], note: orgRefusal });
       const store = await connectStore(envFilePath(a.envPath), a.org);
-      const { removeOperatorSecret } = await import("../credentials/operator-secrets.js");
+      const { removeOperatorSecret, operatorSecretEnvFallbackPresent } = await import("../credentials/operator-secrets.js");
       const removed = await removeOperatorSecret(a.name, a.org ? { org: a.org } : {});
-      return json({ ok: removed, store: store.label, removed: removed ? [a.name] : [], ...(removed ? {} : { note: `no secret named "${a.name}" was stored` }) });
+      const envFallbackPresent = operatorSecretEnvFallbackPresent(a.name);
+      const notes: string[] = [];
+      if (!removed) notes.push(`no secret named "${a.name}" was stored.`);
+      if (envFallbackPresent) {
+        notes.push(
+          `An environment variable named "${a.name}" is set in THIS ops process, so that name still resolves here — from the environment, not the store. Delete the variable too to retire the value. The deployment's own host may hold one as well; this reply cannot see it.`,
+        );
+      }
+      return json({
+        ok: removed,
+        store: store.label,
+        org: actingOrg(a.org),
+        removed: removed ? [a.name] : [],
+        envFallbackPresent,
+        ...(notes.length > 0 ? { note: notes.join(" ") } : {}),
+      });
     },
   );
 
