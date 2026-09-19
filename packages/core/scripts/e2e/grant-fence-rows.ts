@@ -12,6 +12,8 @@ export interface FenceRowDetail {
   readonly grantId?: unknown;
   readonly askId?: unknown;
   readonly scopeKey?: unknown;
+  readonly domainScopeKey?: unknown;
+  readonly callerScopeKey?: unknown;
   readonly wakeId?: unknown;
   readonly sessionId?: unknown;
   readonly vendorTs?: unknown;
@@ -139,9 +141,10 @@ export function grantsForAsks(rows: readonly AuditWireEntry[], askIds: readonly 
   return rows.filter((e) => e.action === "grant.granted" && typeof detailOf(e).askId === "string" && wanted.has(detailOf(e).askId as string));
 }
 
-export function grantsForExactAsk(rows: readonly AuditWireEntry[], askId: string, scopeKey: string): readonly AuditWireEntry[] {
-  if (askId.length === 0 || scopeKey.length === 0) return [];
-  return rows.filter((e) => e.action === "grant.granted" && detailOf(e).askId === askId && detailOf(e).scopeKey === scopeKey);
+export function grantsForExactAsk(rows: readonly AuditWireEntry[], askId: string, scopeKeys: readonly string[]): readonly AuditWireEntry[] {
+  const wanted = new Set(scopeKeys.filter((key) => key.length > 0));
+  if (askId.length === 0 || wanted.size === 0) return [];
+  return rows.filter((e) => e.action === "grant.granted" && detailOf(e).askId === askId && typeof detailOf(e).scopeKey === "string" && wanted.has(detailOf(e).scopeKey as string));
 }
 
 export function grantIdsOf(rows: readonly AuditWireEntry[]): readonly string[] {
@@ -172,4 +175,27 @@ export function refusedGrantAlreadyLive(rows: readonly AuditWireEntry[]): readon
 
 export function allNoticesDelivered(rows: readonly AuditWireEntry[], platform: string): boolean {
   return rows.length > 0 && rows.every((e) => detailOf(e).outcome === "sent" && detailOf(e).ownerPlatform === platform);
+}
+
+export function currentDomainScopeKey(rows: readonly AuditWireEntry[], sessionScopeKey: string): string | undefined {
+  if (sessionScopeKey.length === 0) return undefined;
+  const keys = new Set<string>();
+  for (const e of rows) {
+    if (e.action !== "grant.asked" && e.action !== "grant.refused") continue;
+    if (detailOf(e).scopeKey !== sessionScopeKey) continue;
+    const key = detailOf(e).domainScopeKey;
+    if (typeof key === "string" && key.length > 0) keys.add(key);
+  }
+  return keys.size === 1 ? [...keys][0] : undefined;
+}
+
+export function grantReentryScope(
+  saved: { readonly scopeKey: string; readonly domainScopeKey?: string },
+  currentSessionId: string,
+  currentDomainScopeKeyValue: string | undefined,
+): "session" | "domain" | undefined {
+  if (saved.scopeKey.length > 0 && saved.scopeKey === currentSessionId) return "session";
+  const savedDomain = saved.domainScopeKey;
+  if (savedDomain === undefined || savedDomain.length === 0) return undefined;
+  return currentDomainScopeKeyValue !== undefined && currentDomainScopeKeyValue === savedDomain ? "domain" : undefined;
 }

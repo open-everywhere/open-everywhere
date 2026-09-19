@@ -65,6 +65,7 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly frozenArgs: GrantJsonObject;
   readonly targetLabel: string;
   readonly scopeKey: string;
+  readonly domainScopeKey?: string;
   readonly purpose: string;
   readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
@@ -88,15 +89,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
   const askId = randomUUID();
   const toolSlug = grantToolSlug(input.mcpTool) ?? "";
   const resource = grantBorrowResourceLabel(input.targetLabel, input.mcpTool, input.frozenArgs);
-  const live = await store.liveBorrowCredentialGrant(
-    input.org,
-    input.ownerPrincipalId,
-    input.connector,
-    input.mcpTool,
-    grantFrozenArgsDigest(input.frozenArgs),
-    input.scopeKey,
-    nowIso,
-  );
+  const live = await liveBorrowGrantInReach(input, grantFrozenArgsDigest(input.frozenArgs), nowIso);
   const liveAsk =
     input.requesterPrincipalId === undefined
       ? null
@@ -105,7 +98,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     borrow: {
       mcpTool: input.mcpTool,
       rowId: askId,
-      takenToolNames: await takenGrantToolNames(input.org, input.scopeKey, nowIso),
+      takenToolNames: await takenGrantToolNames(input.org, input.scopeKey, input.domainScopeKey, nowIso),
       targetLabel: input.targetLabel,
     },
     connector: input.connector,
@@ -123,6 +116,8 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
       connector: input.connector,
       gate: verdict.ok ? "unverified_requester" : verdict.reason,
       resource: grantAuditResource({ frozenArgs: input.frozenArgs, mcpTool: input.mcpTool, resource }),
+      scopeKey: input.scopeKey,
+      ...(input.domainScopeKey === undefined ? {} : { domainScopeKey: input.domainScopeKey }),
       verb: toolSlug,
     });
     return {
@@ -150,6 +145,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     ...(input.requesterTarget === undefined ? {} : { requesterTarget: input.requesterTarget }),
     resource,
     scopeKey: input.scopeKey,
+    ...(input.domainScopeKey === undefined ? {} : { domainScopeKey: input.domainScopeKey }),
     status: "pending",
     toolName: verdict.toolName,
     verb: toolSlug,
@@ -181,13 +177,26 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     requestedMode: ask.requestedMode,
     resource: grantAuditResource(ask),
     scopeKey: ask.scopeKey,
+    ...(ask.domainScopeKey === undefined ? {} : { domainScopeKey: ask.domainScopeKey }),
     toolName: ask.toolName,
     verb: ask.verb,
   });
   return { askId: ask.id, ownerHandle: ask.ownerSlug, sent: true, toolName: verdict.toolName };
 }
 
-async function takenGrantToolNames(org: string, scopeKey: string, nowIso: string): Promise<readonly string[]> {
+async function liveBorrowGrantInReach(input: AskForGrantInput, frozenArgsDigest: string, nowIso: string): Promise<CredentialGrantRow | null> {
+  const store = getOperationalStore();
+  const read = async (scopeKey: string): Promise<CredentialGrantRow | null> =>
+    await store.liveBorrowCredentialGrant(input.org, input.ownerPrincipalId, input.connector, input.mcpTool, frozenArgsDigest, scopeKey, nowIso);
+  const own = await read(input.scopeKey);
+  if (own !== null) return own;
+  const domainScopeKey = input.domainScopeKey;
+  if (domainScopeKey === undefined || domainScopeKey === input.scopeKey) return null;
+  const shared = await read(domainScopeKey);
+  return shared !== null && shared.mode === "standing" ? shared : null;
+}
+
+async function takenGrantToolNames(org: string, scopeKey: string, domainScopeKey: string | undefined, nowIso: string): Promise<readonly string[]> {
   const store = getOperationalStore();
   const names: string[] = [];
   const claim = (row: { readonly toolName?: string }): void => {
@@ -195,6 +204,9 @@ async function takenGrantToolNames(org: string, scopeKey: string, nowIso: string
   };
   for (const row of await store.credentialGrantsForScope(org, scopeKey)) claim(row);
   for (const ask of await store.pendingCredentialGrantAsksForScope(org, scopeKey, nowIso)) claim(ask);
+  if (domainScopeKey !== undefined && domainScopeKey !== scopeKey) {
+    for (const row of await store.liveStandingCredentialGrantsForScope(org, domainScopeKey, nowIso)) claim(row);
+  }
   return names;
 }
 

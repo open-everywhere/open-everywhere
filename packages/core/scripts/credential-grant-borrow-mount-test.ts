@@ -17,6 +17,7 @@ import {
   registerGrantRoomNotice,
   runGrantedCall,
   type GrantBorrowCall,
+  type GrantCallResult,
 } from "../agent/access/credential-grant-broker.js";
 import {
   _resetGrantRoomNoticeForTest,
@@ -251,6 +252,62 @@ console.log("3. the broker sends a borrow row through the borrow transport:");
     "mcp mcp.notion.com tools/call notion-fetch keys:page_id,page_size",
     "the digest is the UNION of the model's keys and the frozen ones, sorted — the same set the transport's merge produces",
   );
+
+  const usedDetail = (used[used.length - 1]?.detail ?? {}) as Record<string, unknown>;
+  eq(usedDetail["scopeKey"], SCOPE, "the grant.used row names what the GRANT is bound to");
+  eq(usedDetail["callerScopeKey"], SCOPE, "…and the session that SPENT it — equal here, because this grant is session-bound");
+}
+
+console.log("4b. the broker admits a domain-bound standing grant from a later seat:");
+{
+  const store = getOperationalStore();
+  const DOMAIN_KEY = "oe-grant-domain::acme";
+  const OTHER_DOMAIN_KEY = "oe-grant-domain::other-co";
+  const ROTATED_SESSION = "wrun_borrow_gen2";
+  const calls: string[] = [];
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", async (_call, grant) => {
+    calls.push(grant.id);
+    return { content: [{ text: "the page body", type: "text" }] };
+  }, "test:credential-grant-borrow-mount-1950");
+
+  await store.addCredentialGrant(ORG, borrowRow({ id: "g-1950-standing", mode: "standing", scopeKey: DOMAIN_KEY }));
+  await store.addCredentialGrant(ORG, borrowRow({ id: "g-1950-session", mode: "session", scopeKey: DOMAIN_KEY }));
+  await store.addCredentialGrant(ORG, borrowRow({ id: "g-1950-elsewhere", mode: "standing", scopeKey: OTHER_DOMAIN_KEY }));
+  const call = async (grantId: string, domainScopeKey: string | undefined): Promise<GrantCallResult> =>
+    await runGrantedCall(
+      grantId,
+      { page_id: "ATTACKER-PAGE" },
+      {
+        nowMs: Date.now(),
+        org: ORG,
+        platform: "slack",
+        requesterPrincipalId: "slack/W1/U-req",
+        scopeKey: ROTATED_SESSION,
+        ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
+        workspace: "W1",
+      },
+    );
+
+  const standing = await call("g-1950-standing", DOMAIN_KEY);
+  ok(standing.ok, `🔴 THE RULING: a STANDING grant bound to the room's domain is spendable from a seat that never asked for it${standing.ok ? "" : ` — refused ${standing.refused}`}`);
+  eq(calls, ["g-1950-standing"], "…and it reached the transport, so this is a real call and not a refusal read as a pass");
+
+  const sessionMode = await call("g-1950-session", DOMAIN_KEY);
+  ok(!sessionMode.ok && sessionMode.refused === "out_of_scope", `🔴 NEGATIVE CONTROL: a SESSION-mode row spelled with the same domain key is refused out_of_scope (got ${sessionMode.ok ? "ok" : sessionMode.refused})`);
+
+  const elsewhere = await call("g-1950-elsewhere", DOMAIN_KEY);
+  ok(!elsewhere.ok && elsewhere.refused === "out_of_scope", `🔴 NEVER ACROSS DOMAINS: a standing grant bound to ANOTHER room is refused out_of_scope (got ${elsewhere.ok ? "ok" : elsewhere.refused})`);
+
+  const noDomain = await call("g-1950-standing", undefined);
+  ok(!noDomain.ok && noDomain.refused === "out_of_scope", `🔴 NEGATIVE CONTROL: a caller that resolves NO domain reaches it through neither key (got ${noDomain.ok ? "ok" : noDomain.refused})`);
+  eq(calls, ["g-1950-standing"], "…and none of the three refusals reached the transport, so nothing was spent on them");
+
+  const rows = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.used" && ((r.detail ?? {}) as Record<string, unknown>)["grantId"] === "g-1950-standing");
+  const detail = (rows[rows.length - 1]?.detail ?? {}) as Record<string, unknown>;
+  eq(detail["scopeKey"], DOMAIN_KEY, "the grant.used row names the DOMAIN the grant is bound to");
+  eq(detail["callerScopeKey"], ROTATED_SESSION, "🔴 …and the LATER session that actually spent it, which the bound scope can no longer name");
+  eq(detail["mode"], "standing", "…beside the mode, so the pair reads as the binding the ruling introduced");
 }
 
 console.log("5. permission is judged first, then every absence refuses no_transport by name:");

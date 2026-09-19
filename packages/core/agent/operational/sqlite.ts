@@ -539,6 +539,7 @@ function getDb(): DatabaseSync {
       frozen_args            TEXT,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
       tool_name              TEXT,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
       scope_key              TEXT NOT NULL,   -- the CHAT this would serve (the session id)
+      domain_scope_key       TEXT,            -- OPE-1950: the room's domain-shaped seat key; a STANDING grant binds here instead
       purpose                TEXT NOT NULL,   -- model-authored; untrusted content
       requester_target       TEXT,            -- JSON ReplyTarget: where the owner's answer is reported back
       card_surface_id        TEXT,            -- where the owner's card landed -- the lapse sweep rewrites it
@@ -767,6 +768,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE credential_grant ADD COLUMN refund_turn TEXT",
     "ALTER TABLE credential_grant ADD COLUMN refund_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE credential_grant ADD COLUMN refund_turn_seq INTEGER",
+
+    "ALTER TABLE credential_grant_ask ADD COLUMN domain_scope_key TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -1094,7 +1097,7 @@ function refuseHalfBorrow(table: string, row: Parameters<typeof grantBorrowColum
 const GRANT_ASK_SQLITE_SELECT =
   `SELECT id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
           mcp_tool, frozen_args, tool_name,
-          scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id
+          scope_key, domain_scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id
    FROM credential_grant_ask`;
 
 type GrantAskSqliteRow = {
@@ -1111,6 +1114,7 @@ type GrantAskSqliteRow = {
   frozen_args: string | null;
   tool_name: string | null;
   scope_key: string;
+  domain_scope_key: string | null;
   purpose: string;
   requester_target: string | null;
   card_surface_id: string | null;
@@ -1139,6 +1143,7 @@ function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
     ...(frozenArgs === undefined ? {} : { frozenArgs }),
     ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
     scopeKey: r.scope_key,
+    ...(r.domain_scope_key === null || r.domain_scope_key === undefined ? {} : { domainScopeKey: r.domain_scope_key }),
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
     ...(r.card_surface_id === null ? {} : { cardSurfaceId: r.card_surface_id }),
@@ -3280,8 +3285,8 @@ export const sqliteOperationalStore: OperationalStore = {
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
             mcp_tool, frozen_args, tool_name,
-            scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            scope_key, domain_scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -3298,6 +3303,7 @@ export const sqliteOperationalStore: OperationalStore = {
         grantJsonColumn(row.frozenArgs),
         row.toolName ?? null,
         row.scopeKey,
+        row.domainScopeKey ?? null,
         row.purpose,
         row.requesterTarget ?? null,
         row.cardSurfaceId ?? null,
@@ -3411,6 +3417,16 @@ export const sqliteOperationalStore: OperationalStore = {
     const rows = getDb()
       .prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND scope_key = ? ORDER BY created_at DESC`)
       .all(org, scopeKey) as GrantSqliteRow[];
+    return rows.map(grantFromSqliteRow);
+  },
+
+  async liveStandingCredentialGrantsForScope(org, scopeKey, nowIso) {
+    const rows = getDb()
+      .prepare(
+        `${GRANT_SQLITE_SELECT} WHERE org_id = ? AND scope_key = ? AND mode = 'standing' AND status = 'active'
+           AND expires_at > ? AND revoked_at IS NULL ORDER BY created_at DESC`,
+      )
+      .all(org, scopeKey, nowIso) as GrantSqliteRow[];
     return rows.map(grantFromSqliteRow);
   },
 

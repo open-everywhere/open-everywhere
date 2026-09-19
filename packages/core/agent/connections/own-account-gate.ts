@@ -1,13 +1,16 @@
 import { auditToolAction } from "../audit/tool-action.js";
 import { getConfig } from "../access/config.js";
 import { domainsAdmitCredentialGrant, isCredentialGrantConnector } from "../access/credential-grant.js";
+import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
+import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
+import { requesterThisTurn } from "../access/requester-identity.js";
 import { requesterMessagesThisTurn } from "../access/requester-messages.js";
 import { askBodyOf } from "../hooks/own-account-ask.js";
-import { currentSessionId, delegationRootSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { currentSessionId, currentTurnId, delegationRootSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { credentialGrantStateRefusal, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
-import { getOperationalStore } from "../operational/provider.js";
 import { adoptedOwnAccountAsk } from "./own-account-carriage.js";
 import {
   actingIdentityAuditDetail,
@@ -22,6 +25,7 @@ export interface ConnectorActingIdentityDeps {
   readonly vendor: OwnAccountVendor;
   readonly ask: () => OwnAccountAsk | undefined;
   readonly grants: () => Promise<readonly CredentialGrantRow[]>;
+  readonly askerPrincipalId?: string;
   readonly consentRouteAvailable: () => boolean;
   readonly deploymentAdmitsGrant: () => boolean;
   readonly nowIso: string;
@@ -32,13 +36,16 @@ export interface ConnectorActingIdentityDeps {
 
 export const CONNECTOR_ACTING_IDENTITY_ACTION = "connector.acting_identity";
 
-export function holdsPersonalGrant(rows: readonly CredentialGrantRow[], connector: string, nowIso: string): boolean {
-  return rows.some((row) => row.connector === connector && credentialGrantStateRefusal(row, nowIso) === undefined);
+export function holdsPersonalGrant(rows: readonly CredentialGrantRow[], connector: string, ownerPrincipalId: string | undefined, nowIso: string): boolean {
+  if (ownerPrincipalId === undefined) return false;
+  return rows.some(
+    (row) => row.connector === connector && row.ownerPrincipalId === ownerPrincipalId && credentialGrantStateRefusal(row, nowIso) === undefined,
+  );
 }
 
 export async function decideConnectorActingIdentity(deps: ConnectorActingIdentityDeps): Promise<ActingIdentityVerdict> {
   const ask = safeAsk(deps.ask);
-  const personalGrantHeld = ask === undefined ? false : holdsPersonalGrant(await safeGrants(deps.grants), ask.connector, deps.nowIso);
+  const personalGrantHeld = ask === undefined ? false : holdsPersonalGrant(await safeGrants(deps.grants), ask.connector, deps.askerPrincipalId, deps.nowIso);
   const verdict = decideActingIdentity({
     callerCanSpendPersonal: deps.callerCanSpendPersonal ?? false,
     connector: deps.vendor.connector,
@@ -117,9 +124,21 @@ function grantLookupScope(ctx: BindableContext): string | undefined {
   return own !== undefined && own.length > 0 ? own : undefined;
 }
 
+function askerKey(ctx: BindableContext): string | undefined {
+  try {
+    const p = resolvePartition(ctx);
+    const verdict = requesterThisTurn(currentTurnId(ctx));
+    return verdict.kind === "requester" ? tryPrincipalKey(p.platform, p.workspace, verdict.principalId) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function connectorActingIdentityForTurn(ctx: BindableContext, vendor: OwnAccountVendor, tool: string): Promise<ActingIdentityVerdict> {
+  const asker = askerKey(ctx);
   return await decideConnectorActingIdentity({
     ask: () => ownAccountAskForTurn(ctx, [vendor]),
+    ...(asker === undefined ? {} : { askerPrincipalId: asker }),
     audit: async (detail) => {
       await auditToolAction(ctx, CONNECTOR_ACTING_IDENTITY_ACTION, detail);
     },
@@ -128,7 +147,7 @@ export async function connectorActingIdentityForTurn(ctx: BindableContext, vendo
     grants: async () => {
       const scope = grantLookupScope(ctx);
       if (scope === undefined) return [];
-      return await getOperationalStore().credentialGrantsForScope(resolvePartition(ctx).org, scope);
+      return await credentialGrantsInReach(resolvePartition(ctx).org, scope, grantDomainScopeKey(ctx), new Date().toISOString());
     },
     nowIso: new Date().toISOString(),
     tool,

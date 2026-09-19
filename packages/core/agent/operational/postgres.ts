@@ -456,6 +456,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      frozen_args            text,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
      tool_name              text,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
      scope_key              text NOT NULL,   -- the CHAT this would serve (the session id)
+     domain_scope_key       text,            -- OPE-1950: the room's domain-shaped seat key; a STANDING grant binds here instead
      purpose                text NOT NULL,   -- model-authored; untrusted content
      requester_target       text,            -- JSON ReplyTarget: where the owner's answer is reported back
      card_surface_id        text,            -- where the owner's card landed -- the lapse sweep rewrites it
@@ -627,6 +628,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS mcp_tool text`,
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS frozen_args text`,
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS tool_name text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS domain_scope_key text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS mcp_tool text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS frozen_args text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS tool_name text`,
@@ -1515,7 +1517,7 @@ function refuseHalfBorrow(table: string, row: Parameters<typeof grantBorrowColum
 const GRANT_ASK_COLUMNS =
   `id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
    mcp_tool, frozen_args, tool_name,
-   scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
+   scope_key, domain_scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
 const GRANT_ASK_SELECT = `SELECT ${GRANT_ASK_COLUMNS} FROM credential_grant_ask`;
 
 type GrantAskPgRow = {
@@ -1532,6 +1534,7 @@ type GrantAskPgRow = {
   frozen_args: string | null;
   tool_name: string | null;
   scope_key: string;
+  domain_scope_key: string | null;
   purpose: string;
   requester_target: string | null;
   card_surface_id: string | null;
@@ -1560,6 +1563,7 @@ function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
     ...(frozenArgs === undefined ? {} : { frozenArgs }),
     ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
     scopeKey: r.scope_key,
+    ...(r.domain_scope_key === null || r.domain_scope_key === undefined ? {} : { domainScopeKey: r.domain_scope_key }),
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
     ...(r.card_surface_id === null || r.card_surface_id === undefined ? {} : { cardSurfaceId: r.card_surface_id }),
@@ -3818,8 +3822,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
             mcp_tool, frozen_args, tool_name,
-            scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+            scope_key, domain_scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
         [
           org,
           row.id,
@@ -3835,6 +3839,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           grantJsonColumn(row.frozenArgs),
           row.toolName ?? null,
           row.scopeKey,
+          row.domainScopeKey ?? null,
           row.purpose,
           row.requesterTarget ?? null,
           row.cardSurfaceId ?? null,
@@ -3946,6 +3951,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async credentialGrantsForScope(org, scopeKey) {
       const { rows } = await client.query(`${GRANT_SELECT} WHERE org_id = $1 AND scope_key = $2 ORDER BY created_at DESC`, [org, scopeKey]);
+      return (rows as GrantPgRow[]).map(grantFromPgRow);
+    },
+
+    async liveStandingCredentialGrantsForScope(org, scopeKey, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_SELECT} WHERE org_id = $1 AND scope_key = $2 AND mode = 'standing' AND status = 'active'
+           AND expires_at > $3 AND revoked_at IS NULL ORDER BY created_at DESC`,
+        [org, scopeKey, nowIso],
+      );
       return (rows as GrantPgRow[]).map(grantFromPgRow);
     },
 

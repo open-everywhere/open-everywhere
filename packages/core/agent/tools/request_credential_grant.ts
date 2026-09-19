@@ -7,6 +7,7 @@ import type { GrantAskWorkerOrigin } from "../access/credential-grant-card.js";
 import { askForCredentialGrant, auditGrant, type GrantAuditStamps } from "../access/credential-grant-flow.js";
 import { resolveRequesterLabel } from "../access/credential-grant-notice.js";
 import { credentialGrantConnectors, domainsAdmitCredentialGrant } from "../access/credential-grant.js";
+import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -245,6 +246,7 @@ export const requestCredentialGrantEntry = defineTool({
     const p = resolvePartition(c);
     const domains = domainsForCtx(c);
     const scopeKey = grantScopeKey(c);
+    const domainScopeKey = grantDomainScopeKey(c);
     if (scopeKey.length === 0) {
       await auditVerbRefusal(c, "no_scope_key", { connector: input.connector });
       return { asked: false, message: "Refused: this conversation has no session id, so there is no chat for a grant to be scoped to." };
@@ -285,6 +287,7 @@ export const requestCredentialGrantEntry = defineTool({
       ...(requesterTarget === undefined ? {} : { requesterTarget }),
       ...(conversationLabel === undefined ? {} : { conversationLabel }),
       scopeKey,
+      ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
       ...(p.surface === undefined ? {} : { surface: p.surface }),
       targetLabel: input.target_label,
       ...(workerOrigin === undefined ? {} : { workerOrigin }),

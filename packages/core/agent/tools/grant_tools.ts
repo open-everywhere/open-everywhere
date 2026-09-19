@@ -14,6 +14,8 @@ import {
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
+import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
+import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
@@ -88,6 +90,7 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
       const c = ctx as BindableContext;
       const turnId = currentTurnId(c);
       const requester = requesterThisTurn(turnId);
+      const domainScopeKey = grantDomainScopeKey(c);
       let org = "unknown";
       let platform = "unknown";
       let workspace = "unknown";
@@ -107,6 +110,7 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
           platform,
           requesterPrincipalId: requesterKeyForGrantCall(platform, workspace, requester),
           scopeKey: currentSessionId(c) ?? "",
+          ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
           ...(surface === undefined ? {} : { surface }),
           ...(turnId === undefined ? {} : { turnId }),
           workspace,
@@ -199,7 +203,7 @@ async function resolveGrantMount(ctx: unknown): Promise<Record<string, Replayabl
   } catch {
     return null;
   }
-  const grants = await getOperationalStore().credentialGrantsForScope(org, scopeKey);
+  const grants = await credentialGrantsInReach(org, scopeKey, grantDomainScopeKey(c), new Date().toISOString());
   const mounted = mountGrantEntries(grants);
   return Object.keys(mounted).length > 0 ? mounted : null;
 }

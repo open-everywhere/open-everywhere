@@ -23,6 +23,7 @@ import {
   registerGrantRoomNotice,
 } from "./grant-room-notice-registry.internal.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
+import { grantScopeAdmits } from "./credential-grant-scope.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 import { haltScopeFor, resolveHalt, resolveHaltUnaddressed, type HaltScope } from "./halt.js";
 import { surfaceKeyOf, tenantKeyOf } from "./resolver.js";
@@ -52,6 +53,7 @@ export const GRANT_REFUND_CAP_PER_TURN = REFUND_CAP_PER_TURN;
 
 export interface GrantCallContext extends GrantAuditStamps {
   readonly scopeKey: string;
+  readonly domainScopeKey?: string;
   readonly requesterPrincipalId: string | undefined;
   readonly turnId?: string;
   readonly nowMs: number;
@@ -118,7 +120,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
 
   const stateRefusal = credentialGrantStateRefusal(grant, nowIso);
   if (stateRefusal !== undefined) return refuse(stateRefusal);
-  if (grant.scopeKey !== ctx.scopeKey) return refuse("out_of_scope");
+  if (!grantScopeAdmits(grant, ctx.scopeKey, ctx.domainScopeKey)) return refuse("out_of_scope");
   if (ctx.requesterPrincipalId === undefined) return refuse("unverified_requester");
 
   const mcpTool = grant.mcpTool;
@@ -150,6 +152,8 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     requester: ctx.requesterPrincipalId,
     resource: grantAuditResource(grant),
     scopeDigest: send.scopeDigest,
+    scopeKey: grant.scopeKey,
+    callerScopeKey: ctx.scopeKey,
     tier: grant.tier,
     verb: grant.verb,
   });

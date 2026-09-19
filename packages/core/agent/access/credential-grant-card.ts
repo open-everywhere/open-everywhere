@@ -97,7 +97,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     "Tap one button to answer:",
     `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${vendor}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
     `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
-    `• *Approve for ${GRANT_MODE_WORDS.standing}* — a standing grant, clamped to a fixed ${String(STANDING_DAYS)}-day ceiling.`,
+    `• *Approve for ${GRANT_MODE_WORDS.standing}* — every conversation in the rooms declared into this room's domain, for ${String(STANDING_DAYS)} days. Wider than the two above: those other rooms can spend it too, for this one tool with the values below.`,
     "• *Decline* — nothing is granted.",
     "",
     "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
@@ -124,9 +124,10 @@ export function grantBorrowPhrase(row: {
 function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string): string {
   const action = grantActionPhrase(ask.connector, ask.mcpTool);
   const pinned = Object.keys(ask.frozenArgs ?? {}).length > 0;
+  const bound = `Whichever button you press, this lends ONE thing: your ${vendor} account doing that one job, and nothing else you can reach in ${vendor}. Only the rooms declared into the asker's own domain can spend it, and only until it ends.`;
   return pinned
-    ? `Approving lets ${where} ${action} with your account — the pinned values above, and nothing else in ${vendor}. No other conversation gets it.`
-    : `Approving lets ${where} ${action} with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your ${vendor} account. No other conversation gets it.`;
+    ? `Approving lets ${where} ${action} with your account — the pinned values above, and nothing else in ${vendor}. ${bound}`
+    : `Approving lets ${where} ${action} with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your ${vendor} account. ${bound}`;
 }
 
 function unreviewedToolLines(ask: CredentialGrantAskRow): readonly string[] {

@@ -8,6 +8,7 @@ export interface LegacyGrantThreadRecord {
 export interface ExactGrantThreadRecord extends LegacyGrantThreadRecord {
   readonly askId: string;
   readonly scopeKey: string;
+  readonly domainScopeKey?: string;
 }
 
 export type GrantThreadRecord = ExactGrantThreadRecord | LegacyGrantThreadRecord;
@@ -22,7 +23,13 @@ export function isExactGrantThreadRecord(record: GrantThreadRecord | undefined):
 
 export function serializeGrantThreadRecord(record: ExactGrantThreadRecord): string {
   return `${JSON.stringify(
-    { threadId: record.threadId, raisedAt: record.raisedAt, askId: record.askId, scopeKey: record.scopeKey },
+    {
+      threadId: record.threadId,
+      raisedAt: record.raisedAt,
+      askId: record.askId,
+      scopeKey: record.scopeKey,
+      ...(record.domainScopeKey === undefined ? {} : { domainScopeKey: record.domainScopeKey }),
+    },
     null,
     2,
   )}\n`;
@@ -36,17 +43,19 @@ export function parseGrantThreadRecord(raw: string): GrantThreadRecord | undefin
     return undefined;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-  const { threadId, raisedAt, askId, scopeKey } = parsed as {
+  const { threadId, raisedAt, askId, scopeKey, domainScopeKey } = parsed as {
     threadId?: unknown;
     raisedAt?: unknown;
     askId?: unknown;
     scopeKey?: unknown;
+    domainScopeKey?: unknown;
   };
   if (typeof threadId !== "string" || threadId.trim().length === 0) return undefined;
   if (typeof raisedAt !== "string" || !Number.isFinite(Date.parse(raisedAt))) return undefined;
   const base: LegacyGrantThreadRecord = { threadId: threadId.trim(), raisedAt };
   if (typeof askId !== "string" || askId.trim().length === 0 || typeof scopeKey !== "string" || scopeKey.trim().length === 0) return base;
-  return { ...base, askId: askId.trim(), scopeKey: scopeKey.trim() };
+  const domain = typeof domainScopeKey === "string" && domainScopeKey.trim().length > 0 ? domainScopeKey.trim() : undefined;
+  return { ...base, askId: askId.trim(), scopeKey: scopeKey.trim(), ...(domain === undefined ? {} : { domainScopeKey: domain }) };
 }
 
 export type GrantThreadResolution =
@@ -56,6 +65,7 @@ export type GrantThreadResolution =
       readonly threadId: string;
       readonly askId: string;
       readonly scopeKey: string;
+      readonly domainScopeKey?: string;
       readonly raisedAt: string;
       readonly ageMs: number;
     }
@@ -97,6 +107,7 @@ export function resolveGrantThread(opts: {
     threadId: record.threadId,
     askId: record.askId,
     scopeKey: record.scopeKey,
+    ...(record.domainScopeKey === undefined ? {} : { domainScopeKey: record.domainScopeKey }),
     raisedAt: record.raisedAt,
     ageMs,
   };

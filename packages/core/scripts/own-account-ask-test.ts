@@ -301,11 +301,16 @@ function row(over: Partial<CredentialGrantRow> = {}): CredentialGrantRow {
   } as CredentialGrantRow;
 }
 
-ok(holdsPersonalGrant([row()], "notion", NOW), "a live row is a held grant");
-ok(!holdsPersonalGrant([row({ status: "revoked" })], "notion", NOW), "a revoked row is not");
-ok(!holdsPersonalGrant([row({ expiresAt: "2026-05-11T23:30:00.000Z" })], "notion", NOW), "a row past its expiry is not, whatever its status column says");
-ok(!holdsPersonalGrant([row({ connector: "linear" })], "notion", NOW), "another connector's row is not");
-ok(!holdsPersonalGrant([], "notion", NOW), "no rows ⇒ no grant");
+const ASKER = "slack/T1/U-asker";
+const OTHER_OWNER = "slack/T1/U-someone-else";
+ok(holdsPersonalGrant([row({ ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "a live row the ASKER owns is a held grant");
+ok(!holdsPersonalGrant([row({ ownerPrincipalId: ASKER, status: "revoked" })], "notion", ASKER, NOW), "a revoked row is not");
+ok(!holdsPersonalGrant([row({ expiresAt: "2026-05-11T23:30:00.000Z", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "a row past its expiry is not, whatever its status column says");
+ok(!holdsPersonalGrant([row({ connector: "linear", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "another connector's row is not");
+ok(!holdsPersonalGrant([], "notion", ASKER, NOW), "no rows ⇒ no grant");
+ok(!holdsPersonalGrant([row({ ownerPrincipalId: OTHER_OWNER })], "notion", ASKER, NOW), "🔴 SOMEBODY ELSE's live grant for the same connector is NOT this asker's held grant");
+ok(holdsPersonalGrant([row({ ownerPrincipalId: OTHER_OWNER }), row({ id: "grant-2", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "NEGATIVE CONTROL: the asker's OWN row in the same set still answers, so the leg above is the owner test and not a reader that stopped finding rows");
+ok(!holdsPersonalGrant([row({ ownerPrincipalId: ASKER })], "notion", undefined, NOW), "🔴 an UNVERIFIED turn names no owner and therefore holds nothing — fail closed");
 
 interface GateRun {
   readonly rows: Record<string, unknown>[];

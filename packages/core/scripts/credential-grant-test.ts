@@ -32,6 +32,10 @@ import {
   type CredentialGrantAskRow,
   type CredentialGrantRow,
 } from "../agent/operational/credential-grant-rows.js";
+import { credentialGrantFromAsk } from "../agent/access/credential-grant.js";
+import { credentialGrantsInReach } from "../agent/access/credential-grant-reach.js";
+import { grantScopeAdmits, grantScopeKeyForMode } from "../agent/access/credential-grant-scope.js";
+import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { grantToolEntry, mountedGrantName } from "../agent/tools/grant_tools.js";
 import { runGrantedCall } from "../agent/access/credential-grant-broker.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -512,6 +516,105 @@ console.log("7. the lapse copy:");
   ok(card.includes("has been told"), "when the requester WAS told, the card says so");
   ok(!cardUntold.includes("has been told"), "NEGATIVE CONTROL: when the requester was NOT told, the card does not claim they were");
   ok(cardUntold.includes("NOT been told"), "…it says the opposite out loud, so the owner knows somebody may still be waiting");
+}
+
+{
+  const DOMAIN_KEY = "oe-grant-domain::acme";
+  const OTHER_DOMAIN_KEY = "oe-grant-domain::other-co";
+  const SEAT_BEFORE = "session-seat-gen1";
+  const SEAT_AFTER = "session-seat-gen2";
+
+  eq(grantScopeKeyForMode("standing", SEAT_BEFORE, DOMAIN_KEY), DOMAIN_KEY, "a standing grant binds to the room's domain key");
+  eq(grantScopeKeyForMode("session", SEAT_BEFORE, DOMAIN_KEY), SEAT_BEFORE, "NEGATIVE CONTROL: a session grant binds to the asking session, even where a domain key exists");
+  eq(grantScopeKeyForMode("once", SEAT_BEFORE, DOMAIN_KEY), SEAT_BEFORE, "NEGATIVE CONTROL: so does a once grant");
+  eq(grantScopeKeyForMode("standing", SEAT_BEFORE, undefined), SEAT_BEFORE, "a room with no windowed domain leaves standing on the exact-session rule — there is no broader seat to name");
+  eq(grantScopeKeyForMode("standing", SEAT_BEFORE, ""), SEAT_BEFORE, "…and an EMPTY domain key is not a key: it falls back rather than binding a grant to nothing");
+
+  const bound = (mode: CredentialGrantRow["mode"], scopeKey: string): Pick<CredentialGrantRow, "scopeKey" | "mode"> => ({ mode, scopeKey });
+  ok(grantScopeAdmits(bound("standing", DOMAIN_KEY), SEAT_AFTER, DOMAIN_KEY), "a standing grant on the domain key is reachable from a seat that never asked for it");
+  ok(grantScopeAdmits(bound("session", SEAT_AFTER), SEAT_AFTER, DOMAIN_KEY), "a session grant is reachable from its own session");
+  ok(!grantScopeAdmits(bound("session", SEAT_BEFORE), SEAT_AFTER, DOMAIN_KEY), "NEGATIVE CONTROL: a session grant from the PREVIOUS generation is not");
+  ok(
+    !grantScopeAdmits(bound("session", DOMAIN_KEY), SEAT_AFTER, DOMAIN_KEY),
+    "🔴 a SESSION-mode row spelled with a domain key is still refused — the mode decides the rule, never the shape of the string",
+  );
+  ok(
+    !grantScopeAdmits(bound("once", DOMAIN_KEY), SEAT_AFTER, DOMAIN_KEY),
+    "🔴 …and so is a ONCE-mode row spelled that way, so a single-use grant can never become domain-wide",
+  );
+  ok(
+    !grantScopeAdmits(bound("standing", OTHER_DOMAIN_KEY), SEAT_AFTER, DOMAIN_KEY),
+    "🔴 NEVER ACROSS DOMAINS: a standing grant bound to another room's domain is refused here",
+  );
+  ok(!grantScopeAdmits(bound("standing", DOMAIN_KEY), SEAT_AFTER, undefined), "NEGATIVE CONTROL: a seat that resolves no domain reaches no domain-keyed row at all");
+
+  const askRow: CredentialGrantAskRow = {
+    connector: "notion",
+    createdAt: iso(NOW),
+    domainScopeKey: DOMAIN_KEY,
+    expiresAt: iso(NOW + 30 * 60_000),
+    frozenArgs: FROZEN,
+    id: "ask-1950",
+    mcpTool: MCP_TOOL,
+    ownerNativeId: "U-owner",
+    ownerPlatform: "slack",
+    ownerPrincipalId: "slack/W1/U-owner",
+    ownerSlug: "rowan_hale",
+    purpose: "read the launch page",
+    requestedMode: "session",
+    requesterPrincipalId: "slack/W1/U-req",
+    resource: "Launch page — notion-fetch({page:abc123})",
+    scopeKey: SEAT_BEFORE,
+    status: "pending",
+    toolName: TOOL_NAME,
+    verb: "notion_fetch",
+  };
+  const mintFields = { expiresAt: iso(NOW + GRANT_STANDING_MAX_MS), grantId: "g-1950", inputSchema: SCHEMA, nowIso: iso(NOW), ownerSlug: "rowan_hale", tier: "read" as const };
+  eq(
+    credentialGrantFromAsk(askRow, { ...mintFields, mode: "standing" }).scopeKey,
+    DOMAIN_KEY,
+    "an ask RAISED as `session` and APPROVED as `standing` mints on the domain key — the owner's answer decides the binding",
+  );
+  eq(
+    credentialGrantFromAsk({ ...askRow, requestedMode: "standing" }, { ...mintFields, mode: "session" }).scopeKey,
+    SEAT_BEFORE,
+    "NEGATIVE CONTROL: an ask RAISED as `standing` and NARROWED to `session` mints on the asking session, so a narrowing cannot leave a domain-wide row behind",
+  );
+  const { domainScopeKey: _dropped, ...askNoDomain } = askRow;
+  eq(
+    credentialGrantFromAsk(askNoDomain, { ...mintFields, mode: "standing" }).scopeKey,
+    SEAT_BEFORE,
+    "an ask that recorded no domain (a room with no windowed domain, or a pre-migration row) keeps the exact-session rule",
+  );
+
+  const D = (id: string, patch: Partial<CredentialGrantRow> = {}): CredentialGrantRow => grantRow(id, { mode: "standing", scopeKey: DOMAIN_KEY, expiresAt: iso(NOW + GRANT_STANDING_MAX_MS), ...patch });
+  await store.addCredentialGrant(ORG, D("g-dom-live"));
+  await store.addCredentialGrant(ORG, D("g-dom-expired", { expiresAt: iso(NOW - 1000) }));
+  await store.addCredentialGrant(ORG, D("g-dom-session-mode", { mode: "session" }));
+  await store.addCredentialGrant(ORG, D("g-dom-other", { scopeKey: OTHER_DOMAIN_KEY }));
+  await store.addCredentialGrant(ORG, D("g-dom-revoked"));
+  eq(await store.revokeCredentialGrant(ORG, "g-dom-revoked", iso(NOW + 10)), true, "the domain-keyed grant the owner ended is revoked");
+  const domainRows = await store.liveStandingCredentialGrantsForScope(ORG, DOMAIN_KEY, iso(NOW));
+  const domainIds = domainRows.map((r) => r.id).sort();
+  eq(domainIds, ["g-dom-live"], `the domain read returns ONLY the live standing row (got ${domainIds.join(", ") || "none"})`);
+
+  await store.addCredentialGrant(ORG, grantRow("g-seat-session", { mode: "session", scopeKey: SEAT_BEFORE, expiresAt: iso(NOW + 60 * 60_000) }));
+  const gen1 = await store.rotateChannelSession(ORG, DOMAIN_KEY, "acme:oe-sup:g1", iso(NOW));
+  const gen2 = await store.rotateChannelSession(ORG, DOMAIN_KEY, "acme:oe-sup:g2", iso(NOW + 1000));
+  ok(gen2.generation > gen1.generation, `the seat rotated (generation ${String(gen1.generation)} → ${String(gen2.generation)})`);
+  eq(gen2.surfaceKey, DOMAIN_KEY, "…under the SAME registry key, which is the durable thing a standing grant can bind to");
+  eq(gen2.token !== gen1.token, true, "NEGATIVE CONTROL: the continuation token DID change, so this is a real rotation and not a no-op read");
+
+  const afterRotation = (await credentialGrantsInReach(ORG, SEAT_AFTER, DOMAIN_KEY, iso(NOW + 2000))).map((r) => r.id);
+  ok(afterRotation.includes("g-dom-live"), "🔴 the STANDING grant survives the rotation — the generation that replaces the asking seat still reaches it");
+  ok(!afterRotation.includes("g-seat-session"), "🔴 NEGATIVE CONTROL: the SESSION grant does NOT survive it — consent is still never migrated across sessions");
+  ok(!afterRotation.includes("g-dom-revoked") && !afterRotation.includes("g-dom-expired"), "…and a revoked or expired standing row is not offered to a session that never saw it");
+  ok(!afterRotation.includes("g-dom-other"), "…and neither is another domain's standing row");
+
+  const beforeRotation = (await credentialGrantsInReach(ORG, SEAT_BEFORE, DOMAIN_KEY, iso(NOW + 2000))).map((r) => r.id);
+  ok(beforeRotation.includes("g-seat-session"), "NEGATIVE CONTROL: the session grant IS reachable from its own session, so the leg above measures the rotation and not a broken write");
+  const noDomain = (await credentialGrantsInReach(ORG, SEAT_AFTER, undefined, iso(NOW + 2000))).map((r) => r.id);
+  eq(noDomain.length, 0, "a seat with no windowed domain reaches nothing through this union — the domain arm is the only thing that widens, and it is off");
 }
 
 console.log(`\ncredential-grant: ${n} assertions passed.`);

@@ -1,5 +1,6 @@
 import { classifyConnectorOpTier } from "./consequence.js";
 import { connectorDisplayName, grantDuplicateRefusalText, type GrantCopyAudience, type GrantDuplicateFacts } from "./credential-grant-copy.js";
+import { grantScopeKeyForMode } from "./credential-grant-scope.js";
 import {
   grantOwnerSlug,
   grantTargetSlug,
@@ -212,7 +213,7 @@ export function credentialGrantFromAsk(
     ...(ask.frozenArgs === undefined ? {} : { frozenArgs: ask.frozenArgs }),
     ...(ask.toolName === undefined ? {} : { toolName: ask.toolName }),
     ...(fields.inputSchema === undefined ? {} : { inputSchema: fields.inputSchema }),
-    scopeKey: ask.scopeKey,
+    scopeKey: grantScopeKeyForMode(fields.mode, ask.scopeKey, ask.domainScopeKey),
     mode: fields.mode,
     tier: fields.tier,
     status: "active",

@@ -11,6 +11,11 @@ import { GRANT_CARD_CLICK_ACTION, handleGrantCardClick, resolveGrantCardClick, t
 import { grantCardActionId, grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "../agent/access/credential-grant-card.js";
 import { resolveGrantOwner } from "../agent/access/credential-grant-ask.js";
 import { askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
+import { grantDomainScopeKey } from "../agent/access/credential-grant-scope.js";
+import { bindFrom } from "../agent/identity/binding.js";
+import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
+import { standingSeatDomainFor } from "../agent/memory/domain.js";
+import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
@@ -40,7 +45,7 @@ import {
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
-import { resolvePartition } from "../agent/memory/partition.js";
+import { domainKeyOf, resolvePartition } from "../agent/memory/partition.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 
@@ -116,6 +121,8 @@ async function raise(
     target: string | undefined;
     purpose: string;
     scope: string;
+    domain: string;
+    mode: "once" | "session" | "standing";
     now: number;
     tool: string;
     frozenArgs: Record<string, unknown>;
@@ -134,11 +141,12 @@ async function raise(
     ownerPrincipalId: OWNER,
     platform: "slack",
     purpose: over.purpose ?? "draft the Q3 summary",
-    requestedMode: "once",
+    requestedMode: over.mode ?? "once",
     requesterLabel: "Requesting Person",
     requesterPrincipalId: "requester" in over ? over.requester : REQ,
     ...("target" in over ? (over.target === undefined ? {} : { requesterTarget: over.target }) : { requesterTarget: JSON.stringify(ROOM) }),
     scopeKey: over.scope ?? "sess-chat-1",
+    ...(over.domain === undefined ? {} : { domainScopeKey: over.domain }),
     surface: stamps.surface,
     targetLabel: over.resource ?? "Launch page",
     workspace: WS,
@@ -931,6 +939,151 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
     eq(dmed.length, 1, "control — and one card reaches the owner's DM");
     eq((await refusedRows()).length, before, "control — and writes NO grant.refused row, so the two arms above measured their own gates");
   }
+}
+
+console.log("10. the standing binding reaches the ask:");
+{
+  const DOMAIN = "oe-grant-domain::acme";
+  const OTHER_DOMAIN = "oe-grant-domain::other-co";
+  const askedRows = async (): Promise<readonly { readonly detail?: unknown }[]> =>
+    (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.asked");
+  const refused1950 = async (): Promise<readonly { readonly detail?: unknown }[]> =>
+    (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.refused");
+  const detail = (rows: readonly { readonly detail?: unknown }[]): { gate?: unknown; scopeKey?: unknown; domainScopeKey?: unknown } =>
+    (rows[0]?.detail ?? {}) as { gate?: unknown; scopeKey?: unknown; domainScopeKey?: unknown };
+
+  const recorded = await raise({ domain: DOMAIN, frozenArgs: { id: "dom-1" }, mode: "standing", scope: "sess-1950-a" });
+  eq(recorded.sent, true, "an ask raised in a windowed room goes out");
+  const askRow = await store.getCredentialGrantAsk(ORG, recorded.askId!);
+  eq(askRow?.scopeKey, "sess-1950-a", "the ask row is filed under the ASKING SESSION, whatever mode was requested");
+  eq(askRow?.domainScopeKey, DOMAIN, "…and records the room's DOMAIN key beside it, which is what a STANDING answer binds to");
+  const askAudit = detail(await askedRows());
+  eq(askAudit.scopeKey, "sess-1950-a", "the grant.asked row names the asking session");
+  eq(askAudit.domainScopeKey, DOMAIN, "🔴 …and names the domain scope, so an operator can join a later domain-keyed grant back to its ask");
+
+  const noDomain = await raise({ frozenArgs: { id: "dom-2" }, mode: "standing", scope: "sess-1950-b" });
+  eq((await store.getCredentialGrantAsk(ORG, noDomain.askId!))?.domainScopeKey, undefined, "NEGATIVE CONTROL: a room that resolves no windowed domain records no domain key — the flow never invents one");
+
+  const domainGrant = (over: Partial<{ id: string; mode: "once" | "session" | "standing"; scopeKey: string; frozen: Record<string, unknown> }>): Parameters<typeof store.addCredentialGrant>[1] => ({
+    askId: `ask-${over.id ?? "x"}`,
+    connector: "notion",
+    createdAt: new Date(clock).toISOString(),
+    expiresAt: new Date(clock + 30 * 24 * 60 * 60_000).toISOString(),
+    frozenArgs: over.frozen ?? { id: "dom-live" },
+    id: over.id ?? "x",
+    mcpTool: "notion-fetch",
+    mode: over.mode ?? "standing",
+    ownerPrincipalId: OWNER,
+    ownerSlug: "rowan_hale",
+    purpose: "read the launch page",
+    requesterPrincipalId: REQ,
+    resource: "Launch page",
+    scopeKey: over.scopeKey ?? DOMAIN,
+    status: "active",
+    tier: "read",
+    toolName: "grant__rowan_hale_notion__notion_fetch_launch",
+    verb: "notion_fetch",
+  });
+  await store.addCredentialGrant(ORG, domainGrant({ id: "g-1950-standing" }));
+  const nagged = await raise({ domain: DOMAIN, frozenArgs: { id: "dom-live" }, mode: "standing", scope: "sess-1950-rotated" });
+  eq(nagged.sent, false, "🔴 THE ANTI-NAG HALF: a FRESH session in the same room is refused, so a seat rotation does not re-card the owner");
+  eq(nagged.reason, "grant_already_live", "…by name — the live standing grant it would duplicate is what refuses it");
+  const refusalAudit = detail(await refused1950());
+  eq(refusalAudit.gate, "grant_already_live", "the refusal writes its row");
+  eq(refusalAudit.domainScopeKey, DOMAIN, "🔴 …carrying the DOMAIN scope, which is the only row a rotated rerun can read its own domain key from");
+
+  await store.addCredentialGrant(ORG, domainGrant({ frozen: { id: "dom-session-mode" }, id: "g-1950-session-mode", mode: "session" }));
+  const sessionModeRow = await raise({ domain: DOMAIN, frozenArgs: { id: "dom-session-mode" }, mode: "standing", scope: "sess-1950-c" });
+  eq(sessionModeRow.sent, true, "🔴 NEGATIVE CONTROL: a SESSION-mode row spelled with the domain key does NOT refuse — the mode decides, never the shape of the string");
+
+  await store.addCredentialGrant(ORG, domainGrant({ frozen: { id: "dom-elsewhere" }, id: "g-1950-elsewhere", scopeKey: OTHER_DOMAIN }));
+  const otherRoom = await raise({ domain: DOMAIN, frozenArgs: { id: "dom-elsewhere" }, mode: "standing", scope: "sess-1950-d" });
+  eq(otherRoom.sent, true, "🔴 NEVER ACROSS DOMAINS: another room's live standing grant does not refuse an ask raised here");
+
+  const unwindowed = await raise({ frozenArgs: { id: "dom-live" }, mode: "standing", scope: "sess-1950-e" });
+  eq(unwindowed.sent, true, "NEGATIVE CONTROL: a room with no domain key reads only its own session, so the domain arm is the only thing that widened");
+
+  const probeCtx = (sessionId: string): BindableContext =>
+    ({ session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId } }) as unknown as BindableContext;
+  const PROBE = resolvePartition(probeCtx("sess-1950-probe"));
+  const ROOM_DOMAIN = defineDomain({ name: "grant-1950-room", reach: [PROBE.surfaceKey], credentialGrants: ["notion"] });
+  const useDomains1950 = (loadDomains: () => readonly ReturnType<typeof defineDomain>[]): void => {
+    registerConfig({
+      loadBundles: () => [],
+      loadBindings: () => [],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains,
+      loadSilos: () => [],
+      domainsForSurface: () => [ROOM_DOMAIN.name],
+    });
+  };
+  const AWAY_DOMAIN = defineDomain({ name: "grant-1950-elsewhere", reach: ["slack/T-other/C-other"], credentialGrants: ["notion"] });
+  useDomains1950(() => [ROOM_DOMAIN]);
+  const windowed = <T>(fn: () => T): T => {
+    registerSettings({ window: { topology: true } });
+    try {
+      return fn();
+    } finally {
+      resetSettingsForTest();
+    }
+  };
+  const asMode = <T>(mode: string | undefined, fn: () => T): T => {
+    const before = process.env.OE_MODE;
+    if (mode === undefined) delete process.env.OE_MODE;
+    else process.env.OE_MODE = mode;
+    try {
+      return fn();
+    } finally {
+      if (before === undefined) delete process.env.OE_MODE;
+      else process.env.OE_MODE = before;
+    }
+  };
+
+  const shipped = asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-shipped")));
+  eq(shipped, "oe-grant-domain::grant-1950-room", "🔴 THE SHIPPED DEFAULT: with the window topology UNARMED, a declared room still resolves its domain scope");
+  eq(
+    asMode("channel", () => windowed(() => grantDomainScopeKey(probeCtx("sess-1950-armed")))),
+    shipped,
+    "…and ARMING the topology changes nothing — the seat's shape is no longer an input to the binding",
+  );
+  ok(!(shipped ?? "").startsWith("oe-domain::"), `🔴 …and the key is NOT the seat's registry-key spelling, which would invite a future reader to join two different things (read: ${String(shipped)})`);
+  ok(
+    asMode("channel", () => windowed(() => grantDomainScopeKey(probeCtx("sess-1950-notseat")))) !== windowed(() => supervisorGrainFor(domainKeyOf(PROBE), [ROOM_DOMAIN]).registryKey),
+    "🔴 NEGATIVE CONTROL, stated against the derivation it replaced: the grant scope is NOT the seat registry key, even with the topology armed and both resolvable",
+  );
+
+  useDomains1950(() => [AWAY_DOMAIN]);
+  eq(asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-homeless"))), undefined, "🔴 a room the deployment placed in NO domain resolves no domain scope — the exact-session rule, fail closed");
+  useDomains1950(() => [ROOM_DOMAIN]);
+  ok(asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-home"))) !== undefined, "NEGATIVE CONTROL: the same room DOES resolve one once its domain is declared, so the leg above measures membership and not a broken read");
+
+  const ORG_CATCHALL = defineDomain({ name: "grant-1950-org", match: "org" });
+  useDomains1950(() => [ORG_CATCHALL, AWAY_DOMAIN]);
+  eq(
+    asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-catchall"))),
+    undefined,
+    "🔴 a room that reaches a domain ONLY through the `org` catch-all resolves no domain scope — a deployment-wide standing grant is the widening the ruling refuses",
+  );
+  ok(
+    standingSeatDomainFor(domainKeyOf(PROBE), [ORG_CATCHALL, AWAY_DOMAIN])?.name === ORG_CATCHALL.name,
+    "…and the WIDER helper really would have answered that catch-all, so the leg above measures the narrowing and not an absent domain",
+  );
+  useDomains1950(() => [ROOM_DOMAIN]);
+
+  eq(asMode("dm", () => grantDomainScopeKey(probeCtx("sess-1950-dm"))), undefined, "🔴 a DM resolves NO domain scope — a private consent can never bind to the room's domain");
+  eq(asMode("mpim", () => grantDomainScopeKey(probeCtx("sess-1950-mpim"))), undefined, "🔴 …and neither does a group DM");
+  ok(asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-chan2"))) !== undefined, "🔴 NEGATIVE CONTROL: the SAME context in a channel DOES resolve one — the two legs above measure the mode gate, not a function that answers undefined to everything");
+
+  eq(asMode(undefined, () => grantDomainScopeKey(probeCtx("sess-1950-unclassified"))), undefined, "🔴 a context NO mapper classified resolves no domain scope — a gap-filled `channel` is not a classification");
+  ok(asMode(undefined, () => bindFrom(probeCtx("sess-1950-gapfill")).mode) === "channel", "…and the gap-fill really does read `channel`, so the leg above is the PROVENANCE test and not a mode test");
+  eq(asMode(undefined, () => bindFrom(probeCtx("sess-1950-gapfill2")).modeResolved), undefined, "…while `modeResolved` is absent, which is the one fact that tells the two apart");
+
+  useDomains1950(() => {
+    throw new Error("domains unreadable");
+  });
+  eq(asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-broken"))), undefined, "🔴 an unreadable domain config resolves NO domain scope — the fail-closed direction");
+  useDomains1950(() => [ROOM_DOMAIN]);
 }
 
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

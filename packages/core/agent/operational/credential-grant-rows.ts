@@ -23,6 +23,7 @@ export interface CredentialGrantAskRow {
   readonly frozenArgs?: GrantJsonObject;
   readonly toolName?: string;
   readonly scopeKey: string;
+  readonly domainScopeKey?: string;
   readonly purpose: string;
   readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;

@@ -48,6 +48,8 @@ import {
   discordWakeSessionIds,
   exactDiscordOwnedAsks,
   grantIdsOf,
+  currentDomainScopeKey,
+  grantReentryScope,
   grantsForExactAsk,
   noticesForGrant,
   refusedGrantAlreadyLive,
@@ -7099,6 +7101,7 @@ export const SCENARIOS: readonly Scenario[] = [
         readonly grantId?: unknown;
         readonly askId?: unknown;
         readonly scopeKey?: unknown;
+        readonly domainScopeKey?: unknown;
       };
       const grantRows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
       const refused = grantRows.filter((e) => e.action === "grant.refused");
@@ -7111,16 +7114,23 @@ export const SCENARIOS: readonly Scenario[] = [
           `${ENV.discordGrantTapped}=1 is set but the saved grant authority is ${reason}. Phase 2 requires one exact sidecar carrying askId, scopeKey, threadId and raisedAt; a thread-only pin or legacy two-field record cannot identify which grant was tapped. Reconcile the old record against the audit trail to one exact ask/scope tuple, or raise and tap a fresh ask.`,
         );
       }
-      if (tapped && reentry.kind === "record" && reentry.scopeKey !== currentSessionId) {
+      const runDomainScopeKey = currentDomainScopeKey(grantRows, currentSessionId);
+      const reentryScope = reentry.kind === "record" ? grantReentryScope(reentry, currentSessionId, runDomainScopeKey) : undefined;
+      if (tapped && reentry.kind === "record" && reentryScope === undefined) {
         ctx.skip(
-          `the saved grant belongs to a different Eve session than this run's phase-1 Discord wake. The deployment may have opened a new generation/session; consent is never migrated across scopes. No granted call was posted. Raise a new ask in the current session and obtain a human tap only if this candidate's board still requires the grant leg.`,
+          `the saved grant is reachable from neither this run's Eve session nor this run's room domain (saved session ${reentry.scopeKey}, saved domain ${reentry.domainScopeKey ?? "none recorded"}; this run: session ${currentSessionId}, domain ${runDomainScopeKey ?? "unreadable"}). A once- or session-mode grant dies with the session that asked, and a standing one re-enters only through the domain key it was bound to — consent is never migrated across scopes either way. No granted call was posted. Raise a new ask and obtain a human tap only if this candidate's board still requires the grant leg.`,
+        );
+      }
+      if (tapped && reentryScope === "domain") {
+        ctx.log(
+          `S-DISCORD-GRANT: the asking seat has rotated away, and the saved authority re-enters through the room's DOMAIN key ${String(runDomainScopeKey)} — the binding a STANDING grant carries (OPE-1950). This is the unattended-board path: no fresh human tap was needed.`,
         );
       }
 
-      const noFreshAsk = tapped && askedRows.length === 0 && reentry.kind === "record" && reentry.scopeKey === currentSessionId && refusedGrantAlreadyLive(grantRows).length > 0;
+      const noFreshAsk = tapped && askedRows.length === 0 && reentryScope !== undefined && refusedGrantAlreadyLive(grantRows).length > 0;
       if (noFreshAsk) {
         ctx.log(
-          `S-DISCORD-GRANT: this tapped run's fresh raise was refused \`grant_already_live\` in the exact session saved with the tapped ask. Phase 1's row gates stand down for this run only; phase 2 joins the saved askId + scopeKey directly.`,
+          `S-DISCORD-GRANT: this tapped run's fresh raise was refused \`grant_already_live\` in the exact ${reentryScope} scope saved with the tapped ask. Phase 1's row gates stand down for this run only; phase 2 joins the saved askId + scope directly.`,
         );
       }
       if (askedRows.length === 0 && !noFreshAsk) {
@@ -7164,6 +7174,7 @@ export const SCENARIOS: readonly Scenario[] = [
           raisedAt: exactAsk.ts,
           askId: exactAskId,
           scopeKey: currentSessionId,
+          ...(runDomainScopeKey === undefined ? {} : { domainScopeKey: runDomainScopeKey }),
         });
         ctx.log(
           `S-DISCORD-GRANT: the Discord grant card is now live in the owner's DM. THE HARNESS CANNOT TAP IT — Discord signs interactions with Ed25519 and this deployment holds only the public key, so unlike every Slack card in this pack there is no forge. To prove the tap-approve half a human taps Approve on that card and the leg is re-run — the exact steps are in packages/core/scripts/e2e/AUDIT.md § S-DISCORD-GRANT — operator procedure. THIS RUN'S ASK LIVES IN THREAD ${threadId}: the grant is scoped to that session, so the re-run needs ${ENV.discordGrantTapped}=1${written ? ` and the exact record in ${threadRecordPath} (copy that whole private sidecar if the rerun is on another machine; ${ENV.discordGrantThread} may only confirm its thread)` : `, but the exact sidecar write failed. A thread pin alone is insufficient; reconcile this ask to its exact audit askId/scopeKey or raise again`}. Left unproven this run: tap-approve routing, the ephemeral answer, the components-strip on the decided card, and grant.notified.`,
@@ -7183,11 +7194,10 @@ export const SCENARIOS: readonly Scenario[] = [
           `the audit window starting at the exact saved raise found ${exactAsks.length} Discord-owned grant.asked rows matching the saved askId + scopeKey tuple. Exactly one is required; phase 2 will not substitute another ask from the same thread or session.`,
         );
       }
-      const grantedDiscord = grantsForExactAsk(
-        await auditRead({ sinceIso: lookback, actions: ["grant.granted"] }),
-        exactReentry.askId,
+      const grantedDiscord = grantsForExactAsk(await auditRead({ sinceIso: lookback, actions: ["grant.granted"] }), exactReentry.askId, [
         exactReentry.scopeKey,
-      );
+        ...(exactReentry.domainScopeKey === undefined ? [] : [exactReentry.domainScopeKey]),
+      ]);
       ctx.gate(
         grantedDiscord.length > 0,
         `🔴 (hard, pinned by ${ENV.discordGrantTapped}): a grant.granted row answers the exact saved askId + scopeKey tuple. None found, so either the tap never landed, it answered another card/session, or the Discord grant-click door did not reach core's resolver.`,

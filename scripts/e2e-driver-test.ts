@@ -15,6 +15,8 @@ import {
   discordOwnedAsksInChannel,
   grantIdsOf,
   grantsForAsks,
+  currentDomainScopeKey,
+  grantReentryScope,
   grantsForExactAsk,
   surfaceNamesChannel,
   unexpiredGrants,
@@ -2801,16 +2803,26 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "OPE-1590: the no-row skip is no longer reached on `askedRows.length === 0` ALONE — that unguarded arm is what exited 1 on a tapped run",
   );
   ok(
-    noFreshAskInit.includes('reentry.kind==="record"') && noFreshAskInit.includes("reentry.scopeKey===currentSessionId"),
-    `OPE-1590: the fall-through requires the exact saved scope to equal THIS run's current session before it accepts an already-live refusal (got: ${JSON.stringify(noFreshAskInit)})`,
+    noFreshAskInit.includes("reentryScope!==void0") || noFreshAskInit.includes("reentryScope!==undefined"),
+    `OPE-1590/OPE-1950: the fall-through accepts an already-live refusal only when the saved authority is re-enterable from THIS run (got: ${JSON.stringify(noFreshAskInit)})`,
+  );
+  const reentryInit = /reentryScope=([^;]+);/.exec(grantBodyTight)?.[1] ?? "";
+  ok(
+    reentryInit.includes('reentry.kind==="record"') && reentryInit.includes("grantReentryScope(reentry,currentSessionId,runDomainScopeKey)"),
+    `OPE-1950: the verdict is computed from the EXACT saved record, this run's current session and this run's own domain key — never from a looser reading (got: ${JSON.stringify(reentryInit)})`,
+  );
+  const domainKeyInit = /runDomainScopeKey=([^;]+);/.exec(grantBodyTight)?.[1] ?? "";
+  ok(
+    domainKeyInit.includes("currentDomainScopeKey(grantRows,currentSessionId)"),
+    `🔴 OPE-1950: this run's domain key is READ OFF ITS OWN AUDIT ROWS, keyed on its own session — a key the harness composed itself would be a second spelling of a decision the product already made (got: ${JSON.stringify(domainKeyInit)})`,
   );
   ok(
     !noFreshAskInit.includes("surfaceNamesChannel") && !noFreshAskInit.includes('e.platform==="discord"'),
     "🔴 OPE-1590: NEGATIVE — neither the stale thread-surface heuristic nor a platform-only scope can open the fall-through",
   );
-  const sessionCheck = grantBodyTight.indexOf("reentry.scopeKey!==currentSessionId");
+  const sessionCheck = grantBodyTight.indexOf("reentryScope===void0") >= 0 ? grantBodyTight.indexOf("reentryScope===void0") : grantBodyTight.indexOf("reentryScope===undefined");
   const grantedPost = grantBodyTight.indexOf("discord.post(discord.mention(`NowusetheNotiontool");
-  ok(sessionCheck >= 0 && grantedPost > sessionCheck, "OPE-1483: the saved-scope/current-session refusal occurs before the one grant-consuming Discord post");
+  ok(sessionCheck >= 0 && grantedPost > sessionCheck, "OPE-1483: the saved-scope/current-run refusal occurs before the one grant-consuming Discord post");
   ok(
     (grantBodyTight.match(/!noFreshAsk/g) ?? []).length >= 2,
     `OPE-1590: the predicate guards BOTH sites — the phase-1 skips and the two Discord-owned hard gates, which assert over the \`askedRows\` that is empty on exactly this path. ` +
@@ -5146,8 +5158,33 @@ rmSync(dir, { recursive: true, force: true });
   ok(grantIdsOf([tapOfA, tapOfB]).join(",") === "g_a,g_b", "grantIdsOf reads the ids the use and notice gates are keyed on");
   const exactTap = grantRow("grant.granted", { askId: "ask_a", scopeKey: "wrun-current", grantId: "g_exact" });
   const wrongScopeTap = grantRow("grant.granted", { askId: "ask_a", scopeKey: "wrun-old", grantId: "g_old" });
-  ok(grantsForExactAsk([exactTap, wrongScopeTap], "ask_a", "wrun-current").length === 1, "grantsForExactAsk keeps the tap on the persisted ask AND session scope");
-  ok(grantsForExactAsk([wrongScopeTap], "ask_a", "wrun-current").length === 0, "🔴 NEGATIVE: a tap for the ask id on another session cannot be spent here");
+  const domainTap = grantRow("grant.granted", { askId: "ask_a", scopeKey: "oe-grant-domain::acme", grantId: "g_standing" });
+  ok(grantsForExactAsk([exactTap, wrongScopeTap], "ask_a", ["wrun-current"]).length === 1, "grantsForExactAsk keeps the tap on the persisted ask AND session scope");
+  ok(grantsForExactAsk([wrongScopeTap], "ask_a", ["wrun-current"]).length === 0, "🔴 NEGATIVE: a tap for the ask id on another session cannot be spent here");
+  ok(grantsForExactAsk([domainTap], "ask_a", ["wrun-current", "oe-grant-domain::acme"]).length === 1, "…and it keeps a STANDING tap bound to the saved room DOMAIN key");
+  ok(grantsForExactAsk([domainTap], "ask_a", ["wrun-current"]).length === 0, "🔴 NEGATIVE: a record that saved no domain key does NOT reach a domain-bound tap — an absent key narrows, it never widens");
+  ok(grantsForExactAsk([domainTap], "ask_a", ["wrun-current", "oe-grant-domain::other-co"]).length === 0, "🔴 NEVER ACROSS DOMAINS: another room's domain key does not select this tap");
+  ok(grantsForExactAsk([grantRow("grant.granted", { askId: "ask_b", scopeKey: "oe-grant-domain::acme", grantId: "g_other" })], "ask_a", ["oe-grant-domain::acme"]).length === 0, "🔴 NEGATIVE: another ASK answered in the same domain is not this card — the ask id still decides");
+  ok(grantsForExactAsk([exactTap], "ask_a", []).length === 0, "VACUITY: no scope keys select no taps");
+  ok(grantsForExactAsk([exactTap], "ask_a", [""]).length === 0, "VACUITY: an EMPTY scope key is dropped rather than matched, so an unreadable key cannot select every row");
+
+  const SAVED = { scopeKey: "wrun-old", domainScopeKey: "oe-grant-domain::acme" };
+  ok(grantReentryScope({ scopeKey: "wrun-current" }, "wrun-current", undefined) === "session", "a run IN the asking session re-enters by session, with no domain key needed");
+  ok(grantReentryScope(SAVED, "wrun-old", undefined) === "session", "…and the session arm still wins where both could match, so a once/session grant never depends on the domain");
+  ok(grantReentryScope(SAVED, "wrun-new", "oe-grant-domain::acme") === "domain", "🔴 THE RULING: the asking seat rotated away and the saved authority re-enters through the room's domain key");
+  ok(grantReentryScope(SAVED, "wrun-new", "oe-grant-domain::other-co") === undefined, "🔴 NEVER ACROSS DOMAINS: another room's domain key re-enters nothing");
+  ok(grantReentryScope(SAVED, "wrun-new", undefined) === undefined, "🔴 NEGATIVE: a run whose own domain key is unreadable falls back to the exact-session refusal");
+  ok(grantReentryScope({ scopeKey: "wrun-old" }, "wrun-new", "oe-grant-domain::acme") === undefined, "🔴 NEGATIVE: a record that saved NO domain key cannot re-enter by domain — the harness never invents the second key");
+  ok(grantReentryScope({ scopeKey: "wrun-old", domainScopeKey: "" }, "wrun-new", "oe-grant-domain::acme") === undefined, "🔴 NEGATIVE: an EMPTY saved domain key is not a key");
+
+  const askedHere = grantRow("grant.asked", { askId: "ask_a", scopeKey: "wrun-current", domainScopeKey: "oe-grant-domain::acme" });
+  const refusedHere = grantRow("grant.refused", { gate: "grant_already_live", scopeKey: "wrun-current", domainScopeKey: "oe-grant-domain::acme" });
+  ok(currentDomainScopeKey([askedHere], "wrun-current") === "oe-grant-domain::acme", "currentDomainScopeKey reads this run's domain key off its own grant.asked row");
+  ok(currentDomainScopeKey([refusedHere], "wrun-current") === "oe-grant-domain::acme", "🔴 …and off the ALREADY-LIVE REFUSAL, which is the only row a tapped rerun leaves behind");
+  ok(currentDomainScopeKey([askedHere], "wrun-other") === undefined, "🔴 NEGATIVE: a row from ANOTHER session names another room and is not read as this run's domain");
+  ok(currentDomainScopeKey([askedHere, grantRow("grant.asked", { scopeKey: "wrun-current", domainScopeKey: "oe-grant-domain::other-co" })], "wrun-current") === undefined, "🔴 NEGATIVE: two different domain keys for one session is unresolvable, and it answers undefined rather than picking one");
+  ok(currentDomainScopeKey([grantRow("grant.asked", { scopeKey: "wrun-current" })], "wrun-current") === undefined, "NEGATIVE: a row carrying no domain key yields none — a room with no windowed domain stays on the exact-session rule");
+  ok(currentDomainScopeKey([askedHere], "") === undefined, "VACUITY: an empty session id reads no row's domain");
 
   const NOW = Date.parse("2026-05-12T11:30:00.000Z");
   const live = grantRow("grant.granted", { askId: "ask_a", expiresAt: "2026-05-12T22:30:00.000Z", grantId: "g_live", owner: "discord/900000000000000001" });
