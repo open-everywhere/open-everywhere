@@ -53,10 +53,26 @@ export async function fetchTranscript(
   return parsed as TranscriptResult;
 }
 
+export const SEAT_READ_TOOL = "read_thread";
+
+export const SEAT_READ_RESULT_TYPES: readonly string[] = ["action.result"];
+
+function isToolResultEvent(type: string, types: readonly string[]): boolean {
+  const t = type.toLowerCase();
+  return types.some((x) => t === x.toLowerCase()) || t.endsWith(".result") || t === "result";
+}
+
+export type SeatCatchUpRoad =
+  | "envelope"
+  | "read"
+  | "none";
+
 export interface SeatCatchUpWakeVerdict {
   readonly wakeIndex?: number;
   readonly carriedCatchUp: boolean;
   readonly staleCarried: readonly string[];
+  readonly road: SeatCatchUpRoad;
+  readonly readIndex?: number;
 }
 
 function eventText(e: TranscriptWireEvent): string {
@@ -65,7 +81,13 @@ function eventText(e: TranscriptWireEvent): string {
 
 export function seatCatchUpWake(
   events: readonly TranscriptWireEvent[],
-  opts: { readonly trigger: string; readonly caughtUp: string; readonly stale?: readonly string[] },
+  opts: {
+    readonly trigger: string;
+    readonly caughtUp: string;
+    readonly stale?: readonly string[];
+    readonly readTool?: string;
+    readonly readResultTypes?: readonly string[];
+  },
 ): SeatCatchUpWakeVerdict {
   let wake: { index: number; text: string } | undefined;
   for (const e of events) {
@@ -73,12 +95,27 @@ export function seatCatchUpWake(
     if (!text.includes(opts.trigger)) continue;
     if (wake === undefined || e.index < wake.index) wake = { index: e.index, text };
   }
-  if (wake === undefined) return { carriedCatchUp: false, staleCarried: [] };
+  if (wake === undefined) return { carriedCatchUp: false, staleCarried: [], road: "none" };
   const text = wake.text;
+  const carriedCatchUp = text.includes(opts.caughtUp);
+  const readTool = opts.readTool ?? SEAT_READ_TOOL;
+  const resultTypes = opts.readResultTypes ?? SEAT_READ_RESULT_TYPES;
+  let readIndex: number | undefined;
+  if (!carriedCatchUp) {
+    for (const e of events) {
+      if (e.index <= wake.index) continue;
+      if (!isToolResultEvent(e.type, resultTypes)) continue;
+      const body = eventText(e);
+      if (!body.includes(readTool) || !body.includes(opts.caughtUp)) continue;
+      if (readIndex === undefined || e.index < readIndex) readIndex = e.index;
+    }
+  }
   return {
     wakeIndex: wake.index,
-    carriedCatchUp: text.includes(opts.caughtUp),
+    carriedCatchUp,
     staleCarried: (opts.stale ?? []).filter((m) => m.length > 0 && text.includes(m)),
+    road: carriedCatchUp ? "envelope" : readIndex !== undefined ? "read" : "none",
+    ...(readIndex !== undefined ? { readIndex } : {}),
   };
 }
 

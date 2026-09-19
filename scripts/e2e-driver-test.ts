@@ -150,6 +150,8 @@ const {
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
 } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
+const { haltConfirmation } = await import("@open-everywhere/core/agent/tools/halt.js");
+const { NO_CARD_NOTE_OPENING } = await import("@open-everywhere/core/agent/channels/approval-claim-guard.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { spendRefusalDmPreflight } = await import("../packages/core/scripts/e2e/spend-refusal-dm.js");
 const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
@@ -2474,6 +2476,28 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(!isFillerAck("I'll send you the numbers: 4 silos, 2 domains."), "isFillerAck: OPE-1692 negative control — \"I'll send\" was NOT widened, so a delivering sentence stays substantive");
   ok(isFillerAck("I’ll confirm once the write is complete."), "isFillerAck: OPE-1692 — the CURLY apostrophe (U+2019) the seat emits matches too");
   ok(isFillerAck("I'll confirm once the write is complete."), "isFillerAck: …and so does the straight one — the branch takes a character class, not one spelling");
+
+  for (const scope of ["surface", "org"] as const) {
+    ok(
+      !isFillerAck(haltConfirmation(scope)),
+      `isFillerAck: OPE-1963 — the host-authored halt confirmation (scope "${scope}") is SUBSTANTIVE, whatever its prose looks like`,
+    );
+    ok(
+      !isFillerAck(`${haltConfirmation(scope)} Surface halt applied for the authorized fixture test.`),
+      `isFillerAck: OPE-1963 — …and still is when the model's own narration lands in the same message (scope "${scope}")`,
+    );
+  }
+  ok(!isFillerAck("Nothing consequential will run now."), "isFillerAck: OPE-1963 — the NOUN-subject promise that caused it stays substantive even shorn of the rest of the template");
+  ok(!isFillerAck("The deploy pipeline will run at 6pm."), "isFillerAck: OPE-1963 negative control — an ordinary sentence about something else running is substantive");
+  ok(
+    isFillerAck("Got it — I’m saving that deploy-day detail to channel memory and will confirm once the write is complete."),
+    "isFillerAck: OPE-1963 — the OPE-1692 ack with its subject ELIDED after \"and\" is still filler",
+  );
+  ok(!isFillerAck(NO_CARD_NOTE_OPENING + " A standing grant covered it.)"), "isFillerAck: OPE-1963 — the host's standing-grant note is host-authored copy and is never skipped");
+  ok(isFillerAck("I’m saving that now; will confirm once the write is complete."), "isFillerAck: OPE-1963 — the elided subject after a SEMICOLON is still a promise");
+  ok(isFillerAck("I’m saving that now — will confirm once the write is complete."), "isFillerAck: OPE-1963 — …and after an EM DASH");
+  ok(isFillerAck("Saving now.\nWill confirm once the write is complete."), "isFillerAck: OPE-1963 — …and at the start of a LINE, which is where a two-sentence ack puts it");
+  ok(!isFillerAck("Luna will report the outcome when the worker settles."), "isFillerAck: OPE-1963 negative control — a NAMED third party is a noun subject, so the branch stays shut");
 }
 
 {
