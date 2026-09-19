@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { auditActionFindings } from "./audit-actions-lint.js";
-import { scanAuditActions, KNOWN_ROAD_NAMES } from "./audit-action-scan-lib.js";
+import { scanAuditActions, constantFiles, KNOWN_ROAD_NAMES, SCAN_PATHSPECS } from "./audit-action-scan-lib.js";
 import {
   CONSEQUENTIAL_AUDIT_ACTIONS,
   DYNAMIC_ACTION_SITES,
@@ -192,6 +196,42 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
   const red = auditActionFindings(real, minusOne, DYNAMIC_ACTION_SITES);
   ok(red.some((f) => f.rule === "undeclared" && f.detail.includes("reply.post")),
     "removing reply.post from the registry reds the real scan — the totality check is load-bearing");
+
+  const realPath = process.env.PATH ?? "";
+  const gitDir = realPath.split(delimiter).find((dir) => dir.length > 0 && existsSync(join(dir, "git")));
+  ok(gitDir !== undefined, "the host resolves git on PATH — the scan's ONE external dependency");
+  const shadow = mkdtempSync(join(tmpdir(), "audit-scan-path-"));
+  try {
+    writeFileSync(join(shadow, "rg"), "#!/bin/sh\nexit 127\n", { mode: 0o755 });
+    process.env.PATH = `${shadow}${delimiter}${gitDir ?? ""}`;
+    let rgUnusable = false;
+    try {
+      execFileSync("rg", ["--version"], { stdio: "ignore" });
+    } catch {
+      rgUnusable = true;
+    }
+    ok(rgUnusable, "🔴 NEGATIVE CONTROL: `rg` really is unusable under the cut PATH");
+
+    const blind = scanAuditActions(process.cwd());
+    ok(blind.filesScanned === real.filesScanned, `…and the scan walks the same ${real.filesScanned} files without it (got ${blind.filesScanned})`);
+    ok(blind.actions.join(",") === real.actions.join(","), "…and resolves the same action names");
+    ok(blind.unresolved.length === real.unresolved.length, "…and reports the same unresolved sites");
+  } finally {
+    process.env.PATH = realPath;
+    rmSync(shadow, { recursive: true, force: true });
+  }
+
+  let shortWalkThrew = false;
+  try {
+    constantFiles(process.cwd(), [":(glob)packages/core/agent/**/*.no-such-extension"], 1);
+  } catch {
+    shortWalkThrew = true;
+  }
+  ok(shortWalkThrew, "a constant walk that reads fewer files than the emission walk matched THROWS");
+
+  const wholeWalk = constantFiles(process.cwd(), SCAN_PATHSPECS, real.filesScanned);
+  ok(wholeWalk.length >= real.filesScanned,
+    `…while the real pathspecs return a superset of the ${real.filesScanned} emission files (got ${wholeWalk.length})`);
 }
 
 console.log(`✓ audit-actions lint: ${n} assertions passed`);

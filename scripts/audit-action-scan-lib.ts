@@ -53,23 +53,43 @@ export const KNOWN_ROAD_NAMES: readonly string[] = KNOWN_ROADS.map((r) => r.name
 
 const SCAN_GLOBS: readonly string[] = ["packages/core/agent", "packages/providers"];
 
-function sourceFiles(repoRoot: string): string[] {
-  const pattern = KNOWN_ROAD_NAMES.join("|");
-  const out = execFileSync("rg", ["-l", pattern, ...SCAN_GLOBS, "--glob", "!node_modules", "--glob", "!*/dist/*", "--glob", "*.ts"], {
+export const SCAN_PATHSPECS: readonly string[] = SCAN_GLOBS.map((dir) => `:(glob)${dir}/**/*.ts`);
+
+function gitLines(repoRoot: string, args: readonly string[]): string[] {
+  const out = execFileSync("git", [...args], {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
-  return out.split("\n").filter(Boolean).filter((f) => !f.includes("/dist/"));
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .filter((f) => !f.includes("/dist/") && !f.includes("/node_modules/"));
 }
 
-function constantFiles(repoRoot: string): string[] {
-  const out = execFileSync("rg", ["--files", ...SCAN_GLOBS, "--glob", "!node_modules", "--glob", "!*/dist/*", "--glob", "*.ts"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return out.split("\n").filter(Boolean).filter((f) => !f.includes("/dist/"));
+function sourceFiles(repoRoot: string): string[] {
+  const pattern = KNOWN_ROAD_NAMES.join("|");
+  let files: string[];
+  try {
+    files = gitLines(repoRoot, ["grep", "--untracked", "--exclude-standard", "--full-name", "-l", "-E", pattern, "--", ...SCAN_PATHSPECS]);
+  } catch (error) {
+    if ((error as { readonly status?: number }).status !== 1) throw error;
+    files = [];
+  }
+  if (files.length === 0) {
+    throw new Error(`audit-action scan: no file under ${SCAN_GLOBS.join(", ")} calls a known audit road — the walk read nothing`);
+  }
+  return files;
+}
+
+export function constantFiles(repoRoot: string, pathspecs: readonly string[], mustCoverAtLeast: number): string[] {
+  const files = gitLines(repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "--full-name", "--", ...pathspecs]);
+  if (files.length < mustCoverAtLeast) {
+    throw new Error(
+      `audit-action scan: the constant walk read ${files.length} file(s) under ${SCAN_GLOBS.join(", ")}, fewer than the ${mustCoverAtLeast} file(s) the emission walk matched over the same paths — the constant walk lost rows`,
+    );
+  }
+  return files;
 }
 
 function collectConstants(repoRoot: string, files: readonly string[]): { readonly values: Map<string, string>; readonly collisions: string[] } {
@@ -184,7 +204,7 @@ function readSpan(road: RoadShape, call: string): SpanReading {
 
 export function scanAuditActions(repoRoot: string): AuditActionScan {
   const files = sourceFiles(repoRoot);
-  const { values: constants, collisions } = collectConstants(repoRoot, constantFiles(repoRoot));
+  const { values: constants, collisions } = collectConstants(repoRoot, constantFiles(repoRoot, SCAN_PATHSPECS, files.length));
   const ambiguous = new Set(collisions);
   const resolved: ResolvedActionSite[] = [];
   const unresolved: UnresolvedActionSite[] = [];
