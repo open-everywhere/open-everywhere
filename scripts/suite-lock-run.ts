@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
+import { withoutDacOverride, writeBitsBite } from "./dac-fence.js";
+import { isVitestCommand, itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
 import { fmtBytes, samplePeakRss } from "./proc-rss.js";
 
 const DEFAULT_LOCK_DIR = "/tmp/oe-suite-locks/full-suite.lock";
@@ -212,6 +213,16 @@ function headSha(): string | undefined {
   }
 }
 
+export function fencedSpawn(cmd: string, args: readonly string[]): { cmd: string; args: string[] } {
+  if (!isVitestCommand(cmd) || writeBitsBite()) return { cmd, args: [...args] };
+  console.error(
+    "suite-lock-run: this process BYPASSES the POSIX write bits (uid 0 with CAP_DAC_OVERRIDE), which would invert every " +
+      "write-fence assertion in the tier. Spawning the suite with the DAC bypass dropped (OPE-1989/OPE-1990) — same uid, " +
+      "same file ownership, ordinary permission checks.",
+  );
+  return withoutDacOverride(cmd, args);
+}
+
 export async function runLocked(
   cmd: string,
   args: string[],
@@ -235,7 +246,8 @@ export async function runLocked(
     const exits: number[] = [];
     for (const run of plan.runs) {
       const label = [cmd, ...run.args].join(" ");
-      const { exit, peakRssBytes } = await spawnMeasured(cmd, run.args, label);
+      const spawnPair = fencedSpawn(cmd, run.args);
+      const { exit, peakRssBytes } = await spawnMeasured(spawnPair.cmd, spawnPair.args, label);
       exits.push(exit);
       console.error(`suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)}`);
     }

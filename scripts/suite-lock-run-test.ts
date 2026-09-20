@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
+import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
+import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, writeBitsBite } from "./dac-fence.js";
 import type { MemoryProbe } from "./ci-max-workers.js";
 import { LOCAL_SHARDS, SANDBOX_SHARDS, itShardCount, itShardsOverride, planShards, tierProofLine, worstExit } from "./it-shards.js";
 import { fmtBytes, ppidOf, rssBytesOf, treeRssBytes, type ProcProbe } from "./proc-rss.js";
@@ -477,6 +478,42 @@ async function main(): Promise<void> {
     assert.equal(fmtBytes(0), "not measured", "an unmeasured peak says so rather than printing 0 GB");
     assert.equal(fmtBytes(12 * 1024 ** 3), "12.0 GB", "a gigabyte-scale peak reads in binary GB");
     assert.equal(fmtBytes(300 * 1024), "300 KB", "🔴 a sub-megabyte peak must not round to `0 MB`, which reads as `not measured`");
+  });
+
+  await check("the wrapper drops the DAC bypass for vitest, and only for vitest", () => {
+    const bits = writeBitsBite();
+
+    const node = fencedSpawn(process.execPath, ["-e", "0"]);
+    assert.equal(node.cmd, process.execPath, "a non-vitest command is spawned exactly as it was asked for");
+    assert.deepEqual(node.args, ["-e", "0"], "…with its arguments untouched");
+
+    const vitest = fencedSpawn("/repo/node_modules/.bin/vitest", ["run", "--shard=1/4"]);
+    if (bits) {
+      assert.equal(vitest.cmd, "/repo/node_modules/.bin/vitest", "a runner the write bits already bite is spawned unwrapped");
+      assert.deepEqual(vitest.args, ["run", "--shard=1/4"], "…with its arguments untouched");
+    } else {
+      assert.match(vitest.cmd, /capsh$/u, "a runner that bypasses the write bits spawns vitest behind capsh");
+      assert.equal(vitest.args[0], `--drop=${DAC_BYPASS_CAPS.join(",")}`, "…dropping exactly the two DAC bypass capabilities, and no others");
+      assert.match(vitest.args.at(-1) ?? "", /vitest'? '?run/u, "…and the wrapped command still runs vitest with its own arguments");
+    }
+  });
+
+  await check("dacFenceScript quotes every word, so a path with a space cannot split", () => {
+    const script = dacFenceScript("/opt/my tools/vitest", ["run", "--reporter=it's-fine"]);
+    assert.ok(script.includes(`'/opt/my tools/vitest'`), "a command path with a space is quoted whole");
+    assert.ok(script.includes(`'--reporter=it'\\''s-fine'`), "…and an embedded single quote is escaped rather than ending the quoting");
+  });
+
+  await check("assertWriteBitsBite names the runner it refuses, and passes once the bits bite", () => {
+    if (writeBitsBite()) {
+      assertWriteBitsBite("this leg");
+      return;
+    }
+    assert.throws(
+      () => assertWriteBitsBite("this leg"),
+      /this leg .*BYPASSES them \(CAP_DAC_OVERRIDE\)/su,
+      "an unfenced runner is refused BY NAME — never a silent pass",
+    );
   });
 
   rmSync(scratch, { recursive: true, force: true });

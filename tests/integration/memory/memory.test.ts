@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 
+import { assertWriteBitsBite } from "../../../scripts/dac-fence.js";
 import { __setStaleTurnParkMsForTest } from "../../../agent/model/scripted-model";
 
 import {
@@ -150,6 +151,8 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(refusalText).toContain("memory/it-memory-brain/");
   expect(refusalText).toContain("DROPPED");
 
+  assertWriteBitsBite("TEST 1's shell-fence legs");
+
   const shells = childResults
     .filter((t) => t.name === "bash")
     .map((t) => t.output as { exitCode: number; stdout: string; stderr: string });
@@ -251,6 +254,7 @@ test("OPE-999 — update_status still writes STATUS.md against the fenced memory
   if (!childTerminal) throw new Error("memory test: no child request recorded — the delegation never ran");
   const shell = childTerminal.toolResults.find((t) => t.name === "bash")?.output as { exitCode: number; stdout: string; stderr: string } | undefined;
   expect(shell).toBeDefined();
+  assertWriteBitsBite("TEST 1b's re-lock leg");
   expect(shell!.exitCode).not.toBe(0);
   expect(`${shell!.stderr}${shell!.stdout}`).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(siloFilePath("it-memory-b-brain", "after-status.md"))).toBe(false);

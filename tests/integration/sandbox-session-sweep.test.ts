@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "vitest";
 
+import { assertWriteBitsBite } from "../../scripts/dac-fence.js";
 import { JUST_BASH_SESSIONS_RELPATH, sweepStaleSandboxSessions } from "./sandbox-session-sweep";
 import { scratchDir } from "./temp-dir-fixtures";
 
@@ -43,7 +44,8 @@ test("sweepStaleSandboxSessions collects a stale session, leaves the current run
   expect(sweepStaleSandboxSessions(root, now)).toBe(0);
 });
 
-test.skipIf(process.getuid?.() === 0)("sweepStaleSandboxSessions clears a stale session even when it ships a read-only subtree", () => {
+test("sweepStaleSandboxSessions clears a stale session even when it ships a read-only subtree", () => {
+  assertWriteBitsBite("this test");
   const root = scratchDir("oe-it-fixture-sandbox-sweep-readonly-");
   const sessionsDir = join(root, JUST_BASH_SESSIONS_RELPATH);
   mkdirSync(sessionsDir, { recursive: true });

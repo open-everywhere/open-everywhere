@@ -35,11 +35,15 @@ export interface ShardPlan {
   readonly runs: readonly ShardRun[];
 }
 
+export function isVitestCommand(cmd: string): boolean {
+  return /(^|[\\/])vitest(\.cmd|\.js)?$/u.test(cmd);
+}
+
 export function planShards(cmd: string, args: readonly string[], shards: number): ShardPlan {
   const single: ShardRun[] = [{ args: [...args], suite: INTEGRATION_SUITE_NAME }];
   const unsharded = (reason: string): ShardPlan => ({ wholeTier: false, reason, runs: [{ args: [...args], suite: INTEGRATION_SUITE_NAME }] });
 
-  if (!/(^|[\\/])vitest(\.cmd|\.js)?$/u.test(cmd)) return unsharded(`the wrapped command is \`${cmd}\`, not vitest`);
+  if (!isVitestCommand(cmd)) return unsharded(`the wrapped command is \`${cmd}\`, not vitest`);
   if (args[0] !== "run") return unsharded("the wrapped vitest call is not `vitest run`");
   const rest = args.slice(1);
   if (rest.some((a) => a.startsWith("--shard"))) return unsharded("the caller already chose a --shard");

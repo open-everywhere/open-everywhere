@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   MEMORY_ROOT_DIR,
   lockMemoryRoot,
@@ -12,6 +13,7 @@ import {
   withMemoryRootWritable,
 } from "../agent/memory/root-fence.js";
 import { lockCommand } from "../agent/memory/readonly.js";
+import { withoutDacOverride, writeBitsBite } from "../../../scripts/dac-fence.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -24,9 +26,13 @@ ok(!memoryRootLockCommand().includes("-R"), "the root lock is never recursive");
 ok(lockCommand(MEMORY_ROOT_DIR).includes("-R"), "…and readonly.ts's tier lock still IS recursive — the two are not interchangeable");
 ok(memoryRootUnlockCommand() === `chmod u+w '${MEMORY_ROOT_DIR}'`, "unlock command restores owner write on the root only");
 
-if (process.getuid?.() === 0) {
-  console.log("⏭  memory-root-fence: §1 SKIPPED — running as uid 0, which bypasses the permission bits the fence relies on.");
-} else {
+const MEASURE_ONLY_FLAG = "--measure-only";
+const MEASURED_PREFIX = "MEASURED assertions=";
+const selfPath = fileURLToPath(import.meta.url);
+const tsxBin = join(dirname(selfPath), "..", "..", "..", "node_modules", ".bin", "tsx");
+
+async function runMeasurement(): Promise<number> {
+  const before = n;
   const base = mkdtempSync(join(tmpdir(), "oe-root-fence-"));
   try {
     const root = join(base, MEMORY_ROOT_DIR);
@@ -89,6 +95,38 @@ if (process.getuid?.() === 0) {
     }
     rmSync(base, { recursive: true, force: true });
   }
+  return n - before;
+}
+
+function runMeasurementFenced(): number {
+  const { cmd, args } = withoutDacOverride(tsxBin, [selfPath, MEASURE_ONLY_FLAG]);
+  const child = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  if (child.error !== undefined) throw child.error;
+  const out = child.stdout ?? "";
+  process.stdout.write(
+    out
+      .split("\n")
+      .filter((line) => !line.startsWith(MEASURED_PREFIX))
+      .join("\n"),
+  );
+  assert.equal(child.status, 0, `§1 measured in a fenced child process (exit ${String(child.status)})`);
+  const measured = new RegExp(`^${MEASURED_PREFIX}(\\d+)$`, "mu").exec(out);
+  assert.ok(measured !== null, "the fenced child reported its assertion count — without it a silent early return would read as a pass");
+  const made = Number(measured[1]);
+  console.log(`🔒 memory-root-fence: §1 ran in a child process with CAP_DAC_OVERRIDE dropped — ${made} assertion(s).`);
+  return made;
+}
+
+if (process.argv.includes(MEASURE_ONLY_FLAG)) {
+  const made = await runMeasurement();
+  console.log(`${MEASURED_PREFIX}${made}`);
+  process.exit(0);
+}
+
+if (writeBitsBite()) {
+  await runMeasurement();
+} else {
+  n += runMeasurementFenced();
 }
 
 class RecordingSandbox {
