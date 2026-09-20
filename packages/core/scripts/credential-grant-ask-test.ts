@@ -1086,4 +1086,22 @@ console.log("10. the standing binding reaches the ask:");
   useDomains1950(() => [ROOM_DOMAIN]);
 }
 
+{
+  const description = String((requestCredentialGrantEntry as unknown as { description: string }).description);
+
+  ok(
+    !/Raise it as soon as you know whose account it is/.test(description),
+    "🔴 the description still tells the model to raise the ask as soon as it knows whose account it is — the line the S24 red was measured under",
+  );
+
+  ok(/own account/i.test(description), "the description no longer says the ask is for a person's OWN account");
+  ok(/nobody has bound here/i.test(description), "the description no longer says the ask is for a connector NOBODY has bound here");
+
+  ok(/REST skill/i.test(description), "the description does not name the REST skill on the team integration key as the org road");
+  ok(/already bound to this conversation/i.test(description), "the description does not name an already-bound connector as the org road");
+  ok(/delegat/i.test(description), "the description does not say the org road is reached by delegating — a lean seat holds neither of those tools");
+
+  ok(!/refused/i.test(description.split("There is no TOOL NAME")[0] ?? ""), "🔴 the new copy promises a refusal for a needless ask — nothing in this tree refuses one");
+}
+
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

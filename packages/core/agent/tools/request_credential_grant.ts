@@ -142,7 +142,12 @@ export const requestCredentialGrantEntry = defineTool({
     "the room that the ask went out, then carry on with something else; do not wait for an answer and " +
     "do not ask twice. When they approve, this conversation gains a tool on its next turn and the " +
     "answer is posted here. This grants nothing by itself. " +
-    "🔴 Raise it as soon as you know whose account it is — there is no TOOL NAME to look up first. A connector call that fails with " +
+    "🔴 TWO THINGS NEED THIS ASK: a PERSON'S OWN ACCOUNT, when that person has asked for it, and a connector " +
+    "NOBODY HAS BOUND HERE. Org work runs on the ORG'S OWN ROAD — the Notion REST skill on the team integration " +
+    "key, or a connector already bound to this conversation — and you reach either by delegating the work to a " +
+    "task, which is where those tools live. Never ask a person to lend their own access for work the org's own " +
+    "road already does. " +
+    "There is no TOOL NAME to look up first. A connector call that fails with " +
     '"not granted to this surface" is the REASON to ask; it is not this ask being refused, and it never becomes one. Say an ask ' +
     "went out, or was refused, only from what THIS tool hands back.",
   inputSchema: z.object({
