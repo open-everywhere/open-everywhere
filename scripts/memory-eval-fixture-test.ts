@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { TRACKED_ROOM_IDS, idOfKey } from "../packages/core/scripts/e2e/fixture-inventory-lib.js";
 
 const NOTION = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101";
 const SLACK_MEM = "slack/T0EXAMPLE/C0EXCHAN005";
+const NOTION_OWN = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000105";
 const DOMAIN_REASONING_CEILING = "high";
 const UNMOVED = [
   "slack/T0EXAMPLE/C0EXCHAN003",
   "slack/T0EXAMPLE/C0EXRANDM",
   "github/example-owner/e2e-scratch",
   "discord/1300000000000000100/1300000000000000101",
+  "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00000000000000001-thread.tacv2",
   "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011",
+  NOTION_OWN,
 ];
 
 type Snapshot = {
@@ -94,6 +98,44 @@ ok(true, "domains.ts loads clean with OE_MEMORY_EVAL=1 (channel exclusivity + un
   ok(
     on.ceilings["e2e-memory"] === DOMAIN_REASONING_CEILING,
     `flag on: e2e-memory declares reasoningCeiling "${DOMAIN_REASONING_CEILING}" (got ${on.ceilings["e2e-memory"] ?? "none — every --effort high run silently clamps to the org default"})`,
+  );
+}
+
+{
+  const notionRooms: readonly string[] = [NOTION, NOTION_OWN];
+  ok(new Set(notionRooms).size === 2, "the own-account page and the Test page are two different rooms — this names a copy-paste of one id over the other, which the flag-on assertions also fail on");
+  ok(
+    off.resolved[NOTION_OWN] === "e2e-unified",
+    `flag off: the own-account Notion page resolves to e2e-unified (got ${off.resolved[NOTION_OWN]}) — an undeclared page is what the ambient gate refuses`,
+  );
+  ok(
+    on.resolved[NOTION_OWN] === "e2e-unified",
+    `flag on: the own-account Notion page STAYS on e2e-unified (got ${on.resolved[NOTION_OWN]}) — only the Test page is on loan to the battery`,
+  );
+  const notionReachOff = (off.reach["e2e-unified"] ?? []).filter((k) => k.startsWith("notion/"));
+  const notionReachOn = (on.reach["e2e-unified"] ?? []).filter((k) => k.startsWith("notion/"));
+  ok(
+    notionReachOff.length === 2,
+    `flag off: e2e-unified holds BOTH Notion rooms (found ${notionReachOff.length}: ${notionReachOff.join(", ") || "none"})`,
+  );
+  ok(
+    notionReachOn.length === 1,
+    `flag on: e2e-unified holds ONE Notion room — the Test page has gone to the battery (found ${notionReachOn.length}: ${notionReachOn.join(", ") || "none"})`,
+  );
+  ok((off.reach["e2e-unified"] ?? []).includes(NOTION_OWN), "flag off: e2e-unified lists the own-account Notion page");
+  ok((on.reach["e2e-unified"] ?? []).includes(NOTION_OWN), "flag on: e2e-unified STILL lists the own-account Notion page");
+  ok(!(on.reach["e2e-memory"] ?? []).includes(NOTION_OWN), "flag on: e2e-memory does NOT take the own-account page — the battery asked for one page, not both");
+}
+
+{
+  const tracked = TRACKED_ROOM_IDS.E2E_NOTION_OWN_ACCOUNT_PAGE_ID;
+  ok(
+    typeof tracked === "string" && tracked.length > 0,
+    `TRACKED_ROOM_IDS carries E2E_NOTION_OWN_ACCOUNT_PAGE_ID (got ${tracked ?? "nothing"}) — without it the page resolves from the environment alone, and a clone cannot provision the room`,
+  );
+  ok(
+    tracked === idOfKey(NOTION_OWN),
+    `the tracked room id and the e2e-unified declaration name ONE page (tracked ${tracked}, declared ${idOfKey(NOTION_OWN)}) — a drift routes the scenario at a page the domain does not reach`,
   );
 }
 

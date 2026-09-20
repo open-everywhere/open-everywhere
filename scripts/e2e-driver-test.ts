@@ -6592,7 +6592,7 @@ rmSync(dir, { recursive: true, force: true });
   );
   ok(
     /ctx\.skip\(\s*`\$\{ENV\.notionOwnAccountPageId\} is not set/.test(legBody),
-    "🔴 OPE-1984: an unset page is a SKIP naming the variable, never a fallback to the ambient page — a fallback is the state this ticket exists to remove",
+    "🔴 OPE-1984: a page this harness cannot name is a SKIP naming the variable, never a fallback to the ambient page — a fallback is the state this ticket exists to remove. Since OPE-1992 the id is TRACKED, so the skip fires only when neither the variable nor TRACKED_ROOM_IDS carries one",
   );
   ok(
     legBody.indexOf("grantOverlapVerdict(") > 0 && legBody.indexOf("grantOverlapVerdict(") < legBody.indexOf("appendParagraphBlock("),

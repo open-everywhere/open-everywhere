@@ -3544,10 +3544,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const ownPageId = roomIdFor(ENV.notionOwnAccountPageId, process.env);
       if (ownPageId === undefined)
         ctx.skip(
-          `${ENV.notionOwnAccountPageId} is not set — this leg needs a Notion page of its OWN, and it may not fall back to ` +
+          `${ENV.notionOwnAccountPageId} is not set and TRACKED_ROOM_IDS carries no id for it — this leg needs a Notion page of its OWN, and it may not fall back to ` +
             `${ENV.notionAmbientPageId}: the pack's own credential-grant legs pin that page as a grant's frozen argument, so an ordinary read of it ` +
             `takes the borrowed personal road and writes no ${CONNECTOR_ACTING_IDENTITY_ACTION} row at all (OPE-1984, measured on two live runs). ` +
-            `Provision a SECOND page in the same ambientSupervisor domain as ${ENV.notionAmbientPageId} and export its id.`,
+            `Provision a SECOND page in the same ambientSupervisor domain as ${ENV.notionAmbientPageId}, declare it in TRACKED_ROOM_IDS and in the e2e-unified domain, or export its id here.`,
         );
       const not = ctx.notionAmbient!.forPage(ownPageId!);
       if (!ctx.auditRead)

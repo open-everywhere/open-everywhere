@@ -693,6 +693,11 @@ export const TRACKED_ROOM_RESOLVERS: Readonly<Record<string, TrackedRoomResolver
     },
     alsoNeeds: roomExtraVars(ENGAGED_ROOM_VARS.linear),
   },
+  [ENV.notionOwnAccountPageId]: {
+    capability: "notionAmbient",
+    roomId: (env, tracked) => roomIdFor(ENV.notionOwnAccountPageId, env, tracked),
+    alsoNeeds: roomExtraVars(ENV.notionOwnAccountPageId),
+  },
 };
 
 export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): CapabilityReport {

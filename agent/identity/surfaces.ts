@@ -23,6 +23,7 @@ export const surfaces: readonly Surface[] = [
   defineSurface({ key: "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011", trust: "internal" }),
   defineSurface({ key: "notion/40000000-0000-4000-8000-000000000001", trust: "internal" }),
   defineSurface({ key: "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101", trust: "internal" }),
+  defineSurface({ key: "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000105", trust: "internal" }),
 
   defineSurface({ key: "github/example-owner", trust: "internal" }),
   defineSurface({ key: "github/example-owner/e2e-scratch", trust: "internal" }),

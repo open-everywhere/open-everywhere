@@ -172,6 +172,8 @@ export const TRACKED_ROOM_IDS: Readonly<Record<string, string>> = {
   E2E_SLACK_HALT_CHANNEL: "C0EXCHAN011",
 
   E2E_ADDRESSED_GITHUB_REPO: "example-owner/oe-e2e-addressed-github",
+
+  E2E_NOTION_OWN_ACCOUNT_PAGE_ID: "40000000-0000-4000-8000-000000000105",
 };
 
 export type CapFixtureScope = "channel" | "dm";
