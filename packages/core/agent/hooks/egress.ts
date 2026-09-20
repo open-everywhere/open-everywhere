@@ -3,6 +3,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { resolveAccessFor } from "../access/request.js";
+import { noteOwnAccountRouteRefusal } from "../connections/own-account-gate.js";
 import { compileNetworkPolicy, openWriteHosts, writeHostsAuditFields } from "../access/egress.js";
 import { noteStandingWriteGrants } from "../channels/standing-authority.js";
 import { browserEgressHosts } from "../access/browser-hosts.js";
@@ -41,6 +42,7 @@ export interface ResolvedEgressPolicy {
   readonly reachableHosts: readonly ReachableHost[];
   readonly compileError?: string;
   readonly halted?: true;
+  readonly ownAccountEgressRefusals: readonly { readonly connector: string; readonly viaConnection: string }[];
 }
 
 export async function computeEgressPolicy(
@@ -51,7 +53,7 @@ export async function computeEgressPolicy(
   try {
     const access = resolve();
     if (halted !== undefined && (await halted())) {
-      return { policy: "deny-all", scopeKey: access.scopeKey, connectors: [], connectorContentOrigin: {}, reachableHosts: [], halted: true };
+      return { policy: "deny-all", scopeKey: access.scopeKey, connectors: [], connectorContentOrigin: {}, reachableHosts: [], halted: true, ownAccountEgressRefusals: access.ownAccountEgressRefusals ?? [] };
     }
     const policy = await compile(access);
     return {
@@ -60,6 +62,7 @@ export async function computeEgressPolicy(
       connectors: access.connectors,
       connectorContentOrigin: access.connectorContentOrigin,
       reachableHosts: access.reachableHosts,
+      ownAccountEgressRefusals: access.ownAccountEgressRefusals ?? [],
     };
   } catch (err) {
     return {
@@ -69,6 +72,7 @@ export async function computeEgressPolicy(
       connectorContentOrigin: {},
       reachableHosts: [],
       compileError: String(err),
+      ownAccountEgressRefusals: [],
     };
   }
 }
@@ -152,12 +156,13 @@ export interface EgressEnforcementResult {
   readonly compileError?: string;
   readonly enforceError?: string;
   readonly abortError?: Error;
+  readonly ownAccountEgressRefusals: readonly { readonly connector: string; readonly viaConnection: string }[];
 }
 
 export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementDeps): Promise<EgressEnforcementResult> {
   const audit = deps.audit ?? appendAudit;
 
-  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError, halted } = await computeEgressPolicy(
+  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError, halted, ownAccountEgressRefusals } = await computeEgressPolicy(
     deps.resolve,
     deps.compile,
     deps.halted,
@@ -226,7 +231,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
       } catch (err) {
         log(`subagent divergence audit skipped (the child is still being failed): ${String(err)}`);
       }
-      return { phase, applied: false, reason: "policy-changed", fingerprint, abortError: failure };
+      return { phase, applied: false, reason: "policy-changed", fingerprint, abortError: failure, ownAccountEgressRefusals };
     }
   }
 
@@ -242,7 +247,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
   let publishState: EgressEnforcementState | null = null;
 
   if (!reapply) {
-    return { phase, applied: false, reason, fingerprint, ...(compileError ? { compileError } : {}) };
+    return { phase, applied: false, reason, fingerprint, ownAccountEgressRefusals, ...(compileError ? { compileError } : {}) };
   }
 
   if (wantEnforce || compileError) {
@@ -351,6 +356,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     reason,
     enforced,
     fingerprint,
+    ownAccountEgressRefusals,
     ...(compileError ? { compileError } : {}),
     ...(enforceError ? { enforceError } : {}),
     ...(abortError ? { abortError } : {}),
@@ -410,11 +416,20 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
   };
 }
 
+function noteOwnAccountWithheld(ctx: HookContext, result: EgressEnforcementResult): void {
+  try {
+    void noteOwnAccountRouteRefusal(ctx as unknown as BindableContext, result.ownAccountEgressRefusals).catch(() => undefined);
+  } catch (err) {
+    log(`own-account acting-identity row skipped (the withholding itself is unaffected): ${String(err)}`);
+  }
+}
+
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
       await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
       const result = await enforceEgress("session.started", liveDeps(ctx));
+      noteOwnAccountWithheld(ctx, result);
       if (result.abortError) throw result.abortError;
     },
 
@@ -422,6 +437,7 @@ export default defineHook({
       try {
         await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
         const result = await enforceEgress("turn.started", liveDeps(ctx));
+        noteOwnAccountWithheld(ctx, result);
         if (result.abortError) throw result.abortError;
       } catch (err) {
         if (err instanceof DelegatedTaskBindingUnavailableError || (err instanceof Error && err.message.includes("identical-binding invariant VIOLATED"))) throw err;

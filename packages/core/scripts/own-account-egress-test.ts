@@ -199,5 +199,48 @@ ok(
   "…and the reason, in the words the member reads",
 );
 
+{
+  const { CONNECTOR_ACTING_IDENTITY_ACTION, noteOwnAccountRouteRefusal, ownAccountRouteLabel } = await import("../agent/connections/own-account-gate.js");
+  ok(ownAccountRouteLabel(["notion-rest"]) === "egress:notion-rest", "the route label names the connection whose key was not stamped");
+  ok(ownAccountRouteLabel(["b", "a", "b"]) === "egress:a,b", "…and EVERY connection it cost, deduped and sorted — never just the first");
+  const asking = workerCtx(renderOwnAccountStamp("seat-1", "turn_4", { connector: "notion", ambiguous: false }));
+  await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  let actingRows: { action: string; detail?: Record<string, unknown> }[] = [];
+  for (let i = 0; i < 40 && actingRows.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    actingRows = (await readAudit({ org: "default", limit: 100 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION);
+  }
+  ok(actingRows.length >= 1, `the withholding also writes a ${CONNECTOR_ACTING_IDENTITY_ACTION} row (got ${actingRows.length})`);
+  const d = actingRows[0]?.detail ?? {};
+  ok(d["connector"] === "notion", "…naming the connector the ask named");
+  ok(d["refused"] === true, "🔴 …and it is a REFUSAL, never an install read that answered the ask");
+  ok(d["askRecognised"] === true, "…and it records that an ask was recognised");
+  ok(d["requiredIdentity"] === "human-acting", "…and the identity the request required");
+  ok(d["identity"] === undefined, "🔴 …and NO identity to run under — the gate's `refused` ⇒ no `identity` contract");
+  ok(d["tool"] === "egress:notion-rest", `…and the ROUTE in place of a tool name, so the refusal joins the road it stopped (got ${String(d["tool"])})`);
+  ok(typeof d["reason"] === "string" && (d["reason"] as string).startsWith("own-account-ask-"), `…and the gate's own reason code (got ${String(d["reason"])})`);
+
+  const countBefore = (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION).length;
+  await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  await new Promise((r) => setTimeout(r, 400));
+  const countAfter = (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION).length;
+  ok(countAfter === countBefore, `🔴 a SECOND pass on the same turn wrote a second row (before ${countBefore}, after ${countAfter})`);
+}
+
+{
+  const { CONNECTOR_ACTING_IDENTITY_ACTION, noteOwnAccountRouteRefusal } = await import("../agent/connections/own-account-gate.js");
+  const actingCount = async (): Promise<number> => (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION).length;
+  const before = await actingCount();
+  const plain = await hostsOf(workerCtx(undefined));
+  ok(plain.includes("api.notion.com"), "the ordinary ask still reaches the vendor host on the team key");
+  const plainCtx = workerCtx(undefined);
+  const plainAccess = resolveAccessFor(plainCtx);
+  ok(plainAccess.ownAccountEgressRefusals === undefined, "…and nothing is recorded as withheld");
+  await noteOwnAccountRouteRefusal(plainCtx, plainAccess.ownAccountEgressRefusals ?? []);
+  await new Promise((r) => setTimeout(r, 400));
+  const after = await actingCount();
+  ok(after === before, `🔴 …and the ordinary read adds NO ${CONNECTOR_ACTING_IDENTITY_ACTION} row (before ${before}, after ${after})`);
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ own-account-egress: ${n} assertions passed`);

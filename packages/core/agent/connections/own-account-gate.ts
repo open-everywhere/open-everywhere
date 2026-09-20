@@ -12,6 +12,7 @@ import type { Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { credentialGrantStateRefusal, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { adoptedOwnAccountAsk } from "./own-account-carriage.js";
+import { ownAccountVendorFor } from "./own-account-vendors.js";
 import {
   actingIdentityAuditDetail,
   decideActingIdentity,
@@ -134,9 +135,9 @@ function askerKey(ctx: BindableContext): string | undefined {
   }
 }
 
-export async function connectorActingIdentityForTurn(ctx: BindableContext, vendor: OwnAccountVendor, tool: string): Promise<ActingIdentityVerdict> {
+function actingIdentityDepsForTurn(ctx: BindableContext, vendor: OwnAccountVendor, tool: string): ConnectorActingIdentityDeps {
   const asker = askerKey(ctx);
-  return await decideConnectorActingIdentity({
+  return {
     ask: () => ownAccountAskForTurn(ctx, [vendor]),
     ...(asker === undefined ? {} : { askerPrincipalId: asker }),
     audit: async (detail) => {
@@ -152,5 +153,45 @@ export async function connectorActingIdentityForTurn(ctx: BindableContext, vendo
     nowIso: new Date().toISOString(),
     tool,
     vendor,
-  });
+  };
+}
+
+export async function connectorActingIdentityForTurn(ctx: BindableContext, vendor: OwnAccountVendor, tool: string): Promise<ActingIdentityVerdict> {
+  return await decideConnectorActingIdentity(actingIdentityDepsForTurn(ctx, vendor, tool));
+}
+
+async function routeActingIdentityForTurn(ctx: BindableContext, vendor: OwnAccountVendor, route: string): Promise<ActingIdentityVerdict> {
+  return await decideConnectorActingIdentity(actingIdentityDepsForTurn(ctx, vendor, route));
+}
+
+export function ownAccountRouteLabel(viaConnections: readonly string[]): string {
+  return `egress:${[...new Set(viaConnections)].sort().join(",")}`;
+}
+
+const routeRefusalWritten = new Set<string>();
+const ROUTE_REFUSAL_MEMO_MAX = 512;
+
+export async function noteOwnAccountRouteRefusal(
+  ctx: BindableContext,
+  refusals: readonly { readonly connector: string; readonly viaConnection: string }[],
+): Promise<void> {
+  const first = refusals[0];
+  if (first === undefined) return;
+  if (memoHolds(ctx, first.connector)) return;
+  await routeActingIdentityForTurn(ctx, ownAccountVendorFor(first.connector), ownAccountRouteLabel(refusals.map((r) => r.viaConnection)));
+}
+
+function memoHolds(ctx: BindableContext, connector: string): boolean {
+  let session: string | undefined;
+  try {
+    session = currentSessionId(ctx);
+  } catch {
+    return false;
+  }
+  if (session === undefined) return false;
+  const key = [session, connector].join("\u0000");
+  if (routeRefusalWritten.has(key)) return true;
+  if (routeRefusalWritten.size >= ROUTE_REFUSAL_MEMO_MAX) routeRefusalWritten.clear();
+  routeRefusalWritten.add(key);
+  return false;
 }
