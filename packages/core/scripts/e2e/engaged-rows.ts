@@ -92,6 +92,17 @@ export function replyPostCount(rows: readonly AuditWireEntry[], opts: { readonly
   return rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface)).length;
 }
 
+export function replyPostSurfaces(rows: readonly AuditWireEntry[]): readonly string[] {
+  const seen: string[] = [];
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    const s = r.surface;
+    if (typeof s !== "string" || s.length === 0) continue;
+    if (!seen.includes(s)) seen.push(s);
+  }
+  return seen;
+}
+
 export interface SeatContinuity {
   readonly replies: number;
   readonly answeredWakeIds: readonly string[];

@@ -165,6 +165,7 @@ const {
   isAmbientLegAddressing,
   dispatchedAction,
   replyPostCount,
+  replyPostSurfaces,
   reportedDirectMention,
   reportedNameDrop,
   reportedSeatedChannelWatch,
@@ -1826,9 +1827,35 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const { approvalRequestForSlackAsk, factToken, approveButton, contradictButton, legGate } = await import("../packages/core/scripts/e2e/journey.js");
+  const { approvalRequestForSlackAsk, bareSurfaceSegment, factToken, otherFactTokens, approveButton, contradictButton, legGate } = await import(
+    "../packages/core/scripts/e2e/journey.js"
+  );
   ok(/^falcon-\d{1,5}$/.test(factToken("falcon")), "factToken appends a run-unique numeric suffix to the stem");
   ok(factToken("x") !== factToken("x") || true, "factToken is stem-scoped (suffix derives from the clock)");
+
+  ok(bareSurfaceSegment("example-owner/oe-e2e-addressed-github") === "oe-e2e-addressed-github", "🔴 OPE-1991: the owner/repo slug reduces to the repo NAME the reply.post row carries");
+  ok(bareSurfaceSegment("C0ABC") === "C0ABC", "IDEMPOTENT on a value with no path — a Discord snowflake, a Linear team id and a Notion page id all pass through unchanged");
+  ok(bareSurfaceSegment("slack/T0ABC/C0ABC") === "C0ABC", "…and a fully-qualified surface KEY reduces to the bare segment too, which is the same conversion in the other direction");
+  ok(bareSurfaceSegment("") === "", "NEGATIVE: an empty value is handed back, never turned into some other scope");
+  ok(bareSurfaceSegment("owner/") === "owner/", "🔴 NEGATIVE: a trailing slash yields an EMPTY last segment, and an empty scope reads as NO scope at all — so the value is handed back instead");
+
+  ok(
+    JSON.stringify(otherFactTokens("The explicit verification record says the OPE121 canary code is obsidian-37625", "obsidian", "obsidian-54772")) ===
+      JSON.stringify(["obsidian-37625"]),
+    "🔴 OPE-1977: otherFactTokens names the PREVIOUS board's canary the recall turn chose instead — the line that tells fixture accumulation from a broken memory read",
+  );
+  ok(otherFactTokens("the canary is obsidian-54772", "obsidian", "obsidian-54772").length === 0, "NEGATIVE: this run's OWN canary is never reported as stale");
+  ok(
+    otherFactTokens("the canary is OBSIDIAN-54772", "obsidian", "obsidian-54772").length === 0,
+    "NEGATIVE: the comparison is case-insensitive, exactly as the recall gate's own containment check is — a case difference is not a second canary",
+  );
+  ok(
+    JSON.stringify(otherFactTokens("obsidian-1 and obsidian-2 and obsidian-1", "obsidian", "obsidian-9")) === JSON.stringify(["obsidian-1", "obsidian-2"]),
+    "…each stale token ONCE, in first-seen order — a silo holding one line twice is still one stale canary",
+  );
+  ok(otherFactTokens("no tokens here at all", "obsidian", "obsidian-1").length === 0, "VACUITY: a reply quoting no token claims nothing — the reader is a diagnostic, never an assertion of its own");
+  ok(otherFactTokens("abc-1", "a.c", "x").length === 0, "🔴 the stem is ESCAPED, so a caller may pass any literal — an unescaped `a.c` would match `abc-1` and report a token nothing wrote");
+  ok(JSON.stringify(otherFactTokens("a.c-1", "a.c", "x")) === JSON.stringify(["a.c-1"]), "…and the escaped stem still matches its own literal (the positive control for the line above)");
   const card = { ts: "1.1", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default" }] };
   const decoded = approveButton(card);
   ok(decoded?.pendingId === "row-9" && decoded.org === "default", "approveButton decodes pendingId off the action_id and org off value");
@@ -5672,6 +5699,32 @@ rmSync(dir, { recursive: true, force: true });
   ok(replyPostCount([row("slack.no_reply", {})]) === 0, "NEGATIVE: a silence row is not a post");
   ok(replyPostCount([]) === 0, "VACUITY: an empty window is zero posts — which is what AUDITED silence means");
 
+  {
+    const JOURNEY_PAGE = "3d4cb5e7-0000-4000-8000-000000000001";
+    const SIBLING_PAGE = "394cb5e7-0000-4000-8000-000000000002";
+    const window = [post(SIBLING_PAGE)];
+    ok(
+      replyPostCount(window, { surface: JOURNEY_PAGE }) === 0,
+      "🔴 OPE-1991: a reply.post on a SIBLING surface inside the silence window does NOT fail the audited-silence gate — the deployment answered another page and honoured the stop on this one",
+    );
+    ok(
+      replyPostCount(window) === 1,
+      "…and the same window UNSCOPED counts it, which is exactly the read that red a live run leg 58 against a healthy deployment",
+    );
+    ok(
+      replyPostCount([...window, post(JOURNEY_PAGE)], { surface: JOURNEY_PAGE }) === 1,
+      "🔴 NOT A BLANKET WIDENING: a reply on the journey's OWN surface in the same window still fails the gate, which is the broken stop this leg exists to catch",
+    );
+  }
+
+  ok(
+    JSON.stringify(replyPostSurfaces([post("C1"), post("CZ"), post("C1")])) === JSON.stringify(["C1", "CZ"]),
+    "replyPostSurfaces names each surface ONCE, in first-seen order — the diagnostic beside a scope that matched nothing",
+  );
+  ok(replyPostSurfaces([row("slack.no_reply", {}, "C1")]).length === 0, "NEGATIVE: a silence row contributes no surface — only posts do");
+  ok(replyPostSurfaces([post("")]).length === 0, "NEGATIVE: an unreadable surface is left out, never rendered as a blank entry that names nothing");
+  ok(replyPostSurfaces([]).length === 0, "VACUITY: an empty window names no surfaces");
+
   const joinedReply = (wakeId: unknown, surface = "C1") => row(REPLY_POST_ACTION, { sessionId: "seat", wakeId }, surface);
   const answered = (posts: readonly AuditWireEntry[]) => seatContinuity(posts, { surface: "C1", admittedWakeIds: ["w1", "w2"] }).answeredWakeIds;
   ok(JSON.stringify(answered([joinedReply("w1"), joinedReply("w1")])) === JSON.stringify(["w1"]), "duplicate posts do not prove a second answered wake");
@@ -5946,6 +5999,56 @@ rmSync(dir, { recursive: true, force: true });
       (gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length === 1,
       `OPE-1711: exactly ONE single-read reply.post gate remains IN THE ENGAGED HELPERS — the audited-SILENCE gate, which must not poll (found ${(gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length}; this counts the REPLY_POST_ACTION spelling those helpers use, not every "reply.post" read in the file)`,
     );
+
+    {
+      const calls = gatesSrc.match(/await gateAuditedSilence\(ctx, \{[^}]*\}\)/g) ?? [];
+      ok(
+        calls.length === 5,
+        `🔴 OPE-1991: all five J-ENGAGED journeys call the audited-silence gate (found ${calls.length}) — a journey that stopped calling it would satisfy every per-call assertion below by being absent`,
+      );
+      ok(
+        calls.every((c) => c.includes("surface") && c.includes("liveFrom:")),
+        `🔴 OPE-1991: every call passes BOTH the surface scope and the liveness watermark — the unscoped shape counted a sibling page's correct answer as a broken stop in a live run, and an unchecked scope would pass vacuously instead`,
+      );
+      const expected: Readonly<Record<string, string>> = {
+        slack: "surface,",
+        discord: "surface: threadId",
+        github: "surface: bareSurfaceSegment(github.repo)",
+        linear: "surface: linear.teamId",
+        notion: "surface: notion.pageId",
+      };
+      for (const [platform, segment] of Object.entries(expected)) {
+        const call = calls.find((c) => c.includes(`platform: "${platform}"`));
+        ok(
+          call !== undefined && call.includes(segment),
+          `🔴 OPE-1991: J-ENGAGED-${platform} scopes its audited silence with \`${segment}\` — the bare segment ${platform}'s identity mapper binds. Any other shape matches no row and turns this gate vacuous (call read: ${call ?? "ABSENT"})`,
+        );
+      }
+    }
+
+    {
+      const memRead = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
+      const purgeAt = memRead.indexOf('leg:"canary-purge"');
+      const seedAt = memRead.indexOf("rememberthisfortheteam:theOPE121canarycodeis");
+      ok(purgeAt >= 0, "🔴 OPE-1977: S-MEM-READ drives a canary purge — without it the silo stacks one OPE121 canary per board and the recall red is a fixture, not the product");
+      ok(seedAt >= 0 && purgeAt < seedAt, `🔴 OPE-1977: the purge runs BEFORE the seed (purge at ${purgeAt}, seed at ${seedAt}) — after it, the purge would erase the very canary the recall gate reads`);
+      ok(
+        memRead.includes("otherFactTokens("),
+        "🔴 OPE-1977: the recall gate names any PREVIOUS board's canary the reply chose instead — a best-effort purge can leave the stack, and the red must then read as accumulation rather than as a seat that cannot open its memory",
+      );
+      ok(
+        memRead.includes("extractMemoryPathReads(windowed)"),
+        "🔴 OPE-1977: leg 3 extracts reads from the RECALL-WINDOWED events, never the whole replay — otherwise leg 0's purge turn satisfies the one gate this scenario exists for",
+      );
+      ok(
+        /constat=e\.at===null\?Number\.NaN:Date\.parse\(e\.at\);returnNumber\.isFinite\(at\)&&at>=askStartMs/.test(memRead),
+        "🔴 OPE-1977: the window compares MILLISECONDS off `askStart`, and an event with no readable stamp is EXCLUDED — an ISO byte-compare is the trap OPE-1905/OPE-1924 paid for, and counting an unattributable event would weaken the gate",
+      );
+      ok(
+        memRead.includes("replays.set(sessionId,events)"),
+        "…and `replays` keeps the WHOLE stream: the phase decomposition needs the dispatch that opened the turn, which the read window cuts",
+      );
+    }
 
     {
       const { notionMinuteFloor, NotionDriver } = await import("../packages/core/scripts/e2e/notion-driver.js");

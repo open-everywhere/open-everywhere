@@ -8,6 +8,23 @@ export function factToken(stem: string): string {
   return `${stem}-${Date.now() % 100_000}`;
 }
 
+export function bareSurfaceSegment(value: string): string {
+  const last = value.split("/").pop();
+  return last === undefined || last.length === 0 ? value : last;
+}
+
+export function otherFactTokens(text: string, stem: string, mine: string): readonly string[] {
+  const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const found = text.match(new RegExp(`${escaped}-\\d{1,5}`, "gi")) ?? [];
+  const seen: string[] = [];
+  for (const raw of found) {
+    const t = raw.toLowerCase();
+    if (t === mine.toLowerCase()) continue;
+    if (!seen.includes(t)) seen.push(t);
+  }
+  return seen;
+}
+
 export function withoutMarker(text: string, marker: string): string {
   return marker.length === 0 ? text : text.split(marker).join(" ");
 }

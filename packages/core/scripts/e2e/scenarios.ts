@@ -87,6 +87,7 @@ import {
   isAmbientLegAddressing,
   dispatchedAction,
   replyPostCount,
+  replyPostSurfaces,
   reportedDirectMention,
   reportedNameDrop,
   reportedSeatedChannelWatch,
@@ -173,7 +174,9 @@ import {
   driveDecide,
   drivePrOpen,
   eveRequestApprovalButtons,
+  bareSurfaceSegment,
   factToken,
+  otherFactTokens,
   withoutMarker,
   parseLinkCode,
   parseClaimCodeBack,
@@ -773,14 +776,26 @@ async function gateStandDownMarked(
 
 async function gateAuditedSilence(
   ctx: ScenarioContext,
-  opts: { readonly sinceIso: string; readonly platform: string; readonly surface?: string; readonly observedSilent: boolean },
+  opts: {
+    readonly sinceIso: string;
+    readonly platform: string;
+    readonly surface: string;
+    readonly liveFrom: string;
+    readonly observedSilent: boolean;
+  },
 ): Promise<void> {
   ctx.gate(opts.observedSilent, "stop honoured: a further plain message drew NO post in the silence window");
-  const scope = opts.surface ? { surface: opts.surface } : {};
+  const scope = { surface: opts.surface };
+  const earlier = await ctx.auditRead!({ sinceIso: opts.liveFrom, platform: opts.platform, actions: [REPLY_POST_ACTION], limit: 1000 });
+  const mine = replyPostCount(earlier, scope);
+  ctx.gate(
+    mine > 0,
+    `stop honoured: NEGATIVE CONTROL — this journey's OWN earlier replies are readable under surface "${opts.surface}" (found ${mine} of ${replyPostCount(earlier)} ${REPLY_POST_ACTION} row(s) since the journey opened). Zero means the scope names no surface the deployment posted on — a wrong SHAPE, most likely a qualified key where the row carries the bare segment — and the silence gate below would then pass however much was posted. Surfaces this window carried: ${JSON.stringify(replyPostSurfaces(earlier))}`,
+  );
   const posts = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
   ctx.gate(
-    replyPostCount(posts, opts.surface ? { surface: opts.surface } : {}) === 0,
-    `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on this surface after the stop (found ${posts.length})`,
+    replyPostCount(posts, scope) === 0,
+    `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on surface "${opts.surface}" after the stop (found ${posts.length}). A reply the deployment posted on a SIBLING surface of this platform in the same window is NOT counted here and never was a broken stop`,
   );
 }
 
@@ -1297,7 +1312,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slack!;
@@ -1308,6 +1323,25 @@ export const SCENARIOS: readonly Scenario[] = [
         return;
       }
       const canary = factToken("obsidian");
+
+      if (ctx.synthetic) {
+        try {
+          await driveDecide({
+            slack: a,
+            synthetic: ctx.synthetic,
+            gate: ctx.gate,
+            log: ctx.log,
+            ask: `permanently erase from memory every stored fact that states an OPE121 canary code — every one of them, whatever code each names, including any note recording which code was verified. They are stale test data from earlier runs of this check and must not persist.`,
+            leg: "canary-purge",
+            decision: "approve",
+            timeoutMs: FILE_REPLY_WAIT,
+          });
+        } catch (err) {
+          ctx.log(`canary purge (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)} — the leg proceeds, and a stale canary in the recall below will be NAMED by the gate rather than read as a failed memory read`);
+        }
+      } else {
+        ctx.log("canary purge: synthetic capability absent — no purge card driven, so previous boards' canaries stay in the silo (OPE-1977: the recall gate below names any it finds)");
+      }
 
       const seedStart = auditSinceForDriverClock(Date.now());
       const { ts: seedTs } = await a.post(a.mention(`remember this for the team: the OPE121 canary code is ${canary}`));
@@ -1324,9 +1358,13 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const answer = await a.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(answer.threadTs === askTs, "recall: the answer lands in its OWN fresh thread");
+      const staleCanaries = otherFactTokens(answer.text, "obsidian", canary);
+      if (staleCanaries.length > 0) {
+        ctx.log(`recall: the reply also named ${JSON.stringify(staleCanaries)} — previous boards' canaries are STILL in the silo, so leg 0's purge did not clear the stack (OPE-1977)`);
+      }
       ctx.gate(
         answer.text.toLowerCase().includes(canary.toLowerCase()),
-        `recall: the reply carries the seeded canary "${canary}" — reply: "${answer.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+        `recall: the reply carries the seeded canary "${canary}"${staleCanaries.length > 0 ? ` — it named ${JSON.stringify(staleCanaries)} instead, which is a PREVIOUS board's canary still in the silo, so the read WORKED and the fixture is what is stale (leg 0's purge did not clear the stack)` : ""} — reply: "${answer.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
 
       const rows = await auditRead({ sinceIso: askStart, limit: 1000 });
@@ -1341,10 +1379,19 @@ export const SCENARIOS: readonly Scenario[] = [
       const reads: string[] = [];
       const readingSessions: string[] = [];
       const replays = new Map<string, readonly TranscriptWireEvent[]>();
+      const askStartMs = Date.parse(askStart);
+      const duringRecall = (e: TranscriptWireEvent): boolean => {
+        const at = e.at === null ? Number.NaN : Date.parse(e.at);
+        return Number.isFinite(at) && at >= askStartMs;
+      };
       for (const sessionId of sessionIds) {
         const events = await transcriptRead(sessionId);
         replays.set(sessionId, events);
-        const found = extractMemoryPathReads(events);
+        const windowed = events.filter(duringRecall);
+        if (windowed.length !== events.length) {
+          ctx.log(`  session ${sessionId}: ${events.length - windowed.length} event(s) predate the recall ask and are OUT of the read window — on a standing seat legs 0-1 share this session`);
+        }
+        const found = extractMemoryPathReads(windowed);
         if (found.length > 0) {
           ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
           readingSessions.push(sessionId);
@@ -7683,7 +7730,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const silenceFrom = new Date().toISOString();
       const { ts: afterStopTs } = await slack.post(fixtureLine("and what's 5 plus 5?"), rootTs);
       const during = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
-      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "slack", surface, observedSilent: during.length === 0 });
+      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "slack", surface, liveFrom: mentionFrom, observedSilent: during.length === 0 });
 
       const idleMarker = factToken("sl-idle");
       await slack.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, rootTs);
@@ -7798,7 +7845,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const raw = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
       const silent = raw.filter(notCancelNote);
       if (raw.length !== silent.length) ctx.log(`stop window: skipped ${raw.length - silent.length} turn-cancel note(s) — not replies, and not explained (OPE-1724)`);
-      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", observedSilent: silent.length === 0 });
+      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", surface: threadId, liveFrom: mentionFrom, observedSilent: silent.length === 0 });
 
       const idleMarker = factToken("dc-idle");
       await discord.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, threadId);
@@ -7873,7 +7920,7 @@ export const SCENARIOS: readonly Scenario[] = [
         await sleep(SILENCE_WINDOW);
         const after = await github.comments(issue);
         const observedSilent = after.filter((c) => github.isBotComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", observedSilent });
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", surface: bareSurfaceSegment(github.repo), liveFrom: mentionFrom, observedSilent });
 
         const idleMarker = factToken("gh-idle");
         await github.comment(issue, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
@@ -7939,7 +7986,7 @@ export const SCENARIOS: readonly Scenario[] = [
         await sleep(SILENCE_WINDOW);
         const after = await linear.comments(issue.id);
         const observedSilent = after.filter((c) => linear.isAppComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", observedSilent });
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", surface: linear.teamId, liveFrom: mentionFrom, observedSilent });
 
         const idleMarker = factToken("lin-idle");
         await linear.comment(issue.id, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
@@ -8008,7 +8055,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const after = await notion.blockComments(blockId);
         const silenceFloor = notionMinuteFloor(silenceFrom);
         const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", observedSilent });
+        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", surface: notion.pageId, liveFrom: mentionFrom, observedSilent });
 
         await sleep(msToNextMinuteBoundary(Date.now()));
         const idleMarker = factToken("not-idle");
