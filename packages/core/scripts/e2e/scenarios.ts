@@ -143,7 +143,7 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -453,7 +453,7 @@ async function awaitOwnWakeReply(
   const { teamId } = await driver.identity();
   const surfaceKey = `slack/${teamId}/${driver.channelId}`;
   const sinceIso = new Date(vendor.ms - 5_000).toISOString();
-  const actions = [WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION, REPLY_POST_ACTION];
+  const actions = [WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION, REPLY_POST_ACTION, TASK_WAKE_ACTION, DELEGATION_TASK_STARTED_ACTION];
   const seen = new Map<string, SlackMessage>();
   let lastRows: readonly AuditWireEntry[] = [];
   let readFailures = 0;

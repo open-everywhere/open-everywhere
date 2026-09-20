@@ -14,6 +14,7 @@ export function shouldAssertShaAncestry(probe: ShaAncestryProbe): boolean {
 
 export const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
 export const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
+export const TASK_WAKE_ACTION = "unified.task_wake";
 export const REPLY_POST_ACTION = "reply.post";
 export const REPLY_EDIT_ACTION = "reply.edit";
 
@@ -224,15 +225,48 @@ function ingressOfDriverPost(rows: readonly AuditWireEntry[], post: OwnWakeDrive
   });
 }
 
-function replyIdsByWake(rows: readonly AuditWireEntry[], wakeId: string): { readonly mine: ReadonlySet<string>; readonly foreign: ReadonlySet<string> } {
-  const mine = new Set<string>();
+function wakeLineage(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): ReadonlySet<string> {
+  const lineage = new Set<string>([wakeId]);
+  if (floorMs === undefined) return lineage;
+  const dispatchedHere = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+    const task = dS(r, "task");
+    const at = Date.parse(r.ts);
+    if (task === undefined || task.length === 0) continue;
+    if (!Number.isFinite(at) || at < floorMs) continue;
+    dispatchedHere.add(task);
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const r of rows) {
+      if (r.action !== TASK_WAKE_ACTION) continue;
+      if (dS(r, "outcome") !== "installed") continue;
+      const task = dS(r, "task");
+      if (task === undefined || !dispatchedHere.has(task)) continue;
+      const minted = dS(r, "wakeId");
+      const inherited = dS(r, "inheritedWakeId");
+      if (minted === undefined || minted.length === 0) continue;
+      if (inherited === undefined || inherited.length === 0) continue;
+      if (!lineage.has(inherited) || lineage.has(minted)) continue;
+      lineage.add(minted);
+      grew = true;
+    }
+  }
+  return lineage;
+}
+
+function replyIdsByWake(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): { readonly mine: ReadonlyMap<string, string>; readonly foreign: ReadonlySet<string> } {
+  const lineage = wakeLineage(rows, wakeId, floorMs);
+  const mine = new Map<string, string>();
   const foreign = new Set<string>();
   for (const r of rows) {
     if (r.action !== REPLY_POST_ACTION) continue;
     const id = dS(r, "id");
     const rowWake = dS(r, "wakeId");
     if (id === undefined || id.length === 0 || rowWake === undefined || rowWake.length === 0) continue;
-    (rowWake === wakeId ? mine : foreign).add(id);
+    if (lineage.has(rowWake)) mine.set(id, rowWake);
+    else foreign.add(id);
   }
   return { mine, foreign };
 }
@@ -259,18 +293,21 @@ export async function pollForOwnWakeReply(
         const parsed = turnStart === undefined ? Number.NaN : Date.parse(turnStart.ts);
         if (Number.isFinite(parsed)) floorMs = parsed;
       }
-      const { mine, foreign } = replyIdsByWake(rows, wakeId);
+      const { mine, foreign } = replyIdsByWake(rows, wakeId, floorMs);
       const candidates = await deps.fetchCandidates();
       standing = candidates.length;
       foreignSeen = candidates.filter((c) => foreign.has(c.id)).length;
       for (const c of candidates) {
         if (!c.substantive) continue;
-        if (mine.has(c.id)) {
+        const postedBy = mine.get(c.id);
+        if (postedBy !== undefined) {
           return {
             kind: "own-wake",
             id: c.id,
             wakeId,
-            detail: `a ${REPLY_POST_ACTION} row for wake ${wakeId} names message ${c.id} — this leg's own turn posted it`,
+            detail:
+              `a ${REPLY_POST_ACTION} row for wake ${postedBy} names message ${c.id} — this leg's own turn posted it` +
+              (postedBy === wakeId ? "" : ` (the settlement of a task wake ${wakeId} dispatched, answering under the wake minted for that task)`),
           };
         }
         if (!foreign.has(c.id) && floorMs !== undefined && c.atMs >= floorMs) {

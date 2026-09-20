@@ -467,4 +467,103 @@ const gitStdout = (args: readonly string[]): string => {
   }
 }
 
+{
+  const ms = (iso: string): number => Date.parse(iso);
+  const SURFACE = "slack/T0AAAA/D0EXDMCH001";
+  const slackTs = (iso: string): string => (ms(iso) / 1000).toFixed(6);
+  const msg = (iso: string, substantive = true): OwnWakeCandidate => ({ id: slackTs(iso), atMs: ms(iso), substantive });
+  const platformOf = (action: string): string =>
+    action === "unified.task_wake" ? "unified" : action === "delegation.task_started" ? "ingest" : "slack";
+  const row = (action: string, iso: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: iso, org: "default", platform: platformOf(action), workspace: "dm", action, detail,
+  });
+
+  const ASK = "2026-05-16T08:53:50.000Z";
+  const TURN_START = "2026-05-16T08:53:56.000Z";
+  const HANDOFF = "2026-05-16T08:54:02.000Z";
+  const DISPATCH = "2026-05-16T08:54:11.000Z";
+  const SETTLED = "2026-05-16T08:54:24.000Z";
+
+  const W_ASK = "4c382da1";
+  const W_TASK = "1bf93f28";
+  const TASK = "task_j4";
+
+  const ingress = row("wake.ingress", "2026-05-16T08:53:50.400Z", { wakeId: W_ASK, surfaceKey: SURFACE, vendorTs: ASK });
+  const turnStart = row("wake.turn_start", TURN_START, { wakeId: W_ASK });
+  const handoffRow = row("reply.post", HANDOFF, { wakeId: W_ASK, id: slackTs(HANDOFF), route: "tool", chars: 194 });
+  const dispatched = row("delegation.task_started", DISPATCH, { task: TASK, call: "call_1", agent: "", session: "s1", continuation: false });
+  const taskWake = (over: Record<string, unknown> = {}): AuditWireEntry =>
+    row("unified.task_wake", "2026-05-16T08:54:22.000Z", { task: TASK, status: "completed", outcome: "installed", wakeId: W_TASK, inheritedWakeId: W_ASK, turnId: "turn_1", ...over });
+  const settledRow = row("reply.post", SETTLED, { wakeId: W_TASK, id: slackTs(SETTLED), route: "bridge", chars: 243 });
+
+  const post = { vendorMs: ms(ASK), surfaceKey: SURFACE } as const;
+
+  const run = async (rows: readonly AuditWireEntry[], candidates: readonly OwnWakeCandidate[]) => {
+    let now = 1_000_000;
+    return pollForOwnWakeReply(
+      {
+        now: () => now,
+        sleep: async (d: number) => { now += d; },
+        fetchRows: async () => rows,
+        fetchCandidates: async () => candidates,
+      },
+      post,
+      { timeoutMs: 40_000, pollMs: 5_000 },
+    );
+  };
+
+  {
+    const o = await run([ingress, turnStart, handoffRow, dispatched, taskWake(), settledRow], [msg(HANDOFF, false), msg(SETTLED)]);
+    ok(o.kind === "own-wake", `a settlement answering under its OWN minted wake is this leg's reply (got "${o.kind}": ${o.detail})`);
+    ok(o.kind === "own-wake" && o.id === slackTs(SETTLED), `…and the message returned is the settlement, not the hand-off frame (got "${o.kind === "own-wake" ? o.id : "n/a"}")`);
+    ok(o.kind === "own-wake" && o.wakeId === W_ASK, `…while the outcome still names THIS leg's ask as its key — callers join on it (got "${o.kind === "own-wake" ? o.wakeId : "n/a"}")`);
+    ok(o.detail.includes(W_TASK) && o.detail.includes("settlement"), `…and the detail names the minted wake that posted it, so a board read can follow the lineage (got: ${o.detail})`);
+  }
+
+  {
+    const strangerRow = row("reply.post", SETTLED, { wakeId: "w-stranger", id: slackTs(SETTLED), chars: 243 });
+    const o = await run([ingress, turnStart, dispatched, taskWake(), strangerRow], [msg(SETTLED)]);
+    ok(o.kind === "timeout", `a reply.post row on a wake outside this leg's settlement lineage is never its reply (got "${o.kind}": ${o.detail})`);
+    ok(o.detail.includes("1 of them attributed to ANOTHER wake"), `…and the timeout still names the cause (got: ${o.detail})`);
+  }
+
+  {
+    const o = await run([ingress, turnStart, dispatched, taskWake({ inheritedWakeId: "w-another-leg" }), settledRow], [msg(SETTLED)]);
+    ok(o.kind === "timeout", `a task wake inheriting from ANOTHER leg's ask does not adopt its settlement (got "${o.kind}": ${o.detail})`);
+  }
+
+  {
+    const W_TASK2 = "9817a07c";
+    const TASK2 = "task_j4_again";
+    const dispatched2 = row("delegation.task_started", "2026-05-16T08:55:10.000Z", { task: TASK2, call: "call_2", agent: "", session: "s1", continuation: false });
+    const secondTaskWake = row("unified.task_wake", "2026-05-16T08:55:40.000Z", { task: TASK2, status: "completed", outcome: "installed", wakeId: W_TASK2, inheritedWakeId: W_TASK, turnId: "turn_2" });
+    const SECOND = "2026-05-16T08:55:42.000Z";
+    const secondReply = row("reply.post", SECOND, { wakeId: W_TASK2, id: slackTs(SECOND), chars: 310 });
+    const o = await run([ingress, turnStart, dispatched, dispatched2, secondTaskWake, taskWake(), secondReply], [msg(SECOND)]);
+    ok(o.kind === "own-wake" && o.id === slackTs(SECOND), `a settlement OF a settlement is still this leg's reply, whatever order the task wake rows were read in (got "${o.kind}")`);
+  }
+
+  {
+    const strangerRow = row("reply.post", SETTLED, { wakeId: "w-stranger", id: slackTs(SETTLED), chars: 243 });
+    const o = await run([ingress, turnStart, dispatched, taskWake({ wakeId: "w-stranger", inheritedWakeId: null }), strangerRow], [msg(SETTLED)]);
+    ok(o.kind === "timeout", `a task wake naming no inherited id joins nothing to this lineage (got "${o.kind}": ${o.detail})`);
+  }
+
+  {
+    const o = await run([ingress, turnStart, dispatched, taskWake({ outcome: "ingressed" }), settledRow], [msg(SETTLED)]);
+    ok(o.kind === "timeout", `a task wake row whose outcome is not "installed" adopts nothing (got "${o.kind}": ${o.detail})`);
+  }
+
+  {
+    const prevDispatch = row("delegation.task_started", "2026-05-16T08:52:00.000Z", { task: "task_leg15", call: "call_0", agent: "", session: "s1", continuation: false });
+    const prevTaskWake = taskWake({ task: "task_leg15", wakeId: "w-leg15-task" });
+    const prevReply = row("reply.post", SETTLED, { wakeId: "w-leg15-task", id: slackTs(SETTLED), chars: 243 });
+    const o = await run([ingress, turnStart, prevDispatch, prevTaskWake, prevReply], [msg(SETTLED)]);
+    ok(o.kind === "timeout", `a PREVIOUS leg's task, settling under this leg's stamp, is never this leg's reply (got "${o.kind}": ${o.detail})`);
+
+    const o2 = await run([ingress, turnStart, prevTaskWake, prevReply], [msg(SETTLED)]);
+    ok(o2.kind === "timeout", `…and an absent ${"delegation.task_started"} row fails CLOSED, never open (got "${o2.kind}")`);
+  }
+}
+
 console.log(`✓ ${n} read-channel-e2e assertions passed`);
