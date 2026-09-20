@@ -8,7 +8,7 @@ import type { Partition } from "../partition.js";
 import type { Tier } from "../store.js";
 import type { MemorySilo } from "../silo.js";
 import { providerById, type MemoryAccess } from "../provider.js";
-import { upsertUnderSection } from "../markdown.js";
+import { supersedeUnderSection, upsertUnderSection } from "../markdown.js";
 
 export interface LearnSignals {
   readonly request?: string;
@@ -107,6 +107,12 @@ export function enrichmentBullets(
   return [`- ${today}: recurring workflow — ${result.signature} (seen ${result.count}×) [[MEMORY]]`];
 }
 
+const ENRICHMENT_SIGNATURE = /recurring workflow — (.+?) \(seen \d+/;
+
+export function enrichmentSignatureOf(bullet: string): string | null {
+  return bullet.match(ENRICHMENT_SIGNATURE)?.[1] ?? null;
+}
+
 export async function writeEnrichment(
   p: Partition,
   target: { readonly tier: Tier; readonly silo: MemorySilo; readonly access?: MemoryAccess },
@@ -116,7 +122,17 @@ export async function writeEnrichment(
   const files = await provider.readTier(p, target.tier, target.silo, target.access);
   const seed = `# Recurring workflows (auto-learned)\n\n## Recurring\n(none yet)\n`;
   let recurring = files["RECURRING.md"] ?? seed;
-  for (const b of bullets) recurring = upsertUnderSection(recurring, "Recurring", b);
+  let superseded = 0;
+  for (const b of bullets) {
+    const key = enrichmentSignatureOf(b);
+    if (key === null) {
+      recurring = upsertUnderSection(recurring, "Recurring", b);
+      continue;
+    }
+    const step = supersedeUnderSection(recurring, "Recurring", b, (existing) => enrichmentSignatureOf(existing) === key);
+    recurring = step.content;
+    if (step.superseded !== null) superseded++;
+  }
   files["RECURRING.md"] = recurring;
   const { version } = await writeMemoryTier({
     provider,
@@ -130,7 +146,7 @@ export async function writeEnrichment(
     platform: "memory",
     workspace: target.silo.name,
     principalId: DREAM_ACTOR,
-    extra: { bullets: bullets.length },
+    extra: { bullets: bullets.length, superseded },
   });
   return version;
 }

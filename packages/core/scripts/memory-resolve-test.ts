@@ -230,6 +230,33 @@ ok(!writeNoneIndex.includes("Start with"), "🔴 index/none: the entry line does
 ok(writeNoneIndex.includes("The index entry is `memory/txn/MEMORY.md`"), "🔴 index/none: …but the path is still NAMED, so the seat can say which file it cannot reach");
 ok(writeFileToolsIndex.includes("Start with `memory/txn/MEMORY.md`"), "🔴 index/file-tools/CONTROL: a seat that CAN open the file still reads 'Start with' — the fix is narrowed to the route that cannot");
 ok(writeAgentIndex.includes("Start with `memory/txn/MEMORY.md`"), "🔴 index/agent/CONTROL: so does a delegating seat — it names the path in the brief");
+ok(
+  writeFileToolsIndex.includes("the one with the LATER date is the current value") && writeFileToolsIndex.includes("do not report the pair as a conflict"),
+  "🔴 index/file-tools: the recall lead states that the newest statement of a fact is the current one",
+);
+for (const [route, idx] of [["file-tools", writeFileToolsIndex], ["agent", writeAgentIndex]] as const) {
+  ok(
+    idx.includes("SAME date, or either is undated") && idx.includes("say the files disagree rather than choosing one"),
+    `🔴 index/${route}: …and a pair nothing orders is reported as a disagreement, never resolved by picking`,
+  );
+}
+ok(
+  writeAgentIndex.includes("the one with the LATER date is the current value"),
+  "🔴 index/agent: a delegating seat reads the same rule — it resolves what the lookup brings back",
+);
+ok(
+  writeFileToolsIndex.includes("CHANGE that line to the new value rather than adding a second one"),
+  "🔴 index/file-tools: …and the save clause says to REWRITE the existing line, so the pair never forms",
+);
+ok(
+  writeAgentIndex.includes("CHANGE that line to the new value instead of adding a second one"),
+  "🔴 index/agent: the delegation BRIEF carries the same rewrite instruction — the worker does the writing",
+);
+ok(
+  !writeNoneIndex.includes("LATER date"),
+  "🔴 index/none: the newest-wins rule is ABSENT — a seat that cannot read has nothing to resolve",
+);
+
 ok(renderMemoryIndex([]).includes("No memory is configured"), "index: empty plan → 'no memory' note");
 const nkb = resolveMemoryPlan(binding("channel", "internal"), partition("C_NKB"), cfg);
 const nkbIndex = renderMemoryIndex(nkb.reads);
@@ -243,6 +270,9 @@ ok(nkbIndex.includes("source: Notion") && nkbIndex.includes("read-only cache") &
   const gh = { name: "repo-brain", provider: "github", container: "acme/brain" };
   const writableGit = renderMemoryIndex([{ silo: gh, tier: siloTier(gh.name), readOnly: false }]);
   ok(!writableGit.includes("APPEND-ONLY"), "index negative control: a writable github silo is NOT marked append-only");
+
+  ok(!writableNotion.includes("CHANGE that line"), "🔴 index: an APPEND-ONLY silo is NOT told to rewrite an existing line — that edit is refused at persist");
+  ok(writableGit.includes("CHANGE that line to the new value"), "🔴 index CONTROL: a backing that owns its files IS told to rewrite — the backing is what decided, not the route");
 }
 
 const partialIndex = renderMemoryIndex(multi.reads, ["notion-kb"]);

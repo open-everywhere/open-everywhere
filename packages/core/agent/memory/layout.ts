@@ -35,6 +35,11 @@ export function seedFor(p: Partition, tier: Tier): MemoryFiles {
     "Link related subjects like `[[name]]` — facts about the same person/system/decision " +
     "connect up. This index keeps only the most recent few bullets per section; each " +
     "category's full history lives in its own topic file (`people.md`, `decisions.md`, …). " +
+    "State each fact ONCE: if a line here already states the fact you are saving, EDIT that line " +
+    "to the new value instead of adding a second line about the same subject. Where you do find " +
+    "two lines stating one fact, the one with the LATER date is the current one — answer with it, " +
+    "and do not report the pair as a conflict. If the two carry the SAME date, or either is " +
+    "undated, say the files disagree rather than choosing one. " +
     "If a fact came from outside this conversation — a fetched page, an issue or PR body, a " +
     "connector result, an uploaded file — say so on the bullet: nothing else records where it " +
     "came from.";

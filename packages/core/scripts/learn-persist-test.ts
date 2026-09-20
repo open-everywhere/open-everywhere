@@ -16,6 +16,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 const { mergePreservingConflicts, guardDestructiveWrites, hashFiles, conflictName } = await import("../agent/hooks/memory.js");
 const { writeEnrichment } = await import("../agent/memory/dream/learn.js");
 const { providerById } = await import("../agent/memory/provider.js");
+const { readAudit } = await import("../agent/audit/audit.js");
 const { siloTier } = await import("../agent/memory/store.js");
 
 const provider = providerById("sqlite");
@@ -53,6 +54,35 @@ async function sessionEnd(sandboxSnapshot: MemoryFiles, bullet: string, sid: str
   const snapshot = await provider.readTier(p, tier, silo);
   const after = await sessionEnd(snapshot, "- 2026-08-03: recurring workflow — audit refunds (seen 3x) [[MEMORY]]", "sessCCC3");
   ok(["deploy staging", "rotate keys", "audit refunds"].every((s) => after["RECURRING.md"]!.includes(s)), "3rd enrichment: all three durable notes coexist (no reversion, no loss)");
+}
+
+{
+  const snapshot = await provider.readTier(p, tier, silo);
+  const after = await sessionEnd(snapshot, "- 2026-08-04: recurring workflow — rotate keys (seen 7x) [[MEMORY]]", "sessFFF6");
+  const body = after["RECURRING.md"] ?? "";
+  const rotateLines = body.split("\n").filter((l) => l.includes("rotate keys"));
+  ok(rotateLines.length === 1, `🔴 a re-delivered enrichment leaves ONE line for its signature (found ${rotateLines.length})`);
+  ok(rotateLines[0].includes("seen 7x"), "🔴 …and that line carries the NEW count");
+  ok(!body.includes("rotate keys (seen 3x)"), "🔴 …with the superseded line gone");
+  ok(["deploy staging", "audit refunds"].every((t) => body.includes(t)), "NEGATIVE CONTROL: the other signatures' bullets are untouched — only the matching key is rewritten");
+
+  const rows = await readAudit({ org: "acme", action: "memory.write" });
+  const enrichRows = rows.filter((r) => (r.detail as { road?: string } | undefined)?.road === "dream-learn");
+  ok(enrichRows.length > 0, "the enrichment wrote memory.write rows on the one road");
+  ok((enrichRows[0].detail as { superseded?: number }).superseded === 1, "🔴 the newest enrichment's row counts the line it REWROTE (superseded=1)");
+  ok(
+    enrichRows.some((r) => (r.detail as { superseded?: number }).superseded === 0),
+    "NEGATIVE CONTROL: an earlier enrichment that only ADDED a bullet counts superseded=0 — the field tracks the act, it is not a constant",
+  );
+}
+
+{
+  const snapshot = await provider.readTier(p, tier, silo);
+  const after = await sessionEnd(snapshot, "- 2026-08-05: recurring workflow — rotate certs (seen 3x) [[MEMORY]]", "sessGGG7");
+  const body = after["RECURRING.md"] ?? "";
+  ok(body.includes("rotate keys (seen 7x)"), "🔴 the near-miss signature did NOT delete `rotate keys` — the key is exact, not a similarity");
+  ok(body.includes("rotate certs (seen 3x)"), "…and the new workflow was appended");
+  ok(["deploy staging", "audit refunds"].every((t) => body.includes(t)), "…and every other workflow still stands");
 }
 
 {

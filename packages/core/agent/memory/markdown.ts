@@ -115,3 +115,25 @@ export function removeBulletLineWhere(content: string, matches: (normalizedLine:
 
   return { content: merged.join("\n"), removed: true };
 }
+
+export function supersedeUnderSection(
+  content: string,
+  sectionTitle: string,
+  bullet: string,
+  matches: (existingBullet: string) => boolean,
+): { content: string; superseded: string | null } {
+  const line = bullet.startsWith("- ") ? bullet : `- ${bullet}`;
+  const lines = content.split("\n");
+  const found = findSection(lines, sectionTitle);
+  if (found) {
+    for (let i = found.headingIdx + 1; i < found.end; i++) {
+      const existing = lines[i].replace(/[ \t]+$/, "");
+      if (!/^\s*-\s+/.test(existing)) continue;
+      if (!matches(existing)) continue;
+      const next = [...lines];
+      next[i] = line;
+      return { content: next.join("\n"), superseded: existing };
+    }
+  }
+  return { content: upsertUnderSection(content, sectionTitle, bullet), superseded: null };
+}

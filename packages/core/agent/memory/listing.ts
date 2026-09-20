@@ -26,16 +26,20 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
   const delegated = recall === "agent";
   const unreachable = recall === "none";
   const file = code(dir + "/MEMORY.md");
+  const appendOnly = isAppendOnlyBacking(silo);
+  const rewriteInPlace = appendOnly ? "" : " Where a line already states the fact you are saving, CHANGE that line to the new value rather than adding a second one.";
+  const rewriteInBrief = appendOnly ? "" : "If a line there already states that fact, CHANGE that line to the new value instead of adding a second one. ";
   const saveVerb = unreachable
     ? "this seat CANNOT write these files and cannot delegate — say plainly that you can't save anything to memory from here, never that you saved it"
     : delegated
       ? `to save something, delegate it THIS turn — \`${recall}\` with \`mode: "sync"\` and a brief of exactly this shape: ` +
         `"Open ${dir}/MEMORY.md with your file tools and add this fact for the team under the right heading (as a note, or as a decision if it records a choice): <the fact, verbatim>. ` +
+        rewriteInBrief +
         `Reply with the exact line you wrote and the path you wrote it to.". ` +
         `A fact is not a standing rule — never frame it as one. Only after the worker reports the line it WROTE, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
-      : `save durable facts here by EDITING ${file} (or another file in this silo) with your file tools — the edit IS the save, and the host persists it when the turn ends. Nothing is saved by saying it is`;
+      : `save durable facts here by EDITING ${file} (or another file in this silo) with your file tools — the edit IS the save, and the host persists it when the turn ends. Nothing is saved by saying it is.${rewriteInPlace}`;
   if (!readOnly) {
-    return isAppendOnlyBacking(silo)
+    return appendOnly
       ? `writable but APPEND-ONLY — ${saveVerb}. Add new lines at the END of a file; changing or removing an existing line is REFUSED and does NOT save`
       : `writable — ${saveVerb}`;
   }
@@ -50,9 +54,14 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
       : "read-only — edits are blocked; edit this channel's OWN writable silo above instead";
 }
 
+const NEWEST_WINS =
+  "Where two lines state one fact, the one with the LATER date is the current value — answer with it, " +
+  "and do not report the pair as a conflict. If the two carry the SAME date, or either is undated, " +
+  "nothing orders them: say the files disagree rather than choosing one.";
+
 const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: string; readonly heading: string }>> = {
   "file-tools": {
-    lead: "Read the relevant silo with your tools before acting.",
+    lead: "Read the relevant silo with your tools before acting. " + NEWEST_WINS,
     heading: "## Silos — read with file tools",
   },
   agent: {
@@ -61,7 +70,7 @@ const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: strin
       "memory, delegate a lookup: `agent` with `mode: \"sync\"` and a brief naming the paths below and " +
       "what you need out of them (the worker has the file tools, greps the tree, and returns what it " +
       "found this turn). Do that before answering from guesswork — and if the lookup comes back empty, " +
-      "say so rather than inventing the answer.",
+      "say so rather than inventing the answer. " + NEWEST_WINS,
     heading: "## Silos — read by delegating a lookup",
   },
   none: {
