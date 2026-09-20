@@ -1,5 +1,6 @@
 import type { AuditWireEntry } from "./audit-read.js";
-import { WAKE_INGRESS_ACTION } from "../../agent/channels/wake-timing.js";
+import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
+import { DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
   const v = row.detail?.[key];
@@ -95,12 +96,19 @@ export const SETTLEMENT_REPORT_POSTED_ACTION = "delegation.settlement_report_pos
 
 export const REPLY_POST_ACTION = "reply.post";
 
-export function settlementReportMessageIds(rows: readonly AuditWireEntry[]): ReadonlySet<string> {
-  const out = new Set<string>();
+export interface SettlementReportPairing {
+  readonly id: string;
+  readonly task: string;
+  readonly wake: string;
+}
+
+export function settlementReportPairings(rows: readonly AuditWireEntry[]): readonly SettlementReportPairing[] {
+  const out: SettlementReportPairing[] = [];
   for (const settled of rows) {
     if (settled.action !== SETTLEMENT_REPORT_POSTED_ACTION) continue;
     const wake = dstr(settled, "wake");
-    if (wake === undefined) continue;
+    const task = dstr(settled, "task");
+    if (wake === undefined || task === undefined) continue;
     let best: { readonly id: string; readonly key: number } | undefined;
     for (const post of rows) {
       if (post.action !== REPLY_POST_ACTION) continue;
@@ -114,9 +122,96 @@ export function settlementReportMessageIds(rows: readonly AuditWireEntry[]): Rea
       if (!Number.isFinite(pair.at) || !Number.isFinite(pair.limit) || pair.at > pair.limit) continue;
       if (best === undefined || pair.at > best.key) best = { id, key: pair.at };
     }
-    if (best !== undefined) out.add(best.id);
+    if (best !== undefined) out.push({ id: best.id, task, wake });
   }
   return out;
+}
+
+export type SettlementReplyVerdict =
+  | { readonly kind: "not-a-report"; readonly detail: string }
+  | { readonly kind: "answer"; readonly wakeId: string; readonly detail: string }
+  | { readonly kind: "step-over"; readonly detail: string };
+
+function replyPostWakeId(rows: readonly AuditWireEntry[], messageId: string): string | undefined {
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    if (dstr(r, "id") !== messageId) continue;
+    const wake = dstr(r, "wakeId");
+    if (wake !== undefined) return wake;
+  }
+  return undefined;
+}
+
+export function turnStartMs(rows: readonly AuditWireEntry[], wakeId: string): number | undefined {
+  for (const r of rows) {
+    if (r.action !== WAKE_TURN_START_ACTION) continue;
+    if (dstr(r, "wakeId") !== wakeId) continue;
+    const at = tsMs(r);
+    if (Number.isFinite(at)) return at;
+  }
+  return undefined;
+}
+
+export function classifySettlementReply(
+  rows: readonly AuditWireEntry[],
+  opts: {
+    readonly messageId: string;
+    readonly askWakeId: string | undefined;
+    readonly floorMs: number | undefined;
+    readonly answersAsk: boolean;
+  },
+): SettlementReplyVerdict {
+  const pairing = settlementReportPairings(rows).find((p) => p.id === opts.messageId);
+  if (pairing === undefined) {
+    return { kind: "not-a-report", detail: `no ${SETTLEMENT_REPORT_POSTED_ACTION} row names message ${opts.messageId}` };
+  }
+  const postedBy = replyPostWakeId(rows, opts.messageId);
+  const missing =
+    opts.askWakeId === undefined
+      ? `this read holds no ${WAKE_INGRESS_ACTION} row for the ask itself`
+      : opts.floorMs === undefined
+        ? `this read holds no ${WAKE_TURN_START_ACTION} row for the ask's wake ${opts.askWakeId}, so its turn has no floor`
+        : postedBy === undefined
+          ? `no ${REPLY_POST_ACTION} row names the wake that posted it`
+          : undefined;
+  if (opts.askWakeId === undefined || opts.floorMs === undefined || postedBy === undefined) {
+    return {
+      kind: "step-over",
+      detail: `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, and ${missing} — it cannot be tied to this ask, so it is stepped over (OPE-1965)`,
+    };
+  }
+  if (!tasksDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task)) {
+    return {
+      kind: "step-over",
+      detail:
+        `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, which has no ${DELEGATION_TASK_STARTED_ACTION} ` +
+        `row inside the ask's own turn — a PREVIOUS leg dispatched it and it settled in this turn (OPE-1965)`,
+    };
+  }
+  const lineage = wakeLineage(rows, opts.askWakeId, opts.floorMs);
+  if (!lineage.has(postedBy)) {
+    return {
+      kind: "step-over",
+      detail:
+        `message ${opts.messageId} carried a SETTLEMENT REPORT posted under wake ${postedBy}, which is OUTSIDE the ask's own ` +
+        `lineage (ask wake ${opts.askWakeId}) — this ask dispatched task ${pairing.task}, but the wake that posted is not one it answers under`,
+    };
+  }
+  if (!opts.answersAsk) {
+    return {
+      kind: "step-over",
+      detail:
+        `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, which this ask dispatched, but its text does ` +
+        "not carry what the ask asked for — the caller's content gate rejected it (a fan-out settles more than one task in a turn)",
+    };
+  }
+  return {
+    kind: "answer",
+    wakeId: postedBy,
+    detail:
+      `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, which THIS ask dispatched, posted under wake ` +
+      `${postedBy}${postedBy === opts.askWakeId ? "" : ", minted for that task"}, and it carries what the ask asked for — the delegated ANSWER (OPE-1988)`,
+  };
 }
 
 export function replyPostSessionId(rows: readonly AuditWireEntry[], messageId: string): string | undefined {

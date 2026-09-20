@@ -225,18 +225,10 @@ function ingressOfDriverPost(rows: readonly AuditWireEntry[], post: OwnWakeDrive
   });
 }
 
-function wakeLineage(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): ReadonlySet<string> {
+export function wakeLineage(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): ReadonlySet<string> {
   const lineage = new Set<string>([wakeId]);
   if (floorMs === undefined) return lineage;
-  const dispatchedHere = new Set<string>();
-  for (const r of rows) {
-    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
-    const task = dS(r, "task");
-    const at = Date.parse(r.ts);
-    if (task === undefined || task.length === 0) continue;
-    if (!Number.isFinite(at) || at < floorMs) continue;
-    dispatchedHere.add(task);
-  }
+  const dispatchedHere = tasksDispatchedAtOrAfter(rows, floorMs);
   for (let grew = true; grew; ) {
     grew = false;
     for (const r of rows) {
@@ -254,6 +246,19 @@ function wakeLineage(rows: readonly AuditWireEntry[], wakeId: string, floorMs: n
     }
   }
   return lineage;
+}
+
+export function tasksDispatchedAtOrAfter(rows: readonly AuditWireEntry[], floorMs: number): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+    const task = dS(r, "task");
+    const at = Date.parse(r.ts);
+    if (task === undefined || task.length === 0) continue;
+    if (!Number.isFinite(at) || at < floorMs) continue;
+    out.add(task);
+  }
+  return out;
 }
 
 function replyIdsByWake(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): { readonly mine: ReadonlyMap<string, string>; readonly foreign: ReadonlySet<string> } {

@@ -6,6 +6,7 @@ import {
   auditSinceForVendorInstant,
   carriesHostTemplate,
   classifyConnectorRoad,
+  classifySettlementReply,
   classifyUnansweredWake,
   fireAnchor,
   fixtureSalt,
@@ -15,7 +16,8 @@ import {
   replyPostSessionId,
   rowsAtOrAfter,
   saltedFixtureLine,
-  settlementReportMessageIds,
+  settlementReportPairings,
+  turnStartMs,
   wakeIdForVendorInstant,
   workerRoadForOp,
 } from "./gate-joins.js";
@@ -27,10 +29,10 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: number): AuditWireEntry => ({
+const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: number, platform = "slack"): AuditWireEntry => ({
   ts,
   org: "default",
-  platform: "slack",
+  platform,
   workspace: "T0EXAMPLE",
   action,
   detail,
@@ -199,21 +201,85 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     row("delegation.settlement_report_posted", "2026-01-27T00:33:25.459Z", { task: "task_06965c9a", wake: WAKE }, 11),
     row("reply.post", "2026-01-27T00:34:18.000Z", { id: ANSWER, wakeId: WAKE, chars: 88, sessionId: "wrun_A" }, 12),
   ];
-  const ids = settlementReportMessageIds(rows);
+  const reportIds = (rs: readonly AuditWireEntry[]) => new Set(settlementReportPairings(rs).map((p) => p.id));
+  const ids = reportIds(rows);
   ok(ids.has(REPORT), "the message that carried the settlement report is named — by POSITION, since the row itself names only the task and the wake");
   ok(!ids.has(ANSWER), "🔴 and the answer posted AFTER it is not: a pairing that took the newest post would skip the very reply the leg is waiting for");
 
   const foreign = [...rows, row("reply.post", "2026-01-27T00:33:24.000Z", { id: "1769474004.000000", wakeId: "some-other-wake", chars: 40 }, 9)];
-  ok(!settlementReportMessageIds(foreign).has("1769474004.000000"), "a post from ANOTHER wake is never paired with this settlement row, however close it sits");
+  ok(!reportIds(foreign).has("1769474004.000000"), "a post from ANOTHER wake is never paired with this settlement row, however close it sits");
 
-  ok(settlementReportMessageIds([rows[1]!]).size === 0, "a settlement row whose wake no reply.post names contributes nothing — there is no message to skip, and inventing one would skip a real answer");
-  ok(settlementReportMessageIds([rows[0]!, rows[2]!]).size === 0, "reply.post rows with no settlement row beside them name nothing: an ordinary turn skips nothing at all");
+  ok(reportIds([rows[1]!]).size === 0, "a settlement row whose wake no reply.post names contributes nothing — there is no message to skip, and inventing one would skip a real answer");
+  ok(reportIds([rows[0]!, rows[2]!]).size === 0, "reply.post rows with no settlement row beside them name nothing: an ordinary turn skips nothing at all");
 
   const noSeq = rows.map((r) => ({ ts: r.ts, org: r.org, platform: r.platform, workspace: r.workspace, action: r.action, detail: r.detail }));
-  ok(settlementReportMessageIds(noSeq).has(REPORT), "with no `seq` on the wire the pairing falls back to `ts` and still finds the report");
+  ok(reportIds(noSeq).has(REPORT), "with no `seq` on the wire the pairing falls back to `ts` and still finds the report");
 
   ok(replyPostSessionId(rows, REPORT) === "wrun_A", "replyPostSessionId names the session that posted a message the leg holds");
   ok(replyPostSessionId(rows, "1769384956.000000") === undefined, "…and answers nothing for a message no reply.post row names");
+}
+
+{
+  const SURFACE = "slack/T0EXAMPLE/C0EXCHAN003";
+  const ASK_VENDOR_MS = Date.parse("2026-01-28T12:28:04.000Z");
+  const ASK_WAKE = "ask-wake-not-quoted";
+  const MINTED = "6fc46eec";
+  const TASK = "task-not-quoted";
+  const ACK = "1769603299.000000";
+  const REPORT = "1769603380.031000";
+  const rows = [
+    row("wake.ingress", "2026-01-28T12:28:04.100Z", { wakeId: ASK_WAKE, vendorTs: "2026-01-28T12:28:04.000Z", surfaceKey: SURFACE }, 1),
+    row("wake.turn_start", "2026-01-28T12:28:04.900Z", { wakeId: ASK_WAKE, turnStartTs: "2026-01-28T12:28:04.900Z" }, 2),
+    row("delegation.task_started", "2026-01-28T12:28:08.000Z", { task: TASK, continuation: false }, 3, "ingest"),
+    row("reply.post", "2026-01-28T12:28:19.000Z", { id: ACK, wakeId: ASK_WAKE, chars: 118 }, 4),
+    row("unified.task_wake", "2026-01-28T12:29:39.000Z", { task: TASK, wakeId: MINTED, inheritedWakeId: ASK_WAKE, outcome: "installed" }, 5, "unified"),
+    row("reply.post", "2026-01-28T12:29:40.000Z", { id: REPORT, wakeId: MINTED, chars: 233 }, 6),
+    row("delegation.settlement_report_posted", "2026-01-28T12:29:40.031Z", { task: TASK, wake: MINTED }, 7),
+  ];
+  const askWakeId = wakeIdForVendorInstant(rows, ASK_VENDOR_MS, SURFACE);
+  const floorMs = turnStartMs(rows, ASK_WAKE);
+  const keys = { askWakeId, floorMs };
+
+  ok(askWakeId === ASK_WAKE, "the ask's own wake is found by the vendor instant — the first of the two keys the wait latches");
+  ok(floorMs === Date.parse("2026-01-28T12:28:04.900Z"), "…and its turn start is the second, read from the row's own `ts`, which `wake-turn-start.ts` stamps from `turnStartTs`");
+  const pairing = settlementReportPairings(rows).find((p) => p.id === REPORT);
+  ok(pairing?.id === REPORT, "§5's pairing still names the report's message: what changed is what the wait DOES with it");
+  ok(pairing?.task === TASK && pairing.wake === MINTED, "…and the pairing carries the task that settled and the wake it settled under — the join a bare id set threw away");
+
+  const answered = classifySettlementReply(rows, { ...keys, messageId: REPORT, answersAsk: true });
+  ok(answered.kind === "answer", "🔴 the settlement report of a task THIS ask dispatched, carrying what the ask asked for, IS the answer — the 320 s timeout this ticket names");
+  ok(answered.kind === "answer" && answered.wakeId === MINTED, "…and it names the MINTED wake it was posted under, never the ask's, so a log says which wake answered");
+
+  const noToken = classifySettlementReply(rows, { ...keys, messageId: REPORT, answersAsk: false });
+  ok(noToken.kind === "step-over", "🔴 control: the SAME report whose text does not carry what the ask asked for is stepped over — the content gate is load-bearing, not decoration");
+
+  const interim = classifySettlementReply(rows, { ...keys, messageId: ACK, answersAsk: true });
+  ok(interim.kind === "not-a-report", "the interim ack carries no settlement row, so §5 claims nothing about it — `skip` owns that message, exactly as before");
+
+  ok(classifySettlementReply(rows, { messageId: REPORT, askWakeId: undefined, floorMs, answersAsk: true }).kind === "step-over", "control: no wake for the ask at all FAILS CLOSED to the old unconditional skip");
+  ok(classifySettlementReply(rows, { messageId: REPORT, askWakeId: ASK_WAKE, floorMs: undefined, answersAsk: true }).kind === "step-over", "control: no floor for the ask's turn FAILS CLOSED too — nothing can be placed inside a turn with no start");
+
+  const earlierDispatch = rows.map((r) => (r.action === "delegation.task_started" ? row(r.action, "2026-01-28T12:25:16.000Z", r.detail as Record<string, unknown>, r.seq, "ingest") : r));
+  ok(classifySettlementReply(earlierDispatch, { ...keys, messageId: REPORT, answersAsk: true }).kind === "step-over", "🔴 control: a task dispatched BEFORE this ask's turn start is a PREVIOUS leg's, so its report never ends this wait");
+
+  const foreignPost = rows.map((r) => (r.action === "unified.task_wake" ? row(r.action, r.ts, { ...(r.detail as Record<string, unknown>), inheritedWakeId: "another-legs-wake" }, r.seq, "unified") : r));
+  ok(classifySettlementReply(foreignPost, { ...keys, messageId: REPORT, answersAsk: true }).kind === "step-over", "🔴 control: a minted wake whose `inheritedWakeId` is another leg's is never adopted, so a report posted under it is stepped over");
+
+  const WAKE_Rb = "e900c9f0";
+  const REPORT_Rb = "1769474005.459000";
+  const TASK_Rb = "task_06965c9a";
+  const FLOOR_Rb = Date.parse("2026-01-27T00:33:16.000Z");
+  const rowsRb = [
+    row("wake.turn_start", "2026-01-27T00:33:16.000Z", { wakeId: WAKE_Rb, turnStartTs: "2026-01-27T00:33:16.000Z" }, 8),
+    row("delegation.task_started", "2026-01-27T00:29:27.000Z", { task: TASK_Rb, continuation: false }, 9, "ingest"),
+    row("reply.post", "2026-01-27T00:33:25.400Z", { id: REPORT_Rb, wakeId: WAKE_Rb, chars: 251 }, 10),
+    row("delegation.settlement_report_posted", "2026-01-27T00:33:25.459Z", { task: TASK_Rb, wake: WAKE_Rb }, 11),
+  ];
+  const keysRb = { askWakeId: WAKE_Rb, floorMs: FLOOR_Rb };
+  ok(classifySettlementReply(rowsRb, { ...keysRb, messageId: REPORT_Rb, answersAsk: true }).kind === "step-over", "🔴 OPE-1965 still holds ON LINEAGE, not on text: the PR task's report is posted under THIS ask's own wake, and the dispatch join places that task in a PREVIOUS leg");
+
+  const dispatchedHere = rowsRb.map((r) => (r.action === "delegation.task_started" ? row(r.action, "2026-01-27T00:33:17.000Z", r.detail as Record<string, unknown>, r.seq, "ingest") : r));
+  ok(classifySettlementReply(dispatchedHere, { ...keysRb, messageId: REPORT_Rb, answersAsk: true }).kind === "answer", "…and the SAME rows with the dispatch inside this turn answer — a seat that delegates and settles under its own wake has answered its ask");
 }
 
 {

@@ -129,6 +129,7 @@ import {
   auditSinceForVendorInstant,
   carriesHostTemplate,
   classifyConnectorRoad,
+  classifySettlementReply,
   classifyUnansweredWake,
   CONNECTOR_USE_ACTION,
   FIRE_ATTRS_SENT_ACTION,
@@ -142,7 +143,8 @@ import {
   rowsAtOrAfter,
   saltedFixtureLine,
   SETTLEMENT_REPORT_POSTED_ACTION,
-  settlementReportMessageIds,
+  type SettlementReplyVerdict,
+  turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
@@ -906,11 +908,26 @@ async function gateSeatCatchUp(
 
 const SETTLEMENT_STEPS = 3;
 
+const SETTLEMENT_WAIT_ACTIONS = [
+  REPLY_POST_ACTION,
+  SETTLEMENT_REPORT_POSTED_ACTION,
+  WAKE_INGRESS_ACTION,
+  WAKE_TURN_START_ACTION,
+  TASK_WAKE_ACTION,
+  DELEGATION_TASK_STARTED_ACTION,
+];
+
 async function awaitNonSettlementReply(
   ctx: ScenarioContext,
   driver: SlackDriver,
   anchorTs: string,
-  opts: { readonly what: string; readonly sinceIso: string; readonly timeoutMs: number; readonly skip?: (m: SlackMessage) => boolean },
+  opts: {
+    readonly what: string;
+    readonly sinceIso: string;
+    readonly timeoutMs: number;
+    readonly skip?: (m: SlackMessage) => boolean;
+    readonly answers: (m: SlackMessage) => boolean;
+  },
 ): Promise<SlackMessage> {
   const read = ctx.auditRead;
   const deadline = Date.now() + opts.timeoutMs;
@@ -921,13 +938,21 @@ async function awaitNonSettlementReply(
     ctx.log(`reply-wait ${opts.what}: no control-plane audit reader — a previous task's settlement report posted in this turn would be graded as the answer (OPE-1965)`);
     return reply;
   }
+  const vendor = slackVendorEventTime(anchorTs);
+  if (!vendor) ctx.log(`reply-wait ${opts.what}: the driver's own post ts ${anchorTs} carries no readable vendor instant, so no settlement report can be tied to this ask — every one is stepped over (OPE-1965)`);
+  const surfaceKey = vendor ? `slack/${(await driver.identity()).teamId}/${driver.channelId}` : undefined;
+  let askWakeId: string | undefined;
+  let floorMs: number | undefined;
   for (let step = 0; step < SETTLEMENT_STEPS; step++) {
-    let reports: ReadonlySet<string> | undefined;
+    let verdict: SettlementReplyVerdict | undefined;
     try {
-      reports = await pollOptional(
+      verdict = await pollOptional(
         async () => {
-          const rows = await read({ sinceIso: opts.sinceIso, actions: [REPLY_POST_ACTION, SETTLEMENT_REPORT_POSTED_ACTION], limit: 200 });
-          return rows.some((r) => r.action === REPLY_POST_ACTION && (r.detail as { id?: unknown } | undefined)?.id === reply.ts) ? settlementReportMessageIds(rows) : undefined;
+          const rows = await read({ sinceIso: opts.sinceIso, actions: SETTLEMENT_WAIT_ACTIONS, limit: OWN_WAKE_AUDIT_PAGE });
+          if (!rows.some((r) => r.action === REPLY_POST_ACTION && (r.detail as { id?: unknown } | undefined)?.id === reply.ts)) return undefined;
+          if (askWakeId === undefined && vendor) askWakeId = wakeIdForVendorInstant(rows, vendor.ms, surfaceKey);
+          if (floorMs === undefined && askWakeId !== undefined) floorMs = turnStartMs(rows, askWakeId);
+          return classifySettlementReply(rows, { messageId: reply.ts, askWakeId, floorMs, answersAsk: opts.answers(reply) });
         },
         { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: `reply-wait ${opts.what}: the ${REPLY_POST_ACTION} row for message ${reply.ts}` },
       );
@@ -935,12 +960,15 @@ async function awaitNonSettlementReply(
       ctx.log(`reply-wait ${opts.what}: the settlement-report read failed (${String(err instanceof Error ? err.message : err)}) — grading the reply in hand`);
       return reply;
     }
-    if (reports === undefined) {
+    if (verdict === undefined) {
       ctx.log(`reply-wait ${opts.what}: no ${REPLY_POST_ACTION} row named message ${reply.ts} within ${AUDIT_ROW_WAIT}ms, so it could not be classified — grading it as the answer`);
       return reply;
     }
-    if (!reports.has(reply.ts)) return reply;
-    ctx.log(`reply-wait ${opts.what}: message ${reply.ts} carried a delegated task's SETTLEMENT REPORT, not this ask's answer — stepping over it and waiting again`);
+    if (verdict.kind !== "step-over") {
+      ctx.log(`reply-wait ${opts.what}: ${verdict.kind} — ${verdict.detail}`);
+      return reply;
+    }
+    ctx.log(`reply-wait ${opts.what}: ${verdict.detail} — stepping over it and waiting again`);
     reply = await wait(reply.ts);
   }
   return reply;
@@ -5428,6 +5456,7 @@ export const SCENARIOS: readonly Scenario[] = [
         sinceIso: memAskStart,
         timeoutMs: FILE_REPLY_WAIT,
         skip: (m) => isFillerAck(m.text),
+        answers: (m) => m.text.includes(decision),
       });
       ctx.gate(memAck.text.trim().length > 0, "remember: the ask drew a reply (the turn ran, interim or final)");
       await ctx.judgePass(
