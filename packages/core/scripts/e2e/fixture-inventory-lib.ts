@@ -72,6 +72,11 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
   { surface: "linear", envVar: "E2E_SOAK_LINEAR_TEAM_ID", what: "the soak org's team (OPE-855)" },
 
   { surface: "notion", envVar: "E2E_NOTION_PAGE_ID", what: "J-NOT's ambient scratch page" },
+  {
+    surface: "notion",
+    envVar: "E2E_NOTION_OWN_ACCOUNT_PAGE_ID",
+    what: "S-OWN-ACCOUNT-NOTION's own page — the same domain as E2E_NOTION_PAGE_ID, and never that page (OPE-1984)",
+  },
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_1", what: "the soak tests' spec page" },
   { surface: "notion", envVar: "E2E_NOTION_SOAK_PAGE_2", what: "the soak tests' late-recall page" },
 

@@ -6337,6 +6337,191 @@ rmSync(dir, { recursive: true, force: true });
 }
 
 {
+  const {
+    activeStandingGrants,
+    CONNECTOR_ACTING_IDENTITY_ACTION,
+    GRANT_LIFECYCLE_ACTIONS,
+    GRANT_LIFECYCLE_ROW_LIMIT,
+    GRANT_OVERLAP_LOOKBACK_DAYS,
+    GRANT_USE_FRESHNESS_MS,
+    grantOverlapVerdict,
+  } = await import("../packages/core/scripts/e2e/own-account-rows.js");
+
+  const NOW = Date.parse("2026-05-27T08:32:00.000Z");
+  const LEG_PAGE = "page-own-account";
+  const PINNED_PAGE = "page-ambient";
+  const iso = (msBefore: number): string => new Date(NOW - msBefore).toISOString();
+  const grantRow = (action: string, detail: Record<string, unknown>, tsMsBefore = 60_000): AuditWireEntry => ({
+    ts: iso(tsMsBefore),
+    org: "o",
+    platform: "discord",
+    workspace: "w",
+    action,
+    detail,
+  });
+  const granted = (over: Record<string, unknown> = {}): AuditWireEntry =>
+    grantRow("grant.granted", {
+      askId: "ask-1",
+      connector: "notion",
+      expiresAt: new Date(NOW + 29 * 24 * 60 * 60 * 1000).toISOString(),
+      grantId: "g-1",
+      mode: "standing",
+      owner: "discord/300000000000000104",
+      requester: "discord/1",
+      resource: "notion-fetch keys:id",
+      scopeKey: "oe-grant-domain::e2e-unified",
+      tier: "read",
+      verb: "notion_fetch",
+      ...over,
+    });
+  const used = (over: Record<string, unknown> = {}, tsMsBefore = 60_000): AuditWireEntry =>
+    grantRow(
+      "grant.used",
+      {
+        connector: "notion",
+        grantId: "g-1",
+        mode: "standing",
+        owner: "discord/300000000000000104",
+        purpose: "e2e grant-tap fixture",
+        requester: "discord/1",
+        resource: "notion-fetch keys:id",
+        scopeKey: "oe-grant-domain::e2e-unified",
+        tier: "read",
+        verb: "notion_fetch",
+        ...over,
+      },
+      tsMsBefore,
+    );
+
+  ok(
+    GRANT_LIFECYCLE_ACTIONS.includes("grant.granted") && GRANT_LIFECYCLE_ACTIONS.includes("grant.used") && GRANT_LIFECYCLE_ACTIONS.includes("grant.revoked"),
+    "the preflight narrows at the route to the three lifecycle actions its verdict turns on — a mint, a spend and a revocation",
+  );
+  ok(GRANT_OVERLAP_LOOKBACK_DAYS >= 30, "the lookback covers a standing grant's whole life, so a mint still in force is inside the window and `expiresAt` can be the authority");
+
+  ok(activeStandingGrants([granted()], { connector: "notion", nowMs: NOW }).length === 1, "a standing mint whose expiry is still future is live");
+  const fromMint = activeStandingGrants([granted()], { connector: "notion", nowMs: NOW })[0];
+  ok(fromMint.evidence === "granted" && fromMint.resource === "notion-fetch keys:id" && fromMint.verb === "notion_fetch", "the live grant carries the row that proved it, and the audit resource NAMES only");
+  ok(
+    activeStandingGrants([granted({ expiresAt: new Date(NOW - 1000).toISOString() })], { connector: "notion", nowMs: NOW }).length === 0,
+    "NEGATIVE: a LAPSED standing grant is not live — `expiresAt` is the authority, and a lapsed grant mounts nothing",
+  );
+  ok(
+    activeStandingGrants([granted({ expiresAt: "not-a-date" })], { connector: "notion", nowMs: NOW }).length === 0,
+    "NEGATIVE: an unreadable expiry is not live — an unreadable field may never be read as a live grant, the same fail-closed rule `unexpiredGrants` holds",
+  );
+  ok(activeStandingGrants([granted({ mode: "once" })], { connector: "notion", nowMs: NOW }).length === 0, "NEGATIVE: a ONCE-mode grant is burned by its first call and cannot pre-empt a later leg's road");
+  ok(activeStandingGrants([granted()], { connector: "linear", nowMs: NOW }).length === 0, "NEGATIVE: the connector is MATCHED — a Linear grant never answers a question about a Notion read");
+  ok(activeStandingGrants([granted(), grantRow("grant.revoked", { askId: "ask-1", grantId: "g-1" })], { connector: "notion", nowMs: NOW }).length === 0, "NEGATIVE: a REVOKED grant is not live, whatever its expiry says");
+  ok(activeStandingGrants([used()], { connector: "notion", nowMs: NOW }).length === 1, "a fresh SPEND stands in for a mint this window did not hold — the grant was live when it was spent");
+  ok(
+    activeStandingGrants([used({}, GRANT_USE_FRESHNESS_MS + 60_000)], { connector: "notion", nowMs: NOW }).length === 0,
+    "NEGATIVE: a STALE spend proves nothing about now — `grant.used` carries no expiry, so the claim is bounded to the freshness window",
+  );
+  ok(
+    activeStandingGrants([granted({ expiresAt: new Date(NOW - 1000).toISOString() }), used()], { connector: "notion", nowMs: NOW }).length === 0,
+    "NEGATIVE: a spend does NOT override the mint's own expiry — a grant this window shows lapsed stays lapsed however recently it was spent",
+  );
+  ok(activeStandingGrants([granted(), used()], { connector: "notion", nowMs: NOW }).length === 1, "one grant is counted ONCE however many rows name it");
+  ok(activeStandingGrants([granted({ grantId: undefined })], { connector: "notion", nowMs: NOW }).length === 0, "NEGATIVE: a row naming no grant id is not a grant this preflight can revoke-check, so it is not counted");
+
+  const inside = grantOverlapVerdict([granted()], { connector: "notion", legPageId: PINNED_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT });
+  ok(inside.kind === "red", "THE LEG: a page this pack's grant legs pin, with a live standing grant on the window, REDS — it is the two live runs failure, named rather than timed out");
+  ok(
+    inside.reason.includes(PINNED_PAGE) && inside.reason.includes("notion-fetch keys:id") && inside.reason.includes(CONNECTOR_ACTING_IDENTITY_ACTION),
+    "the red NAMES the page, the grant it saw and the row that then goes missing — a reason an operator can act on without reading the transcript",
+  );
+  const outsideGrant = grantOverlapVerdict([granted()], { connector: "notion", legPageId: LEG_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT });
+  ok(outsideGrant.kind === "proceed", "NEGATIVE: a live grant pinned to ANOTHER page proceeds — the frozen arguments are pinned into the mounted schema, so it cannot answer a read of this page");
+  ok(
+    outsideGrant.reason.includes("NAMES") && outsideGrant.reason.includes("never their values"),
+    "the proceed reason states its own LIMIT — the wire carries a grant's argument names, so a grant somebody else pinned to this page is invisible here",
+  );
+  ok(
+    grantOverlapVerdict([], { connector: "notion", legPageId: PINNED_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT }).kind === "proceed",
+    "NEGATIVE: the pinned page with NO live grant proceeds — the ROWS are load-bearing, so the verdict is not a disguised comparison of two ids",
+  );
+  ok(
+    grantOverlapVerdict([granted({ mode: "once" })], { connector: "notion", legPageId: PINNED_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT }).kind === "proceed",
+    "NEGATIVE: a once-mode grant on the pinned page proceeds — it is burned by its first call and pre-empts no later leg",
+  );
+  ok(
+    grantOverlapVerdict([granted()], { connector: "notion", legPageId: PINNED_PAGE, nowMs: NOW, pinnedPageIds: [], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT }).kind === "proceed",
+    "NEGATIVE: with NO pinned page known, a live grant alone never reds — the harness may not call a page borrowed on evidence it does not hold",
+  );
+  ok(
+    grantOverlapVerdict([], { connector: "notion", legPageId: PINNED_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT }).reason.includes("later board"),
+    "the quiet-window proceed on the pinned page still warns: the same fixture reds the day an owner taps the ask",
+  );
+
+  const atCeiling = Array.from({ length: 4 }, () => grantRow("grant.revoked", { askId: "ask-0", grantId: "g-old" }));
+  ok(
+    grantOverlapVerdict(atCeiling, { connector: "notion", legPageId: LEG_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: 4 }).reason.includes("truncated"),
+    "a row count AT the requested ceiling says the window was TRUNCATED — an absence read off a page the caller could not prove complete is not an absence",
+  );
+  ok(
+    !grantOverlapVerdict(atCeiling, { connector: "notion", legPageId: LEG_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: 5 }).reason.includes("truncated"),
+    "NEGATIVE: a count BELOW the ceiling says nothing about truncation — the warning is driven by the count, not printed unconditionally",
+  );
+  ok(
+    grantOverlapVerdict([granted()], { connector: "notion", legPageId: LEG_PAGE, nowMs: NOW, pinnedPageIds: [PINNED_PAGE], rowLimit: GRANT_LIFECYCLE_ROW_LIMIT }).reason.includes(
+      "not something this check settles",
+    ),
+    "🔴 the proceed reason does NOT claim the live grants are frozen elsewhere — which page a grant pins is unreadable here, including for the grants it just counted",
+  );
+
+  const ownAccountSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  const legStart = ownAccountSrc.indexOf('id: "S-OWN-ACCOUNT-NOTION"');
+  ok(legStart > 0, "S-OWN-ACCOUNT-NOTION is still in the scenario table under that id — every gate below reads its body");
+  const legBody = ownAccountSrc.slice(legStart, ownAccountSrc.indexOf('id: "F-ART"', legStart));
+  ok(legBody.length > 1000, "the leg body was sliced to the next scenario, not to nothing");
+  ok(
+    /roomIdFor\(ENV\.notionOwnAccountPageId, process\.env\)/.test(legBody),
+    "🔴 OPE-1984: the leg resolves its OWN page through `ENV.notionOwnAccountPageId`. Reading `ENV.notionAmbientPageId` is what put it on the page the pack's own grant legs pin, and two boards then scored it CANNOT RUN",
+  );
+  ok(
+    /ctx\.notionAmbient!\.forPage\(/.test(legBody),
+    "🔴 OPE-1984: …and DRIVES that page — the ambient driver is re-pointed with `forPage`, so the anchors, the comments and the reply waits all land on the leg's own page",
+  );
+  ok(
+    !/const not = ctx\.notionAmbient!;/.test(legBody),
+    "🔴 OPE-1984: NEGATIVE — the leg no longer takes the ambient driver bare. That one line is the whole defect: it binds every drive to `E2E_NOTION_PAGE_ID`, the page a tapped standing grant reaches",
+  );
+  ok(
+    /ctx\.skip\(\s*`\$\{ENV\.notionOwnAccountPageId\} is not set/.test(legBody),
+    "🔴 OPE-1984: an unset page is a SKIP naming the variable, never a fallback to the ambient page — a fallback is the state this ticket exists to remove",
+  );
+  ok(
+    legBody.indexOf("grantOverlapVerdict(") > 0 && legBody.indexOf("grantOverlapVerdict(") < legBody.indexOf("appendParagraphBlock("),
+    "🔴 OPE-1984: the preflight runs BEFORE the leg drives anything — a check after the first comment is a check that costs the turn it was meant to save",
+  );
+  ok(
+    /ctx\.gate\(overlap\.kind === "proceed", overlap\.reason\)/.test(legBody),
+    "🔴 OPE-1984: the preflight's verdict is a hard GATE carrying its own reason — logging it would turn the named red back into the 15-minute arm-1 skip it replaces",
+  );
+
+  const { NotionDriver } = await import("../packages/core/scripts/e2e/notion-driver.js");
+  const base = new NotionDriver({
+    anchorHuman: "c-human",
+    anchorOffTopic: "c-off",
+    anchorOnTopic: "c-on",
+    anchorOnTopic2: "c-on2",
+    botUserId: "bot-1",
+    driverKey: "secret_placeholder_not_a_credential",
+    pageId: PINNED_PAGE,
+    webhookSecret: "wh-placeholder",
+    workspaceId: "ws-1",
+  });
+  const repointed = base.forPage(LEG_PAGE);
+  ok(repointed.pageId === LEG_PAGE && base.pageId === PINNED_PAGE, "forPage returns a NEW driver on the named page and leaves the original bound where it was");
+  ok(repointed.botUserId === "bot-1" && repointed.webhookSecret === "wh-placeholder", "the bot identity and the WORKSPACE-level signing secret ride along — only the page differs");
+  ok(
+    repointed.anchorOnTopic === undefined && repointed.anchorOnTopic2 === undefined && repointed.anchorOffTopic === undefined && repointed.anchorHuman === undefined,
+    "🔴 the four forge anchors are DROPPED — they are comment ids on the old page, and carrying them would let a forge replay name a comment the new page does not hold",
+  );
+}
+
+{
   const scenariosSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
   const start = scenariosSrc.indexOf('id: "J-MPIM"');
   ok(start > 0, "the J-MPIM scenario is still in scenarios.ts (if it is gone, delete this section rather than letting it pass vacuously)");

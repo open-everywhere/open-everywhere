@@ -256,6 +256,13 @@ export class NotionDriver {
   get pageId(): string {
     return this.cfg.pageId;
   }
+  forPage(pageId: string): NotionDriver {
+    const { anchorOnTopic: _a, anchorOnTopic2: _b, anchorOffTopic: _c, anchorHuman: _d, ...rest } = this.cfg;
+    return new NotionDriver(
+      { ...rest, pageId },
+      { ...(this.retry.fetchFn === undefined ? {} : { fetchFn: this.retry.fetchFn }), ...(this.retry.sleepFn === undefined ? {} : { sleepFn: this.retry.sleepFn }) },
+    );
+  }
   get webhookSecret(): string | undefined {
     return this.cfg.webhookSecret;
   }

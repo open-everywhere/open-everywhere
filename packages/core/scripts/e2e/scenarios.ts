@@ -65,6 +65,10 @@ import {
   allOrdinaryInstallReads,
   CONNECTOR_ACTING_IDENTITY_ACTION,
   CONNECTOR_OWN_ACCOUNT_ASK_ACTION,
+  GRANT_LIFECYCLE_ACTIONS,
+  GRANT_LIFECYCLE_ROW_LIMIT,
+  GRANT_OVERLAP_LOOKBACK_DAYS,
+  grantOverlapVerdict,
   HUMAN_ACTING_IDENTITY,
   installReads,
   INSTALL_IDENTITY,
@@ -3462,13 +3466,33 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 900_000,
     judged: false,
     run: async (ctx) => {
-      const not = ctx.notionAmbient!;
+      const ownPageId = roomIdFor(ENV.notionOwnAccountPageId, process.env);
+      if (ownPageId === undefined)
+        ctx.skip(
+          `${ENV.notionOwnAccountPageId} is not set — this leg needs a Notion page of its OWN, and it may not fall back to ` +
+            `${ENV.notionAmbientPageId}: the pack's own credential-grant legs pin that page as a grant's frozen argument, so an ordinary read of it ` +
+            `takes the borrowed personal road and writes no ${CONNECTOR_ACTING_IDENTITY_ACTION} row at all (OPE-1984, measured on two live runs). ` +
+            `Provision a SECOND page in the same ambientSupervisor domain as ${ENV.notionAmbientPageId} and export its id.`,
+        );
+      const not = ctx.notionAmbient!.forPage(ownPageId!);
       if (!ctx.auditRead)
         ctx.skip(
           `no audit reader is wired (set ${ENV.targetUrl} + E2E_CONTROL_READ_TOKEN). The ${CONNECTOR_ACTING_IDENTITY_ACTION} row is this leg's only ` +
             `observable — the reply text cannot say which account read the page, and this room carries this leg's own earlier phrasings.`,
         );
       const auditRead = ctx.auditRead!;
+      const overlap = grantOverlapVerdict(
+        await auditRead({ sinceIso: lookbackIso(GRANT_OVERLAP_LOOKBACK_DAYS), limit: GRANT_LIFECYCLE_ROW_LIMIT, actions: GRANT_LIFECYCLE_ACTIONS }),
+        {
+          connector: NOTION_CONNECTOR,
+          legPageId: not.pageId,
+          nowMs: Date.now(),
+          pinnedPageIds: [grantAskPageId()].filter((id): id is string => id !== undefined),
+          rowLimit: GRANT_LIFECYCLE_ROW_LIMIT,
+        },
+      );
+      ctx.gate(overlap.kind === "proceed", overlap.reason);
+      ctx.log(`S-OWN-ACCOUNT-NOTION fixture preflight — ${overlap.reason}`);
       const readWindow = async (sinceIso: string) => actingIdentityRead(await auditRead({ sinceIso, limit: 1000, platform: "notion" }), NOTION_CONNECTOR);
       const diagnose = async (sinceIso: string): Promise<string> => {
         try {

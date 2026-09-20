@@ -57,6 +57,7 @@ export const ENV = {
 
   notionDriverKey: "E2E_NOTION_DRIVER_KEY",
   notionAmbientPageId: "E2E_NOTION_PAGE_ID",
+  notionOwnAccountPageId: "E2E_NOTION_OWN_ACCOUNT_PAGE_ID",
   notionAmbientWebhookSecret: "E2E_NOTION_WEBHOOK_SECRET",
   notionBotUserId: "E2E_NOTION_BOT_USER_ID",
   notionWorkspaceId: "E2E_NOTION_WORKSPACE_ID",
