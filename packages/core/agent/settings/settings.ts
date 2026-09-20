@@ -75,6 +75,10 @@ export interface AgentSettings {
     readonly dreamCandidateCap: number;
     readonly skillProposalPr: boolean;
   };
+  readonly policyPages: {
+    readonly privacy: string;
+    readonly terms: string;
+  };
   readonly routines: {
     readonly eventMaxFanout: number;
     readonly maxConcurrency: number;
@@ -155,6 +159,11 @@ const positiveInt = (value: number): string | undefined =>
 
 const positiveNumber = (value: number): string | undefined =>
   Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
+
+const policyTextProblem = (value: string): string | undefined =>
+  value.length > 0 && value.trim().length === 0
+    ? "must be either empty (no document published) or real text — a whitespace-only value renders a blank page"
+    : undefined;
 
 const stringArray = (value: readonly string[]): string | undefined =>
   Array.isArray(value) && value.every((t) => typeof t === "string") ? undefined : "must be an array of strings";
@@ -400,6 +409,24 @@ export const SETTINGS = {
       summary:
         "Whether a Mode-1 SKILL proposal also opens a PULL REQUEST on the config repo (`accessRequests.configRepo`), adding the drafted skill under `.agents/skills/<name>/SKILL.md` on its own branch. Off ships the v1 behaviour: the proposal is recorded in the review queue and nothing reaches GitHub. On, MERGING the pull request is what arms the skill — the cycle never merges, never pushes to the base branch, and needs no credential beyond the one the access-request and credential-binding flows already use. A person's review or comment on a proposal is read back as a CORRECTION and carried into the next proposal for that scope, and only an author with repository standing (GitHub's `author_association`: OWNER, MEMBER or COLLABORATOR) counts.",
     } satisfies SettingSpec<boolean>,
+  },
+  policyPages: {
+    privacy: {
+      path: "policyPages.privacy",
+      shipped: "",
+      validate: policyTextProblem,
+      summary:
+        "The operator's PRIVACY POLICY, served as `GET /privacy` — the URL `teams-app/manifest.json` declares as `privacyUrl`. Free text, rendered ESCAPED and as PLAIN TEXT with its line breaks kept: never as HTML and never as markdown, so the route cannot become a way to serve arbitrary markup from this deployment's origin. Empty (shipped) ⇒ the route answers 200 with a placeholder page saying no policy is published yet and naming this setting; it never 404s, because a manifest pointing at a 404 is the defect the route exists to remove.",
+      format: (v) => (v === "" ? "`` (unset — `/privacy` serves the placeholder page)" : "the operator's own text"),
+    } satisfies SettingSpec<string>,
+    terms: {
+      path: "policyPages.terms",
+      shipped: "",
+      validate: policyTextProblem,
+      summary:
+        "The operator's TERMS OF USE, served as `GET /terms` — the URL `teams-app/manifest.json` declares as `termsOfUseUrl`. Same rendering and same unset behaviour as `policyPages.privacy`.",
+      format: (v) => (v === "" ? "`` (unset — `/terms` serves the placeholder page)" : "the operator's own text"),
+    } satisfies SettingSpec<string>,
   },
   routines: {
     eventMaxFanout: {
@@ -864,6 +891,10 @@ export function getSettings(
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),
       skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr, env),
+    },
+    policyPages: {
+      privacy: resolve(SETTINGS.policyPages.privacy, o.policyPages?.privacy, env),
+      terms: resolve(SETTINGS.policyPages.terms, o.policyPages?.terms, env),
     },
     routines: {
       eventMaxFanout: resolve(SETTINGS.routines.eventMaxFanout, o.routines?.eventMaxFanout, env),
