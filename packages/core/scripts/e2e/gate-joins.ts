@@ -44,12 +44,11 @@ export const MEMORY_WRITE_ACTION = "memory.write";
 
 export const MEMORY_OWN_PERSIST_ROADS: readonly string[] = ["session-persist"];
 
-export function isMemoryHopWrite(row: AuditWireEntry, opts: { readonly ownSessionId?: string } = {}): boolean {
+export function isMemoryHopWrite(row: AuditWireEntry): boolean {
   if (row.action !== MEMORY_WRITE_ACTION) return false;
-  if (opts.ownSessionId === undefined) return true;
   const road = dstr(row, "road");
-  if (road === undefined || !MEMORY_OWN_PERSIST_ROADS.includes(road)) return true;
-  return dstr(row, "sessionId") !== opts.ownSessionId;
+  if (road === undefined) return true;
+  return !MEMORY_OWN_PERSIST_ROADS.includes(road);
 }
 
 export interface ReplayedEvent {

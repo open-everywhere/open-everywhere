@@ -109,27 +109,52 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 {
   const UNIFIED = "wrun_example23";
   const park = row("memory.write", "2026-01-24T00:25:22.000Z", { road: "session-persist", kind: "memory", outcome: "edited", files: 9, sessionId: UNIFIED });
-  ok(!isMemoryHopWrite(park, { ownSessionId: UNIFIED }), "the unified session's own turn-end persist does not trip the WRITE side — it is unavoidable, and the read gate is what sees a same-session hop");
-  ok(isMemoryHopWrite(park, {}), "🔴 with no session identified nothing is excluded: the caller gets the strict rule back rather than a guess");
+  const siblingRemember = row("memory.write", "2026-01-24T17:44:07.000Z", {
+    road: "session-persist",
+    kind: "memory",
+    tier: "silo:e2e-ambient-brain",
+    outcome: "write-intent",
+    files: 9,
+    sessionId: "wrun_example25",
+  });
+  const siblingPersist = { ...siblingRemember, detail: { ...siblingRemember.detail, outcome: "edited" } };
+
+  ok(!isMemoryHopWrite(park), "the unified session's own turn-end persist does not trip the WRITE side — the read gate is what sees a hop taken on that road");
   ok(
-    isMemoryHopWrite({ ...park, detail: { ...park.detail, sessionId: "wrun_SOMEONE_ELSE" } }, { ownSessionId: UNIFIED }),
-    "ANOTHER session's persist in the same window still trips it",
+    !isMemoryHopWrite(siblingPersist),
+    "🔴 a SIBLING seat's turn-end persist in the same window is NOT a hop either (OPE-1986): counting one reds the leg whenever another seat is awake in the room",
   );
-  for (const road of ["control-edit", "dream-learn", "purge", "pinned-instructions"]) {
+  ok(
+    !isMemoryHopWrite({ ...siblingPersist, detail: { ...siblingPersist.detail, sessionId: "wrun_A_THIRD_SEAT" } }),
+    "…and the exclusion is decided by the ROAD alone, so a third seat's persist is excluded on the same terms — no session id is read at all",
+  );
+  for (const road of ["control-edit", "dream-learn", "dream-tidy", "purge", "pinned-instructions"]) {
     ok(
-      isMemoryHopWrite({ ...park, detail: { ...park.detail, road } }, { ownSessionId: UNIFIED }),
-      `a \`${road}\` write by the same session still trips it — only the session's own persist road is excluded`,
+      isMemoryHopWrite({ ...siblingPersist, detail: { ...siblingPersist.detail, road } }),
+      `a \`${road}\` write by ANOTHER session still trips it — every road but \`session-persist\` is a deliberate act this window can see`,
+    );
+    ok(
+      isMemoryHopWrite({ ...park, detail: { ...park.detail, road } }),
+      `…and a \`${road}\` write by the unified session itself trips it too — the road is what the gate reads, never who wrote it`,
     );
   }
   ok(
-    !isMemoryHopWrite({ ...park, detail: { ...park.detail, outcome: "write-intent" } }, { ownSessionId: UNIFIED }),
-    "🔴 an in-turn remember-ask flush by the same session does NOT trip the write side — the write side is blind to a same-session hop, by construction",
+    !isMemoryHopWrite(siblingRemember),
+    "🔴 the MEASURED row — a sibling seat's in-turn remember-ask flush (`outcome: write-intent`) — does NOT trip the write side either: the road is all this reader has, and it carries the deliberate write too",
   );
   ok(
-    isMemoryHopWrite({ ...park, detail: { road: "session-persist", sessionId: 42 } }, { ownSessionId: UNIFIED }),
-    "a row whose sessionId is not a string fails toward COUNTING — an unreadable row reds the leg rather than being quietly dropped",
+    !isMemoryHopWrite({ ...park, detail: { ...park.detail, outcome: "write-intent" } }),
+    "…and neither does the ANSWERING session's own remember-ask flush, which is the hop the write side would most want to see and cannot",
   );
-  ok(!isMemoryHopWrite(row("memory.operational_write", park.ts, { road: "status-board" }), {}), "an OPERATIONAL write is a different action and is not this gate's business");
+  ok(
+    isMemoryHopWrite({ ...park, detail: { kind: "memory", sessionId: UNIFIED } }),
+    "a row with NO readable road fails toward COUNTING — an unreadable row reds the leg rather than being quietly dropped",
+  );
+  ok(
+    isMemoryHopWrite({ ...park, detail: { ...park.detail, road: 42 } }),
+    "…and so does a row whose road is not a string: the gate understands the closed road set and nothing else",
+  );
+  ok(!isMemoryHopWrite(row("memory.operational_write", park.ts, { road: "status-board" })), "an OPERATIONAL write is a different action and is not this gate's business");
 }
 
 {

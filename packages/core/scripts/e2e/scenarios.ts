@@ -130,6 +130,7 @@ import {
   fireAnchor,
   fixtureSalt,
   isMemoryHopWrite,
+  MEMORY_WRITE_ACTION,
   memoryPathReadsBetween,
   PROMISE_SUBJECT,
   replyPostSessionId,
@@ -3732,7 +3733,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "F-EDIT",
     proves: ["PAR-message-edit-wake"],
-    title: "Message-EDIT wake (<previous-body>): an xoxp edit of an engaged message wakes an edit-aware reply (live primary-model wake-envelope probe)",
+    title: "Message-EDIT wake (<previous-body>): an xoxp edit of an engaged message wakes a reply that ANSWERS from the post-edit value (live primary-model wake-envelope probe)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
@@ -3742,8 +3743,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const slack = ctx.slack!;
       const { ts: rootTs } = await slack.post(slack.mention("I'm planning a small event for 20 people. Acknowledge and stand by."));
       await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
-      const before = "actually the headcount is 35";
-      const after = "actually the headcount is 50 (edited)";
+      const QUESTION = "at 3 slices each, how many slices of pizza do we need? reply with just the number";
+      const before = `actually the headcount is 35 — ${QUESTION}`;
+      const after = `actually the headcount is 50 — ${QUESTION}`;
+      const postEditAnswer = "150";
       const { ts: editTs } = await slack.post(before, rootTs);
       const settle = await pollOptional(
         async () => (await slack.replies(rootTs)).find((m) => slack.isBotReply(m) && tsAfter(m.ts, editTs) && !isPendingWorkHandoff(m.text)),
@@ -3751,11 +3754,26 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.log(settle ? "edit-wake: the pre-edit follow-up drew a reply; editing now" : `edit-wake: the pre-edit follow-up drew no reply within ${EDIT_SETTLE_WAIT}ms (legitimate — the seat may judge it not worth a line); editing now`);
       await slack.update(editTs, after);
-      const editReply = await slack.awaitThreadReply(rootTs, { afterTs: settle?.ts ?? editTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const postEditReply = (m: SlackMessage): boolean => slack.isBotReply(m) && tsAfter(m.ts, settle?.ts ?? editTs) && !isPendingWorkHandoff(m.text);
+      const answersEdit = new RegExp(`\\b${postEditAnswer}\\b`);
+      const answered = await pollOptional(
+        async () => (await slack.replies(rootTs)).find((m) => postEditReply(m) && answersEdit.test(m.text)),
+        { timeoutMs: REPLY_WAIT, what: `a bot reply carrying the post-edit answer ${postEditAnswer} in thread ${rootTs}` },
+      );
+      const editReply = answered ?? (await slack.replies(rootTs)).find(postEditReply);
+      ctx.gate(
+        editReply !== undefined,
+        `edit-wake: the seat replied at all after the edit (no bot reply after ${settle?.ts ?? editTs} within ${REPLY_WAIT}ms — an edit that asks a question and draws silence is a product finding)`,
+      );
+      if (answered === undefined) ctx.log(`edit-wake: no reply carried the post-edit answer ${postEditAnswer} within ${REPLY_WAIT}ms — grading the first post-edit reply, which the gate below reds on`);
       await ctx.judgePass(
-        closedQA("Does the reply acknowledge the headcount CHANGED (to 50), rather than ignoring the edit?", { mustMatch: [/50|chang|updat|edit|revis/i] }),
-        editReply.text,
-        "edit-wake: the agent wakes on the message edit and acknowledges the change (live wake-envelope probe)",
+        closedQA(
+          `Does the reply answer the question for the EDITED headcount of 50 — that is, ${postEditAnswer} slices — rather than for the pre-edit headcount of 35 (105 slices)? ` +
+            "Naming the old figure alongside the new one is fine; answering ONLY with the old one is a FAIL.",
+          { mustMatch: [answersEdit] },
+        ),
+        editReply!.text,
+        `edit-wake: the agent wakes on the message edit and answers from the POST-EDIT value (${postEditAnswer}, not 105) — the <previous-body> envelope was read (live wake-envelope probe)`,
       );
     },
   },
@@ -4894,22 +4912,11 @@ export const SCENARIOS: readonly Scenario[] = [
         "money-shot: cross-surface recall quality",
       );
 
+      ctx.log(`MONEY SHOT HELD: the GitHub issue reply quotes the token "${marker}" stated only in Slack — cross-surface recall with zero context re-entry`);
+
       if (singleWindow && ctx.auditRead) {
         const writes = await ctx.auditRead({ sinceIso: decideAt, actions: ["memory.write", REPLY_POST_ACTION] });
         const unifiedSessionId = replyPostSessionId(writes, ack.ts);
-        if (unifiedSessionId === undefined) {
-          ctx.log(
-            `shared-context proof: no ${REPLY_POST_ACTION} row names the ack message ${ack.ts}, so the unified session's id is unknown — the gate below keeps the STRICT "no write of any road" rule`,
-          );
-        }
-        const hops = writes.filter((r) => isMemoryHopWrite(r, unifiedSessionId === undefined ? {} : { ownSessionId: unifiedSessionId }));
-        ctx.gate(
-          hops.length === 0,
-          `shared-context proof (write side): NO memory write by ANOTHER session or ANOTHER road in the decide→reply window. ` +
-            `Found ${hops.length} of ${writes.filter((r) => r.action === "memory.write").length} memory.write row(s); the unified session ` +
-            `${unifiedSessionId ?? "(unidentified)"}'s own turn-end persist is excluded — it is unavoidable, not innocent, and the READ gate below ` +
-            `is what sees a same-session hop (${JSON.stringify(hops.map((r) => r.detail))})`,
-        );
 
         if (unifiedSessionId !== undefined && ctx.transcriptRead) {
           const events = await ctx.transcriptRead(unifiedSessionId);
@@ -4933,13 +4940,24 @@ export const SCENARIOS: readonly Scenario[] = [
                 `(event ${slice.toIndex}) — the token reached that answer from the ONE live context window, not from a write-then-read hop. ` +
                 `Found ${slice.paths.length} read(s): ${JSON.stringify(slice.paths.slice(0, 12))}`,
             );
+            ctx.log("shared-context proof (read side) HELD — the GitHub turn read no memory path inside its own slice");
           }
         } else {
           ctx.log(
             `shared-context proof (read side) NOT RUN — ${unifiedSessionId === undefined ? "the unified session's id is unknown" : "ctx.transcriptRead is unwired"}. ` +
-              "The write gate above cannot see a same-session hop, so the no-hop half of the money shot is UNPROVEN on this run",
+              "The write gate below cannot see a hop taken on the persist road, so the no-hop half of the money shot is UNPROVEN on this run",
           );
         }
+
+        const memoryWrites = writes.filter((r) => r.action === MEMORY_WRITE_ACTION);
+        const hops = memoryWrites.filter((r) => isMemoryHopWrite(r));
+        ctx.gate(
+          hops.length === 0,
+          `shared-context proof (write side): NO memory write on a road OTHER than \`session-persist\` in the decide→reply window. ` +
+            `Found ${hops.length} of ${memoryWrites.length} memory.write row(s); every session's \`session-persist\` row is excluded because that road carries ` +
+            `the turn-end persist AND the remember-ask flush alike, so this half cannot tell them apart — the READ gate above is what sees a hop taken on it ` +
+            `(${JSON.stringify(hops.map((r) => r.detail))})`,
+        );
       } else if (singleWindow) {
         ctx.log("shared-context proof skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so the run can assert the no-memory-hop half of the money shot");
       }
@@ -5012,6 +5030,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored (E2E_PR_REPO set): ${drive.reason}`);
+        if (drive.miss === "published-unevidenced") ctx.gate(false, drive.reason);
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain — grant it via a bundle's repos (agent/access/bundle.ts) + install the App on it, then re-run. Agent reply: ${drive.reason}`
@@ -5082,6 +5101,7 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored: ${drive.reason}`);
+        if (drive.miss === "published-unevidenced") ctx.gate(false, drive.reason);
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain (provision per J-PR's guidance). Agent reply: ${drive.reason}`
@@ -5309,6 +5329,7 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored (E2E_PR_REPO set): ${drive.reason}`);
+        if (drive.miss === "published-unevidenced") ctx.gate(false, drive.reason);
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain — grant it via a bundle's repos + install the App, then re-run. Agent reply: ${drive.reason}`

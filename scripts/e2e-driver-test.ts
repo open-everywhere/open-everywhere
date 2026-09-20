@@ -2352,7 +2352,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const { findJudgeAllow, prOpenRowNumbers, JUDGE_ARM_PROBE_MS } = await import("../packages/core/scripts/e2e/journey.js");
+  const { findJudgeAllow, prOpenRowPublishes } = await import("../packages/core/scripts/e2e/journey.js");
   const row = (action: string, detail: Record<string, unknown>) => ({
     ts: "2026-04-13T17:44:49.000Z",
     org: "default",
@@ -2400,10 +2400,171 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     row("pr.open", { repo: "other/repo", number: 99, head: "x", base: "main" }),
     row("pr.open", { repo: "acme/e2e-scratch", number: 18, head: "e2e-wf-1", base: "main" }),
   ];
-  ok(JSON.stringify(prOpenRowNumbers(prRows)) === JSON.stringify([18, 99]), "prOpenRowNumbers: pr.open rows only (a pr.update means a PR was ALREADY open for that head — a different state), de-duplicated, newest-first");
-  ok(JSON.stringify(prOpenRowNumbers(prRows, "acme/e2e-scratch")) === JSON.stringify([18]), "prOpenRowNumbers: narrowing to the fixture repo drops another repo's publish from the same window");
-  ok(prOpenRowNumbers([row("pr.open", { repo: "acme/e2e-scratch" })]).length === 0, "prOpenRowNumbers: a pr.open row with no `number` yields nothing (never guess a PR number — the teardown closes whatever it is handed)");
-  ok(JUDGE_ARM_PROBE_MS > 0 && JUDGE_ARM_PROBE_MS <= 120_000, `the judge-arm probe budget stays small (${JUDGE_ARM_PROBE_MS}ms) — its rows are written BEFORE the reply the drive already awaited, so it covers audit propagation, not a race`);
+  ok(
+    JSON.stringify(prOpenRowPublishes(prRows).map((p) => p.number)) === JSON.stringify([18, 99]),
+    "prOpenRowPublishes: pr.open rows only (a pr.update means a PR was ALREADY open for that head — a different state), de-duplicated, newest-first",
+  );
+  ok(
+    JSON.stringify(prOpenRowPublishes(prRows, "acme/e2e-scratch")) === JSON.stringify([{ number: 18, head: "e2e-wf-1" }]),
+    "prOpenRowPublishes: narrowing to the fixture repo drops another repo's publish from the same window, and the row's `head` rides along so a miss-path teardown needs no second GitHub read",
+  );
+  ok(
+    prOpenRowPublishes([row("pr.open", { repo: "acme/e2e-scratch" })]).length === 0,
+    "prOpenRowPublishes: a pr.open row with no `number` yields nothing (never guess a PR number — the teardown closes whatever it is handed)",
+  );
+  ok(
+    prOpenRowPublishes([row("pr.open", { repo: "acme/e2e-scratch", number: 7 })])[0]?.head === undefined,
+    "prOpenRowPublishes: a row that states no head yields no head — the caller reads it back from GitHub rather than being handed a guess",
+  );
+  ok(
+    prOpenRowPublishes([row("pr.open", { repo: "acme/e2e-scratch", number: 7, head: "" })])[0]?.head === undefined,
+    "prOpenRowPublishes: an EMPTY head is no head — `deleteBranch(\"\")` is not a teardown",
+  );
+}
+
+{
+  const { drivePrOpen } = await import("../packages/core/scripts/e2e/journey.js");
+  type DriveArgs = Parameters<typeof drivePrOpen>[0];
+
+  const TOKEN = "prline-83737";
+  const auditRow = (action: string, detail: Record<string, unknown>) => ({
+    ts: "2026-06-03T03:43:49.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "acme",
+    action,
+    detail,
+  });
+  const ALLOW = auditRow("approval.judge.verdict", {
+    tool: "open_pull_request",
+    action: "pr.open",
+    mode: "enforce",
+    verdict: "allow",
+    enforcedVerdict: "allow",
+    resolvedBy: "judge",
+    passes: 2,
+    reasoning: "a one-line README addition against a granted fixture repo, requested in-room",
+  });
+  const PUBLISH = auditRow("pr.open", { repo: "example-owner/e2e-scratch", number: 101, head: "add-prline-83737", sha: "4c5d1f8b", tainted: false });
+
+  const HANDOFF = "I'm handing off the repo change and PR flow now — the worker will check out, commit and open the PR.";
+
+  const cardlessSlack = {
+    mention: (t: string) => `<@bot> ${t}`,
+    post: async () => ({ ts: "1780456498.000100" }),
+    awaitThreadReply: async () => ({ ts: "1780456498.000200", text: HANDOFF }),
+    awaitThreadMessage: async (_threadTs: string, opts: { readonly timeoutMs: number }) => {
+      await new Promise((resolve) => setTimeout(resolve, opts.timeoutMs));
+      throw new Error(`timed out after ${opts.timeoutMs}ms waiting for an approval card`);
+    },
+    isBotReply: () => true,
+    channelId: "C0EXCHAN003",
+    identity: async () => ({ userId: "U0", teamId: "T0" }),
+  };
+
+  const lateReader = (visibleFromRead: number, rows: readonly unknown[]) => {
+    const readsAt: number[] = [];
+    const started = Date.now();
+    return {
+      readsAt,
+      read: async () => {
+        readsAt.push(Date.now() - started);
+        return readsAt.length >= visibleFromRead ? rows : [];
+      },
+    };
+  };
+
+  const baseArgs = (over: Record<string, unknown>): DriveArgs =>
+    ({
+      slack: cardlessSlack,
+      synthetic: {},
+      gate: (cond: boolean, what: string) => {
+        if (!cond) throw new Error(`gate failed: ${what}`);
+      },
+      log: () => {},
+      pr: { getPr: async () => ({ head: "add-prline-83737", base: "main" }), prContainsToken: async () => true },
+      ask: "checkout the repo, add a line to README.md, and open a pull request",
+      token: TOKEN,
+      base: "main",
+      leg: "pr",
+      repo: "example-owner/e2e-scratch",
+      ...over,
+    }) as unknown as DriveArgs;
+
+  {
+    const reader = lateReader(2, [ALLOW, PUBLISH]);
+    const result = await drivePrOpen(baseArgs({ timeoutMs: 5_000, auditRead: reader.read }));
+    ok(result.published === true && result.arm === "judge-allow", "drivePrOpen: a judge verdict row that appears only on a LATER probe tick still resolves as ARM (b) — the probe keeps reading, it is not one-shot");
+    ok(result.published === true && result.prNumber === 101, "…on the PR the pr.open row names, read back and hard-gated exactly as arm (a)'s PR is");
+    ok(reader.readsAt.length >= 2, "…and the drive really did read the audit more than once (a one-shot read would prove nothing about a late row)");
+  }
+
+  {
+    const reader = lateReader(Number.MAX_SAFE_INTEGER, []);
+    const started = Date.now();
+    const result = await drivePrOpen(baseArgs({ timeoutMs: 4_000, auditRead: reader.read }));
+    const elapsed = Date.now() - started;
+    ok(result.published === false && result.miss === "no-tool", "drivePrOpen: no card and no verdict row anywhere in the budget is still the model-declined SKIP — card absence never becomes an arm");
+    ok(elapsed >= 3_500, `…and the drive spent the WHOLE card budget looking (${elapsed}ms of 4000ms) rather than giving up on an early tick`);
+    ok(elapsed < 12_000, `…while spending it ONCE, concurrently (${elapsed}ms): a probe with its own serial budget would have cost the card budget plus that budget`);
+    ok(reader.readsAt.length >= 3, `…and it kept reading the audit across the whole window (${reader.readsAt.length} reads), not only at the start`);
+  }
+
+  {
+    const reader = lateReader(2, [ALLOW, PUBLISH]);
+    const result = await drivePrOpen(baseArgs({ timeoutMs: 0, auditRead: reader.read }));
+    ok(result.published === true && result.arm === "judge-allow" && result.prNumber === 101, "drivePrOpen: a verdict row visible only to the FINAL re-read is reported as ARM (b) — 'CANNOT RUN' is the most expensive sentence this drive can say, so it costs one more read first");
+    ok(reader.readsAt.length === 2, "…and that re-read is exactly one extra request (the probe's single tick, then the last chance)");
+  }
+
+  {
+    const reader = lateReader(2, [PUBLISH]);
+    const opened: { number: number; head: string }[] = [];
+    const result = await drivePrOpen(baseArgs({ timeoutMs: 0, auditRead: reader.read, onPublished: (p: { number: number; head: string }) => opened.push(p) }));
+    ok(
+      result.published === false && result.miss === "published-unevidenced",
+      "drivePrOpen: a pr.open row with NO judge verdict row is still NOT an arm — the arm stays gated on the verdict row, never on card absence",
+    );
+    ok(
+      opened.length === 1 && opened[0]?.number === 101 && opened[0]?.head === "add-prline-83737",
+      "🔴 …and the published PR is registered for the caller's TEARDOWN anyway, head and all — a leg that ends in CANNOT RUN used to strand a real PR in the fixture repo",
+    );
+    ok(
+      result.published === false && result.reason.includes("open_pull_request DID run") && result.reason.includes("#101"),
+      "🔴 …and the miss REASON names the published PR and says the tool ran — a torn-down PR reported as 'the model never called the tool' is the exact false sentence this ticket exists to kill",
+    );
+  }
+
+  {
+    const reader = lateReader(2, [PUBLISH]);
+    const opened: { number: number; head: string }[] = [];
+    await drivePrOpen(
+      baseArgs({
+        timeoutMs: 0,
+        auditRead: reader.read,
+        onPublished: (p: { number: number; head: string }) => opened.push(p),
+        pr: { getPr: async () => ({ head: "add-prline-83737", base: "main" }), prContainsToken: async () => false },
+      }),
+    );
+    ok(opened.length === 0, "drivePrOpen: a pr.open row whose diff does NOT carry this run's token is NOT claimed for teardown — the token is what makes a miss-path close safe");
+  }
+}
+
+{
+  const { firstOfTwo } = await import("../packages/core/scripts/e2e/journey.js");
+  const after = <T>(ms: number, value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+  ok((await firstOfTwo(after(5, "judge"), after(60, "card")))?.value === "judge", "firstOfTwo: the side that produces a value FIRST wins, and says which side it was");
+  const late = await firstOfTwo(after(60, undefined), after(5, "card"));
+  ok(late?.which === "b" && late.value === "card", "firstOfTwo: a side that produces NOTHING does not win — the race waits for the other one instead of answering early");
+  ok((await firstOfTwo(after(5, undefined), after(20, undefined))) === undefined, "firstOfTwo: `undefined` only once BOTH sides are done with nothing — that is the 'neither arm' answer");
+  let threw = false;
+  try {
+    await firstOfTwo(Promise.reject(new Error("audit read 500")), after(20, undefined));
+  } catch (err) {
+    threw = (err as Error).message === "audit read 500";
+  }
+  ok(threw, "🔴 firstOfTwo: a rejection PROPAGATES — an error is never an absence, and a 500 from the audit read must not arrive dressed as 'the judge didn't allow'");
 }
 
 {

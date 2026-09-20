@@ -364,14 +364,22 @@ export function findJudgeAllow(rows: readonly AuditWireEntry[], tool: string): J
   return undefined;
 }
 
-export function prOpenRowNumbers(rows: readonly AuditWireEntry[], repo?: string): readonly number[] {
-  const out: number[] = [];
+export interface PrOpenPublish {
+  readonly number: number;
+  readonly head?: string;
+}
+
+export function prOpenRowPublishes(rows: readonly AuditWireEntry[], repo?: string): readonly PrOpenPublish[] {
+  const out: PrOpenPublish[] = [];
   for (const row of rows) {
     if (row.action !== "pr.open") continue;
     const d = row.detail as Record<string, unknown> | undefined;
     if (repo !== undefined && d?.repo !== repo) continue;
     const n = d?.number;
-    if (typeof n === "number" && Number.isInteger(n) && n > 0 && !out.includes(n)) out.push(n);
+    if (typeof n !== "number" || !Number.isInteger(n) || n <= 0) continue;
+    if (out.some((p) => p.number === n)) continue;
+    const head = d?.head;
+    out.push(typeof head === "string" && head.length > 0 ? { number: n, head } : { number: n });
   }
   return out;
 }
@@ -379,9 +387,21 @@ export function prOpenRowNumbers(rows: readonly AuditWireEntry[], repo?: string)
 export type PrDriveResult =
   | { readonly published: true; readonly arm: "card"; readonly card: SlackMessage; readonly prNumber: number; readonly head: string }
   | { readonly published: true; readonly arm: "judge-allow"; readonly card?: undefined; readonly judge: JudgeAllowEvidence; readonly prNumber: number; readonly head: string }
-  | { readonly published: false; readonly miss: "grant-refused" | "errored" | "no-tool"; readonly reason: string };
+  | { readonly published: false; readonly miss: PrDriveMiss; readonly reason: string };
 
-export const JUDGE_ARM_PROBE_MS = 60_000;
+export type PrDriveMiss = "grant-refused" | "errored" | "no-tool" | "published-unevidenced";
+
+export async function firstOfTwo<A, B>(
+  a: Promise<A | undefined>,
+  b: Promise<B | undefined>,
+): Promise<{ readonly which: "a"; readonly value: A } | { readonly which: "b"; readonly value: B } | undefined> {
+  const never = new Promise<never>(() => {});
+  return Promise.race([
+    a.then((value) => (value === undefined ? never : ({ which: "a", value }) as const)),
+    b.then((value) => (value === undefined ? never : ({ which: "b", value }) as const)),
+    Promise.all([a, b]).then(() => undefined),
+  ]);
+}
 
 export async function drivePrOpen(args: {
   slack: SlackDriver;
@@ -399,7 +419,6 @@ export async function drivePrOpen(args: {
   onPublished?: (pr: { readonly number: number; readonly head: string }) => void;
   auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
   repo?: string;
-  judgeArmProbeMs?: number;
 }): Promise<PrDriveResult> {
   const { slack, synthetic, pr, ask, token, base, timeoutMs } = args;
   const decision = args.decision ?? "approve";
@@ -409,48 +428,106 @@ export async function drivePrOpen(args: {
   const firstReply = await slack.awaitThreadReply(askTs, { timeoutMs });
 
   let card: SlackMessage | undefined = approveButton(firstReply) !== undefined ? firstReply : undefined;
-  if (card === undefined && args.auditRead !== undefined) {
-    const auditRead = args.auditRead;
+
+  const resolveJudgeArm = async (judge: JudgeAllowEvidence, prNumber: number): Promise<PrDriveResult> => {
+    args.log(
+      `ARM (b) JUDGE-ALLOW: no pr.open card — the chain resolved allow (judge said "${judge.verdict ?? "?"}", resolvedBy "${judge.resolvedBy ?? "?"}", source "${judge.source ?? "?"}", passes ${judge.passes ?? "?"}) and published PR #${prNumber} directly. Reasoning: ${(judge.reasoning ?? "(none recorded)").replace(/\s+/g, " ").slice(0, 400)}`,
+    );
+    const details = await pollUntil(async () => args.pr.getPr(prNumber), { timeoutMs, what: `the judge-published PR #${prNumber} readable via the GitHub API` });
+    args.onPublished?.({ number: prNumber, head: details.head });
+    gate(details.base === base, `the judge-published PR targets the "${base}" base branch (got "${details.base}")`);
+    gate(
+      await pr.prContainsToken(prNumber, token),
+      `the judge-published PR's diff carries the run token "${token}" (the agent really made the change)`,
+    );
+    return { published: true, arm: "judge-allow", judge, prNumber, head: details.head };
+  };
+
+  const registerForTeardown = async (publish: PrOpenPublish): Promise<void> => {
+    const head = publish.head ?? (await args.pr.getPr(publish.number).catch(() => undefined))?.head;
+    if (head === undefined) {
+      args.log(`teardown: PR #${publish.number} carries the run token "${token}" but neither its pr.open row nor the GitHub read names a head branch — CLOSE IT BY HAND`);
+      return;
+    }
+    args.log(`teardown: PR #${publish.number} (head ${head}) carries the run token "${token}" although neither arm resolved — handed to the caller's teardown`);
+    args.onPublished?.({ number: publish.number, head });
+  };
+
+  const readArmRows = async (
+    auditRead: NonNullable<typeof args.auditRead>,
+  ): Promise<{ judge?: JudgeAllowEvidence; publishes: readonly PrOpenPublish[] }> => {
+    const rows = await auditRead({ sinceIso: askIso, actions: ["approval.judge.verdict", "pr.open"] });
+    const judge = findJudgeAllow(rows, "open_pull_request");
+    return { publishes: prOpenRowPublishes(rows, args.repo), ...(judge !== undefined ? { judge } : {}) };
+  };
+
+  const tokenCarrying = async (candidates: readonly PrOpenPublish[]): Promise<readonly PrOpenPublish[]> => {
+    const mine: PrOpenPublish[] = [];
+    for (const publish of candidates) {
+      try {
+        if (await pr.prContainsToken(publish.number, token)) mine.push(publish);
+      } catch (err) {
+        args.log(`teardown: could not read PR #${publish.number}'s diff to tell whether it carries the run token (${String(err instanceof Error ? err.message : err)}) — not claimed`);
+      }
+    }
+    return mine;
+  };
+
+  let cardWaited = false;
+  const auditRead = args.auditRead;
+  if (card === undefined && auditRead !== undefined) {
     let seenJudge: JudgeAllowEvidence | undefined;
-    let seenNumbers: readonly number[] = [];
-    const matched = await pollOptional<{ judge: JudgeAllowEvidence; prNumber: number }>(
+    let seenPublishes: readonly PrOpenPublish[] = [];
+    const probe = pollOptional<{ judge: JudgeAllowEvidence; prNumber: number }>(
       async () => {
-        const rows = await auditRead({ sinceIso: askIso, actions: ["approval.judge.verdict", "pr.open"] });
-        const judge = findJudgeAllow(rows, "open_pull_request");
+        const { judge, publishes } = await readArmRows(auditRead);
+        if (publishes.length > 0) seenPublishes = publishes;
         if (judge === undefined) return undefined;
         seenJudge = judge;
-        const numbers = prOpenRowNumbers(rows, args.repo);
-        if (numbers.length > 0) seenNumbers = numbers;
-        for (const n of numbers) {
-          if (await pr.prContainsToken(n, token)) return { judge, prNumber: n };
+        for (const publish of publishes) {
+          if (await pr.prContainsToken(publish.number, token)) return { judge, prNumber: publish.number };
         }
         return undefined;
       },
-      { timeoutMs: args.judgeArmProbeMs ?? JUDGE_ARM_PROBE_MS, what: `an approval.judge.verdict allow + a token-carrying pr.open audit row for the card-less "${args.leg}" publish` },
+      { timeoutMs, what: `an approval.judge.verdict allow + a token-carrying pr.open audit row for the card-less "${args.leg}" publish` },
     );
-    const found = matched ?? (seenJudge !== undefined && seenNumbers.length > 0 ? { judge: seenJudge, prNumber: seenNumbers[0]! } : undefined);
-    if (found !== undefined) {
-      const { judge, prNumber } = found;
-      args.log(
-        `ARM (b) JUDGE-ALLOW: no pr.open card — the chain resolved allow (judge said "${judge.verdict ?? "?"}", resolvedBy "${judge.resolvedBy ?? "?"}", source "${judge.source ?? "?"}", passes ${judge.passes ?? "?"}) and published PR #${prNumber} directly. Reasoning: ${(judge.reasoning ?? "(none recorded)").replace(/\s+/g, " ").slice(0, 400)}`,
-      );
-      const details = await pollUntil(async () => args.pr.getPr(prNumber), { timeoutMs, what: `the judge-published PR #${prNumber} readable via the GitHub API` });
-      args.onPublished?.({ number: prNumber, head: details.head });
-      gate(details.base === base, `the judge-published PR targets the "${base}" base branch (got "${details.base}")`);
-      gate(
-        await pr.prContainsToken(prNumber, token),
-        `the judge-published PR's diff carries the run token "${token}" (the agent really made the change)`,
-      );
-      return { published: true, arm: "judge-allow", judge, prNumber, head: details.head };
-    }
+    const outcome = await firstOfTwo(probe, awaitCard(slack, askTs, timeoutMs).catch(() => undefined));
+    cardWaited = true;
+    if (outcome?.which === "b") card = outcome.value;
+    const matched = outcome?.which === "a" ? outcome.value : undefined;
+    const found = matched ?? (card === undefined && seenJudge !== undefined && seenPublishes.length > 0 ? { judge: seenJudge, prNumber: seenPublishes[0]!.number } : undefined);
+    if (found !== undefined) return await resolveJudgeArm(found.judge, found.prNumber);
   } else if (card === undefined) {
     args.log(
       "no card in the first reply and NO audit read wired — arm (b) is off, so a judge-allow publish would read as a no-tool skip here. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
     );
   }
 
-  card ??= await awaitCard(slack, askTs, timeoutMs).catch(() => undefined);
+  if (card === undefined && !cardWaited) card = await awaitCard(slack, askTs, timeoutMs).catch(() => undefined);
   if (!card) {
+    if (auditRead !== undefined) {
+      const late = await readArmRows(auditRead).catch((err) => {
+        args.log(`final audit re-read before CANNOT RUN failed (${String(err instanceof Error ? err.message : err)}) — reporting the miss on the evidence already in hand`);
+        return undefined;
+      });
+      if (late !== undefined) {
+        const mine = await tokenCarrying(late.publishes);
+        if (late.judge !== undefined && late.publishes.length > 0) {
+          args.log("final audit re-read: an approval.judge.verdict allow landed after the probe's last tick — this run is arm (b), not a miss");
+          return await resolveJudgeArm(late.judge, (mine[0] ?? late.publishes[0]!).number);
+        }
+        for (const publish of mine) await registerForTeardown(publish);
+        if (mine.length > 0) {
+          return {
+            published: false,
+            miss: "published-unevidenced",
+            reason:
+              `open_pull_request DID run: PR #${mine[0]!.number} is open and its diff carries this run's token "${token}", but NO approval.judge.verdict allow row ` +
+              `and NO pr.open card was found for it, so neither arm could be evidenced. The PR was handed to the teardown. Reply: ${firstReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}`,
+          };
+        }
+      }
+    }
     const reason = firstReply.text.replace(/\s+/g, " ").trim().slice(0, 240);
     return { published: false, miss: classifyPrMiss(firstReply.text), reason };
   }
