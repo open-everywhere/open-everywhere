@@ -3762,6 +3762,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.targetNativeId);
         conjuncts.push(`target_native_id = $${params.length}`);
       }
+      if (filter?.claimedPlatform !== undefined) {
+        params.push(filter.claimedPlatform);
+        conjuncts.push(`claimed_platform = $${params.length}`);
+      }
+      if (filter?.claimedTenant !== undefined) {
+        params.push(filter.claimedTenant);
+        conjuncts.push(`claimed_tenant = $${params.length}`);
+      }
+      if (filter?.claimedNativeId !== undefined) {
+        params.push(filter.claimedNativeId);
+        conjuncts.push(`claimed_native_id = $${params.length}`);
+      }
       if (filter?.status !== undefined) {
         params.push(filter.status);
         conjuncts.push(`status = $${params.length}`);

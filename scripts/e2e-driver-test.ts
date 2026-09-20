@@ -2995,6 +2995,34 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { parseClaimCodeBack, CLAIM_CODE_BACK_MARKER, parseLinkCode } = await import("../packages/core/scripts/e2e/journey.js");
+  const { claimCodeBackReply, codeBackInstructions } = await import("../packages/core/agent/identity/link-flow.js");
+  const { linkClaimInstructions } = await import("../packages/core/agent/identity/link-challenge.js");
+
+  const CODE_BACK = "D4EP4RMX";
+  const STRAY_MINT = "PWWXPKPE";
+  const confirmation = claimCodeBackReply(CODE_BACK);
+  ok(CLAIM_CODE_BACK_MARKER.test(confirmation), "🔴 CLAIM_CODE_BACK_MARKER matches the PRODUCT's own claim confirmation (agent/identity/link-flow.ts claimCodeBackReply) — the pin that catches a copy drift");
+  ok(parseClaimCodeBack(confirmation) === CODE_BACK, "parseClaimCodeBack: lifts the code-back out of the real claim confirmation");
+
+  const strayMint = linkClaimInstructions(STRAY_MINT, 10);
+  ok(parseLinkCode(strayMint) === STRAY_MINT, "control: the stray mint really does parse as a code — the two readers see the same bytes and disagree on purpose");
+  ok(parseClaimCodeBack(strayMint) === undefined, "🔴 parseClaimCodeBack: a `link <CODE>` MINT is never a code-back, however new it is (the live-run leg-15 defect)");
+  ok(
+    parseClaimCodeBack(`${confirmation}\n\n${strayMint}`) === CODE_BACK,
+    "🔴 parseClaimCodeBack: with BOTH messages in front of it, it still answers the code the claim confirmation points at — it reads the WHOLE-LINE rendering only, so the mint's anchored `link <CODE>` can never win",
+  );
+  ok(
+    parseClaimCodeBack(`${strayMint}\n\n${confirmation}`) === CODE_BACK,
+    "🔴 parseClaimCodeBack: …and it slices at the marker, so a code standing EARLIER in the same text is never taken",
+  );
+
+  ok(parseClaimCodeBack(codeBackInstructions(CODE_BACK)) === undefined, "parseClaimCodeBack: the DIRECTORY transport's consent code-back is a different message and is not matched");
+  ok(parseClaimCodeBack(undefined) === undefined && parseClaimCodeBack("") === undefined, "parseClaimCodeBack: total over absent/empty input");
+  ok(parseClaimCodeBack("enter this code where they started it: and then nothing") === undefined, "parseClaimCodeBack: the marker alone is not a code — a drifted body yields undefined rather than a guess");
+}
+
+{
   const cwEmpty = resolveConnectorWrite({});
   ok(
     !cwEmpty.ok && cwEmpty.missing.length === 1 && cwEmpty.missing[0] === ENV.notionChannel,
@@ -4075,6 +4103,20 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(isQualifyingEdit(msg("100.0", "one sec", atBoundaryTs)), "isQualifyingEdit: an edit landing EXACTLY at the window boundary qualifies");
 
   ok(!isQualifyingEdit(msg("100.0", "one sec", "50.0")), "isQualifyingEdit: an edited.ts BEFORE the message's own ts is refused, not accepted");
+
+  {
+    const { endsOwnWakeWait } = await import("../packages/core/scripts/e2e/slack-driver.js");
+    const wanted = msg("200.0", "enter this code where they started it");
+    const unwanted = msg("201.0", "From your OTHER account, send me this line");
+    const wants = (m: { readonly text: string }) => /enter this code where they started it/.test(m.text);
+    ok(endsOwnWakeWait(wanted, undefined, wants), "endsOwnWakeWait: the wanted message ends the wait");
+    ok(!endsOwnWakeWait(unwanted, undefined, wants), "🔴 endsOwnWakeWait: a message of the SAME wake that is not the wanted one does NOT end the wait");
+    ok(endsOwnWakeWait(unwanted, undefined, undefined), "endsOwnWakeWait/CONTROL: with NO want the same message ends the wait — every caller before this rule is unchanged");
+    ok(!endsOwnWakeWait(wanted, (m) => isFillerAck(m.text) || /started it/.test(m.text), wants), "endsOwnWakeWait: a `skip` still rejects, so the want never WIDENS what counts as substantive");
+    const editedUnwanted = msg("201.0", "From your OTHER account, send me this line", "230.0");
+    ok(isQualifyingEdit(editedUnwanted), "control: the wrong message really IS a qualifying edit — so the next assertion is about the ORDER and not about the edit window");
+    ok(!endsOwnWakeWait(editedUnwanted, (m) => !wants(m), wants), "🔴 endsOwnWakeWait: a QUALIFYING EDIT overrides a `skip` but never a want — this is why the want is a second term, not a folded one");
+  }
 
   const { withPatchedFetch } = await import("../packages/core/scripts/_fetch-test-utils.js");
   const scriptedHistoryMessage = { ts: folded.ts, text: folded.text, edited: { ts: folded.editedTs }, bot_id: "B-OE" };

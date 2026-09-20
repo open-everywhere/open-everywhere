@@ -700,6 +700,9 @@ export interface LinkChallengeFilter {
   readonly targetPlatform?: string;
   readonly targetTenant?: string;
   readonly targetNativeId?: string;
+  readonly claimedPlatform?: string;
+  readonly claimedTenant?: string;
+  readonly claimedNativeId?: string;
   readonly status?: LinkChallengeStatus;
 }
 

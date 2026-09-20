@@ -87,6 +87,15 @@ export function claimAddressingRefusal(input: { readonly addressed: boolean }): 
   );
 }
 
+export function linkStartOpenLoopRefusal(input: { readonly openLoop: boolean; readonly transport: LinkTransport; readonly codeBack: boolean }): string | undefined {
+  if (!input.openLoop) return undefined;
+  const subject = input.transport === "directory" ? "the link you just agreed to is still open" : "the link you just claimed is still open";
+  const finish = input.codeBack
+    ? "it finishes when you give whoever started it the code I posted you in this conversation."
+    : "it finishes when whoever started it confirms it on their own side.";
+  return `I can't start another link here: ${subject}, and ${finish}`;
+}
+
 export function linkConsentPendingInstructions(targetName: string, ttlMinutes: number): string {
   return (
     `I have asked ${targetName} to confirm, in their own DM with me, that the account is theirs. ` +

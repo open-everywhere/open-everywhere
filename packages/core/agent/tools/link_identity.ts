@@ -5,10 +5,10 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { surfaceKeyOf } from "../access/resolver.js";
-import { issueLinkChallenge } from "../identity/link-store.js";
+import { issueLinkChallenge, openChallengeAnsweredBy } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { linkClaimInstructions, LINK_CHALLENGE_TTL_MS } from "../identity/link-challenge.js";
-import { linkConsentAsk, linkConsentPendingInstructions } from "../identity/link-flow.js";
+import { asLinkTransport, linkConsentAsk, linkConsentPendingInstructions, linkStartOpenLoopRefusal } from "../identity/link-flow.js";
 import { linkConsentActions } from "../identity/link-consent.js";
 import { hasAccountDirectory, lookupAccountDirectory, accountDirectoryPlatforms, DIRECTORY_MAX_CANDIDATES } from "../identity/account-directory.js";
 import { accountProfileFor, humanAccountLabel } from "../identity/account-display-name.js";
@@ -61,6 +61,15 @@ export default defineTool({
     }
     const refusal = linkInitiatorRefusal(binding, "start a link");
     if (refusal) throw new Error(refusal);
+    const actorTenant = tryLinkTenantOf(binding.platform, binding.workspace);
+    const openLoop =
+      actorTenant === undefined ? undefined : await openChallengeAnsweredBy({ org: binding.org, account: { platform: binding.platform, tenant: actorTenant, nativeId: actor } });
+    const openLoopRefusal = linkStartOpenLoopRefusal({
+      openLoop: openLoop !== undefined,
+      transport: asLinkTransport(openLoop?.transport),
+      codeBack: openLoop?.backNonceHash !== undefined,
+    });
+    if (openLoopRefusal) throw new Error(openLoopRefusal);
     const p = resolvePartition(ctx);
     const surfaceKey = surfaceKeyOf({ platform: p.platform, workspace: p.workspace, channel: p.surface });
 

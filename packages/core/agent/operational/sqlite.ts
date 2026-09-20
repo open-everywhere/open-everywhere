@@ -3223,6 +3223,18 @@ export const sqliteOperationalStore: OperationalStore = {
       conjuncts.push("target_native_id = ?");
       params.push(filter.targetNativeId);
     }
+    if (filter?.claimedPlatform !== undefined) {
+      conjuncts.push("claimed_platform = ?");
+      params.push(filter.claimedPlatform);
+    }
+    if (filter?.claimedTenant !== undefined) {
+      conjuncts.push("claimed_tenant = ?");
+      params.push(filter.claimedTenant);
+    }
+    if (filter?.claimedNativeId !== undefined) {
+      conjuncts.push("claimed_native_id = ?");
+      params.push(filter.claimedNativeId);
+    }
     if (filter?.status !== undefined) {
       conjuncts.push("status = ?");
       params.push(filter.status);

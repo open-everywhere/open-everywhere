@@ -114,6 +114,10 @@ export function passesSkip(m: SlackMessage, skip: ((m: SlackMessage) => boolean)
   return !(skip?.(m) ?? false) || isQualifyingEdit(m);
 }
 
+export function endsOwnWakeWait(m: SlackMessage, skip: ((m: SlackMessage) => boolean) | undefined, want: ((m: SlackMessage) => boolean) | undefined): boolean {
+  return passesSkip(m, skip) && (want?.(m) ?? true);
+}
+
 export function mergeBotMessagesAfter(
   threadMsgs: readonly SlackMessage[],
   historyMsgs: readonly SlackMessage[],

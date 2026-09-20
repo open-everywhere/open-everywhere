@@ -15,7 +15,7 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { passesSkip, tsAfter } from "./slack-driver.js";
+import { endsOwnWakeWait, tsAfter } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
@@ -171,6 +171,8 @@ import {
   factToken,
   withoutMarker,
   parseLinkCode,
+  parseClaimCodeBack,
+  CLAIM_CODE_BACK_MARKER,
   silenceCauseGate,
   slackMessageTimestampIso,
   SPEND_GATE_DOORS,
@@ -432,6 +434,7 @@ async function awaitOwnWakeReply(
     readonly what: string;
     readonly timeoutMs: number;
     readonly skip?: (m: SlackMessage) => boolean;
+    readonly want?: { readonly label: string; readonly match: (m: SlackMessage) => boolean };
   },
 ): Promise<SlackMessage> {
   const read = ctx.auditRead;
@@ -441,7 +444,11 @@ async function awaitOwnWakeReply(
       `reply-wait ${opts.what}: UNATTRIBUTED — ${read ? `the driver's own post ts ${anchorTs} carries no readable vendor instant` : "no control-plane audit reader (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN unset)"}, ` +
         "so this wait runs the old first-bot-message rule and a previous leg's late post can still satisfy it (OPE-1957)",
     );
-    return driver.awaitAnyReply(anchorTs, { timeoutMs: opts.timeoutMs, ...(opts.skip ? { skip: opts.skip } : {}) });
+    const degradedSkip =
+      opts.skip === undefined && opts.want === undefined
+        ? undefined
+        : (m: SlackMessage) => (opts.skip?.(m) ?? false) || (opts.want !== undefined && !opts.want.match(m));
+    return driver.awaitAnyReply(anchorTs, { timeoutMs: opts.timeoutMs, ...(degradedSkip ? { skip: degradedSkip } : {}) });
   }
   const { teamId } = await driver.identity();
   const surfaceKey = `slack/${teamId}/${driver.channelId}`;
@@ -468,7 +475,7 @@ async function awaitOwnWakeReply(
         const out: OwnWakeCandidate[] = [];
         for (const m of msgs) {
           seen.set(m.ts, m);
-          out.push({ id: m.ts, atMs: slackVendorEventTime(m.ts)?.ms ?? Number.NaN, substantive: passesSkip(m, opts.skip) });
+          out.push({ id: m.ts, atMs: slackVendorEventTime(m.ts)?.ms ?? Number.NaN, substantive: endsOwnWakeWait(m, opts.skip, opts.want?.match) });
         }
         return out;
       },
@@ -484,7 +491,7 @@ async function awaitOwnWakeReply(
     }
     throw new Error(`reply-wait ${opts.what}: the match named message ${outcome.id} (${outcome.kind}) but the room read no longer holds it`);
   }
-  throw new PollTimeout(`${opts.what}: ${outcome.kind} — ${outcome.detail}`, opts.timeoutMs);
+  throw new PollTimeout(`${opts.what}: ${outcome.kind} — ${outcome.detail}${opts.want ? ` (this wait only accepts ${opts.want.label}, so a message of this wake's that is NOT that one never ends it)` : ""}`, opts.timeoutMs);
 }
 
 async function archiveNotionPageFromDm(
@@ -2283,13 +2290,19 @@ export const SCENARIOS: readonly Scenario[] = [
       const secondaryDm = ctx.slackSecondary!.withChannel(secondaryDmChannel);
       const claimAsk = `link ${code!}`;
       const { ts: claimTs } = await secondaryDm.post(claimAsk);
-      const claimReply = await awaitOwnWakeReply(ctx, secondaryDm, claimTs, { what: "S-LINK-SLACK (own-dm claim)", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const claimReply = await awaitOwnWakeReply(ctx, secondaryDm, claimTs, {
+        what: "S-LINK-SLACK (own-dm claim)",
+        timeoutMs: REPLY_WAIT,
+        skip: (m) => isPendingWorkHandoff(m.text),
+        want: { label: "the claim confirmation carrying the code-back (agent/identity/link-flow.ts claimCodeBackReply)", match: (m) => CLAIM_CODE_BACK_MARKER.test(m.text) },
+      });
       await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (own-dm claim)");
-      const code2 = parseLinkCode(claimReply.text);
+      const code2 = parseClaimCodeBack(claimReply.text);
       ctx.gate(
         code2 !== undefined,
-        "own-dm claim: a second (code-back) code was parsed from the bot's reply in the secondary's own DM — the model may have paraphrased " +
-          `instead of relaying the instructions verbatim. Reply: "${claimReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+        "own-dm claim: the code-back was parsed out of the claim confirmation in the secondary's own DM — the message carries the " +
+          "confirmation's marker (the `want` above proved that) but no 8-symbol code stands after it, so the host copy has drifted from " +
+          `agent/identity/link-flow.ts claimCodeBackReply. Reply: "${claimReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
       const claimedRows = await pollOptional(
         async () => {

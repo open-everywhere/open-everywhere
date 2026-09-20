@@ -227,6 +227,22 @@ export async function claimLinkChallenge(input: {
   return claimed;
 }
 
+export async function openChallengeAnsweredBy(input: {
+  readonly org: string;
+  readonly account: LinkedAccount;
+  readonly now?: Date;
+}): Promise<LinkChallengeRow | undefined> {
+  const store = getOperationalStore();
+  const nowMs = (input.now ?? new Date()).getTime();
+  const rows = await store.listLinkChallenges(input.org, {
+    status: "claimed",
+    claimedPlatform: input.account.platform,
+    claimedTenant: input.account.tenant,
+    claimedNativeId: input.account.nativeId,
+  });
+  return rows.find((r) => Date.parse(r.expiresAt) > nowMs);
+}
+
 export async function auditLinkNoticeUndeliverable(input: { readonly org: string; readonly challenge: LinkChallengeRow; readonly error: unknown }): Promise<void> {
   const c = input.challenge;
   await auditLink(input.org, c.initiatingPlatform, c.initiatingSurfaceKey, accountLabel(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId), "identity.link.notice_undeliverable", {

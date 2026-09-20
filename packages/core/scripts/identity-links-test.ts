@@ -18,14 +18,17 @@ import {
   LINK_CODE_LENGTH,
 } from "../agent/identity/link-challenge.js";
 import { agentNameTokens } from "../agent/identity/bot-name.js";
+import { linkStartOpenLoopRefusal } from "../agent/identity/link-flow.js";
 import {
   claimLinkChallenge,
   confirmLinkedId,
   confirmedLinkSetPrincipals,
+  consentLinkChallenge,
   denyLinkChallenge,
   expandLinkSet,
   issueLinkChallenge,
   listLinkSetsWithIds,
+  openChallengeAnsweredBy,
   ratifyLinkChallenge,
   resolveLinkSet,
   revokeLinkSet,
@@ -398,7 +401,96 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await sq.decideLinkChallenge(ORG, "c-sq-exp", ["claimed"], "ratified", new Date().toISOString())) === false, "sqlite F7: the ratified CAS refuses a claimed-but-EXPIRED challenge (TTL conjunct in the statement)");
   ok((await sq.decideLinkChallenge(ORG, "c-sq-exp", ["claimed"], "denied", new Date().toISOString())) === true, "sqlite F7: a DENY carries NO TTL conjunct — an expired claim can still be denied");
 
+  const openCh: LinkChallengeRow = {
+    org: ORG, id: "c-sq-open", nonceHash: hashLinkCode("JKLMNPQR"),
+    initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_OPEN", initiatingSurfaceKey: "slack/T1/D1",
+    transport: "code",
+    status: "pending", createdAt: now, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  };
+  await sq.addLinkChallenge(ORG, openCh);
+  ok((await sq.claimLinkChallenge(ORG, openCh.nonceHash, "github", "", "gh-open", new Date().toISOString()))?.status === "claimed", "sqlite OPE-1959 setup: a third challenge stands CLAIMED");
+  const sqByStatus = await sq.listLinkChallenges(ORG, { status: "claimed" });
+  ok(sqByStatus.some((r) => r.id === "c-sq-open"), "sqlite OPE-1959 control: the status conjunct alone DOES return the open claim — so a zero below is the account conjunct's doing");
+  const sqMine = await sq.listLinkChallenges(ORG, { status: "claimed", claimedPlatform: "github", claimedTenant: "", claimedNativeId: "gh-open" });
+  ok(sqMine.length === 1 && sqMine[0]!.id === "c-sq-open", "🔴 sqlite OPE-1959: the claimed* conjuncts select THIS account's own open claim");
+  ok(
+    (await sq.listLinkChallenges(ORG, { status: "claimed", claimedPlatform: "github", claimedTenant: "", claimedNativeId: "gh-somebody-else" })).length === 0,
+    "🔴 sqlite OPE-1959: …and another account matches nothing — the conjunct NARROWS rather than being dropped",
+  );
+
   ok(OPERATIONAL_TABLES.includes("identity_link_sets") && OPERATIONAL_TABLES.includes("identity_linked_ids") && OPERATIONAL_TABLES.includes("identity_link_challenges"), "the three tables are in OPERATIONAL_TABLES (the migrator's canonical list)");
+}
+
+{
+  const store = getOperationalStore();
+  const nowIso = new Date().toISOString();
+  const live: LinkChallengeRow = {
+    org: ORG, id: "c-open-live", nonceHash: hashLinkCode("KLMNPQRS"),
+    initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_LIVE_INIT", initiatingSurfaceKey: "slack/T1/D_LIVE",
+    transport: "code",
+    status: "pending", createdAt: nowIso, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  };
+  await store.addLinkChallenge(ORG, live);
+  const claimedLive = await claimLinkChallenge({ org: ORG, code: "KLMNPQRS", claimant: { platform: "slack", tenant: T1, nativeId: "U_CLAIMANT" }, backCode: "WXYZ2345" });
+  ok(claimedLive?.status === "claimed", "OPE-1959 setup: the claimant's claim landed and the row carries a code-back digest");
+
+  const found = await openChallengeAnsweredBy({ org: ORG, account: { platform: "slack", tenant: T1, nativeId: "U_CLAIMANT" } });
+  ok(found?.id === "c-open-live", "🔴 OPE-1959: openClaimedChallengeFor finds the OPEN challenge this account claimed");
+  ok(found?.backNonceHash !== undefined, "OPE-1959: …and hands back the whole row, so the caller can tell a code-back loop from a degraded one");
+  ok(
+    (await openChallengeAnsweredBy({ org: ORG, account: { platform: "slack", tenant: T1, nativeId: "U_LIVE_INIT" } })) === undefined,
+    "🔴 OPE-1959: the INITIATOR of that same challenge has no open claim — the guard is scoped to the claimant, and it would be a different (unruled) rule otherwise",
+  );
+  ok(
+    (await openChallengeAnsweredBy({ org: ORG, account: { platform: "slack", tenant: "T_OTHER", nativeId: "U_CLAIMANT" } })) === undefined,
+    "🔴 OPE-1959: the same native id in ANOTHER workspace has no open claim — the tenant is a conjunct, never decoration",
+  );
+
+  const stale: LinkChallengeRow = {
+    org: ORG, id: "c-open-stale", nonceHash: hashLinkCode("LMNPQRST"),
+    initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_STALE_INIT", initiatingSurfaceKey: "slack/T1/D_STALE",
+    transport: "code",
+    status: "pending", createdAt: nowIso, expiresAt: new Date(Date.now() - 600_000).toISOString(),
+  };
+  await store.addLinkChallenge(ORG, stale);
+  const claimedStale = await claimLinkChallenge({ org: ORG, code: "LMNPQRST", claimant: { platform: "slack", tenant: T1, nativeId: "U_STALE" }, now: new Date(Date.now() - 700_000) });
+  ok(claimedStale?.status === "claimed", "OPE-1959 setup: the stale challenge was claimed while it was still inside its TTL");
+  ok(
+    (await store.listLinkChallenges(ORG, { status: "claimed", claimedPlatform: "slack", claimedTenant: T1, claimedNativeId: "U_STALE" })).length === 1,
+    "OPE-1959 control: the row is STILL `claimed` in the store — the sweep is prune-on-write and this is a read",
+  );
+  ok(
+    (await openChallengeAnsweredBy({ org: ORG, account: { platform: "slack", tenant: T1, nativeId: "U_STALE" } })) === undefined,
+    "🔴 OPE-1959: an EXPIRED claim is not an open one — the read compares the TTL itself, so nobody is stranded behind a dead code-back",
+  );
+  await denyLinkChallenge({ org: ORG, challengeId: "c-open-live" });
+  await denyLinkChallenge({ org: ORG, challengeId: "c-open-stale" });
+
+  const dirTarget = { platform: "slack", tenant: T1, nativeId: "U_CONSENTER" };
+  const dirIssued = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_DIR_INIT", surfaceKey: "slack/T1/D_DIR", transport: "directory", target: dirTarget });
+  ok((await consentLinkChallenge({ org: ORG, challengeId: dirIssued.challenge.id, consenter: dirTarget }))?.status === "claimed", "OPE-1959 setup: the directory consent landed in the same `claimed` status");
+  const consented = await openChallengeAnsweredBy({ org: ORG, account: dirTarget });
+  ok(consented?.id === dirIssued.challenge.id, "🔴 OPE-1959: a DIRECTORY CONSENTER is mid-loop too — consentLinkChallenge writes the same claimed_* triple, so the read finds it through either door");
+  ok(consented?.transport === "directory", "🔴 OPE-1959: …and the row carries WHICH door, so the caller can put true words in front of the person");
+  await denyLinkChallenge({ org: ORG, challengeId: dirIssued.challenge.id });
+
+  ok(linkStartOpenLoopRefusal({ openLoop: false, transport: "code", codeBack: true }) === undefined, "OPE-1959: no open loop, no refusal — the guard is silent on every other turn");
+  const withCode = linkStartOpenLoopRefusal({ openLoop: true, transport: "code", codeBack: true })!;
+  ok(/the link you just claimed is still open/.test(withCode), "🔴 OPE-1959: the refusal says WHY it refused");
+  ok(/the code I posted you in this conversation/.test(withCode), "🔴 OPE-1959: …and points at the pending code-back, which is the person's actual next step");
+  ok(!withCode.includes("\n"), "🔴 OPE-1959: it is ONE line — a refusal a model relays verbatim must not become a wall of text");
+  const noCode = linkStartOpenLoopRefusal({ openLoop: true, transport: "code", codeBack: false })!;
+  ok(/the link you just claimed is still open/.test(noCode), "OPE-1959: the degraded loop refuses for the same stated reason");
+  ok(
+    !/the code I posted you/.test(noCode) && /confirms it on their own side/.test(noCode),
+    "🔴 OPE-1959: …but when the code-back was UNDELIVERABLE the copy does NOT send the person hunting for a code nobody posted",
+  );
+  const consenterCopy = linkStartOpenLoopRefusal({ openLoop: true, transport: "directory", codeBack: true })!;
+  ok(
+    /the link you just agreed to is still open/.test(consenterCopy) && !/claimed/.test(consenterCopy),
+    "🔴 OPE-1959: a DIRECTORY consenter is never told they CLAIMED something — they were asked and agreed, and the one line they read has to name the act they performed",
+  );
+  ok(!consenterCopy.includes("\n"), "OPE-1959: the consent-door variant is one line too");
 }
 
 {
@@ -1130,6 +1222,49 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   registerPostArm({ platform: "discord" });
   _resetAccountDisplayNamesForTest();
   ok(!canDeliverDirectMessage("slack"), "OPE-616 teardown: the notice-capturing arm is gone");
+}
+
+{
+  const claimantNotices: { text: string }[] = [];
+  const dmInitiator = ctxFor({ channelId: "D_1959_INIT", channelType: "im", principalId: "U_1959_INIT", dmPartnerTrust: "internal" });
+  await linkIdentity.execute({}, dmInitiator);
+  const code1959 = latestIssuedCode();
+
+  const claimedId = await observeLinkClaim({
+    org: ORG,
+    platform: "slack",
+    tenant: T1,
+    authorId: "U_1959_CLAIMANT",
+    addressed: true,
+    text: `link ${code1959}`,
+    trust: "peer",
+    notifyClaimant: async (text: string) => {
+      claimantNotices.push({ text });
+    },
+    codeBackDeliverable: true,
+  });
+  ok(claimedId !== undefined, "OPE-1959 setup: the claim hook recorded the claim");
+  ok(claimantNotices.some((m) => /enter this code where they started it/.test(m.text)), "OPE-1959 setup: the claimant was given the code-back — this is the pending step the refusal must point at");
+
+  const beforeStart = (await getOperationalStore().listLinkChallenges(ORG, { initiatingNativeId: "U_1959_CLAIMANT" })).length;
+  ok(beforeStart === 0, "OPE-1959 setup: the claimant has opened no challenge of its own yet");
+
+  const dmClaimant = ctxFor({ channelId: "D_1959_CLAIMANT", channelType: "im", principalId: "U_1959_CLAIMANT", dmPartnerTrust: "internal" });
+  await refuses(
+    () => linkIdentity.execute({}, dmClaimant),
+    "the link you just claimed is still open",
+    "🔴 OPE-1959: link_identity REFUSES a start while this account's own claim is open — one live code per proof-of-control loop",
+  );
+  ok(
+    (await getOperationalStore().listLinkChallenges(ORG, { initiatingNativeId: "U_1959_CLAIMANT" })).length === 0,
+    "🔴 OPE-1959: the refused start minted NOTHING — the refusal runs before the challenge is written, so no second code exists to confuse anybody",
+  );
+  await refuses(() => linkIdentity.execute({ platform: "github", query: "octo" }, dmClaimant), "the link you just claimed is still open", "OPE-1959: …and so is a directory SEARCH — a search is act 1 of the start the next call makes");
+
+  ok(await denyLinkChallenge({ org: ORG, challengeId: claimedId! }), "OPE-1959 control setup: the initiator denied the claim, so the loop is closed");
+  const after = (await linkIdentity.execute({}, dmClaimant)) as { decided: string; challengeId: string };
+  ok(after.decided === "code" && typeof after.challengeId === "string", "🔴 OPE-1959 CONTROL: with no open claim the SAME call SUCCEEDS — so the refusal above measured the open claim and nothing else");
+  await denyLinkChallenge({ org: ORG, challengeId: after.challengeId, from: ["pending", "claimed"] });
 }
 
 {

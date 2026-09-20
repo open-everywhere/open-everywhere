@@ -296,15 +296,30 @@ export const LINK_CODE_ALPHABET = "23456789ACDEFGHJKLMNPQRSTUVWXYZ";
 
 export function parseLinkCode(text: string | undefined): string | undefined {
   if (!text) return undefined;
-  const CLASS = `[${LINK_CODE_ALPHABET}]`;
-  const PUNCT = "[\\s:*_`\\-]";
-  const anchored = new RegExp(`\\blink${PUNCT}+(${CLASS}{8})\\b`, "i").exec(text);
+  const anchored = new RegExp(`\\blink${LINK_CODE_PUNCT}+(${LINK_CODE_CLASS}{8})\\b`, "i").exec(text);
   if (anchored) return anchored[1]!.toUpperCase();
+  return bareCodeLine(text);
+}
+
+const LINK_CODE_CLASS = `[${LINK_CODE_ALPHABET}]`;
+const LINK_CODE_PUNCT = "[\\s:*_`\\-]";
+
+function bareCodeLine(text: string): string | undefined {
+  const re = new RegExp(`^${LINK_CODE_PUNCT}*(${LINK_CODE_CLASS}{8})${LINK_CODE_PUNCT}*$`);
   for (const line of text.split("\n")) {
-    const bare = new RegExp(`^${PUNCT}*(${CLASS}{8})${PUNCT}*$`).exec(line);
+    const bare = re.exec(line);
     if (bare) return bare[1]!;
   }
   return undefined;
+}
+
+export const CLAIM_CODE_BACK_MARKER = /enter this code where they started it/i;
+
+export function parseClaimCodeBack(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const marker = CLAIM_CODE_BACK_MARKER.exec(text);
+  if (!marker) return undefined;
+  return bareCodeLine(text.slice(marker.index + marker[0].length));
 }
 
 export interface PrReadback {
