@@ -407,8 +407,15 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised: "S-HALT is declared RED-until-fixture: the halt is cleared only through the control plane, so a pack holding a read token could never lift one it set.",
   },
   { action: "admin.halt.cleared", fields: ["door", "cleared"], proves: "a halt was lifted, and what it had been holding", notExercised: "pairs with admin.halt.set — no leg may set a halt it cannot clear." },
+  {
+    action: "aws.sso.link_refused",
+    fields: ["reason", "signerSubject"],
+    proves:
+      "an AWS Identity Center sign-in was refused a personal link, naming the requester whose link was spent and the Identity Center account that completed the sign-in",
+    notExercised:
+      "no e2e leg completes an Identity Center link: it needs a real AWS Identity Center instance, a registered public PKCE client and a browser that can sign in as two different directory users. Driving it needs an Identity Center fixture with two seeded users and a confirmed `aws` linked-id row for one of them.",
+  },
 ];
-
 
 const AUDIT_ACTION_PLATFORMS: readonly string[] = ["slack", "discord", "teams", "github", "linear", "notion", "unified"];
 

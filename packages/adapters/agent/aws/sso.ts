@@ -2,6 +2,7 @@ import {
   warmCredential,
   encryptedKvVault,
   requireAwsSsoLinkStore,
+  checkAwsSsoIdentityBinding,
   OE_AWS_SSO_CALLBACK_PATH,
   type AwsCredentials,
   type AwsIdentityRequest,
@@ -15,7 +16,7 @@ export type FetchLike = typeof fetch;
 
 export { OE_AWS_SSO_CALLBACK_PATH };
 
-const DEFAULT_SSO_SCOPES = ["sso:account:access"] as const;
+const DEFAULT_SSO_SCOPES = ["sso:account:access", "openid"] as const;
 const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_EXPIRY_SKEW_MS = 60 * 1000;
 const DEFAULT_CRED_TTL_SECONDS = 3600;
@@ -26,6 +27,7 @@ interface AwsSsoTokenRecord {
   readonly expiresAtMs?: number;
   readonly region: string;
   readonly obtainedAtMs: number;
+  readonly identityCenterSubject?: string;
 }
 
 interface AwsSsoPendingRecord {
@@ -43,7 +45,9 @@ export class AwsSsoLinkRequiredError extends Error {
   constructor(authorizationUrl: string, why: string) {
     super(
       `your AWS account isn't linked yet — ${why}. Open this personal link to connect it (expires soon): ` +
-        `${authorizationUrl} — complete the AWS sign-in, then ask again. This acts as YOU with YOUR own ` +
+        `${authorizationUrl} — complete the AWS sign-in, then ask again. The link completes ONLY for the ` +
+        `Identity Center account already linked to you; a sign-in by anyone else is refused and links ` +
+        `nothing, so forwarding it gains nobody access. Once linked, the agent acts as YOU with YOUR own ` +
         `Identity Center access, bounded by the role granted to this channel. If you later say you've ` +
         `signed in, RETRY the operation to re-check.`,
     );
@@ -96,6 +100,7 @@ export interface AwsSsoMinterOptions {
   readonly fetch?: FetchLike;
   readonly store?: AwsSsoLinkStore;
   readonly pending?: AwsSsoPendingStore;
+  readonly bindIdentity?: typeof checkAwsSsoIdentityBinding;
   readonly redirectUri?: () => string | undefined;
   readonly now?: () => number;
   readonly newPkce?: () => { readonly verifier: string; readonly challenge: string };
@@ -138,6 +143,21 @@ export function parseRoleArn(roleArn: string): { accountId: string; roleName: st
   return { accountId: m[1]!, roleName: m[2]! };
 }
 
+export function idTokenSubject(idToken: string | undefined): string | undefined {
+  if (typeof idToken !== "string") return undefined;
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return undefined;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof claims !== "object" || claims === null) return undefined;
+  const sub = (claims as { sub?: unknown }).sub;
+  return typeof sub === "string" && sub.length > 0 ? sub : undefined;
+}
+
 export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   const fetchImpl = opts.fetch ?? fetch;
   const region = opts.region;
@@ -145,6 +165,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   const scopes = opts.scopes ?? DEFAULT_SSO_SCOPES;
   const vault = encryptedKvVault();
   const pendingStore = opts.pending ?? defaultPendingStore(vault);
+  const bindIdentity = opts.bindIdentity ?? checkAwsSsoIdentityBinding;
   const store = () => opts.store ?? requireAwsSsoLinkStore();
   const redirectUriOf = opts.redirectUri ?? defaultRedirectUri;
   const now = opts.now ?? Date.now;
@@ -171,6 +192,14 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     }
     return clientId;
   }
+  function requireOpenIdScope(): void {
+    if (scopes.includes("openid")) return;
+    throw new Error(
+      "AWS SSO link: the configured scopes omit \"openid\" (OE_AWS_SSO_SCOPES). Without it the Identity " +
+        "Center token response carries no id-token, so the account that signs in cannot be named and the " +
+        "link can never complete. Fail-closed: no link was started.",
+    );
+  }
   const authorizeEndpoint = () => `https://oidc.${requireRegion()}.amazonaws.com/authorize`;
   const tokenEndpoint = () => `https://oidc.${requireRegion()}.amazonaws.com/token`;
   const portalEndpoint = () => `https://portal.sso.${requireRegion()}.amazonaws.com/federation/credentials`;
@@ -178,6 +207,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   async function startLink(principalSubject: string): Promise<{ url: string }> {
     const reg = requireRegion();
     const cid = requireClientId();
+    requireOpenIdScope();
     const redirectUri = redirectUriOf();
     if (!redirectUri) {
       throw new Error(
@@ -222,15 +252,30 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       client_id: cid,
       code_verifier: pending.verifier,
     });
+    const signerSubject = idTokenSubject(tok.id_token);
+    const consume = () => pendingStore.write(state, JSON.stringify({ ...pending, consumed: true, verifier: "" }));
+    const verdict = await bindIdentity({ principalSubject: pending.principalSubject, signerSubject });
+    if (!verdict.ok) {
+      await consume();
+      throw new Error(
+        signerSubject === undefined
+          ? "AWS SSO link: the Identity Center sign-in returned no id-token subject, so the account that " +
+            "signed in cannot be named. The link requested `openid`, so the provider answered without one — " +
+            "check that the OIDC client may issue id-tokens. Fail-closed: nothing was linked."
+          : `AWS SSO link: refused — ${verdict.reason}. Fail-closed: nothing was linked.`,
+      );
+    }
+
     const record: AwsSsoTokenRecord = {
       accessToken: tok.access_token,
       ...(tok.refresh_token ? { refreshToken: tok.refresh_token } : {}),
       ...(typeof tok.expires_in === "number" ? { expiresAtMs: now() + tok.expires_in * 1000 } : {}),
       region: pending.region,
       obtainedAtMs: now(),
+      identityCenterSubject: verdict.awsNativeId,
     };
     await store().write(pending.principalSubject, JSON.stringify(record));
-    await pendingStore.write(state, JSON.stringify({ ...pending, consumed: true, verifier: "" }));
+    await consume();
     return { principalSubject: pending.principalSubject };
   }
 
@@ -239,6 +284,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     readonly refresh_token?: string;
     readonly expires_in?: number;
     readonly token_type?: string;
+    readonly id_token?: string;
   }
 
   async function exchangeToken(form: Record<string, string>): Promise<OidcTokenResponse> {
@@ -284,6 +330,11 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "your stored AWS link is unreadable");
     }
+    if (!rec.identityCenterSubject) {
+      await store().clear(principalSubject);
+      const { url } = await startLink(principalSubject);
+      throw new AwsSsoLinkRequiredError(url, "your AWS link predates the identity check and must be made again");
+    }
     const expired = rec.expiresAtMs !== undefined && now() >= rec.expiresAtMs - skew;
     if (!expired) return rec.accessToken;
     if (!rec.refreshToken) {
@@ -303,6 +354,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       ...(typeof tok.expires_in === "number" ? { expiresAtMs: now() + tok.expires_in * 1000 } : {}),
       region: rec.region,
       obtainedAtMs: now(),
+      identityCenterSubject: rec.identityCenterSubject,
     };
     await store().write(principalSubject, JSON.stringify(updated));
     return updated.accessToken;

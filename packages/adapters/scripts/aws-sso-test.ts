@@ -5,6 +5,7 @@ import {
   awsSsoTokenRef,
   parseRoleArn,
   isAwsSsoLinkRequired,
+  idTokenSubject,
   AwsSsoLinkRequiredError,
   type AwsSsoPendingStore,
 } from "../agent/aws/sso.js";
@@ -55,13 +56,33 @@ function memPending(): AwsSsoPendingStore & { rows: Map<string, string> } {
   };
 }
 
-function tokenBlob(over: Partial<{ accessToken: string; refreshToken: string; expiresAtMs: number }> = {}): string {
+const ALICE_AWS_SUB = "94482408-0011-7098-abcd-1e4f2c9b0000";
+const BOB_AWS_SUB = "94482408-0011-7098-abcd-1e4f2c9b1111";
+
+function fakeIdToken(claims: Record<string, unknown>): string {
+  const seg = (o: unknown) => Buffer.from(JSON.stringify(o), "utf8").toString("base64url");
+  return `${seg({ alg: "RS256", typ: "JWT" })}.${seg(claims)}.not-a-signature`;
+}
+
+function bindOnly(allowed: string) {
+  return async (input: { readonly principalSubject: string; readonly signerSubject: string | undefined }) =>
+    input.signerSubject === undefined
+      ? ({ ok: false, reason: "the AWS sign-in named no signer" } as const)
+      : input.signerSubject === allowed
+        ? ({ ok: true, awsNativeId: allowed } as const)
+        : ({ ok: false, reason: "the AWS sign-in was completed by a different Identity Center account" } as const);
+}
+
+function tokenBlob(
+  over: Partial<{ accessToken: string; refreshToken: string; expiresAtMs: number; identityCenterSubject: string | null }> = {},
+): string {
   return JSON.stringify({
     accessToken: over.accessToken ?? "sso-access-token",
     ...(over.refreshToken !== undefined ? { refreshToken: over.refreshToken } : {}),
     ...(over.expiresAtMs !== undefined ? { expiresAtMs: over.expiresAtMs } : {}),
     region: REGION,
     obtainedAtMs: 1_000,
+    ...(over.identityCenterSubject === null ? {} : { identityCenterSubject: over.identityCenterSubject ?? ALICE_AWS_SUB }),
   });
 }
 
@@ -265,6 +286,7 @@ function portalCredsJson(expirationMs: number): string {
     store,
     pending,
     newState: () => "STATE_RT",
+    bindIdentity: bindOnly(ALICE_AWS_SUB),
     fetch: (async (url: string, init?: RequestInit) => {
       const u = String(url);
       if (u.endsWith("/token")) {
@@ -272,7 +294,10 @@ function portalCredsJson(expirationMs: number): string {
         ok(form.get("grant_type") === "authorization_code", "roundtrip: completeLink exchanges an authorization_code");
         ok(form.get("code") === "auth-code-xyz", "roundtrip: the code is presented");
         ok(!!form.get("code_verifier"), "roundtrip: the PKCE verifier is presented at exchange");
-        return new Response(JSON.stringify({ access_token: "linked-access", refresh_token: "linked-refresh", expires_in: 3600 }), { status: 200 });
+        return new Response(
+          JSON.stringify({ access_token: "linked-access", refresh_token: "linked-refresh", expires_in: 3600, id_token: fakeIdToken({ sub: ALICE_AWS_SUB }) }),
+          { status: 200 },
+        );
       }
       if (u.includes("/federation/credentials")) return new Response(portalCredsJson(exp), { status: 200 });
       throw new Error(`unexpected fetch to ${u}`);
@@ -288,6 +313,7 @@ function portalCredsJson(expirationMs: number): string {
   ok(store.rows.has(ALICE), "roundtrip: completeLink stored the token for that principal");
   const rec = JSON.parse(store.rows.get(ALICE)!);
   ok(rec.accessToken === "linked-access" && rec.refreshToken === "linked-refresh", "roundtrip: the stored token is the exchanged one");
+  ok(rec.identityCenterSubject === ALICE_AWS_SUB, "roundtrip: the stored record RECORDS which Identity Center account it is bound to");
   const pend = JSON.parse(pending.rows.get("STATE_RT")!);
   ok(pend.consumed === true && pend.verifier === "", "roundtrip: the pending row is consumed single-use + the verifier scrubbed");
 
@@ -374,4 +400,146 @@ function portalCredsJson(expirationMs: number): string {
   ok(bearers.length === 3, "warm: a repeat mint for the SAME subject inside the TTL still reuses its entry — separation did not defeat the cache");
 }
 
-console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying + OPE-300 purge hook)`);
+function linkMinter(idTokenClaims: Record<string, unknown> | undefined) {
+  const store = memStore();
+  const pending = memPending();
+  const minter = makeAwsSsoMinter({
+    region: REGION,
+    clientId: CLIENT_ID,
+    store,
+    pending,
+    newState: () => "STATE_BIND",
+    bindIdentity: bindOnly(ALICE_AWS_SUB),
+    fetch: (async (url: string) => {
+      if (String(url).endsWith("/token")) {
+        return new Response(
+          JSON.stringify({
+            access_token: "linked-access",
+            expires_in: 3600,
+            ...(idTokenClaims ? { id_token: fakeIdToken(idTokenClaims) } : {}),
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch to ${String(url)}`);
+    }) as typeof fetch,
+  });
+  return { minter, store, pending };
+}
+
+{
+  const { minter, store, pending } = linkMinter({ sub: BOB_AWS_SUB });
+  await minter.startLink(ALICE);
+  let caught: unknown;
+  try {
+    await minter.completeLink("STATE_BIND", "auth-code-xyz");
+  } catch (e) {
+    caught = e;
+  }
+  ok(caught instanceof Error, "bind-mismatch: a sign-in by a DIFFERENT Identity Center account is REFUSED");
+  ok(caught instanceof Error && /different Identity Center account/u.test(caught.message), "bind-mismatch: the refusal names the axis that failed");
+  ok(store.rows.size === 0, "🔴 bind-mismatch: NO token is stored — a refused completion leaves nothing behind for the requester to spend");
+  const pend = JSON.parse(pending.rows.get("STATE_BIND")!);
+  ok(pend.consumed === true && pend.verifier === "", "bind-mismatch: the opened link is SPENT — the forwarder gets no second attempt at the same capability");
+}
+
+{
+  const { minter, store } = linkMinter({ sub: ALICE_AWS_SUB });
+  await minter.startLink(ALICE);
+  const done = await minter.completeLink("STATE_BIND", "auth-code-xyz");
+  ok(done.principalSubject === ALICE, "bind-match: the requester's OWN sign-in completes the link");
+  ok(JSON.parse(store.rows.get(ALICE)!).identityCenterSubject === ALICE_AWS_SUB, "bind-match: the stored record names the account it was bound to");
+}
+
+{
+  const asked: (string | undefined)[] = [];
+  const store = memStore();
+  const minter = makeAwsSsoMinter({
+    region: REGION,
+    clientId: CLIENT_ID,
+    store,
+    pending: memPending(),
+    newState: () => "STATE_BIND",
+    bindIdentity: async (input) => {
+      asked.push(input.signerSubject);
+      return { ok: false, reason: "the AWS sign-in named no signer" };
+    },
+    fetch: (async () => new Response(JSON.stringify({ access_token: "linked-access", expires_in: 3600 }), { status: 200 })) as typeof fetch,
+  });
+  await minter.startLink(ALICE);
+  let caught: unknown;
+  try {
+    await minter.completeLink("STATE_BIND", "auth-code-xyz");
+  } catch (e) {
+    caught = e;
+  }
+  ok(caught instanceof Error && /no id-token subject/u.test(caught.message), "bind-no-idtoken: a response naming no signer is refused, and points at the OIDC client");
+  ok(asked.length === 1 && asked[0] === undefined, "🔴 bind-no-idtoken: the binding check IS ASKED with an absent signer, so the refusal is audited like every other");
+  ok(store.rows.size === 0, "bind-no-idtoken: nothing is stored");
+}
+
+{
+  const { minter } = linkMinter({ aud: CLIENT_ID });
+  await minter.startLink(ALICE);
+  let caught: unknown;
+  try {
+    await minter.completeLink("STATE_BIND", "auth-code-xyz");
+  } catch (e) {
+    caught = e;
+  }
+  ok(caught instanceof Error && /no id-token subject/u.test(caught.message), "bind-no-sub: an id-token carrying no `sub` names nobody — refused");
+}
+
+{
+  const store = memStore({ [ALICE]: tokenBlob({ expiresAtMs: Date.now() + 3600_000, identityCenterSubject: null }) });
+  const minter = makeAwsSsoMinter({
+    region: REGION,
+    clientId: CLIENT_ID,
+    store,
+    pending: memPending(),
+    fetch: (async () => {
+      throw new Error("legacy-row: no network call may be made for an unproven row");
+    }) as typeof fetch,
+  });
+  let caught: unknown;
+  try {
+    await minter.mint(meReq);
+  } catch (e) {
+    caught = e;
+  }
+  ok(isAwsSsoLinkRequired(caught), "legacy-row: a record written before the binding check is UNPROVEN — the mint demands a fresh link");
+  ok(caught instanceof Error && /predates the identity check/u.test(caught.message), "legacy-row: the person is told why they must link again");
+  ok(!store.rows.has(ALICE), "🔴 legacy-row: the unproven row is DESTROYED, not merely declined — it held a live, refreshable session that may be another human's");
+}
+
+{
+  ok(idTokenSubject(fakeIdToken({ sub: ALICE_AWS_SUB })) === ALICE_AWS_SUB, "idTokenSubject: reads `sub` from the payload segment");
+  ok(idTokenSubject(undefined) === undefined, "idTokenSubject: undefined in, undefined out");
+  ok(idTokenSubject("not.a.jwt") === undefined, "idTokenSubject: a non-base64url payload yields nothing rather than throwing");
+  ok(idTokenSubject("only.two") === undefined, "idTokenSubject: a value that is not three segments is not an id-token");
+  ok(idTokenSubject(fakeIdToken({ sub: "" })) === undefined, "idTokenSubject: an EMPTY `sub` names nobody");
+  ok(idTokenSubject(fakeIdToken({ sub: 42 })) === undefined, "idTokenSubject: a non-string `sub` names nobody");
+  ok(idTokenSubject(fakeIdToken(["not", "an", "object"] as unknown as Record<string, unknown>)) === undefined, "idTokenSubject: a non-object payload names nobody");
+}
+
+{
+  const pending = memPending();
+  const minter = makeAwsSsoMinter({ region: REGION, clientId: CLIENT_ID, store: memStore(), pending, newState: () => "STATE_SCOPE" });
+  const { url } = await minter.startLink(ALICE);
+  const scope = new URL(url).searchParams.get("scope") ?? "";
+  ok(scope.split(" ").includes("openid"), "🔴 scopes: the default link requests `openid` — without it the token response carries no id-token and every completion refuses");
+  ok(scope.split(" ").includes("sso:account:access"), "scopes: the portal scope is still requested");
+
+  const strictPending = memPending();
+  const noOpenId = makeAwsSsoMinter({ region: REGION, clientId: CLIENT_ID, scopes: ["sso:account:access"], store: memStore(), pending: strictPending });
+  let caught: unknown;
+  try {
+    await noOpenId.startLink(ALICE);
+  } catch (e) {
+    caught = e;
+  }
+  ok(caught instanceof Error && /omit "openid"/u.test(caught.message), "🔴 scopes: a scope override without `openid` refuses the LINK, so nobody signs in to a flow that can never complete");
+  ok(strictPending.rows.size === 0, "scopes: the refused link wrote no pending row — it fails before any state is created");
+}
+
+console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying + OPE-300 purge hook + OPE-1955 signer binding)`);

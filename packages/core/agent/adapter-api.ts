@@ -88,6 +88,9 @@ export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackComplet
 export { registerAwsSsoCallbackCompleter, OE_AWS_SSO_CALLBACK_PATH } from "./connections/aws-sso-callback.js";
 export type { AwsSsoCallbackArgs, AwsSsoCallbackResult, AwsSsoCallbackCompleter } from "./connections/aws-sso-callback.js";
 
+export { checkAwsSsoIdentityBinding } from "./connections/aws-sso-identity-binding.js";
+export type { AwsSsoBindingVerdict } from "./connections/aws-sso-identity-binding.js";
+
 export type { Connection, CredentialAuthorizationDetail } from "./access/bundle.js";
 
 export { registerUserAuthFlow, requireUserAuthFlow } from "./connections/user-auth-flow.js";
