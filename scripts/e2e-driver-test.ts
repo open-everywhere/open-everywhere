@@ -1862,6 +1862,73 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(otherFactTokens("no tokens here at all", "obsidian", "obsidian-1").length === 0, "VACUITY: a reply quoting no token claims nothing — the reader is a diagnostic, never an assertion of its own");
   ok(otherFactTokens("abc-1", "a.c", "x").length === 0, "🔴 the stem is ESCAPED, so a caller may pass any literal — an unescaped `a.c` would match `abc-1` and report a token nothing wrote");
   ok(JSON.stringify(otherFactTokens("a.c-1", "a.c", "x")) === JSON.stringify(["a.c-1"]), "…and the escaped stem still matches its own literal (the positive control for the line above)");
+  {
+    const { carriesFactToken, distinctFactToken, examinedPostLines } = await import("../packages/core/scripts/e2e/journey.js");
+    const asked = "rcwfxa-60697";
+
+    ok(
+      carriesFactToken(
+        "Refused: the Notion connector is not authorized for this account, so I could not access its page-creation operation. rcwa-60697",
+        asked,
+      ),
+      "🔴 OPE-2032: a fired post spelling the token with a SHORTER stem matches — the shape of the post a live run's wait missed",
+    );
+    ok(carriesFactToken("I tried the connector tool and it refused. rcwfxa-60697", asked), "POSITIVE CONTROL: the token spelled exactly as asked still matches");
+    ok(
+      !carriesFactToken("Refused: the Notion connector is not authorized for this account.", asked),
+      "🔴 NEGATIVE: a post carrying NO digit run does not match — the refusal prose alone is not the fire's confirmation word",
+    );
+    ok(!carriesFactToken("OE e2e rcwa-60696", asked), "🔴 NEGATIVE: the same stem family with a DIFFERENT digit run does not match — the digits are the anchor, not the letters");
+    ok(!carriesFactToken("the monthly cap is now 60697 USD per month", asked), "🔴 NEGATIVE: a bare figure in the prose is not the token — the stem prefix has to ride with it");
+    ok(
+      !carriesFactToken("rcwa-160697", asked) && !carriesFactToken("rcwa-606971", asked),
+      "🔴 NEGATIVE: a LONGER number never satisfies the run — the digits are delimited on both sides, so a page count containing them is not the word",
+    );
+    ok(carriesFactToken("RCWA-60697", asked), "the match is case-insensitive — a model that recases the token it echoes has still echoed it");
+    ok(!carriesFactToken("rcw and then much later in the same sentence 60697", asked), "NEGATIVE: the prefix sits within twelve stem characters of the run, not anywhere in the post");
+    ok(!carriesFactToken("xrcwa-60697", asked), "NEGATIVE: the ANCHOR needs the prefix to start a token, so a longer word ending in it does not widen the match");
+    ok(
+      carriesFactToken("ref plain-token here", "plain-token") && !carriesFactToken("ref plain-toke here", "plain-token"),
+      "a value that is not a factToken has no digit anchor, so it falls back to EXACT containment rather than matching more loosely than the caller asked",
+    );
+    ok(carriesFactToken("marker del-sl-60697", "del-sl-60697"), "🔴 a HYPHENATED stem still matches its own token verbatim — the anchor cannot bridge the hyphen, so exact containment has to answer first");
+    ok(
+      carriesFactToken("x github-notion-rest-60697", "github-notion-rest-60697"),
+      "🔴 …and so does a stem longer than the twelve characters the anchor spans — `github-notion-rest` is a stem this pack mints",
+    );
+    ok(carriesFactToken("reportrcwfxa-60697", asked), "🔴 a token GLUED to the preceding word matches — `includes` accepted it, and the anchor may only ever ADD spellings");
+    ok(!carriesFactToken("marker del-sl-60698", "del-sl-60697"), "NEGATIVE CONTROL: the containment fallback is exact, so a hyphenated stem with the WRONG digits still does not match");
+
+    ok(distinctFactToken("rcwfxa", ["rcwa-60697"], 60697) === "rcwfxa-60698", "🔴 OPE-2032: a digit run the other token already holds is walked past — two tokens minted in one millisecond share a clock, not a number");
+    ok(distinctFactToken("rcwfxa", ["rcwa-60696"], 60697) === "rcwfxa-60697", "POSITIVE CONTROL: a free number is kept exactly as minted");
+    ok(distinctFactToken("rcwfxa", ["rcwa-99999"], 99999) === "rcwfxa-0", "the walk WRAPS at 100000 — the same modulus factToken mints under, so the token stays the shape every gate reads");
+    ok(distinctFactToken("rcwfxa", ["not-a-token"], 4) === "rcwfxa-4", "a taken value carrying no digit run reserves nothing");
+    ok(
+      !carriesFactToken("reason: e2e connector-write proof, ref rcwa-60697", distinctFactToken("rcwfxa", ["rcwa-60697"], 60697)),
+      "🔴 THE JOIN: the minted fire word does NOT match the creation CARD's own note — the false-match two tokens exist to prevent, which matching on digits alone would have re-opened",
+    );
+
+    ok(
+      JSON.stringify(examinedPostLines([{ ts: "1780491746.509000", text: "Refused: the connector\n  is not authorized. rcwa-60697" }])) ===
+        JSON.stringify(["1780491746.509000 | Refused: the connector is not authorized. rcwa-60697"]),
+      "🔴 OPE-2032: a timed-out wait prints each bot post's ts and its first 120 characters, whitespace collapsed to one line per post",
+    );
+    ok(examinedPostLines([{ ts: "1.1", text: "x".repeat(400) }])[0].length === "1.1".length + 3 + 120, "the text is cut at 120 characters, so one long post cannot flood the leg log");
+    ok(examinedPostLines([]).length === 0, "VACUITY: no bot posts is an empty list, never a line claiming one");
+    ok(
+      JSON.stringify(examinedPostLines([{ ts: "1.1", text: "only post" }], 0)) === JSON.stringify(["… 1 earlier bot post(s) elided"]),
+      "🔴 a limit of ZERO keeps nothing — `slice(-0)` is `slice(0)`, which would hand back EVERY post under a line saying none were kept",
+    );
+    const newestFirst = Array.from({ length: 15 }, (_, i) => ({ ts: `${1780491746 + (14 - i)}.509499`, text: `post ${14 - i}` }));
+    ok(newestFirst[0].text === "post 14" && newestFirst[14].text === "post 0", "fixture control: the input really is newest-first, or the assertion below proves nothing");
+    const examinedLines = examinedPostLines(newestFirst);
+    ok(
+      examinedLines.length === 13 && examinedLines[0] === "… 3 earlier bot post(s) elided" && examinedLines[12].endsWith("| post 14") && examinedLines[1].endsWith("| post 3"),
+      "🔴 the MOST RECENT twelve are kept, OLDEST FIRST, and the elision is COUNTED — posts 0-2 go, post 14 stays and reads last",
+    );
+    ok(!examinedLines.some((l) => l.endsWith("| post 0")), "🔴 NEGATIVE: the OLDEST post is the one elided — a raw slice of the live page would have kept it and dropped post 14");
+  }
+
   const card = { ts: "1.1", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default" }] };
   const decoded = approveButton(card);
   ok(decoded?.pendingId === "row-9" && decoded.org === "default", "approveButton decodes pendingId off the action_id and org off value");

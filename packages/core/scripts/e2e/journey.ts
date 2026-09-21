@@ -8,6 +8,35 @@ export function factToken(stem: string): string {
   return `${stem}-${Date.now() % 100_000}`;
 }
 
+function factTokenDigits(token: string): string | undefined {
+  return /-(\d{1,5})$/.exec(token)?.[1];
+}
+
+export function distinctFactToken(stem: string, taken: readonly string[], seed: number = Date.now() % 100_000): string {
+  const used = new Set(taken.map(factTokenDigits).filter((d): d is string => d !== undefined));
+  let n = ((Math.trunc(seed) % 100_000) + 100_000) % 100_000;
+  for (let i = 0; i < 100_000 && used.has(String(n)); i++) n = (n + 1) % 100_000;
+  return `${stem}-${n}`;
+}
+
+export function carriesFactToken(text: string, token: string): boolean {
+  if (text.includes(token)) return true;
+  const digits = factTokenDigits(token);
+  if (digits === undefined) return false;
+  const stem = token.slice(0, token.length - digits.length - 1);
+  const prefix = stem.slice(0, 3).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (prefix.length === 0) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${prefix}[a-z0-9]{0,12}-?(?<!\\d)${digits}(?!\\d)`, "i").test(text);
+}
+
+export function examinedPostLines(posts: readonly SlackMessage[], limit = 12): readonly string[] {
+  const ordered = [...posts].sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
+  const tail = limit <= 0 ? [] : ordered.slice(-limit);
+  const lines = tail.map((m) => `${m.ts} | ${m.text.replace(/\s+/g, " ").trim().slice(0, 120)}`);
+  const elided = posts.length - tail.length;
+  return elided > 0 ? [`… ${elided} earlier bot post(s) elided`, ...lines] : lines;
+}
+
 export function bareSurfaceSegment(value: string): string {
   const last = value.split("/").pop();
   return last === undefined || last.length === 0 ? value : last;
