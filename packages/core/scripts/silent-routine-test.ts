@@ -35,7 +35,7 @@ const {
   ROUTINE_MARKER,
 } = await import("../agent/routines/routine.js");
 const { storedTrigger, storedReport } = await import("../agent/tools/create_routine.js");
-const { renderFailureBlock, renderScheduledMessage, renderSilentBlock, renderWatchMessage, WATCH_SILENCE_SENTINEL } = await import(
+const { renderFailureBlock, renderReachBlock, renderScheduledMessage, renderSilentBlock, renderWatchMessage, WATCH_SILENCE_SENTINEL } = await import(
   "../agent/routines/watch.js"
 );
 const { renderJobMessage } = await import("../agent/routines/job.js");
@@ -126,8 +126,8 @@ const turnStarted = (attributes?: Record<string, string>): Promise<unknown> =>
   const plain = routine({ id: "r-plain" });
   ok(
     renderScheduledMessage(plain) ===
-      `[routine r-plain] Scheduled fire (routine created: ${plain.createdAt}; previous run: none — this is the FIRST run).\n\n${renderFailureBlock()}\n\n${plain.prompt}`,
-    "an ordinary fire's message is preamble + health block + prompt, with no stray blank paragraph where the silent block would have been",
+      `[routine r-plain] Scheduled fire (routine created: ${plain.createdAt}; previous run: none — this is the FIRST run).\n\n${renderFailureBlock()}\n\n${renderReachBlock("full")}\n\n${plain.prompt}`,
+    "an ordinary fire's message is preamble + health block + reach block + prompt, with no stray blank paragraph where the silent block would have been",
   );
   ok(!renderWatchMessage(routine({ id: "r-w", trigger: { kind: "watch", everyMinutes: 15 } })).includes("[silent]"), "a watch fire never carries the silent block (the pair is refused anyway)");
   ok(renderJobMessage(routine({ id: "r-j", sessionMode: "job", report: { kind: "silent" } })).includes("[silent]"), "a durable JOB can be silent too, and gets the same block");

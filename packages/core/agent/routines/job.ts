@@ -1,5 +1,5 @@
 import { JOB_STATE_MAX_BYTES, type Routine } from "./routine.js";
-import { firePreamble, renderFailureBlock, renderSilentBlock } from "./watch.js";
+import { firePreamble, renderFailureBlock, renderReachBlock, renderSilentBlock } from "./watch.js";
 import { renderPolicyBlock } from "./policy.js";
 import { renderCollectedBlock, type CollectedInput } from "./collector.js";
 import { renderFollowUpsBlock } from "./follow-ups.js";
@@ -43,6 +43,8 @@ export function renderJobMessage(
     ...(silent.length > 0 ? ["", silent] : []),
     "",
     renderFailureBlock(),
+    "",
+    renderReachBlock("job-restricted"),
     ...(rules.length > 0 ? ["", rules] : []),
     ...(followUps.length > 0 ? ["", followUps] : []),
     "",

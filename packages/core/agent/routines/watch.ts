@@ -10,6 +10,8 @@ export const WATCH_STATE_TOOL = "record_watch_state";
 
 export const RUN_FAILED_TOOL = "report_run_failed";
 
+export const CONNECTION_SEARCH_TOOL = "connection_search";
+
 export function firePreamble(r: Pick<Routine, "id" | "createdAt" | "lastRunAt">): string {
   const last = r.lastRunAt ? `previous run: ${r.lastRunAt}` : "previous run: none — this is the FIRST run";
   return `[routine ${r.id}] Scheduled fire (routine created: ${r.createdAt}; ${last}).`;
@@ -34,7 +36,35 @@ export function renderFailureBlock(): string {
     `your prose, so a run that reports a problem and finishes cleanly is recorded as a SUCCESS and ` +
     `this routine keeps firing at the same broken thing forever. ${MAX_CONSECUTIVE_FAILURES} declared ` +
     `failures in a row and it stops itself. Do NOT call it when the work DID happen and the news was ` +
-    `merely bad — finding a problem is a routine doing its job, not failing at it.`
+    `merely bad — finding a problem is a routine doing its job, not failing at it. ` +
+    `Say what you TRIED and what the system ANSWERED: the operation you called, the search you ran, ` +
+    `and the words that came back. A bare "not authorized" is a guess unless a call returned it.`
+  );
+}
+
+export type FireReach = "full" | "job-restricted";
+
+export function renderReachBlock(reach: FireReach): string {
+  if (reach === "job-restricted") {
+    return (
+      `[reach] This fire runs on a RESTRICTED job wake: it holds no \`${CONNECTION_SEARCH_TOOL}\`, and ` +
+      `no connector operation beyond a read. That is the design, not a fault — this job runs for weeks ` +
+      `with nobody attending it, so the consequential half of the kit is withheld until a human takes ` +
+      `the session over. Do NOT go looking for a connector here, and do not describe the narrowing as a ` +
+      `refusal: nothing refused you. If the work this fire was sent to do needs a tool you do not hold, ` +
+      `call \`${RUN_FAILED_TOOL}\` and name the tool you needed and the fact that this wake does not ` +
+      `carry it. That IS what the [health] block above asks of you here: a tool your kit does not hold ` +
+      `is a fact about the kit, not a guess, and no call has to sit behind it. Never invent one.`
+    );
+  }
+  return (
+    `[reach] A tool you cannot see is not a tool you do not have. A CONNECTOR operation — creating a ` +
+    `Notion page, reading a record in a connected workspace — is FOUND by search: it is not always ` +
+    `listed in this session, and the list you start with is not the whole of your reach. Call ` +
+    `\`${CONNECTION_SEARCH_TOOL}\` with a keyword for the thing you need, then call the operation it ` +
+    `names. Do that BEFORE you report that a connector is unavailable. Attempt the operation this ` +
+    `fire names, and report what came back. A refusal is what a call returned — never something you ` +
+    `concluded without making one.`
   );
 }
 
@@ -51,6 +81,8 @@ function fireMessage(
     ...(silent.length > 0 ? ["", silent] : []),
     "",
     renderFailureBlock(),
+    "",
+    renderReachBlock("full"),
     ...(rules.length > 0 ? ["", rules] : []),
     ...(followUps.length > 0 ? ["", followUps] : []),
     "",
@@ -88,6 +120,8 @@ export function renderWatchMessage(
     firePreamble(r),
     "",
     renderFailureBlock(),
+    "",
+    renderReachBlock("full"),
     ...(rules.length > 0 ? ["", rules] : []),
     ...(followUps.length > 0 ? ["", followUps] : []),
     "",

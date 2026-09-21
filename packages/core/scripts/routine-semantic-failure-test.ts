@@ -134,6 +134,14 @@ const MIN = 60_000;
     /did not|DID NOT/u.test(block) && /news/u.test(block),
     "instruction: it draws the ONLY distinction checkable from inside the turn — did the WORK happen, not was the NEWS good. Without the second clause a routine whose job is to report problems disables itself for doing it correctly (the classifier this design refuses)",
   );
+  ok(
+    /what you TRIED/u.test(block) && /what the system ANSWERED/u.test(block),
+    "instruction: a declared failure names the ATTEMPT and the ANSWER — the line above demands a reason, this one demands that the reason came from somewhere",
+  );
+  ok(
+    /"not authorized" is a guess unless a call returned it/u.test(block),
+    'instruction: and it names the exact bad shape, a bare "not authorized" — the string one fire actually wrote without making a single call',
+  );
 
   const plain: Routine = {
     id: "r-msg",
