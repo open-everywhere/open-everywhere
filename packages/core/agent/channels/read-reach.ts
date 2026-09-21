@@ -93,3 +93,37 @@ export function noteAuthoredRecordRead(ctx: unknown, read: AuthoredRecordRead): 
   } catch {
   }
 }
+
+export const BORROWED_RECORD_KIND = "credential-grant";
+
+export const BORROWED_READ_OP = "credential_grant_borrow";
+
+export interface BorrowedRecordRead {
+  readonly connection: string;
+  readonly grantId: string;
+  readonly targetLabel?: string;
+}
+
+export function noteBorrowedRecordRead(ctx: unknown, read: BorrowedRecordRead): void {
+  try {
+    if (read.connection.length === 0 || read.grantId.length === 0) return;
+    const bind = ctx as BindableContext;
+    const turnId = currentTurnId(bind);
+    if (turnId === undefined || turnId.length === 0) return;
+    let surfaceKey: string | undefined;
+    try {
+      surfaceKey = resolvePartition(bind).surfaceKey;
+    } catch {
+      surfaceKey = undefined;
+    }
+    const label = read.targetLabel !== undefined && read.targetLabel.length > 0 ? read.targetLabel : undefined;
+    noteConnectorRead(turnId, {
+      ...stampReadReach(bind, turnId, surfaceKey),
+      connection: read.connection,
+      op: BORROWED_READ_OP,
+      ...(label === undefined ? {} : { record: { kind: BORROWED_RECORD_KIND, id: read.grantId } }),
+    });
+    if (label !== undefined) rememberRecordName(currentSessionId(bind), turnId, BORROWED_RECORD_KIND, read.grantId, label);
+  } catch {
+  }
+}

@@ -29,9 +29,15 @@ import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynami
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { resolvePartition } from "../agent/memory/partition.js";
-import grantTools, { mountGrantEntries, requesterKeyForGrantCall } from "../agent/tools/grant_tools.js";
+import grantTools, { grantToolEntry, mountGrantEntries, requesterKeyForGrantCall } from "../agent/tools/grant_tools.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { parsePrincipalKey } from "../agent/identity/principal-key.js";
+import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
+import { grantBorrowResourceLabel } from "../agent/operational/credential-grant-rows.js";
+import { connectorReadsThisTurn } from "../agent/channels/reply-provenance.js";
+import { BORROWED_READ_OP, BORROWED_RECORD_KIND } from "../agent/channels/read-reach.js";
+import type { BindableContext } from "../agent/identity/binding.js";
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -113,6 +119,8 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   scopeKey,
   targetLabel: "Launch page",
 });
+
+const REQUESTER_ENVELOPE = '<message trigger="true" from="human" author-id="slack/W1/U-req">quote one sentence from this page</message>';
 
 const callCtx = (scopeKey: string, nowMs = NOW + 1000, turnId?: string) => ({
   ...stamps,
@@ -251,6 +259,35 @@ console.log("2. the granted argument is const-pinned in the schema, not hidden f
     "mcp mcp.notion.com tools/call notion-fetch keys:id,page_size",
     "the audit digest carries the argument NAMES and the host, never a value",
   );
+}
+
+console.log("2b. the mounted description names the pin and points elsewhere for anything else:");
+{
+  const grants = await store.credentialGrantsForScope(ORG, "session-session");
+  const entry = mountGrantEntries(grants)[GRANT_NAME] as unknown as { description: string };
+  const d = entry.description;
+  ok(d.includes('reads exactly the Notion page "Launch page"'), "🔴 the description names the PINNED target in plain words — the requester's own label, which is what the owner approved and what the room's grant-use notice already says");
+  ok(d.includes("and nothing else"), "…and says the tool reads that one target and nothing else");
+  ok(d.includes("Use this organisation's own Notion connector for any other Notion page"), "🔴 …and names the OTHER ROAD by name, so a model asked about a different page has somewhere to go");
+  ok(d.includes("never present it as any other Notion page"), "🔴 …and forbids the misattribution the boards measured — the tool's bytes describe the pinned page alone");
+  ok(d.indexOf("PINNED TO ONE TARGET") < d.indexOf("argument(s) are FIXED"), "…and the pin is stated BEFORE the fixed-argument mechanics, which is the order a reader takes them in");
+
+  const pinned = grants.find((g) => g.toolName === GRANT_NAME);
+  ok(pinned !== undefined, "§2b precondition: the pinned row is readable");
+  const unpinned = grantToolEntry({ ...pinned!, frozenArgs: {} }, NOW) as unknown as { description: string };
+  ok(!unpinned.description.includes("PINNED TO ONE TARGET"), "🔴 a grant that fixes NO arguments states no pin — the copy is conditional on the freeze, exactly as the owner's card is");
+  ok(unpinned.description.includes("This grant fixes no arguments"), "…and still says out loud that nothing is pinned, which is the wider ask");
+
+  const partial = grantToolEntry({ ...pinned!, frozenArgs: { page_size: 5 } }, NOW) as unknown as { description: string };
+  ok(!partial.description.includes("PINNED TO ONE TARGET"), "🔴 a grant that freezes some OTHER argument and leaves the TARGET free states no pin — the sentence is gated on the target, never on how many keys are frozen");
+  ok(partial.description.includes("1 argument(s) are FIXED"), "…and still names the argument it did fix, which is true");
+
+  const unreviewed = grantToolEntry(
+    { ...pinned!, mcpTool: "notion-search", resource: grantBorrowResourceLabel("Launch page", "notion-search", pinned!.frozenArgs ?? {}) },
+    NOW,
+  ) as unknown as { description: string };
+  ok(!unreviewed.description.includes("PINNED TO ONE TARGET"), "🔴 an UNREVIEWED vendor tool claims no pin — the host cannot name which argument is that tool's target, and it says nothing rather than guessing");
+  ok(unreviewed.description.includes("no reviewed description for the exact Notion tool"), "…and the unreviewed marker still fires, which is the honest thing it CAN say");
 }
 
 console.log("3. two sessions, one mounted name, the installed eve:");
@@ -565,6 +602,93 @@ console.log("9b. the mount hands the broker the turn the cap is keyed on:");
   ok(/const turnId = currentTurnId\(c\)/u.test(entry), "the mounted execute reads the eve turn id…");
   const brokerCall = entry.slice(entry.indexOf("runGrantedCall("));
   ok(/turnId === undefined \? \{\} : \{ turnId \}/u.test(brokerCall), "…and spreads it into the BROKER's call context, which is the only thing that arms the per-turn cap on a real turn");
+}
+
+console.log("10. a granted call records its pinned target on the turn's provenance ledger:");
+{
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", async () => ({ blocks: ["pinned page body"] }), "test:credential-grant-mount");
+  registerSlackFixtureMapper();
+
+  const SCOPE = "session-provenance";
+  const TURN = "turn_70";
+  const ask = await askForCredentialGrant(askInput(SCOPE, "session"));
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  ok(approved.approved, "§10 precondition: a session-mode grant frozen to page `abc123` is minted");
+  const entry = mountGrantEntries(await store.credentialGrantsForScope(ORG, SCOPE))[GRANT_NAME] as unknown as {
+    execute(input: unknown, ctx: unknown): Promise<{ ok: boolean; refused?: string }>;
+  };
+  ok(typeof entry?.execute === "function", "…and it mounts an executable entry");
+
+  const ctx = {
+    channel: { kind: "channel:slack" },
+    session: {
+      id: SCOPE,
+      turn: { id: TURN, sequence: 1 },
+      auth: { current: { attributes: { oe_platform: "slack", oe_grain: "standing", channel_id: "C1", team_id: "W1", channel_type: "channel", trust_checked: "true" }, principalId: "U-req", principalType: "slack-user" } },
+    },
+    agent: { name: "oe", nodeId: "__root__" },
+  } as unknown as BindableContext;
+
+  await inSession(new FakeSession(), async () => {
+    const verdict = recordRequesterIdentity(ctx, TURN, REQUESTER_ENVELOPE);
+    ok(verdict.kind === "requester", "§10 precondition: the turn names one verified requester, which the broker requires before it spends anybody's credential");
+
+    const before = connectorReadsThisTurn(TURN).length;
+    const result = await entry.execute({ id: "abc123" }, ctx);
+    ok(result.ok, `the granted call succeeds through the real broker (refused: ${String(result.refused)})`);
+
+    const reads = connectorReadsThisTurn(TURN);
+    eq(reads.length, before + 1, "🔴 the granted call adds ONE entry to this turn's provenance ledger — before this ticket it added none, and the reply named no source at all");
+    const read = reads[reads.length - 1]!;
+    eq(read.proof, "surface", "…carrying the SAME reach proof every other read on a per-surface seat carries, so the reply-time rule is unchanged for a borrowed read");
+    eq(read.connection, "notion", "…recorded under the GRANT ROW's own connection name, which is what the footer shows for every other read on that system");
+    eq(read.op, BORROWED_READ_OP, "…under a HOST-authored op name, never the vendor tool string, which is model-authored at ask time");
+    eq(read.record?.kind, BORROWED_RECORD_KIND, "…carrying the grant's record kind");
+    eq(read.record?.id, approved.approved ? approved.grant.id : "", "…whose id is the GRANT ROW, so a reader joins the footer to the `grant.used` row for the same call");
+  });
+
+  await inSession(new FakeSession(), async () => {
+    const ERRORED_TURN = "turn_72";
+    recordRequesterIdentity(ctx, ERRORED_TURN, REQUESTER_ENVELOPE);
+    const erroredCtx = { ...(ctx as unknown as Record<string, unknown>), session: { ...((ctx as unknown as { session: Record<string, unknown> }).session), turn: { id: ERRORED_TURN, sequence: 1 } } } as unknown as BindableContext;
+    _resetGrantBorrowTransportsForTest();
+    registerGrantBorrowTransport("notion", async () => ({ content: [{ text: "page not found", type: "text" }], isError: true }), "test:credential-grant-mount");
+    const errored = await entry.execute({ id: "abc123" }, erroredCtx);
+    ok(errored.ok, "the broker still reports `ok` on a vendor error — it sent the call, which is what `ok` means");
+    eq(connectorReadsThisTurn(ERRORED_TURN).length, 0, "🔴 …and the turn records NO source, because the vendor answered an error and nothing was read");
+  });
+
+  await inSession(new FakeSession(), async () => {
+    const PARTIAL_TURN = "turn_73";
+    recordRequesterIdentity(ctx, PARTIAL_TURN, REQUESTER_ENVELOPE);
+    const partialCtx = { ...(ctx as unknown as Record<string, unknown>), session: { ...((ctx as unknown as { session: Record<string, unknown> }).session), turn: { id: PARTIAL_TURN, sequence: 1 } } } as unknown as BindableContext;
+    _resetGrantBorrowTransportsForTest();
+    registerGrantBorrowTransport("notion", async () => ({ blocks: ["pinned page body"] }), "test:credential-grant-mount");
+    const row = (await store.credentialGrantsForScope(ORG, SCOPE)).find((g) => g.toolName === GRANT_NAME);
+    ok(row !== undefined, "§10 precondition: the grant row is readable for the doctored mounts below");
+    const loose = grantToolEntry({ ...row!, frozenArgs: { page_size: 5 } }, NOW) as unknown as { execute(i: unknown, c: unknown): Promise<{ ok: boolean }> };
+    ok((await loose.execute({ id: "abc123" }, partialCtx)).ok, "the call still succeeds — the store row is unchanged, only the mount's view of the freeze is");
+    const partialReads = connectorReadsThisTurn(PARTIAL_TURN);
+    eq(partialReads.length, 1, "the borrowed read is still RECORDED — the turn did read Notion");
+    eq(partialReads[0]?.record, undefined, "🔴 …and it names NO record, because this grant does not pin which page the call reads");
+
+    const WRITE_TURN = "turn_74";
+    recordRequesterIdentity(ctx, WRITE_TURN, REQUESTER_ENVELOPE);
+    const writeCtx = { ...(ctx as unknown as Record<string, unknown>), session: { ...((ctx as unknown as { session: Record<string, unknown> }).session), turn: { id: WRITE_TURN, sequence: 1 } } } as unknown as BindableContext;
+    const writeTier = grantToolEntry({ ...row!, tier: "write" }, NOW) as unknown as { execute(i: unknown, c: unknown): Promise<{ ok: boolean }> };
+    ok((await writeTier.execute({ id: "abc123" }, writeCtx)).ok, "the call still succeeds on a write-tier mount row");
+    eq(connectorReadsThisTurn(WRITE_TURN).length, 0, "🔴 a non-`read` tier records NOTHING — the ledger is read-verbs-only, so a write slice can never render a mutation as a source (`borrowShape` refuses that tier at mint today, so this is the line that keeps it true when it does not)");
+  });
+
+  await inSession(new FakeSession(), async () => {
+    const REFUSED_TURN = "turn_71";
+    recordRequesterIdentity(ctx, REFUSED_TURN, REQUESTER_ENVELOPE);
+    const refusedCtx = { ...(ctx as unknown as Record<string, unknown>), session: { ...((ctx as unknown as { session: Record<string, unknown> }).session), id: "session-not-this-grant", turn: { id: REFUSED_TURN, sequence: 1 } } } as unknown as BindableContext;
+    const refused = await entry.execute({ id: "abc123" }, refusedCtx);
+    ok(!refused.ok, "a call from a conversation the grant was not approved for is refused");
+    eq(connectorReadsThisTurn(REFUSED_TURN).length, 0, "🔴 …and records NO source — a refusal carries no vendor bytes, so the turn read nothing");
+  });
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

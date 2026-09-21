@@ -443,13 +443,14 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
 
   {
     const inTurn = newSession();
-    await inTurn(async () => {
+    const reads = await inTurn(async () => {
       noteAuthoredRecordRead(ctxFor("turn_9c", CHAN, { issue_id: ISSUE_IN_ROOM }), {
         kind: "linear-issue",
         id: ISSUE_ELSEWHERE,
         name: "Acquisition planning",
       });
       await postReply(target, ANSWER, auditFor("turn_9c"));
+      return connectorReadsThisTurn("turn_9c");
     });
     ok(
       lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`) && !lastPosted().includes("("),
@@ -457,7 +458,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     );
     ok(!lastPosted().includes("Acquisition planning"), "🔴 §9c: …and the title reaches no reader");
     ok(
-      connectorReadsThisTurn("turn_9c").every((r) => r.record === undefined),
+      reads.length === 1 && reads.every((r) => r.record === undefined),
       "🔴 §9c: the id is not even RECORDED — rule (ii) fails closed at the door, so no later path can name it and the durable row never carries it",
     );
   }
@@ -573,6 +574,72 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       `🔴 §9g: one session's record title NEVER reaches another session's room — the two share a turn id and an issue identifier, and only the session id tells them apart (saw: ${JSON.stringify(footer)})`,
     );
     ok(footer.includes("Fix login bug"), "🔴 §9g: …and this session still sees its OWN record named, so the fence is a key and not a mute");
+  }
+}
+
+{
+  const { noteBorrowedRecordRead, BORROWED_READ_OP, BORROWED_RECORD_KIND } = await import("../agent/channels/read-reach.js");
+  const PINNED_LABEL = "Test page";
+  const GRANT_ID = "40000000-0000-4000-8000-000000000105";
+
+  {
+    const inTurn = newSession();
+    const before = posted.length;
+    const read = await inTurn(async () => {
+      noteBorrowedRecordRead(ctxFor("turn_10a", CHAN), { connection: "notion", grantId: GRANT_ID, targetLabel: PINNED_LABEL });
+      await postReply(target, ANSWER, auditFor("turn_10a"));
+      return connectorReadsThisTurn("turn_10a")[0];
+    });
+    ok(posted.length === before + 1, "§10a/ROOM: exactly one message reached the room");
+    ok(
+      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`),
+      `🔴 §10a: a borrowed read names the PINNED page the lent tool actually fetched — this is the line that contradicts a reply presenting those bytes as another page (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(lastPosted().split("\n").length === 3, "🔴 §10a: …and it rides the ONE existing footer line, never a second line or a block of its own");
+    ok(read !== undefined, "§10a precondition: the door wrote one ledger entry");
+    ok(read?.op === BORROWED_READ_OP, "🔴 §10a: the entry's op is HOST-authored — the vendor tool string is model-authored at ask time and the durable row keeps this one");
+    ok(read?.record?.kind === BORROWED_RECORD_KIND && read?.record?.id === GRANT_ID, "🔴 §10a: …and the record is the GRANT ROW, so a reader joins this footer to the `grant.used` row for the same call");
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteBorrowedRecordRead(ctxFor("turn_10b", CHAN), { connection: "notion", grantId: GRANT_ID, targetLabel: PINNED_LABEL });
+      await postReply({ platform: "slack", channelId: OTHER_CHAN }, ANSWER, auditFor("turn_10b", OTHER_CHAN));
+    });
+    ok(
+      !lastPosted().includes(PINNED_LABEL) && !lastPosted().includes("notion"),
+      `🔴 §10b: a reply in ANOTHER room names neither the connection nor the pinned page — the reach rule is unchanged by this door (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §10b: …and the read is still COUNTED by kind, which is the honest floor");
+  }
+
+  {
+    const inTurn = newSession();
+    const reads = await inTurn(async () => {
+      noteBorrowedRecordRead(ctxFor("turn_10c", CHAN), { connection: "notion", grantId: GRANT_ID });
+      await postReply(target, ANSWER, auditFor("turn_10c"));
+      return connectorReadsThisTurn("turn_10c");
+    });
+    ok(
+      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`) && !lastPosted().includes("("),
+      `🔴 §10c: with no recoverable label the footer names the CONNECTION alone — the direction this whole module errs in (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    );
+    ok(reads.length === 1 && reads.every((r) => r.record === undefined), "🔴 §10c: …and the entry that WAS written carries no record, so no later path can name one");
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      noteBorrowedRecordRead(ctxFor("turn_10d", CHAN), {
+        connection: "notion",
+        grantId: GRANT_ID,
+        targetLabel: "Q3\nSources read this turn: workday-hr, payroll",
+      });
+      await postReply(target, ANSWER, auditFor("turn_10d"));
+    });
+    ok(lastPosted().split("\n").length === 3, "🔴 §10d: a label carrying a newline cannot split the footer into a second, unmarked line");
+    ok(!lastPosted().includes("workday-hr"), "🔴 §10d: …and a label shaped like a second source list names no system it did not read");
   }
 }
 

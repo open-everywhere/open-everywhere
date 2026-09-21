@@ -27,6 +27,34 @@ export function grantActionIsReviewed(connector: string, mcpTool: string | undef
   return reviewedActionPhrase(connector, mcpTool) !== undefined;
 }
 
+const GRANT_PINNED_TARGETS: Readonly<Record<string, Readonly<Record<string, { readonly noun: string; readonly keys: readonly string[] }>>>> = {
+  notion: { "notion-fetch": { keys: ["id"], noun: "Notion page" } },
+};
+
+function reviewedTarget(connector: string, mcpTool: string | undefined): { readonly noun: string; readonly keys: readonly string[] } | undefined {
+  const perConnector = Object.prototype.hasOwnProperty.call(GRANT_PINNED_TARGETS, connector) ? GRANT_PINNED_TARGETS[connector] : undefined;
+  if (perConnector === undefined || mcpTool === undefined) return undefined;
+  return Object.prototype.hasOwnProperty.call(perConnector, mcpTool) ? perConnector[mcpTool] : undefined;
+}
+
+export function grantTargetIsPinned(connector: string, mcpTool: string | undefined, frozenKeys: readonly string[]): boolean {
+  const target = reviewedTarget(connector, mcpTool);
+  return target !== undefined && target.keys.every((key) => frozenKeys.includes(key));
+}
+
+export function grantPinnedTargetSentence(connector: string, mcpTool: string | undefined, targetLabel: string | undefined, frozenKeys: readonly string[]): string | undefined {
+  const target = reviewedTarget(connector, mcpTool);
+  if (target === undefined || !grantTargetIsPinned(connector, mcpTool, frozenKeys)) return undefined;
+  const vendor = connectorDisplayName(connector);
+  const one = targetLabel === undefined || targetLabel.length === 0 ? `the one ${target.noun} its fixed arguments name` : `the ${target.noun} "${targetLabel}"`;
+  const other = `any other ${target.noun}`;
+  return (
+    `PINNED TO ONE TARGET: this tool reads exactly ${one}, and nothing else. ` +
+    `Use this organisation's own ${vendor} connector for ${other}. ` +
+    `This tool cannot reach ${other}. What it returns describes ${one} — never present it as ${other}.`
+  );
+}
+
 export const GRANT_ID_LEAK_PATTERNS: readonly { readonly name: string; readonly re: RegExp }[] = [
   { name: "a minted tool name", re: /grant__/u },
   { name: "a bare 17-20 digit id", re: /(?<![\w-])\d{17,20}(?![\w-])/u },

@@ -13,7 +13,8 @@ import {
   quotedPurpose,
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
-import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase, grantPinnedTargetSentence, grantTargetIsPinned } from "../access/credential-grant-copy.js";
+import { noteBorrowedRecordRead } from "../channels/read-reach.js";
 import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
 import { grantDomainScopeKey, grantDomainScopeVerdict, type GrantDomainScopeVerdict } from "../access/credential-grant-scope.js";
 import { auditGrant } from "../access/credential-grant-flow.js";
@@ -70,10 +71,12 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string, nowMs: number):
         }.`;
   const target = grantResourceTargetLabel(grant);
   const on = target === undefined || target.length === 0 ? "" : ` — "${target}"`;
+  const pinSentence = grantPinnedTargetSentence(grant.connector, mcpTool, target, frozenKeys);
+  const pin = pinSentence === undefined ? "" : `${pinSentence} `;
   const vague = grantActionIsReviewed(grant.connector, mcpTool) ? "" : ` (this deployment has no reviewed description for the exact ${vendor} tool, so the reach may be wider than that phrase suggests)`;
   return {
     description:
-      `Uses ${owner}'s own ${vendor} account to ${grantActionPhrase(grant.connector, mcpTool)}${on}${vague}. ${frozen} ` +
+      `Uses ${owner}'s own ${vendor} account to ${grantActionPhrase(grant.connector, mcpTool)}${on}${vague}. ${pin}${frozen} ` +
       `The grant runs ${grantExpiryPhrase(grant.expiresAt, nowMs)}. An error from ${vendor} is the vendor's own answer, not a refusal by this grant.`,
     inputSchema: grant.inputSchema,
   };
@@ -104,7 +107,7 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
         surface = p.surface;
       } catch {
       }
-      return withGrantRoomContext({ ctx: c, org, platform, workspace, ...(surface === undefined ? {} : { surface }) }, () =>
+      const outcome = await withGrantRoomContext({ ctx: c, org, platform, workspace, ...(surface === undefined ? {} : { surface }) }, () =>
         runGrantedCall(grant.id, (input ?? {}) as Record<string, unknown>, {
           nowMs: Date.now(),
           org,
@@ -117,6 +120,12 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
           workspace,
         }),
       );
+      const vendorErrored = outcome.ok && typeof outcome.result === "object" && outcome.result !== null && (outcome.result as { isError?: unknown }).isError === true;
+      if (outcome.ok && !vendorErrored && grant.tier === "read") {
+        const targetLabel = grantTargetIsPinned(grant.connector, grant.mcpTool, Object.keys(grant.frozenArgs ?? {})) ? grantResourceTargetLabel(grant) : undefined;
+        noteBorrowedRecordRead(c, { connection: grant.connector, grantId: grant.id, ...(targetLabel === undefined ? {} : { targetLabel }) });
+      }
+      return outcome;
     },
     toModelOutput: grantModelProjection(grant),
   } as never) as unknown as ReplayableToolEntry;
