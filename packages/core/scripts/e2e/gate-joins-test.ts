@@ -27,6 +27,7 @@ import {
   settlementReportPairings,
   spendCapRaisedByThisRun,
   turnStartMs,
+  unattendedArmRoad,
   unifiedTurnSessionId,
   wakeIdForVendorInstant,
   workerRoadForOp,
@@ -353,6 +354,53 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(mounted.mounted, "a worker that DID mount the op leaves the connector road open, so an empty window there really is the fence going unreached");
   ok(workerRoadForOp([], OP).workers === 0, "no worker rows at all ⇒ no delegated worker ran, and the fire's own seat is where the call had to come from");
   ok(!workerRoadForOp([{ ...worker, detail: { worker: "w", tools: "not-an-array" } }], OP).mounted, "an unreadable roster cannot support the claim that the call was possible");
+}
+
+{
+  const OP = "notion__create_page";
+  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_example35", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
+
+  const restArm = unattendedArmRoad({ planeRows: 0, workerRows: restRoad, op: OP });
+  ok(restArm.verdict === "not-proven", "🔴 the DECLARED fire took the REST road with the op unmounted: there is no lift to measure, so the arm is NOT PROVEN and never scored");
+  ok(restArm.note.startsWith("NO CONNECTOR CALL HAPPENED:") && restArm.note.includes(OP), "…and the note names the road, so the observation sends the next reader to routing rather than to the declare→lift join");
+
+  const mountedRoad = [{ ...restRoad[0]!, detail: { ...restRoad[0]!.detail, tools: ["bash", OP], toolCount: 2 } }];
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, op: OP }).verdict === "unexplained",
+    "🔴 a worker that DID mount the op, with neither a lift nor a refusal in the window: the declared fire held the fence's road and nothing recorded it — HARD, and without this arm the rule would excuse the regression",
+  );
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: [], op: OP }).verdict === "unexplained",
+    "no roster at all is not an explanation either — the fire's own seat is where the call had to come from, so an empty plane stays HARD",
+  );
+
+  const unreadable = [{ ...restRoad[0]!, detail: { worker: "wrun_example36", grain: "task", tools: "not-an-array" } }];
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: unreadable, op: OP }).verdict === "unexplained",
+    "🔴 a roster whose tools is not an array says nothing about the road, so it cannot buy the arm its NOT PROVEN — an unreadable roster fails HARD, not open",
+  );
+  const truncated = [{ ...restRoad[0]!, detail: { ...restRoad[0]!.detail, namesTruncated: true, toolCount: 512 } }];
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: truncated, op: OP }).verdict === "unexplained",
+    "🔴 a TRUNCATED roster may have carried the op past the cap, so its silence is not the seat taking another road either",
+  );
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: [...unreadable, ...restRoad], op: OP }).verdict === "not-proven",
+    "control: ONE readable roster beside an unreadable one still explains the empty plane — the rule needs a readable roster, not every roster readable",
+  );
+  ok(workerRoadForOp([...unreadable, ...truncated, ...restRoad], OP).explained === 1, "…and `explained` counts only the rosters that could support the claim, while `workers` still counts all three");
+  ok(workerRoadForOp([...unreadable, ...truncated, ...restRoad], OP).workers === 3, "…the worker COUNT is unchanged, so a gate message still reports what the window really carried");
+
+  ok(unattendedArmRoad({ planeRows: 1, workerRows: restRoad, op: OP }).verdict === "measured", "a plane row present ⇒ the arm SCORES, and the roster never overrides a row that was really there");
+
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, op: OP }).note === `1 delegated worker(s) ran and at least one MOUNTED ${OP}, so the connector road was open to the work`,
+    "the mounted roster's note says the road was OPEN, which is what makes the hard red above readable",
+  );
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: [], op: OP }).note === "no worker.toolset row in this window, so no delegated worker ran and the fire's own seat is where the call had to come from",
+    "…and an empty window's note names the seat, not the fence",
+  );
 }
 
 {

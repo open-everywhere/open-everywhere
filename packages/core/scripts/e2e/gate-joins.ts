@@ -290,6 +290,7 @@ export const WORKER_TOOLSET_ACTION = "worker.toolset";
 export interface WorkerRoadVerdict {
   readonly workers: number;
   readonly mounted: boolean;
+  readonly explained: number;
   readonly sample: readonly string[];
 }
 
@@ -298,19 +299,52 @@ const ROSTER_SAMPLE = 12;
 export function workerRoadForOp(rows: readonly AuditWireEntry[], op: string): WorkerRoadVerdict {
   let workers = 0;
   let mounted = false;
+  let explained = 0;
   let sample: readonly string[] = [];
   for (const r of rows) {
     if (r.action !== WORKER_TOOLSET_ACTION) continue;
     workers += 1;
     const raw = r.detail?.tools;
+    const readable = Array.isArray(raw) && raw.every((t) => typeof t === "string") && r.detail?.namesTruncated !== true;
     const tools = Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
     if (tools.includes(op)) {
       mounted = true;
       continue;
     }
+    if (!readable) continue;
+    explained += 1;
     if (sample.length === 0 && tools.length > 0) sample = tools.slice(0, ROSTER_SAMPLE);
   }
-  return { workers, mounted, sample };
+  return { workers, mounted, explained, sample };
+}
+
+export type UnattendedArmVerdict =
+  | "measured"
+  | "not-proven"
+  | "unexplained";
+
+export interface UnattendedArmRoad {
+  readonly verdict: UnattendedArmVerdict;
+  readonly note: string;
+  readonly road: WorkerRoadVerdict;
+}
+
+export function unattendedArmRoad(args: {
+  readonly planeRows: number;
+  readonly workerRows: readonly AuditWireEntry[];
+  readonly op: string;
+}): UnattendedArmRoad {
+  const road = workerRoadForOp(args.workerRows, args.op);
+  const note =
+    road.workers === 0
+      ? `no ${WORKER_TOOLSET_ACTION} row in this window, so no delegated worker ran and the fire's own seat is where the call had to come from`
+      : road.mounted
+        ? `${road.workers} delegated worker(s) ran and at least one MOUNTED ${args.op}, so the connector road was open to the work`
+        : road.explained === 0
+          ? `${road.workers} delegated worker(s) ran, none mounted ${args.op}, and NO roster could be read whole (a non-array tools list, or one the emitter truncated) — an unreadable roster cannot say which road the seat took`
+          : `NO CONNECTOR CALL HAPPENED: ${road.workers} delegated worker(s) ran and none mounted ${args.op} (one roster: ${JSON.stringify(road.sample)}) — the seat took another road, so the fence was never on it`;
+  const verdict: UnattendedArmVerdict = args.planeRows > 0 ? "measured" : !road.mounted && road.explained > 0 ? "not-proven" : "unexplained";
+  return { verdict, note, road };
 }
 
 export function wakeIdForVendorInstant(rows: readonly AuditWireEntry[], vendorMs: number, surfaceKey?: string): string | undefined {

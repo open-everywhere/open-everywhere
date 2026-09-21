@@ -153,10 +153,10 @@ import {
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
+  unattendedArmRoad,
   unifiedTurnSessionId,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
-  workerRoadForOp,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
@@ -7527,25 +7527,28 @@ export const SCENARIOS: readonly Scenario[] = [
         return { all, ...splitFenceRows(all, OP) };
       };
 
+      const armRoad = async (arm: "A" | "B", sinceIso: string, planeRows: number) =>
+        unattendedArmRoad({
+          planeRows,
+          workerRows: await auditRead({ sinceIso, actions: [WORKER_TOOLSET_ACTION], limit: 200 }).catch(() => {
+            ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${WORKER_TOOLSET_ACTION} read failed — reading the window as carrying no roster, which keeps an empty plane HARD`);
+            return [];
+          }),
+          op: OP,
+        });
+
       const a = await driveArm("A", false);
       await arming.recheck();
       const rowsA = await connectorRows(a.sinceIso);
       const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
-      const roadA = workerRoadForOp(await auditRead({ sinceIso: a.sinceIso, actions: [WORKER_TOOLSET_ACTION], limit: 200 }).catch(() => []), OP);
-      const roadNoteA =
-        roadA.workers === 0
-          ? `no ${WORKER_TOOLSET_ACTION} row in this window, so no delegated worker ran and the fire's own seat is where the call had to come from`
-          : roadA.mounted
-            ? `${roadA.workers} delegated worker(s) ran and at least one MOUNTED ${OP}, so the connector road was open to the work`
-            : `NO CONNECTOR CALL HAPPENED: ${roadA.workers} delegated worker(s) ran and none mounted ${OP} (one roster: ${JSON.stringify(roadA.sample)}) — the seat took another road, so the fence was never on it`;
-      const tookAnotherRoad = roadA.workers > 0 && !roadA.mounted;
+      const roadA = await armRoad("A", a.sinceIso, reachedA);
       ctx.gate(
-        reachedA > 0 || tookAnotherRoad,
-        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal) AND no roster evidence of another road. The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is not a missing fixture. What the rosters do say: ${roadNoteA}.`,
+        roadA.verdict !== "unexplained",
+        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal) AND no roster evidence of another road. The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is not a missing fixture. What the rosters do say: ${roadA.note}.`,
       );
-      if (reachedA === 0) {
+      if (roadA.verdict === "not-proven") {
         ctx.observe(
-          `S-ROUTINE-CONNECTOR-WRITE arm A NOT PROVEN this run: no connector plane row for ${OP}, and the rosters say why — ${roadNoteA}. The unattended fence sits on the connector-TOOL road; ` +
+          `S-ROUTINE-CONNECTOR-WRITE arm A NOT PROVEN this run: no connector plane row for ${OP}, and the rosters say why — ${roadA.note}. The unattended fence sits on the connector-TOOL road; ` +
             "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm A's fence gates are not scored on a run that never put the fence on the road.",
         );
       } else {
@@ -7577,22 +7580,35 @@ export const SCENARIOS: readonly Scenario[] = [
       const b = await driveArm("B", true);
       await arming.recheck();
       const rowsB = await connectorRows(b.sinceIso);
+      const reachedB = rowsB.refused.length + rowsB.lifted.length + rowsB.otherRefusals.length;
+      const roadB = await armRoad("B", b.sinceIso, reachedB);
       ctx.gate(
-        rowsB.lifted.length > 0,
-        `🔴 (hard) arm B: the DECLARED fire's connector WRITE was LIFTED — a connector.unattended_lift row for ${OP} (found ${rowsB.lifted.length}; refusals in the same window: ${JSON.stringify(rowsB.refused.map((e) => e.detail))}). An absence here with arm A green means the declare→lift join is broken: the click wrote a row the fence does not read.`,
+        roadB.verdict !== "unexplained",
+        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) AND no roster evidence of another road. That is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is not a missing fixture. What the rosters do say: ${roadB.note}.`,
       );
-      ctx.gate(
-        allNamePermissionKind(rowsB.lifted, OP_PERMISSION_KIND),
-        `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_PERMISSION_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
-      );
-      ctx.gate(
-        allAttributedToRoutine(rowsB.lifted),
-        `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine permission key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
-      );
-      ctx.gate(
-        rowsB.refused.length === 0,
-        `🔴 (hard) arm B: NO ask-unattended connector.refused row for ${OP} in the declared arm's window — the declaration must remove the refusal, not sit beside it (found ${rowsB.refused.length})`,
-      );
+      if (roadB.verdict === "not-proven") {
+        ctx.observe(
+          `S-ROUTINE-CONNECTOR-WRITE arm B NOT PROVEN this run: no connector plane row for ${OP} in the DECLARED arm's window, and the rosters say why — ${roadB.note}. The lift is written by the unattended fence on the connector-TOOL road; ` +
+            "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm B's lift and refusal gates are not scored on a run that never put the fence on the road.",
+        );
+      } else {
+        ctx.gate(
+          rowsB.lifted.length > 0,
+          `🔴 (hard) arm B: the DECLARED fire's connector WRITE was LIFTED — a connector.unattended_lift row for ${OP} (found ${rowsB.lifted.length}; refusals in the same window: ${JSON.stringify(rowsB.refused.map((e) => e.detail))}). The op WAS reached on this run (${reachedB} connector plane row(s), and the rosters say: ${roadB.note}), so an absence here means the declare→lift join is broken: the click wrote a row the fence does not read.`,
+        );
+        ctx.gate(
+          allNamePermissionKind(rowsB.lifted, OP_PERMISSION_KIND),
+          `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_PERMISSION_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+        );
+        ctx.gate(
+          allAttributedToRoutine(rowsB.lifted),
+          `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine permission key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+        );
+        ctx.gate(
+          rowsB.refused.length === 0,
+          `🔴 (hard) arm B: NO ask-unattended connector.refused row for ${OP} in the declared arm's window — the declaration must remove the refusal, not sit beside it (found ${rowsB.refused.length})`,
+        );
+      }
       ctx.log(
         `S-ROUTINE-CONNECTOR-WRITE: both arms observed. NOT proven here: the routine permission CARD on a connector refusal — connections/connector-auth.ts reaches neither approvals/flow.ts nor the card planner, so that half of OPE-1290 is unimplemented for connector ops rather than untested. See AUDIT.md.`,
       );

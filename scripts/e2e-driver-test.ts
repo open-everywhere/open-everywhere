@@ -7077,6 +7077,27 @@ rmSync(dir, { recursive: true, force: true });
   ok(logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
   ok(replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${replyHandouts})`);
 }
+
+{
+  const body = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString().replace(/\s+/g, "");
+  ok(body.includes("unattendedArmRoad("), "🔴 the leg calls the SHARED road rule rather than re-deriving one per arm");
+  ok((body.match(/armRoad\("A",/g) ?? []).length === 1 && (body.match(/armRoad\("B",/g) ?? []).length === 1, "…once for EACH arm — arm B reading it is the whole of OPE-2021");
+
+  const armBBranch = body.indexOf('roadB.verdict==="not-proven"');
+  const armBLift = body.indexOf("theDECLAREDfire'sconnectorWRITEwasLIFTED");
+  const armBRefusal = body.indexOf("NOask-unattendedconnector.refusedrowfor");
+  ok(armBLift > 0 && armBRefusal > 0, `the two arm B gate messages this scan anchors on are still in the body (lift at ${armBLift}, refusal at ${armBRefusal}) — a rename here must update this scan, not silently unpin it`);
+  ok(armBBranch > 0, "🔴 arm B branches on its OWN road verdict — without this the DECLARED fire's REST road reds the leg again");
+  ok(armBLift > armBBranch, `🔴 arm B's LIFT gate sits INSIDE the verdict branch, never before it (branch at ${armBBranch}, lift at ${armBLift})`);
+  ok(armBRefusal > armBBranch, `🔴 …and so does its refusal-absence gate (branch at ${armBBranch}, refusal gate at ${armBRefusal})`);
+  const armABranch = body.indexOf('roadA.verdict==="not-proven"');
+  ok(armABranch > 0 && armABranch < armBBranch, "arm A keeps the branch it landed with at OPE-1968, and it still comes first");
+
+  ok(
+    SCENARIOS.filter((s) => s.run.toString().includes("unattendedArmRoad(")).map((s) => s.id).join(",") === "S-ROUTINE-CONNECTOR-WRITE",
+    "negative control: exactly ONE leg reads this rule, so the checks above cannot be passing on another leg's body",
+  );
+}
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +
     `${passed - shapeChecks} are harness/driver logic — neither half is a product-behaviour coverage figure)`,
