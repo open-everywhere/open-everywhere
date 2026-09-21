@@ -74,6 +74,10 @@ async function consolidate(ctx: HookContext): Promise<void> {
     dedupeKey = undefined;
   }
   const result = await learnFromSession(scope, { request, messages, ...(dedupeKey !== undefined ? { dedupeKey } : {}) }, ledger);
+  if (result.skipped === "memory-instruction") {
+    log("skipped: the request is an instruction about memory, not a fact for memory");
+    return;
+  }
   if (!result.signature) return;
 
   if (result.enrich && target) {

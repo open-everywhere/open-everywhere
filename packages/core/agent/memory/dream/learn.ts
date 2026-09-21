@@ -26,6 +26,7 @@ export interface LearnResult {
   readonly count: number;
   readonly enrich: boolean;
   readonly skillProposal: Proposal | null;
+  readonly skipped: "memory-instruction" | null;
 }
 
 function proposedSkillSketch(signature: string, request: string, count: number): string {
@@ -50,6 +51,28 @@ function proposedSkillSketch(signature: string, request: string, count: number):
   ].join("\n");
 }
 
+const MEMORY_OBJECT = String.raw`(?:memor(?:y|ies)|stored\s+facts?|silos?|brains?|(?:your|our|my)\s+notes?)`;
+const ERASE_VERB = String.raw`(?:erase|delete|remove|purge|wipe|scrub|expunge)`;
+const ERASE_PARTICIPLE = String.raw`(?:erased?|deleted?|removed?|purged?|wiped?|scrubbed?|expunged?|forgotten)`;
+
+const MEMORY_INSTRUCTION_PATTERNS: readonly RegExp[] = [
+  new RegExp(String.raw`\b${ERASE_VERB}\b[^.!?\n]{0,80}?\b${MEMORY_OBJECT}\b`, "i"),
+  new RegExp(String.raw`\b${MEMORY_OBJECT}\b[^.!?\n]{0,80}?\b${ERASE_PARTICIPLE}\b`, "i"),
+  /(?<!\b(?:don'?t|do\s+not|never|won'?t|can'?t|cannot)(?:\s+\w+){0,2}\s+)\bforget\s+(?:this|that|these|those|it|them|everything|all|about|any|what|the|my|our|your)\b/i,
+  /\b(?:don'?t|do\s+not|never|stop|no\s+longer)\s+(?:remember|remembering|store|storing|save|saving|retain|retaining|persist|persisting|keep|keeping)\s+(?:this|that|these|those|it|them|anything|what\s+(?:i|we)\b)/i,
+];
+
+const NON_PERSISTENCE = /\b(?:must|should|shall|may|can|do)(?:\s+not|n['’]?t)\s+(?:be\s+)?(?:persist(?:ed)?|stored?|remembered|retained|kept)\b/i;
+const NO_PERSISTENCE_SUBJECT = /\b(?:nothing|none\s+of\s+(?:this|that|it|them)|no\s+(?:facts?|notes?|records?|bullets?))\b[^.!?\n]{0,60}?\b(?:persists?|persisted|stored?|remembered|retained|kept)\b/i;
+const MEMORY_ANCHOR = /\b(?:memor(?:y|ies)|stored\s+facts?|recall|silos?|brains?)\b/i;
+
+export function isMemoryInstruction(text: string | undefined): boolean {
+  if (typeof text !== "string" || text.length === 0) return false;
+  const flat = text.replace(/\s+/g, " ");
+  if (MEMORY_INSTRUCTION_PATTERNS.some((re) => re.test(flat))) return true;
+  return (NON_PERSISTENCE.test(flat) || NO_PERSISTENCE_SUBJECT.test(flat)) && MEMORY_ANCHOR.test(flat);
+}
+
 export async function learnFromSession(
   scope: string,
   signals: LearnSignals,
@@ -59,8 +82,10 @@ export async function learnFromSession(
   const enrichThreshold = opts.enrichThreshold ?? 3;
   const skillThreshold = opts.skillThreshold ?? 3;
   const request = signals.request?.trim();
-  const empty: LearnResult = { signature: null, count: 0, enrich: false, skillProposal: null };
+  const empty: LearnResult = { signature: null, count: 0, enrich: false, skillProposal: null, skipped: null };
   if (!request) return empty;
+
+  if (isMemoryInstruction(request)) return { ...empty, skipped: "memory-instruction" };
 
   const signature = workflowSignature(request);
   if (!signature) return empty;
@@ -78,13 +103,15 @@ export async function learnFromSession(
         }
       : null;
 
-  return { signature, count, enrich: count === enrichThreshold, skillProposal };
+  return { signature, count, enrich: count === enrichThreshold, skillProposal, skipped: null };
 }
 
 export async function safeDistill(judge: DreamJudge | null, input: DistillInput): Promise<readonly DistilledFact[] | null> {
   if (!judge) return null;
+  if (isMemoryInstruction(input.request)) return null;
+  const messages = input.messages?.filter((m) => !isMemoryInstruction(m));
   try {
-    return await judge.distill(input);
+    return await judge.distill(messages === undefined ? input : { ...input, messages });
   } catch {
     return null;
   }
