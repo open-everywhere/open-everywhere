@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { seedFor, tierRelDir } from "./layout.js";
 import type { Partition } from "./partition.js";
 import type { MemoryProvider } from "./provider.js";
@@ -7,6 +8,10 @@ export interface PgClient {
   query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
   withConnection?<T>(fn: (client: PgClient) => Promise<T>): Promise<T>;
 }
+
+const ORG_GUC =
+  `(org_id = current_setting('app.current_org', true)
+     OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`;
 
 const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS memory_file (
@@ -25,19 +30,166 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
   `ALTER TABLE memory_file ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE memory_tier ENABLE ROW LEVEL SECURITY`,
+];
+
+const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS memory_file_org_isolation ON memory_file`,
   `DROP POLICY IF EXISTS memory_tier_org_isolation ON memory_tier`,
   `CREATE POLICY memory_file_org_isolation ON memory_file
-     USING (org_id = current_setting('app.current_org', true)
-       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)
-     WITH CHECK (org_id = current_setting('app.current_org', true)
-       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY memory_tier_org_isolation ON memory_tier
-     USING (org_id = current_setting('app.current_org', true)
-       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)
-     WITH CHECK (org_id = current_setting('app.current_org', true)
-       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
 ];
+
+const SCHEMA_POLICY_LOCK_CLASS = createHash("sha256").update("open-everywhere:schema-policy").digest().readInt32BE(0);
+
+const MEMORY_POLICY_LOCK_KEY = createHash("sha256").update("open-everywhere:memory-policy-span").digest().readInt32BE(0);
+
+const SCHEMA_POLICY_LOCK_TIMEOUT_MS = 60_000;
+
+let policySpanAtomicityWarned = false;
+function warnIfPolicySpanCannotBeAtomic(client: PgClient): void {
+  if (client.withConnection || policySpanAtomicityWarned) return;
+  policySpanAtomicityWarned = true;
+  console.warn(
+    "[open-everywhere:memory] this Postgres client offers no withConnection seam, so the RLS policy span re-applies in " +
+      "AUTOCOMMIT. That is correct for the embedded PGlite floor. On a POOLED hosted client it means a pass that aborts inside " +
+      "the span leaves memory_file and memory_tier with NO policy, which denies every memory read and write to a non-owner " +
+      "runtime role until the next owner-mode init. A one-connection engine can run BEGIN and COMMIT; what this seam buys is " +
+      "the proof that every statement lands on ONE connection. Give the client a withConnection implementation " +
+      "(packages/adapters/agent/postgres/neon.ts is the reference).",
+  );
+}
+
+export function _resetMemoryPolicySpanAtomicityWarnForTest(): void {
+  policySpanAtomicityWarned = false;
+}
+
+async function applyPolicyStatements(client: PgClient): Promise<void> {
+  warnIfPolicySpanCannotBeAtomic(client);
+  if (!client.withConnection) {
+    for (const stmt of POLICY_STATEMENTS) await client.query(stmt);
+    return;
+  }
+  await client.withConnection(async (conn) => {
+    await conn.query("BEGIN");
+    try {
+      await conn.query(`SET LOCAL lock_timeout = ${SCHEMA_POLICY_LOCK_TIMEOUT_MS}`);
+      await conn.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [SCHEMA_POLICY_LOCK_CLASS, MEMORY_POLICY_LOCK_KEY]);
+      for (const stmt of POLICY_STATEMENTS) await conn.query(stmt);
+      await conn.query("COMMIT");
+    } catch (err) {
+      await conn.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    }
+  });
+}
+
+const ISOLATED_TABLES = ["memory_file", "memory_tier"] as const;
+
+const EXPECTED_POLICY: Readonly<Record<string, { readonly name: string; readonly permissive: boolean; readonly cmd: string }>> = {
+  memory_file: { name: "memory_file_org_isolation", permissive: true, cmd: "*" },
+  memory_tier: { name: "memory_tier_org_isolation", permissive: true, cmd: "*" },
+};
+
+const VIOLATION_SUFFIX = {
+  noPolicy: ": row-level security is on and NO policy is present — a non-owner runtime role is denied every read and write",
+  foreignPolicy: " — not the isolation policy this schema creates",
+  widenedPolicy: " — the org predicate is gone, so the policy no longer isolates",
+} as const;
+
+const TAMPER_SUFFIXES = [VIOLATION_SUFFIX.foreignPolicy, VIOLATION_SUFFIX.widenedPolicy] as const;
+
+function isOrgGucExpr(expr: string | null): boolean {
+  return (
+    expr !== null &&
+    /\borg_id\b/.test(expr) &&
+    /current_setting\(\s*'app\.current_org'(::text)?\s*,\s*true\s*\)/i.test(expr) &&
+    /\bNULLIF\s*\(/i.test(expr)
+  );
+}
+
+export async function verifyMemoryIsolation(client: PgClient): Promise<string[]> {
+  const violations: string[] = [];
+  for (const table of ISOLATED_TABLES) {
+    const { rows } = await client.query(
+      `SELECT c.relrowsecurity AS rls FROM pg_class c WHERE c.oid = to_regclass($1)`,
+      [table],
+    );
+    const t = rows[0] as { rls: boolean } | undefined;
+    if (!t) {
+      violations.push(`${table}: table missing`);
+      continue;
+    }
+    if (t.rls !== true) violations.push(`${table}: ROW LEVEL SECURITY is disabled`);
+
+    const expected = EXPECTED_POLICY[table];
+    const pols = await policiesOn(client, table);
+    for (const p of pols) {
+      if (p.name !== expected.name || p.permissive !== expected.permissive || p.cmd !== expected.cmd) {
+        violations.push(`${table}: unexpected ${p.permissive ? "permissive" : "RESTRICTIVE"} policy "${p.name}" (cmd ${p.cmd})${VIOLATION_SUFFIX.foreignPolicy}`);
+        continue;
+      }
+      if (!isOrgGucExpr(p.qual) || !isOrgGucExpr(p.withcheck)) {
+        violations.push(`${table}: policy "${p.name}" no longer reads app.current_org${VIOLATION_SUFFIX.widenedPolicy}`);
+      }
+    }
+    if (t.rls === true && pols.length === 0) violations.push(`${table}${VIOLATION_SUFFIX.noPolicy}`);
+  }
+  return violations;
+}
+
+interface FoundPolicy {
+  readonly name: string;
+  readonly permissive: boolean;
+  readonly cmd: string;
+  readonly qual: string | null;
+  readonly withcheck: string | null;
+}
+
+async function policiesOn(client: PgClient, table: string): Promise<FoundPolicy[]> {
+  const { rows } = await client.query(
+    `SELECT p.polname AS name, p.polpermissive AS permissive, p.polcmd AS cmd,
+            pg_get_expr(p.polqual, p.polrelid) AS qual,
+            pg_get_expr(p.polwithcheck, p.polrelid) AS withcheck
+     FROM pg_policy p WHERE p.polrelid = to_regclass($1)`,
+    [table],
+  );
+  return rows as FoundPolicy[];
+}
+
+export type MemoryIsolationCause = "aborted-init" | "tampering" | "unknown";
+
+export function memoryIsolationCause(violations: readonly string[]): MemoryIsolationCause {
+  if (violations.some((v) => TAMPER_SUFFIXES.some((suffix) => v.endsWith(suffix)))) return "tampering";
+  if (violations.some((v) => v.endsWith(VIOLATION_SUFFIX.noPolicy))) return "aborted-init";
+  return "unknown";
+}
+
+const CAUSE_NOTE: Readonly<Record<MemoryIsolationCause, string>> = {
+  "aborted-init":
+    "a memory table stood with row-level security on and NO policy — an init aborted inside the policy span leaves this, and so does an owner-credential DROP POLICY; every memory read and write under the non-owner runtime role was denied until now",
+  tampering:
+    "a policy this schema never creates was present, or the expected one stopped reading app.current_org — an older release's shape reads the same way, so check the release history before treating it as an intrusion",
+  unknown: "neither the aborted-init nor the tampering signature explains this state — read the violations",
+};
+
+function causeReport(violations: readonly string[]): string {
+  const cause = memoryIsolationCause(violations);
+  return `cause: ${cause} (${CAUSE_NOTE[cause]})`;
+}
+
+function remedy(violations: readonly string[]): string {
+  if (violations.some((v) => v.endsWith(VIOLATION_SUFFIX.foreignPolicy))) {
+    return (
+      "An owner boot does NOT remove a policy this schema did not create, so re-running the init will not repair this: " +
+      "DROP the unexpected policy as the owner, then reboot (docs/extending/database.md, two-role split)."
+    );
+  }
+  return "Re-run the schema init as the owner/migration role to repair it, then reboot (docs/extending/database.md, two-role split).";
+}
 
 export async function initPostgresSchema(client: PgClient): Promise<void> {
   const { rows } = await client.query(
@@ -45,8 +197,35 @@ export async function initPostgresSchema(client: PgClient): Promise<void> {
      FROM pg_class c WHERE c.oid = to_regclass('memory_file')`,
   );
   const r = rows[0] as { is_owner: boolean } | undefined;
-  if (r && r.is_owner !== true) return;
+  if (r && r.is_owner !== true) {
+    const violations = await verifyMemoryIsolation(client);
+    if (violations.length > 0) {
+      throw new Error(
+        `memory schema: org isolation FAILED verification under the non-owner runtime role — ${causeReport(violations)} — ${violations.join("; ")}. ` +
+          remedy(violations),
+      );
+    }
+    return;
+  }
+
+  const preViolations = r ? await verifyMemoryIsolation(client) : [];
+
   for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
+  await applyPolicyStatements(client);
+
+  if (preViolations.length > 0) {
+    console.error(
+      `[open-everywhere:memory] org isolation was broken; the policies this schema owns have been re-created — ${causeReport(preViolations)}: ${preViolations.join("; ")}`,
+    );
+  }
+
+  const post = await verifyMemoryIsolation(client);
+  if (post.length > 0) {
+    console.error(
+      `[open-everywhere:memory] org isolation is STILL broken after the apply — ${causeReport(post)}: ${post.join("; ")}. ` +
+        `The org_id filter on every query still isolates tenants; the RLS layer does not. ${remedy(post)}`,
+    );
+  }
 }
 
 export async function setOrgContext(client: PgClient, org: string): Promise<void> {
