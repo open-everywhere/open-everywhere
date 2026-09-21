@@ -11,12 +11,14 @@ const {
   applyRequestClaimGuard,
   detectRequestClaims,
   auditWithheldRequestClaim,
+  guardRequestClaims,
   REQUEST_CLAIM_WITHHELD_ACTION,
   WITHHELD_REQUEST_CLAIM_NOTE,
 } = await import("../agent/channels/request-claim-guard.js");
 const { accessRequestsProposedThisTurn, noteAccessRequestProposed, ACCESS_REQUEST_KIND } = await import(
   "../agent/channels/access-request-ledger.js"
 );
+const { markCardPostedThisTurn } = await import("../agent/approvals/card-signal.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 
 const require = createRequire(import.meta.url);
@@ -35,8 +37,9 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const NOTHING = false;
-const PROPOSED = true;
+const NOTHING = { proposed: false, cardMinted: false } as const;
+const PROPOSED = { proposed: true, cardMinted: false } as const;
+const CARD_MINTED = { proposed: false, cardMinted: true } as const;
 
 const SHIP_228_REPLY =
   "I've submitted the channel-scope request for this channel to widen `e2e-fixture` with POST, tied to `e2e-run-muavvcxo`. " +
@@ -95,7 +98,98 @@ ok(
   "SUBJECT: both claims of the measured reply read as ACCESS, including the sentence with no access word in it",
 );
 const genericOnly = detectRequestClaims("I've submitted the request. It's pending approval.");
-ok(genericOnly.length === 2 && genericOnly.every((c) => c.subject === "generic"), "SUBJECT: a reply with no access word reads as GENERIC");
+ok(genericOnly.length === 2 && genericOnly.every((c) => c.subject === "generic"), "SUBJECT: a reply that names no kind at all reads as GENERIC");
+
+const proseOnly = detectRequestClaims("Your Notion connector is live. I've submitted the request.");
+ok(proseOnly.length === 1 && proseOnly[0]?.subject === "generic", "SUBJECT: an access word in prose beside a kind-less claim does NOT make it an access claim");
+
+const ROUTINE_ACK =
+  "I've set the one-shot check-in up for 15:00, and a routine-approval card has been raised for the permission it needs.";
+const routine = detectRequestClaims(ROUTINE_ACK);
+ok(routine.length === 1, `OTHER-KIND: the routine ack still READS as a claim (saw ${routine.length}) — the detector did not simply stop seeing it`);
+ok(routine[0]?.shape === "raised", "OTHER-KIND: in the mirror shape the measured audit row named");
+ok(routine[0]?.subject === "other-approval", "OTHER-KIND: and it is labelled by the kind ITS OWN sentence names, not by `permission`");
+const acked = applyRequestClaimGuard(ROUTINE_ACK, NOTHING);
+ok(acked.body === ROUTINE_ACK, "OTHER-KIND: so it posts BYTE-IDENTICAL on a turn with no access propose");
+ok(acked.withheld.length === 0, "OTHER-KIND: nothing is withheld, so no row is written and no host note is appended");
+
+const GRANT_NOTE =
+  "(No card was raised on this turn. Writes in this room ride a standing grant: notion-rest may PATCH, POST. " +
+  "The host sees the policy, not the request, so it cannot say whether this act used it.)";
+const MIXED = `${GRANT_NOTE}\n\n${ROUTINE_ACK}`;
+const mixed = applyRequestClaimGuard(MIXED, NOTHING);
+ok(mixed.body === MIXED, "MIXED: a grant notice beside a routine ack leaves the whole post untouched");
+ok(!mixed.body.includes(WITHHELD_REQUEST_CLAIM_NOTE), "MIXED: and the host appends no line answering a claim nobody made");
+const mixedClaims = detectRequestClaims(MIXED);
+ok(
+  mixedClaims.length === 1 && mixedClaims.every((c) => c.subject === "other-approval"),
+  `MIXED: the word \`grant\` in the host's own note no longer decides the ack's subject (saw ${mixedClaims.length} claim(s))`,
+);
+
+const BOTH = `${ROUTINE_ACK} I've also submitted the channel-scope access request to widen the fixture.`;
+const parted = applyRequestClaimGuard(BOTH, NOTHING);
+ok(parted.withheld.length === 1, `PARTED: exactly one sentence is withheld (saw ${parted.withheld.length})`);
+ok(parted.withheld[0]?.subject === "access", "PARTED: and it is the ACCESS one");
+ok(parted.body.includes("routine-approval card has been raised"), "PARTED: the routine ack survives");
+ok(!parted.body.includes("channel-scope access request"), "PARTED: the fabricated access claim does not");
+ok(parted.body.includes(WITHHELD_REQUEST_CLAIM_NOTE), "PARTED: and the host's line stands in its place");
+
+ok(
+  detectRequestClaims("The spend-limit card has been raised for your review.")[0]?.subject === "other-approval",
+  "OTHER-KIND: a spend-limit card names its own kind too",
+);
+ok(
+  detectRequestClaims("The connector-write approval card has been raised.")[0]?.subject === "other-approval",
+  "OTHER-KIND: and a connector-op card, although `connector` is itself access vocabulary",
+);
+
+const LOOSE = "I've submitted the access request to widen the connector so it can file tickets.";
+const loose = applyRequestClaimGuard(LOOSE, NOTHING);
+ok(loose.withheld.length === 1, `LOOSE: the sentence is still one claim (saw ${loose.withheld.length})`);
+ok(loose.withheld[0]?.subject === "access", "LOOSE: a kind word that does not qualify the card leaves it an ACCESS claim");
+ok(!loose.body.includes("I've submitted"), "LOOSE: so it is struck");
+
+const TRAILING_KIND = "I've submitted the channel-scope access request for this channel; it's pending routine approval.";
+const trailing = applyRequestClaimGuard(TRAILING_KIND, NOTHING);
+ok(trailing.withheld.length === 1, `TRAILING-KIND: the sentence is one claim (saw ${trailing.withheld.length})`);
+ok(trailing.withheld[0]?.subject === "access", "TRAILING-KIND: a kind qualifying another noun leaves the claim an ACCESS claim");
+ok(!trailing.body.includes("I've submitted"), "TRAILING-KIND: so it is struck");
+const TRAILING_BARE = "I've submitted the request for POST on `e2e-fixture`; it's pending routine approval.";
+ok(detectRequestClaims(TRAILING_BARE)[0]?.subject === "generic", "TRAILING-KIND: a bare span with a kind phrase in another clause stays KIND-LESS");
+ok(
+  applyRequestClaimGuard(TRAILING_BARE, CARD_MINTED).withheld.length === 1,
+  "TRAILING-KIND: so it is struck, and a minted card does not back it either — its own noun is not a card",
+);
+
+const TRAILING_SPLIT = "I've submitted the channel-scope request to widen `e2e-fixture` with POST. It's pending routine approval.";
+const split = applyRequestClaimGuard(TRAILING_SPLIT, NOTHING);
+ok(split.withheld.length === 2, `TRAILING-KIND: split over two sentences, both are withheld (saw ${split.withheld.length})`);
+
+const KINDLESS = "The approval card has been raised, and it is with a reviewer now.";
+ok(detectRequestClaims(KINDLESS)[0]?.subject === "generic", "KIND-LESS: a card sentence that names no kind reads as GENERIC");
+ok(applyRequestClaimGuard(KINDLESS, NOTHING).withheld.length === 1, "KIND-LESS: with no propose and no card observed it is struck");
+ok(applyRequestClaimGuard(KINDLESS, CARD_MINTED).body === KINDLESS, "KIND-LESS: a card the host saw minted backs it, BYTE-IDENTICAL");
+
+const accessVsCard = applyRequestClaimGuard(SHIP_228_REPLY, CARD_MINTED);
+ok(accessVsCard.withheld.length === 2, "KIND-LESS: a minted card backs NEITHER sentence of the measured access fabrication");
+ok(accessVsCard.body.includes(WITHHELD_REQUEST_CLAIM_NOTE), "KIND-LESS: the host's own line still stands in their place");
+
+const NOT_A_CARD = "I've raised the request with the admins.";
+ok(detectRequestClaims(NOT_A_CARD)[0]?.subject === "generic", "KIND-LESS: a request sentence that names no kind also reads as GENERIC");
+ok(applyRequestClaimGuard(NOT_A_CARD, CARD_MINTED).withheld.length === 1, "KIND-LESS: but a minted card does NOT back it — its own noun is not a card");
+const SPLIT_GENERIC = "I've submitted the request for `e2e-fixture` to POST here. It's pending the required approval.";
+ok(
+  applyRequestClaimGuard(SPLIT_GENERIC, CARD_MINTED).withheld.length === 2,
+  "KIND-LESS: nor an access fabrication written with no access word in it",
+);
+
+const EVERY_SUBJECT = `${SHIP_228_REPLY} ${ROUTINE_ACK} ${KINDLESS}`;
+const everySubject = applyRequestClaimGuard(EVERY_SUBJECT, NOTHING);
+ok(everySubject.withheld.length === 3, `ROW: the mixed body withholds its three unbacked claims (saw ${everySubject.withheld.length})`);
+ok(
+  everySubject.withheld.every((c) => c.subject !== "other-approval"),
+  "ROW: and no `other-approval` claim is ever among them, so the row's subjects stay {access, generic}",
+);
 
 await auditWithheldRequestClaim(
   {
@@ -130,6 +224,18 @@ ok(twice.includes(WITHHELD_REQUEST_CLAIM_NOTE), "IDEMPOTENT: and does not quietl
 const healed = applyRequestClaimGuard(once, PROPOSED).body;
 ok(!healed.includes(WITHHELD_REQUEST_CLAIM_NOTE), "IDEMPOTENT: a turn that DID propose takes the note back off");
 
+const notedCard = `${KINDLESS}\n\n${WITHHELD_REQUEST_CLAIM_NOTE}`;
+ok(
+  !applyRequestClaimGuard(notedCard, CARD_MINTED).body.includes(WITHHELD_REQUEST_CLAIM_NOTE),
+  "IDEMPOTENT: a claim that survives on the card signal takes the note off with it",
+);
+ok(
+  applyRequestClaimGuard(notedCard, NOTHING).body.includes(WITHHELD_REQUEST_CLAIM_NOTE),
+  "IDEMPOTENT: and with nothing observed the claim is struck and the note stands — the negative control for it",
+);
+const notedAck = `${ROUTINE_ACK}\n\n${WITHHELD_REQUEST_CLAIM_NOTE}`;
+ok(applyRequestClaimGuard(notedAck, NOTHING).body === notedAck, "IDEMPOTENT: a routine ack under an earlier note is stable, and keeps exactly one note");
+
 inSession(() => {
   noteAccessRequestProposed("turn_3", ACCESS_REQUEST_KIND, "card-posted");
   const mine = accessRequestsProposedThisTurn("turn_3");
@@ -147,6 +253,26 @@ noteAccessRequestProposed("turn_3", ACCESS_REQUEST_KIND, "card-posted");
 ok(accessRequestsProposedThisTurn("turn_3").length === 0, "LEDGER: outside an eve context it observes nothing");
 ok(accessRequestsProposedThisTurn(undefined).length === 0, "LEDGER: an unreadable turn id answers empty");
 ok(ACCESS_REQUEST_KIND === "access.request", "LEDGER: the kind is the approvals plane's own spelling");
+
+const DOOR_AUDIT = {
+  org: "acme",
+  platform: "slack",
+  workspace: "T1",
+  surface: "C0EXGENRL",
+  principalId: "U1",
+  turnId: "turn_9",
+  sessionId: "wrun_9",
+  route: "tool",
+} as const;
+inSession(() => {
+  const before = guardRequestClaims(KINDLESS, DOOR_AUDIT);
+  ok(before.withheld.length === 1, `SIGNAL: with no propose and no card, the door step strikes the kind-less claim (saw ${before.withheld.length})`);
+  markCardPostedThisTurn();
+  const after = guardRequestClaims(KINDLESS, DOOR_AUDIT);
+  ok(after.body === KINDLESS && after.withheld.length === 0, "SIGNAL: once the host has minted a card, the same sentence survives byte-identical");
+  ok(guardRequestClaims(SHIP_228_REPLY, DOOR_AUDIT).withheld.length === 2, "SIGNAL: the minted card backs neither sentence of the access fabrication");
+  ok(guardRequestClaims(ROUTINE_ACK, DOOR_AUDIT).body === ROUTINE_ACK, "SIGNAL: and the routine ack rides no signal at all");
+});
 
 const chanDir = join(fileURLToPath(new URL("..", import.meta.url)), "agent", "channels");
 const doors = readdirSync(chanDir)

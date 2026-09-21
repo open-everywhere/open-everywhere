@@ -1,4 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
+import { peekCardPostedThisTurn } from "../approvals/card-signal.js";
 import { accessRequestsProposedThisTurn } from "./access-request-ledger.js";
 import { replySentences } from "./memory-claim-guard.js";
 import type { ReplyAudit } from "./reply-post.js";
@@ -10,12 +11,13 @@ export const WITHHELD_REQUEST_CLAIM_NOTE =
 
 export type RequestClaimShape = "submitted" | "raised" | "pending-approval";
 
-export type RequestClaimSubject = "access" | "generic";
+export type RequestClaimSubject = "access" | "other-approval" | "generic";
 
 export interface RequestClaim {
   readonly shape: RequestClaimShape;
   readonly subject: RequestClaimSubject;
   readonly sentence: number;
+  readonly namesCard: boolean;
 }
 
 const CLAIM_PATTERNS: readonly { readonly shape: RequestClaimShape; readonly re: RegExp }[] = [
@@ -40,6 +42,19 @@ const PENDING_PATTERN = CLAIM_PATTERNS[2]!;
 const ACCESS_SUBJECT =
   /\b(?:access|scope|scoped|widen(?:ing|ed)?|permission|permissions|connector|connection|grant)\b/i;
 
+const APPROVAL_KINDS =
+  "routine|purge|spend(?:[-\\s]limits?)?|ticket|skill|webhook|pull[-\\s]request|" +
+  "connector[-\\s](?:write|op|operation|revocation)|agent[-\\s]creation";
+
+const OTHER_APPROVAL_KIND = new RegExp(
+  `\\b(?:${APPROVAL_KINDS})(?:'s)?[-\\s]+(?:approval[-\\s]+)?(?:approval|card|request|proposal)\\b`,
+  "i",
+);
+
+const KIND_QUALIFIER_BEFORE = new RegExp(`\\b(?:${APPROVAL_KINDS})(?:'s)?[-\\s]+(?:approval[-\\s]+)?$`, "i");
+
+const CARD_NOUN = /\bcard\b/i;
+
 const MODAL_BEFORE =
   /\b(?:will|'ll|shall|would|could|can|should|must|going\s+to|about\s+to|let\s+me|once|after|when|if|unless|whether|before|has\s+to|have\s+to|had\s+to|needs?\s+to|need\s+to|ought\s+to)\b[^.!?\n]{0,40}$/i;
 
@@ -58,7 +73,6 @@ const ACK_BEFORE = /(?:^[\s*_>\-#]*|\b(?:i|we|it|that|this|which|they|has|have|h
 
 export function detectRequestClaims(text: string): readonly RequestClaim[] {
   const claims: RequestClaim[] = [];
-  const subject: RequestClaimSubject = ACCESS_SUBJECT.test(text) ? "access" : "generic";
   const sentences = replySentences(text);
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i]!.text;
@@ -71,11 +85,23 @@ export function detectRequestClaims(text: string): readonly RequestClaim[] {
       if (NEGATION_BEFORE.test(before) || NEGATION_IN_SPAN.test(m[0])) continue;
       if (p === PENDING_PATTERN && PRIOR_ROW_REFERENCE.test(s)) continue;
       if (p === VERB_FIRST_PATTERN && !ACK_BEFORE.test(before)) continue;
-      claims.push({ shape: p.shape, subject, sentence: i });
+      claims.push({
+        shape: p.shape,
+        subject: claimSubject(s, before, m[0], p !== PENDING_PATTERN),
+        sentence: i,
+        namesCard: CARD_NOUN.test(m[0]),
+      });
       break;
     }
   }
-  return claims;
+  if (!claims.some((c) => c.subject === "access")) return claims;
+  return claims.map((c) => (c.subject === "generic" ? { ...c, subject: "access" as const } : c));
+}
+
+function claimSubject(sentence: string, before: string, span: string, kindMayQualify: boolean): RequestClaimSubject {
+  if (ACCESS_SUBJECT.test(span)) return "access";
+  if (kindMayQualify && (OTHER_APPROVAL_KIND.test(span) || KIND_QUALIFIER_BEFORE.test(before))) return "other-approval";
+  return ACCESS_SUBJECT.test(sentence) ? "access" : "generic";
 }
 
 export interface RequestClaimGuardResult {
@@ -83,17 +109,31 @@ export interface RequestClaimGuardResult {
   readonly withheld: readonly RequestClaim[];
 }
 
-export function applyRequestClaimGuard(text: string, proposed: boolean): RequestClaimGuardResult {
+export interface RequestClaimEvidence {
+  readonly proposed: boolean;
+  readonly cardMinted: boolean;
+}
+
+function strikesClaim(claim: RequestClaim, evidence: RequestClaimEvidence): boolean {
+  if (claim.subject === "other-approval") return false;
+  if (claim.subject === "access") return !evidence.proposed;
+  return !evidence.proposed && !(evidence.cardMinted && claim.namesCard);
+}
+
+export function applyRequestClaimGuard(text: string, evidence: RequestClaimEvidence): RequestClaimGuardResult {
   const hadNote = text.includes(WITHHELD_REQUEST_CLAIM_NOTE);
   const bare = hadNote ? text.split(WITHHELD_REQUEST_CLAIM_NOTE).join("").trimEnd() : text;
-  if (proposed) return { body: bare, withheld: [] };
   const claims = detectRequestClaims(bare);
-  if (claims.length === 0) return { body: hadNote ? `${bare}\n\n${WITHHELD_REQUEST_CLAIM_NOTE}` : bare, withheld: [] };
-  const struck = new Set(claims.map((c) => c.sentence));
+  const withheld = claims.filter((c) => strikesClaim(c, evidence));
+  if (withheld.length === 0) {
+    const backed = evidence.proposed || claims.some((c) => c.subject === "generic");
+    return { body: hadNote && !backed ? `${bare}\n\n${WITHHELD_REQUEST_CLAIM_NOTE}` : bare, withheld: [] };
+  }
+  const struck = new Set(withheld.map((c) => c.sentence));
   const sentences = replySentences(bare);
   const kept = sentences.filter((_, i) => !struck.has(i)).map((s) => s.text);
   const body = `${kept.join("").trimEnd()}\n\n${WITHHELD_REQUEST_CLAIM_NOTE}`.trimStart();
-  return { body, withheld: claims };
+  return { body, withheld };
 }
 
 export async function auditWithheldRequestClaim(
@@ -122,5 +162,8 @@ export async function auditWithheldRequestClaim(
 }
 
 export function guardRequestClaims(text: string, audit: ReplyAudit | undefined): RequestClaimGuardResult {
-  return applyRequestClaimGuard(text, accessRequestsProposedThisTurn(audit?.turnId).length > 0);
+  return applyRequestClaimGuard(text, {
+    proposed: accessRequestsProposedThisTurn(audit?.turnId).length > 0,
+    cardMinted: peekCardPostedThisTurn(),
+  });
 }
