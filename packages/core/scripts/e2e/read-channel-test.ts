@@ -465,6 +465,45 @@ const gitStdout = (args: readonly string[]): string => {
     const o = await pollForOwnWakeReply(deps, post, { timeoutMs: 40_000, pollMs: 5_000 });
     ok(o.kind === "own-wake" && o.id === slackTs(REAL), `an interim ack on this leg's own wake is stepped over for the substantive reply (got "${o.kind}": ${o.detail})`);
   }
+
+  {
+    const S228 = "slack/T0EXAMPLE/D0EXDMCH001";
+    const WAKE = "00000000-0000-4000-8000-000000000031";
+    const ASK_Rc = "2026-05-25T22:27:18.890Z";
+    const REPLY_ID = "1779748052.241000";
+    const REPLY_AT = ms("2026-05-25T22:27:32.241Z");
+    const ing228 = row("wake.ingress", ASK_Rc, { wakeId: WAKE, surfaceKey: S228, vendorTs: ASK_Rc });
+    const turn228 = row("wake.turn_start", "2026-05-25T22:27:27.017Z", { wakeId: WAKE, sessionId: "wrun_example30", turnId: "turn_0" });
+    const post228 = row("reply.post", "2026-05-25T22:27:32.269Z", { wakeId: WAKE, id: REPLY_ID, chars: 200, route: "tool", platform: "slack" });
+    const driverPost = { vendorMs: ms(ASK_Rc), surfaceKey: S228 } as const;
+    const acked: OwnWakeCandidate = { id: REPLY_ID, atMs: REPLY_AT, substantive: false };
+
+    const { deps } = makeDeps([[ing228, turn228, post228]], [[acked]]);
+    const o = await pollForOwnWakeReply(deps, driverPost, { timeoutMs: 420_000, pollMs: 5_000 });
+    ok(o.kind === "timeout", `a wake whose only post the leg skipped still times out — the skip decides, not the key (got "${o.kind}": ${o.detail})`);
+    ok(o.kind === "timeout" && o.ownSkipped === 1, `…and the timeout COUNTS that post as this wake's own, stepped over by the caller (got ownSkipped=${o.kind === "timeout" ? o.ownSkipped : "n/a"})`);
+    ok(!o.detail.includes("produced no reply row"), `…and never claims the wake produced no reply row, which is the sentence that sent OPE-2017 at the audit read (got: ${o.detail})`);
+    ok(o.detail.includes("1 carried a reply.post row for this wake's own lineage"), `…the detail says it in words too, so a ship report names the seam without re-reading the store (got: ${o.detail})`);
+
+    const { deps: d2 } = makeDeps([[ing228, turn228]], [[acked]]);
+    const o2 = await pollForOwnWakeReply(d2, driverPost, { timeoutMs: 420_000, pollMs: 5_000 });
+    ok(o2.kind === "timeout" && o2.ownSkipped === 0, `with NO reply.post row in the read the same skipped message attributes to nobody (got ownSkipped=${o2.kind === "timeout" ? o2.ownSkipped : "n/a"})`);
+
+    const { deps: d3 } = makeDeps([[ing228, turn228]], [[{ ...acked, substantive: true }]]);
+    const o3 = await pollForOwnWakeReply(d3, driverPost, { timeoutMs: 420_000, pollMs: 5_000 });
+    ok(o3.kind === "unattributed", `a missing reply.post row alone ends the wait on the unattributed arm, never in a timeout (got "${o3.kind}": ${o3.detail})`);
+
+    const early: OwnWakeCandidate = { id: "1779748039.000100", atMs: ms("2026-05-25T22:27:19.000Z"), substantive: true };
+    const { deps: d4 } = makeDeps([[ing228, turn228]], [[early]]);
+    const o4 = await pollForOwnWakeReply(d4, driverPost, { timeoutMs: 420_000, pollMs: 5_000 });
+    ok(o4.kind === "timeout" && o4.belowFloor === 1, `a message standing before this wake's turn start is counted at the floor (got belowFloor=${o4.kind === "timeout" ? o4.belowFloor : "n/a"})`);
+    ok(o4.kind === "timeout" && o4.ownSkipped === 0, `…and it is NOT counted as a post this wake made (got ownSkipped=${o4.kind === "timeout" ? o4.ownSkipped : "n/a"})`);
+
+    const { deps: d5 } = makeDeps([[ing228]], [[{ ...acked, substantive: true }]]);
+    const o5 = await pollForOwnWakeReply(d5, driverPost, { timeoutMs: 420_000, pollMs: 5_000 });
+    ok(o5.kind === "timeout" && o5.belowFloor === 1, `with NO wake.turn_start row the arm is shut and the refusal is counted (got "${o5.kind}" belowFloor=${o5.kind === "timeout" ? o5.belowFloor : "n/a"})`);
+    ok(o5.detail.includes("that arm stayed closed"), `…and the detail says the floor was never fixed, so belowFloor is not read as "it arrived early" (got: ${o5.detail})`);
+  }
 }
 
 {

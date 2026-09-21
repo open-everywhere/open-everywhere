@@ -204,7 +204,15 @@ export type OwnWakeReplyOutcome =
   | { readonly kind: "own-wake"; readonly id: string; readonly wakeId: string; readonly detail: string }
   | { readonly kind: "unattributed"; readonly id: string; readonly wakeId: string; readonly detail: string }
   | { readonly kind: "no-wake"; readonly detail: string }
-  | { readonly kind: "timeout"; readonly wakeId: string; readonly detail: string };
+  | {
+      readonly kind: "timeout";
+      readonly wakeId: string;
+      readonly standing: number;
+      readonly foreignSeen: number;
+      readonly ownSkipped: number;
+      readonly belowFloor: number;
+      readonly detail: string;
+    };
 
 export interface OwnWakeReplyDeps extends SettlePollDeps {
   readonly fetchCandidates: () => Promise<readonly OwnWakeCandidate[]>;
@@ -286,6 +294,8 @@ export async function pollForOwnWakeReply(
   let floorMs: number | undefined;
   let standing = 0;
   let foreignSeen = 0;
+  let ownSkipped = 0;
+  let belowFloor = 0;
   for (;;) {
     const rows = await deps.fetchRows();
     if (wakeId === undefined) {
@@ -302,6 +312,8 @@ export async function pollForOwnWakeReply(
       const candidates = await deps.fetchCandidates();
       standing = candidates.length;
       foreignSeen = candidates.filter((c) => foreign.has(c.id)).length;
+      ownSkipped = candidates.filter((c) => !c.substantive && mine.has(c.id)).length;
+      belowFloor = candidates.filter((c) => c.substantive && !mine.has(c.id) && !foreign.has(c.id) && !(floorMs !== undefined && c.atMs >= floorMs)).length;
       for (const c of candidates) {
         if (!c.substantive) continue;
         const postedBy = mine.get(c.id);
@@ -345,9 +357,17 @@ export async function pollForOwnWakeReply(
   return {
     kind: "timeout",
     wakeId,
+    standing,
+    foreignSeen,
+    ownSkipped,
+    belowFloor,
     detail:
-      `wake ${wakeId} produced no reply row and no unattributed post after its turn start within ${opts.timeoutMs}ms ` +
-      `(${standing} bot message(s) stood in the room, ${foreignSeen} of them attributed to ANOTHER wake — those never end this wait)`,
+      `wake ${wakeId} produced no message this wait could accept within ${opts.timeoutMs}ms ` +
+      `(${standing} bot message(s) stood in the room, ${foreignSeen} of them attributed to ANOTHER wake — those never end this wait; ` +
+      `${ownSkipped} carried a ${REPLY_POST_ACTION} row for this wake's own lineage and did not pass the caller's substantive test ` +
+      `(its skip, and its want when it set one), so a non-zero count there means the wake DID post and the leg refused what it posted; ` +
+      `${belowFloor} attributed to no wake and refused by the ${WAKE_TURN_START_ACTION} floor` +
+      `${floorMs === undefined ? ", which no row in this read fixed — that arm stayed closed" : ""})`,
   };
 }
 
