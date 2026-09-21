@@ -102,6 +102,7 @@ async function raise(scope: string): Promise<string> {
   const outcome = await askForCredentialGrant({
     connector: "notion",
     domainGrantsConnector: true,
+    explicit: false,
     frozenArgs: { id: `page-${scope}` },
     mcpTool: VENDOR_TOOL,
     nowMs: Date.now(),

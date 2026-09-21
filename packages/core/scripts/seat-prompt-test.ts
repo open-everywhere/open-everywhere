@@ -1,5 +1,6 @@
 
 import {
+  GRANTS_SECTION,
   SEAT_PROMPT_SLOTS,
   composeSeatPrompt,
   editReplyParagraph,
@@ -21,6 +22,7 @@ import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
 import { renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
+import { mayRaiseGrantAsk } from "../agent/tools/request_credential_grant.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { formatWindowToken } from "../agent/channels/window-key.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -721,6 +723,58 @@ function ok(cond: boolean, label: string): void {
     !flat(worker).includes("never scan, never search another channel to answer"),
     "🔴 …not even the no-scanning clause on its own",
   );
+}
+
+{
+  registerSlackFixtureMapper();
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope1978", reach: ["slack/T8/C8"], mode: "unified", ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const perSurface: BindableContext = {
+    channel: { kind: "slack", continuationToken: "C8:oe-sup:g1" },
+    session: { auth: { current: { attributes: { team_id: "T8", channel_id: "C8", channel_type: "channel", is_private: "false", trust_checked: "true" }, principalId: "U1", principalType: "user" } } },
+  } as BindableContext;
+  const unified: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: formatWindowToken({ domain: "ope1978", windowId: "ope1978", generation: 1 }) },
+    session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+  } as BindableContext;
+  ok((await renderScopeMarkdown(perSurface)).includes(GRANTS_SECTION), "🔴 the ASSEMBLED per-surface seat prompt carries the grant rule");
+  ok((await renderScopeMarkdown(unified)).includes(GRANTS_SECTION), "🔴 …and so does the assembled unified-window seat prompt");
+
+  const childCtx = { channel: { kind: "slack", continuationToken: "subagent:sess-parent:call-1" } } as unknown as BindableContext;
+  ok(mayRaiseGrantAsk(childCtx), "fixture guard: this ctx is the worker shape that can actually raise the ask");
+  ok(renderSupervisorPersona(childCtx).includes(GRANTS_SECTION), "🔴 a DELEGATED WORKER reads the grant rule too — it can raise the ask, so it reads the bound on it");
+  ok(renderSupervisorPersona(childCtx).includes("## Your job"), "fixture guard: that ctx really resolves the WORKER persona, not the seat's");
+
+  const taskCtx = {
+    channel: { kind: "slack", continuationToken: "unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3" },
+    session: { auth: { current: { attributes: { oe_platform: "slack", team_id: "T8", channel_id: "C8", oe_oneshot: { taskId: "t1", callerToken: "unified:oe-dom:acme:oe-sup:g3", callerOrigin: { kind: "slack" } } } } } },
+  } as unknown as BindableContext;
+  ok(renderSupervisorPersona(taskCtx).includes(GRANTS_SECTION), "a task-window worker reads it too");
+  ok(renderSupervisorPersona(taskCtx, { messageToolOnly: true }).includes(GRANTS_SECTION), "🔴 …on the wake-addressed arm as well, which withholds the reply section but not this");
+
+  for (const arm of [
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "wake-addressed", pinned: false } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "reply-only" } }),
+    renderSeatPersona({ seatKind: "conversational", delivery: { kind: "closing-text" } }),
+    renderSeatPersona({ seatKind: "worker", midTurnPost: true }),
+    renderSeatPersona({ seatKind: "worker", midTurnPost: false }),
+  ]) {
+    ok(arm.includes(GRANTS_SECTION), "the grant rule survives every delivery arm of both personas");
+  }
+
+  const flat = (s: string): string => s.replace(/\s+/g, " ");
+  ok(flat(GRANTS_SECTION).includes("Never raise an ask nobody asked for."), "🔴 the rule still forbids the unasked ask");
+  ok(flat(GRANTS_SECTION).includes("Otherwise only SUGGEST it"), "🔴 …and still names the suggestion as the only other road");
 }
 
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

@@ -105,6 +105,7 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   ...stamps,
   connector: "notion",
   domainGrantsConnector: true,
+  explicit: false,
   nowMs: NOW,
   ownerHandle: "Rowan Hale",
   ownerNativeId: "U-owner",

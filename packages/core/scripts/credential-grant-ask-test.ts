@@ -19,6 +19,9 @@ import { registerSettings, resetSettingsForTest } from "../agent/settings/settin
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
+import { OE_OWN_ACCOUNT_ASK_ATTR, renderOwnAccountStamp } from "../agent/connections/own-account-carriage.js";
+import { namedOwnAccountVendor } from "../agent/connections/own-account-ask.js";
+import { ownAccountVendorFor } from "../agent/connections/own-account-vendors.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
@@ -131,6 +134,7 @@ async function raise(
   const outcome = await askForCredentialGrant({
     connector: "notion",
     domainGrantsConnector: true,
+    explicit: false,
     frozenArgs: over.frozenArgs ?? { id: "abc123" },
     mcpTool: over.tool ?? "notion-fetch",
     nowMs: over.now ?? clock,
@@ -1096,14 +1100,86 @@ console.log("10. the standing binding reaches the ask:");
     "🔴 the description still tells the model to raise the ask as soon as it knows whose account it is — the line the S24 red was measured under",
   );
 
+  const flat = description.replace(/\s+/g, " ");
   ok(/own account/i.test(description), "the description no longer says the ask is for a person's OWN account");
-  ok(/nobody has bound here/i.test(description), "the description no longer says the ask is for a connector NOBODY has bound here");
+  ok(
+    !/TWO THINGS NEED THIS ASK/i.test(flat),
+    "🔴 the description still names TWO reasons to raise the ask — the second one is what let a seat start an ask nobody asked for",
+  );
+  ok(
+    /NOBODY HAS BOUND HERE is a reason to SUGGEST/i.test(flat),
+    "🔴 an unbound connector is not named as a reason to SUGGEST the grant road — the only thing it may now start",
+  );
+  ok(
+    /not granted to this surface" is a reason to SUGGEST/i.test(flat),
+    '🔴 a `not granted to this surface` refusal is still named as the REASON TO ASK — OPE-1978 makes it a reason to SUGGEST',
+  );
+
+  ok(/do not ask twice/i.test(flat), "the description no longer tells the model not to ask twice");
+  ok(/work the org's own road already does/i.test(flat), "the description no longer forbids an ask for work the org's own road already does");
 
   ok(/REST skill/i.test(description), "the description does not name the REST skill on the team integration key as the org road");
   ok(/already bound to this conversation/i.test(description), "the description does not name an already-bound connector as the org road");
   ok(/delegat/i.test(description), "the description does not say the org road is reached by delegating — a lean seat holds neither of those tools");
 
   ok(!/refused/i.test(description.split("There is no TOOL NAME")[0] ?? ""), "🔴 the new copy promises a refusal for a needless ask — nothing in this tree refuses one");
+}
+
+console.log("12. the ask verb records whether a person's own words asked for the borrow:");
+{
+  const RECOGNISED_WORDS = "please use my own notion account for this";
+  const recognised = namedOwnAccountVendor([RECOGNISED_WORDS], [ownAccountVendorFor("notion")]);
+  ok(recognised !== undefined, "fixture guard: the own-account grammar really recognises the wording this leg stamps from");
+  ok(
+    namedOwnAccountVendor(["use my Notion"], [ownAccountVendorFor("notion")]) === undefined,
+    "🔴 the grammar does NOT recognise the seat prompt's own trigger wording — a `false` row is not evidence that the prompt rule failed",
+  );
+
+  const seatCtx = (sessionId: string, stamped: boolean): BindableContext =>
+    ({
+      session: {
+        auth: {
+          current: {
+            attributes: {
+              oe_grain: "standing",
+              ...(stamped && recognised !== undefined ? { [OE_OWN_ACCOUNT_ASK_ATTR]: renderOwnAccountStamp(sessionId, undefined, recognised) } : {}),
+            },
+          },
+        },
+        id: sessionId,
+      },
+    }) as unknown as BindableContext;
+  const FIXTURE_1978 = resolvePartition(seatCtx("sess-1978-probe", false));
+  const DOMAINS_1978 = [defineDomain({ name: "grant-1978-fixture", reach: [FIXTURE_1978.surfaceKey], credentialGrants: ["notion"] })];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => DOMAINS_1978,
+    loadSilos: () => [],
+    domainsForSurface: ({ workspaceKey, surface }) => DOMAINS_1978.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  });
+  const ENVELOPE_1978 = '<message trigger="true" from="human" author-id="U-req">read the launch page</message>';
+  const driveAsk = async (sessionId: string, stamped: boolean, targetLabel: string): Promise<{ asked: boolean; message: string }> =>
+    await inEveContext(new FakeEveContext(), async () => {
+      const ctx = seatCtx(sessionId, stamped);
+      recordRequesterIdentity(ctx, undefined, ENVELOPE_1978);
+      return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+        { connector: "notion", owner: OWNER, purpose: "read the launch page", requested_mode: "once", target_label: targetLabel },
+        ctx,
+      )) as { asked: boolean; message: string };
+    });
+  const latestAsked = async (): Promise<{ explicit?: unknown }> =>
+    ((await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === "grant.asked")[0]?.detail ?? {}) as { explicit?: unknown };
+
+  const asked = await driveAsk("sess-1978-asked", true, "OPE-1978 asked-for page");
+  eq(asked.asked, true, "fixture guard: the asked-for leg really raised an ask, so there is a row to read");
+  eq((await latestAsked()).explicit, true, "🔴 a borrow the person's own words asked for is recorded `explicit: true`");
+
+  const unasked = await driveAsk("sess-1978-unasked", false, "OPE-1978 unasked page");
+  eq(unasked.asked, true, "🔴 an ask no recognised words asked for is still RAISED — the column measures, it never refuses");
+  eq((await latestAsked()).explicit, false, "🔴 …and its row records `explicit: false`, which is what makes the two readable apart");
 }
 
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

@@ -143,6 +143,7 @@ const mintGrant = async (opts: {
     ...stamps,
     connector: "notion",
     domainGrantsConnector: true,
+    explicit: false,
     frozenArgs: { id: opts.pageId ?? "abc123" },
     mcpTool: VENDOR_TOOL,
     nowMs: NOW,

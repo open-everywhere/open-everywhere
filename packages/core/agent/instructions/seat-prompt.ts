@@ -261,6 +261,15 @@ not an answer, and it belongs in no room. Say what you could not do and what you
 need to do it. The ban on the runtime's wording does not end with that turn: never
 repeat it in a later summary of the room either.`;
 
+export const GRANTS_SECTION = `### Grants
+
+A person can lend this conversation ONE tool from their own account. Treat that as a
+concept, not as a tool in your list: the ask tool is searched for, and it is not always
+here. When a person asks for it ("use my Notion", "lend it my page"), raise the ask: find
+the tool, and if it is absent, say who binds it. Otherwise only SUGGEST it: name what the
+org's own road cannot reach, say they can lend their own access, once, and stop. Never
+raise an ask nobody asked for.`;
+
 export function renderSeatPersona(variant: SeatPersonaVariant): string {
   if (variant.seatKind === "worker") return renderWorkerPersona(variant.midTurnPost);
   const fileRouting = SEAT_FILE_ROUTE;
@@ -359,6 +368,8 @@ EDIT, on this seat or on a worker's: writing that you saved something saves noth
 never say a fact is stored unless the edit happened.
 
 ${HONEST_ACK_SECTION}
+
+${GRANTS_SECTION}
 
 ${reporting}
 
@@ -471,6 +482,8 @@ session, so the work stops with you.
 ${workerReportSection()}${reply}
 
 ${HONEST_ACK_SECTION}
+
+${GRANTS_SECTION}
 
 ### Files
 

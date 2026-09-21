@@ -11,6 +11,8 @@ import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { adoptedOwnAccountAsk } from "../connections/own-account-carriage.js";
+import { ownAccountVendorFor } from "../connections/own-account-vendors.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { grantActionPhrase } from "../access/credential-grant-copy.js";
@@ -142,13 +144,15 @@ export const requestCredentialGrantEntry = defineTool({
     "the room that the ask went out, then carry on with something else; do not wait for an answer and " +
     "do not ask twice. When they approve, this conversation gains a tool on its next turn and the " +
     "answer is posted here. This grants nothing by itself. " +
-    "🔴 TWO THINGS NEED THIS ASK: a PERSON'S OWN ACCOUNT, when that person has asked for it, and a connector " +
-    "NOBODY HAS BOUND HERE. Org work runs on the ORG'S OWN ROAD — the Notion REST skill on the team integration " +
+    "🔴 ONE THING NEEDS THIS ASK: a PERSON'S OWN ACCOUNT, and only when a person here asked for it to be lent. " +
+    "A connector NOBODY HAS BOUND HERE is a reason to SUGGEST this road, never to raise the ask yourself — name " +
+    "what the org's own road cannot reach, say they can lend their own access, once, and stop. " +
+    "Org work runs on the ORG'S OWN ROAD — the Notion REST skill on the team integration " +
     "key, or a connector already bound to this conversation — and you reach either by delegating the work to a " +
     "task, which is where those tools live. Never ask a person to lend their own access for work the org's own " +
     "road already does. " +
     "There is no TOOL NAME to look up first. A connector call that fails with " +
-    '"not granted to this surface" is the REASON to ask; it is not this ask being refused, and it never becomes one. Say an ask ' +
+    '"not granted to this surface" is a reason to SUGGEST this road too, on the same terms; it is not this ask being refused, and it never becomes one. Say an ask ' +
     "went out, or was refused, only from what THIS tool hands back.",
   inputSchema: z.object({
     connector: z
@@ -273,9 +277,12 @@ export const requestCredentialGrantEntry = defineTool({
     const conversationLabel = await grantConversationLabel(p.platform, p.workspace, p.surface);
     const audience = requesterPrincipalId !== undefined && requesterPrincipalId === owner.principalId ? "owner" : "seat";
 
+    const explicit = adoptedOwnAccountAsk(c, [ownAccountVendorFor(input.connector)]) !== undefined;
+
     const outcome = await askForCredentialGrant({
       connector: input.connector,
       domainGrantsConnector: domainsAdmitCredentialGrant(domains, input.connector),
+      explicit,
       frozenArgs: frozenArgs,
       mcpTool,
       nowMs: Date.now(),

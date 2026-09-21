@@ -211,6 +211,7 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
     const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
     return rows.length > 0 ? rows : undefined;
   }, "a grant.asked audit row");
+  expect((asked[0]!.detail as { explicit?: unknown }).explicit, "the grant.asked row carries no `explicit` column — the ask verb never resolved it").toBe(false);
   const askId = String((asked[0]!.detail as { askId?: unknown }).askId ?? "");
   const ask = await store.getCredentialGrantAsk(org, askId);
   expect(ask?.status, "the ask did not land pending").toBe("pending");

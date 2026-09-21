@@ -70,6 +70,7 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
   readonly domainGrantsConnector: boolean;
+  readonly explicit: boolean;
   readonly workerOrigin?: GrantAskWorkerOrigin;
   readonly conversationLabel?: string;
   readonly nowMs: number;
@@ -172,6 +173,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
   await auditGrant(input, "grant.asked", ask.requesterPrincipalId, {
     askId: ask.id,
     connector: ask.connector,
+    explicit: input.explicit,
     owner: ask.ownerPrincipalId,
     purpose: quotedPurpose(ask.purpose),
     requestedMode: ask.requestedMode,

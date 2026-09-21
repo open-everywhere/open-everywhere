@@ -115,6 +115,7 @@ async function raise(over: { frozenArgs?: Record<string, unknown>; tool?: string
     ...stamps,
     connector: "notion",
     domainGrantsConnector: true,
+    explicit: false,
     frozenArgs: over.frozenArgs ?? { id: "abc123" },
     mcpTool: over.tool ?? VENDOR_TOOL,
     nowMs: NOW,
