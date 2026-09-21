@@ -232,6 +232,18 @@ console.log("3. the golden:");
   );
   ok(domainLine.includes("does NOT reach a thread"), "🔴 …and only THAT arm may claim the thread exclusion, because only that arm's row has it");
   ok(domainLine !== standingLine, "🔴 NEGATIVE CONTROL: the two arms really differ — a card that rendered one sentence for both is what this pair exists to catch");
+  const roomCard = grantCardText({ ...ask, domainScopeKey: "oe-grant-room::payments::slack/T1/C_PAY" }, "Ada Lovelace", undefined, "#proj-chat").split("\n");
+  const roomLine = roomCard.find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
+  ok(!roomLine.includes("domain") && !roomLine.includes("other rooms can spend it"), `🔴 a ROOM-keyed ask's standing button names NO domain and no sibling room (read: ${JSON.stringify(roomLine)})`);
+  ok(roomLine.includes("threads included"), "🔴 …and says the threads ARE included, because every wake in the room resolves the same key");
+  ok(!roomLine.includes("no thread gets it") && !roomLine.includes("does NOT reach a thread"), "🔴 …and never claims a thread exclusion, which this row has not got");
+  ok(roomLine.includes("keeps working after this one ends"), "🔴 …and says the thing that makes it different from the session button: it outlives the conversation that asked");
+  ok(roomLine.includes("No OTHER room gets it") && roomLine.includes("no scheduled run can spend it"), "🔴 …while carrying the two exclusions this row DOES have");
+  ok(roomLine !== standingLine && roomLine !== domainLine, "🔴 NEGATIVE CONTROL: the room arm is its own sentence — folding it into either neighbour is what this block exists to catch");
+  ok(
+    (roomCard.at(-1) ?? "").includes("Only conversations in the asker's own room can spend it"),
+    "🔴 …and the CLOSING line branches with it, because it has to hold for the widest button",
+  );
   const domainTail = grantCardText({ ...ask, domainScopeKey: "oe-grant-domain::payments" }, "Ada Lovelace", undefined, "#proj-chat").split("\n").at(-1) ?? "";
   ok(
     domainTail.includes("Only the main conversation of the asker's room and of the rooms declared into its domain can spend it"),

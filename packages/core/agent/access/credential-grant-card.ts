@@ -9,6 +9,7 @@ import {
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
+import { grantScopeReachOf, type GrantScopeReach } from "./credential-grant-scope.js";
 import {
   flatDisplayName,
   grantResourceTargetLabel,
@@ -77,7 +78,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
   const seat = workerOrigin === undefined ? undefined : flatDisplayName(workerOrigin.seatLabel);
   const vendor = connectorDisplayName(ask.connector);
   const where = flatDisplayName(grantConversationPhrase(conversationLabel));
-  const domainBound = typeof ask.domainScopeKey === "string" && ask.domainScopeKey.length > 0;
+  const reach = grantScopeReachOf(ask.domainScopeKey);
   return [
     `*${seat ?? who}* asks to use your ${vendor} account, for ${where}.`,
     "",
@@ -98,13 +99,11 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     "Tap one button to answer:",
     `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${vendor}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
     `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
-    domainBound
-      ? `• *Approve for ${GRANT_MODE_WORDS.standing}* — the main conversation of this room and of the rooms declared into this room's domain, for ${String(STANDING_DAYS)} days. Wider than the two above: those other rooms can spend it too, for this one tool with the values below. It does NOT reach a thread of those rooms, and no scheduled run can spend it — a person has to be here asking.`
-      : `• *Approve for ${GRANT_MODE_WORDS.standing}* — this one conversation, for ${String(STANDING_DAYS)} days. Wider than the two above only in TIME: no other room and no thread gets it, and no scheduled run can spend it — a person has to be here asking.`,
+    standingButtonLine(reach),
     "• *Decline* — nothing is granted.",
     "",
     "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
-    closingReassurance(ask, where, vendor, domainBound),
+    closingReassurance(ask, where, vendor, reach),
   ].join("\n");
 }
 
@@ -124,13 +123,27 @@ export function grantBorrowPhrase(row: {
   return target === undefined ? action : `${action} — "${quotedPurpose(target)}"`;
 }
 
-function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string, domainBound: boolean): string {
+function standingButtonLine(reach: GrantScopeReach): string {
+  const head = `• *Approve for ${GRANT_MODE_WORDS.standing}*`;
+  const days = String(STANDING_DAYS);
+  if (reach === "domain") {
+    return `${head} — the main conversation of this room and of the rooms declared into this room's domain, for ${days} days. Wider than the two above: those other rooms can spend it too, for this one tool with the values below. It does NOT reach a thread of those rooms, and no scheduled run can spend it — a person has to be here asking.`;
+  }
+  if (reach === "room") {
+    return `${head} — this room, for ${days} days: every conversation here, threads included, and it keeps working after this one ends and a new one takes its place. Wider than the two above: anyone talking to me in this room can spend it, for this one tool with the values below. No OTHER room gets it, and no scheduled run can spend it — a person has to be here asking.`;
+  }
+  return `${head} — this one conversation, for ${days} days. Wider than the two above only in TIME: no other room and no thread gets it, and no scheduled run can spend it — a person has to be here asking.`;
+}
+
+function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string, reach: GrantScopeReach): string {
   const action = grantActionPhrase(ask.connector, ask.mcpTool);
   const pinned = Object.keys(ask.frozenArgs ?? {}).length > 0;
-  const reach = domainBound
-    ? "Only the main conversation of the asker's room and of the rooms declared into its domain can spend it"
-    : "Only the conversation they asked from can spend it";
-  const bound = `Whichever button you press, this lends ONE thing: your ${vendor} account doing that one job, and nothing else you can reach in ${vendor}. ${reach}, only while somebody is there asking, and only until it ends.`;
+  const reachClause = {
+    domain: "Only the main conversation of the asker's room and of the rooms declared into its domain can spend it",
+    room: "Only conversations in the asker's own room can spend it",
+    session: "Only the conversation they asked from can spend it",
+  }[reach];
+  const bound = `Whichever button you press, this lends ONE thing: your ${vendor} account doing that one job, and nothing else you can reach in ${vendor}. ${reachClause}, only while somebody is there asking, and only until it ends.`;
   return pinned
     ? `Approving lets ${where} ${action} with your account — the pinned values above, and nothing else in ${vendor}. ${bound}`
     : `Approving lets ${where} ${action} with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your ${vendor} account. ${bound}`;

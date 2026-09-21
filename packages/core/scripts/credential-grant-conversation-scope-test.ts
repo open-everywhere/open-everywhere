@@ -10,9 +10,12 @@ delete process.env.OE_PLATFORM;
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { registerIdentityMapper } = await import("../agent/identity/binding.js");
-const { grantDomainScopeKey, grantDomainScopeVerdict } = await import("../agent/access/credential-grant-scope.js");
+const { grantDomainScopeKey, grantDomainScopeVerdict, grantScopeAdmits, grantScopeKeyForMode, grantScopeReachOf } = await import("../agent/access/credential-grant-scope.js");
 const { routineFireAttributes, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
 const { _setDeploymentIdentityForTest } = await import("../agent/identity/deployment-identity.js");
+const { windowedSupervisorEnabled } = await import("../agent/memory/domain.js");
+const { classifyWindowRouting } = await import("../agent/access/window-routing.js");
+const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 
 _setDeploymentIdentityForTest({ org: undefined });
 
@@ -26,10 +29,13 @@ const PLATFORM = "grantconvscopetestplatform";
 const WS = "W1";
 const ROOM = "C_GRANTED";
 const OUTSIDE = "C_NO_DOMAIN";
+const ROOM2 = "C_GRANTED_SIBLING";
 const DOMAIN = "granted-domain";
 const HUMAN = "U_HUMAN";
 const CREATOR = "U_CREATOR";
 const KEY = `oe-grant-domain::${DOMAIN}`;
+const ROOM_KEY = `oe-grant-room::${DOMAIN}::${PLATFORM}/${WS}/${ROOM}`;
+const ROOM2_KEY = `oe-grant-room::${DOMAIN}::${PLATFORM}/${WS}/${ROOM2}`;
 
 registerIdentityMapper(PLATFORM, (c) => {
   const a = (c as BindableContext).session?.auth?.current?.attributes as Record<string, string> | undefined;
@@ -43,24 +49,29 @@ registerIdentityMapper(PLATFORM, (c) => {
   };
 });
 
-registerConfig({
-  loadBundles: () => [],
-  loadBindings: () => [],
-  pluginRegistry: {},
-  skillContent: {},
-  loadDomains: () => [{ name: DOMAIN, reach: [`${PLATFORM}/${WS}/${ROOM}`] }],
-  loadSilos: () => [],
-  domainsForSurface: () => [],
-});
+const useDomains = (domains: readonly { readonly name: string; readonly reach: readonly string[] }[]): void => {
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains as never,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+};
+const DECLARED = [{ name: DOMAIN, reach: [`${PLATFORM}/${WS}/${ROOM}`, `${PLATFORM}/${WS}/${ROOM2}`] }];
+useDomains(DECLARED);
 
 type Attrs = Record<string, string>;
 
-const ctxOf = (attributes: Attrs, slot: Record<string, unknown> = {}, id = "wrun_live"): unknown => ({
-  channel: { kind: PLATFORM },
+const ctxOf = (attributes: Attrs, slot: Record<string, unknown> = {}, id = "wrun_live", continuationToken?: string): unknown => ({
+  channel: { kind: PLATFORM, ...(continuationToken === undefined ? {} : { continuationToken }) },
   session: { auth: { current: { attributes, ...slot } }, id },
 });
 
-const liveCtx = (grain: string, room = ROOM): unknown => ctxOf({ actor: HUMAN, oe_grain: grain, room, ws: WS }, { principalId: HUMAN, principalType: "test-user" });
+const liveCtx = (grain: string, room = ROOM, id = "wrun_live"): unknown =>
+  ctxOf({ actor: HUMAN, oe_grain: grain, room, ws: WS }, { principalId: HUMAN, principalType: "test-user" }, id);
 
 const fireCtx = (attributes: Attrs, principalId = "eve:app"): unknown =>
   ctxOf(attributes, { authenticator: "app", principalId, principalType: "runtime" }, "wrun_fire");
@@ -81,8 +92,8 @@ ok(
   !threadVerdict.admitted && threadVerdict.scopeKey === KEY,
   "§grain: …and REPORTS the key it withheld, because the mount's audit row names the grants that key would have reached",
 );
-ok(grantDomainScopeVerdict(liveCtx("task") as never).admitted === false, "§grain: a `task` (worker) grain is refused too — the gate admits one grain, it does not exclude a list");
-ok(grantDomainScopeVerdict(liveCtx("native") as never).admitted === false, "§grain: a `native` grain is refused — and it is what an unclassifiable token fail-softs to, so this is the fail-closed direction");
+ok(grantDomainScopeVerdict(liveCtx("task") as never).admitted === false, "§grain: a `task` (worker) grain is refused too — the gate admits one grain on the DOMAIN key, it does not exclude a list");
+ok(grantDomainScopeVerdict(liveCtx("native") as never).scopeKey !== KEY, "§grain: 🔴 a `native` grain never reaches the DOMAIN key — a lost stamp fail-softs to that grain, and the domain's grants are not its to hold");
 
 const standingFire = fireCtx({ ...routineFireAttributes(routine, destAttrs, "channel", true, true), oe_grain: "standing" });
 const standingFireVerdict = grantDomainScopeVerdict(standingFire as never);
@@ -134,5 +145,77 @@ ok(grantDomainScopeKey(standingSeat as never) === KEY, "§wrapper: grantDomainSc
 ok(grantDomainScopeKey(threadSeat as never) === undefined, "§wrapper: 🔴 …and `undefined` on the thread seat, which drops every call site to the exact-session rule");
 ok(grantDomainScopeKey(standingFire as never) === undefined, "§wrapper: …and `undefined` on the unattended delivery");
 ok(grantDomainScopeKey(dispatchedFire as never) === undefined, "§wrapper: …and `undefined` on the dispatched fire");
+
+const nativeSeat = liveCtx("native");
+const nativeVerdict = grantDomainScopeVerdict(nativeSeat as never);
+ok(nativeVerdict.admitted, "§solo: 🔴 an ATTENDED `native` turn in a declared room IS admitted — the room's own conversation under the shipped topology");
+ok(nativeVerdict.scopeKey === ROOM_KEY, `§solo: …and the key names the DOMAIN AND THE ROOM (want ${ROOM_KEY}, got ${String(nativeVerdict.scopeKey)})`);
+ok(nativeVerdict.scopeKey !== KEY, "§solo: 🔴 …and is NOT the domain key, so this arm can never reach a grant tapped in a sibling room");
+
+const before = liveCtx("native", ROOM, "wrun_before");
+const after = liveCtx("native", ROOM, "wrun_after");
+const keyBefore = grantDomainScopeKey(before as never);
+ok(keyBefore === grantDomainScopeKey(after as never) && keyBefore === ROOM_KEY, "§solo: 🔴 two sessions of the SAME room resolve the SAME key — a 30-day tap outlives the rotation that retires the asking session");
+const roomGrant = { mode: "standing", scopeKey: ROOM_KEY } as const;
+ok(grantScopeAdmits(roomGrant, "wrun_after", grantDomainScopeKey(after as never)), "§solo: …so the LATER session reaches a standing grant the EARLIER one's tap minted");
+ok(!grantScopeAdmits({ mode: "standing", scopeKey: "wrun_before" }, "wrun_after", grantDomainScopeKey(after as never)), "§solo: NEGATIVE CONTROL: a row keyed to the earlier SESSION is not reachable from the later one — which is the orphaning this arm removes");
+
+const sibling = liveCtx("native", ROOM2);
+ok(grantDomainScopeKey(sibling as never) === ROOM2_KEY, `§solo: a SECOND declared room of the same domain mints its OWN key (got ${String(grantDomainScopeKey(sibling as never))})`);
+ok(!grantScopeAdmits(roomGrant, "wrun_sibling", grantDomainScopeKey(sibling as never)), "§solo: 🔴 …and cannot reach the first room's standing grant — the key is at most as wide as the domain key, never wider");
+ok(!grantScopeAdmits(roomGrant, "wrun_example37", KEY), "§solo: 🔴 …and the DOMAIN's standing seat cannot reach a room-keyed row either — the two shapes never join");
+ok(!grantScopeAdmits({ mode: "session", scopeKey: ROOM_KEY }, "wrun_after", grantDomainScopeKey(after as never)), "§solo: a `session`-mode row spelled with a ROOM key is still refused — the MODE decides, never the shape of the string");
+
+registerSettings({ window: { topology: true } });
+try {
+  const seatedNative = grantDomainScopeVerdict(liveCtx("native") as never);
+  ok(!seatedNative.admitted && seatedNative.gate === "non_standing_grain", `§solo: 🔴 a \`native\` wake in a SEATED room mints NO room key (got ${String(seatedNative.admitted ? "admitted" : seatedNative.gate)})`);
+  ok(!seatedNative.admitted && seatedNative.scopeKey === KEY, "§solo: …and reports the DOMAIN key it was withheld, unchanged from before this arm");
+} finally {
+  resetSettingsForTest();
+}
+ok(grantDomainScopeKey(liveCtx("native") as never) === ROOM_KEY, "§solo: NEGATIVE CONTROL: the SAME wake in the SAME room IS admitted once the room is unseated — the leg above measures the seat, not a broken context");
+
+const nativeOutside = grantDomainScopeVerdict(liveCtx("native", OUTSIDE) as never);
+ok(!nativeOutside.admitted && nativeOutside.gate === "no_domain", "§solo: 🔴 a `native` seat in a room NO domain declares is refused — fail closed, and it is the majority of rooms");
+ok(!nativeOutside.admitted && nativeOutside.scopeKey === undefined, "§solo: …and carries no key, so the mount writes no row for it");
+const nativeDm = ctxOf({ actor: HUMAN, dm: "D_OWNER", oe_grain: "native", ws: WS }, { principalId: HUMAN, principalType: "test-user" }, "wrun_dm_native");
+ok(grantDomainScopeVerdict(nativeDm as never).admitted === false, "§solo: a DIRECT MESSAGE binds nothing at this grain either — the DM arm runs above the grain split");
+const nativeFire = fireCtx({ ...routineFireAttributes(routine, destAttrs, "channel", true, true), oe_grain: "native" });
+const nativeFireVerdict = grantDomainScopeVerdict(nativeFire as never);
+ok(!nativeFireVerdict.admitted && nativeFireVerdict.gate === "unattended", "§solo: 🔴 an UNATTENDED delivery at the `native` grain is refused — nobody is in the room to be asking");
+ok(!nativeFireVerdict.admitted && nativeFireVerdict.scopeKey === ROOM_KEY, "§solo: …and reports the ROOM key it withheld, which is what the mount's audit row names");
+const soloThread = ctxOf({ actor: HUMAN, room: ROOM, ws: WS }, { principalId: HUMAN, principalType: "test-user" }, "wrun_thread_reply", `${ROOM}:1726900000.0001`);
+ok(grantDomainScopeKey(soloThread as never) === ROOM_KEY, `§solo: 🔴 an UNSTAMPED thread reply in the room resolves the room's OWN key — the room, not its main conversation, is the boundary this key can honestly name (got ${String(grantDomainScopeKey(soloThread as never))})`);
+ok(
+  grantDomainScopeVerdict(soloThread as never).admitted && grantDomainScopeVerdict(liveCtx("thread") as never).admitted === false,
+  "§solo: …while a STAMPED `thread` seat is still refused, so the grain gate is intact for the seated deployment that produces one",
+);
+ok(grantDomainScopeVerdict(liveCtx("thread") as never).scopeKey === KEY, "§solo: …and that refusal reports the DOMAIN key, which is the reach a seated deployment's thread seat was withheld");
+
+useDomains([{ name: `odd::name`, reach: [`${PLATFORM}/${WS}/${ROOM}`] }]);
+const ambiguous = grantDomainScopeVerdict(liveCtx("native") as never);
+ok(!ambiguous.admitted && ambiguous.gate === "ambiguous_domain_name", `§solo: 🔴 a domain name carrying "::" refuses the room key rather than packing an unrecoverable pair (got ${String(!ambiguous.admitted && ambiguous.gate)})`);
+ok(!ambiguous.admitted && ambiguous.scopeKey === undefined, "§solo: …and mints no key at all, so the seat keeps the exact-session rule");
+ok(grantDomainScopeKey(liveCtx("standing") as never) === "oe-grant-domain::odd::name", "§solo: NEGATIVE CONTROL: the STANDING arm still mints for the same domain — the refusal is about the PAIR, not about the name being odd");
+useDomains(DECLARED);
+
+ok(grantScopeReachOf(ROOM_KEY) === "room", "§solo: grantScopeReachOf reads a room key as `room`");
+ok(grantScopeReachOf(KEY) === "domain", "§solo: …a domain key as `domain`");
+ok(grantScopeReachOf(undefined) === "session" && grantScopeReachOf("") === "session", "§solo: …and no key at all as `session`, which is the exact-session rule");
+ok(grantScopeReachOf("wrun_example38_unrecognised") === "domain", "§solo: 🔴 …while an UNRECOGNISED shape reads as the WIDEST keyed reach — the card may under-promise a boundary and must never claim one the row has not got");
+ok(grantScopeKeyForMode("standing", "wrun_after", ROOM_KEY) === ROOM_KEY, "§solo: the mint binds an approved `standing` tap to the room key …");
+ok(grantScopeKeyForMode("once", "wrun_after", ROOM_KEY) === "wrun_after", "§solo: … and a `once` tap to the asking session, whatever key the ask recorded");
+
+ok(!windowedSupervisorEnabled(`${PLATFORM}/${WS}/${ROOM}`, DECLARED as never), "§solo: 🔴 on the SHIPPED default no seat stands for a declared room — which is why its own wake is `native`");
+ok(classifyWindowRouting("native", `${PLATFORM}/${WS}/${ROOM}`, DECLARED as never) === "native-by-design", "§solo: …and the router calls that `native` wake BY DESIGN, not a degradation");
+registerSettings({ window: { topology: true } });
+try {
+  ok(windowedSupervisorEnabled(`${PLATFORM}/${WS}/${ROOM}`, DECLARED as never), "§solo: NEGATIVE CONTROL: ARMING the topology does seat the same room — the leg above measures the capability, not a broken config");
+  ok(classifyWindowRouting("native", `${PLATFORM}/${WS}/${ROOM}`, DECLARED as never) === "native-degraded", "§solo: …and a `native` wake there is a DEGRADATION instead, which is the armed deployment's own road — and the arm above refuses exactly that wake");
+  ok(grantDomainScopeVerdict(liveCtx("standing") as never).scopeKey === KEY, "§solo: …while the armed topology's STANDING seat still answers the DOMAIN key, unchanged by this arm");
+} finally {
+  resetSettingsForTest();
+}
 
 console.log(`credential-grant-conversation-scope: ${String(n)} assertions passed`);
