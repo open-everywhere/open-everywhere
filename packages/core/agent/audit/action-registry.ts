@@ -568,6 +568,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "governance.narrowed",
   "governance.redirected",
   "grant.mount_refused",
+  "grant.mount_withheld",
   "input_response.card_refused",
   "input_response.card_settled",
   "input_response.dropped",

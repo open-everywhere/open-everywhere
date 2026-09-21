@@ -1004,7 +1004,9 @@ console.log("10. the standing binding reaches the ask:");
   eq(unwindowed.sent, true, "NEGATIVE CONTROL: a room with no domain key reads only its own session, so the domain arm is the only thing that widened");
 
   const probeCtx = (sessionId: string): BindableContext =>
-    ({ session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId } }) as unknown as BindableContext;
+    ({
+      session: { auth: { current: { attributes: { oe_grain: "standing" }, principalId: "U_PROBE", principalType: "test-user" } }, id: sessionId },
+    }) as unknown as BindableContext;
   const PROBE = resolvePartition(probeCtx("sess-1950-probe"));
   const ROOM_DOMAIN = defineDomain({ name: "grant-1950-room", reach: [PROBE.surfaceKey], credentialGrants: ["notion"] });
   const useDomains1950 = (loadDomains: () => readonly ReturnType<typeof defineDomain>[]): void => {

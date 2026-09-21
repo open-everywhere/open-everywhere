@@ -15,7 +15,8 @@ import {
 } from "../operational/credential-grant-rows.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
 import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
-import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
+import { grantDomainScopeKey, grantDomainScopeVerdict, type GrantDomainScopeVerdict } from "../access/credential-grant-scope.js";
+import { auditGrant } from "../access/credential-grant-flow.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
@@ -203,10 +204,51 @@ async function resolveGrantMount(ctx: unknown): Promise<Record<string, Replayabl
   } catch {
     return null;
   }
-  const grants = await credentialGrantsInReach(org, scopeKey, grantDomainScopeKey(c), new Date().toISOString());
+  const nowIso = new Date().toISOString();
+  const verdict = grantDomainScopeVerdict(c);
+  const grants = await credentialGrantsInReach(org, scopeKey, verdict.admitted ? verdict.scopeKey : undefined, nowIso);
+  await noteStandingGrantsWithheld(c, { nowIso, org, sessionId: scopeKey, verdict });
   const mounted = mountGrantEntries(grants);
   return Object.keys(mounted).length > 0 ? mounted : null;
 }
+
+async function noteStandingGrantsWithheld(
+  ctx: BindableContext,
+  seat: { readonly nowIso: string; readonly org: string; readonly sessionId: string; readonly verdict: GrantDomainScopeVerdict },
+): Promise<void> {
+  const { nowIso, org, sessionId, verdict } = seat;
+  if (verdict.admitted || verdict.scopeKey === undefined) return;
+  const { gate, scopeKey } = verdict;
+  try {
+    const key = `${sessionId}|${gate}`;
+    if (auditedWithholdings.has(key)) return;
+    if (auditedWithholdings.size >= WITHHELD_AUDIT_MEMO_MAX) auditedWithholdings.clear();
+    auditedWithholdings.add(key);
+    const withheld = await getOperationalStore().liveStandingCredentialGrantsForScope(org, scopeKey, nowIso);
+    if (withheld.length === 0) {
+      auditedWithholdings.delete(key);
+      return;
+    }
+    const p = resolvePartition(ctx);
+    let grain = "unknown";
+    try {
+      grain = windowGrainOf(ctx);
+    } catch {
+    }
+    await auditGrant({ org: p.org, platform: p.platform, workspace: p.workspace, ...(p.surface === undefined ? {} : { surface: p.surface }) }, "grant.mount_withheld", undefined, {
+      connectors: [...new Set(withheld.map((g) => g.connector))].sort(),
+      gate,
+      grain,
+      grantIds: withheld.map((g) => g.id).sort(),
+      scopeKey,
+      surfaceKey: p.surfaceKey,
+    });
+  } catch {
+  }
+}
+
+const auditedWithholdings = new Set<string>();
+const WITHHELD_AUDIT_MEMO_MAX = 512;
 
 export default defineDynamic({
   events: {

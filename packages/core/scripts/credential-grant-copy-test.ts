@@ -193,11 +193,11 @@ console.log("3. the golden:");
       "Tap one button to answer:",
       "• *Approve once* — one call that actually reaches Notion. An attempt blocked before it is sent costs nothing and can be retried — at most 4 attempts in one turn.",
       "• *Approve for this conversation* — every call that conversation makes, until the grant expires.",
-      "• *Approve for 30 days* — every conversation in the rooms declared into this room's domain, for 30 days. Wider than the two above: those other rooms can spend it too, for this one tool with the values below.",
+      "• *Approve for 30 days* — this one conversation, for 30 days. Wider than the two above only in TIME: no other room and no thread gets it, and no scheduled run can spend it — a person has to be here asking.",
       "• *Decline* — nothing is granted.",
       "",
       "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
-      "Approving lets the #proj-chat conversation read a Notion page with your account — the pinned values above, and nothing else in Notion. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the rooms declared into the asker's own domain can spend it, and only until it ends.",
+      "Approving lets the #proj-chat conversation read a Notion page with your account — the pinned values above, and nothing else in Notion. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the conversation they asked from can spend it, only while somebody is there asking, and only until it ends.",
     ].join("\n"),
     "the card",
   );
@@ -217,10 +217,31 @@ console.log("3. the golden:");
   const buttons = grantCardText(ask, "Ada Lovelace", undefined, "#proj-chat").split("\n");
   const standingLine = buttons.find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
   const sessionLine = buttons.find((l) => l.startsWith("• *Approve for this conversation*")) ?? "";
-  ok(standingLine.includes("the rooms declared into this room's domain") && standingLine.includes("those other rooms can spend it too"), `the STANDING button names the DOMAIN it reaches, in plain words (read: ${JSON.stringify(standingLine)})`);
   ok(!standingLine.includes("group"), "🔴 …and never as a \"group\", which names no configured thing an operator could check");
   ok(!standingLine.includes("a standing grant, clamped to a fixed"), "🔴 …and no longer describes only its clock, which said nothing about what it reaches");
   ok(standingLine.includes("Wider than the two above"), "🔴 …and says out loud that it is the widest button, which is the fact an owner is choosing between");
+  ok(standingLine.includes("this one conversation") && !standingLine.includes("domain"), "🔴 a KEYLESS ask's standing button promises ONE conversation and names no domain");
+  ok(standingLine.includes("no other room and no thread gets it"), "🔴 …and says so as an exclusion the owner can check, not only as a span of days");
+  const domainLine =
+    grantCardText({ ...ask, domainScopeKey: "oe-grant-domain::payments" }, "Ada Lovelace", undefined, "#proj-chat")
+      .split("\n")
+      .find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
+  ok(
+    domainLine.includes("the rooms declared into this room's domain") && domainLine.includes("those other rooms can spend it too"),
+    `🔴 an ask that DOES carry a domain key names the domain it reaches, in plain words (read: ${JSON.stringify(domainLine)})`,
+  );
+  ok(domainLine.includes("does NOT reach a thread"), "🔴 …and only THAT arm may claim the thread exclusion, because only that arm's row has it");
+  ok(domainLine !== standingLine, "🔴 NEGATIVE CONTROL: the two arms really differ — a card that rendered one sentence for both is what this pair exists to catch");
+  const domainTail = grantCardText({ ...ask, domainScopeKey: "oe-grant-domain::payments" }, "Ada Lovelace", undefined, "#proj-chat").split("\n").at(-1) ?? "";
+  ok(
+    domainTail.includes("Only the main conversation of the asker's room and of the rooms declared into its domain can spend it"),
+    "🔴 …and the CLOSING line branches with it, because it has to hold for the widest button",
+  );
+  ok(domainTail.includes("only while somebody is there asking"), "🔴 …while BOTH arms carry the attendance bound, which holds for every mode");
+  ok(
+    standingLine.includes("no scheduled run can spend it") && standingLine.includes("a person has to be here asking"),
+    "🔴 …and says no scheduled run can spend it, because a person has to be in the room asking",
+  );
   ok(sessionLine.includes("that conversation") && !sessionLine.includes("domain"), "🔴 NEGATIVE CONTROL: the SESSION button still bounds itself to one conversation — the two buttons say different things");
   const tail = buttons.at(-1) ?? "";
   ok(!tail.includes("No other conversation gets it") && !tail.includes("No other room gets it"), `🔴 the closing line claims NO room boundary — a standing grant crosses one by ruling (read: ${JSON.stringify(tail)})`);
@@ -230,12 +251,12 @@ console.log("3. the golden:");
   const openTail = grantCardText({ ...ask, frozenArgs: {}, resource: "Quarterly report — notion-fetch({})" }, "Ada Lovelace", undefined, "#proj-chat").split("\n").at(-1);
   eq(
     pinnedTail,
-    "Approving lets the #proj-chat conversation read a Notion page with your account — the pinned values above, and nothing else in Notion. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the rooms declared into the asker's own domain can spend it, and only until it ends.",
+    "Approving lets the #proj-chat conversation read a Notion page with your account — the pinned values above, and nothing else in Notion. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the conversation they asked from can spend it, only while somebody is there asking, and only until it ends.",
     "a PINNED grant's last line bounds it to the pinned values",
   );
   eq(
     openTail,
-    "Approving lets the #proj-chat conversation read a Notion page with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your Notion account. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the rooms declared into the asker's own domain can spend it, and only until it ends.",
+    "Approving lets the #proj-chat conversation read a Notion page with your account, choosing for itself which one, every time. Nothing is pinned, so this reaches whatever that tool can read in your Notion account. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the conversation they asked from can spend it, only while somebody is there asking, and only until it ends.",
     "🔴 an UNPINNED grant's last line says the opposite — it never claims a bound the grant does not have",
   );
   ok(!(openTail ?? "").includes("nothing else in Notion"), "NEGATIVE CONTROL: the unpinned arm carries none of the pinned arm's reassurance");
