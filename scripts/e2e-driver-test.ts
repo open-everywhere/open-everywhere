@@ -30,6 +30,7 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
+import type { TranscriptWireEvent } from "../packages/core/scripts/e2e/transcript-read.js";
 import type { NotionComment } from "../packages/core/scripts/e2e/notion-driver.js";
 import {
   chooseNotionTaintAnchor,
@@ -6851,6 +6852,120 @@ rmSync(dir, { recursive: true, force: true });
       ok(good.ok && good.pin.title === "team handbook (oe-e2e fixture)" && good.pin.phrases.length > 0, "…and still carries the page's title and its quotable prose");
     }
   }
+}
+
+{
+  const scenario = SCENARIOS.find((s) => s.id === "S-MEM-READ")!;
+  const SEED_TS = "1000.000001";
+  const ASK_TS = "2000.000001";
+  const INTERIM_TS = "2000.000100";
+  const ANSWER_TS = "2000.000200";
+  const TASK = "task_bf1fa4e4f45d47a109fd4d91";
+  const SEAT = "s-seat";
+  const WORKER = "s-worker";
+  const CALL = "call_0";
+  const interimText = (canary: string) =>
+    `The new fact write was verified as \`${canary}\`, but I'm still waiting on the separate read-only disk inspection for the exact file path you asked for; I won't guess that path.`;
+  const answerText = (canary: string) =>
+    `The current OPE121 canary code is \`${canary}\`. I found it in exactly two memory files: e2e-ambient-brain/MEMORY.md#L25 and e2e-ambient-brain/notes.md#L74.`;
+
+  ok(!isFillerAck(interimText("obsidian-81091")), "the measured interim post is NOT a filler ack — the fix cannot be a text pattern (OPE-2011)");
+  ok(isFillerAck("I'm checking the current memory files on disk now"), "positive control: the ack IS filler, so the leg's own skip predicate is not vacuous");
+
+  let canary = "";
+  let askPosted = false;
+  let readsSinceAsk = 0;
+  let replyHandouts = 0;
+  const delivered = new Set<string>();
+  const gateLabels: string[] = [];
+  const logs: string[] = [];
+  const nowIso = () => new Date().toISOString();
+  const row = (action: string, detail: Record<string, unknown>, seq: number): AuditWireEntry => ({
+    ts: nowIso(), org: "default", platform: "ingest", workspace: "e2e", action, detail, seq,
+  });
+  const recallRows = (): AuditWireEntry[] => {
+    const out: AuditWireEntry[] = [
+      row("delegation.task_started", { task: TASK, session: SEAT, call: CALL }, 10),
+      row("worker.toolset", { worker: WORKER, parentCallId: CALL, parentSession: SEAT, rootSession: SEAT }, 11),
+    ];
+    if (delivered.has(INTERIM_TS)) out.push(row("reply.post", { id: INTERIM_TS, sessionId: SEAT, wakeId: "w-ask" }, 15));
+    if (readsSinceAsk >= 2) out.push(row("delegation.task_settled", { task: TASK, session: SEAT, status: "completed", adopted: true }, 20));
+    if (delivered.has(ANSWER_TS)) out.push(row("reply.post", { id: ANSWER_TS, sessionId: SEAT, wakeId: "w-task" }, 25));
+    return out;
+  };
+  const event = (index: number, type: string, data: unknown): TranscriptWireEvent => ({ index, at: nowIso(), type, data });
+
+  const slack = {
+    botUserId: "U0OPENEVERYWHERE",
+    mention: (text: string) => `<@U0OPENEVERYWHERE> ${text}`,
+    async identity() {
+      return { userId: "U0EXOWNER", teamId: "T0EXAMPLE" };
+    },
+    async post(text: string) {
+      const found = /obsidian-\d{1,5}/.exec(text);
+      if (found) canary = found[0];
+      if (!askPosted && found === null) {
+        askPosted = true;
+        return { ts: ASK_TS };
+      }
+      return { ts: SEED_TS };
+    },
+    async awaitThreadReply(rootTs: string, opts: { afterTs?: string; timeoutMs: number; skip?: (m: { text: string }) => boolean }) {
+      if (rootTs === SEED_TS) return { ts: "1000.000002", threadTs: SEED_TS, text: `Saved — the OPE121 canary code \`${canary}\` is recorded in notes.md and indexed in MEMORY.md.` };
+      const next = replyHandouts === 0
+        ? { ts: INTERIM_TS, threadTs: ASK_TS, text: interimText(canary) }
+        : replyHandouts === 1
+          ? { ts: ANSWER_TS, threadTs: ASK_TS, text: answerText(canary) }
+          : undefined;
+      if (next === undefined) throw new PollTimeout(`a substantive bot reply in thread ${rootTs}`, opts.timeoutMs);
+      ok(opts.skip?.(next) !== true, `the reply the stub hands back (${next.ts}) passes the leg's own skip predicate`);
+      replyHandouts++;
+      delivered.add(next.ts);
+      return next;
+    },
+  };
+
+  await scenario.run({
+    slack,
+    async auditRead(opts: { actions?: readonly string[] }) {
+      if (opts.actions?.includes("memory.write")) {
+        return [row("memory.write", { silo: "e2e-ambient-brain", path: "memory/e2e-ambient-brain/notes.md", sessionId: SEAT }, 1)];
+      }
+      readsSinceAsk++;
+      return recallRows();
+    },
+    async transcriptRead(sessionId: string) {
+      return sessionId === WORKER
+        ? [
+            event(0, "session.started", { turnId: "t1" }),
+            event(1, "turn.started", { turnId: "t1" }),
+            event(2, "actions.requested", { turnId: "t1", stepIndex: 0, calls: [{ name: "bash", input: { command: "rg -n 'obsidian-' memory/e2e-ambient-brain/MEMORY.md memory/e2e-ambient-brain/notes.md" } }] }),
+            event(3, "turn.completed", { turnId: "t1" }),
+          ]
+        : [event(0, "turn.started", { turnId: "s1" }), event(1, "turn.completed", { turnId: "s1" })];
+    },
+    gate(pass: boolean, label: string) {
+      gateLabels.push(label);
+      if (!pass) throw new Error(`GATE ${label}`);
+    },
+    skip(reason: string): never {
+      throw new ScenarioSkip(reason);
+    },
+    log(line: string) {
+      logs.push(line);
+    },
+    recordTiming() {},
+  } as never);
+
+  const canaryGate = gateLabels.find((l) => l.startsWith("recall: the reply carries the seeded canary")) ?? "";
+  ok(canaryGate.includes("I found it in exactly two memory files"), "the leg grades the FINAL reply — the one posted after the settlement row (OPE-2011)");
+  ok(!canaryGate.includes("still waiting on the separate read-only disk inspection"), "…and NOT the interim post it used to take as the answer");
+
+  const joinedGate = gateLabels.find((l) => l.startsWith("JOINED:")) ?? "";
+  ok(joinedGate.includes("0/1 had gaps"), `the delegation join finds the settlement row (JOINED said: ${joinedGate.slice(0, 160)})`);
+  ok(logs.some((l) => l.startsWith("recall answer: answer") && l.includes("stepped over 1 interim post")), "…and the run log says the wait stepped over exactly one interim post");
+  ok(logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
+  ok(replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${replyHandouts})`);
 }
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +

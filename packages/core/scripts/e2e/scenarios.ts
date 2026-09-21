@@ -116,7 +116,7 @@ import {
 import type { TimingsRecord } from "./timings-record.js";
 import { APPROVAL_PREFIX, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
-import { pollOptional, pollUntil, PollTimeout, sleep } from "./poll.js";
+import { DEFAULT_INITIAL_DELAY_MS, pollOptional, pollUntil, PollTimeout, sleep } from "./poll.js";
 import { ControlWriteDriver, type ControlWriteConfig, type SpendOwnershipHandle, type HaltOwnershipHandle } from "./control-write-driver.js";
 import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
 import { deployedSpendReportReaderPreflight, dmSpendPresence, spendMaskVerdictOver } from "./spend-dm-mask.js";
@@ -159,7 +159,7 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -1424,7 +1424,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_800_000,
+    timeoutMs: 1_980_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slack!;
@@ -1468,7 +1468,31 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: askTs } = await a.post(
         a.mention(`what is the OPE121 canary code? Check what is actually written in the memory files on disk before you answer, and tell me which file you found it in.`),
       );
-      const answer = await a.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const firstReply = await a.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+
+      const DELEGATED_ANSWER_ACTIONS = [REPLY_POST_ACTION, DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION];
+      const DELEGATED_ANSWER_POLL_MS = DEFAULT_INITIAL_DELAY_MS;
+      const DELEGATED_ANSWER_STEPS = 3;
+      const settleWait = await awaitDelegatedAnswer<SlackMessage>(
+        {
+          sleep,
+          now: () => Date.now(),
+          fetchRows: () => auditRead({ sinceIso: askStart, actions: DELEGATED_ANSWER_ACTIONS, limit: 1000 }),
+          nextReply: async (afterTs, timeoutMs) => {
+            try {
+              return await a.awaitThreadReply(askTs, { afterTs, timeoutMs, skip: (m) => isFillerAck(m.text) });
+            } catch (err) {
+              if (err instanceof PollTimeout) return undefined;
+              throw err;
+            }
+          },
+          log: (line) => ctx.log(line),
+        },
+        firstReply,
+        { floorMs: Date.parse(askStart), timeoutMs: REPLY_WAIT, pollMs: DELEGATED_ANSWER_POLL_MS, maxSteps: DELEGATED_ANSWER_STEPS },
+      );
+      const answer = settleWait.message;
+      ctx.log(`recall answer: ${settleWait.kind} (stepped over ${settleWait.stepped} interim post(s)) — ${settleWait.detail}`);
       ctx.gate(answer.threadTs === askTs, "recall: the answer lands in its OWN fresh thread");
       const staleCanaries = otherFactTokens(answer.text, "obsidian", canary);
       if (staleCanaries.length > 0) {

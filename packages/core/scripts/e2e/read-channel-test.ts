@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
-import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, shouldAssertShaAncestry, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, shouldAssertShaAncestry, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -563,6 +563,128 @@ const gitStdout = (args: readonly string[]): string => {
 
     const o2 = await run([ingress, turnStart, prevTaskWake, prevReply], [msg(SETTLED)]);
     ok(o2.kind === "timeout", `…and an absent ${"delegation.task_started"} row fails CLOSED, never open (got "${o2.kind}")`);
+  }
+}
+
+{
+  const ASK_MS = Date.parse("2026-05-24T01:24:45.000Z");
+  const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: number): AuditWireEntry => ({
+    ts, org: "default", platform: "ingest", workspace: "e2e", action, detail, ...(seq !== undefined ? { seq } : {}),
+  });
+  const started = row("delegation.task_started", "2026-05-24T01:25:02.000Z", { task: "task_bf1fa4e4", session: "s-seat", call: "call_0" }, 10);
+  const settled = row("delegation.task_settled", "2026-05-24T01:25:53.088Z", { task: "task_bf1fa4e4", session: "s-seat", status: "completed" }, 20);
+  const post = (id: string, ts: string, seq: number): AuditWireEntry => row("reply.post", ts, { id, sessionId: "s-seat", wakeId: "w-ask" }, seq);
+  const interimPost = post("1758498819.000100", "2026-05-24T01:25:39.000Z", 15);
+  const answerPost = post("1758498837.000200", "2026-05-24T01:25:57.000Z", 25);
+
+  {
+    const v = classifyDelegatedAnswer([started, settled, interimPost, answerPost], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "pre-settlement", `the interim post, standing before the settlement row, ⇒ "pre-settlement" (got "${v.kind}")`);
+    ok(v.kind === "pre-settlement" && v.taskId === "task_bf1fa4e4", "…and the verdict names the task whose settlement it stands before");
+  }
+
+  {
+    const v = classifyDelegatedAnswer([started, settled, interimPost, answerPost], { messageId: "1758498837.000200", floorMs: ASK_MS });
+    ok(v.kind === "answer", `the post standing after the settlement row ⇒ "answer" (got "${v.kind}")`);
+  }
+
+  {
+    const v = classifyDelegatedAnswer([started, interimPost], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "unsettled", `a dispatched task with no settlement row yet ⇒ "unsettled" (got "${v.kind}")`);
+  }
+
+  {
+    const v = classifyDelegatedAnswer([interimPost], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "in-seat", `no delegation.task_started row at all ⇒ "in-seat", graded at once (got "${v.kind}")`);
+  }
+
+  {
+    const older = row("delegation.task_started", "2026-05-24T01:22:00.000Z", { task: "task_prev", session: "s-seat" }, 2);
+    const v = classifyDelegatedAnswer([older, interimPost], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "in-seat", `a dispatch row PREDATING the ask is not this ask's delegation (got "${v.kind}")`);
+  }
+
+  {
+    const v = classifyDelegatedAnswer([started, settled], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "unlocatable", `a message no reply.post row names ⇒ "unlocatable" (got "${v.kind}")`);
+  }
+
+  {
+    const stepped = post("1758498819.000100", "2026-05-24T01:26:30.000Z", 15);
+    const v = classifyDelegatedAnswer([started, settled, stepped], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v.kind === "pre-settlement", `with both rows carrying seq, a backward-stepped ts never overrides the insert order (got "${v.kind}")`);
+  }
+
+  {
+    const noSeq = (action: string, ts: string, detail: Record<string, unknown>): AuditWireEntry => ({ ts, org: "default", platform: "ingest", workspace: "e2e", action, detail });
+    const startedNoSeq = noSeq("delegation.task_started", "2026-05-24T01:25:02.000Z", { task: "task_bf1fa4e4", session: "s-seat" });
+    const settledNoSeq = noSeq("delegation.task_settled", "2026-05-24T01:25:53.088Z", { task: "task_bf1fa4e4", session: "s-seat", status: "completed" });
+    const early = noSeq("reply.post", "2026-05-24T01:25:39.000Z", { id: "1758498819.000100", sessionId: "s-seat" });
+    const late = noSeq("reply.post", "2026-05-24T01:25:57.000Z", { id: "1758498837.000200", sessionId: "s-seat" });
+    const v1 = classifyDelegatedAnswer([startedNoSeq, settledNoSeq, early, late], { messageId: "1758498819.000100", floorMs: ASK_MS });
+    ok(v1.kind === "pre-settlement", `with NO seq on either row the ts fallback places the interim post before the settlement (got "${v1.kind}")`);
+    const v2 = classifyDelegatedAnswer([startedNoSeq, settledNoSeq, early, late], { messageId: "1758498837.000200", floorMs: ASK_MS });
+    ok(v2.kind === "answer", `…and places the later post after it (got "${v2.kind}") — the arm discriminates, it does not answer one verdict for everything`);
+  }
+
+  type Msg = { readonly ts: string };
+  const makeDeps = (
+    rowsSequence: readonly (readonly AuditWireEntry[])[],
+    replies: readonly (Msg | undefined)[],
+  ) => {
+    let now = 1_000_000;
+    let read = 0;
+    let handed = 0;
+    let sleeps = 0;
+    const logs: string[] = [];
+    return {
+      deps: {
+        now: () => now,
+        sleep: async (ms: number) => { sleeps++; now += ms; },
+        fetchRows: async () => rowsSequence[Math.min(read++, rowsSequence.length - 1)] ?? [],
+        nextReply: async () => replies[handed++],
+        log: (line: string) => { logs.push(line); },
+      },
+      sleepCount: () => sleeps,
+      logs,
+    };
+  };
+
+  {
+    const { deps, sleepCount, logs } = makeDeps(
+      [
+        [started, interimPost],
+        [started, settled, interimPost],
+        [started, settled, interimPost, answerPost],
+      ],
+      [{ ts: "1758498837.000200" }],
+    );
+    const out = await awaitDelegatedAnswer<Msg>(deps, { ts: "1758498819.000100" }, { floorMs: ASK_MS, timeoutMs: 180_000, pollMs: 3_000, maxSteps: 3 });
+    ok(out.kind === "answer", `interim → settle row → final reply ⇒ the wait ends on "answer" (got "${out.kind}": ${out.detail})`);
+    ok(out.message.ts === "1758498837.000200", `…and the message it hands back is the FINAL reply, not the interim post (got ${out.message.ts})`);
+    ok(out.stepped === 1, `…having stepped over exactly one interim post (got ${out.stepped})`);
+    ok(sleepCount() === 1, `…and it re-read while the worker was unsettled rather than grading at once (got ${sleepCount()} poll(s))`);
+    ok(logs.some((l) => l.includes("stepping over")), "…and the run log says which post it stepped over");
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([[started, settled, answerPost]], []);
+    const out = await awaitDelegatedAnswer<Msg>(deps, { ts: "1758498837.000200" }, { floorMs: ASK_MS, timeoutMs: 180_000, pollMs: 3_000, maxSteps: 3 });
+    ok(out.kind === "answer" && out.stepped === 0 && sleepCount() === 0, `an already-settled turn returns its reply with no poll and no step (kind "${out.kind}", ${out.stepped} step(s), ${sleepCount()} poll(s))`);
+  }
+
+  {
+    const { deps } = makeDeps([[started, settled, interimPost]], [undefined]);
+    const out = await awaitDelegatedAnswer<Msg>(deps, { ts: "1758498819.000100" }, { floorMs: ASK_MS, timeoutMs: 180_000, pollMs: 3_000, maxSteps: 3 });
+    ok(out.kind === "budget", `no later reply ⇒ the interim post is graded, not an exception (got "${out.kind}")`);
+    ok(out.message.ts === "1758498819.000100" && out.detail.includes("OPE-1949"), "…and the detail names the fold-into-edit shape that produces no second post");
+  }
+
+  {
+    const { deps } = makeDeps([[started, interimPost]], []);
+    const out = await awaitDelegatedAnswer<Msg>(deps, { ts: "1758498819.000100" }, { floorMs: ASK_MS, timeoutMs: 9_000, pollMs: 3_000, maxSteps: 3 });
+    ok(out.kind === "budget", `a worker that never settles ⇒ the bound elapses and the reply in hand is graded (got "${out.kind}")`);
+    ok(out.detail.includes("still running"), "…and the detail carries the last read's own reason");
   }
 }
 

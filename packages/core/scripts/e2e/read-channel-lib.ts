@@ -350,3 +350,136 @@ export async function pollForOwnWakeReply(
       `(${standing} bot message(s) stood in the room, ${foreignSeen} of them attributed to ANOTHER wake — those never end this wait)`,
   };
 }
+
+export type DelegatedAnswerVerdict =
+  | { readonly kind: "in-seat"; readonly detail: string }
+  | { readonly kind: "answer"; readonly detail: string }
+  | { readonly kind: "pre-settlement"; readonly taskId: string; readonly detail: string }
+  | { readonly kind: "unsettled"; readonly taskId: string; readonly detail: string }
+  | { readonly kind: "unlocatable"; readonly detail: string };
+
+function rowStandsBefore(a: AuditWireEntry, b: AuditWireEntry): boolean | undefined {
+  const pair =
+    typeof a.seq === "number" && typeof b.seq === "number"
+      ? { at: a.seq, limit: b.seq }
+      : { at: Date.parse(a.ts), limit: Date.parse(b.ts) };
+  if (!Number.isFinite(pair.at) || !Number.isFinite(pair.limit)) return undefined;
+  return pair.at < pair.limit;
+}
+
+export function classifyDelegatedAnswer(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly messageId: string; readonly floorMs: number },
+): DelegatedAnswerVerdict {
+  const dispatched = [...tasksDispatchedAtOrAfter(rows, opts.floorMs)];
+  if (dispatched.length === 0) {
+    return {
+      kind: "in-seat",
+      detail:
+        `no ${DELEGATION_TASK_STARTED_ACTION} row stands at or after this ask (${new Date(opts.floorMs).toISOString()}) — ` +
+        `the seat answered with its own file tools, so message ${opts.messageId} is the answer`,
+    };
+  }
+  const settlements: { readonly taskId: string; readonly row: AuditWireEntry }[] = [];
+  for (const taskId of dispatched) {
+    const row = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "task") === taskId);
+    if (row === undefined) {
+      return {
+        kind: "unsettled",
+        taskId,
+        detail:
+          `this ask dispatched task ${taskId} and no ${DELEGATION_TASK_SETTLED_ACTION} row names it yet — the worker is ` +
+          `still running, so message ${opts.messageId} cannot be its report`,
+      };
+    }
+    settlements.push({ taskId, row });
+  }
+  const post = rows.find((r) => r.action === REPLY_POST_ACTION && dS(r, "id") === opts.messageId);
+  if (post === undefined) {
+    return {
+      kind: "unlocatable",
+      detail:
+        `no ${REPLY_POST_ACTION} row names message ${opts.messageId}, so it cannot be placed against the ` +
+        `${settlements.length} settlement row(s) this ask's dispatches produced`,
+    };
+  }
+  for (const s of settlements) {
+    if (rowStandsBefore(post, s.row) !== true) continue;
+    return {
+      kind: "pre-settlement",
+      taskId: s.taskId,
+      detail:
+        `message ${opts.messageId} was posted BEFORE the ${DELEGATION_TASK_SETTLED_ACTION} row for task ${s.taskId}, which ` +
+        "this ask dispatched — it is an interim post, and the worker's report is the reply that follows the settlement (OPE-2011)",
+    };
+  }
+  return {
+    kind: "answer",
+    detail:
+      `message ${opts.messageId} stands at or after the ${DELEGATION_TASK_SETTLED_ACTION} row of every task this ask ` +
+      `dispatched (${settlements.map((s) => s.taskId).join(", ")}) — the delegated ANSWER`,
+  };
+}
+
+export interface DelegatedAnswerDeps<M> {
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  readonly fetchRows: () => Promise<readonly AuditWireEntry[]>;
+  readonly nextReply: (afterId: string, timeoutMs: number) => Promise<M | undefined>;
+  readonly log: (line: string) => void;
+}
+
+export interface DelegatedAnswerOutcome<M> {
+  readonly message: M;
+  readonly kind: DelegatedAnswerVerdict["kind"] | "budget";
+  readonly stepped: number;
+  readonly detail: string;
+}
+
+export async function awaitDelegatedAnswer<M extends { readonly ts: string }>(
+  deps: DelegatedAnswerDeps<M>,
+  first: M,
+  opts: { readonly floorMs: number; readonly timeoutMs: number; readonly pollMs: number; readonly maxSteps: number },
+): Promise<DelegatedAnswerOutcome<M>> {
+  const deadline = deps.now() + opts.timeoutMs;
+  let message = first;
+  let stepped = 0;
+  let last = "no audit read has run yet";
+  for (;;) {
+    const verdict = classifyDelegatedAnswer(await deps.fetchRows(), { messageId: message.ts, floorMs: opts.floorMs });
+    last = verdict.detail;
+    if (verdict.kind === "in-seat" || verdict.kind === "answer") {
+      return { message, kind: verdict.kind, stepped, detail: verdict.detail };
+    }
+    if (verdict.kind === "pre-settlement") {
+      if (stepped >= opts.maxSteps) {
+        return { message, kind: "budget", stepped, detail: `${verdict.detail} — but ${opts.maxSteps} interim post(s) were already stepped over, so this one is graded` };
+      }
+      const left = deadline - deps.now();
+      if (left <= 0) break;
+      deps.log(`delegated-answer wait: ${verdict.detail} — stepping over it and waiting again`);
+      const next = await deps.nextReply(message.ts, left);
+      if (next === undefined) {
+        return {
+          message,
+          kind: "budget",
+          stepped,
+          detail:
+            `${verdict.detail} — but no later reply arrived within the remaining ${left}ms, so the interim post is graded. ` +
+            "A settlement that FOLDED into an edit of this very message posts no later reply at all (OPE-1949)",
+        };
+      }
+      message = next;
+      stepped++;
+      continue;
+    }
+    if (deps.now() + opts.pollMs >= deadline) break;
+    await deps.sleep(opts.pollMs);
+  }
+  return {
+    message,
+    kind: "budget",
+    stepped,
+    detail: `the ${opts.timeoutMs}ms settle bound elapsed and the reply in hand is graded exactly as it was before OPE-2011 — last read: ${last}`,
+  };
+}
