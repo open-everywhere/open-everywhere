@@ -30,7 +30,6 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
-import { primingTurnFlight } from "../packages/core/scripts/e2e/coalesced-burst.js";
 import type { TranscriptWireEvent } from "../packages/core/scripts/e2e/transcript-read.js";
 import type { NotionComment } from "../packages/core/scripts/e2e/notion-driver.js";
 import {
@@ -1058,7 +1057,6 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-PROVENANCE-DM",
     "S-SPEND-DM-MASK",
     "S-SPEND-REFUSAL-KEYS",
-    "S-APPROVAL-COALESCED",
     "S-JUDGE-LIFT-NOTICE",
     "S-DELEGATED-slack",
     "S-DELEGATED-discord",
@@ -1090,7 +1088,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on; S-APPROVAL-COALESCED (OPE-1859) is the live two-room coalesced-turn approval scope PR #839 declared MANDATORY and never wrote — it drives the UNIFIED domain rather than the addressed-only one that declaration named, because a domain with no shared window cannot coalesce two rooms into one turn at all; S-JUDGE-LIFT-NOTICE (OPE-1902) is the first live leg on the judge-lift notice — the act an armed judge lowered runs with NO card, and the room's only trace is a notice carrying the contradict affordance — a road that shipped with \`post-deploy proof: none\`; it rides e2e-unified, whose reach already spans e2e-scratch and Slack, so a GitHub-origin lift freezes its venue onto a room this pack drives, and it self-skips when the judge ASKS rather than lifts, because which of those two correct answers the judge gives is a model judgement no knob here drives;)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on; S-JUDGE-LIFT-NOTICE (OPE-1902) is the first live leg on the judge-lift notice — the act an armed judge lowered runs with NO card, and the room's only trace is a notice carrying the contradict affordance — a road that shipped with \`post-deploy proof: none\`; it rides e2e-unified, whose reach already spans e2e-scratch and Slack, so a GitHub-origin lift freezes its venue onto a room this pack drives, and it self-skips when the judge ASKS rather than lifts, because which of those two correct answers the judge gives is a model judgement no knob here drives;)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackHalt", "controlWrite", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite",
     "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion"]);
@@ -1138,7 +1136,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-APPROVAL-COALESCED,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-HALT,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-JUDGE-LIFT-NOTICE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-HALT,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-BRIDGE,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-JUDGE-LIFT-NOTICE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -2856,7 +2854,6 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const MANDATORY_IDS = [
     "S-OE-STATUS",
     "S-PROVENANCE-DM",
-    "S-APPROVAL-COALESCED",
   ];
   for (const id of MANDATORY_IDS) {
     const s = SCENARIOS.find((x) => x.id === id);
@@ -7363,140 +7360,6 @@ rmSync(dir, { recursive: true, force: true });
   const delegatedSeedGate = delegatedSeed.gateLabels.find((l) => l.startsWith("seed:")) ?? "";
   ok(delegatedSeedGate.includes("reached the SILO"), `…and the seed gate PASSES on the delegated turn, which is the board this ticket exists for (gate said: ${delegatedSeedGate.slice(0, 160)})`);
   ok(!delegatedSeedGate.includes("NO SETTLEMENT"), "…and never on the no-settlement red, which is a different sentence for a different failure");
-}
-
-{
-  const row = (over: Partial<AuditWireEntry> & { readonly action: string; readonly seq?: number }): AuditWireEntry => ({
-    ts: "2026-09-20T17:32:20.000Z",
-    org: "oe",
-    platform: "slack",
-    workspace: "e2e-unified",
-    ...over,
-  });
-  const turnStart = row({ seq: 41, action: "wake.turn_start", surface: "slack/T1/CASK", detail: { wakeId: "wake-prime" } });
-  const primeIngress = row({ seq: 40, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-prime" } });
-  const askIngress = row({ seq: 42, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-ask" } });
-  const asideIngress = row({ seq: 43, action: "wake.ingress", surface: "slack/T1/CASIDE", detail: { wakeId: "wake-aside" } });
-  const primeReply = (seq: number) => row({ seq, action: "reply.post", surface: "CASK", detail: { wakeId: "wake-prime" } });
-
-  const held = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(44)] });
-  ok(held.kind === "in-flight", `the priming turn's reply.post AFTER both burst ingress rows reads as in-flight (got ${held.kind}: ${held.why})`);
-  ok(held.why.includes("seq 44") && held.why.includes("seq 43"), `…and the verdict carries both locators, so a board reader can class it without the runner log (got ${held.why})`);
-
-  const ended = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(42)] });
-  ok(ended.kind === "ended-before-burst", `a priming reply.post BEFORE the last burst ingress row is a HARNESS non-reproduction, never a product red (got ${ended.kind}: ${ended.why})`);
-  ok(ended.why.includes("nothing places the turn alive"), `…and it claims only what the rows support (got ${ended.why})`);
-  ok(!ended.why.includes("ENDED first"), `…and does NOT claim the turn had finished, which a reply.post row cannot say (got ${ended.why})`);
-
-  const foreign = primingTurnFlight({
-    turnStart,
-    turnStarts: [turnStart],
-    ingress: [primeIngress, askIngress, asideIngress],
-    replies: [row({ seq: 44, action: "reply.post", surface: "CASK", detail: { wakeId: "wake-ask" } })],
-  });
-  ok(foreign.kind === "unobservable", `a reply.post belonging to ANOTHER wake is not the priming turn's end anchor (got ${foreign.kind}: ${foreign.why})`);
-  ok(foreign.why.includes("wake-prime"), `…and the refusal names the wake id it could not find (got ${foreign.why})`);
-
-  const noStart = primingTurnFlight({ turnStart: undefined, turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
-  ok(noStart.kind === "unobservable" && noStart.why.includes("wake.turn_start"), `no turn-start row yields no verdict, naming the missing row (got ${noStart.kind}: ${noStart.why})`);
-
-  const noWakeId = primingTurnFlight({ turnStart: row({ seq: 41, action: "wake.turn_start" }), turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
-  ok(noWakeId.kind === "unobservable" && noWakeId.why.includes("detail.wakeId"), `a turn-start row without a wake id yields no verdict (got ${noWakeId.kind}: ${noWakeId.why})`);
-  const noStartSeq = primingTurnFlight({ turnStart: row({ action: "wake.turn_start", detail: { wakeId: "wake-prime" } }), turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
-  ok(noStartSeq.kind === "unobservable" && noStartSeq.why.includes("seq"), `a turn-start row without a seq yields no verdict (got ${noStartSeq.kind}: ${noStartSeq.why})`);
-  const noReplySeq = primingTurnFlight({
-    turnStart,
-    turnStarts: [turnStart],
-    ingress: [primeIngress, askIngress, asideIngress],
-    replies: [row({ action: "reply.post", surface: "CASK", detail: { wakeId: "wake-prime" } })],
-  });
-  ok(noReplySeq.kind === "unobservable" && noReplySeq.why.includes("seq"), `a reply.post row without a seq yields no verdict (got ${noReplySeq.kind}: ${noReplySeq.why})`);
-
-  const oneDelivery = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress], replies: [primeReply(44)] });
-  ok(oneDelivery.kind === "unobservable", `one burst ingress row is not two — the priming post's own row does not make up the pair (got ${oneDelivery.kind}: ${oneDelivery.why})`);
-  ok(oneDelivery.why.includes("only 1 of the burst's 2 deliveries"), `…and the refusal counts what it found (got ${oneDelivery.why})`);
-
-  const twoPostsNewestFirst = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(44), primeReply(42)] });
-  const twoPostsOldestFirst = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(42), primeReply(44)] });
-  ok(twoPostsNewestFirst.kind === "in-flight", `a turn that posted twice is read at its LAST post (newest-first rows: got ${twoPostsNewestFirst.kind}: ${twoPostsNewestFirst.why})`);
-  ok(twoPostsOldestFirst.kind === "in-flight", `🔴 …and the SAME rows in the opposite order give the SAME verdict — the join does not lean on the route's sort (got ${twoPostsOldestFirst.kind}: ${twoPostsOldestFirst.why})`);
-  ok(twoPostsOldestFirst.why.includes("seq 44"), `…and the end it names is the later post, not the earlier one (got ${twoPostsOldestFirst.why})`);
-
-  const notYet = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [] });
-  ok(notYet.kind === "unobservable" && notYet.why.includes("no anchor of its own"), `no reply.post yet is unobservable, not a decided verdict (got ${notYet.kind}: ${notYet.why})`);
-
-  const laterTurnStart = row({ seq: 45, action: "wake.turn_start", surface: "slack/T1/CASK", detail: { wakeId: "wake-ask" } });
-  const answeredByALaterTurn = primingTurnFlight({
-    turnStart,
-    turnStarts: [turnStart, laterTurnStart],
-    ingress: [primeIngress, askIngress, asideIngress],
-    replies: [primeReply(46)],
-  });
-  ok(
-    answeredByALaterTurn.kind === "unobservable",
-    `🔴 a reply carrying the priming wake id but written AFTER a later turn started is NOT the priming turn's anchor — the silent-priming-turn false green (got ${answeredByALaterTurn.kind}: ${answeredByALaterTurn.why})`,
-  );
-  ok(answeredByALaterTurn.why.includes("45"), `…and the refusal names the later turn's start that bounded it (got ${answeredByALaterTurn.why})`);
-  const boundedButOwn = primingTurnFlight({
-    turnStart,
-    turnStarts: [turnStart, laterTurnStart],
-    ingress: [primeIngress, askIngress, asideIngress],
-    replies: [primeReply(44)],
-  });
-  ok(boundedButOwn.kind === "in-flight", `…and a reply BEFORE that later start is still the priming turn's own (got ${boundedButOwn.kind}: ${boundedButOwn.why})`);
-
-  const foreignIngress = row({ seq: 48, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-stranger" } });
-  const withAStranger = primingTurnFlight({
-    turnStart,
-    turnStarts: [turnStart],
-    ingress: [primeIngress, askIngress, asideIngress, foreignIngress],
-    replies: [primeReply(44)],
-  });
-  ok(withAStranger.kind === "in-flight", `a foreign wake admitted later in the window does not move the burst anchor (got ${withAStranger.kind}: ${withAStranger.why})`);
-  ok(withAStranger.why.includes("second at seq 43"), `…and the anchor named is the burst's SECOND delivery, not the stranger (got ${withAStranger.why})`);
-}
-
-{
-  const leg = SCENARIOS.find((s) => s.id === "S-APPROVAL-COALESCED")!;
-  const body = leg.run.toString().replace(/\s+/g, "");
-
-  ok(body.includes("coalescedBurstOutcome(records)"), "🔴 the leg asks the shared reader for its outcome rather than deciding the miss inline");
-  ok(body.includes("ctx.skip(outcome.verdict)"), "🔴 OPE-2038: a burst eve did not merge is reported through `ctx.skip` — the skip class, carrying `PRECONDITION NOT REPRODUCED`");
-  ok(!body.includes("(hard,PRODUCT)"), "🔴 …and the leg no longer carries a `(hard, PRODUCT)` gate on the coalesce — that word is what board #230 was wrongly told");
-  ok(!/ctx\.gate\([^;]{0,400}turn\.unaccounted_wakesrownamingtheswallowedwake/.test(body), "🔴 …and the miss is not a `ctx.gate` under any other wording either — the skip is the only verdict here");
-
-  const skipAt = body.indexOf("ctx.skip(outcome.verdict)");
-  const scopeGateAt = body.indexOf("EVERYapproval.requested.scopeKeynamestheASKINGroom");
-  const negativeControlAt = body.indexOf("noapproval.requestedrowisscopedtotheOTHERroom");
-  ok(scopeGateAt > 0 && negativeControlAt > 0, `the two OPE-1756 scope gates this scan anchors on are still in the body (scope at ${scopeGateAt}, control at ${negativeControlAt})`);
-  ok(skipAt > 0 && scopeGateAt > skipAt, `🔴 the OPE-1756 scope gate runs only BEHIND the coalesce verdict (skip at ${skipAt}, gate at ${scopeGateAt})`);
-  ok(negativeControlAt > skipAt, `🔴 …and so does its negative control (skip at ${skipAt}, control at ${negativeControlAt})`);
-  ok(body.includes("(hard,OPE-1756):"), "…and that gate is still spelled HARD — the skip class covers the precondition, never the scope rule");
-
-  ok(body.includes("primingTurnFlight("), "🔴 the leg still computes the OPE-2005 flight verdict — OPE-2038 changed what the miss is CALLED, never how the precondition is read");
-  ok(body.includes("flight:run.flight"), "…and hands it to the outcome reader, which is what makes a missed window distinguishable from an unreadable one");
-
-  ok(body.includes("burstMergeWindow("), "🔴 the leg measures eve's merge window on every attempt, so the number becomes comparable across boards");
-  ok(body.includes("window:run.window"), "…and carries it into the verdict, where a board reader sees it without the runner log");
-
-  const legSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
-  const attemptsMatch = /const COALESCE_ATTEMPTS = (\d+);/.exec(legSrc);
-  ok(attemptsMatch !== null, "COALESCE_ATTEMPTS is declared as a plain literal in scenarios.ts, so this scan can read it");
-  const attempts = Number(attemptsMatch![1]);
-  ok(attempts === 4, `🔴 OPE-2038 raised the interleave attempts from 2 to 4 — two draws is a thin sample to call eve's window on (got ${attempts})`);
-  ok(body.includes("n<=COALESCE_ATTEMPTS"), "…and the loop reads that constant rather than a second copy of the number");
-  const constMs = (name: string): number => {
-    const m = new RegExp(`const ${name} = ([\\d_]+);`).exec(legSrc);
-    ok(m !== null, `${name} is declared as a plain numeric literal in scenarios.ts, so this scan can read it`);
-    return Number(m![1]!.replace(/_/g, ""));
-  };
-  const perAttemptMs = constMs("COALESCE_PRIME_WAIT") + constMs("PRIMING_FLIGHT_WAIT") + constMs("UNIFIED_REPLY_WAIT") + 2 * constMs("AUDIT_ROW_WAIT");
-  const worstCaseMs = attempts * perAttemptMs + 2 * constMs("AUDIT_ROW_WAIT");
-  ok(perAttemptMs === 720_000, `SANITY: the per-attempt worst case reads 720s today (got ${perAttemptMs}ms) — a change here is a budget decision, not a typo`);
-  ok(leg.timeoutMs >= worstCaseMs, `🔴 the leg's budget covers ${attempts} attempts at their worst case (${worstCaseMs}ms) — got ${leg.timeoutMs}ms`);
-
-  const other = SCENARIOS.find((s) => s.id === "S-DELEGATED-slack")!.run.toString().replace(/\s+/g, "");
-  ok(!other.includes("coalescedBurstOutcome("), "NEGATIVE CONTROL: a sibling leg does not satisfy these scans");
 }
 
 {

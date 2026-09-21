@@ -357,10 +357,14 @@ const SILENT: Expected = "SILENT_OK";
 {
   ok(parseSeries(undefined) === undefined, "parseSeries(undefined): no --series flag ⇒ undefined ⇒ main() falls back to seriesOf(cli.turns) unchanged");
   ok(JSON.stringify(parseSeries("S6,S6,S6")) === JSON.stringify(["S6", "S6", "S6"]), "parseSeries: a comma-list of valid ids parses in order, duplicates kept (repeats are the point for a screening run)");
-  ok(JSON.stringify(parseSeries("S7,S7,S7,S7,S7")) === JSON.stringify(["S7", "S7", "S7", "S7", "S7"]), "parseSeries: S7 (the OPE-747 coalesced-turn probe) is a valid id — the n=5 screening run parses");
   ok(JSON.stringify(parseSeries(" S1, S6 ")) === JSON.stringify(["S1", "S6"]), "parseSeries: surrounding whitespace around each id is trimmed");
   ok(JSON.stringify(parseSeries("")) === JSON.stringify([]), "parseSeries: an empty string parses to an empty (but DEFINED, not undefined) series — a caller that explicitly passed --series \"\" gets an explicit empty run, not the default fallback");
   assert.throws(() => parseSeries("S1,S9,S2"), /unknown scenario id\(s\) S9/, "parseSeries: an unknown scenario id FAILS LOUD (throws), naming the bad id — never silently dropped, which would run a shorter series than asked");
+
+  assert.throws(() => parseSeries("S7,S7,S7,S7,S7"), /S7 cannot be driven on this eve/, "parseSeries: S7 is REFUSED, not silently dropped — a shortened series is a run the operator did not ask for");
+  assert.throws(() => parseSeries("S7"), /coalesced-delivery-merge-assumption-test\.ts/, "…and the refusal names the offline pin that goes RED on the day S7 becomes drivable again");
+  assert.throws(() => parseSeries("S1,S7,S6"), /S7 cannot be driven/, "…and one unreachable id refuses the WHOLE series, so a mixed run never silently loses its S7 turns");
+  ok(JSON.stringify(parseSeries("S1,S6")) === JSON.stringify(["S1", "S6"]), "🔴 NEGATIVE CONTROL: the refusal is specific to S7 — every other id still parses, so the guard above is not a blanket throw");
 }
 
 {

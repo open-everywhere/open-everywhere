@@ -276,8 +276,10 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   {
     action: "turn.unaccounted_wakes",
     fields: ["turnId", "turnWake", "unaccounted", "count", "addressedCount", "ambientCount", "capped"],
-    proves: "a coalesced turn swallowed wakes it never answered, and how many of those were addressed to the agent",
-    notExercised: "S-APPROVAL-COALESCED drives it, and that leg is itself RED until its unified fixtures are armed — so on a pack without them this row has no other writer.",
+    proves:
+      "a turn ended leaving pending wakes it never answered, and how many of those were addressed to the agent. NOT that the turn was COALESCED: `settleWakeAccounting` writes the row whenever a pending, in-TTL wake registered at or before the turn's own wake goes unaccounted, which a turn that merged nothing produces too",
+    notExercised:
+      "No leg GATES on it. F-SEC produces it incidentally — on a live run its un-mentioned follow-up entered as an ambient wake the seat left unanswered — and `classifyUnansweredWake` (scripts/e2e/gate-joins.ts) only READS the row to say which silence a red was. The leg that meant to drive it, S-APPROVAL-COALESCED, was retired at OPE-2041 because the merge it drove is unreachable: eve 0.52.5+ batches adjacent queued deliveries only when their full auth contexts are structurally equal, and OE's per-delivery `oe_wake_id` / `oe_delivery_id` stamps make that impossible on a unified window (pinned offline by `packages/core/scripts/coalesced-delivery-merge-assumption-test.ts`). A leg that GATES on this row needs no merge at all: it needs to leave one pending in-TTL wake unanswered at a turn's end and assert the row, not to reproduce a coalesced turn.",
   },
   {
     action: "window.routing_degraded",

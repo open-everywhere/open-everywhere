@@ -7,8 +7,6 @@ import {
   renderPacingLine,
   type PacingClock,
 } from "../packages/core/scripts/e2e/pacing.js";
-import { slackUnifiedCoalescingBurst, slackUnifiedPrimedCoalescingBurst } from "../packages/core/scripts/e2e/coalesced-burst.js";
-import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 import { PACING_CHANNEL_FLOOR_MS, PACING_MAX_CONCURRENT_PER_SURFACE } from "../packages/core/scripts/e2e/env.js";
 import { SlackDriver } from "../packages/core/scripts/e2e/slack-driver.js";
 import { DiscordDriver } from "../packages/core/scripts/e2e/discord-driver.js";
@@ -181,7 +179,7 @@ function fakeClock(): PacingClock & { readonly slept: number[]; settle(): Promis
   ok(gate.stats().maxConcurrencyPerSurface.get("slack") === 2, "the burst reports the two slots it really held — the pacing line never understates the exception");
 }
 
-ok(PACING_MAX_CONCURRENT_PER_SURFACE === 2, "the shipped per-surface cap is 2, which is the size of S-APPROVAL-COALESCED's two-room burst");
+ok(PACING_MAX_CONCURRENT_PER_SURFACE === 2, "the shipped per-surface cap is 2, which is the size of the two-room burst the block above drives");
 
 {
   const clock = fakeClock();
@@ -203,118 +201,6 @@ ok(PACING_MAX_CONCURRENT_PER_SURFACE === 2, "the shipped per-surface cap is 2, w
   ok(gate.stats().totalDrives === 4, "both bursts drove both of their rooms");
 }
 
-{
-  const clock = fakeClock();
-  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
-  const calls: { channel: string; text: string; at: number; settled: number }[] = [];
-  let settled = 0;
-  const drive = slackUnifiedCoalescingBurst({
-    gate,
-    channelA: "CASK",
-    channelB: "CASIDE",
-    post: async (channel, text) => {
-      const at = calls.length;
-      await new Promise((r) => setImmediate(r));
-      calls.push({ channel, text, at, settled: settled++ });
-      return { ts: `ts-${channel}` };
-    },
-  });
-  const work = drive("the routine ask", "the aside");
-  await clock.settle();
-  const out = await work;
-
-  ok(calls.length === 2, "the drive made exactly two vendor posts");
-  ok(calls[0]?.channel === "CASK" && calls[0]?.text === "the routine ask", "🔴 the ASK is posted FIRST, into the asking room");
-  ok(calls[1]?.channel === "CASIDE" && calls[1]?.text === "the aside", "🔴 the ASIDE is posted SECOND, so it is the last delivery eve can merge — the whole reason the leg reproduces OPE-1756");
-  ok(calls[0]!.at === 0 && calls[1]!.at === 1, "🔴 the second post is not even STARTED until the first has returned — a concurrent `Promise.all` would leave the arrival order to the network");
-  ok(out.askTs === "ts-CASK", "the drive returns the ASK's ts — the reply the leg waits for is the one in the asking room");
-  ok(gate.stats().drivesPerChannel.get("slack/CASK") === 1 && gate.stats().drivesPerChannel.get("slack/CASIDE") === 1, "both rooms are accounted for in the pacing report");
-  ok(gate.stats().waitedMs === 0, "…and on a fresh pair of rooms the burst held nothing back: the two posts are back-to-back, which is the coalescing precondition");
-}
-
-{
-  const clock = fakeClock();
-  const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });
-  const startedAt: number[] = [];
-  const drive = slackUnifiedCoalescingBurst({
-    gate,
-    channelA: "CASK",
-    channelB: "CASIDE",
-    post: async () => {
-      startedAt.push(clock.now());
-      return { ts: "ts" };
-    },
-  });
-  const work = (async () => {
-    await drive("ask 1", "aside 1");
-    await drive("ask 2", "aside 2");
-  })();
-  await clock.settle();
-  await work;
-  ok(startedAt.length === 4, "both attempts drove both rooms");
-  ok(startedAt[0] === 0 && startedAt[1] === 0, "attempt 1's two posts are back-to-back");
-  ok(startedAt[2] === 1_000 && startedAt[3] === 1_000, "🔴 attempt 2 waits a full floor — the retry the leg makes when the first interleave did not coalesce is still paced");
-  ok(gate.stats().waitedMs === 1_000, "…and the cost of that wait is reported");
-}
-
-const PRIME_TURN_START: AuditWireEntry = {
-  seq: 41,
-  ts: "2026-09-20T17:32:20.000Z",
-  org: "oe",
-  platform: "slack",
-  workspace: "e2e-unified",
-  surface: "slack/T1/CASK",
-  action: "wake.turn_start",
-  detail: { wakeId: "wake-prime" },
-};
-
-{
-  const order: string[] = [];
-  let burstRanBeforeTurnStart = false;
-  let turnStartResolved = false;
-  let releaseTurnStart: (() => void) | undefined;
-  const turnStarted = new Promise<void>((r) => { releaseTurnStart = r; });
-
-  const drive = slackUnifiedPrimedCoalescingBurst({
-    primePost: async (text) => { order.push(`prime:${text}`); },
-    awaitTurnStart: async () => { order.push("await-turn-start"); await turnStarted; turnStartResolved = true; return PRIME_TURN_START; },
-    burst: async (askText, asideText) => {
-      if (!turnStartResolved) burstRanBeforeTurnStart = true;
-      order.push(`burst:${askText}|${asideText}`);
-      return { askTs: "ts-CASK" };
-    },
-  });
-
-  const work = drive("ready?", "the routine ask", "the aside");
-  await new Promise((r) => setImmediate(r));
-  ok(order.length === 2, `the drive primes and then WAITS — nothing else has run yet (got ${JSON.stringify(order)})`);
-  ok(!burstRanBeforeTurnStart, "🔴 the burst has NOT fired while the priming turn's wake.turn_start row is still unseen — an idle-seat burst is the very shape OPE-1948 removes");
-
-  releaseTurnStart!();
-  const out = await work;
-
-  ok(order[0] === "prime:ready?", "🔴 the PRIMING post goes first, into the asking room — it is what occupies the seat");
-  ok(order[1] === "await-turn-start", "🔴 …then the drive waits for the priming turn's own wake.turn_start row, rather than sleeping and hoping");
-  ok(order[2] === "burst:the routine ask|the aside", "🔴 …and only THEN the two-room burst, so both deliveries queue behind a RUNNING turn");
-  ok(order.length === 3, `exactly three steps, no more (got ${JSON.stringify(order)})`);
-  ok(out.askTs === "ts-CASK", "the drive returns the burst's ASK ts — the reply the leg waits for is still the one in the asking room");
-  ok(out.primed === true, "…and reports that the seat was primed, which is what tells a product red from a harness one");
-  ok(out.turnStart === PRIME_TURN_START, "🔴 …and hands back the turn-start ROW itself (OPE-2005) — its wakeId is what joins the priming turn to its own reply.post END anchor, and a bare boolean could not");
-}
-
-{
-  const order: string[] = [];
-  const drive = slackUnifiedPrimedCoalescingBurst({
-    primePost: async () => { order.push("prime"); },
-    awaitTurnStart: async () => { order.push("await-turn-start"); return undefined; },
-    burst: async () => { order.push("burst"); return { askTs: "ts-CASK" }; },
-  });
-  const out = await drive("ready?", "ask", "aside");
-  ok(order.join(",") === "prime,await-turn-start,burst", `a priming turn that never started still reaches the burst (got ${JSON.stringify(order)})`);
-  ok(out.primed === false, "…and `primed` reports FALSE, so the leg's red names the harness rather than blaming the product");
-  ok(out.turnStart === undefined, "…and NO turn-start row comes back, so the flight join has nothing to join on and refuses rather than guessing");
-  ok(out.askTs === "ts-CASK", "…and the ask ts still comes back, so the leg can still poll for its reply");
-}
 {
   const clock = fakeClock();
   const gate = createPacingGate({ floorMs: 1_000, maxConcurrentPerSurface: 2, clock });

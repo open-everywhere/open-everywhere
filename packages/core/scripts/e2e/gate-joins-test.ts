@@ -26,10 +26,6 @@ import {
   rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
-  burstMergeWindow,
-  coalescedBurstOutcome,
-  type CoalescedAttemptRecord,
-  PRECONDITION_NOT_REPRODUCED,
   seedMemoryWrites,
   seedSettlementRead,
   settlementReportPairings,
@@ -41,7 +37,6 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
-import { primingTurnFlight, type PrimingFlightInput } from "./coalesced-burst.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -861,111 +856,6 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(
     readsAsClarifyingQuestion("Stored it. Do you want me to delete the older codes as well?"),
     "a seat that stored AND asked still reads as one — the leg LOGS that case and never fails on it, because the write row is what the gate turns on",
-  );
-}
-
-{
-  const wakeRow = (action: string, ts: string, seq: number, wakeId: string, surface?: string): AuditWireEntry => ({
-    ts,
-    org: "default",
-    platform: "slack",
-    workspace: "T0EXAMPLE",
-    action,
-    seq,
-    detail: { wakeId },
-    ...(surface !== undefined ? { surface } : {}),
-  });
-
-  const primeIngress = wakeRow("wake.ingress", "2026-09-21T18:11:24.900Z", 116_430, "8fdc0dbd", "slack/T0EXAMPLE/C0EXRANDM");
-  const primeStart = wakeRow("wake.turn_start", "2026-09-21T18:11:25.235Z", 116_431, "8fdc0dbd", "slack/T0EXAMPLE/C0EXRANDM");
-  const askIngress = wakeRow("wake.ingress", "2026-09-21T18:11:33.073Z", 116_432, "fb1ed46f", "slack/T0EXAMPLE/C0EXRANDM");
-  const asideIngress = wakeRow("wake.ingress", "2026-09-21T18:11:33.232Z", 116_433, "d7dd1207", "slack/T0EXAMPLE/C0EXCHAN003");
-  const primeReply = wakeRow("reply.post", "2026-09-21T18:11:34.829Z", 116_434, "8fdc0dbd", "C0EXRANDM");
-  const nextStart = wakeRow("wake.turn_start", "2026-09-21T18:11:55.245Z", 116_435, "fb1ed46f", "slack/T0EXAMPLE/C0EXRANDM");
-  const measured: PrimingFlightInput = {
-    turnStart: primeStart,
-    ingress: [primeIngress, askIngress, asideIngress],
-    replies: [primeReply],
-    turnStarts: [primeStart, nextStart],
-  };
-
-  const window = burstMergeWindow(measured);
-  ok(window.gapMs === 20_416, `🔴 the merge window is the MEASURED 20.4 s — reply.post to the next wake.turn_start (got ${String(window.gapMs)})`);
-  ok(
-    window.surfaces.join("|") === "slack/T0EXAMPLE/C0EXRANDM|slack/T0EXAMPLE/C0EXCHAN003",
-    `…and both burst surfaces are reported, in seq order, so a board reader can see the burst spanned TWO containers (got ${JSON.stringify(window.surfaces)})`,
-  );
-  ok(window.summary.includes("20.4s") && window.summary.includes("C0EXCHAN003"), "…and the one-line summary carries both, because that line is what the leg logs and what the verdict quotes");
-
-  const markedPrime = burstMergeWindow({ ...measured, ingress: [{ ...primeIngress, surface: "slack/T0EXAMPLE/CPRIME" }, askIngress, asideIngress] });
-  ok(!markedPrime.surfaces.includes("slack/T0EXAMPLE/CPRIME"), "🔴 NEGATIVE CONTROL: the priming wake's own ingress row is NOT one of the burst's two surfaces");
-  ok(markedPrime.surfaces.length === 2 && markedPrime.gapMs === 20_416, "…and dropping it changes neither the count nor the gap");
-
-  const noNextStart = burstMergeWindow({ ...measured, turnStarts: [primeStart] });
-  ok(noNextStart.gapMs === undefined, "🔴 no later wake.turn_start means NO gap — the window has no upper anchor yet");
-  ok(noNextStart.summary.includes("upper anchor") && noNextStart.surfaces.length === 2, "…and it still reports the two burst surfaces, which are readable without that anchor");
-  const noReply = burstMergeWindow({ ...measured, replies: [] });
-  ok(noReply.gapMs === undefined && noReply.summary.includes("no reply.post row"), "🔴 no priming reply.post means no gap either, and the summary names the missing row");
-  const noSeq = burstMergeWindow({ ...measured, turnStart: { ...primeStart, seq: undefined } });
-  ok(noSeq.gapMs === undefined && noSeq.summary.includes("no seq"), "🔴 a turn-start row without `seq` yields nothing — seq is the only monotonic locator on this wire");
-  const backward = burstMergeWindow({ ...measured, turnStarts: [primeStart, { ...nextStart, ts: "2026-09-" }] });
-  ok(backward.gapMs === undefined && backward.summary.includes("BACKWARD"), "🔴 a wall clock that steps backward between the two anchors yields nothing — never a negative duration dressed as a measurement");
-
-  const inFlight = primingTurnFlight(measured);
-  ok(inFlight.kind === "in-flight", "PRECONDITION OF THE PINS BELOW: the board's own rows really do score in-flight, so the miss below is not an idle-seat miss");
-  const missed = (attempt: number): CoalescedAttemptRecord => ({ attempt, coalesced: false, primed: true, flight: inFlight, window });
-  const four = coalescedBurstOutcome([missed(1), missed(2), missed(3), missed(4)]);
-  ok(four.kind === "not-reproduced", "🔴 OPE-2038: four attempts that eve delivered as separate turns are a NON-REPRODUCTION, not a product finding");
-  ok(
-    four.kind === "not-reproduced" && four.verdict.startsWith(`${PRECONDITION_NOT_REPRODUCED} — eve delivered the burst as separate turns on 4 attempts`),
-    "…and the verdict LEADS with the word OPE-2005 item 3 asked for, so a board table shows it without opening the runner log",
-  );
-  ok(
-    four.kind === "not-reproduced" && !four.verdict.includes("PRODUCT"),
-    "🔴 …and it never says PRODUCT. The landed leg's '🔴 (hard, PRODUCT)' is the defect this pin closes — the in-flight precondition HELD on both of board #230's attempts and eve still did not merge",
-  );
-  ok(
-    four.kind === "not-reproduced" && four.verdict.includes("4 of 4 attempts put the burst behind a priming turn PROVEN still running"),
-    "…and it carries the OPE-2005 flight verdicts unchanged, which is what tells a missed window from an unreadable one",
-  );
-  ok(four.kind === "not-reproduced" && four.verdict.includes("20.4s"), "…and every attempt's merge window rides in the verdict, so one board row is enough to compare eve's window across ships");
-
-  const idleSeat = primingTurnFlight({
-    ...measured,
-    ingress: [primeIngress, { ...askIngress, seq: 116_436 }, { ...asideIngress, seq: 116_437 }],
-    turnStarts: [primeStart],
-  });
-  ok(idleSeat.kind === "ended-before-burst", `PRECONDITION: a priming reply BEFORE the second burst ingress row scores ended-before-burst (got ${idleSeat.kind})`);
-  const missedIdle = coalescedBurstOutcome([1, 2, 3, 4].map((attempt) => ({ attempt, coalesced: false, primed: true, flight: idleSeat, window })));
-  ok(missedIdle.kind === "not-reproduced" && missedIdle.verdict.includes("may have met an idle seat"), "🔴 every attempt ending before its burst reads as an idle seat — widen the priming ask");
-  ok(missedIdle.kind === "not-reproduced" && !missedIdle.verdict.includes("could NOT BE READ"), "…and it does NOT say the evidence was unreadable, which is the opposite diagnosis");
-  const unreadable = primingTurnFlight({ ...measured, replies: [] });
-  ok(unreadable.kind === "unobservable", "PRECONDITION: no priming reply.post at all is unobservable, not a decided miss");
-  const missedUnread = coalescedBurstOutcome([1, 2, 3, 4].map((attempt) => ({ attempt, coalesced: false, primed: true, flight: unreadable, window })));
-  ok(missedUnread.kind === "not-reproduced" && missedUnread.verdict.includes("could NOT BE READ"), "🔴 every attempt unreadable reads as a READ to fix, never as a window to widen");
-  ok(missedUnread.kind === "not-reproduced" && !missedUnread.verdict.includes("idle seat"), "…and it does not claim the seat was idle, which these rows cannot say");
-  const noPrime = coalescedBurstOutcome([1, 2].map((attempt) => ({ attempt, coalesced: false, primed: false, flight: unreadable, window })));
-  ok(noPrime.kind === "not-reproduced" && noPrime.verdict.includes("NO priming turn started"), "…and an attempt set where no priming turn even STARTED points at the priming wait first");
-
-  const two = coalescedBurstOutcome([missed(1), missed(2)]);
-  ok(two.kind === "not-reproduced" && two.attempts === 2 && two.verdict.includes("on 2 attempts"), "🔴 the count is the verdict's own, not a constant: two misses read 'on 2 attempts'");
-  const one = coalescedBurstOutcome([missed(1)]);
-  ok(one.kind === "not-reproduced" && one.verdict.includes("on 1 attempt."), "…and one miss reads 'on 1 attempt' — the count is spelled, so a shrunken loop cannot hide behind the old sentence");
-  ok(
-    two.kind === "not-reproduced" && four.kind === "not-reproduced" && two.verdict !== four.verdict,
-    "NEGATIVE CONTROL: two misses and four misses do NOT produce the same sentence — 'the race missed once' and 'it missed four times' are different claims about eve's window",
-  );
-  const none = coalescedBurstOutcome([]);
-  ok(none.kind === "not-reproduced" && none.attempts === 0 && none.verdict.includes("No attempt ran at all"), "🔴 an empty attempt set is reported as a loop defect, never as evidence about eve");
-
-  const hit = (attempt: number): CoalescedAttemptRecord => ({ attempt, coalesced: true, primed: true, flight: inFlight, window });
-  const late = coalescedBurstOutcome([missed(1), missed(2), hit(3)]);
-  ok(late.kind === "coalesced" && late.attempt === 3, "🔴 OPE-1756's scope gates run behind ANY coalesced attempt, and the outcome names which one — earlier misses do not veto it");
-  const first = coalescedBurstOutcome([hit(1)]);
-  ok(first.kind === "coalesced" && first.attempt === 1, "…including the first, which is board #229's shape and the leg's common case");
-  ok(
-    coalescedBurstOutcome([missed(1), hit(2), missed(3)]).kind === "coalesced",
-    "NEGATIVE CONTROL: a miss AFTER the merge cannot un-coalesce the run — the `turn.unaccounted_wakes` row already proved the seam was reachable",
   );
 }
 

@@ -59,7 +59,6 @@ import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type Leg
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
 import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
-import { slackUnifiedCoalescingBurst } from "./coalesced-burst.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
 
@@ -158,8 +157,7 @@ async function main(): Promise<void> {
       : undefined;
 
   const pacing = createPacingGate();
-  const rawSlackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
-  const slackDriver = paceMaybe(rawSlackDriver, "slack", pacing);
+  const slackDriver = paceMaybe(slack.ok ? new SlackDriver(slack.cfg) : undefined, "slack", pacing);
   const githubDriver = paceMaybe(github.ok ? new GithubDriver(github.cfg) : undefined, "github", pacing);
   const linearDriver = paceMaybe(linear.ok ? new LinearDriver(linear.cfg) : undefined, "linear", pacing);
   const notionAmbientDriver = paceMaybe(notionAmbient.ok ? new NotionDriver(notionAmbient.cfg) : undefined, "notion", pacing);
@@ -173,19 +171,9 @@ async function main(): Promise<void> {
   const slackCapFixtureDriver = slackDriver && slackCapFixture.ok ? slackDriver.withChannel(slackCapFixture.cfg.channel) : undefined;
   const slackHaltDriver = slackDriver && slackHalt.ok ? slackDriver.withChannel(slackHalt.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
-  const slackUnifiedArmed = slackDriver && rawSlackDriver && slackUnified.ok
-    ? { driver: slackDriver, raw: rawSlackDriver, cfg: slackUnified.cfg }
-    : undefined;
+  const slackUnifiedArmed = slackDriver && slackUnified.ok ? { driver: slackDriver, cfg: slackUnified.cfg } : undefined;
   const slackUnifiedADriver = slackUnifiedArmed?.driver.withChannel(slackUnifiedArmed.cfg.channelA);
   const slackUnifiedBDriver = slackUnifiedArmed?.driver.withChannel(slackUnifiedArmed.cfg.channelB);
-  const postSlackUnifiedBurst = slackUnifiedArmed
-    ? slackUnifiedCoalescingBurst({
-        gate: pacing,
-        channelA: slackUnifiedArmed.cfg.channelA,
-        channelB: slackUnifiedArmed.cfg.channelB,
-        post: (channel, text) => slackUnifiedArmed.raw.withChannel(channel).post(text),
-      })
-    : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
@@ -448,7 +436,6 @@ async function main(): Promise<void> {
       notionAmbient: notionAmbientDriver,
       slackUnifiedA: slackUnifiedADriver,
       slackUnifiedB: slackUnifiedBDriver,
-      postSlackUnifiedBurst,
       unifiedDomain: slackUnified.ok ? slackUnified.cfg.domain : undefined,
       unifiedAuditCall,
       targetUrl: auditTarget || undefined,

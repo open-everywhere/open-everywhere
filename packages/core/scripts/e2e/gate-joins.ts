@@ -3,7 +3,6 @@ import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channel
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
-import type { PrimingFlightInput, PrimingFlightVerdict } from "./coalesced-burst.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
   const v = row.detail?.[key];
@@ -649,126 +648,6 @@ const CLARIFYING_ASK_RE =
 export function readsAsClarifyingQuestion(text: string): boolean {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.includes("?") && CLARIFYING_ASK_RE.test(flat);
-}
-
-export const PRECONDITION_NOT_REPRODUCED = "PRECONDITION NOT REPRODUCED";
-
-function rowWakeId(row: AuditWireEntry): string | undefined {
-  return dstr(row, "wakeId");
-}
-
-function rowSeq(row: AuditWireEntry): number | undefined {
-  return typeof row.seq === "number" && Number.isFinite(row.seq) ? row.seq : undefined;
-}
-
-export interface BurstMergeWindow {
-  readonly gapMs?: number;
-  readonly surfaces: readonly string[];
-  readonly summary: string;
-}
-
-export function burstMergeWindow(input: PrimingFlightInput): BurstMergeWindow {
-  const nothing = (why: string): BurstMergeWindow => ({ surfaces: [], summary: `merge window unmeasured — ${why}` });
-  const { turnStart } = input;
-  if (!turnStart) return nothing("no wake.turn_start row arrived for the priming post");
-  const primeWakeId = rowWakeId(turnStart);
-  if (primeWakeId === undefined) return nothing("the priming turn's wake.turn_start row carries no detail.wakeId");
-  const startSeq = rowSeq(turnStart);
-  if (startSeq === undefined) return nothing(`the priming turn's wake.turn_start row (wake ${primeWakeId}) carries no seq`);
-
-  const burst = input.ingress
-    .filter((row) => {
-      const seq = rowSeq(row);
-      return seq !== undefined && seq > startSeq && rowWakeId(row) !== primeWakeId;
-    })
-    .sort((x, y) => rowSeq(x)! - rowSeq(y)!)
-    .slice(0, 2);
-  const surfaces = burst.map((row) => row.surface ?? "(no surface column)");
-
-  const withSurfaces = (why: string): BurstMergeWindow => ({
-    surfaces,
-    summary: `merge window unmeasured — ${why}; burst surfaces ${surfaces.length > 0 ? surfaces.join(", ") : "unread"}`,
-  });
-
-  const nextStart = input.turnStarts
-    .filter((row) => {
-      const seq = rowSeq(row);
-      return seq !== undefined && seq > startSeq;
-    })
-    .sort((x, y) => rowSeq(x)! - rowSeq(y)!)[0];
-  const ends = input.replies
-    .filter((row) => {
-      const seq = rowSeq(row);
-      return rowWakeId(row) === primeWakeId && seq !== undefined && seq > startSeq && (nextStart === undefined || seq < rowSeq(nextStart)!);
-    })
-    .sort((x, y) => rowSeq(x)! - rowSeq(y)!);
-  const lastEnd = ends[ends.length - 1];
-  if (lastEnd === undefined) return withSurfaces(`no reply.post row answers the priming turn's wake ${primeWakeId} before the next turn started`);
-  if (nextStart === undefined) return withSurfaces("no later wake.turn_start row is in this window, so the gap has no upper anchor yet");
-
-  const endMs = tsMs(lastEnd);
-  const nextMs = tsMs(nextStart);
-  if (!Number.isFinite(endMs) || !Number.isFinite(nextMs)) return withSurfaces("one of the two anchors carries an unparseable ts, and a duration cannot be read off seq");
-  const gapMs = nextMs - endMs;
-  if (gapMs < 0) return withSurfaces(`the two anchors' ts values step BACKWARD (${lastEnd.ts} → ${nextStart.ts}), so the wall clock cannot measure this gap`);
-  return {
-    gapMs,
-    surfaces,
-    summary:
-      `merge window ${(gapMs / 1000).toFixed(1)}s — the priming turn's reply.post (${lastEnd.ts}) to the next wake.turn_start (${nextStart.ts}); ` +
-      `burst surfaces ${surfaces.length > 0 ? surfaces.join(", ") : "unread"}`,
-  };
-}
-
-export interface CoalescedAttemptRecord {
-  readonly attempt: number;
-  readonly coalesced: boolean;
-  readonly primed: boolean;
-  readonly flight: PrimingFlightVerdict;
-  readonly window: BurstMergeWindow;
-}
-
-export type CoalescedBurstOutcome =
-  | { readonly kind: "coalesced"; readonly attempt: number }
-  | { readonly kind: "not-reproduced"; readonly attempts: number; readonly verdict: string };
-
-export function coalescedBurstOutcome(attempts: readonly CoalescedAttemptRecord[]): CoalescedBurstOutcome {
-  const hit = attempts.find((a) => a.coalesced);
-  if (hit !== undefined) return { kind: "coalesced", attempt: hit.attempt };
-
-  const n = attempts.length;
-  const plural = n === 1 ? "attempt" : "attempts";
-  if (n === 0) {
-    return {
-      kind: "not-reproduced",
-      attempts: 0,
-      verdict:
-        `${PRECONDITION_NOT_REPRODUCED} — eve delivered the burst as separate turns on 0 attempts. ` +
-        "No attempt ran at all, so this says nothing about eve's merge window either. Look at the leg's own loop before reading anything into the deployment.",
-    };
-  }
-  const anyPrimed = attempts.some((a) => a.primed);
-  const inFlight = attempts.filter((a) => a.flight.kind === "in-flight");
-  const perAttempt = attempts
-    .map((a) => `attempt ${a.attempt}: flight ${a.flight.kind} (${a.flight.why}); ${a.window.summary}`)
-    .join(" · ");
-  return {
-    kind: "not-reproduced",
-    attempts: n,
-    verdict:
-      `${PRECONDITION_NOT_REPRODUCED} — eve delivered the burst as separate turns on ${n} ${plural}. ` +
-      "This is the HARNESS's precondition, NOT a product finding: whether eve merges two queued deliveries into one turn is eve's queue timing, and this codebase does not force it. " +
-      "Nothing about the deployment's wake accounting was measured, and OPE-1756's scope gates are skipped rather than passed — on a turn that merged nothing they would pass vacuously. " +
-      `${
-        inFlight.length > 0
-          ? `${inFlight.length} of ${n} ${plural} put the burst behind a priming turn PROVEN still running, so eve's window is what to widen, not the wake.`
-          : attempts.some((a) => a.flight.kind === "ended-before-burst")
-            ? "NO attempt put the burst behind a priming turn proven still running: a priming turn last spoke BEFORE the burst was admitted, so the burst may have met an idle seat. Widen the priming ask, or shorten the gap before the burst."
-            : "The precondition could NOT BE READ on any attempt — every flight verdict names a missing row or field. Fix the read before reading anything into the seat."
-      } ` +
-      `${anyPrimed ? "At least one priming turn started, so the wake road is not the problem." : "NO priming turn started on any attempt, so look at the priming wait first."} ` +
-      `Per attempt — ${perAttempt}.`,
-  };
 }
 
 export const MEMORY_CLAIM_WITHHELD_ACTION = "memory.claim_withheld";

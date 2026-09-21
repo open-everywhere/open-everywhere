@@ -41,7 +41,6 @@ const REQUIRED_IDS = [
   "F-EDIT",
   "F-SEC",
   "J-SUP",
-  "S-APPROVAL-COALESCED",
   "S-DELEGATED-slack",
   "S-DELEGATED-github",
   "S-DELEGATED-notion",

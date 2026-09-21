@@ -92,10 +92,19 @@ export const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
   S4: { id: "S4", label: "cross-surface recall (fact on Notion → recalled on Slack @mention)", expected: "LANDED", needs: ["slack", "notion"] },
   S5: { id: "S5", label: "TRUE ambient step-in (Notion channel-watch, no namedrop; reply helpful, silence defensible)", expected: "LANDED", soft: true, needs: ["slack", "notion"] },
   S6: { id: "S6", label: "sequential pair correctness (Slack direct-mention + channel-watch injected back to back into an IDLE session — TWO turns)", expected: "LANDED", needs: ["slack"] },
-  S7: { id: "S7", label: "coalesced-turn correctness (ambient+addressed pair buffered behind a running turn — sibling wakes PROVEN from the transcript)", expected: "LANDED", needs: ["slack"] },
+  S7: { id: "S7", label: "coalesced-turn correctness (ambient+addressed pair buffered behind a running turn — sibling wakes PROVEN from the transcript) — UNREACHABLE on eve 0.52.5+, refused by parseSeries (OPE-2041)", expected: "LANDED", needs: ["slack"] },
 };
 export const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
+
+const UNREACHABLE_SCENARIOS: Partial<Record<ScenarioId, string>> = {
+  S7:
+    "S7 is UNREACHABLE on eve 0.52.5+ (OPE-2041). eve batches adjacent queued deliveries only when their full auth " +
+    "contexts match, and every wake this harness injects is stamped with a fresh oe_wake_id and oe_delivery_id by " +
+    "divertToUnifiedWindow, so the pair can never reach the model as sibling wakes and every probe would report a " +
+    "harness fault. packages/core/scripts/coalesced-delivery-merge-assumption-test.ts pins that offline and goes RED " +
+    "the day it stops holding — that is the day to delete this entry and run S7 again.",
+};
 
 export function parseSeries(raw: string | undefined): ScenarioId[] | undefined {
   if (raw === undefined) return undefined;
@@ -103,6 +112,13 @@ export function parseSeries(raw: string | undefined): ScenarioId[] | undefined {
   const bad = ids.filter((id) => !(id in SCENARIOS));
   if (bad.length > 0) {
     throw new Error(`--series: unknown scenario id(s) ${bad.join(",")} — valid: ${Object.keys(SCENARIOS).join(",")}`);
+  }
+  const unreachable = [...new Set(ids.filter((id) => UNREACHABLE_SCENARIOS[id as ScenarioId] !== undefined))];
+  if (unreachable.length > 0) {
+    throw new Error(
+      `--series: ${unreachable.join(",")} cannot be driven on this eve. ` +
+        unreachable.map((id) => UNREACHABLE_SCENARIOS[id as ScenarioId]).join(" "),
+    );
   }
   return ids as ScenarioId[];
 }

@@ -101,7 +101,6 @@ import {
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
-import { primingTurnFlight, slackUnifiedPrimedCoalescingBurst, type PrimingFlightInput, type PrimingFlightVerdict } from "./coalesced-burst.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
@@ -127,16 +126,12 @@ import {
   AUDIT_SINCE_SKEW_MS,
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
-  burstMergeWindow,
-  type BurstMergeWindow,
   carriesHostTemplate,
   catchUpBoundHeld,
   type CatchUpWindowBound,
   classifyConnectorRoad,
   classifySettlementReply,
   classifyUnansweredWake,
-  coalescedBurstOutcome,
-  type CoalescedAttemptRecord,
   CONNECTOR_USE_ACTION,
   FIRE_ATTRS_SENT_ACTION,
   fireAnchor,
@@ -275,7 +270,6 @@ export interface ScenarioContext {
   readonly notionAmbient?: NotionDriver;
   readonly slackUnifiedA?: SlackDriver;
   readonly slackUnifiedB?: SlackDriver;
-  readonly postSlackUnifiedBurst?: (askText: string, asideText: string) => Promise<{ readonly askTs: string }>;
   readonly unifiedDomain?: string;
   readonly unifiedAuditCall?: UnifiedAuditCall;
   readonly targetUrl?: string;
@@ -382,9 +376,6 @@ async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, labe
   );
 }
 const UNIFIED_REPLY_WAIT = 420_000;
-const COALESCE_PRIME_WAIT = 60_000;
-const PRIMING_FLIGHT_WAIT = 120_000;
-const COALESCE_ATTEMPTS = 4;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
@@ -4247,184 +4238,6 @@ export const SCENARIOS: readonly Scenario[] = [
       await sleep(SILENCE_WINDOW);
       const noiseReplies = (await sup.collectBotMessagesAfter(noiseTs, noiseTs)).filter((m) => !isApprovalCard(m));
       ctx.gate(noiseReplies.length === 0, "supervisor: an off-topic aside drew NO in-channel reply within the silence window");
-    },
-  },
-  {
-    id: "S-APPROVAL-COALESCED",
-    title:
-      "Coalesced-turn approval scope: two rooms, one turn, one approval — `approval.requested.scopeKey` names the ASKING room and the reply lands there (OPE-1756's live proof)",
-    requires: ["slack", "slackUnified"],
-    surface: "slack",
-    suite: "core",
-    timeoutMs: 3_060_000,
-    judged: false,
-    run: async (ctx) => {
-      const a = ctx.slackUnifiedA!;
-      const b = ctx.slackUnifiedB!;
-      const postBurst = ctx.postSlackUnifiedBurst!;
-      const auditRead = ctx.auditRead;
-      if (!auditRead) {
-        ctx.skip(
-          "the control-plane audit reader is unreachable — every gate on this leg is an audit row (approval.requested.scopeKey, reply.post, turn.unaccounted_wakes), so there is nothing it could assert without one. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.",
-        );
-        return;
-      }
-      const { teamId } = await a.identity();
-      const askingKey = `slack/${teamId}/${a.channelId}`;
-      const otherKey = `slack/${teamId}/${b.channelId}`;
-      ctx.gate(askingKey !== otherKey, `precondition: the two unified containers are DIFFERENT rooms (${askingKey} vs ${otherKey}) — one room cannot demonstrate a wrong-room scope`);
-
-      type ProposeDetail = { readonly kind?: unknown; readonly scopeKey?: unknown; readonly id?: unknown };
-      type UnaccountedDetail = { readonly turnId?: unknown; readonly count?: unknown; readonly unaccounted?: readonly unknown[] };
-
-      const awaitTurnStart = async (sinceIso: string): Promise<AuditWireEntry | undefined> =>
-        pollOptional(
-          async () => {
-            const rows = await auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION] });
-            const ordered = rows.filter((r) => typeof r.seq === "number").sort((x, y) => (x.seq ?? 0) - (y.seq ?? 0));
-            return ordered[0] ?? rows[rows.length - 1];
-          },
-          { timeoutMs: COALESCE_PRIME_WAIT, what: "a wake.turn_start row for the priming post — the seat is now inside a turn" },
-        );
-
-      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean; readonly flight: PrimingFlightVerdict; readonly window: BurstMergeWindow }> => {
-        const sinceIso = new Date(Date.now() - 30_000).toISOString();
-        const marker = factToken(`coalesce${n}`);
-        const askText = `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`;
-        const asideText = `(aside, no reply needed) filing the ${marker} notes from the other room for later.`;
-        const primeStart = new Date().toISOString();
-        const drive = slackUnifiedPrimedCoalescingBurst({
-          primePost: async (text) => void (await a.post(text)),
-          awaitTurnStart: () => awaitTurnStart(primeStart),
-          burst: postBurst,
-        });
-        const primeText = `${a.mention("one quick thing first")} — read this channel's recent messages and tell me, in one line, what the last message before mine was about. Read them properly — don't answer from what's already in front of you.`;
-        const { askTs, primed, turnStart } = await drive(primeText, askText, asideText);
-        ctx.log(
-          primed
-            ? `attempt ${n}: the priming turn STARTED before the burst (a wake.turn_start row landed)`
-            : `attempt ${n}: the priming turn did NOT start inside ${COALESCE_PRIME_WAIT}ms — the burst fired onto a possibly-idle seat`,
-        );
-
-        const flightRows = async (): Promise<PrimingFlightInput> => {
-          const [ingress, replies, turnStarts] = await Promise.all([
-            auditRead({ sinceIso: primeStart, actions: [WAKE_INGRESS_ACTION] }),
-            auditRead({ sinceIso: primeStart, actions: [REPLY_POST_ACTION], platform: "slack" }),
-            auditRead({ sinceIso: primeStart, actions: [WAKE_TURN_START_ACTION] }),
-          ]);
-          return { turnStart, ingress, replies, turnStarts };
-        };
-        let flight: PrimingFlightVerdict = { kind: "unobservable", why: "the flight evidence was never read" };
-        await pollOptional(
-          async () => {
-            flight = primingTurnFlight(await flightRows());
-            return flight.kind === "unobservable" ? undefined : flight;
-          },
-          { timeoutMs: PRIMING_FLIGHT_WAIT, what: `attempt ${n}: the priming turn's reply.post END anchor, to order it against the burst's wake.ingress rows` },
-        );
-        ctx.log(`attempt ${n}: priming turn flight — ${flight.kind}: ${flight.why}`);
-        const reply = await pollOptional(
-          async () => {
-            try {
-              return await a.awaitAnyReply(askTs, { timeoutMs: 5_000, skip: (m) => isFillerAck(m.text) });
-            } catch {
-              return undefined;
-            }
-          },
-          { timeoutMs: UNIFIED_REPLY_WAIT, what: `any reply in the ASKING room (${a.channelId}) after attempt ${n}'s routine ask — the liveness signal, not a content match` },
-        );
-
-        let mergeWindow: BurstMergeWindow = { surfaces: [], summary: "merge window unmeasured — the window evidence was never read" };
-        await pollOptional(
-          async () => {
-            mergeWindow = burstMergeWindow(await flightRows());
-            return mergeWindow.gapMs;
-          },
-          { timeoutMs: AUDIT_ROW_WAIT, what: `attempt ${n}: the wake.turn_start row after the priming turn's reply.post, to measure eve's merge window` },
-        );
-        ctx.log(`attempt ${n}: ${mergeWindow.summary}`);
-        return { sinceIso, replied: reply !== undefined, primed, flight, window: mergeWindow };
-      };
-
-      const approvalRows = async (sinceIso: string) =>
-        pollOptional(
-          async () => {
-            const rows = await auditRead({ sinceIso, actions: ["approval.requested"] });
-            const mine = rows.filter((e) => (e.detail as ProposeDetail | undefined)?.kind === "routine.create");
-            return mine.length > 0 ? mine : undefined;
-          },
-          { timeoutMs: AUDIT_ROW_WAIT, what: "the routine-create approval.requested row for this run's ask" },
-        );
-
-      const coalescedRows = async (sinceIso: string) =>
-        pollOptional(
-          async () => {
-            const rows = await auditRead({ sinceIso, actions: ["turn.unaccounted_wakes"] });
-            const merged = rows.filter((e) => Number((e.detail as UnaccountedDetail | undefined)?.count ?? 0) > 0);
-            return merged.length > 0 ? merged : undefined;
-          },
-          { timeoutMs: AUDIT_ROW_WAIT, what: "a turn.unaccounted_wakes row proving one turn merged the other room's wake" },
-        );
-
-      let sinceIso: string | undefined;
-      let replied = false;
-      const records: CoalescedAttemptRecord[] = [];
-      for (let n = 1; n <= COALESCE_ATTEMPTS; n++) {
-        const run = await attempt(n);
-        sinceIso = run.sinceIso;
-        replied = replied || run.replied;
-        const merged = await coalescedRows(run.sinceIso);
-        records.push({ attempt: n, coalesced: merged !== undefined, primed: run.primed, flight: run.flight, window: run.window });
-        if (merged !== undefined) {
-          ctx.log(`attempt ${n}: the turn coalesced — ${merged.length} turn.unaccounted_wakes row(s)`);
-          break;
-        }
-        ctx.log(`attempt ${n}: the two posts ran as separate turns (no turn.unaccounted_wakes row) — retrying the interleave`);
-      }
-      ctx.gate(
-        replied,
-        `the ASKING room (${a.channelId}) produced a reply in this window — the turn RAN. Without one nothing below could be scoped either way`,
-      );
-      const outcome = coalescedBurstOutcome(records);
-      if (outcome.kind === "not-reproduced") {
-        ctx.skip(outcome.verdict);
-        return;
-      }
-      ctx.log(`attempt ${outcome.attempt} coalesced — OPE-1756's scope gates below are now measuring a turn that really merged the other room's wake`);
-
-      const rows = await approvalRows(sinceIso!);
-      ctx.gate(
-        rows !== undefined && rows.length > 0,
-        `🔴 (hard): the routine ask minted an approval.requested row (kind "routine.create") — no row means the ask never reached the approval plane, so the scope it would have carried is unobservable`,
-      );
-      const scopeKeys = (rows ?? []).map((e) => String((e.detail as ProposeDetail | undefined)?.scopeKey ?? ""));
-      ctx.gate(
-        scopeKeys.every((k) => k === askingKey),
-        `🔴 (hard, OPE-1756): EVERY approval.requested.scopeKey names the ASKING room ${askingKey} — a key naming ${otherKey} is the coalesced-turn defect, carding the ask against whichever delivery eve merged last (got ${JSON.stringify(scopeKeys)})`,
-      );
-      ctx.gate(
-        !scopeKeys.includes(otherKey),
-        `🔴 NEGATIVE CONTROL: no approval.requested row is scoped to the OTHER room ${otherKey} — stated separately from the gate above so an EMPTY scopeKey set cannot satisfy both by being vacuous`,
-      );
-
-      const posts = await pollOptional(
-        async () => {
-          const all = await auditRead({ sinceIso: sinceIso!, actions: [REPLY_POST_ACTION], platform: "slack" });
-          return all.length > 0 ? all : undefined;
-        },
-        { timeoutMs: AUDIT_ROW_WAIT, what: "this run's reply.post rows" },
-      );
-      ctx.gate(posts !== undefined && posts.length > 0, "reply.post rows for this run are readable — the reply-target gate below is not vacuous");
-      const askingPosts = (posts ?? []).filter((e) => e.surface === a.channelId);
-      ctx.gate(
-        askingPosts.length > 0,
-        `🔴 (hard): at least one reply.post row landed in the ASKING room (surface column "${a.channelId}", the BARE segment) — got surfaces ${JSON.stringify((posts ?? []).map((e) => e.surface))}`,
-      );
-      const otherPosts = (posts ?? []).filter((e) => e.surface === b.channelId);
-      ctx.gate(
-        otherPosts.length === 0,
-        `🔴 (hard): NO reply.post row landed in the room that only filed an aside (surface column "${b.channelId}") — a reply there is the same wrong-room derivation the scope gate catches, on the delivery plane (got ${otherPosts.length})`,
-      );
     },
   },
   {
