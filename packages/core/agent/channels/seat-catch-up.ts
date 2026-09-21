@@ -5,7 +5,7 @@ import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { processRegistryMap } from "../lib/process-registry.js";
-import { admissionNameFor, domainForChannel } from "../memory/domain.js";
+import { admissionNameFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getSettings } from "../settings/settings.js";
 import { e2eDriverPrincipals, isE2eDriver } from "../testing/driver-allowlist.js";
@@ -76,24 +76,26 @@ export function seatAdmissionFor(channelKey: string | undefined): SeatAdmissionF
     const domains = getConfig().loadDomains();
     const base = admissionFunction(channelKey ? admissionNameFor(channelKey, domains) : undefined);
     if (channelKey === undefined) return base;
-    return withE2eDriverAdmission(base, domainForChannel(channelKey, domains)?.name, surfaceOfChannelKey(channelKey));
+    return withE2eDriverAdmission(base, surfaceOfChannelKey(channelKey), workspaceOfChannelKey(channelKey));
   } catch {
     return admissionFunction(undefined);
   }
 }
-
-export const E2E_DRIVER_DOMAINS: ReadonlySet<string> = new Set(["e2e-engaged"]);
 
 function surfaceOfChannelKey(channelKey: string): string {
   const slash = channelKey.indexOf("/");
   return slash === -1 ? channelKey : channelKey.slice(0, slash);
 }
 
-export function withE2eDriverAdmission(base: SeatAdmissionFn, domainName: string | undefined, surface: string): SeatAdmissionFn {
-  if (domainName === undefined || !E2E_DRIVER_DOMAINS.has(domainName)) return base;
+function workspaceOfChannelKey(channelKey: string): string | undefined {
+  const workspace = channelKey.split("/")[1];
+  return workspace === undefined || workspace === "" ? undefined : workspace;
+}
+
+export function withE2eDriverAdmission(base: SeatAdmissionFn, surface: string, workspace: string | undefined): SeatAdmissionFn {
   const drivers = getSettings().wake.e2eDrivers;
   if (e2eDriverPrincipals(drivers, surface).length === 0) return base;
-  return (c) => base(c) || (c.sender === "bot" && isE2eDriver(drivers, surface, c.authorId));
+  return (c) => base(c) || (c.sender === "bot" && isE2eDriver(drivers, surface, workspace, c.authorId));
 }
 
 export interface SeatCatchUpResult {

@@ -28,8 +28,21 @@ export function e2eDriverPrincipals(configured: readonly E2eDriverIdentity[], su
   return configured.filter((d) => d.surface === surface).map((d) => d.principal);
 }
 
-export function isE2eDriver(configured: readonly E2eDriverIdentity[], surface: string, principal: string | undefined): boolean {
-  if (principal === undefined || principal === "") return false;
+function driverPrincipalFor(surface: string, workspace: string | undefined, authorId: string | undefined): string | undefined {
+  if (authorId === undefined || authorId === "") return undefined;
+  if (surface !== "slack") return authorId;
+  if (workspace === undefined || workspace === "") return undefined;
+  return `${workspace}:${authorId}`;
+}
+
+export function isE2eDriver(
+  configured: readonly E2eDriverIdentity[],
+  surface: string,
+  workspace: string | undefined,
+  authorId: string | undefined,
+): boolean {
+  const principal = driverPrincipalFor(surface, workspace, authorId);
+  if (principal === undefined) return false;
   return configured.some((d) => d.surface === surface && d.principal === principal);
 }
 

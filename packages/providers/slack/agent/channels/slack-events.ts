@@ -922,8 +922,7 @@ export function dmDoorAdmitsDriver(
   ev: ParsedMessageEvent,
   configured: readonly E2eDriverIdentity[] = getSettings().wake.e2eDrivers,
 ): boolean {
-  if (!ev.teamId || !ev.botId) return false;
-  return isE2eDriver(configured, "slack", `${ev.teamId}:${ev.botId}`);
+  return isE2eDriver(configured, "slack", ev.teamId, ev.botId);
 }
 
 export const DM_DRIVER_ADMIT_REASON = "e2e driver — the DM door admits a named driver identity";

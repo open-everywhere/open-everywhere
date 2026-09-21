@@ -270,12 +270,17 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
 }
 
 {
-  const { withE2eDriverAdmission, E2E_DRIVER_DOMAINS } = await import("../agent/channels/seat-catch-up.js");
+  const { withE2eDriverAdmission } = await import("../agent/channels/seat-catch-up.js");
   const { admissionFunction } = await import("../agent/channels/seat-admission.js");
   const { registerSettings, resetSettingsForTest, defineSettings } = await import("../agent/settings/settings.js");
 
   const DRIVER = "1300000001500000042";
   const OTHER_BOT = "1300000001500000099";
+  const GUILD = "1300000000000000100";
+  const NOTION_DRIVER = "399cb5e7-0000-0000-0000-000000000042";
+  const TEAM = "T0TESTTEAM";
+  const SLACK_DRIVER = "B0TESTDRIVER";
+  const OTHER_SLACK_BOT = "B0TESTOTHER";
   const wide = admissionFunction("wide");
   const bot = (authorId?: string) => ({ sender: "bot" as const, trust: "relay" as const, type: "channel" as const, ...(authorId ? { authorId } : {}) });
   const person = { sender: "human" as const, trust: "peer" as const, type: "channel" as const, authorId: "U1" };
@@ -283,32 +288,48 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
   ok(!wide(bot(DRIVER)), "🔴 the fixture domain's own `wide` policy REFUSES the driver — this is the drop that made the two catch-up legs undrivable");
 
   resetSettingsForTest();
-  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER }] } }));
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER }, { surface: "notion", principal: NOTION_DRIVER }] } }));
 
-  const admit = withE2eDriverAdmission(wide, "e2e-engaged", "discord");
-  ok(admit(bot(DRIVER)), "🔴 the NAMED driver enters the seat's context on the fixture domain — the whole point: the pack can now prove the since-last-wake read on this surface");
-  ok(!admit(bot(OTHER_BOT)), "🔴 a DIFFERENT bot on the SAME domain and surface is still REFUSED — the lever names identities, not 'bots in the fixture room'");
+  const admit = withE2eDriverAdmission(wide, "discord", GUILD);
+  ok(admit(bot(DRIVER)), "🔴 the NAMED driver enters the seat's context — the whole point: the pack can now prove the since-last-wake read on this surface");
+  ok(!admit(bot(OTHER_BOT)), "🔴 a DIFFERENT bot on the SAME surface is still REFUSED — the lever names identities, not 'bots in the fixture room'");
   ok(!admit(bot()), "an UNATTRIBUTABLE bot is refused — a message the surface could not pin to an author can never be the driver's");
   ok(admit(person), "a person still enters, exactly as `wide` admits them — the wrapper only ever widens");
 
-  ok(!withE2eDriverAdmission(wide, "e2e-engaged", "notion")(bot(DRIVER)), "🔴 the same principal is refused on ANOTHER surface — the entry's `surface` is matched, not decoration");
-
-  ok(!withE2eDriverAdmission(wide, "e2e-unified", "discord")(bot(DRIVER)), "🔴 the same driver is refused in a NON-fixture domain — the carve-out is scoped to the e2e fixtures, so a real room gains nothing");
-  ok(!withE2eDriverAdmission(wide, undefined, "discord")(bot(DRIVER)), "…and refused in a room that resolves to no explicit domain at all");
-  ok(E2E_DRIVER_DOMAINS.has("e2e-engaged"), "the carve-out's domain roster is the e2e fixture the engaged journeys drive");
-  ok(!E2E_DRIVER_DOMAINS.has("org") && !E2E_DRIVER_DOMAINS.has("dm") && !E2E_DRIVER_DOMAINS.has("public"), "🔴 …and NO criteria pseudo-domain. `domainForChannel` resolves EXPLICIT domains alone, so `org`/`dm`/`public` here would each be a line that reads as a vouch and admits nobody");
+  ok(!withE2eDriverAdmission(wide, "notion", GUILD)(bot(DRIVER)), "🔴 the DISCORD principal is refused at a NOTION seat that HAS its own entry — the entry's `surface` is matched, not decoration, and the list is not a flat roll of ids");
+  ok(withE2eDriverAdmission(wide, "notion", GUILD)(bot(NOTION_DRIVER)), "…and that Notion seat still admits its OWN entry — the negative control that proves the line above was refused by the surface and not by an empty list");
 
   resetSettingsForTest();
-  ok(withE2eDriverAdmission(wide, "e2e-engaged", "discord") === wide, "🔴 an unconfigured deployment gets the base policy ITSELF back — the shipped posture is byte-identical, not merely equivalent");
+  ok(withE2eDriverAdmission(wide, "discord", GUILD) === wide, "🔴 an unconfigured deployment gets the base policy ITSELF back — the shipped posture is byte-identical, not merely equivalent");
 
-  const FIXTURE_ROOM = "discord/G1/C-engaged";
-  const REAL_ROOM = "discord/G1/C-real";
+  resetSettingsForTest();
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "slack", principal: `${TEAM}:${SLACK_DRIVER}` }] } }));
+  const slackSeat = withE2eDriverAdmission(wide, "slack", TEAM);
+  ok(slackSeat(bot(SLACK_DRIVER)), "🔴 OPE-1969: the Slack driver's BARE `bot_id` — what a catch-up line carries — matches the `teamId:botId` entry, because the pair is built from the seat's own workspace");
+  ok(!slackSeat(bot(OTHER_SLACK_BOT)), "🔴 a DIFFERENT Slack bot in the SAME workspace is still refused — the pair is matched whole, not by its workspace half");
+  ok(!withE2eDriverAdmission(wide, "slack", "T_OTHER")(bot(SLACK_DRIVER)), "🔴 WORKSPACE-PINNED: the same `bot_id` in ANOTHER workspace is refused — a Slack `bot_id` is unique only inside its own workspace");
+  ok(!withE2eDriverAdmission(wide, "slack", undefined)(bot(SLACK_DRIVER)), "a seat whose key carries NO workspace admits nobody — a missing half can never complete a pair");
+  ok(!slackSeat(bot(`${TEAM}:${SLACK_DRIVER}`)), "🔴 negative control: the PRE-BUILT pair as an author id is refused — the spelling happens once, inside the predicate, so a caller that pairs it again matches nothing");
+
+  const { isE2eDriver } = await import("../agent/testing/driver-allowlist.js");
+  const CONFIGURED = [{ surface: "slack", principal: `${TEAM}:${SLACK_DRIVER}` }] as const;
+  for (const [team, botId, expected] of [
+    [TEAM, SLACK_DRIVER, true],
+    [TEAM, OTHER_SLACK_BOT, false],
+    ["T_OTHER", SLACK_DRIVER, false],
+    [undefined, SLACK_DRIVER, false],
+  ] as ReadonlyArray<readonly [string | undefined, string, boolean]>) {
+    const door = isE2eDriver(CONFIGURED, "slack", team, botId);
+    const seat = withE2eDriverAdmission(wide, "slack", team)(bot(botId));
+    ok(door === expected && seat === expected, `🔴 door and seat AGREE on ${team ?? "(no workspace)"}:${botId} — both ${expected ? "admit" : "refuse"} it`);
+  }
+
+  const CLAIMED_ROOM = `slack/${TEAM}/C-claimed`;
+  const UNCLAIMED_ROOM = `slack/${TEAM}/C-unclaimed`;
+  const FOREIGN_WORKSPACE_ROOM = "slack/T_OTHER/C-unclaimed";
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");
-  const DOMAINS = [
-    defineDomain({ name: "e2e-engaged", reach: [FIXTURE_ROOM] }),
-    defineDomain({ name: "e2e-unified", reach: [REAL_ROOM] }),
-  ];
+  const DOMAINS = [defineDomain({ name: "e2e-engaged", reach: [CLAIMED_ROOM] })];
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
@@ -318,9 +339,11 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
-  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "discord", principal: DRIVER }] } }));
-  ok(seatAdmissionFor(FIXTURE_ROOM)(bot(DRIVER)), "🔴 `seatAdmissionFor` REACHES the carve-out for a fixture room — the catch-up read is the caller, and this is the assertion that fails if the wrapper is never wired in");
-  ok(!seatAdmissionFor(REAL_ROOM)(bot(DRIVER)), "🔴 …and does NOT reach it for a room in another domain — the negative control that keeps the line above from passing on a deployment-wide widening");
+  registerSettings(defineSettings({ wake: { e2eDrivers: [{ surface: "slack", principal: `${TEAM}:${SLACK_DRIVER}` }] } }));
+  ok(seatAdmissionFor(UNCLAIMED_ROOM)(bot(SLACK_DRIVER)), "🔴 OPE-1969: `seatAdmissionFor` REACHES the carve-out for a room NO domain claims — the leg-56 shape, and the assertion that fails on the old domain-scoped wrapper");
+  ok(seatAdmissionFor(CLAIMED_ROOM)(bot(SLACK_DRIVER)), "…and still reaches it for a room the fixture domain DOES claim — the widening took nothing away");
+  ok(!seatAdmissionFor(UNCLAIMED_ROOM)(bot(OTHER_SLACK_BOT)), "🔴 an UNLISTED bot in that same unclaimed room is refused — the room did not become open, one named identity entered it");
+  ok(!seatAdmissionFor(FOREIGN_WORKSPACE_ROOM)(bot(SLACK_DRIVER)), "🔴 …and the SAME `bot_id` in another WORKSPACE is refused — the negative control that keeps the lines above from passing on a deployment-wide widening");
   resetSettingsForTest();
 }
 
