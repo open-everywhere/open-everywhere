@@ -13,27 +13,52 @@ export function isRememberAsk(text: string | undefined): boolean {
   return REMEMBER_ASK_PATTERNS.some((re) => re.test(text));
 }
 
-const slot = defineState<{ armed: boolean }>("open-everywhere.memory.writeIntent", () => ({ armed: false }));
+export const MAX_UNSERVED_POSTS = 4;
+
+interface WriteIntentState {
+  readonly armed: boolean;
+  readonly unserved: number;
+}
+
+const slot = defineState<WriteIntentState>("open-everywhere.memory.writeIntent", () => ({ armed: false, unserved: 0 }));
+
+function readState(v: unknown): WriteIntentState {
+  const s = (v ?? {}) as { armed?: unknown; unserved?: unknown };
+  const unserved = typeof s.unserved === "number" && Number.isFinite(s.unserved) && s.unserved > 0 ? s.unserved : 0;
+  return { armed: s.armed === true, unserved };
+}
 
 export function noteWriteIntent(text: string | undefined): void {
   if (!isRememberAsk(text)) return;
   try {
-    slot.update(() => ({ armed: true }));
+    slot.update(() => ({ armed: true, unserved: 0 }));
   } catch {
   }
 }
 
 export function writeIntentArmed(): boolean {
   try {
-    return slot.get().armed === true;
+    return readState(slot.get()).armed;
   } catch {
     return false;
   }
 }
 
+export function noteUnservedPost(): void {
+  try {
+    slot.update((s) => {
+      const state = readState(s);
+      if (!state.armed) return state;
+      const unserved = state.unserved + 1;
+      return unserved >= MAX_UNSERVED_POSTS ? { armed: false, unserved: 0 } : { armed: true, unserved };
+    });
+  } catch {
+  }
+}
+
 export function consumeWriteIntent(): void {
   try {
-    slot.update(() => ({ armed: false }));
+    slot.update(() => ({ armed: false, unserved: 0 }));
   } catch {
   }
 }

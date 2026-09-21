@@ -19,7 +19,8 @@ import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { lockMemoryRoot, memoryRootUnlockCommand } from "../memory/root-fence.js";
 import { removedLineDigests } from "../memory/purge-redaction.js";
-import { consumeWriteIntent, noteWriteIntent, writeIntentArmed } from "../memory/write-intent.js";
+import { consumeWriteIntent, noteUnservedPost, noteWriteIntent, writeIntentArmed } from "../memory/write-intent.js";
+import { factStoredThisTurn } from "../memory/write-evidence.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
 import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
@@ -811,10 +812,12 @@ export async function flushWriteIntentMemory(ctx: MemoryPersistContext): Promise
   }
   try {
     const flush = await persistMemoryNow(ctx, "write-intent");
-    if (flush.failed === 0) consumeWriteIntent();
+    const landed = factStoredThisTurn(currentTurnId(ctx));
+    if (flush.failed === 0 && landed) consumeWriteIntent();
+    else if (flush.failed === 0) noteUnservedPost();
     log(
       `write-intent: persisted before the reply — ${flush.persisted} file(s) across ${flush.silos} silo(s), ${flush.changed} changed, ${flush.failed} failed` +
-        `${flush.failed > 0 ? " — the intent STAYS ARMED, so the next reply re-offers the write" : ""}`,
+        `${flush.failed > 0 || !landed ? " — the intent STAYS ARMED (or retires on its bound), so the next post re-offers the write" : ""}`,
     );
     return flush;
   } catch (err) {

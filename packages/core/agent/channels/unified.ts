@@ -35,6 +35,7 @@ import {
 } from "./question-bridge.js";
 import { admitInputResponse } from "../approvals/input-response-floor.js";
 import { resolvePartition } from "../memory/partition.js";
+import { flushWriteIntentMemory, type MemoryPersistContext } from "../hooks/memory.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
@@ -554,6 +555,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           const creatorId = attestedFireCreatorId(bind);
           const turnId = currentTurnId(bind);
           const owingTask = wakeId ? pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId)) : undefined;
+          await flushWriteIntentMemory(ctx as unknown as MemoryPersistContext);
           const id = await postUnifiedReply(
             origin,
             withRunRefusalBlock(action.text, consumeRoutineRunPermissionRefusals()),

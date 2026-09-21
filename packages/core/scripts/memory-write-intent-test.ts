@@ -23,7 +23,7 @@ _setDeploymentIdentityForTest({ org: undefined });
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
-const { isRememberAsk, noteWriteIntent, writeIntentArmed, consumeWriteIntent, REMEMBER_ASK_PATTERNS } = await import("../agent/memory/write-intent.js");
+const { isRememberAsk, noteWriteIntent, writeIntentArmed, consumeWriteIntent, REMEMBER_ASK_PATTERNS, MAX_UNSERVED_POSTS } = await import("../agent/memory/write-intent.js");
 const { flushWriteIntentMemory } = await import("../agent/hooks/memory.js");
 const { noteTaskDispatched } = await import("../agent/hooks/settlement-flush.js");
 const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
@@ -232,7 +232,7 @@ async function memoryWriteRows(): Promise<{ road: string; turnId: string | undef
     noteWriteIntent("remember this: the OPE121 canary code is obsidian-30653");
     const flush = await flushWriteIntentMemory(seat.ctx);
     ok(flush !== null && flush.changed === 1, `the in-turn persist CHANGED the store (${JSON.stringify(flush)})`);
-    ok(!writeIntentArmed(), "and the intent is spent once the persist ran");
+    ok(!writeIntentArmed(), "and the intent is spent once a durable write LANDED for the turn");
 
     ok(factStoredThisTurn("turn_armed"), "AFTER the flush the turn holds write evidence — the row the reply guard reads");
     ok(!factStoredThisTurn("turn_other"), "and it backs THIS turn only — yesterday's write can never back today's ack");
@@ -256,6 +256,37 @@ async function memoryWriteRows(): Promise<{ road: string; turnId: string | undef
   });
 }
 
+{
+  const seat = makeSeat("sess-nothing", "turn_nothing");
+  const before = (await memoryWriteRows()).length;
+  await inEveContext(new FakeEveContext(), async () => {
+    noteWriteIntent("remember this: the release decision is shipit-6125");
+    const flush = await flushWriteIntentMemory(seat.ctx);
+    ok(flush !== null, "the persist RAN — nothing held it, so this is not the fan-out skip above");
+    ok(flush !== null && flush.changed === 0 && flush.failed === 0, `and it landed NOTHING (${JSON.stringify(flush)})`);
+    ok(!factStoredThisTurn("turn_nothing"), "so the turn holds NO write evidence — the fact the rule below keys on");
+    ok(writeIntentArmed(), "the intent SURVIVES a post that persisted nothing, so the next post of the same ask re-offers the write");
+  });
+  ok((await memoryWriteRows()).length === before, "and no memory.write row was written — the negative control for the assertion above");
+}
+
+{
+  const seat = makeSeat("sess-bounded", "turn_bounded");
+  await inEveContext(new FakeEveContext(), async () => {
+    noteWriteIntent("remember this: an ask nothing is ever written for");
+    for (let i = 1; i < MAX_UNSERVED_POSTS; i++) {
+      await flushWriteIntentMemory(seat.ctx);
+      ok(writeIntentArmed(), `the intent is still armed after ${i} post(s) that landed nothing`);
+    }
+    await flushWriteIntentMemory(seat.ctx);
+    ok(!writeIntentArmed(), `and it RETIRES on the ${MAX_UNSERVED_POSTS}th, so the persist stops being paid for on every post`);
+    noteWriteIntent("remember this: a second, later ask");
+    ok(writeIntentArmed(), "a fresh remember-ask RE-ARMS after a retirement");
+    await flushWriteIntentMemory(seat.ctx);
+    ok(writeIntentArmed(), "…with its own full budget, not the exhausted one");
+  });
+}
+
 const agentDir = join(fileURLToPath(new URL("..", import.meta.url)), "agent");
 const replySrc = readFileSync(join(agentDir, "tools", "reply.ts"), "utf-8");
 const hookSrc = readFileSync(join(agentDir, "hooks", "memory.ts"), "utf-8");
@@ -276,6 +307,15 @@ for (const [i, at] of postAts.entries()) {
   ok(i === 0 || flushAt > postAts[i - 1]!, `the call before ${postDoors[i]} is its OWN, not the previous door's`);
 }
 
+const unifiedSrc = readFileSync(join(agentDir, "channels", "unified.ts"), "utf-8");
+const bridgeAt = unifiedSrc.indexOf("shouldBridgeAddressedProse(");
+ok(bridgeAt > -1, "the scan finds the addressed-mention bridge — a scan that missed it would pass vacuously");
+const bridgePostAt = unifiedSrc.indexOf("await postUnifiedReply(", bridgeAt);
+ok(bridgePostAt > -1, "…and the post it makes");
+const bridgeFlushAt = unifiedSrc.indexOf("flushWriteIntentMemory(", bridgeAt);
+ok(bridgeFlushAt > -1, "the relay door calls the in-turn persist — without it a delegated ask's report has no write in front of it");
+ok(bridgeFlushAt < bridgePostAt, "…and it runs BEFORE the post, which is the only position the claim guard can read");
+
 const flushAt = hookSrc.indexOf("export async function flushWriteIntentMemory");
 ok(flushAt > -1, "the flush is exported from the module that owns the persist road");
 const flushBody = hookSrc.slice(flushAt, flushAt + 2000);
@@ -288,6 +328,14 @@ const namingAdapters = readdirSync(chanDir)
   .filter((n) => readFileSync(join(chanDir, n), "utf-8").includes("write-intent.js"));
 ok(readdirSync(chanDir).length > 10, "the channel scan sees the adapter directory — an empty scan would pass vacuously");
 ok(namingAdapters.length === 0, `PARITY: no channel adapter names the write-intent road — naming it: ${namingAdapters.join(", ")}`);
+
+const flushingAdapters = readdirSync(chanDir)
+  .filter((n) => n.endsWith(".ts"))
+  .filter((n) => readFileSync(join(chanDir, n), "utf-8").includes("flushWriteIntentMemory("));
+ok(
+  flushingAdapters.length === 1 && flushingAdapters[0] === "unified.ts",
+  `PARITY: the in-turn persist reaches the channels directory at unified.ts ALONE — found: ${flushingAdapters.join(", ")}`,
+);
 
 const providersDir = join(fileURLToPath(new URL("../../", import.meta.url)), "providers");
 const bundles = readdirSync(providersDir).filter((b) => {
