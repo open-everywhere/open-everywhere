@@ -2,7 +2,7 @@ import type { AuditWireEntry } from "./audit-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
-import { DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
 import type { PrimingFlightInput, PrimingFlightVerdict } from "./coalesced-burst.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
@@ -534,6 +534,7 @@ export interface SeedWriteRead {
   readonly beforeFloor: number;
   readonly unreadableRoad: number;
   readonly unplaceable: number;
+  readonly afterSettlement: number;
   readonly detail: string;
 }
 
@@ -547,7 +548,7 @@ function positionCompare(a: AuditWireEntry, b: AuditWireEntry): number | undefin
 
 export function seedMemoryWrites(
   rows: readonly AuditWireEntry[],
-  opts: { readonly seedTurnStartMs?: number } = {},
+  opts: { readonly seedTurnStartMs?: number; readonly settlementPost?: AuditWireEntry } = {},
 ): SeedWriteRead {
   const all = rows.filter((r) => r.action === MEMORY_WRITE_ACTION);
   let anchor: AuditWireEntry | undefined;
@@ -569,6 +570,7 @@ export function seedMemoryWrites(
   let beforeFloor = 0;
   let unreadableRoad = 0;
   let unplaceable = 0;
+  let afterSettlement = 0;
   for (const r of all) {
     const road = dstr(r, "road");
     if (road === MEMORY_PURGE_ROAD) continue;
@@ -578,18 +580,28 @@ export function seedMemoryWrites(
     }
     let placed = true;
     let after = true;
-    if (turnFloor !== undefined) {
+    let aboveCeiling = false;
+    if (opts.settlementPost !== undefined) {
+      const cmp = positionCompare(r, opts.settlementPost);
+      if (cmp === undefined) placed = false;
+      else if (cmp > 0) aboveCeiling = true;
+    }
+    if (placed && !aboveCeiling && turnFloor !== undefined) {
       const at = tsMs(r);
       if (!Number.isFinite(at)) placed = false;
       else if (at < turnFloor) after = false;
     }
-    if (placed && after && anchor !== undefined) {
+    if (placed && !aboveCeiling && after && anchor !== undefined) {
       const cmp = positionCompare(r, anchor);
       if (cmp === undefined) placed = false;
       else if (cmp <= 0) after = false;
     }
     if (!placed) {
       unplaceable += 1;
+      continue;
+    }
+    if (aboveCeiling) {
+      afterSettlement += 1;
       continue;
     }
     if (!after) {
@@ -622,10 +634,12 @@ export function seedMemoryWrites(
     beforeFloor,
     unreadableRoad,
     unplaceable,
+    afterSettlement,
     detail:
       `${writes.length} ${MEMORY_WRITE_ACTION} row(s) count as the SEED's own write, floored on ${floorSaid}; ` +
       `excluded: ${purgeWrites} on the "${MEMORY_PURGE_ROAD}" road (leg 0's erase), ${beforeFloor} at or before the floor, ` +
-      `${unreadableRoad} with no readable road, ${unplaceable} this reader could not place`,
+      `${unreadableRoad} with no readable road, ${unplaceable} this reader could not place` +
+      (opts.settlementPost === undefined ? "" : `, ${afterSettlement} after the settlement post (OPE-1915: the worker persists BEFORE it)`),
   };
 }
 
@@ -754,5 +768,172 @@ export function coalescedBurstOutcome(attempts: readonly CoalescedAttemptRecord[
       } ` +
       `${anyPrimed ? "At least one priming turn started, so the wake road is not the problem." : "NO priming turn started on any attempt, so look at the priming wait first."} ` +
       `Per attempt — ${perAttempt}.`,
+  };
+}
+
+export const MEMORY_CLAIM_WITHHELD_ACTION = "memory.claim_withheld";
+
+export type SeedSettlementKind =
+  | "unjoinable"
+  | "unread"
+  | "inline"
+  | "unsettled"
+  | "unposted"
+  | "settled";
+
+export interface SeedSettlementRead {
+  readonly kind: SeedSettlementKind;
+  readonly dispatched: readonly string[];
+  readonly unsettled: readonly string[];
+  readonly settlement?: AuditWireEntry;
+  readonly post?: AuditWireEntry;
+  readonly roundTripMs?: number;
+  readonly claimsWithheld: number;
+  readonly detail: string;
+}
+
+export function seedSettlementRead(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly seedWakeId?: string; readonly seedTurnStartMs?: number; readonly ackId?: string },
+): SeedSettlementRead {
+  const floor = typeof opts.seedTurnStartMs === "number" && Number.isFinite(opts.seedTurnStartMs) ? opts.seedTurnStartMs : undefined;
+  const base = { dispatched: [] as readonly string[], unsettled: [] as readonly string[], claimsWithheld: 0 };
+  if (opts.seedWakeId === undefined || floor === undefined) {
+    return {
+      ...base,
+      kind: "unjoinable",
+      detail:
+        `the seed turn's delegation cannot be joined: ${opts.seedWakeId === undefined ? `no ${WAKE_INGRESS_ACTION} row for the seed post` : `no ${WAKE_TURN_START_ACTION} row for seed wake ${opts.seedWakeId}`}` +
+        " — the gate takes the INLINE path, which is its pre-OPE-2036 behaviour",
+    };
+  }
+  const seedWakeId = opts.seedWakeId;
+  const lineage = wakeLineage(rows, seedWakeId, floor);
+  const claimsWithheld = rows.filter((r) => {
+    if (r.action !== MEMORY_CLAIM_WITHHELD_ACTION) return false;
+    const wake = dstr(r, "wakeId");
+    return wake !== undefined && lineage.has(wake);
+  }).length;
+  const ackId = opts.ackId;
+  if (ackId !== undefined && !rows.some((r) => r.action === REPLY_POST_ACTION && dstr(r, "id") === ackId)) {
+    return {
+      ...base,
+      claimsWithheld,
+      kind: "unread",
+      detail: `no ${REPLY_POST_ACTION} row names the seed ack ${ackId} yet, so a missing ${DELEGATION_TASK_STARTED_ACTION} row cannot yet be read as "the seat wrote inline"`,
+    };
+  }
+
+  const dispatchedHere = tasksDispatchedAtOrAfter(rows, floor);
+  const seatSession = ackId === undefined ? undefined : replyPostSessionId(rows, ackId);
+  const dispatched: string[] = [];
+  const otherSessions = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+    const task = dstr(r, "task");
+    if (task === undefined || !dispatchedHere.has(task) || dispatched.includes(task)) continue;
+    if (seatSession !== undefined && dstr(r, "session") !== seatSession) {
+      otherSessions.add(task);
+      continue;
+    }
+    dispatched.push(task);
+  }
+  if (seatSession === undefined && dispatched.length > 0) {
+    return {
+      ...base,
+      claimsWithheld,
+      kind: "unjoinable",
+      detail:
+        `${dispatched.length} ${DELEGATION_TASK_STARTED_ACTION} row(s) stand inside the seed turn and no ${REPLY_POST_ACTION} row names a ` +
+        `session for the seed ack ${ackId ?? "(none given)"}, so this reader cannot tell the seat's own dispatch from a fire's — ` +
+        "the gate takes §16's inline path rather than waiting on a task that may not be this turn's",
+    };
+  }
+  const alsoSaid = otherSessions.size === 0 ? "" : ` (${otherSessions.size} dispatch(es) inside the same window belong to ANOTHER session and are not this turn's)`;
+  if (dispatched.length === 0) {
+    return {
+      ...base,
+      claimsWithheld,
+      kind: "inline",
+      detail: `the seed turn dispatched no worker at or after its own start — the seat wrote INLINE and §16's path is unchanged${alsoSaid}`,
+    };
+  }
+
+  const unsettled: string[] = [];
+  let settlement: AuditWireEntry | undefined;
+  for (const task of dispatched) {
+    const settled = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dstr(r, "task") === task);
+    if (settled === undefined) {
+      unsettled.push(task);
+      continue;
+    }
+    if (settlement === undefined) {
+      settlement = settled;
+      continue;
+    }
+    const cmp = positionCompare(settled, settlement);
+    if (cmp !== undefined && cmp > 0) settlement = settled;
+  }
+  if (unsettled.length > 0 || settlement === undefined) {
+    return {
+      dispatched,
+      unsettled,
+      claimsWithheld,
+      kind: "unsettled",
+      detail:
+        `the seed turn DELEGATED the remember (task(s) ${dispatched.join(", ")}) and ${unsettled.length} of them carry no ` +
+        `${DELEGATION_TASK_SETTLED_ACTION} row yet (${unsettled.join(", ") || "none readable"}) — the worker is still running${alsoSaid}`,
+    };
+  }
+
+  let post: AuditWireEntry | undefined;
+  let outsideLineage = 0;
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    const id = dstr(r, "id");
+    const wake = dstr(r, "wakeId");
+    if (id === undefined || wake === undefined) continue;
+    if (ackId !== undefined && id === ackId) continue;
+    if (!lineage.has(wake)) {
+      outsideLineage += 1;
+      continue;
+    }
+    const cmp = positionCompare(r, settlement);
+    if (cmp === undefined || cmp < 0) continue;
+    if (post === undefined) {
+      post = r;
+      continue;
+    }
+    const against = positionCompare(r, post);
+    if (against !== undefined && against < 0) post = r;
+  }
+  if (post === undefined) {
+    return {
+      dispatched,
+      unsettled,
+      settlement,
+      claimsWithheld,
+      kind: "unposted",
+      detail:
+        `every task the seed turn dispatched (${dispatched.join(", ")}) has settled, and no ${REPLY_POST_ACTION} row on seed wake ` +
+        `${seedWakeId}'s own lineage stands at or after the settlement (${outsideLineage} reply row(s) in the window belong to another wake) — ` +
+        "the settlement has not been posted yet, or it FOLDED into an edit of the ack (OPE-1949)",
+    };
+  }
+  const postMs = tsMs(post);
+  const roundTripMs = Number.isFinite(postMs) && postMs >= floor ? postMs - floor : undefined;
+  return {
+    dispatched,
+    unsettled,
+    settlement,
+    post,
+    claimsWithheld,
+    ...(roundTripMs === undefined ? {} : { roundTripMs }),
+    kind: "settled",
+    detail:
+      `the seed turn DELEGATED the remember to ${dispatched.length} worker(s) (${dispatched.join(", ")}), every one settled, and the ` +
+      `SETTLEMENT POST ${dstr(post, "id") ?? "(no id)"} stands at or after the newest settlement on seed wake ${seedWakeId}'s lineage` +
+      `${roundTripMs === undefined ? "" : ` — round trip ${roundTripMs}ms from the seed turn's start`}` +
+      `; ${claimsWithheld} withheld durability claim(s) on this lineage, which is the EXPECTED shape for the interim ack${alsoSaid}`,
   };
 }

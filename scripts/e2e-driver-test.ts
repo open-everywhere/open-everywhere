@@ -6261,6 +6261,44 @@ rmSync(dir, { recursive: true, force: true });
         memRead.includes("ThisSUPERSEDEStheerasure"),
         "…and the seed supersedes the erasure explicitly: either half alone still leaves a standing erasure over the code the seat is being handed",
       );
+
+      ok(
+        memRead.includes("seedSettlementRead"),
+        "🔴 OPE-2036: the leg asks `seedSettlementRead` which shape the seed turn took, rather than assuming the seat wrote inline",
+      );
+      const settleWaitAt = memRead.indexOf("theworker'ssettlementpost,thenthepersistrowstandingrightbeforeit");
+      const writeWaitAt = memRead.indexOf("thecanary'sownmemory.writeauditrow");
+      ok(settleWaitAt >= 0 && writeWaitAt >= 0, `🔴 OPE-2036: BOTH seed waits are present — the inline one and the delegated one (settle at ${settleWaitAt}, write at ${writeWaitAt})`);
+      ok(
+        /timeoutMs:REPLY_WAIT,[^}]{0,80}what:"seed:theworker'ssettlementpost/.test(memRead),
+        "🔴 OPE-2036: the DELEGATED seed wait is bounded by REPLY_WAIT — the same settlement wait the S-DELEGATED-* legs use, never AUDIT_ROW_WAIT measured from the interim ack",
+      );
+      ok(
+        /timeoutMs:AUDIT_ROW_WAIT,[^}]{0,80}what:"seed:thecanary'sownmemory\.writeauditrow/.test(memRead),
+        "…and the INLINE seed wait keeps its own AUDIT_ROW_WAIT bound, unchanged — OPE-2036 build item 4",
+      );
+      ok(
+        memRead.includes("settlementPost:settle.post"),
+        "🔴 OPE-2036: §16's filter runs on the delegated path with the SETTLEMENT POST as its ceiling — the worker persists before it reports (OPE-1915)",
+      );
+      ok(
+        memRead.includes("MEMORY_CLAIM_WITHHELD_ACTION"),
+        "🔴 OPE-2036: the seed read asks for the claim-withheld rows, so the interim ack's struck \"stored\" claim can be LOGGED as the expected shape rather than read as a failure",
+      );
+      ok(
+        memRead.includes("seedDelegation?.roundTripMs"),
+        "🔴 OPE-2036 build item 5: the leg REPORTS the turn start → settlement round trip, so a slow worker is visible without gating on it",
+      );
+      ok(
+        memRead.includes('seedDelegation.kind==="unsettled"||seedDelegation.kind==="unposted"'),
+        "🔴 OPE-2036: the leg reads BOTH no-settlement verdicts — the worker still running, and a settlement that never posted",
+      );
+      const noSettleAt = memRead.indexOf("NOSETTLEMENTwithin");
+      ok(noSettleAt >= 0, `🔴 OPE-2036: the red NAMES the missing settlement (found at ${noSettleAt})`);
+      ok(
+        memRead.includes("thisredsaystheWORKERdidnotreport,neverthatthecanarywasnotstored"),
+        "…and says what it does NOT claim, so the next reader goes to the worker rather than to the write path",
+      );
     }
 
     {
@@ -7136,116 +7174,144 @@ rmSync(dir, { recursive: true, force: true });
   ok(!isFillerAck(interimText("obsidian-81091")), "the measured interim post is NOT a filler ack — the fix cannot be a text pattern (OPE-2011)");
   ok(isFillerAck("I'm checking the current memory files on disk now"), "positive control: the ack IS filler, so the leg's own skip predicate is not vacuous");
 
-  let canary = "";
-  let askPosted = false;
-  let readsSinceAsk = 0;
-  let replyHandouts = 0;
-  const delivered = new Set<string>();
-  const gateLabels: string[] = [];
-  const logs: string[] = [];
-  const nowIso = () => new Date().toISOString();
-  const row = (action: string, detail: Record<string, unknown>, seq: number): AuditWireEntry => ({
-    ts: nowIso(), org: "default", platform: "ingest", workspace: "e2e", action, detail, seq,
-  });
-  const rowAt = (action: string, detail: Record<string, unknown>, seq: number, ts: string): AuditWireEntry => ({ ...row(action, detail, seq), ts });
   const SEED_WAKE = "w-seed";
   const SEED_SURFACE = "slack/T0EXAMPLE/C0E2ESEED";
-  const seedWindowRows = (): AuditWireEntry[] => [
-    rowAt("memory.write", { road: "purge", kind: "memory", silo: "e2e-ambient-brain", version: 377 }, 1, "2026-06-03T12:05:25.742Z"),
-    rowAt("memory.write", { road: "session-persist", outcome: "edited", kind: "memory", silo: "e2e-ambient-brain" }, 2, "2026-06-03T12:05:26.100Z"),
-    rowAt("wake.ingress", { wakeId: SEED_WAKE, surfaceKey: SEED_SURFACE, vendorTs: new Date(SEED_AT_MS).toISOString() }, 3, "2026-06-03T12:05:26.400Z"),
-    rowAt("wake.turn_start", { wakeId: SEED_WAKE }, 4, "2026-06-03T12:05:27.000Z"),
-    rowAt(
-      "memory.write",
-      { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", sessionId: SEAT },
-      5,
-      "2026-09-26T12:33:44.900Z",
-    ),
-  ];
-  const recallRows = (): AuditWireEntry[] => {
-    const out: AuditWireEntry[] = [
-      row("delegation.task_started", { task: TASK, session: SEAT, call: CALL }, 10),
-      row("worker.toolset", { worker: WORKER, parentCallId: CALL, parentSession: SEAT, rootSession: SEAT }, 11),
-    ];
-    if (delivered.has(INTERIM_TS)) out.push(row("reply.post", { id: INTERIM_TS, sessionId: SEAT, wakeId: "w-ask" }, 15));
-    if (readsSinceAsk >= 2) out.push(row("delegation.task_settled", { task: TASK, session: SEAT, status: "completed", adopted: true }, 20));
-    if (delivered.has(ANSWER_TS)) out.push(row("reply.post", { id: ANSWER_TS, sessionId: SEAT, wakeId: "w-task" }, 25));
-    return out;
-  };
-  const event = (index: number, type: string, data: unknown): TranscriptWireEvent => ({ index, at: nowIso(), type, data });
+  const SEED_ACK_TS = "1000.000002";
+  const SEED_SETTLEMENT_TS = "1000.000003";
+  const SEED_TASK = "task_933d7c41f8ab4e2f91d07b5c";
 
-  const slack = {
-    botUserId: "U0OPENEVERYWHERE",
-    channelId: "C0E2ESEED",
-    mention: (text: string) => `<@U0OPENEVERYWHERE> ${text}`,
-    async identity() {
-      return { userId: "U0EXOWNER", teamId: "T0EXAMPLE" };
-    },
-    async post(text: string) {
-      const found = /obsidian-\d{1,5}/.exec(text);
-      if (found) canary = found[0];
-      if (!askPosted && found === null) {
-        askPosted = true;
-        return { ts: ASK_TS };
+  const runLeg = async (seedDelegates: boolean) => {
+    let canary = "";
+    let askPosted = false;
+    let readsSinceAsk = 0;
+    let seedReads = 0;
+    let replyHandouts = 0;
+    const delivered = new Set<string>();
+    const gateLabels: string[] = [];
+    const logs: string[] = [];
+    const nowIso = () => new Date().toISOString();
+    const row = (action: string, detail: Record<string, unknown>, seq: number): AuditWireEntry => ({
+      ts: nowIso(), org: "default", platform: "ingest", workspace: "e2e", action, detail, seq,
+    });
+    const rowAt = (action: string, detail: Record<string, unknown>, seq: number, ts: string): AuditWireEntry => ({ ...row(action, detail, seq), ts });
+    const seedWindowRows = (): AuditWireEntry[] => {
+      seedReads++;
+      const rows: AuditWireEntry[] = [
+        rowAt("memory.write", { road: "purge", kind: "memory", silo: "e2e-ambient-brain", version: 377 }, 1, "2026-06-03T12:05:25.742Z"),
+        rowAt("memory.write", { road: "session-persist", outcome: "edited", kind: "memory", silo: "e2e-ambient-brain" }, 2, "2026-06-03T12:05:26.100Z"),
+        rowAt("wake.ingress", { wakeId: SEED_WAKE, surfaceKey: SEED_SURFACE, vendorTs: new Date(SEED_AT_MS).toISOString() }, 3, "2026-06-03T12:05:26.400Z"),
+        rowAt("wake.turn_start", { wakeId: SEED_WAKE }, 4, "2026-06-03T12:05:27.000Z"),
+      ];
+      if (!seedDelegates) {
+        rows.push(
+          rowAt("memory.write", { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", sessionId: SEAT }, 5, "2026-06-03T12:05:44.900Z"),
+          rowAt("reply.post", { id: SEED_ACK_TS, sessionId: SEAT, wakeId: SEED_WAKE }, 6, "2026-06-03T12:05:45.100Z"),
+        );
+        return rows;
       }
-      return { ts: SEED_TS };
-    },
-    async awaitThreadReply(rootTs: string, opts: { afterTs?: string; timeoutMs: number; skip?: (m: { text: string }) => boolean }) {
-      if (rootTs === SEED_TS) return { ts: "1000.000002", threadTs: SEED_TS, text: `Saved — the OPE121 canary code \`${canary}\` is recorded in notes.md and indexed in MEMORY.md.` };
-      const next = replyHandouts === 0
-        ? { ts: INTERIM_TS, threadTs: ASK_TS, text: interimText(canary) }
-        : replyHandouts === 1
-          ? { ts: ANSWER_TS, threadTs: ASK_TS, text: answerText(canary) }
-          : undefined;
-      if (next === undefined) throw new PollTimeout(`a substantive bot reply in thread ${rootTs}`, opts.timeoutMs);
-      ok(opts.skip?.(next) !== true, `the reply the stub hands back (${next.ts}) passes the leg's own skip predicate`);
-      replyHandouts++;
-      delivered.add(next.ts);
-      return next;
-    },
+      rows.push(
+        rowAt("delegation.task_started", { task: SEED_TASK, session: SEAT, call: "call_seed" }, 5, "2026-06-03T12:05:37.884Z"),
+        rowAt("reply.post", { id: SEED_ACK_TS, sessionId: SEAT, wakeId: SEED_WAKE }, 6, "2026-06-03T12:05:49.820Z"),
+        rowAt("memory.claim_withheld", { claims: 1, shapes: ["stored"], wakeId: SEED_WAKE, sessionId: SEAT }, 7, "2026-06-03T12:05:49.853Z"),
+      );
+      if (seedReads >= 2) {
+        rows.push(
+          rowAt("delegation.task_settled", { task: SEED_TASK, session: SEAT, status: "completed" }, 8, "2026-06-03T12:07:08.100Z"),
+          rowAt("memory.write", { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", version: 379 }, 9, "2026-06-03T12:07:08.442Z"),
+          rowAt("reply.post", { id: SEED_SETTLEMENT_TS, sessionId: SEAT, wakeId: SEED_WAKE }, 10, "2026-06-03T12:07:08.565Z"),
+          rowAt("memory.write", { road: "session-persist", outcome: "edited", kind: "memory", silo: "e2e-ambient-brain", version: 380 }, 11, "2026-06-03T12:07:09.000Z"),
+        );
+      }
+      return rows;
+    };
+    const recallRows = (): AuditWireEntry[] => {
+      const out: AuditWireEntry[] = [
+        row("delegation.task_started", { task: TASK, session: SEAT, call: CALL }, 10),
+        row("worker.toolset", { worker: WORKER, parentCallId: CALL, parentSession: SEAT, rootSession: SEAT }, 11),
+      ];
+      if (delivered.has(INTERIM_TS)) out.push(row("reply.post", { id: INTERIM_TS, sessionId: SEAT, wakeId: "w-ask" }, 15));
+      if (readsSinceAsk >= 2) out.push(row("delegation.task_settled", { task: TASK, session: SEAT, status: "completed", adopted: true }, 20));
+      if (delivered.has(ANSWER_TS)) out.push(row("reply.post", { id: ANSWER_TS, sessionId: SEAT, wakeId: "w-task" }, 25));
+      return out;
+    };
+    const event = (index: number, type: string, data: unknown): TranscriptWireEvent => ({ index, at: nowIso(), type, data });
+
+    const slack = {
+      botUserId: "U0OPENEVERYWHERE",
+      channelId: "C0E2ESEED",
+      mention: (text: string) => `<@U0OPENEVERYWHERE> ${text}`,
+      async identity() {
+        return { userId: "U0EXOWNER", teamId: "T0EXAMPLE" };
+      },
+      async post(text: string) {
+        const found = /obsidian-\d{1,5}/.exec(text);
+        if (found) canary = found[0];
+        if (!askPosted && found === null) {
+          askPosted = true;
+          return { ts: ASK_TS };
+        }
+        return { ts: SEED_TS };
+      },
+      async awaitThreadReply(rootTs: string, opts: { afterTs?: string; timeoutMs: number; skip?: (m: { text: string }) => boolean }) {
+        if (rootTs === SEED_TS) return { ts: SEED_ACK_TS, threadTs: SEED_TS, text: `Saved — the OPE121 canary code \`${canary}\` is recorded in notes.md and indexed in MEMORY.md.` };
+        const next = replyHandouts === 0
+          ? { ts: INTERIM_TS, threadTs: ASK_TS, text: interimText(canary) }
+          : replyHandouts === 1
+            ? { ts: ANSWER_TS, threadTs: ASK_TS, text: answerText(canary) }
+            : undefined;
+        if (next === undefined) throw new PollTimeout(`a substantive bot reply in thread ${rootTs}`, opts.timeoutMs);
+        ok(opts.skip?.(next) !== true, `the reply the stub hands back (${next.ts}) passes the leg's own skip predicate`);
+        replyHandouts++;
+        delivered.add(next.ts);
+        return next;
+      },
+    };
+
+    await scenario.run({
+      slack,
+      async auditRead(opts: { actions?: readonly string[] }) {
+        if (opts.actions?.includes("memory.write")) return seedWindowRows();
+        readsSinceAsk++;
+        return recallRows();
+      },
+      async transcriptRead(sessionId: string) {
+        return sessionId === WORKER
+          ? [
+              event(0, "session.started", { turnId: "t1" }),
+              event(1, "turn.started", { turnId: "t1" }),
+              event(2, "actions.requested", { turnId: "t1", stepIndex: 0, calls: [{ name: "bash", input: { command: "rg -n 'obsidian-' memory/e2e-ambient-brain/MEMORY.md memory/e2e-ambient-brain/notes.md" } }] }),
+              event(3, "turn.completed", { turnId: "t1" }),
+            ]
+          : [event(0, "turn.started", { turnId: "s1" }), event(1, "turn.completed", { turnId: "s1" })];
+      },
+      gate(pass: boolean, label: string) {
+        gateLabels.push(label);
+        if (!pass) throw new Error(`GATE ${label}`);
+      },
+      skip(reason: string): never {
+        throw new ScenarioSkip(reason);
+      },
+      log(line: string) {
+        logs.push(line);
+      },
+      recordTiming() {},
+    } as never);
+    return { gateLabels, logs, replyHandouts, seedReads };
   };
 
-  await scenario.run({
-    slack,
-    async auditRead(opts: { actions?: readonly string[] }) {
-      if (opts.actions?.includes("memory.write")) return seedWindowRows();
-      readsSinceAsk++;
-      return recallRows();
-    },
-    async transcriptRead(sessionId: string) {
-      return sessionId === WORKER
-        ? [
-            event(0, "session.started", { turnId: "t1" }),
-            event(1, "turn.started", { turnId: "t1" }),
-            event(2, "actions.requested", { turnId: "t1", stepIndex: 0, calls: [{ name: "bash", input: { command: "rg -n 'obsidian-' memory/e2e-ambient-brain/MEMORY.md memory/e2e-ambient-brain/notes.md" } }] }),
-            event(3, "turn.completed", { turnId: "t1" }),
-          ]
-        : [event(0, "turn.started", { turnId: "s1" }), event(1, "turn.completed", { turnId: "s1" })];
-    },
-    gate(pass: boolean, label: string) {
-      gateLabels.push(label);
-      if (!pass) throw new Error(`GATE ${label}`);
-    },
-    skip(reason: string): never {
-      throw new ScenarioSkip(reason);
-    },
-    log(line: string) {
-      logs.push(line);
-    },
-    recordTiming() {},
-  } as never);
+  const inline = await runLeg(false);
 
-  const canaryGate = gateLabels.find((l) => l.startsWith("recall: the reply carries the seeded canary")) ?? "";
+  const canaryGate = inline.gateLabels.find((l) => l.startsWith("recall: the reply carries the seeded canary")) ?? "";
   ok(canaryGate.includes("I found it in exactly two memory files"), "the leg grades the FINAL reply — the one posted after the settlement row (OPE-2011)");
   ok(!canaryGate.includes("still waiting on the separate read-only disk inspection"), "…and NOT the interim post it used to take as the answer");
 
-  const joinedGate = gateLabels.find((l) => l.startsWith("JOINED:")) ?? "";
+  const joinedGate = inline.gateLabels.find((l) => l.startsWith("JOINED:")) ?? "";
   ok(joinedGate.includes("0/1 had gaps"), `the delegation join finds the settlement row (JOINED said: ${joinedGate.slice(0, 160)})`);
-  ok(logs.some((l) => l.startsWith("recall answer: answer") && l.includes("stepped over 1 interim post")), "…and the run log says the wait stepped over exactly one interim post");
-  ok(logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
-  ok(replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${replyHandouts})`);
+  ok(inline.logs.some((l) => l.startsWith("recall answer: answer") && l.includes("stepped over 1 interim post")), "…and the run log says the wait stepped over exactly one interim post");
+  ok(inline.logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
+  ok(inline.replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${inline.replyHandouts})`);
 
-  const seedEvidence = logs.find((l) => l.startsWith("seed evidence:")) ?? "";
+  const seedEvidence = inline.logs.find((l) => l.startsWith("seed evidence:")) ?? "";
   ok(
     seedEvidence.includes("1 memory.write row(s) count as the SEED's own write"),
     `🔴 OPE-2028: the seed gate counts ONE row — the seed's own — out of the three memory.write rows in the window (log said: ${seedEvidence.slice(0, 200)})`,
@@ -7262,6 +7328,41 @@ rmSync(dir, { recursive: true, force: true });
     seedEvidence.includes("1 at or before the floor"),
     "…and that floor is APPLIED, not merely resolved: the purge TURN's own turn-end persist rides a non-purge road and is excluded by position alone",
   );
+  ok(
+    inline.logs.some((l) => l.startsWith("seed route: IN-SEAT")),
+    `🔴 OPE-2036: a seed turn with no dispatch row is read as IN-SEAT (route line: ${(inline.logs.find((l) => l.startsWith("seed route:")) ?? "none").slice(0, 160)})`,
+  );
+  ok(!seedEvidence.includes("after the settlement post"), "…and the inline evidence sentence carries no settlement ceiling, so it is byte-identical to the pre-OPE-2036 one");
+  ok(!inline.logs.some((l) => l.startsWith("seed round-trip:")), "…and no round trip is reported for a turn that never delegated");
+
+  const delegatedSeed = await runLeg(true);
+  const delegatedRoute = delegatedSeed.logs.find((l) => l.startsWith("seed route:")) ?? "";
+  ok(delegatedRoute.startsWith("seed route: DELEGATED"), `🔴 OPE-2036: the leg detects that the SEED turn dispatched a worker (route line: ${delegatedRoute.slice(0, 200)})`);
+  ok(delegatedRoute.includes(SEED_TASK), `…naming the task the seed turn dispatched (got ${delegatedRoute.slice(0, 200)})`);
+  ok(delegatedSeed.seedReads >= 2, `🔴 OPE-2036: the leg keeps reading for the settlement after classing the route as DELEGATED (seed reads ${delegatedSeed.seedReads})`);
+  const delegatedEvidence = delegatedSeed.logs.find((l) => l.startsWith("seed evidence:")) ?? "";
+  ok(
+    delegatedEvidence.includes("1 memory.write row(s) count as the SEED's own write"),
+    `🔴 OPE-2036: the gate counts the WORKER's persist — the row standing right before the settlement post (log said: ${delegatedEvidence.slice(0, 220)})`,
+  );
+  ok(
+    delegatedEvidence.includes('1 on the "purge" road') && delegatedEvidence.includes("1 at or before the floor"),
+    "…with §16's road and floor terms still applied, so the delegated path is the SAME filter under a ceiling and not a second gate",
+  );
+  ok(
+    delegatedEvidence.includes("1 after the settlement post"),
+    `🔴 OPE-2036: the CEILING excludes the decoy write standing above the settlement post, and counts it (log said: ${delegatedEvidence.slice(0, 220)})`,
+  );
+  const roundTrip = delegatedSeed.logs.find((l) => l.startsWith("seed round-trip:")) ?? "";
+  ok(roundTrip.includes(`${Date.parse("2026-06-03T12:07:08.565Z") - Date.parse("2026-06-03T12:05:27.000Z")}ms`), `🔴 OPE-2036 build item 5: the round trip is REPORTED, turn start → settlement post (got ${roundTrip})`);
+  ok(roundTrip.includes("never gated"), "…and the line says it is recorded rather than thresholded — delegations of this shape ranged 19.9 s to 733.0 s in one day");
+  ok(
+    delegatedSeed.logs.some((l) => l.includes("durability claim(s) were STRUCK")),
+    "🔴 OPE-2036: the interim ack's struck \"stored\" claim is LOGGED as the expected shape, never read as a failure",
+  );
+  const delegatedSeedGate = delegatedSeed.gateLabels.find((l) => l.startsWith("seed:")) ?? "";
+  ok(delegatedSeedGate.includes("reached the SILO"), `…and the seed gate PASSES on the delegated turn, which is the board this ticket exists for (gate said: ${delegatedSeedGate.slice(0, 160)})`);
+  ok(!delegatedSeedGate.includes("NO SETTLEMENT"), "…and never on the no-settlement red, which is a different sentence for a different failure");
 }
 
 {

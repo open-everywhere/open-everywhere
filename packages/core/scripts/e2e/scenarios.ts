@@ -145,6 +145,7 @@ import {
   haltSetByThisRun,
   isMemoryHopWrite,
   isPersistOutcome,
+  MEMORY_CLAIM_WITHHELD_ACTION,
   MEMORY_WRITE_ACTION,
   memoryPathReadsBetween,
   PERSIST_OUTCOMES,
@@ -154,6 +155,8 @@ import {
   rowsAtOrAfter,
   saltedFixtureLine,
   seedMemoryWrites,
+  seedSettlementRead,
+  type SeedSettlementRead,
   type SeedWriteRead,
   SETTLEMENT_REPORT_POSTED_ACTION,
   spendCapRaisedByThisRun,
@@ -1429,7 +1432,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 2_040_000,
+    timeoutMs: 2_280_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slack!;
@@ -1472,7 +1475,16 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       const ackText = seedAck.text.replace(/\s+/g, " ").trim();
-      const SEED_WRITE_ACTIONS = [MEMORY_WRITE_ACTION, WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION];
+      const SEED_WRITE_ACTIONS = [
+        MEMORY_WRITE_ACTION,
+        WAKE_INGRESS_ACTION,
+        WAKE_TURN_START_ACTION,
+        DELEGATION_TASK_STARTED_ACTION,
+        DELEGATION_TASK_SETTLED_ACTION,
+        REPLY_POST_ACTION,
+        TASK_WAKE_ACTION,
+        MEMORY_CLAIM_WITHHELD_ACTION,
+      ];
       const seedVendorMs = slackVendorEventTime(seedTs)?.ms;
       const seedSurfaceKey = seedVendorMs === undefined ? undefined : `slack/${(await a.identity()).teamId}/${a.channelId}`;
       if (seedVendorMs === undefined) {
@@ -1481,27 +1493,93 @@ export const SCENARIOS: readonly Scenario[] = [
       let seedWakeId: string | undefined;
       let seedTurnStartMs: number | undefined;
       let seedRead: SeedWriteRead | undefined;
-      const seedWrite = await pollOptional(
-        async () => {
-          const rows = await auditRead({ sinceIso: purgeStart, actions: SEED_WRITE_ACTIONS, limit: 1000 });
-          if (seedWakeId === undefined && seedVendorMs !== undefined) seedWakeId = wakeIdForVendorInstant(rows, seedVendorMs, seedSurfaceKey);
-          if (seedTurnStartMs === undefined && seedWakeId !== undefined) seedTurnStartMs = turnStartMs(rows, seedWakeId);
-          const read = seedMemoryWrites(rows, seedTurnStartMs === undefined ? {} : { seedTurnStartMs });
-          seedRead = read;
-          return read.writes.length > 0 ? read : undefined;
-        },
-        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the canary's own memory.write audit row" },
+      let seedDelegation: SeedSettlementRead | undefined;
+      const readSeedWindow = async (): Promise<readonly AuditWireEntry[]> => {
+        const rows = await auditRead({ sinceIso: purgeStart, actions: SEED_WRITE_ACTIONS, limit: 1000 });
+        if (seedWakeId === undefined && seedVendorMs !== undefined) seedWakeId = wakeIdForVendorInstant(rows, seedVendorMs, seedSurfaceKey);
+        if (seedTurnStartMs === undefined && seedWakeId !== undefined) seedTurnStartMs = turnStartMs(rows, seedWakeId);
+        return rows;
+      };
+      const readSeedDelegation = (rows: readonly AuditWireEntry[]): SeedSettlementRead => {
+        const read = seedSettlementRead(rows, {
+          ...(seedWakeId === undefined ? {} : { seedWakeId }),
+          ...(seedTurnStartMs === undefined ? {} : { seedTurnStartMs }),
+          ackId: seedAck.ts,
+        });
+        seedDelegation = read;
+        return read;
+      };
+
+      const delegated =
+        seedVendorMs === undefined
+          ? undefined
+          : await pollOptional(
+              async () => {
+                const read = readSeedDelegation(await readSeedWindow());
+                return read.kind === "unread" || read.kind === "unjoinable" ? undefined : read;
+              },
+              { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: whether the seed turn DISPATCHED a worker for the remember" },
+            );
+      ctx.log(
+        `seed route: ${
+          delegated === undefined
+            ? `UNJOINED — ${seedDelegation?.detail ?? "no audit read completed"}; the gate takes §16's inline path, which is its pre-OPE-2036 behaviour`
+            : delegated.kind === "inline"
+              ? `IN-SEAT — ${delegated.detail}`
+              : `DELEGATED — ${delegated.detail}`
+        }`,
       );
-      ctx.log(`seed evidence: ${seedRead?.detail ?? "no audit read completed"}`);
+
+      const seedWrite =
+        delegated === undefined || delegated.kind === "inline"
+          ?
+            await pollOptional(
+              async () => {
+                const rows = await readSeedWindow();
+                const read = seedMemoryWrites(rows, seedTurnStartMs === undefined ? {} : { seedTurnStartMs });
+                seedRead = read;
+                return read.writes.length > 0 ? read : undefined;
+              },
+              { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the canary's own memory.write audit row" },
+            )
+          :
+            await pollOptional(
+              async () => {
+                const rows = await readSeedWindow();
+                const settle = readSeedDelegation(rows);
+                if (settle.kind !== "settled") return undefined;
+                const read = seedMemoryWrites(rows, {
+                  ...(seedTurnStartMs === undefined ? {} : { seedTurnStartMs }),
+                  ...(settle.post === undefined ? {} : { settlementPost: settle.post }),
+                });
+                seedRead = read;
+                return read.writes.length > 0 ? read : undefined;
+              },
+              { timeoutMs: REPLY_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the worker's settlement post, then the persist row standing right before it" },
+            );
+      if (seedDelegation?.roundTripMs !== undefined) {
+        ctx.log(`seed round-trip: ${seedDelegation.roundTripMs}ms from the seed turn's start to the settlement post — RECORDED, never gated`);
+      }
+      if (seedDelegation !== undefined && seedDelegation.claimsWithheld > 0) {
+        ctx.log(
+          `seed: ${seedDelegation.claimsWithheld} durability claim(s) were STRUCK on the seed wake's lineage — the interim ack claimed storage before the worker had written, and the guard struck it. Expected, and never a red (OPE-2036)`,
+        );
+      }
+      const seedEvidence =
+        seedRead?.detail ?? (seedDelegation === undefined ? "no audit read completed" : `the write gate never ran — ${seedDelegation.detail}`);
+      ctx.log(`seed evidence: ${seedEvidence}`);
+      const noSettlement = seedDelegation !== undefined && (seedDelegation.kind === "unsettled" || seedDelegation.kind === "unposted");
       const asked = readsAsClarifyingQuestion(ackText);
       if (seedWrite !== undefined && asked) {
         ctx.log(`seed: the canary WAS stored and the ack still reads as a clarifying question — the fixture wording is not yet unambiguous (OPE-2028): "${ackText.slice(0, 200)}"`);
       }
       ctx.gate(
         seedWrite !== undefined,
-        asked
-          ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedRead?.detail ?? "no audit read completed"} — it asked: "${ackText.slice(0, 240)}"`
-          : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028). ${seedRead?.detail ?? "no audit read completed"} — ack was: "${ackText.slice(0, 160)}"`,
+        noSettlement
+          ? `seed: the seat DELEGATED the remember and this leg saw NO SETTLEMENT within ${REPLY_WAIT / 1000}s — ${seedEvidence}. The interim ack is not the seed's ack on a delegated turn (OPE-2036), so this red says the WORKER did not report, never that the canary was not stored — ack was: "${ackText.slice(0, 160)}"`
+          : asked
+            ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedEvidence} — it asked: "${ackText.slice(0, 240)}"`
+            : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028), and on a DELEGATED turn the row standing before the worker's settlement post (OPE-2036). ${seedEvidence} — ack was: "${ackText.slice(0, 160)}"`,
       );
 
       const askStart = auditSinceForDriverClock(Date.now());

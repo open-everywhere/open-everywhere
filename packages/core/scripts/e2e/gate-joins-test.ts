@@ -31,6 +31,7 @@ import {
   type CoalescedAttemptRecord,
   PRECONDITION_NOT_REPRODUCED,
   seedMemoryWrites,
+  seedSettlementRead,
   settlementReportPairings,
   spendCapRaisedByThisRun,
   turnStartMs,
@@ -966,6 +967,116 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     coalescedBurstOutcome([missed(1), hit(2), missed(3)]).kind === "coalesced",
     "NEGATIVE CONTROL: a miss AFTER the merge cannot un-coalesce the run — the `turn.unaccounted_wakes` row already proved the seam was reachable",
   );
+}
+
+{
+  const SEED_WAKE = "9c88f591";
+  const TASK = "task_933d7c41f8ab4e2f91d07b5c";
+  const SEAT = "s-seat";
+  const ACK = "1758541231.820000";
+  const SETTLEMENT = "1758541328.565000";
+  const TURN_START_MS = Date.parse("2026-01-31T14:24:09.614Z");
+
+  const purge = row("memory.write", "2026-01-31T14:24:04.000Z", { road: MEMORY_PURGE_ROAD, kind: "memory", silo: "e2e-ambient-brain", version: 377 }, 10);
+  const turnStart = row("wake.turn_start", "2026-01-31T14:24:09.614Z", { wakeId: SEED_WAKE }, 11);
+  const dispatch = row("delegation.task_started", "2026-01-31T14:24:19.884Z", { task: TASK, session: SEAT, call: "call_0" }, 12, "ingest");
+  const ackPost = row("reply.post", "2026-01-31T14:24:31.820Z", { id: ACK, sessionId: SEAT, wakeId: SEED_WAKE }, 13);
+  const struck = row("memory.claim_withheld", "2026-01-31T14:24:31.853Z", { claims: 1, shapes: ["stored"], wakeId: SEED_WAKE, sessionId: SEAT }, 14);
+  const foreignStruck = row("memory.claim_withheld", "2026-01-31T14:24:40.000Z", { claims: 2, shapes: ["remembered"], wakeId: "w-other" }, 14);
+  const settled = row("delegation.task_settled", "2026-01-31T14:26:08.100Z", { task: TASK, session: SEAT, status: "completed" }, 15, "ingest");
+  const persist = row("memory.write", "2026-01-31T14:26:08.442Z", { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", version: 379 }, 16);
+  const settlementPost = row("reply.post", "2026-01-31T14:26:08.565Z", { id: SETTLEMENT, sessionId: SEAT, wakeId: SEED_WAKE }, 17);
+  const board = [purge, turnStart, dispatch, ackPost, struck, foreignStruck, settled, persist, settlementPost];
+  const seedOpts = { seedWakeId: SEED_WAKE, seedTurnStartMs: TURN_START_MS, ackId: ACK };
+
+  {
+    const read = seedSettlementRead(board, seedOpts);
+    ok(read.kind === "settled", `🔴 OPE-2036: a seed turn that dispatched and settled reads as SETTLED (got ${read.kind}: ${read.detail})`);
+    ok(read.dispatched.join(",") === TASK, `…naming the task the SEED TURN dispatched (got ${read.dispatched.join(",")})`);
+    ok(read.post === settlementPost, "…and the ceiling is the SETTLEMENT post, the second reply on the seed wake after the settlement row");
+    ok(read.post !== ackPost, "🔴 OPE-2036 NEGATIVE CONTROL: the INTERIM ack is NOT the settlement post — it is the message the pre-fix gate measured the turn from");
+    ok(read.roundTripMs === Date.parse("2026-01-31T14:26:08.565Z") - TURN_START_MS, `…and the round trip is REPORTED as turn start → settlement post (got ${String(read.roundTripMs)}ms)`);
+    ok(read.claimsWithheld === 1, `…and the ack's STRUCK 'stored' claim is counted — the seed wake's own, never the foreign one (got ${read.claimsWithheld})`);
+    const gated = seedMemoryWrites(board, { seedTurnStartMs: TURN_START_MS, settlementPost: read.post });
+    ok(gated.writes.length === 1 && gated.writes[0] === persist, `🔴 OPE-2036: the gate counts the WORKER's persist — the row standing right before the settlement post (got ${gated.writes.length})`);
+    ok(gated.purgeWrites === 1 && gated.afterSettlement === 0, `…and leg 0's purge is still excluded by road, with nothing above the ceiling (purge ${gated.purgeWrites}, after ${gated.afterSettlement})`);
+    const preFix = seedMemoryWrites([purge, turnStart, dispatch, ackPost, struck], { seedTurnStartMs: TURN_START_MS });
+    ok(preFix.writes.length === 0, "🔴 OPE-2036 CONTROL: read at the interim ack, the same window holds NO seed write — which is the red a live run reported over a deployment that stored the code");
+  }
+
+  {
+    const noSettleRow = seedSettlementRead([purge, turnStart, dispatch, ackPost, struck], seedOpts);
+    ok(noSettleRow.kind === "unsettled", `🔴 OPE-2036: a dispatch with no ${"delegation.task_settled"} row reads as UNSETTLED (got ${noSettleRow.kind})`);
+    ok(noSettleRow.unsettled.join(",") === TASK && noSettleRow.detail.includes(TASK), `…and it NAMES the task still running (got ${noSettleRow.detail})`);
+    ok(noSettleRow.post === undefined, "…and hands the caller no ceiling, so the write gate cannot run on a window the worker has not closed");
+    const noPost = seedSettlementRead([purge, turnStart, dispatch, ackPost, struck, settled, persist], seedOpts);
+    ok(noPost.kind === "unposted", `🔴 OPE-2036: every task settled and no reply on the seed wake stands after it reads as UNPOSTED (got ${noPost.kind})`);
+    ok(noPost.settlement === settled && noPost.post === undefined, "…the settlement ROW is held and the post is not, which is the pair the red reports");
+    const foreign = row("reply.post", "2026-01-31T14:26:09.000Z", { id: "1758541329.000000", sessionId: SEAT, wakeId: "w-other" }, 18);
+    const foreignRead = seedSettlementRead([purge, turnStart, dispatch, ackPost, settled, persist, foreign], seedOpts);
+    ok(foreignRead.kind === "unposted", "🔴 OPE-2036 NEGATIVE CONTROL: a reply on a FOREIGN wake is not the settlement post — the join is the seed wake's own lineage");
+    ok(foreignRead.detail.includes("1 reply row(s) in the window belong to another wake"), `…and the red counts what it refused (got ${foreignRead.detail})`);
+  }
+
+  {
+    const inlineRows = [purge, turnStart, ackPost, persist];
+    const read = seedSettlementRead(inlineRows, seedOpts);
+    ok(read.kind === "inline", `🔴 OPE-2036: a seed turn with no dispatch row reads as INLINE — the seat wrote with its own tools (got ${read.kind})`);
+    ok(read.post === undefined && read.dispatched.length === 0, "…and it offers no ceiling, so §16's filter runs exactly as it did before OPE-2036");
+    const before = seedMemoryWrites(inlineRows, { seedTurnStartMs: TURN_START_MS });
+    ok(before.writes.length === 1 && before.afterSettlement === 0, "the inline gate still counts the seat's own write");
+    ok(
+      !before.detail.includes("after the settlement post"),
+      `🔴 OPE-2036: with no ceiling the evidence sentence is the pre-fix one, byte for byte — a reader never meets a count that can only be zero (got ${before.detail})`,
+    );
+    const legZeroDispatch = row("delegation.task_started", "2026-01-31T14:24:02.000Z", { task: "task_legzero", session: SEAT }, 9, "ingest");
+    const stillInline = seedSettlementRead([legZeroDispatch, ...inlineRows], seedOpts);
+    ok(stillInline.kind === "inline", "🔴 OPE-2036 NEGATIVE CONTROL: a dispatch BELOW the seed turn's start is a PREVIOUS leg's and never makes this turn delegated");
+    const otherSeat = row("delegation.task_started", "2026-01-31T14:24:19.884Z", { task: "task_routine", session: "s-routine" }, 12, "ingest");
+    const notMine = seedSettlementRead([otherSeat, ...inlineRows], seedOpts);
+    ok(notMine.kind === "inline", "🔴 OPE-2036: a dispatch by ANOTHER session inside the same seconds is not this seat's — the ack's own row names the session to compare against");
+    ok(notMine.detail.includes("belong to ANOTHER session"), `…and the log says so rather than dropping it silently (got ${notMine.detail})`);
+    ok(seedSettlementRead([dispatch, ...inlineRows], seedOpts).kind === "unsettled", "…and the seat's OWN dispatch at the same instant is read as this turn's, so the session term is a narrowing and not a mute");
+    const noSession = row("reply.post", "2026-01-31T14:24:31.820Z", { id: ACK, wakeId: SEED_WAKE }, 13);
+    const unnarrowable = seedSettlementRead([purge, turnStart, dispatch, noSession, persist], seedOpts);
+    ok(unnarrowable.kind === "unjoinable", `🔴 OPE-2036: a dispatch this reader cannot attribute to the seat is REFUSED, not accepted (got ${unnarrowable.kind}: ${unnarrowable.detail})`);
+    ok(unnarrowable.detail.includes("cannot tell the seat's own dispatch from a fire's"), `…and it says why, so the route line names the ambiguity (got ${unnarrowable.detail})`);
+    ok(
+      seedSettlementRead([purge, turnStart, noSession, persist], seedOpts).kind === "inline",
+      "…and with no dispatch at all the missing session is irrelevant — the refusal is scoped to the case where the narrowing would have mattered",
+    );
+  }
+
+  {
+    const purgeOnly = seedMemoryWrites([purge, turnStart, dispatch, ackPost, settled, settlementPost], {
+      seedTurnStartMs: TURN_START_MS,
+      settlementPost,
+    });
+    ok(purgeOnly.writes.length === 0, "🔴 OPE-2036: with the settlement ceiling applied, leg 0's purge-road write STILL counts as no seed write");
+    ok(purgeOnly.purgeWrites === 1, "…and is still reported as leg 0's erase rather than as one more floored-out row");
+    const late = row("memory.write", "2026-01-31T14:27:00.000Z", { road: "session-persist", outcome: "edited", kind: "memory" }, 30);
+    const above = seedMemoryWrites([purge, turnStart, dispatch, ackPost, settled, settlementPost, late], {
+      seedTurnStartMs: TURN_START_MS,
+      settlementPost,
+    });
+    ok(above.writes.length === 0 && above.afterSettlement === 1, `🔴 OPE-2036: a write ABOVE the settlement post is excluded and COUNTED (writes ${above.writes.length}, after ${above.afterSettlement})`);
+    ok(above.detail.includes("1 after the settlement post"), `…and the sentence names OPE-1915, so the next reader goes to the persist order rather than to the write path (got ${above.detail})`);
+    ok(seedMemoryWrites([purge, turnStart, late], { seedTurnStartMs: TURN_START_MS }).writes.length === 1, "…and without a ceiling that same row counts, so the exclusion is the ceiling's and not a mute reader");
+    const unplaceable = seedMemoryWrites([row("memory.write", "not-a-time", { road: "session-persist" })], { settlementPost });
+    ok(unplaceable.writes.length === 0 && unplaceable.unplaceable === 1, "a write this reader cannot place against the ceiling is excluded and counted, never guessed at");
+  }
+
+  {
+    const noWake = seedSettlementRead(board, { seedTurnStartMs: TURN_START_MS, ackId: ACK });
+    ok(noWake.kind === "unjoinable" && noWake.detail.includes("wake.ingress"), `no seed wake means no join, and it names the row it wanted (got ${noWake.kind}: ${noWake.detail})`);
+    const noFloor = seedSettlementRead(board, { seedWakeId: SEED_WAKE, ackId: ACK });
+    ok(noFloor.kind === "unjoinable" && noFloor.detail.includes("wake.turn_start"), `no turn start means no floor, and it names that row instead (got ${noFloor.kind}: ${noFloor.detail})`);
+    const early = seedSettlementRead([purge, turnStart], seedOpts);
+    ok(early.kind === "unread", `🔴 OPE-2036: with the ack's own reply.post row not yet readable the dispatch question is UNREAD, never "inline" (got ${early.kind})`);
+    ok(early.detail.includes(ACK), `…and it names the row it is waiting on (got ${early.detail})`);
+    ok(seedSettlementRead([purge, turnStart, ackPost], seedOpts).kind === "inline", "…and the moment the ack's row lands, the same window answers INLINE — the fence opens rather than holding for ever");
+    ok(seedSettlementRead([purge, turnStart], { seedWakeId: SEED_WAKE, seedTurnStartMs: TURN_START_MS }).kind === "inline", "a caller that hands in no ack id is never held by the fence");
+  }
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);
