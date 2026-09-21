@@ -103,7 +103,7 @@ import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import { slackUnifiedPrimedCoalescingBurst } from "./coalesced-burst.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
-import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
+import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
   auditSessionIds,
@@ -6615,6 +6615,17 @@ export const SCENARIOS: readonly Scenario[] = [
           const discussionId = chosen.discussionId;
           const replayFrom = new Date(Date.now() - 5_000).toISOString();
           const replayActions = ["notion.dispatched", "wake.turn_start", "notion.replied", "notion.no_reply", "taint.verdict"];
+          const grantRoad = notionTaintGrantRoad(
+            await auditRead({ sinceIso: lookbackIso(GRANT_OVERLAP_LOOKBACK_DAYS), limit: GRANT_LIFECYCLE_ROW_LIMIT, actions: GRANT_LIFECYCLE_ACTIONS }),
+            {
+              connector: NOTION_CONNECTOR,
+              legPageId: not.pageId,
+              nowMs: Date.now(),
+              pinnedPageIds: [grantAskPageId()].filter((id): id is string => id !== undefined),
+              rowLimit: GRANT_LIFECYCLE_ROW_LIMIT,
+            },
+          );
+          ctx.log(`arm B road admission: ${grantRoad.reason}`);
           const forge = await not.forgeCommentCreated(ctx.targetUrl, anchorId, { signed: true });
           ctx.gate(forge.status === 200, "ARM B: signed forge-replay of the human anchor comment is acked (200)");
           const joinNow = async () =>
@@ -6622,6 +6633,7 @@ export const SCENARIOS: readonly Scenario[] = [
               deliveryId: forge.deliveryId,
               commentId: anchorId,
               discussionId,
+              grantRoad,
             });
           const replay = await pollOptional(
             async () => {
@@ -6636,15 +6648,16 @@ export const SCENARIOS: readonly Scenario[] = [
           }
           ctx.gate(
             replay !== undefined,
-            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for kind \`notion\` — a real read_notion_page call, joined to the delivery by id rather than by time` +
-              (replay ? "" : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
+            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road) — joined to the delivery by id rather than by time` +
+              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : "LENT"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
           );
           if (replay) {
-            const nd = replay.verdict.detail as { assumed?: unknown; divergence?: unknown };
+            const nd = replay.verdict.detail as { applied?: unknown; assumed?: unknown; divergence?: unknown; label?: unknown; mode?: unknown };
             ctx.log(
               `arm B: wake ${replay.wakeId} → session ${replay.sessionId}` +
                 (replay.verdictSessionId === replay.sessionId ? " (the seat read the page itself)" : ` → worker ${replay.verdictSessionId} (the seat delegated the read)`) +
-                `; notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
+                `; the ${replay.road === "notion" ? "ORG road served it (kind `notion`, over the deployment's own connector)" : "LENT road served it (kind `connector`, the tool a live standing grant mounts)"}, label \`${String(nd.label ?? "unlabelled")}\`` +
+                `; row mode=${String(nd.mode)} applied=${String(nd.applied)} divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
                 (nd.assumed === true
                   ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
                   : "a REAL verdict off the vouched workspace tier"),
@@ -6652,8 +6665,8 @@ export const SCENARIOS: readonly Scenario[] = [
             const events = ctx.transcriptRead ? await ctx.transcriptRead(replay.verdictSessionId).catch(() => undefined) : undefined;
             if (events) {
               ctx.gate(
-                transcriptHasNotionPageRead(events),
-                `ARM B: the verdict session's own transcript requested read_notion_page — the audit row and the transcript agree about what the turn did (session ${replay.verdictSessionId})`,
+                transcriptHasNotionPageRead(events, { road: replay.road, connector: NOTION_CONNECTOR }),
+                `ARM B: the verdict session's own transcript requested ${replay.road === "notion" ? "read_notion_page" : `the \`${NOTION_CONNECTOR}\` tool the standing grant mounted`} — the audit row and the transcript agree about what the turn did (session ${replay.verdictSessionId})`,
               );
             } else {
               ctx.log(`arm B: the transcript for ${replay.verdictSessionId} is unreadable on this deployment, so the verdict row is the only witness for this run.`);

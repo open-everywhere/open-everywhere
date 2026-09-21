@@ -1,6 +1,8 @@
 import { matchesAgentName } from "../../agent/identity/bot-name.js";
+import { isGrantToolName } from "../../agent/operational/credential-grant-rows.js";
 import type { AuditWireEntry } from "./audit-read.js";
 import type { NotionComment } from "./notion-driver.js";
+import { activeStandingGrants, type ActiveStandingGrant } from "./own-account-rows.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 
 export const NOTION_TAINT_ANCHOR_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -91,6 +93,67 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+export interface NotionTaintGrantRoadInput {
+  readonly legPageId: string;
+  readonly pinnedPageIds: readonly string[];
+  readonly connector: string;
+  readonly nowMs: number;
+  readonly rowLimit: number;
+}
+
+export interface NotionTaintGrantRoadAdmission {
+  readonly admitted: boolean;
+  readonly reason: string;
+  readonly labelPrefix: string;
+  readonly grants: readonly ActiveStandingGrant[];
+}
+
+function renderGrants(grants: readonly ActiveStandingGrant[]): string {
+  return grants.map((g) => `${g.grantId} (resource=${g.resource}, verb=${g.verb ?? "none"}, from the ${g.evidence} row at ${g.at})`).join("; ");
+}
+
+const GRANT_ROAD_LIMIT =
+  "LIMIT: the audit wire carries a grant's argument NAMES and never their values (`grantAuditResource`), so which page any grant pins is NOT readable " +
+  "here — only which page this pack itself asks a grant to pin. A lent verdict row names the connector and the verb and no resource either, so no row on " +
+  "either road says WHICH page was read; the transcript witness is the only rung that ties a lent read to the tool the grant mounted.";
+
+export function notionTaintGrantRoad(rows: readonly AuditWireEntry[], input: NotionTaintGrantRoadInput): NotionTaintGrantRoadAdmission {
+  const labelPrefix = `grant:${input.connector}:`;
+  const grants = activeStandingGrants(rows, { connector: input.connector, nowMs: input.nowMs });
+  const pinnedHere = input.pinnedPageIds.includes(input.legPageId);
+  const truncated = rows.length >= input.rowLimit ? ` The read came back AT its ${input.rowLimit}-row ceiling, so it was truncated and an older live mint may sit behind it.` : "";
+  if (!pinnedHere) {
+    return {
+      admitted: false,
+      grants,
+      labelPrefix,
+      reason:
+        `the lent-tool road is NOT admitted: page ${input.legPageId} is none of the ${input.pinnedPageIds.length} page(s) this pack asks a grant to pin, so a ` +
+        `\`connector\` verdict on this turn is not evidence about THIS page and only the org road counts (${grants.length} live standing ${input.connector} ` +
+        `grant(s) do sit on the window).${truncated} ${GRANT_ROAD_LIMIT}`,
+    };
+  }
+  if (grants.length === 0) {
+    return {
+      admitted: false,
+      grants,
+      labelPrefix,
+      reason:
+        `the lent-tool road is NOT admitted: page ${input.legPageId} IS the page this pack asks a grant to pin, but the ${rows.length}-row lifecycle window shows ` +
+        `no LIVE standing ${input.connector} grant, so nothing the harness can see mounts a lent tool over this page and only the org road counts.${truncated} ${GRANT_ROAD_LIMIT}`,
+    };
+  }
+  return {
+    admitted: true,
+    grants,
+    labelPrefix,
+    reason:
+      `the lent-tool road IS admitted: page ${input.legPageId} is the page this pack asks a grant to pin, and ${grants.length} LIVE standing ${input.connector} ` +
+      `grant(s) sit on the lifecycle window: ${renderGrants(grants)}. A read of that page may therefore be served through the LENT tool, which declares a ` +
+      `\`connector\` ingestion labelled \`${labelPrefix}<verb>\` rather than a \`notion\` one. ${GRANT_ROAD_LIMIT}`,
+  };
+}
+
 export interface NotionTaintReplayEvidence {
   readonly dispatch: AuditWireEntry;
   readonly turnStart: AuditWireEntry;
@@ -99,6 +162,7 @@ export interface NotionTaintReplayEvidence {
   readonly wakeId: string;
   readonly sessionId: string;
   readonly verdictSessionId: string;
+  readonly road: "notion" | "grant";
 }
 
 export type NotionTaintReplayResult =
@@ -109,6 +173,7 @@ export interface NotionTaintReplayInput {
   readonly deliveryId: string;
   readonly commentId: string;
   readonly discussionId: string;
+  readonly grantRoad?: NotionTaintGrantRoadAdmission;
 }
 
 export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input: NotionTaintReplayInput): NotionTaintReplayResult {
@@ -151,15 +216,31 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
   const lifecycle = rows.find(
     (row) => (row.action === "notion.replied" || row.action === "notion.no_reply") && str(detail(row).sessionId) === sessionId,
   );
-  const verdict = rows.find((row) => {
+  const attributed = (row: AuditWireEntry): boolean => {
     const d = detail(row);
-    return row.action === "taint.verdict" && d.kind === "notion" && (str(d.sessionId) === sessionId || str(d.parentSessionId) === sessionId);
+    return row.action === "taint.verdict" && (str(d.sessionId) === sessionId || str(d.parentSessionId) === sessionId);
+  };
+  const verdicts = rows.filter(attributed);
+  const orgRoad = verdicts.find((row) => detail(row).kind === "notion");
+  const lentCandidates = verdicts.filter((row) => {
+    const d = detail(row);
+    const label = str(d.label);
+    return d.kind === "connector" && label !== undefined && (input.grantRoad === undefined ? label.startsWith("grant:") : label.startsWith(input.grantRoad.labelPrefix));
   });
+  const lentRoad = input.grantRoad?.admitted === true ? lentCandidates[0] : undefined;
+  const verdict = orgRoad ?? lentRoad;
   if (!verdict) {
     const decided = lifecycle ? ` The seat's own terminal row for this session is \`${lifecycle.action}\`.` : "";
+    const lentSeen =
+      lentCandidates.length > 0
+        ? ` ${lentCandidates.length} \`connector\` verdict row(s) labelled [${[...new Set(lentCandidates.map((row) => str(detail(row).label) ?? "unlabelled"))].join(", ")}] ARE attributed to this turn — ` +
+          `${input.grantRoad ? input.grantRoad.reason : "this join was given no lent-road admission to judge them against"}`
+        : "";
     return {
       ok: false,
-      reason: `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it — nothing in that turn, or in a worker it delegated to, declared a Notion page read.${decided}`,
+      reason:
+        `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it, and no admitted lent-tool row either — nothing in ` +
+        `that turn, or in a worker it delegated to, declared a Notion page read.${decided}${lentSeen}`,
     };
   }
   const vd = detail(verdict);
@@ -173,11 +254,25 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
       wakeId,
       sessionId,
       verdictSessionId: str(vd.sessionId) ?? sessionId,
+      road: verdict === orgRoad ? "notion" : "grant",
     },
   };
 }
 
-export function transcriptHasNotionPageRead(events: readonly TranscriptWireEvent[]): boolean {
+const GRANT_TOOL_IN_JSON = /"(grant__[A-Za-z0-9_]+__[A-Za-z0-9_]+)"/g;
+
+function transcriptHasGrantedRead(events: readonly TranscriptWireEvent[], connector: string): boolean {
+  for (const event of events) {
+    if (event.type !== "actions.requested" && event.type !== "action.result") continue;
+    for (const [, name] of JSON.stringify(event.data ?? null).matchAll(GRANT_TOOL_IN_JSON)) {
+      if (isGrantToolName(name) && (name.split("__")[1] ?? "").endsWith(`_${connector}`)) return true;
+    }
+  }
+  return false;
+}
+
+export function transcriptHasNotionPageRead(events: readonly TranscriptWireEvent[], road?: { readonly road: "notion" | "grant"; readonly connector: string }): boolean {
+  if (road?.road === "grant") return transcriptHasGrantedRead(events, road.connector);
   return events.some(
     (event) => (event.type === "actions.requested" || event.type === "action.result") && JSON.stringify(event.data ?? null).includes('"read_notion_page"'),
   );

@@ -37,6 +37,7 @@ import {
   NOTION_TAINT_ANCHOR_MAX_AGE_MS,
   notionTaintAnchorProblem,
   notionTaintFixtureRemedy,
+  notionTaintGrantRoad,
   notionTaintReplayEvidence,
   transcriptHasNotionPageRead,
 } from "../packages/core/scripts/e2e/notion-taint-replay.js";
@@ -4920,8 +4921,114 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   );
   ok(!foreignVerdict.ok, "🔴 NEGATIVE CONTROL: a `notion` verdict written by an unrelated session does NOT satisfy this replay, which is precisely what the old time-window scan could not tell apart");
 
+  ok(joined.ok && joined.evidence.road === "notion", "the org road is named on the evidence — a green that does not say which road it measured is a green nobody can read");
+
   ok(transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "read_notion_page" }] } }]), "the replay session's transcript confirms the page-read tool request");
   ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }]), "🔴 ship #217's no_reply-only transcript cannot pass the page-read proof");
+
+  {
+    const lentPage = "40000000-0000-4000-8000-000000000101";
+    const delivery = { deliveryId: "00000000-0000-4000-8000-000000000033", commentId: "40000000-0000-4000-8000-000000000110", discussionId: "discussion-228" };
+    const boardRow = (action: string, detail: Record<string, unknown>, tsMsBefore = 0): AuditWireEntry => ({
+      ts: new Date(now - tsMsBefore).toISOString(),
+      org: "default",
+      platform: action === "taint.verdict" ? "ingest" : "notion",
+      workspace: action === "taint.verdict" ? String(detail.kind ?? "?") : "workspace-1",
+      surface: lentPage,
+      action,
+      detail,
+    });
+    const spend = boardRow(
+      "grant.used",
+      {
+        connector: "notion",
+        grantId: "00000000-0000-4000-8000-000000000034",
+        mode: "standing",
+        resource: "notion-fetch keys:id",
+        scopeKey: "oe-grant-domain::e2e-unified",
+        verb: "notion_fetch",
+      },
+      60_000,
+    );
+    const lentVerdict = boardRow("taint.verdict", {
+      applied: true,
+      assumed: true,
+      divergence: "over-taint",
+      kind: "connector",
+      label: "grant:notion:notion_fetch",
+      mode: "enforced",
+      reason: "a connector read declares untrusted by the table's fail-closed default",
+      sessionId: "wrun_example32",
+      tableTier: "untrusted",
+      taintsToday: true,
+      turnId: "turn_2",
+    });
+    const lentRows = [
+      boardRow("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-228" }),
+      boardRow("wake.turn_start", { wakeId: "wake-228", sessionId: "wrun_example32", turnId: "turn_2" }),
+      boardRow("notion.replied", { sessionId: "wrun_example32", discussionId: "discussion-228" }),
+      lentVerdict,
+    ];
+
+    const roadInput = { connector: "notion", legPageId: lentPage, nowMs: now, pinnedPageIds: [lentPage], rowLimit: 1000 };
+    const admitted = notionTaintGrantRoad([spend], roadInput);
+    ok(admitted.admitted && admitted.labelPrefix === "grant:notion:", "a live standing notion grant, on the page this pack asks a grant to pin, admits the lent-tool road");
+    ok(admitted.reason.includes("00000000-0000-4000-8000-000000000034") && admitted.reason.includes("notion-fetch keys:id"), "…and the admission names the grant and its audit resource, so a reader can check the claim against the trail");
+    ok(admitted.reason.includes("NAMES and never their values"), "🔴 every admission states its own limit: the wire cannot say which page a grant pins, only which page THIS pack asks to be pinned");
+    ok(!notionTaintGrantRoad([spend], { ...roadInput, pinnedPageIds: ["another-page"] }).admitted, "🔴 NEGATIVE CONTROL: a live grant is NOT evidence about a page this pack never named — the lent road stays closed there");
+    ok(!notionTaintGrantRoad([], roadInput).admitted, "🔴 NEGATIVE CONTROL: the pack's own pinned page with NO live grant on it admits nothing — a `connector` row there is some other tool's read");
+    ok(
+      !notionTaintGrantRoad([{ ...spend, detail: { ...(spend.detail as Record<string, unknown>), mode: "once" } }], roadInput).admitted,
+      "NEGATIVE CONTROL: a ONCE-mode grant is burned by its first call and cannot pre-empt this leg's road",
+    );
+    ok(!notionTaintGrantRoad([spend], { ...roadInput, connector: "linear" }).admitted, "NEGATIVE CONTROL: the connector is matched — a Linear grant never admits a road for a Notion read");
+    const burnt = { ...spend, detail: { ...(spend.detail as Record<string, unknown>), mode: "once" } };
+    const atCeiling = notionTaintGrantRoad([burnt], { ...roadInput, rowLimit: 1 });
+    ok(!atCeiling.admitted && atCeiling.reason.includes("AT its 1-row ceiling"), "🔴 a refusal off a window that came back AT its ceiling says the read was truncated, rather than turning a page it could not prove complete into a clean bill");
+    ok(!notionTaintGrantRoad([burnt], roadInput).reason.includes("ceiling"), "🔴 NEGATIVE CONTROL: the same refusal under the ceiling makes NO truncation claim, so the line above is driven by the count and not by the sentence always being there");
+    ok(notionTaintGrantRoad([burnt], { ...roadInput, pinnedPageIds: ["another-page"], rowLimit: 1 }).reason.includes("AT its 1-row ceiling"), "the unpinned refusal carries the truncation sentence too — both refusals claim an absence, so both disclose it");
+
+    const lentJoin = notionTaintReplayEvidence(lentRows, { ...delivery, grantRoad: admitted });
+    ok(lentJoin.ok, "🔴 THE SHIP #228 SHAPE JOINS: the forged replay's own turn read the page through the lent tool, and the arm now accepts that road");
+    ok(lentJoin.ok && lentJoin.evidence.road === "grant", "…and the evidence names the LENT road, so the leg logs which road served rather than reporting a bare green");
+    ok(lentJoin.ok && (lentJoin.evidence.verdict.detail as { label?: unknown }).label === "grant:notion:notion_fetch", "…and the row it carries is the lent one, whose label the leg logs on either road — the KIND never names the tool");
+    ok(lentJoin.ok && lentJoin.evidence.verdictSessionId === "wrun_example32", "the lent road joins by the same session key as the org road — widening the KIND never widened the JOIN");
+
+    const orgOnly = notionTaintReplayEvidence(lentRows, delivery);
+    ok(!orgOnly.ok, "🔴 without an admitted lent road the SAME rows are refused — this is boards #226/#228's red, and the assertion above is what fixes it");
+    ok(!orgOnly.ok && orgOnly.reason.includes("grant:notion:notion_fetch"), "…and the refusal NAMES the connector row it saw, so triage reads the road rather than a bare absence");
+
+    const refused = notionTaintReplayEvidence(lentRows, { ...delivery, grantRoad: notionTaintGrantRoad([], roadInput) });
+    ok(!refused.ok, "🔴 NEGATIVE CONTROL: the lent row does NOT satisfy the replay when no live grant explains it — the arm is not a scan for any `connector` row");
+    ok(!refused.ok && refused.reason.includes("no LIVE standing notion grant"), "…and the refusal quotes the admission's own reason, so the red says what the harness could not establish");
+
+    const otherLabel = notionTaintReplayEvidence(
+      lentRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), label: "web_fetch" } } : r)),
+      { ...delivery, grantRoad: admitted },
+    );
+    ok(!otherLabel.ok, "🔴 NEGATIVE CONTROL: a `connector` verdict that is NOT a grant borrow (label `web_fetch`) never stands in for the page read, admitted road or not");
+
+    const foreignLent = notionTaintReplayEvidence(
+      lentRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), sessionId: "someone-else" } } : r)),
+      { ...delivery, grantRoad: admitted },
+    );
+    ok(!foreignLent.ok, "🔴 NEGATIVE CONTROL: an unrelated session's grant read does not satisfy this replay — the id join is the whole point of OPE-1907 and the new road keeps it");
+
+    const bothRoads = notionTaintReplayEvidence(
+      [...lentRows, boardRow("taint.verdict", { applied: true, assumed: false, divergence: "over-taint", kind: "notion", mode: "enforced", reason: "vouched workspace", sessionId: "wrun_example32" })],
+      { ...delivery, grantRoad: admitted },
+    );
+    ok(bothRoads.ok && bothRoads.evidence.road === "notion", "when BOTH roads wrote a row for one turn the ORG road is reported — the lent road is the fallback, never a replacement");
+
+    const grantCall: readonly TranscriptWireEvent[] = [{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "grant__rowan_notion__notion_fetch_test_page" }] } }];
+    ok(transcriptHasNotionPageRead(grantCall, { road: "grant", connector: "notion" }), "🔴 the lent road's transcript witness reads the GRANT tool the row mounted — a lent turn never calls read_notion_page, so asking for that name would red a correct turn");
+    ok(!transcriptHasNotionPageRead(grantCall), "🔴 NEGATIVE CONTROL: the same transcript fails the ORG road's witness, so the witness really is following the road and not accepting everything");
+    ok(
+      !transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "grant__rowan_linear__linear_read_issue" }] } }], { road: "grant", connector: "notion" }),
+      "NEGATIVE CONTROL: a LINEAR grant tool in the same turn does not witness a Notion page read",
+    );
+    ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }], { road: "grant", connector: "notion" }), "a no_reply-only transcript fails the lent witness too");
+  }
 }
 
 {
