@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import type { AuditWireEntry } from "./audit-read.js";
+import type { HaltLiveEvidenceKey } from "./scenarios.js";
 import {
   AUDIT_SINCE_SKEW_MS,
   auditSinceForDriverClock,
@@ -582,6 +584,113 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(
     replyPostSessionId([ackRow], SLACK_ACK) === "wrun_SLACK_SIBLING",
     "the fallback uses replyPostSessionId, the same join the leg used before the fix",
+  );
+}
+
+{
+  process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
+  const { haltWakeForSlackAnchor, haltSetEvidence } = await import("./scenarios.js");
+
+  const WAKE_ID = "00000000-0000-4000-8000-000000000028";
+  const SESSION_ID = "wrun_example27";
+  const SURFACE_KEY = "slack/T0EXAMPLE/C0EXCHAN011";
+  const ANCHOR_TS = "1769829801.042000";
+  const RUN_START = "2026-01-31T03:23:16.000Z";
+  const KEY: HaltLiveEvidenceKey = {
+    surfaceKey: SURFACE_KEY,
+    channelId: "C0EXCHAN011",
+    workspaceId: "T0EXAMPLE",
+    driverUserId: "U0EXOWNER",
+    runStart: RUN_START,
+  };
+
+  const ingress = (overrides: { surfaceKey?: string; wakeId?: string; vendorTs?: string } = {}): AuditWireEntry => ({
+    ts: "2026-01-31T03:23:21.632Z",
+    org: "default",
+    platform: "slack",
+    workspace: "engineering",
+    surface: overrides.surfaceKey ?? SURFACE_KEY,
+    action: "wake.ingress",
+    detail: {
+      wakeId: overrides.wakeId ?? WAKE_ID,
+      deliveryId: "00000000-0000-4000-8000-000000000029",
+      surfaceKey: overrides.surfaceKey ?? SURFACE_KEY,
+      vendorTs: overrides.vendorTs ?? "2026-01-31T03:23:21.042Z",
+      vendorTsSource: "slack-ts",
+      ingressTs: "2026-01-31T03:23:21.632Z",
+      vendorToIngressMs: 590,
+    },
+  });
+
+  const haltSet = (overrides: { surface?: string; workspace?: string; wakeId?: string } = {}): AuditWireEntry => ({
+    ts: "2026-01-31T03:23:38.426Z",
+    org: "default",
+    platform: "slack",
+    workspace: overrides.workspace ?? "T0EXAMPLE",
+    surface: overrides.surface ?? "C0EXCHAN011",
+    principalId: "U0EXOWNER",
+    action: "admin.halt.set",
+    detail: {
+      level: "surface",
+      scopeKey: SURFACE_KEY,
+      door: "chat",
+      platform: "slack",
+      announced: true,
+      setAt: "2026-01-31T03:23:38.319Z",
+      wakeId: overrides.wakeId ?? WAKE_ID,
+      sessionId: SESSION_ID,
+    },
+  });
+
+  ok(
+    haltWakeForSlackAnchor([ingress()], KEY, ANCHOR_TS) === WAKE_ID,
+    "🔴 the measured wake.ingress row — fully qualified `surface`, domain-name `workspace` — resolves the posted Slack timestamp to its host wake",
+  );
+
+  {
+    const rows = [haltSet(), ingress()];
+    const wakeId = haltWakeForSlackAnchor(rows, KEY, ANCHOR_TS);
+    const setRow = wakeId === undefined ? undefined : rows.find((r) => r.action === "admin.halt.set" && haltSetEvidence(r, KEY, wakeId));
+    ok(setRow !== undefined, "🔴 S-HALT joins the posted Slack timestamp through wake.ingress to the same announced admin.halt.set wake");
+  }
+
+  ok(
+    haltWakeForSlackAnchor([ingress({ surfaceKey: "slack/T0EXAMPLE/C0OTHERROOM" })], KEY, ANCHOR_TS) === undefined,
+    "negative control: an identical vendor instant in ANOTHER ROOM resolves no wake",
+  );
+
+  ok(
+    haltWakeForSlackAnchor([ingress({ surfaceKey: "slack/T9OTHER99/C0EXCHAN011" })], KEY, ANCHOR_TS) === undefined,
+    "negative control: an identical vendor instant in another WORKSPACE resolves no wake — the refusal moved onto detail.surfaceKey, it did not lapse",
+  );
+
+  ok(
+    haltWakeForSlackAnchor([ingress(), ingress({ wakeId: "1626ef2f-0000-0000-0000-000000000002" })], KEY, ANCHOR_TS) === undefined,
+    "negative control: one anchor naming two wakes fails closed",
+  );
+
+  ok(
+    haltWakeForSlackAnchor([ingress({ vendorTs: "2026-01-31T03:23:55.000Z" })], KEY, ANCHOR_TS) === undefined,
+    "negative control: an ingress row for a DIFFERENT post in the same room resolves no wake",
+  );
+
+  ok(
+    haltWakeForSlackAnchor([ingress({ vendorTs: "2026-01-31T04:23:21.042+01:00" })], KEY, ANCHOR_TS) === WAKE_ID,
+    "the same vendor instant written in another zone still joins — milliseconds are compared, never ISO text",
+  );
+
+  ok(haltSetEvidence(haltSet(), KEY, WAKE_ID), "the measured admin.halt.set row is accepted on its own bare-id envelope");
+  ok(
+    !haltSetEvidence(haltSet({ surface: "C0OTHERROOM" }), KEY, WAKE_ID),
+    "negative control: an announced halt in another room is refused — the set-side column checks still pin the room the widened read no longer does",
+  );
+  ok(
+    !haltSetEvidence(haltSet({ workspace: "T9OTHER99" }), KEY, WAKE_ID),
+    "negative control: an announced halt in another WORKSPACE is refused — the set-side workspace column still pins the tenant the widened read no longer does",
+  );
+  ok(
+    !haltSetEvidence(haltSet({ wakeId: "1626ef2f-0000-0000-0000-000000000002" }), KEY, WAKE_ID),
+    "negative control: a halt naming another wake is refused",
   );
 }
 

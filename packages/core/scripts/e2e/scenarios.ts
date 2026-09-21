@@ -192,7 +192,6 @@ import {
   parseClaimCodeBack,
   CLAIM_CODE_BACK_MARKER,
   silenceCauseGate,
-  slackMessageTimestampIso,
   SPEND_GATE_DOORS,
   spendGateDoorOf,
 } from "./journey.js";
@@ -1030,18 +1029,13 @@ export interface HaltLiveEvidenceKey {
 }
 
 export function haltWakeForSlackAnchor(rows: readonly AuditWireEntry[], key: HaltLiveEvidenceKey, anchorTs: string): string | undefined {
-  const vendorTs = slackMessageTimestampIso(anchorTs);
-  if (!vendorTs) return undefined;
+  const vendorMs = slackVendorEventTime(anchorTs)?.ms;
+  if (vendorMs === undefined) return undefined;
   const wakes = new Set<string>();
   for (const row of rows) {
-    if (
-      row.action !== "wake.ingress" ||
-      row.platform !== "slack" ||
-      row.workspace !== key.workspaceId ||
-      row.surface !== key.channelId ||
-      row.detail?.surfaceKey !== key.surfaceKey ||
-      row.detail.vendorTs !== vendorTs
-    ) continue;
+    if (row.action !== "wake.ingress" || row.platform !== "slack" || row.detail?.surfaceKey !== key.surfaceKey) continue;
+    const rowVendorTs = row.detail.vendorTs;
+    if (typeof rowVendorTs !== "string" || Date.parse(rowVendorTs) !== vendorMs) continue;
     const wakeId = row.detail.wakeId;
     if (typeof wakeId === "string" && wakeId.length > 0) wakes.add(wakeId);
   }
@@ -1137,10 +1131,9 @@ export async function cleanupExactHalt(opts: {
       rows = await opts.auditRead({
         sinceIso: opts.key.runStart,
         platform: "slack",
-        workspace: opts.key.workspaceId,
-        surface: opts.key.channelId,
+        surface: opts.key.surfaceKey,
         actions: ["wake.ingress"],
-        limit: 100,
+        limit: 200,
       });
     } catch {
       return clearRunScoped();
@@ -4894,7 +4887,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
         setEvidence = await pollOptional(
           async () => {
-            const rows = await auditRead({ sinceIso: startedAt, platform: "slack", workspace: identity.teamId, surface: slack.channelId, actions: ["wake.ingress", "admin.halt.set"], limit: 100 });
+            const rows = await auditRead({ sinceIso: startedAt, platform: "slack", actions: ["wake.ingress", "admin.halt.set"], limit: 200 });
             const wakeId = haltWakeForSlackAnchor(rows, evidenceKey, anchor.ts);
             if (!wakeId) return undefined;
             anchorWakeId = wakeId;

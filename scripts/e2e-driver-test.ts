@@ -1346,7 +1346,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const anchorTs = "1779773520.123456";
   const wakeId = "wake-1";
   const ingressRow = {
-    ts: "2026-05-26T05:32:00.200Z", org: "default", platform: "slack", workspace: "T1", surface: "C-HALT",
+    ts: "2026-05-26T05:32:00.200Z", org: "default", platform: "slack", workspace: "engineering", surface: key.surfaceKey,
     action: "wake.ingress", detail: { surfaceKey: key.surfaceKey, vendorTs: "2026-05-26T05:32:00.123Z", wakeId },
   };
   const setRow = {
@@ -1354,7 +1354,10 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     action: "admin.halt.set", detail: { door: "chat", level: "surface", scopeKey: key.surfaceKey, announced: true, wakeId, sessionId: "wrun-1", setAt: "2026-05-26T05:32:00.500Z" },
   };
   ok(haltWakeForSlackAnchor([ingressRow], key, anchorTs) === wakeId, "S-HALT resolves the exact posted Slack timestamp to its host wake");
-  ok(haltWakeForSlackAnchor([{ ...ingressRow, workspace: "T2" }], key, anchorTs) === undefined, "S-HALT rejects an identical vendor timestamp from another workspace");
+  ok(
+    haltWakeForSlackAnchor([{ ...ingressRow, surface: "slack/T2/C-HALT", detail: { ...ingressRow.detail, surfaceKey: "slack/T2/C-HALT" } }], key, anchorTs) === undefined,
+    "S-HALT rejects an identical vendor timestamp from another workspace",
+  );
   ok(haltWakeForSlackAnchor([ingressRow, { ...ingressRow, detail: { ...ingressRow.detail, wakeId: "wake-2" } }], key, anchorTs) === undefined, "S-HALT fails closed when one anchor appears to name multiple wakes");
   ok(haltSetEvidence(setRow, key, wakeId), "S-HALT accepts the exact announced chat row joined to the anchor's wake + session + stored timestamp");
   for (const [label, row] of [

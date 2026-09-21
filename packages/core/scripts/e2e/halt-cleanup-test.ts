@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import type { AuditWireEntry } from "./audit-read.js";
+import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 import type { HaltOwnershipHandle } from "./control-write-driver.js";
 
 process.env.OE_SQLITE_PATH = join("/tmp", `oe-halt-cleanup-test-${process.pid}.sqlite3`);
@@ -30,8 +30,8 @@ const ingressRow = (over: Record<string, unknown> = {}): AuditWireEntry =>
     ts: "2026-01-29T07:59:28.000Z",
     org: "default",
     platform: "slack",
-    workspace: KEY.workspaceId,
-    surface: KEY.channelId,
+    workspace: "engineering",
+    surface: KEY.surfaceKey,
     action: "wake.ingress",
     detail: { surfaceKey: KEY.surfaceKey, vendorTs: ANCHOR_ISO, wakeId: WAKE, ...over },
   }) as unknown as AuditWireEntry;
@@ -48,16 +48,18 @@ async function run(opts: {
   readonly auditThrows?: boolean;
   readonly standing?: HaltOwnershipHandle;
   readonly clearResult?: "cleared" | "missing" | "changed";
-}): Promise<{ result: Awaited<ReturnType<typeof cleanupExactHalt>>; cleared: HaltOwnershipHandle[]; inspects: number }> {
+}): Promise<{ result: Awaited<ReturnType<typeof cleanupExactHalt>>; cleared: HaltOwnershipHandle[]; inspects: number; read?: AuditQueryOpts }> {
   const cleared: HaltOwnershipHandle[] = [];
   let inspects = 0;
+  let read: AuditQueryOpts | undefined;
   const result = await cleanupExactHalt({
     key: KEY,
     anchorTs: opts.anchorTs,
     ...(opts.anchorWakeId !== undefined ? { anchorWakeId: opts.anchorWakeId } : {}),
     ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
     alreadyCleared: opts.alreadyCleared ?? false,
-    auditRead: async () => {
+    auditRead: async (o) => {
+      read = o;
       if (opts.auditThrows) throw new Error("audit route 503");
       return opts.rows ?? [];
     },
@@ -70,7 +72,7 @@ async function run(opts: {
       return opts.clearResult ?? "cleared";
     },
   });
-  return { result, cleared, inspects };
+  return { result, cleared, inspects, ...(read !== undefined ? { read } : {}) };
 }
 
 {
@@ -82,6 +84,19 @@ async function run(opts: {
 
   const resolved = await run({ anchorTs: ANCHOR_TS, rows: [ingressRow()], standing: halt() });
   ok(resolved.result.status === "cleared" && resolved.result.via === "wake", "…and it still resolves the anchor post to its wake when the leg did not get that far");
+
+  ok(
+    resolved.read?.surface === KEY.surfaceKey,
+    "🔴 the ingress read narrows `surface` on the FULLY QUALIFIED key — the spelling agent/channels/unified.ts files — never the bare channel id",
+  );
+  ok(
+    resolved.read?.workspace === undefined,
+    "🔴 the ingress read does NOT narrow `workspace` — that column holds the window token's domain name, never the team id, so any value would return an empty page",
+  );
+  ok(
+    resolved.read?.limit === 200,
+    "the ingress read asks for a 200-row page — rows are served newest-first and the cap applies after that sort, so this leg's own row is the first to fall off a short one",
+  );
 
   const notOwned = await run({ anchorTs: ANCHOR_TS, rows: [ingressRow()], standing: halt({ setRef: "another-wake" }) });
   ok(
