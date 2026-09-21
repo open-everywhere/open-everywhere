@@ -5,6 +5,7 @@ import {
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
   carriesHostTemplate,
+  catchUpBoundHeld,
   classifyConnectorRoad,
   classifySettlementReply,
   classifyUnansweredWake,
@@ -18,11 +19,13 @@ import {
   PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
   replyPostSessionId,
+  rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
   settlementReportPairings,
   spendCapRaisedByThisRun,
   turnStartMs,
+  unifiedTurnSessionId,
   wakeIdForVendorInstant,
   workerRoadForOp,
 } from "./gate-joins.js";
@@ -497,6 +500,89 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(!isPersistOutcome("remember"), "🔴 isPersistOutcome: `remember` — the value this gate pinned until 2026-08-16, which has never existed — is refused");
   ok(!isPersistOutcome(undefined) && !isPersistOutcome(null) && !isPersistOutcome(7), "isPersistOutcome: a row whose outcome is absent or not a string is never a member");
   ok(!isPersistOutcome("toString"), "isPersistOutcome: an Object.prototype key is not a member — the lookup reads own properties only");
+}
+
+{
+  const SAME = "not-stale-35259";
+  const FOREIGN = "not-foreign-99001";
+
+  ok(
+    !catchUpBoundHeld({ bound: "wake", sameContainerStale: [SAME] }).held,
+    "wake-bounded: a marker from before the last wake in the SAME container reds — the time slice was not honoured",
+  );
+  ok(
+    catchUpBoundHeld({ bound: "wake", sameContainerStale: [] }).held,
+    "wake-bounded control: an envelope that re-showed nothing from before the wake holds",
+  );
+  ok(
+    !catchUpBoundHeld({ bound: "wake", sameContainerStale: [], foreignContainerCarried: [FOREIGN] }).held,
+    "wake-bounded: a foreign-container marker reds too — nothing from before the wake belongs in the slice",
+  );
+
+  ok(
+    catchUpBoundHeld({ bound: "discussion", sameContainerStale: [SAME], foreignContainerCarried: [], foreignStaged: 1 }).held,
+    "🔴 discussion-bounded: the live-run evidence (same-discussion `not-stale-35259` carried, no foreign marker) PASSES — the Notion envelope re-shows its own discussion by design",
+  );
+  ok(
+    !catchUpBoundHeld({ bound: "discussion", sameContainerStale: [SAME], foreignContainerCarried: [FOREIGN], foreignStaged: 1 }).held,
+    "discussion-bounded control: a foreign-container marker in the envelope reds — the read reached beyond the discussion to the page",
+  );
+  ok(
+    !catchUpBoundHeld({ bound: "discussion", sameContainerStale: [SAME], foreignContainerCarried: [], foreignStaged: 0 }).held,
+    "discussion-bounded: with NO foreign marker staged the gate measured nothing and does not pass vacuously",
+  );
+}
+
+{
+  const FIRST = "1769564705.585000";
+  const LAST = "1769564705.613000";
+  const provRow = row("reply.provenance", "2026-01-28T01:44:51.000Z", { id: LAST, connections: ["notion"], named: 1, withheld: 0 });
+  const otherTurnRow = row("reply.provenance", "2026-01-28T01:32:47.000Z", { id: "1769469387.000001", connections: ["notion"] });
+
+  ok(
+    rowForReplyChunkSet([otherTurnRow, provRow], [FIRST, LAST]) === provRow,
+    "🔴 the provenance row keyed to the LAST chunk is found when the join takes the whole chunk set (the split-reply fix)",
+  );
+  ok(
+    rowForReplyChunkSet([otherTurnRow, provRow], [FIRST]) === undefined,
+    "negative control: keying on the first chunk alone finds no row — the join miss the board red on",
+  );
+  ok(
+    rowForReplyChunkSet([provRow], [LAST]) === provRow,
+    "an un-split reply (one chunk) still joins on its own id",
+  );
+  ok(
+    rowForReplyChunkSet([otherTurnRow], [FIRST, LAST]) === undefined,
+    "no row names any chunk ⇒ undefined — the exhausted-set miss, reported as NOT-JOINED",
+  );
+}
+
+{
+  const GH_REPLY = "980017";
+  const SLACK_ACK = "1769601761.100200";
+  const ghRow = row("reply.post", "2026-01-28T12:09:21.000Z", { id: GH_REPLY, sessionId: "wrun_GITHUB_TURN" }, undefined, "github");
+  const ackRow = row("reply.post", "2026-01-28T12:08:21.000Z", { id: SLACK_ACK, sessionId: "wrun_SLACK_SIBLING" });
+
+  ok(
+    unifiedTurnSessionId([ackRow, ghRow], { githubReplyId: GH_REPLY, slackAnchorId: SLACK_ACK }) === "wrun_GITHUB_TURN",
+    "🔴 the GitHub turn's seat is resolved from the GitHub reply's row, not the Slack ack's — the fix for the sibling-seat replay",
+  );
+  ok(
+    unifiedTurnSessionId([ackRow], { githubReplyId: GH_REPLY, slackAnchorId: SLACK_ACK }) === "wrun_SLACK_SIBLING",
+    "with no GitHub reply row, it falls back to the Slack ack's session — the pre-fix behaviour",
+  );
+  const bothSame = [
+    row("reply.post", "2026-01-28T12:09:21.000Z", { id: GH_REPLY, sessionId: "wrun_ONE" }, undefined, "github"),
+    row("reply.post", "2026-01-28T12:08:21.000Z", { id: SLACK_ACK, sessionId: "wrun_ONE" }),
+  ];
+  ok(
+    unifiedTurnSessionId(bothSame, { githubReplyId: GH_REPLY, slackAnchorId: SLACK_ACK }) === "wrun_ONE",
+    "control: when one session posted both, either row resolves it",
+  );
+  ok(
+    replyPostSessionId([ackRow], SLACK_ACK) === "wrun_SLACK_SIBLING",
+    "the fallback uses replyPostSessionId, the same join the leg used before the fix",
+  );
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

@@ -9,12 +9,39 @@ process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = db;
 
 const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
-const { ControlWriteDriver, resolveControlWriteConfig } = await import("./e2e/control-write-driver.js");
+const { ControlWriteDriver, resolveControlWriteConfig, tailStderrLines, composeControlConnectFailure, CONTROL_WRITE_CONNECT_TIMEOUT_MS } = await import(
+  "./e2e/control-write-driver.js"
+);
 
 let n = 0;
 function ok(condition: unknown, label: string): void {
   assert.ok(condition, label);
   n++;
+}
+
+ok(CONTROL_WRITE_CONNECT_TIMEOUT_MS >= 120_000, `the connect timeout (${CONTROL_WRITE_CONNECT_TIMEOUT_MS} ms) is well past the ~30 s owner-mode start`);
+
+ok(tailStderrLines("a\nb\n\n  c  \nd\n", 2) === "  c\nd", "tailStderrLines keeps the newest non-blank lines, trailing space trimmed and leading indentation (a stack frame) kept");
+ok(tailStderrLines("", 5) === "", "tailStderrLines on empty stderr is empty");
+{
+  const msg = composeControlConnectFailure(new Error("MCP request timed out"), "Error: password authentication failed\n  at connectOperatorStoreForCli");
+  ok(msg.includes("could not start against the pinned store"), "the composed failure keeps the base sentence");
+  ok(msg.includes("MCP request timed out"), "…and carries the SDK's original error, which the old catch {} threw away");
+  ok(msg.includes("password authentication failed"), "…and the child's stderr, which names the real cause");
+  const noStderr = composeControlConnectFailure(new Error("MCP request timed out"), "");
+  ok(noStderr.includes("MCP request timed out") && noStderr.includes("no stderr"), "with no stderr it still names the cause and says the child was silent");
+}
+
+{
+  let threw: unknown;
+  try {
+    await ControlWriteDriver.connect({ org: "fixture-org", storeEnv: { OE_OPERATIONAL_PROVIDER: "sqlite", OE_SQLITE_PATH: db } }, "slack/T1/C-OWNED", { connectTimeoutMs: 1 });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw instanceof Error, "a 1 ms connect budget cannot cover the child's start and throws");
+  ok(threw instanceof Error && threw.message.includes("could not start against the pinned store"), "…and the throw is the composed failure, not a raw SDK error");
+  ok(threw instanceof Error && threw.message.includes(":"), "…carrying the surfaced cause after the base sentence, which the old fixed string never did");
 }
 
 const off = resolveControlWriteConfig({});

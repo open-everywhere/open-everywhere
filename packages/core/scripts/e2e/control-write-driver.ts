@@ -6,6 +6,23 @@ const CORE_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const CONTROL_ENTRY = fileURLToPath(new URL("../control-mcp.ts", import.meta.url));
 const LOCAL_ACTOR = "local-operator";
 
+export const CONTROL_WRITE_CONNECT_TIMEOUT_MS = 180_000;
+
+export function tailStderrLines(text: string, maxLines: number): string {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .filter((l) => l.length > 0);
+  return lines.slice(-Math.max(0, maxLines)).join("\n");
+}
+
+export function composeControlConnectFailure(cause: unknown, stderrTail: string): string {
+  const causeMsg = cause instanceof Error ? cause.message : String(cause);
+  const base = "local control writer could not start against the pinned store";
+  const tail = stderrTail.length > 0 ? ` — child stderr (last lines): ${stderrTail}` : " — child produced no stderr";
+  return `${base}: ${causeMsg}${tail}`;
+}
+
 export interface ControlWriteConfig {
   readonly org: string;
   readonly storeEnv: Readonly<Record<string, string>>;
@@ -69,7 +86,7 @@ export class ControlWriteDriver {
     private readonly surfaceKey: string,
   ) {}
 
-  static async connect(config: ControlWriteConfig, surfaceKey: string): Promise<ControlWriteDriver> {
+  static async connect(config: ControlWriteConfig, surfaceKey: string, opts: { readonly connectTimeoutMs?: number } = {}): Promise<ControlWriteDriver> {
     if (!config.org.trim() || !surfaceKey.trim()) throw new Error("control writer needs a non-blank org and exact surfaceKey");
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -78,13 +95,21 @@ export class ControlWriteDriver {
       env: { ...config.storeEnv, NODE_NO_WARNINGS: "1" },
       stderr: "pipe",
     });
+    let stderrBuf = "";
+    const stderrStream = transport.stderr;
+    if (stderrStream) {
+      stderrStream.on("data", (chunk: Buffer) => {
+        stderrBuf += chunk.toString("utf8");
+        if (stderrBuf.length > 8192) stderrBuf = stderrBuf.slice(-8192);
+      });
+    }
     const client = new Client({ name: "open-everywhere-e2e-control-writer", version: "1" });
     try {
-      await client.connect(transport);
+      await client.connect(transport, { timeout: opts.connectTimeoutMs ?? CONTROL_WRITE_CONNECT_TIMEOUT_MS });
       return new ControlWriteDriver(client, transport, config.org, surfaceKey);
-    } catch {
+    } catch (err) {
       await transport.close().catch(() => undefined);
-      throw new Error("local control writer could not start against the pinned store");
+      throw new Error(composeControlConnectFailure(err, tailStderrLines(stderrBuf, 8)));
     }
   }
 

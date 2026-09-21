@@ -426,3 +426,60 @@ export const PERSIST_OUTCOMES: readonly MemoryPersistOutcome[] = Object.keys(PER
 export function isPersistOutcome(value: unknown): value is MemoryPersistOutcome {
   return typeof value === "string" && Object.hasOwn(PERSIST_OUTCOME_SET, value);
 }
+
+export type CatchUpWindowBound = "wake" | "discussion";
+
+export interface CatchUpBoundVerdict {
+  readonly held: boolean;
+  readonly detail: string;
+}
+
+export function catchUpBoundHeld(opts: {
+  readonly bound: CatchUpWindowBound;
+  readonly sameContainerStale: readonly string[];
+  readonly foreignContainerCarried?: readonly string[];
+  readonly foreignStaged?: number;
+}): CatchUpBoundVerdict {
+  const same = opts.sameContainerStale;
+  const foreign = opts.foreignContainerCarried ?? [];
+  if (opts.bound === "wake") {
+    const carried = [...same, ...foreign];
+    return {
+      held: carried.length === 0,
+      detail:
+        carried.length === 0
+          ? "wake-bounded envelope re-showed nothing from before the seat's last wake — the time slice held"
+          : `wake-bounded envelope re-showed ${JSON.stringify(carried)} from before the seat's last wake — a whole-container read, not a bounded slice`,
+    };
+  }
+  if ((opts.foreignStaged ?? 0) < 1) {
+    return {
+      held: false,
+      detail:
+        "discussion-bounded envelope needs a marker in a DIFFERENT container to prove it is not a whole-PAGE read, and none was staged — nothing was measured about boundedness",
+    };
+  }
+  return {
+    held: foreign.length === 0,
+    detail:
+      foreign.length === 0
+        ? `discussion-bounded envelope re-showed the same discussion (${same.length} earlier marker(s), legitimate) and carried NO foreign-container marker — bounded to the discussion, not the page`
+        : `discussion-bounded envelope carried a foreign-container marker ${JSON.stringify(foreign)} — the read reached beyond this discussion to the whole page`,
+  };
+}
+
+export function rowForReplyChunkSet(rows: readonly AuditWireEntry[], chunkIds: readonly string[]): AuditWireEntry | undefined {
+  const wanted = new Set(chunkIds.filter((id) => id.length > 0));
+  for (const r of rows) {
+    const id = dstr(r, "id");
+    if (id !== undefined && wanted.has(id)) return r;
+  }
+  return undefined;
+}
+
+export function unifiedTurnSessionId(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly githubReplyId: string; readonly slackAnchorId: string },
+): string | undefined {
+  return replyPostSessionId(rows, opts.githubReplyId) ?? replyPostSessionId(rows, opts.slackAnchorId);
+}

@@ -2803,7 +2803,15 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     `🔴 S-PROVENANCE-DM must carry exactly 2 \`ctx.skip\` calls, each naming a deployment fact this harness cannot create. Found ${skips.length}. ` +
       "A third skip means a measurable condition was turned back into a dry pass — a DELEGATED read is measurable since OPE-1849 and must never become a skip again; one fewer means a fixture fact is now reported as a red.",
   );
-  ok(/🔴 REGRESSION:/.test(provBody), "🔴 S-PROVENANCE-DM's empty-ledger fall-through is a RED naming the regression — an unwired seam, an uncarried delegation and a nameless channel state are code defects, not fixture facts");
+  ok(
+    /🔴 NOT-JOINED:/.test(provBody),
+    "🔴 S-PROVENANCE-DM's empty-ledger fall-through is a RED naming the exhausted join — an unwired seam, an uncarried delegation and a nameless channel state are code defects, not fixture facts",
+  );
+  ok(
+    /ctx\.gate\(\s*false,[\s\S]{0,1200}?🔴 NOT-JOINED:/.test(provBody),
+    "🔴 …and that fall-through is a `ctx.gate(false, …)` carrying the NOT-JOINED verdict itself — a RED, never a log line or a skip",
+  );
+  ok(/rowForReplyChunkSet\(/.test(provBody), "🔴 S-PROVENANCE-DM joins the provenance row over the reply's CHUNK SET, not the first chunk's ts alone (OPE-2008)");
   ok(!/^\s*optional:\s*true/mu.test(provBody), "S-PROVENANCE-DM declares no `optional: true` field");
   ok(
     /needs E2E_TARGET_URL \+ E2E_CONTROL_READ_TOKEN/.test(provBody) && !/ctx\.skip\(\s*\n?\s*"needs E2E_TARGET_URL/.test(provBody),

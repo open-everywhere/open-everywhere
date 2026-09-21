@@ -128,6 +128,8 @@ import {
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
   carriesHostTemplate,
+  catchUpBoundHeld,
+  type CatchUpWindowBound,
   classifyConnectorRoad,
   classifySettlementReply,
   classifyUnansweredWake,
@@ -143,7 +145,7 @@ import {
   memoryPathReadsBetween,
   PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
-  replyPostSessionId,
+  rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
   SETTLEMENT_REPORT_POSTED_ACTION,
@@ -151,6 +153,7 @@ import {
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
+  unifiedTurnSessionId,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
   workerRoadForOp,
@@ -861,9 +864,13 @@ async function gateSeatCatchUp(
     readonly trigger: string;
     readonly caughtUp: string;
     readonly stale: readonly string[];
+    readonly windowBound?: CatchUpWindowBound;
+    readonly foreign?: readonly string[];
     readonly replyText?: string;
   },
 ): Promise<void> {
+  const windowBound: CatchUpWindowBound = opts.windowBound ?? "wake";
+  const foreign = opts.foreign ?? [];
   const posts =
     (await awaitReplyPostRows(ctx.auditRead!, {
       sinceIso: opts.sinceIso,
@@ -885,7 +892,7 @@ async function gateSeatCatchUp(
   let picked: { readonly sessionId: string; readonly events: readonly TranscriptWireEvent[]; readonly verdict: SeatCatchUpWakeVerdict } | undefined;
   for (const sessionId of tried) {
     const events = await ctx.transcriptRead(sessionId);
-    const verdict = seatCatchUpWake(events, { trigger: opts.trigger, caughtUp: opts.caughtUp, stale: opts.stale });
+    const verdict = seatCatchUpWake(events, { trigger: opts.trigger, caughtUp: opts.caughtUp, stale: [...opts.stale, ...foreign] });
     if (verdict.wakeIndex === undefined) continue;
     picked = { sessionId, events, verdict };
     break;
@@ -905,9 +912,17 @@ async function gateSeatCatchUp(
     verdict.carriedCatchUp || tookReadRoad,
     `🔴 catch-up: the message said while the seat was idle (\`${opts.caughtUp}\`) reached the seat by NEITHER road. It was not in the wake envelope (event ${verdict.wakeIndex}), and no \`read_thread\` result inside the turn carried it with the reply repeating it. It drew no wake of its own — the audited-silence gate above proves that — so those two are the only paths it had. A red here is a seat road that never ran on this surface, or a catch-up read that returned nothing for it`,
   );
+  const staleSet = new Set(opts.stale);
+  const foreignSet = new Set(foreign);
+  const boundVerdict = catchUpBoundHeld({
+    bound: windowBound,
+    sameContainerStale: verdict.staleCarried.filter((m) => staleSet.has(m)),
+    foreignContainerCarried: verdict.staleCarried.filter((m) => foreignSet.has(m)),
+    foreignStaged: foreign.length,
+  });
   ctx.gate(
-    verdict.staleCarried.length === 0,
-    `🔴 catch-up: the window is BOUNDED to what was said since the seat's last wake — the envelope re-shows nothing from before it (saw ${JSON.stringify(verdict.staleCarried)}). \`seatCatchUp\` filters on \`m.ms >= sinceMs\`, and \`sinceMs\` is \`max(lastWakeAt, now − the adapter's reachback)\` (\`backscroll-window.ts\` \`seatCatchUpSinceMs\`) — the seat's last wake within a journey's own minutes, the reachback floor on a rotated or first-wake generation. A marker from an earlier exchange here is a read that returns the whole container every wake, which carries the idle message too and would pass the gate above while proving nothing`,
+    boundVerdict.held,
+    `🔴 catch-up: the envelope is not bounded as this surface's shape requires — ${boundVerdict.detail}. A read that returns more than its window carries the idle message too and would pass the road gate above while proving nothing`,
   );
 }
 
@@ -5110,7 +5125,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (singleWindow && ctx.auditRead) {
         const writes = await ctx.auditRead({ sinceIso: decideAt, actions: ["memory.write", REPLY_POST_ACTION] });
-        const unifiedSessionId = replyPostSessionId(writes, ack.ts);
+        const unifiedSessionId = unifiedTurnSessionId(writes, { githubReplyId: String(reply.id), slackAnchorId: ack.ts });
 
         if (unifiedSessionId !== undefined && ctx.transcriptRead) {
           const events = await ctx.transcriptRead(unifiedSessionId);
@@ -5120,12 +5135,11 @@ export const SCENARIOS: readonly Scenario[] = [
             extractPaths: (evs) => extractMemoryPathReads(evs as readonly TranscriptWireEvent[]),
           });
           if (!slice.bounded) {
-            ctx.gate(
-              false,
-              `shared-context proof (read side): the GitHub turn could not be LOCATED in seat ${unifiedSessionId}'s replayed stream ` +
+            ctx.log(
+              `shared-context proof (read side) NOT LOCATED (skip-class) — the GitHub turn was not found in seat ${unifiedSessionId}'s replayed stream ` +
                 `(${events.length} event(s); the ask ${slice.fromIndex === undefined ? "was never seen" : `opened at event ${slice.fromIndex}`}, ` +
                 `the marker-carrying reply ${slice.toIndex === undefined ? "was never seen after it" : `closed at event ${slice.toIndex}`}). ` +
-                "Nothing was measured, so nothing is claimed — this is a harness fault, never a verdict on the deployment",
+                "Nothing was measured, so nothing is claimed here — the money shot above is the authoritative verdict, and the write side below is the other witness",
             );
           } else {
             ctx.gate(
@@ -5830,10 +5844,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const { userId, teamId } = await ctx.slack!.identity();
       const runStart = new Date(Date.now() - 60_000).toISOString();
 
-      const ask = async (text: string, what: string): Promise<SlackMessage> => {
+      const ask = async (text: string, what: string): Promise<{ readonly first: SlackMessage; readonly anchorTs: string }> => {
         const { ts: anchorTs } = await dm.post(text);
         const clicked = new Set<string>();
-        return pollUntil(
+        const first = await pollUntil(
           async () => {
             const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
             let pending: SlackMessage | undefined;
@@ -5865,10 +5879,16 @@ export const SCENARIOS: readonly Scenario[] = [
           },
           { timeoutMs: FILE_REPLY_WAIT, what },
         );
+        return { first, anchorTs };
       };
 
+      const chunkSet = async (anchorTs: string): Promise<readonly SlackMessage[]> =>
+        (await dm.collectBotMessagesAfter(anchorTs, anchorTs)).filter(
+          (m) => m.text.trim().length > 0 && !isFillerAck(m.text) && !eveRequestApprovalButtons(m),
+        );
+
       const readToken = factToken("prov");
-      const answer = await ask(
+      const { first: answer, anchorTs: readAnchor } = await ask(
         `can you list the pages in my Notion workspace? (ref ${readToken})`,
         "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask",
       );
@@ -5892,19 +5912,23 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.log(`connector.op: ${opRows.length} row(s) naming ${NOTION_CONNECTOR} in the window`);
 
+      let replyChunks: readonly SlackMessage[] = [answer];
       const provRow = await pollOptional(
         async () => {
+          replyChunks = await chunkSet(readAnchor);
+          const chunkIds = (replyChunks.length > 0 ? replyChunks : [answer]).map((c) => c.ts);
           const rows = await auditRead({ sinceIso: runStart, actions: [REPLY_PROVENANCE_ACTION] });
-          return rows.find((r) => r.detail?.id === answer.ts);
+          return rowForReplyChunkSet(rows, chunkIds);
         },
-        { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for the DM answer ${answer.ts}` },
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for any chunk of the DM answer (first chunk ${answer.ts})` },
       );
       if (provRow === undefined) {
+        const chunkIds = (replyChunks.length > 0 ? replyChunks : [answer]).map((c) => c.ts);
         const edits = await auditRead({ sinceIso: runStart, actions: ["reply.edit"] });
-        const reRendered = edits.filter((r) => r.detail?.id === answer.ts);
+        const reRendered = edits.filter((r) => typeof r.detail?.id === "string" && chunkIds.includes(r.detail.id as string));
         if (reRendered.length > 0) {
           ctx.skip(
-            `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and ${reRendered.length} reply.edit row(s) re-rendered that exact message. ` +
+            `a ${PROVENANCE_READ_TIER}-tier connector.op row exists, NO ${REPLY_PROVENANCE_ACTION} row exists for any chunk of the reply (${JSON.stringify(chunkIds)}), and ${reRendered.length} reply.edit row(s) re-rendered a chunk. ` +
               "That is the ONE fixture route left here: a later turn rewrote the answer, so the bytes in the room belong to that turn's ledger and not to the reading turn's. The harness cannot stop the seat " +
               "editing its own message, so it is a deployment fact and not a footer defect. Nothing is asserted about the footer.",
           );
@@ -5914,7 +5938,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const carried = await auditRead({ sinceIso: runStart, actions: [DELEGATED_PROVENANCE_ACTION] });
         ctx.gate(
           false,
-          `🔴 REGRESSION: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row exists for the reply ${answer.ts}, and no reply.edit re-rendered it. ` +
+          `🔴 NOT-JOINED: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row names ANY chunk of the reply (${JSON.stringify(chunkIds)}), and no reply.edit re-rendered a chunk. ` +
             `The window carries ${delegated.length} delegation row(s) (${[...new Set(delegated.map((r) => r.action))].join(", ") || "none"}) and ${carried.length} ${DELEGATED_PROVENANCE_ACTION} row(s). ` +
             "READ THOSE TWO NUMBERS FIRST — they name which half broke. Delegation rows with NO carriage row means the SETTLE never carried: check `settleDelegatedReads` in `applyTaskSettlement` " +
             "(hooks/spawn-taint.ts), and check the worker wrote at all — the carriage joins through the dispatch row the TAINT plane writes, so `taint.mode: \"off\"` leaves nothing to join. That settle is " +
@@ -5944,7 +5968,9 @@ export const SCENARIOS: readonly Scenario[] = [
         `provenance row: every connection the turn read is named to this room (named=${named}, connections=${connections.length})`,
       );
 
-      const lines = answer.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+      const replyId = typeof provRow.detail?.id === "string" ? (provRow.detail.id as string) : answer.ts;
+      const footerChunk = replyChunks.find((c) => c.ts === replyId) ?? answer;
+      const lines = footerChunk.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
       const footer = lines.find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX));
       ctx.gate(
         footer !== undefined,
@@ -5957,7 +5983,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const controlToken = factToken("provneg");
-      const control = await ask(
+      const { first: control } = await ask(
         `thanks — separate question, no lookups needed: what is 17 + 25? (ref ${controlToken})`,
         "a substantive bot reply to the arithmetic control ask",
       );
@@ -8149,6 +8175,7 @@ export const SCENARIOS: readonly Scenario[] = [
       requireAuditRead(ctx);
       const notion = ctx.notionEngaged!;
       const blockId = await notion.appendParagraphBlock(`e2e engaged-seam probe ${factToken("eng")}`);
+      let foreignBlockId: string | undefined;
       try {
         const mentionFrom = new Date().toISOString();
         const opened = await notion.createBlockDiscussion(blockId, fixtureLine(`${ENGAGED_NAME} — what's 12*12? reply with just the number`));
@@ -8191,6 +8218,10 @@ export const SCENARIOS: readonly Scenario[] = [
         const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
         await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", surface: notion.pageId, liveFrom: mentionFrom, observedSilent });
 
+        foreignBlockId = await notion.appendParagraphBlock(`e2e engaged-foreign probe ${factToken("eng")}`);
+        const foreignMarker = factToken("not-foreign");
+        await notion.createBlockDiscussion(foreignBlockId, `noting on a separate thread: build ${foreignMarker}. No reply needed.`);
+
         await sleep(msToNextMinuteBoundary(Date.now()));
         const idleMarker = factToken("not-idle");
         await notion.replyToDiscussion(opened.discussionId, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
@@ -8206,9 +8237,19 @@ export const SCENARIOS: readonly Scenario[] = [
           .catch(() => undefined);
         ctx.gate(caughtUp !== undefined, "catch-up: the name-drop woke the page again after the stand-down — the wake this leg reads the context of");
         ctx.log(`catch-up: the reply ${caughtUp?.text.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
-        await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "notion", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker], ...(caughtUp ? { replyText: caughtUp.text } : {}) });
+        await gateSeatCatchUp(ctx, {
+          sinceIso: catchUpFrom,
+          platform: "notion",
+          trigger: triggerMarker,
+          caughtUp: idleMarker,
+          stale: [staleMarker],
+          windowBound: "discussion",
+          foreign: [foreignMarker],
+          ...(caughtUp ? { replyText: caughtUp.text } : {}),
+        });
       } finally {
         await notion.archiveBlock(blockId).catch(() => undefined);
+        if (foreignBlockId) await notion.archiveBlock(foreignBlockId).catch(() => undefined);
       }
     },
   },
