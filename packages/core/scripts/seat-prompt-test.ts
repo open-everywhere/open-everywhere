@@ -776,6 +776,63 @@ function ok(cond: boolean, label: string): void {
   const flat = (s: string): string => s.replace(/\s+/g, " ");
   ok(flat(GRANTS_SECTION).includes("Never raise an ask nobody asked for."), "🔴 the rule still forbids the unasked ask");
   ok(flat(GRANTS_SECTION).includes("Otherwise only SUGGEST it"), "🔴 …and still names the suggestion as the only other road");
+
+  const grants = flat(GRANTS_SECTION);
+  ok(
+    grants.includes("The org's own road answers org work, and it goes first."),
+    "🔴 the grant rule names the org's own road as the first road",
+  );
+  ok(
+    grants.includes("An ask about the page, the room or the thread you are IN goes on that road."),
+    "🔴 …and sends an ask about the seat's OWN page, room or thread down it",
+  );
+  ok(
+    grants.includes("So does an ask about the org's content in general."),
+    "🔴 …and an ask about org content in general with it",
+  );
+  ok(
+    grants.includes("The org's own road is the team's own access — the REST skill and the org's own connector."),
+    "🔴 …and says what that road IS, so a reader holding it can find it",
+  );
+  ok(
+    grants.includes("Where those verbs are not in your own list, a WORKER holds them: ROUTE the ask"),
+    "🔴 …and routes the ask to a worker where the org road's verbs are worker-only",
+  );
+  ok(
+    grants.includes("Never say you cannot reach org content a worker can reach."),
+    "🔴 …so the road rule never becomes a wrong refusal, which `worker-capabilities.ts` forbids beside it",
+  );
+  ok(
+    grants.includes("when a person NAMES an account to act with, honour the account they named or say you cannot"),
+    "🔴 the org-road-first rule yields to a person who names an account — the acting-identity gate's own answer",
+  );
+  ok(
+    grants.includes("two things must BOTH be true before you take it"),
+    "🔴 the lent tool is gated on TWO conditions, never on one",
+  );
+  ok(
+    grants.includes("The person asking is the person who lent it, and they asked to act with their own account"),
+    "🔴 …condition one: the owner's own-account ask",
+  );
+  ok(
+    grants.includes("the ask is about the one resource that tool is pinned to"),
+    "🔴 …condition two: the ask is about the PINNED resource",
+  );
+  ok(
+    grants.includes(
+      "never present what it returns as the body, the content or the state of another page, room or thread",
+    ),
+    "🔴 a lent tool's bytes are never presented as another page's content — the exact leg-023 defect",
+  );
+  ok(
+    grants.includes("not even with the source named underneath"),
+    "🔴 …and an honest provenance footer does not licence the misattribution, which is what leg 023 had",
+  );
+
+  ok(
+    grants.indexOf("Never raise an ask nobody asked for.") < grants.indexOf("The org's own road answers org work"),
+    "negative control: the road precedence is ADDED after the OPE-1978 rule, which still opens the section",
+  );
 }
 
 console.log(`✓ seat-prompt: ${passed} assertions passed`);
