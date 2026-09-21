@@ -1535,7 +1535,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const silosTouched = [...new Set(reads.map(siloOfPath).filter((s): s is string => s !== null))];
       ctx.gate(
         reads.length > 0,
-        `READ HAPPENED: the recall turn opened at least one memory/<silo>/… path (totalReads ${reads.length}) — the observable the 2026-07-25 battery measured as 0 while replies still looked fine`,
+        `READ HAPPENED: the recall turn touched at least one memory path — a memory/<silo>/… path or the memory root in a tool's input, or a memory path a tool's OUTPUT listed (totalReads ${reads.length}) — the observable the 2026-07-25 battery measured as 0 while replies still looked fine`,
       );
       ctx.gate(
         silosTouched.length > 0,

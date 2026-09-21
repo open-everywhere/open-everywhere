@@ -57,7 +57,7 @@ export const SEAT_READ_TOOL = "read_thread";
 
 export const SEAT_READ_RESULT_TYPES: readonly string[] = ["action.result"];
 
-function isToolResultEvent(type: string, types: readonly string[]): boolean {
+export function isToolResultEvent(type: string, types: readonly string[] = SEAT_READ_RESULT_TYPES): boolean {
   const t = type.toLowerCase();
   return types.some((x) => t === x.toLowerCase()) || t.endsWith(".result") || t === "result";
 }
