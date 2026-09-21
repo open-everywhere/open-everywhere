@@ -795,11 +795,11 @@ function ok(cond: boolean, label: string): void {
     "🔴 …and says what that road IS, so a reader holding it can find it",
   );
   ok(
-    grants.includes("Where those verbs are not in your own list, a WORKER holds them: ROUTE the ask"),
-    "🔴 …and routes the ask to a worker where the org road's verbs are worker-only",
+    grants.includes("Where those verbs are not in your own list, hand the job to a task the same way: it holds them."),
+    "🔴 …and hands the job to a task where the org road's verbs are worker-only",
   );
   ok(
-    grants.includes("Never say you cannot reach org content a worker can reach."),
+    grants.includes("Never say you cannot reach org content a task can reach."),
     "🔴 …so the road rule never becomes a wrong refusal, which `worker-capabilities.ts` forbids beside it",
   );
   ok(
@@ -807,7 +807,7 @@ function ok(cond: boolean, label: string): void {
     "🔴 the org-road-first rule yields to a person who names an account — the acting-identity gate's own answer",
   );
   ok(
-    grants.includes("two things must BOTH be true before you take it"),
+    grants.includes("two things must BOTH be true before it is taken"),
     "🔴 the lent tool is gated on TWO conditions, never on one",
   );
   ok(
