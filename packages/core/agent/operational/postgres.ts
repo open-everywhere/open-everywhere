@@ -695,6 +695,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE routine_prompt_revisions FORCE ROW LEVEL SECURITY`,
+];
+
+const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -973,6 +976,17 @@ async function ownsAuditTable(client: PgClient): Promise<boolean | null> {
   return r ? r.is_owner === true : null;
 }
 
+const VIOLATION_SUFFIX = {
+  noInsertPolicy: ": no INSERT policy — appends would be denied under FORCE",
+  noSelectPolicy: ": no SELECT policy — reads would be denied under FORCE",
+  foreignPolicy: " — not in the append-only allowlist",
+  mutatingPolicy: " — append-only defeated",
+  hostileTrigger: " — could suppress or alter audit writes",
+  badGrant: " — a non-owner could mutate the append-only log",
+} as const;
+
+const TAMPER_SUFFIXES = [VIOLATION_SUFFIX.foreignPolicy, VIOLATION_SUFFIX.mutatingPolicy, VIOLATION_SUFFIX.hostileTrigger, VIOLATION_SUFFIX.badGrant] as const;
+
 export async function verifyAppendOnlyAudit(client: PgClient): Promise<string[]> {
   const violations: string[] = [];
   for (const table of APPEND_ONLY_TABLES) {
@@ -993,24 +1007,24 @@ export async function verifyAppendOnlyAudit(client: PgClient): Promise<string[]>
     const expected = EXPECTED_POLICIES[table] ?? [];
     for (const p of pols) {
       if (p.cmd === "w" || p.cmd === "d" || p.cmd === "*") {
-        violations.push(`${table}: policy "${p.name}" permits ${p.cmd === "w" ? "UPDATE" : p.cmd === "d" ? "DELETE" : "ALL"} — append-only defeated`);
+        violations.push(`${table}: policy "${p.name}" permits ${p.cmd === "w" ? "UPDATE" : p.cmd === "d" ? "DELETE" : "ALL"}${VIOLATION_SUFFIX.mutatingPolicy}`);
       }
       if (!expected.some((e) => policyMatchesExpected(p, e))) {
-        violations.push(`${table}: unexpected ${p.permissive ? "permissive" : "RESTRICTIVE"} policy "${p.name}" (cmd ${p.cmd}) — not in the append-only allowlist`);
+        violations.push(`${table}: unexpected ${p.permissive ? "permissive" : "RESTRICTIVE"} policy "${p.name}" (cmd ${p.cmd})${VIOLATION_SUFFIX.foreignPolicy}`);
       }
     }
-    if (!pols.some((p) => p.cmd === "a")) violations.push(`${table}: no INSERT policy — appends would be denied under FORCE`);
-    if (!pols.some((p) => p.cmd === "r")) violations.push(`${table}: no SELECT policy — reads would be denied under FORCE`);
+    if (!pols.some((p) => p.cmd === "a")) violations.push(`${table}${VIOLATION_SUFFIX.noInsertPolicy}`);
+    if (!pols.some((p) => p.cmd === "r")) violations.push(`${table}${VIOLATION_SUFFIX.noSelectPolicy}`);
 
     for (const tr of await nonInternalTriggers(client, table)) {
       const ev = triggerEvents(tr.tgtype);
       if (ev.some((e) => e === "INSERT" || e === "UPDATE" || e === "DELETE")) {
-        violations.push(`${table}: hostile trigger "${tr.name}" (${ev.join("/")}) — could suppress or alter audit writes`);
+        violations.push(`${table}: hostile trigger "${tr.name}" (${ev.join("/")})${VIOLATION_SUFFIX.hostileTrigger}`);
       }
     }
 
     for (const g of await badMutationGrants(client, table)) {
-      violations.push(`${table}: role "${g.label}" holds a ${g.privilege} grant — a non-owner could mutate the append-only log`);
+      violations.push(`${table}: role "${g.label}" holds a ${g.privilege} grant${VIOLATION_SUFFIX.badGrant}`);
     }
   }
   return violations;
@@ -1022,15 +1036,21 @@ interface HealActions {
   readonly revokedGrants: string[];
 }
 
-async function healUnexpectedArtifacts(client: PgClient): Promise<HealActions> {
+interface HealPlan {
+  readonly heal: HealActions;
+  readonly policyDrops: readonly string[];
+}
+
+async function healUnexpectedArtifacts(client: PgClient): Promise<HealPlan> {
   const droppedPolicies: string[] = [];
   const droppedTriggers: string[] = [];
   const revokedGrants: string[] = [];
+  const policyDrops: string[] = [];
   for (const table of APPEND_ONLY_TABLES) {
     const expected = EXPECTED_POLICIES[table] ?? [];
     for (const p of await policiesOn(client, table)) {
       if (!expected.some((e) => policyMatchesExpected(p, e))) {
-        await client.query(`DROP POLICY IF EXISTS ${quoteIdent(p.name)} ON ${table}`);
+        policyDrops.push(`DROP POLICY IF EXISTS ${quoteIdent(p.name)} ON ${table}`);
         droppedPolicies.push(`${table}.${p.name}`);
       }
     }
@@ -1043,12 +1063,32 @@ async function healUnexpectedArtifacts(client: PgClient): Promise<HealActions> {
       revokedGrants.push(`${table}:${g.label}:${g.privilege}`);
     }
   }
-  return { droppedPolicies, droppedTriggers, revokedGrants };
+  return { heal: { droppedPolicies, droppedTriggers, revokedGrants }, policyDrops };
 }
 
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
+
+function healedAnything(heal: HealActions | undefined): boolean {
+  return heal !== undefined && (heal.droppedPolicies.length > 0 || heal.droppedTriggers.length > 0 || heal.revokedGrants.length > 0);
+}
+
+export type AuditIntegrityCause = "aborted-init" | "tampering" | "unknown";
+
+export function auditIntegrityCause(violations: readonly string[], healedArtifacts: boolean): AuditIntegrityCause {
+  if (healedArtifacts || violations.some((v) => TAMPER_SUFFIXES.some((suffix) => v.endsWith(suffix)))) return "tampering";
+  if (violations.some((v) => v.endsWith(VIOLATION_SUFFIX.noInsertPolicy) || v.endsWith(VIOLATION_SUFFIX.noSelectPolicy))) return "aborted-init";
+  return "unknown";
+}
+
+const CAUSE_NOTE: Readonly<Record<AuditIntegrityCause, string>> = {
+  "aborted-init":
+    "a table stood with row-level security forced and NO policy, and the heal removed nothing — an init aborted inside the policy span leaves this, and so does an owner-credential DROP POLICY; every audit append since was denied and its row dropped",
+  tampering:
+    "an artifact outside the current allowlist was present — a policy, trigger or grant this schema never creates, or one an older release created; check the release history before treating it as an intrusion",
+  unknown: "neither the aborted-init nor the tampering signature explains this state — read the violations",
+};
 
 async function recordAuditIntegrity(
   client: PgClient,
@@ -1056,8 +1096,9 @@ async function recordAuditIntegrity(
   healed: boolean,
   heal?: HealActions,
 ): Promise<void> {
-  const detail: Record<string, unknown> = { violations, healed };
-  if (heal && (heal.droppedPolicies.length || heal.droppedTriggers.length || heal.revokedGrants.length)) {
+  const healedArtifacts = healedAnything(heal);
+  const detail: Record<string, unknown> = { violations, healed, cause: auditIntegrityCause(violations, healedArtifacts) };
+  if (healedArtifacts) {
     detail.healed_artifacts = heal;
   }
   const org = deploymentOrg();
@@ -1089,6 +1130,12 @@ const AUDIT_CHAIN_LOCK_CLASS = createHash("sha256").update("open-everywhere:audi
 export function auditChainLockKey(org: string): number {
   return createHash("sha256").update(org).digest().readInt32BE(0);
 }
+
+const SCHEMA_POLICY_LOCK_CLASS = createHash("sha256").update("open-everywhere:schema-policy").digest().readInt32BE(0);
+
+const SCHEMA_POLICY_LOCK_KEY = createHash("sha256").update("open-everywhere:operational-policy-span").digest().readInt32BE(0);
+
+const SCHEMA_POLICY_LOCK_TIMEOUT_MS = 60_000;
 
 const AUDIT_CHAIN_LOCK_TIMEOUT_MS = 10_000;
 
@@ -1201,6 +1248,44 @@ async function nextAuditPrevSha(client: PgClient, org: string): Promise<string |
   );
 }
 
+let policySpanAtomicityWarned = false;
+function warnIfPolicySpanCannotBeAtomic(client: PgClient): void {
+  if (client.withConnection || policySpanAtomicityWarned) return;
+  policySpanAtomicityWarned = true;
+  console.warn(
+    "[open-everywhere:operational] this Postgres client offers no withConnection seam, so the RLS policy span re-applies in " +
+      "AUTOCOMMIT. That is correct for the embedded PGlite floor. On a POOLED hosted client it means a pass that aborts inside " +
+      "the span leaves the append-only tables with NO policy — deny-all — until the next owner-mode init. A one-connection " +
+      "engine can run BEGIN and COMMIT; what this seam buys is the proof that every statement lands on ONE connection. Give the client a " +
+      "withConnection implementation (packages/adapters/agent/postgres/neon.ts is the reference).",
+  );
+}
+
+export function _resetPolicySpanAtomicityWarnForTest(): void {
+  policySpanAtomicityWarned = false;
+}
+
+async function applyPolicyStatements(client: PgClient, healDrops: readonly string[] = []): Promise<void> {
+  warnIfPolicySpanCannotBeAtomic(client);
+  const statements = [...healDrops, ...POLICY_STATEMENTS];
+  if (!client.withConnection) {
+    for (const stmt of statements) await client.query(stmt);
+    return;
+  }
+  await client.withConnection(async (conn) => {
+    await conn.query("BEGIN");
+    try {
+      await conn.query(`SET LOCAL lock_timeout = ${SCHEMA_POLICY_LOCK_TIMEOUT_MS}`);
+      await conn.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [SCHEMA_POLICY_LOCK_CLASS, SCHEMA_POLICY_LOCK_KEY]);
+      for (const stmt of statements) await conn.query(stmt);
+      await conn.query("COMMIT");
+    } catch (err) {
+      await conn.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    }
+  });
+}
+
 export async function initOperationalSchema(client: PgClient): Promise<void> {
   warnIfAuditChainCannotSerialise(client);
   const owner = await ownsAuditTable(client);
@@ -1209,8 +1294,10 @@ export async function initOperationalSchema(client: PgClient): Promise<void> {
     const violations = await verifyAppendOnlyAudit(client);
     if (violations.length > 0) {
       await recordAuditIntegrity(client, violations, false);
+      const cause = auditIntegrityCause(violations, false);
       throw new Error(
-        `operational schema: append-only audit posture FAILED verification under the non-owner runtime role — ${violations.join("; ")}. ` +
+        `operational schema: append-only audit posture FAILED verification under the non-owner runtime role — cause: ${cause} ` +
+          `(${CAUSE_NOTE[cause]}) — ${violations.join("; ")}. ` +
           "Re-run the schema init as the owner/migration role to repair it, then reboot (docs/extending/database.md, two-role split).",
       );
     }
@@ -1219,10 +1306,12 @@ export async function initOperationalSchema(client: PgClient): Promise<void> {
 
   const preViolations = owner === true ? await verifyAppendOnlyAudit(client) : [];
 
-  const heal = owner === true ? await healUnexpectedArtifacts(client) : { droppedPolicies: [], droppedTriggers: [], revokedGrants: [] };
+  const plan: HealPlan = owner === true ? await healUnexpectedArtifacts(client) : { heal: { droppedPolicies: [], droppedTriggers: [], revokedGrants: [] }, policyDrops: [] };
+  const heal = plan.heal;
 
   try {
     for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
+    await applyPolicyStatements(client, plan.policyDrops);
   } catch (err) {
     if (owner === null) {
       throw new Error(
@@ -1234,7 +1323,11 @@ export async function initOperationalSchema(client: PgClient): Promise<void> {
   }
 
   if (preViolations.length > 0) {
-    console.error(`[open-everywhere:operational] append-only audit posture was broken and has been re-applied: ${preViolations.join("; ")}`);
+    const cause = auditIntegrityCause(preViolations, healedAnything(heal));
+    console.error(
+      `[open-everywhere:operational] append-only audit posture was broken and has been re-applied — cause: ${cause} ` +
+        `(${CAUSE_NOTE[cause]}): ${preViolations.join("; ")}`,
+    );
     await recordAuditIntegrity(client, preViolations, true, heal);
   }
 
