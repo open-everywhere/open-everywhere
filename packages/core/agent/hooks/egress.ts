@@ -34,6 +34,13 @@ function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
 }
 
+export class EgressBindingDivergenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EgressBindingDivergenceError";
+  }
+}
+
 export interface ResolvedEgressPolicy {
   readonly policy: SandboxNetworkPolicy;
   readonly scopeKey: string;
@@ -199,7 +206,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
       log(`subagent child: parent egress fingerprint unreadable, invariant not asserted this pass: ${String(err)}`);
     }
     if (parentFingerprint !== undefined && parentFingerprint !== fingerprint) {
-      const failure = new Error(
+      const failure = new EgressBindingDivergenceError(
         `egress identical-binding invariant VIOLATED: this subagent child compiled policy ${fingerprint} ` +
           `(${summary}, bound to ${scopeKey}) while its parent published ${parentFingerprint} into the sandbox ` +
           `they share. A native child binds to its parent's identity (identity/binding.ts channelPlatform's ` +
@@ -225,6 +232,9 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
             hosts: hostCount,
             summary,
             ...writeHostsAuditFields(writeHosts),
+            ...(ownAccountEgressRefusals.length > 0
+              ? { ownAccountConnector: ownAccountEgressRefusals[0]!.connector, ownAccountWithheld: true }
+              : {}),
             aborted: true,
           },
         });
@@ -424,23 +434,49 @@ function noteOwnAccountWithheld(ctx: HookContext, result: EgressEnforcementResul
   }
 }
 
+function workerStoppedClause(connector: string): string {
+  return (
+    `(The delegated worker was stopped before it read anything: its seat's firewall still carries the shared ` +
+    `${connector} integration, and one session holds one credential per host, so the worker may not narrow it. ` +
+    `The worker read nothing. Say the refusal above in the room — do not retry the delegation.)`
+  );
+}
+
+async function ownAccountAbortError(ctx: HookContext, result: EgressEnforcementResult): Promise<Error> {
+  const fallback = result.abortError ?? new Error("egress enforcement aborted");
+  const refusals = result.ownAccountEgressRefusals ?? [];
+  const connector = refusals[0]?.connector;
+  if (connector === undefined || !(result.abortError instanceof EgressBindingDivergenceError)) {
+    noteOwnAccountWithheld(ctx, result);
+    return fallback;
+  }
+  try {
+    const verdict = await noteOwnAccountRouteRefusal(ctx as unknown as BindableContext, refusals);
+    if (verdict?.refusal === undefined) return fallback;
+    return new EgressBindingDivergenceError(`${verdict.refusal}\n${workerStoppedClause(connector)}`);
+  } catch (err) {
+    log(`own-account refusal sentence unavailable, failing the worker with the invariant message instead: ${String(err)}`);
+    return fallback;
+  }
+}
+
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
       await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
       const result = await enforceEgress("session.started", liveDeps(ctx));
+      if (result.abortError) throw await ownAccountAbortError(ctx, result);
       noteOwnAccountWithheld(ctx, result);
-      if (result.abortError) throw result.abortError;
     },
 
     "turn.started": async (_event, ctx) => {
       try {
         await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
         const result = await enforceEgress("turn.started", liveDeps(ctx));
+        if (result.abortError) throw await ownAccountAbortError(ctx, result);
         noteOwnAccountWithheld(ctx, result);
-        if (result.abortError) throw result.abortError;
       } catch (err) {
-        if (err instanceof DelegatedTaskBindingUnavailableError || (err instanceof Error && err.message.includes("identical-binding invariant VIOLATED"))) throw err;
+        if (err instanceof DelegatedTaskBindingUnavailableError || err instanceof EgressBindingDivergenceError) throw err;
         log(`turn.started re-apply skipped (session-start policy still in force): ${String(err)}`);
       }
     },

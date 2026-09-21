@@ -16,6 +16,7 @@ import {
   waitForChildren,
   type AuditCursor,
   type AuditRow,
+  type RecordedRequest,
   type ScriptedHandle,
 } from "../harness";
 
@@ -58,6 +59,23 @@ function notionActingRows(rows: readonly AuditRow[]): { refused: unknown; tool: 
     });
 }
 
+async function routeIndependentRefusalOpening(): Promise<string> {
+  const { ownAccountRefusal } = await import("@open-everywhere/core/agent/connections/own-account-ask.js");
+  const withRoute = ownAccountRefusal("notion", true, true);
+  const withoutRoute = ownAccountRefusal("notion", false, false);
+  let i = 0;
+  while (i < withRoute.length && i < withoutRoute.length && withRoute[i] === withoutRoute[i]) i++;
+  const opening = withRoute.slice(0, i).trimEnd();
+  expect(opening.length, `the two route variants no longer share an opening, so this helper cannot derive the sentence. Saw ${JSON.stringify(opening)}`).toBeGreaterThan(80);
+  return opening;
+}
+
+function settlementNotificationText(request: RecordedRequest, taskId: string): string {
+  const own = request.messages.filter((m) => m.text.includes(taskId));
+  expect(own.length, `no settlement notification naming ${taskId} in the turn the seat was woken with`).toBeGreaterThan(0);
+  return own.map((m) => m.text).join("\n");
+}
+
 async function waitForRows(cursor: AuditCursor, action: string, label: string): Promise<AuditRow[]> {
   return await waitFor(
     async () => {
@@ -97,12 +115,18 @@ test(
     expect((await rowsSinceCursor(cursorOwn, [EGRESS_REFUSAL])).length, "own: the egress plane wrote no refusal row").toBeGreaterThan(0);
 
     const divergence = (await rowsSinceCursor(cursorOwn, [EGRESS_POLICY])).filter((r) => (r.detail ?? {})["reason"] === "subagent-binding-divergence");
-    expect(divergence.length, "🔴 own: no divergence row — the worker's policy no longer differs from its seat's, so the refusal now reaches the member in words. Rewrite this arm against the new shape.").toBeGreaterThan(0);
+    expect(divergence.length, "🔴 own: no divergence row — the worker's policy no longer differs from its seat's. The road may have re-opened; do not pass this arm without re-establishing that the team key still answers nothing.").toBeGreaterThan(0);
     expect(divergence.every((r) => (r.detail ?? {})["aborted"] === true), "own: the tripwire fired without failing the child").toBe(true);
+    expect(divergence.every((r) => (r.detail ?? {})["ownAccountWithheld"] === true), `🔴 own: the divergence row does not name the own-account withholding. Saw ${JSON.stringify(divergence.map((r) => r.detail))}`).toBe(true);
+    expect(divergence.every((r) => (r.detail ?? {})["ownAccountConnector"] === "notion"), "own: the divergence row does not name the vendor whose road was withheld").toBe(true);
 
     expect(ownHandle.requests.filter((r) => r.role === "child"), "own: the failed worker still reached a model call — this arm's rows are no longer the whole story").toEqual([]);
 
-    await consumeSettlement({ armed: ownArmed, dispatched: ownHandle, taskId: taskIdOfDelegation(ownHandle, "the own-account delegation"), label: "own: the failed worker's settlement wake" });
+    const ownTaskId = taskIdOfDelegation(ownHandle, "the own-account delegation");
+    const settlement = await consumeSettlement({ armed: ownArmed, dispatched: ownHandle, taskId: ownTaskId, label: "own: the failed worker's settlement wake" });
+    const settlementText = settlementNotificationText(settlement, ownTaskId);
+    expect(settlementText, `🔴 own: the settlement report does not carry the refusal — the member still gets a dead delegation. Saw ${JSON.stringify(settlementText.slice(0, 600))}`).toContain(await routeIndependentRefusalOpening());
+    expect(settlementText, "🔴 own: the settlement report carries the bare tripwire message instead of the refusal").not.toContain("identical-binding invariant VIOLATED");
     ownArmed.dispose();
     ownHandle.dispose();
 

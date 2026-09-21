@@ -197,7 +197,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
 {
   const { enforceEgress } = await import("../agent/hooks/egress.js");
-  const { egressPolicyFingerprint } = await import("../agent/hooks/egress.js");
+  const { egressPolicyFingerprint, EgressBindingDivergenceError } = await import("../agent/hooks/egress.js");
 
   const policy = { allow: { "api.example.com": [{ match: { method: ["GET"] } }] } } as never;
   const scope = () => ({ org: "default", platform: "slack", workspace: "T0EXAMPLE", surface: "C0EXCHAN003", principalId: "UPROBE393" });
@@ -241,7 +241,8 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   const diverged = await enforceEgress("session.started", diverge.deps as never);
   ok(diverged.abortError !== undefined, "🔴 D5: a DIVERGENT fingerprint FAILS the child (fail-closed) — the measured clobber was a mis-bound child replacing its parent's published firewall state mid-turn in the sandbox they share");
   ok(diverge.applied.length === 0, "…and NOTHING was applied: the check runs before the apply, the publish and the stamp, so a violating child touches the shared sandbox not at all");
-  ok(diverged.abortError!.message.includes("identical-binding invariant VIOLATED"), "…with the message the turn.started edge keys its one re-throw on");
+  ok(diverged.abortError!.message.includes("identical-binding invariant VIOLATED"), "…naming the invariant it violated, which is what a transcript reader sees");
+  ok(diverged.abortError instanceof EgressBindingDivergenceError, "…as the TYPED error the turn.started edge keys its one re-throw on");
 
   const divergeRow = diverge.audited.find((r) => r.action === "egress.policy" && r.detail["reason"] === "subagent-binding-divergence");
   ok(divergeRow !== undefined, "🔴 D5/OPE-680: a divergence writes an `egress.policy` row before the child is failed");

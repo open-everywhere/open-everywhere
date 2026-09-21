@@ -204,7 +204,11 @@ ok(
   ok(ownAccountRouteLabel(["notion-rest"]) === "egress:notion-rest", "the route label names the connection whose key was not stamped");
   ok(ownAccountRouteLabel(["b", "a", "b"]) === "egress:a,b", "…and EVERY connection it cost, deduped and sorted — never just the first");
   const asking = workerCtx(renderOwnAccountStamp("seat-1", "turn_4", { connector: "notion", ambiguous: false }));
-  await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  const verdict = await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  ok(verdict !== undefined, "🔴 OPE-1976: the route road returns its verdict, so a delegating seat's worker can be failed WITH the refusal instead of a bare tripwire message");
+  ok(typeof verdict?.refusal === "string" && (verdict.refusal as string).length > 0, "🔴 OPE-1976: …and the verdict carries a refusal SENTENCE — the thing that reaches the member");
+  ok((verdict?.refusal ?? "").includes("notion"), "…naming the vendor the ask named");
+  ok(verdict?.identity === undefined, "…and no identity to run under, the gate's `refused` ⇒ no `identity` contract");
   let actingRows: { action: string; detail?: Record<string, unknown> }[] = [];
   for (let i = 0; i < 40 && actingRows.length === 0; i++) {
     await new Promise((r) => setTimeout(r, 50));
@@ -221,10 +225,21 @@ ok(
   ok(typeof d["reason"] === "string" && (d["reason"] as string).startsWith("own-account-ask-"), `…and the gate's own reason code (got ${String(d["reason"])})`);
 
   const countBefore = (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION).length;
-  await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  const second = await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
   await new Promise((r) => setTimeout(r, 400));
   const countAfter = (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === CONNECTOR_ACTING_IDENTITY_ACTION).length;
   ok(countAfter === countBefore, `🔴 a SECOND pass on the same turn wrote a second row (before ${countBefore}, after ${countAfter})`);
+  ok(second?.refusal === verdict?.refusal && second?.refusal !== undefined, "🔴 OPE-1976: a later pass still gets the SAME refusal sentence, though it writes no second row");
+}
+
+{
+  const { connectorActingIdentityForTurn, noteOwnAccountRouteRefusal } = await import("../agent/connections/own-account-gate.js");
+  const asking = workerCtx(renderOwnAccountStamp("seat-1", "turn_4", { connector: "notion", ambiguous: false }), "worker-parity");
+  const route = await noteOwnAccountRouteRefusal(asking, resolveAccessFor(asking).ownAccountEgressRefusals ?? []);
+  const tool = await connectorActingIdentityForTurn(asking, { connector: "notion" }, "read_notion_page");
+  ok(tool.refusal !== undefined, "the direct seat's connector tool refuses the same ask (the control for the join below)");
+  ok(route?.refusal === tool.refusal, `🔴 OPE-1976: the delegating road's refusal is BYTE-IDENTICAL to the direct seat's, not a second copy of it (route ${JSON.stringify(route?.refusal)} vs tool ${JSON.stringify(tool.refusal)})`);
+  ok(route?.reason === tool.reason, "…and the two reach it through the same reason code");
 }
 
 {
@@ -236,7 +251,8 @@ ok(
   const plainCtx = workerCtx(undefined);
   const plainAccess = resolveAccessFor(plainCtx);
   ok(plainAccess.ownAccountEgressRefusals === undefined, "…and nothing is recorded as withheld");
-  await noteOwnAccountRouteRefusal(plainCtx, plainAccess.ownAccountEgressRefusals ?? []);
+  const none = await noteOwnAccountRouteRefusal(plainCtx, plainAccess.ownAccountEgressRefusals ?? []);
+  ok(none === undefined, "🔴 …and returns NO verdict, so an ordinary delegation is never failed with a refusal");
   await new Promise((r) => setTimeout(r, 400));
   const after = await actingCount();
   ok(after === before, `🔴 …and the ordinary read adds NO ${CONNECTOR_ACTING_IDENTITY_ACTION} row (before ${before}, after ${after})`);

@@ -160,8 +160,14 @@ export async function connectorActingIdentityForTurn(ctx: BindableContext, vendo
   return await decideConnectorActingIdentity(actingIdentityDepsForTurn(ctx, vendor, tool));
 }
 
-async function routeActingIdentityForTurn(ctx: BindableContext, vendor: OwnAccountVendor, route: string): Promise<ActingIdentityVerdict> {
-  return await decideConnectorActingIdentity(actingIdentityDepsForTurn(ctx, vendor, route));
+async function routeActingIdentityForTurn(
+  ctx: BindableContext,
+  vendor: OwnAccountVendor,
+  route: string,
+  writeRow: boolean,
+): Promise<ActingIdentityVerdict> {
+  const deps = actingIdentityDepsForTurn(ctx, vendor, route);
+  return await decideConnectorActingIdentity(writeRow ? deps : { ...deps, audit: async () => undefined });
 }
 
 export function ownAccountRouteLabel(viaConnections: readonly string[]): string {
@@ -174,11 +180,15 @@ const ROUTE_REFUSAL_MEMO_MAX = 512;
 export async function noteOwnAccountRouteRefusal(
   ctx: BindableContext,
   refusals: readonly { readonly connector: string; readonly viaConnection: string }[],
-): Promise<void> {
+): Promise<ActingIdentityVerdict | undefined> {
   const first = refusals[0];
-  if (first === undefined) return;
-  if (memoHolds(ctx, first.connector)) return;
-  await routeActingIdentityForTurn(ctx, ownAccountVendorFor(first.connector), ownAccountRouteLabel(refusals.map((r) => r.viaConnection)));
+  if (first === undefined) return undefined;
+  return await routeActingIdentityForTurn(
+    ctx,
+    ownAccountVendorFor(first.connector),
+    ownAccountRouteLabel(refusals.map((r) => r.viaConnection)),
+    !memoHolds(ctx, first.connector),
+  );
 }
 
 function memoHolds(ctx: BindableContext, connector: string): boolean {

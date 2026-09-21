@@ -14,7 +14,7 @@ import { decideConnectorActingIdentity, holdsPersonalGrant, ownAccountAskFromMes
 import { stampOwnAccountAsk } from "../agent/hooks/own-account-ask.js";
 import { registerConfig } from "../agent/access/config.js";
 import type { HookContext, HookEvent } from "eve/hooks";
-import { egressPolicyFingerprint, enforceEgress } from "../agent/hooks/egress.js";
+import { EgressBindingDivergenceError, egressPolicyFingerprint, enforceEgress } from "../agent/hooks/egress.js";
 import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
 import type { CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -399,7 +399,7 @@ const auditThrows = await decideConnectorActingIdentity({
 });
 ok(auditThrows.refusal !== undefined, "a failed audit write never swallows the verdict");
 
-console.log("§5 why the egress plane is not covered");
+console.log("§5 the egress plane: a child may not narrow the firewall it shares");
 
 {
   const parentPolicy = { allow: { "api.notion.com": [{ transform: [{ headers: { authorization: "Bearer TEAM" } }] }], "github.com": [] } };
@@ -424,13 +424,43 @@ console.log("§5 why the egress plane is not covered");
   const narrowed = await enforceEgress("session.started", childDeps(narrowedByChild) as never);
   ok(narrowed.abortError !== undefined, "🔴 a worker that narrows its own egress policy for an own-account ask ABORTS the delegated job — the tripwire, not a withholding");
   ok(applied.length === 0, "…and applies nothing, so the member gets a failed job rather than a refused vendor call");
-  ok(
-    audited.some((a) => a.action === "egress.policy" && a.detail["reason"] === "subagent-binding-divergence"),
-    "…audited as a binding divergence, which names neither the ask nor the vendor (the OPE-680 misdiagnosis shape)",
-  );
+  const bareRow = audited.find((a) => a.action === "egress.policy" && a.detail["reason"] === "subagent-binding-divergence");
+  ok(bareRow !== undefined, "…audited as a binding divergence");
+  ok(bareRow!.detail["ownAccountWithheld"] === undefined, "…and a divergence that withheld nothing names no own-account ask — the field marks the withholding, not every abort");
 
   const unnarrowed = await enforceEgress("session.started", childDeps(parentPolicy) as never);
   ok(unnarrowed.abortError === undefined && applied.length === 1, "a worker that compiles what its parent published runs normally — the abort is the NARROWING, not the delegation");
+
+  const withheld = { connector: "notion", viaConnection: "notion-rest" };
+  const askAudited: { action: string; detail: Record<string, unknown> }[] = [];
+  const askDeps = {
+    ...childDeps(narrowedByChild),
+    resolve: () => ({ scopeKey: "slack/T1/C1", connectors: [], connectorContentOrigin: {}, connections: [], reachableHosts: [], ownAccountEgressRefusals: [withheld] }),
+    audit: async (e: { action: string; detail?: Record<string, unknown> }) => void askAudited.push({ action: e.action, detail: e.detail ?? {} }),
+  };
+  const asked = await enforceEgress("session.started", askDeps as never);
+  ok(asked.abortError !== undefined, "🔴 an own-account withholding still FAILS the worker — one credential per host per session, so a child may not narrow the firewall it shares");
+  ok(asked.ownAccountEgressRefusals.length === 1, "…and the pass carries the withholding out, which is what lets the hook fail it with the member's refusal");
+  const askRow = askAudited.find((a) => a.action === "egress.policy" && a.detail["reason"] === "subagent-binding-divergence");
+  ok(askRow !== undefined, "…and writes the divergence row before failing the child");
+  ok(askRow!.detail["ownAccountWithheld"] === true, "🔴 OPE-1976: …which RECORDS that this pass also withheld the vendor's hosts, the first thing to check before chasing a binding bug");
+  ok(askRow!.detail["ownAccountConnector"] === "notion", "…and the vendor whose road was withheld");
+  ok(asked.abortError instanceof EgressBindingDivergenceError, "…and the abort is the TYPED divergence, which is what licenses the refusal sentence");
+
+  const applyFailed = {
+    ...childDeps(parentPolicy),
+    resolve: () => ({ scopeKey: "slack/T1/C1", connectors: [], connectorContentOrigin: {}, connections: [], reachableHosts: [], ownAccountEgressRefusals: [withheld] }),
+    apply: async () => {
+      throw new Error("setNetworkPolicy() rejected by the backend");
+    },
+  };
+  const blipped = await enforceEgress("session.started", applyFailed as never);
+  ok(blipped.abortError !== undefined, "a session-start apply failure still ABORTS with an own-account stamp in hand — fail-closed is unchanged");
+  ok(blipped.ownAccountEgressRefusals.length === 1, "…and it carries the withholding, which is exactly why the refusals list cannot be the discriminator");
+  ok(
+    !(blipped.abortError instanceof EgressBindingDivergenceError),
+    "🔴 OPE-1976: an apply failure is NOT the divergence type, so the member is told the firewall failed rather than that their own-account ask was refused",
+  );
 }
 
 console.log(failures === 0 ? "\nown-account gate: PASS" : `\nown-account gate: ${String(failures)} FAILURE(S)`);
