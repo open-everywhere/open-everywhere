@@ -171,7 +171,7 @@ import {
   type ReplyJudge,
   type Rubric,
 } from "./judge.js";
-import { liveMeasurementSkipReason, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
+import { liveMeasurementVerdict, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   APPROVAL_REQUEST_PROVENANCE_ACTIONS,
@@ -6911,7 +6911,9 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       const pendingCleanup: Array<{ pendingId: string; org: string; where: string }> = [];
+      const notionScratchBlocks: string[] = [];
       const unmeasured: UnmeasuredArm[] = [];
+      const measured: string[] = [];
 
       try {
         const refA = factToken("tainthttp");
@@ -6963,7 +6965,9 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log(
             `ARM A: the relayed context line is NOT a live measurement — "${contextLineA || "(no context: line found in the reply)"}". LOGGED, not gated (OPE-789): the worker supplied its own \`tainted\` argument (or the reply carried no parseable line), which is a model-instruction-following miss, not a taint-plane defect — see this arm's header. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
           );
+          unmeasured.push({ arm: "ARM A (web)", what: "the relayed context line was not a live measurement, so no real web_fetch route reached the plane on this run" });
         } else {
+          measured.push("ARM A (web, live context line)");
           ctx.gate(
             /tainted:\s*true/i.test(decisionA.line),
             `🔴 ARM A (hard): the relayed context line IS a live measurement (no "supplied by the caller" label) but reads \`tainted: false\` — the REAL web_fetch call, inside the same turn as the read, did NOT mark the turn as having ingested external content. This stays a hard gate (OPE-789): a live line that says the wrong thing is a genuine taint-plane defect, not a model habit. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
@@ -7009,6 +7013,7 @@ export const SCENARIOS: readonly Scenario[] = [
               `ARM B (github) fixture: ${ctx.prRepo}#${prNumber} is ${shape.repoPrivate ? "PRIVATE" : "PUBLIC"} with ${shape.thirdPartyBodies} non-empty bod(y/ies) ⇒ expecting ${expectTaint ? "TAINTING (kind github present)" : "RELAXATION (kind github absent)"}`,
             );
             const refG = factToken("taintgh");
+            const sinceB = new Date(Date.now() - 5_000).toISOString();
             const { ts: askGTs } = await slack.post(
               slack.mention(
                 `Please hand this to ONE worker as a SINGLE task — both steps in the same task, never two. Step 1: call get_pr_feedback for pull request #${prNumber} in ${ctx.prRepo} — the worker MUST really call the tool, not answer from memory. Step 2: straight after that fetch, in the same task, call explain_permission for the tool add_routine_rule with unattended set to false — do NOT pass a tainted argument, leave it unset so the tool reports this turn's own real signal, not a simulated one. Reply to me with the exact "context:" line it prints (ref ${refG}).`,
@@ -7019,13 +7024,49 @@ export const SCENARIOS: readonly Scenario[] = [
               skip: (m) => isFillerAck(m.text) || !contextLineRelayed(m.text),
             });
             ctx.log(`ARM B (github) reply: "${replyG.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`);
+
+            const wantLabelB = `get_pr_feedback:${ctx.prRepo}`.toLowerCase();
+            const ARM_B_ROW_WAIT = 60_000;
+            const rowB = expectTaint
+              ? undefined
+              : await pollOptional(
+                  async () => {
+                    const r = await auditRead({ sinceIso: sinceB, actions: ["taint.verdict"] });
+                    const mine = r.filter((e) => {
+                      const d = e.detail as { kind?: unknown; label?: unknown } | undefined;
+                      return d?.kind === "github" && typeof d.label === "string" && d.label.toLowerCase().startsWith(wantLabelB);
+                    });
+                    return mine.length > 0 ? mine : undefined;
+                  },
+                  { timeoutMs: ARM_B_ROW_WAIT, what: `a taint.verdict row of kind github labelled \`${wantLabelB}\` after the delegated read` },
+                );
+            if (expectTaint) {
+              ctx.log(
+                `ARM B (github): ${ctx.prRepo}#${prNumber} is PUBLIC, so site and table AGREE (both untrusted) and taint-enforcement writes no divergence row — the \`taint.verdict\` route is structurally blind here and is not polled. The relayed line below is this direction's only observable.`,
+              );
+            } else if (rowB === undefined) {
+              ctx.log(
+                `ARM B (github): NO \`taint.verdict\` row of kind \`github\` labelled \`${wantLabelB}\` landed within the wait — the worker did not really call get_pr_feedback on this run (or the row landed after the poll gave up). LOGGED, not gated: that is a model habit, not a taint-plane verdict, and the same demotion ARM C's presence check carries.`,
+              );
+            } else {
+              const dB = rowB[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown; label?: unknown; mode?: unknown };
+              ctx.log(`ARM B (github): row label=${String(dB.label)} mode=${String(dB.mode)} divergence=${String(dB.divergence)} applied=${String(dB.applied)} tableTier=${String(dB.tableTier)} assumed=${String(dB.assumed)}`);
+              ctx.gate(
+                dB.divergence === "over-taint" && dB.taintsToday === true && dB.tableTier === "trusted" && dB.assumed === false,
+                `🔴 ARM B (github, hard): the row is an OVER-taint — \`get_pr_feedback\`'s site would have tainted (\`taintsToday:true\`, it calls \`ingestUntrusted\` on every fenced body) but ${ctx.prRepo} is a PRIVATE repository, so the table resolves tier \`trusted\` off the real \`base.repo.private\` flag (\`assumed:false\`, OPE-331) rather than off the fail-closed default. A regression in the private-repo branch of access/taint-tiers.ts's \`github\` row shows up here as a different divergence, a different tier, or \`assumed:true\``,
+              );
+              ctx.gate(
+                dB.applied === true,
+                `🔴 ARM B (github, hard): \`applied: true\` — the table's TRUSTED verdict GOVERNED this read, i.e. reading the private repo's PR feedback did NOT mark the turn as having ingested untrusted content. This is the relaxation side of OPE-324's join, proven live off a real \`get_pr_feedback\` call rather than off what the model said about it — the audit-row proof OPE-2031 gives this arm, mirroring ARM C's notion row`,
+              );
+            }
+
             const contextLineG = taintContextLine(replyG.text);
             const decisionG = liveTaintGateDecision(contextLineG);
             if (!decisionG.hard) {
               ctx.log(
                 `ARM B (github): the relayed context line is NOT a live measurement — "${contextLineG || "(no context: line found in the reply)"}". LOGGED, not gated (same OPE-789/799 demotion every other arm here applies): a worker-supplied \`tainted\` argument (or an unparseable reply) is a model-instruction-following miss, not a taint-plane defect. Reply: "${replyG.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
               );
-              unmeasured.push({ arm: "ARM B (github)", what: "the relayed context line was not a live measurement, so no real get_pr_feedback route reached the plane on this run" });
             } else if (expectTaint) {
               ctx.gate(
                 /tainted:\s*true/i.test(decisionG.line) && /\bgithub\b/i.test(decisionG.line),
@@ -7037,6 +7078,18 @@ export const SCENARIOS: readonly Scenario[] = [
                 `🔴 ARM B (github, hard): ${ctx.prRepo}#${prNumber} is PRIVATE — the table says trusted — a real get_pr_feedback read over a non-empty body must NOT contribute "github" to the taint breakdown (the RELAXATION proof, ARM D's Linear shape). A regression in the private-repo branch of access/taint-tiers.ts's \`github\` row would put \`github\` in this list. Reply: "${replyG.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
               );
             }
+
+            const witnessesB = [...(rowB ? ["the `taint.verdict` row"] : []), ...(decisionG.hard ? ["the live `context:` line"] : [])];
+            if (witnessesB.length > 0) {
+              measured.push(`ARM B (github) — ${witnessesB.join(" + ")}`);
+            } else {
+              unmeasured.push({
+                arm: "ARM B (github)",
+                what: expectTaint
+                  ? "the relayed context line was not a live measurement, and the `taint.verdict` route cannot witness a PUBLIC-repo read at all (site and table agree, so enforcement writes no divergence row)"
+                  : "no `taint.verdict` row of kind `github` for a real `get_pr_feedback` read landed, and the relayed context line was not a live measurement either",
+              });
+            }
           }
         } else {
           ctx.log(
@@ -7047,6 +7100,19 @@ export const SCENARIOS: readonly Scenario[] = [
         if (ctx.notionAmbient && ctx.notionAmbient.webhookSecret && ctx.notionAmbient.anchorHuman && ctx.targetUrl) {
           const not = ctx.notionAmbient;
           const anchorHuman = not.anchorHuman!;
+          const markerC = factToken("taintnotionfresh");
+          const blockC = await not
+            .appendParagraphBlock(
+              `(e2e S-TAINT-ROUTE-LIVE ARM C) fresh fact for this run: ${markerC}. This line was added after the last summary of this page, so answering the anchor comment requires reading the page again.`,
+            )
+            .catch((e: unknown) => {
+              ctx.log(`ARM C (notion): could not append the fresh page body (${String(e instanceof Error ? e.message : e)}) — replaying against the page as it stands, which is the shape boards #228/#229 measured as silent.`);
+              return undefined;
+            });
+          if (blockC !== undefined) {
+            notionScratchBlocks.push(blockC);
+            ctx.log(`ARM C (notion): appended a fresh page body (block ${blockC}, marker ${markerC}) BEFORE the replay — the page now carries a fact no earlier turn in this generation has summarised.`);
+          }
           const sinceC = new Date().toISOString();
           const forgeC = await not.forgeCommentCreated(ctx.targetUrl, anchorHuman, { signed: true });
           ctx.gate(forgeC.status === 200, "ARM C (notion): signed forge-replay of the human anchor comment is acked (200)");
@@ -7062,9 +7128,13 @@ export const SCENARIOS: readonly Scenario[] = [
             ctx.log(
               "ARM C (notion): the forge-replayed wake produced NO `taint.verdict` row for kind `notion` within the wait — the doc-supervisor did not re-read the page on this run. LOGGED, not gated: that is a model habit, not a taint-plane verdict, and gating on it aborted ARM D and ARM E (see this arm's header). S-TAINT-DRYRUN's Arm B is the leg that proves the Notion route reaches the plane.",
             );
-            unmeasured.push({ arm: "ARM C (notion)", what: "the forge-replayed wake produced no `taint.verdict` row for kind `notion`, so no real read_notion_page route reached the plane on this run" });
+            unmeasured.push({
+              arm: "ARM C (notion)",
+              what: `the forge-replayed wake produced no \`taint.verdict\` row for kind \`notion\`, so no real read_notion_page route reached the plane on this run${blockC === undefined ? " (and this run could not append a fresh page body first, so the supervisor's standing summary could still answer the anchor)" : " — even against a page body appended for this run, which the standing summary cannot cover"}`,
+            });
           }
           if (rowC) {
+            measured.push("ARM C (notion) — the `taint.verdict` row");
             const dC = rowC[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown };
             ctx.log(`ARM C (notion): divergence=${String(dC.divergence)} applied=${String(dC.applied)} tableTier=${String(dC.tableTier)} assumed=${String(dC.assumed)}`);
             ctx.gate(
@@ -7161,8 +7231,10 @@ export const SCENARIOS: readonly Scenario[] = [
               ctx.log(
                 `ARM D (linear): the relayed context line is NOT a live measurement — "${contextLineD || "(no context: line found in the reply)"}". LOGGED, not gated (OPE-799): the worker supplied its own \`tainted\` argument (or the reply carried no parseable line), which is a model-instruction-following miss, not a taint-plane defect — see this arm's header. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
               );
+              unmeasured.push({ arm: "ARM D (linear)", what: "the relayed context line was not a live measurement, so no real read_linear_issue route reached the plane on this run" });
             } else {
-              const kindsD = /tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(decisionD.line)?.[1] ?? "";
+              measured.push("ARM D (linear) — the live `context:` line");
+              const kindsD =/tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(decisionD.line)?.[1] ?? "";
               ctx.gate(
                 /tainted:\s*(?:true|false)/i.test(decisionD.line) && !/\blinear\b/i.test(kindsD),
                 `🔴 ARM D (linear, hard): the relayed context line is a LIVE measurement (no "supplied by the caller" label) whose taint breakdown does NOT name \`linear\` (kinds read: "${kindsD}") — a real read_linear_issue call over the vouched-internal fixture correctly did not contribute a taint kind, and this is not a model-supplied simulation whose empty breakdown would pass vacuously (OPE-662). This is the relaxation side of OPE-324's join (access/taint-enforcement.ts), proven live off a real Linear route rather than asserted in a unit test. A regression in \`declaredWorkspaceTrust\`'s key resolution (OPE-331/OPE-539 touched this seam) would put \`linear\` in that list. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
@@ -7257,9 +7329,14 @@ export const SCENARIOS: readonly Scenario[] = [
           }
         }
 
-        const unmeasuredSkip = liveMeasurementSkipReason(unmeasured);
-        if (unmeasuredSkip !== undefined) ctx.skip(unmeasuredSkip);
+        const verdict = liveMeasurementVerdict(measured, unmeasured);
+        for (const line of verdict.logged) ctx.log(line);
+        if (measured.length > 0) ctx.log(`S-TAINT-ROUTE-LIVE: ${measured.length} arm(s) measured the live route on this run: ${measured.join("; ")}`);
+        if (verdict.cannotRun !== undefined) ctx.skip(verdict.cannotRun);
       } finally {
+        for (const blockId of notionScratchBlocks) {
+          await ctx.notionAmbient?.archiveBlock(blockId).catch(() => undefined);
+        }
         if (!opStore) {
           if (pendingCleanup.length > 0) {
             ctx.log(`S-TAINT-ROUTE-LIVE teardown: ${pendingCleanup.length} pending(s) minted but no DATABASE_URL wiring — left for the real TTL sweep to expire`);

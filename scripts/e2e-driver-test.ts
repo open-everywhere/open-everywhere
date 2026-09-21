@@ -6411,34 +6411,93 @@ rmSync(dir, { recursive: true, force: true });
         "🔴 OPE-1925: no hand-derived admin-driver clause survives in the scenario table — the sentinel lives in cap-drive-outcome.ts, where the arms above can join it to the branch",
       );
 
-      const { liveMeasurementSkipReason } = await import("../packages/core/scripts/e2e/taint-context-line.js");
+      const { liveMeasurementVerdict } = await import("../packages/core/scripts/e2e/taint-context-line.js");
+      const allMeasured = liveMeasurementVerdict(["ARM A (web, live context line)", "ARM D (linear) — the live `context:` line"], []);
       ok(
-        liveMeasurementSkipReason([]) === undefined,
+        allMeasured.cannotRun === undefined && allMeasured.logged.length === 0,
         "OPE-1877: a run in which every arm that RAN measured something carries no verdict — the leg scores on its gates, exactly as before",
       );
-      const bothSilent = liveMeasurementSkipReason([
+      ok(
+        liveMeasurementVerdict([], []).cannotRun === undefined && liveMeasurementVerdict([], []).logged.length === 0,
+        "OPE-1877: …and a run in which NO arm ran at all carries none either — an undrivable fixture is already its own precise skip, so folding it in would claim a route went unmeasured when it was never drivable",
+      );
+      const bothSilent = liveMeasurementVerdict([], [
         { arm: "ARM B (github)", what: "the relayed context line was not a live measurement" },
         { arm: "ARM C (notion)", what: "no `taint.verdict` row for kind `notion` landed" },
       ]);
       ok(
-        bothSilent !== undefined && bothSilent.includes("ARM B (github)") && bothSilent.includes("ARM C (notion)"),
-        "🔴 OPE-1877: the ship #216/#217 shape — ARM B and ARM C both silent — produces a verdict, and it NAMES both arms so a ship reader is not left to diff two logs",
+        bothSilent.cannotRun !== undefined && bothSilent.cannotRun.includes("ARM B (github)") && bothSilent.cannotRun.includes("ARM C (notion)"),
+        "🔴 OPE-1877: the ship #216/#217 shape — every arm silent — produces a verdict, and it NAMES both arms so a ship reader is not left to diff two logs",
+      );
+      const oneMeasured = liveMeasurementVerdict(["ARM A (web, live context line)"], [{ arm: "ARM C (notion)", what: "no row landed" }]);
+      ok(
+        oneMeasured.cannotRun === undefined,
+        "🔴 OPE-2031: ONE silent arm beside an arm that MEASURED is not cannot-run — the boards #228/#229 shape, where a leg with live web evidence reported that it proved nothing",
       );
       ok(
-        liveMeasurementSkipReason([{ arm: "ARM C (notion)", what: "no row landed" }]) !== undefined,
-        "🔴 OPE-1877 NEGATIVE CONTROL: ONE silent arm is enough — the leg claims a live route per arm, so a run that measured half of them has still not proven the half it missed",
+        oneMeasured.logged.length === 1 && oneMeasured.logged[0]!.includes("ARM C (notion)"),
+        "🔴 OPE-2031: …and the silent arm is still LOGGED BY NAME — the record OPE-1877 demanded survives the correction, it just stops deciding the leg",
+      );
+      ok(
+        liveMeasurementVerdict([], [{ arm: "ARM C (notion)", what: "no row landed" }]).cannotRun !== undefined,
+        "🔴 OPE-2031 NEGATIVE CONTROL: one silent arm and NO measurement anywhere is still CANNOT RUN — the rule turns on the absence of evidence, never on a count of silent arms",
       );
 
       ok(
-        gatesSrc.includes("unmeasured.push({ arm: \"ARM B (github)\""),
+        gatesSrc.includes("arm: \"ARM B (github)\""),
         "🔴 OPE-1877: ARM B records its non-measurement instead of only logging it",
       );
       ok(
-        gatesSrc.includes("unmeasured.push({ arm: \"ARM C (notion)\""),
+        gatesSrc.includes("arm: \"ARM C (notion)\""),
         "🔴 OPE-1877: ARM C records its non-measurement instead of only logging it",
       );
+      ok(
+        gatesSrc.includes("arm: \"ARM A (web)\"") && gatesSrc.includes("measured.push(\"ARM A (web, live context line)\")"),
+        "🔴 OPE-2031: ARM A reports BOTH outcomes to the ledger — a live line is a measurement, a supplied one is a named silence",
+      );
+      ok(
+        gatesSrc.includes("arm: \"ARM D (linear)\"") && gatesSrc.includes("measured.push(\"ARM D (linear) — the live `context:` line\")"),
+        "🔴 OPE-2031: ARM D reports BOTH outcomes to the ledger, for the same reason",
+      );
+      ok(
+        gatesSrc.includes("measured.push(\"ARM C (notion) — the `taint.verdict` row\")"),
+        "🔴 OPE-2031: ARM C counts its `taint.verdict` row as the measurement it is",
+      );
+
+      ok(
+        gatesSrc.includes("d?.kind === \"github\" && typeof d.label === \"string\" && d.label.toLowerCase().startsWith(wantLabelB)"),
+        "🔴 OPE-2031: ARM B reads a `taint.verdict` row of kind `github` from the audit, attributed by the `get_pr_feedback:` label — `walk_pr` and `subscribe_pr:title` declare the same kind and always write `applied:false`, so the label is what keeps the `applied` gate below honest",
+      );
+      ok(
+        gatesSrc.includes("const wantLabelB = `get_pr_feedback:${ctx.prRepo}`.toLowerCase();"),
+        "🔴 OPE-2031: …and the label is pinned to the FIXTURE REPO, not just to the tool — the seat reading feedback on any OTHER private repo inside this arm's window writes a row that passes all four gates, so a repo-agnostic prefix would record a measurement this arm's worker never made",
+      );
+      ok(
+        gatesSrc.includes("dB.divergence === \"over-taint\" && dB.taintsToday === true && dB.tableTier === \"trusted\" && dB.assumed === false"),
+        "🔴 OPE-2031: …and the row's DIRECTION is hard-gated — the private-repo over-taint, off the real `base.repo.private` flag rather than the fail-closed default",
+      );
+      ok(
+        gatesSrc.includes("const sinceB = new Date(Date.now() - 5_000).toISOString();") &&
+          gatesSrc.indexOf("const sinceB = new Date(Date.now() - 5_000).toISOString();") < gatesSrc.indexOf("const rowB = expectTaint"),
+        "🔴 OPE-2031: ARM B's audit window opens BEFORE the ask — a window opened after the reply would miss the row the delegated worker wrote while it read",
+      );
+
       {
-        const verdictAt = gatesSrc.indexOf("const unmeasuredSkip = liveMeasurementSkipReason(unmeasured);");
+        const appendAt = gatesSrc.indexOf("const blockC = await not");
+        const forgeAt = gatesSrc.indexOf("const forgeC = await not.forgeCommentCreated(");
+        const archiveAt = gatesSrc.indexOf("await ctx.notionAmbient?.archiveBlock(blockId)");
+        const verdictPos = gatesSrc.indexOf("const verdict = liveMeasurementVerdict(measured, unmeasured);");
+        ok(
+          appendAt > 0 && forgeAt > 0 && appendAt < forgeAt,
+          "🔴 OPE-2031: ARM C appends the fresh page body BEFORE it forges the replay — appending after the wake would change a page the supervisor has already been asked about",
+        );
+        ok(
+          archiveAt > 0 && verdictPos > 0 && archiveAt > verdictPos,
+          "🔴 OPE-2031: …and the block is archived AFTER the terminal verdict, i.e. in the `finally` — a `ctx.gate` or `ctx.skip` throw must still tear the block down, or the shared scratch page grows one block a run",
+        );
+      }
+      {
+        const verdictAt = gatesSrc.indexOf("const verdict = liveMeasurementVerdict(measured, unmeasured);");
         const armEAt = gatesSrc.indexOf("the named arrow moved the verdict allow → ask specifically");
         const teardownAt = gatesSrc.indexOf("S-TAINT-ROUTE-LIVE teardown:");
         ok(

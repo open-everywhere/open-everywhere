@@ -1,4 +1,4 @@
-const { taintContextLine, isLiveTaintLine, liveTaintGateDecision } = await import("./e2e/taint-context-line.js");
+const { taintContextLine, isLiveTaintLine, liveTaintGateDecision, liveMeasurementVerdict } = await import("./e2e/taint-context-line.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -160,4 +160,38 @@ const suppliedFalse = "context: unattended: false · tainted: false — supplied
   ok(armBGateResult(suppliedTrueOverClean, true) === "soft", "OPE-844: a model-supplied (simulated) line dispatches SOFT on ARM B too — never gated as a plane defect");
 }
 
-console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm, and OPE-844's ARM B direction gate is proven to catch both a private-repo over-mark and a public-repo under-mark`);
+{
+  const armB = { arm: "ARM B (github)", what: "no `taint.verdict` row of kind `github` landed" };
+  const armC = { arm: "ARM C (notion)", what: "the forge-replayed wake produced no `taint.verdict` row for kind `notion`" };
+
+  const mixed = liveMeasurementVerdict(["ARM A (web, live context line)"], [armB, armC]);
+  ok(mixed.cannotRun === undefined, "OPE-2031: one arm measured and two went silent ⇒ NOT cannot-run — the leg scores on the arm that has evidence, which is exactly the run boards #228 and #229 skipped");
+  ok(mixed.logged.length === 2, "OPE-2031: both silent arms are still recorded — the honest record OPE-1877 demanded is not the thing that was wrong");
+  ok(
+    mixed.logged.some((l) => l.includes("ARM B (github)")) && mixed.logged.some((l) => l.includes("ARM C (notion)")),
+    "OPE-2031: each silent arm is LOGGED BY NAME — a reader of the board can tell which route went unmeasured without opening the run log",
+  );
+  ok(
+    mixed.logged.every((l) => l.includes("ARM A (web, live context line)")),
+    "OPE-2031: the logged line names the arm(s) that DID measure, so the record says what the run rests on rather than only what it missed",
+  );
+
+  const none = liveMeasurementVerdict([], [armB, armC]);
+  ok(typeof none.cannotRun === "string" && none.cannotRun.length > 0, "OPE-2031: NO arm measured ⇒ CANNOT RUN — a leg that measured nothing must not report a proof it did not make (OPE-1877, ships #216/#217)");
+  ok(
+    none.cannotRun!.includes("ARM B (github)") && none.cannotRun!.includes("ARM C (notion)"),
+    "OPE-2031: the cannot-run reason names every silent arm, so the skip says WHICH routes went unmeasured",
+  );
+  ok(none.logged.length === 2, "OPE-2031: a cannot-run run still emits the per-arm log lines — the skip reason and the record are both written");
+
+  const onlySilent = liveMeasurementVerdict([], [armB]);
+  ok(typeof onlySilent.cannotRun === "string", "OPE-2031 NEGATIVE CONTROL: ONE arm ran, it measured nothing, and nothing else measured ⇒ still CANNOT RUN — the rule is about the absence of evidence, not about a count of silent arms");
+
+  const allMeasured = liveMeasurementVerdict(["ARM A (web, live context line)", "ARM B (github) — the `taint.verdict` row"], []);
+  ok(allMeasured.cannotRun === undefined && allMeasured.logged.length === 0, "OPE-2031: every arm measured ⇒ no skip and no silent-arm log line");
+
+  const noneRan = liveMeasurementVerdict([], []);
+  ok(noneRan.cannotRun === undefined && noneRan.logged.length === 0, "OPE-2031: no arm RAN at all ⇒ no cannot-run from this helper — an undrivable fixture is its own skip, not an unmeasured route");
+}
+
+console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm, OPE-844's ARM B direction gate is proven to catch both a private-repo over-mark and a public-repo under-mark, and OPE-2031's liveMeasurementVerdict reports CANNOT RUN only when NO arm measured while naming every silent arm either way`);
