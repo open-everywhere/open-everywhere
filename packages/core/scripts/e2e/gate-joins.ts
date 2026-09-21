@@ -1,6 +1,7 @@
 import type { AuditWireEntry } from "./audit-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
+import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
 import { DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
@@ -516,4 +517,121 @@ export function unifiedTurnSessionId(
   opts: { readonly githubReplyId: string; readonly slackAnchorId: string },
 ): string | undefined {
   return replyPostSessionId(rows, opts.githubReplyId) ?? replyPostSessionId(rows, opts.slackAnchorId);
+}
+
+export const MEMORY_PURGE_ROAD: MemoryWriteRoad = "purge";
+
+export type SeedWriteFloor =
+  | "seed-turn"
+  | "purge-commit"
+  | "window";
+
+export interface SeedWriteRead {
+  readonly writes: readonly AuditWireEntry[];
+  readonly floor: SeedWriteFloor;
+  readonly purgeWrites: number;
+  readonly beforeFloor: number;
+  readonly unreadableRoad: number;
+  readonly unplaceable: number;
+  readonly detail: string;
+}
+
+function positionCompare(a: AuditWireEntry, b: AuditWireEntry): number | undefined {
+  if (typeof a.seq === "number" && typeof b.seq === "number") return a.seq - b.seq;
+  const at = tsMs(a);
+  const bt = tsMs(b);
+  if (!Number.isFinite(at) || !Number.isFinite(bt)) return undefined;
+  return at - bt;
+}
+
+export function seedMemoryWrites(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly seedTurnStartMs?: number } = {},
+): SeedWriteRead {
+  const all = rows.filter((r) => r.action === MEMORY_WRITE_ACTION);
+  let anchor: AuditWireEntry | undefined;
+  let purgeWrites = 0;
+  for (const r of all) {
+    if (dstr(r, "road") !== MEMORY_PURGE_ROAD) continue;
+    purgeWrites += 1;
+    if (anchor === undefined) {
+      anchor = r;
+      continue;
+    }
+    const cmp = positionCompare(r, anchor);
+    if (cmp !== undefined && cmp > 0) anchor = r;
+  }
+  const turnFloor =
+    typeof opts.seedTurnStartMs === "number" && Number.isFinite(opts.seedTurnStartMs) ? opts.seedTurnStartMs : undefined;
+
+  const writes: AuditWireEntry[] = [];
+  let beforeFloor = 0;
+  let unreadableRoad = 0;
+  let unplaceable = 0;
+  for (const r of all) {
+    const road = dstr(r, "road");
+    if (road === MEMORY_PURGE_ROAD) continue;
+    if (road === undefined) {
+      unreadableRoad += 1;
+      continue;
+    }
+    let placed = true;
+    let after = true;
+    if (turnFloor !== undefined) {
+      const at = tsMs(r);
+      if (!Number.isFinite(at)) placed = false;
+      else if (at < turnFloor) after = false;
+    }
+    if (placed && after && anchor !== undefined) {
+      const cmp = positionCompare(r, anchor);
+      if (cmp === undefined) placed = false;
+      else if (cmp <= 0) after = false;
+    }
+    if (!placed) {
+      unplaceable += 1;
+      continue;
+    }
+    if (!after) {
+      beforeFloor += 1;
+      continue;
+    }
+    writes.push(r);
+  }
+
+  const floor: SeedWriteFloor = turnFloor !== undefined ? "seed-turn" : anchor !== undefined ? "purge-commit" : "window";
+  const anchorMs = anchor === undefined ? undefined : tsMs(anchor);
+  const purgeSaid =
+    anchor === undefined || turnFloor === undefined
+      ? ""
+      : anchorMs === undefined || !Number.isFinite(anchorMs)
+        ? " (and a purge commit this reader cannot place against it)"
+        : anchorMs < turnFloor
+          ? " (and the purge commit below it)"
+          : " (the purge commit sits ABOVE it — leg 0's erase landed after the seed turn started)";
+  const floorSaid =
+    floor === "seed-turn"
+      ? `the SEED TURN's own start${purgeSaid}`
+      : floor === "purge-commit"
+        ? "the PURGE COMMIT — no wake.turn_start row for the seed turn was readable"
+        : "the READ'S OWN lower bound — neither the seed turn's start nor a purge commit was readable, so only the road term applied";
+  return {
+    writes,
+    floor,
+    purgeWrites,
+    beforeFloor,
+    unreadableRoad,
+    unplaceable,
+    detail:
+      `${writes.length} ${MEMORY_WRITE_ACTION} row(s) count as the SEED's own write, floored on ${floorSaid}; ` +
+      `excluded: ${purgeWrites} on the "${MEMORY_PURGE_ROAD}" road (leg 0's erase), ${beforeFloor} at or before the floor, ` +
+      `${unreadableRoad} with no readable road, ${unplaceable} this reader could not place`,
+  };
+}
+
+const CLARIFYING_ASK_RE =
+  /\b(?:should i\b|shall i\b|do you want me\b|would you like me\b|do you want (?:me )?to\b|would you prefer\b|(?:can|could|please) you confirm\b|please confirm\b|let me know (?:which|whether|if)\b|which (?:one )?(?:do|would) you\b)/i;
+
+export function readsAsClarifyingQuestion(text: string): boolean {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.includes("?") && CLARIFYING_ASK_RE.test(flat);
 }

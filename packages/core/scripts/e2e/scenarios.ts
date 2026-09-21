@@ -145,9 +145,12 @@ import {
   memoryPathReadsBetween,
   PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
+  readsAsClarifyingQuestion,
   rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
+  seedMemoryWrites,
+  type SeedWriteRead,
   SETTLEMENT_REPORT_POSTED_ACTION,
   spendCapRaisedByThisRun,
   type SettlementReplyVerdict,
@@ -1418,7 +1421,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_980_000,
+    timeoutMs: 2_040_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slack!;
@@ -1430,6 +1433,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       const canary = factToken("obsidian");
 
+      const purgeStart = auditSinceForDriverClock(Date.now());
       if (ctx.synthetic) {
         try {
           await driveDecide({
@@ -1437,7 +1441,10 @@ export const SCENARIOS: readonly Scenario[] = [
             synthetic: ctx.synthetic,
             gate: ctx.gate,
             log: ctx.log,
-            ask: `permanently erase from memory every stored fact that states an OPE121 canary code — every one of them, whatever code each names, including any note recording which code was verified. They are stale test data from earlier runs of this check and must not persist.`,
+            ask:
+              `permanently erase from memory the OPE121 canary codes that are ALREADY STORED — every existing one, whatever code each names, ` +
+              `including any note recording which code was verified. Those existing entries are stale test data from earlier runs of this check. ` +
+              `A NEW OPE121 canary code follows in this channel shortly: that one is current, and it is to be kept and stored.`,
             leg: "canary-purge",
             decision: "approve",
             timeoutMs: FILE_REPLY_WAIT,
@@ -1449,13 +1456,44 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log("canary purge: synthetic capability absent — no purge card driven, so previous boards' canaries stay in the silo (OPE-1977: the recall gate below names any it finds)");
       }
 
-      const seedStart = auditSinceForDriverClock(Date.now());
-      const { ts: seedTs } = await a.post(a.mention(`remember this for the team: the OPE121 canary code is ${canary}`));
+      const { ts: seedTs } = await a.post(
+        a.mention(
+          `remember this for the team: the OPE121 canary code is ${canary}. This SUPERSEDES the erasure you just carried out — ` +
+            `that erasure covered the codes stored before it, and this new code is the current one. Store it.`,
+        ),
+      );
       const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
-      const writes = await auditRead({ sinceIso: seedStart, platform: "slack", actions: ["memory.write"] });
+      const ackText = seedAck.text.replace(/\s+/g, " ").trim();
+      const SEED_WRITE_ACTIONS = [MEMORY_WRITE_ACTION, WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION];
+      const seedVendorMs = slackVendorEventTime(seedTs)?.ms;
+      const seedSurfaceKey = seedVendorMs === undefined ? undefined : `slack/${(await a.identity()).teamId}/${a.channelId}`;
+      if (seedVendorMs === undefined) {
+        ctx.log(`seed: the driver's own post ts ${seedTs} carries no readable vendor instant, so the seed turn's start cannot be resolved — the gate falls back to the purge commit, and to the read's own bound when leg 0's purge did not run`);
+      }
+      let seedWakeId: string | undefined;
+      let seedTurnStartMs: number | undefined;
+      let seedRead: SeedWriteRead | undefined;
+      const seedWrite = await pollOptional(
+        async () => {
+          const rows = await auditRead({ sinceIso: purgeStart, actions: SEED_WRITE_ACTIONS, limit: 1000 });
+          if (seedWakeId === undefined && seedVendorMs !== undefined) seedWakeId = wakeIdForVendorInstant(rows, seedVendorMs, seedSurfaceKey);
+          if (seedTurnStartMs === undefined && seedWakeId !== undefined) seedTurnStartMs = turnStartMs(rows, seedWakeId);
+          const read = seedMemoryWrites(rows, seedTurnStartMs === undefined ? {} : { seedTurnStartMs });
+          seedRead = read;
+          return read.writes.length > 0 ? read : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the canary's own memory.write audit row" },
+      );
+      ctx.log(`seed evidence: ${seedRead?.detail ?? "no audit read completed"}`);
+      const asked = readsAsClarifyingQuestion(ackText);
+      if (seedWrite !== undefined && asked) {
+        ctx.log(`seed: the canary WAS stored and the ack still reads as a clarifying question — the fixture wording is not yet unambiguous (OPE-2028): "${ackText.slice(0, 200)}"`);
+      }
       ctx.gate(
-        writes.length > 0,
-        `seed: the canary reached the SILO — a real memory.write audit row exists (found ${writes.length}). Ack was: "${seedAck.text.replace(/\s+/g, " ").trim().slice(0, 160)}"`,
+        seedWrite !== undefined,
+        asked
+          ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedRead?.detail ?? "no audit read completed"} — it asked: "${ackText.slice(0, 240)}"`
+          : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028). ${seedRead?.detail ?? "no audit read completed"} — ack was: "${ackText.slice(0, 160)}"`,
       );
 
       const askStart = auditSinceForDriverClock(Date.now());

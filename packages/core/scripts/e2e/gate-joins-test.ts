@@ -17,13 +17,16 @@ import {
   haltSetByThisRun,
   isMemoryHopWrite,
   isPersistOutcome,
+  MEMORY_PURGE_ROAD,
   memoryPathReadsBetween,
   PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
+  readsAsClarifyingQuestion,
   replyPostSessionId,
   rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
+  seedMemoryWrites,
   settlementReportPairings,
   spendCapRaisedByThisRun,
   turnStartMs,
@@ -739,6 +742,119 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(
     !haltSetEvidence(haltSet({ wakeId: "1626ef2f-0000-0000-0000-000000000002" }), KEY, WAKE_ID),
     "negative control: a halt naming another wake is refused",
+  );
+}
+
+{
+  const PURGE_TS = "2026-01-31T08:56:25.742Z";
+  const PURGE_TURN_PERSIST_TS = "2026-01-31T08:56:26.100Z";
+  const SEED_TURN_START = Date.parse("2026-01-31T08:56:27.000Z");
+  const SEED_WRITE_TS = "2026-01-31T08:56:44.900Z";
+
+  const purge = row("memory.write", PURGE_TS, { road: MEMORY_PURGE_ROAD, kind: "memory", silo: "e2e-ambient-brain", version: 377 }, 100);
+  const purgeTurnPersist = row("memory.write", PURGE_TURN_PERSIST_TS, { road: "session-persist", outcome: "edited", kind: "memory" }, 101);
+  const seedWrite = row("memory.write", SEED_WRITE_TS, { road: "session-persist", outcome: "write-intent", kind: "memory", version: 378 }, 140);
+
+  ok(
+    seedMemoryWrites([purge], { seedTurnStartMs: SEED_TURN_START }).writes.length === 0,
+    "🔴 OPE-2028 NEGATIVE CONTROL: a purge-road memory.write inside the skew window counts as NO seed write — the gate reads RED, which is what a live run needed it to do",
+  );
+  ok(
+    seedMemoryWrites([purge], { seedTurnStartMs: SEED_TURN_START }).purgeWrites === 1,
+    "…and the purge row is COUNTED as excluded rather than dropped silently, so the red can say what it found instead",
+  );
+  {
+    const read = seedMemoryWrites([purge], { seedTurnStartMs: SEED_TURN_START });
+    ok(
+      read.purgeWrites === 1 && read.beforeFloor === 0,
+      `🔴 OPE-2028: the purge row is classed by its ROAD, never lumped in with the floored-out rows (purgeWrites ${read.purgeWrites}, beforeFloor ${read.beforeFloor})`,
+    );
+  }
+  ok(
+    seedMemoryWrites([purge, seedWrite], { seedTurnStartMs: SEED_TURN_START }).writes.length === 1,
+    "the seed's OWN write in the same window counts — the exclusion is of the purge's road, not of every row",
+  );
+
+  {
+    const read = seedMemoryWrites([purge, purgeTurnPersist], { seedTurnStartMs: SEED_TURN_START });
+    ok(read.writes.length === 0, "🔴 OPE-2028: the PURGE TURN's own turn-end persist is excluded — a non-purge road, but before the seed turn started");
+    ok(read.beforeFloor === 1, "…and it is counted as floored-out, not as an unreadable row");
+    ok(read.floor === "seed-turn", "…on the seed turn's own start, which is the strongest bound available here");
+  }
+
+  {
+    const read = seedMemoryWrites([purge, seedWrite]);
+    ok(read.writes.length === 1 && read.floor === "purge-commit", "with no seed turn start, the purge COMMIT is the floor and the later seed write still counts");
+    ok(
+      seedMemoryWrites([purge, purgeTurnPersist]).writes.length === 1,
+      "NEGATIVE CONTROL on that weaker floor: it admits the purge turn's own persist, which is exactly why the seed-turn bound is preferred — stated, not hidden",
+    );
+    ok(read.detail.includes("PURGE COMMIT"), "the detail names WHICH floor placed the count — a gate that cannot say what it measured is not evidence");
+  }
+
+  ok(
+    seedMemoryWrites([purge, row("memory.write", "2026-01-31T08:56:44.900Z", { road: "session-persist" }, 99)]).writes.length === 0,
+    "a row whose `ts` is LATER but whose `seq` is lower than the purge commit's does not count — the store's insert order decides",
+  );
+  ok(
+    seedMemoryWrites([purge, row("memory.write", "2026-01-31T08:56:44.900Z", { road: "session-persist" }, 101)]).writes.length === 1,
+    "negative control on that: the same row with a HIGHER seq does count",
+  );
+
+  {
+    const noRoad = seedMemoryWrites([purge, row("memory.write", SEED_WRITE_TS, { kind: "memory" }, 140)], { seedTurnStartMs: SEED_TURN_START });
+    ok(noRoad.writes.length === 0 && noRoad.unreadableRoad === 1, "a memory.write row with no readable `road` is excluded and COUNTED — the strict direction for a gate that asserts a row IS there");
+    const unplaceable = seedMemoryWrites([row("memory.write", "not-a-time", { road: "session-persist" })], { seedTurnStartMs: SEED_TURN_START });
+    ok(unplaceable.writes.length === 0 && unplaceable.unplaceable === 1, "a row with no seq and an unparseable ts cannot be placed against the floor, so it is excluded and counted");
+  }
+
+  {
+    const below = seedMemoryWrites([purge, seedWrite], { seedTurnStartMs: SEED_TURN_START });
+    ok(below.detail.includes("(and the purge commit below it)"), "the evidence line places a purge commit BELOW the seed turn's start when that is where it is");
+    const late = seedMemoryWrites([row("memory.write", "2026-01-31T08:56:50.000Z", { road: MEMORY_PURGE_ROAD, kind: "memory" }, 200), seedWrite], {
+      seedTurnStartMs: SEED_TURN_START,
+    });
+    ok(late.writes.length === 0 && late.beforeFloor === 1, "a purge that commits AFTER the seed's own write excludes it by position — the canary was erased, and the gate reds");
+    ok(
+      late.detail.includes("sits ABOVE it"),
+      `🔴 and the evidence line says the purge commit sits ABOVE the seed turn's start, never the reverse (said: ${late.detail})`,
+    );
+    const unplaceable = seedMemoryWrites([row("memory.write", "not-a-time", { road: MEMORY_PURGE_ROAD }), seedWrite], { seedTurnStartMs: SEED_TURN_START });
+    ok(
+      unplaceable.detail.includes("cannot place against it") && unplaceable.writes.length === 0,
+      "…and an anchor this reader cannot place says so rather than claiming either side, while the rows it cannot compare stay excluded",
+    );
+  }
+
+  {
+    const read = seedMemoryWrites([seedWrite]);
+    ok(read.writes.length === 1 && read.floor === "window", "with no purge row and no seed turn start, the seed's own write still counts and the floor is named `window`");
+  }
+
+  ok(
+    seedMemoryWrites([row("memory.operational_write", SEED_WRITE_TS, { road: "status-board" }, 140)], { seedTurnStartMs: SEED_TURN_START }).writes.length === 0,
+    "negative control: an operational write is a different action and never satisfies the seed gate",
+  );
+
+  const MEASURED_ASK =
+    "This conflicts with your immediately previous instruction to permanently erase every stored OPE121 canary-code fact. " +
+    "Should I keep the erasure in force, or explicitly supersede it and store this new fact?";
+  ok(readsAsClarifyingQuestion(MEASURED_ASK), "🔴 OPE-2028: the ack a live run measured reads as a CLARIFYING QUESTION, so the red can name the fixture instead of the write path");
+  ok(
+    !readsAsClarifyingQuestion("Stored. The OPE121 canary code is obsidian-49038, written to the team's memory."),
+    "NEGATIVE CONTROL: a plain storage ack is not a clarifying question",
+  );
+  ok(
+    !readsAsClarifyingQuestion("Saved that. Anything else?"),
+    "NEGATIVE CONTROL: a question mark alone is not a clarifying question — an ordinary ack ends in one",
+  );
+  ok(
+    !readsAsClarifyingQuestion("I should ideally confirm the file later"),
+    "NEGATIVE CONTROL: an ask shape with no question mark is not one either — both terms are required",
+  );
+  ok(
+    readsAsClarifyingQuestion("Stored it. Do you want me to delete the older codes as well?"),
+    "a seat that stored AND asked still reads as one — the leg LOGS that case and never fails on it, because the write row is what the gate turns on",
   );
 }
 

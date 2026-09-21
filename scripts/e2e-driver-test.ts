@@ -6168,6 +6168,32 @@ rmSync(dir, { recursive: true, force: true });
         memRead.includes("replays.set(sessionId,events)"),
         "…and `replays` keeps the WHOLE stream: the phase decomposition needs the dispatch that opened the turn, which the read window cuts",
       );
+
+      const purgeBoundAt = memRead.indexOf("constpurgeStart=auditSinceForDriverClock(Date.now())");
+      ok(
+        purgeBoundAt >= 0 && purgeBoundAt < purgeAt,
+        `🔴 OPE-2028: the audit lower bound is taken BEFORE leg 0's purge (bound at ${purgeBoundAt}, purge at ${purgeAt}) — a bound taken after it cannot see the purge commit the seed gate must exclude`,
+      );
+      ok(
+        memRead.includes("seedMemoryWrites"),
+        "🔴 OPE-2028: the seed gate counts through `seedMemoryWrites` — road + position — never every `memory.write` row in the skew window, which is what passed on the purge's own row",
+      );
+      ok(
+        memRead.includes("turnStartMs") && memRead.includes("wakeIdForVendorInstant"),
+        "…and it resolves the SEED TURN's own start as that filter's floor — the bound that also excludes the purge TURN's turn-end persist, which rides a non-purge road",
+      );
+      ok(
+        memRead.includes("readsAsClarifyingQuestion"),
+        "🔴 OPE-2028: the leg reads the seed ack through `readsAsClarifyingQuestion`, so a red caused by a seat that asked INSTEAD of storing quotes the question rather than reporting a bare absent row",
+      );
+      ok(
+        memRead.includes("ALREADYSTORED"),
+        "🔴 OPE-2028: leg 0's erase names the EXISTING entries — the old wording said every fact of the class must not persist, and leg 1 then seeded one more of the same class 37 s later",
+      );
+      ok(
+        memRead.includes("ThisSUPERSEDEStheerasure"),
+        "…and the seed supersedes the erasure explicitly: either half alone still leaves a standing erasure over the code the seat is being handed",
+      );
     }
 
     {
@@ -6967,7 +6993,8 @@ rmSync(dir, { recursive: true, force: true });
 
 {
   const scenario = SCENARIOS.find((s) => s.id === "S-MEM-READ")!;
-  const SEED_TS = "1000.000001";
+  const SEED_AT_MS = Date.parse("2026-06-03T12:05:26.000Z");
+  const SEED_TS = `${Math.floor(SEED_AT_MS / 1000)}.000000`;
   const ASK_TS = "2000.000001";
   const INTERIM_TS = "2000.000100";
   const ANSWER_TS = "2000.000200";
@@ -6994,6 +7021,21 @@ rmSync(dir, { recursive: true, force: true });
   const row = (action: string, detail: Record<string, unknown>, seq: number): AuditWireEntry => ({
     ts: nowIso(), org: "default", platform: "ingest", workspace: "e2e", action, detail, seq,
   });
+  const rowAt = (action: string, detail: Record<string, unknown>, seq: number, ts: string): AuditWireEntry => ({ ...row(action, detail, seq), ts });
+  const SEED_WAKE = "w-seed";
+  const SEED_SURFACE = "slack/T0EXAMPLE/C0E2ESEED";
+  const seedWindowRows = (): AuditWireEntry[] => [
+    rowAt("memory.write", { road: "purge", kind: "memory", silo: "e2e-ambient-brain", version: 377 }, 1, "2026-06-03T12:05:25.742Z"),
+    rowAt("memory.write", { road: "session-persist", outcome: "edited", kind: "memory", silo: "e2e-ambient-brain" }, 2, "2026-06-03T12:05:26.100Z"),
+    rowAt("wake.ingress", { wakeId: SEED_WAKE, surfaceKey: SEED_SURFACE, vendorTs: new Date(SEED_AT_MS).toISOString() }, 3, "2026-06-03T12:05:26.400Z"),
+    rowAt("wake.turn_start", { wakeId: SEED_WAKE }, 4, "2026-06-03T12:05:27.000Z"),
+    rowAt(
+      "memory.write",
+      { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", sessionId: SEAT },
+      5,
+      "2026-09-26T12:33:44.900Z",
+    ),
+  ];
   const recallRows = (): AuditWireEntry[] => {
     const out: AuditWireEntry[] = [
       row("delegation.task_started", { task: TASK, session: SEAT, call: CALL }, 10),
@@ -7008,6 +7050,7 @@ rmSync(dir, { recursive: true, force: true });
 
   const slack = {
     botUserId: "U0OPENEVERYWHERE",
+    channelId: "C0E2ESEED",
     mention: (text: string) => `<@U0OPENEVERYWHERE> ${text}`,
     async identity() {
       return { userId: "U0EXOWNER", teamId: "T0EXAMPLE" };
@@ -7039,9 +7082,7 @@ rmSync(dir, { recursive: true, force: true });
   await scenario.run({
     slack,
     async auditRead(opts: { actions?: readonly string[] }) {
-      if (opts.actions?.includes("memory.write")) {
-        return [row("memory.write", { silo: "e2e-ambient-brain", path: "memory/e2e-ambient-brain/notes.md", sessionId: SEAT }, 1)];
-      }
+      if (opts.actions?.includes("memory.write")) return seedWindowRows();
       readsSinceAsk++;
       return recallRows();
     },
@@ -7077,6 +7118,24 @@ rmSync(dir, { recursive: true, force: true });
   ok(logs.some((l) => l.startsWith("recall answer: answer") && l.includes("stepped over 1 interim post")), "…and the run log says the wait stepped over exactly one interim post");
   ok(logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
   ok(replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${replyHandouts})`);
+
+  const seedEvidence = logs.find((l) => l.startsWith("seed evidence:")) ?? "";
+  ok(
+    seedEvidence.includes("1 memory.write row(s) count as the SEED's own write"),
+    `🔴 OPE-2028: the seed gate counts ONE row — the seed's own — out of the three memory.write rows in the window (log said: ${seedEvidence.slice(0, 200)})`,
+  );
+  ok(
+    seedEvidence.includes('1 on the "purge" road'),
+    "…and it names leg 0's purge commit as EXCLUDED, which is the row the pre-fix gate passed on while the seat stored nothing",
+  );
+  ok(
+    seedEvidence.includes("SEED TURN's own start"),
+    "…floored on the seed TURN's own start, resolved from the post's vendor instant rather than from this box's clock",
+  );
+  ok(
+    seedEvidence.includes("1 at or before the floor"),
+    "…and that floor is APPLIED, not merely resolved: the purge TURN's own turn-end persist rides a non-purge road and is excluded by position alone",
+  );
 }
 
 {
