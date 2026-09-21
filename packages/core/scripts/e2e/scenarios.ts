@@ -101,7 +101,7 @@ import {
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
-import { primingTurnFlight, slackUnifiedPrimedCoalescingBurst, type PrimingFlightVerdict } from "./coalesced-burst.js";
+import { primingTurnFlight, slackUnifiedPrimedCoalescingBurst, type PrimingFlightInput, type PrimingFlightVerdict } from "./coalesced-burst.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
@@ -127,12 +127,16 @@ import {
   AUDIT_SINCE_SKEW_MS,
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
+  burstMergeWindow,
+  type BurstMergeWindow,
   carriesHostTemplate,
   catchUpBoundHeld,
   type CatchUpWindowBound,
   classifyConnectorRoad,
   classifySettlementReply,
   classifyUnansweredWake,
+  coalescedBurstOutcome,
+  type CoalescedAttemptRecord,
   CONNECTOR_USE_ACTION,
   FIRE_ATTRS_SENT_ACTION,
   fireAnchor,
@@ -377,6 +381,7 @@ async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, labe
 const UNIFIED_REPLY_WAIT = 420_000;
 const COALESCE_PRIME_WAIT = 60_000;
 const PRIMING_FLIGHT_WAIT = 120_000;
+const COALESCE_ATTEMPTS = 4;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
@@ -4173,7 +4178,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackUnified"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_500_000,
+    timeoutMs: 3_060_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
@@ -4204,7 +4209,7 @@ export const SCENARIOS: readonly Scenario[] = [
           { timeoutMs: COALESCE_PRIME_WAIT, what: "a wake.turn_start row for the priming post — the seat is now inside a turn" },
         );
 
-      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean; readonly flight: PrimingFlightVerdict }> => {
+      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean; readonly flight: PrimingFlightVerdict; readonly window: BurstMergeWindow }> => {
         const sinceIso = new Date(Date.now() - 30_000).toISOString();
         const marker = factToken(`coalesce${n}`);
         const askText = `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`;
@@ -4223,15 +4228,18 @@ export const SCENARIOS: readonly Scenario[] = [
             : `attempt ${n}: the priming turn did NOT start inside ${COALESCE_PRIME_WAIT}ms — the burst fired onto a possibly-idle seat`,
         );
 
+        const flightRows = async (): Promise<PrimingFlightInput> => {
+          const [ingress, replies, turnStarts] = await Promise.all([
+            auditRead({ sinceIso: primeStart, actions: [WAKE_INGRESS_ACTION] }),
+            auditRead({ sinceIso: primeStart, actions: [REPLY_POST_ACTION], platform: "slack" }),
+            auditRead({ sinceIso: primeStart, actions: [WAKE_TURN_START_ACTION] }),
+          ]);
+          return { turnStart, ingress, replies, turnStarts };
+        };
         let flight: PrimingFlightVerdict = { kind: "unobservable", why: "the flight evidence was never read" };
         await pollOptional(
           async () => {
-            const [ingress, replies, turnStarts] = await Promise.all([
-              auditRead({ sinceIso: primeStart, actions: [WAKE_INGRESS_ACTION] }),
-              auditRead({ sinceIso: primeStart, actions: [REPLY_POST_ACTION], platform: "slack" }),
-              auditRead({ sinceIso: primeStart, actions: [WAKE_TURN_START_ACTION] }),
-            ]);
-            flight = primingTurnFlight({ turnStart, ingress, replies, turnStarts });
+            flight = primingTurnFlight(await flightRows());
             return flight.kind === "unobservable" ? undefined : flight;
           },
           { timeoutMs: PRIMING_FLIGHT_WAIT, what: `attempt ${n}: the priming turn's reply.post END anchor, to order it against the burst's wake.ingress rows` },
@@ -4247,7 +4255,17 @@ export const SCENARIOS: readonly Scenario[] = [
           },
           { timeoutMs: UNIFIED_REPLY_WAIT, what: `any reply in the ASKING room (${a.channelId}) after attempt ${n}'s routine ask — the liveness signal, not a content match` },
         );
-        return { sinceIso, replied: reply !== undefined, primed, flight };
+
+        let mergeWindow: BurstMergeWindow = { surfaces: [], summary: "merge window unmeasured — the window evidence was never read" };
+        await pollOptional(
+          async () => {
+            mergeWindow = burstMergeWindow(await flightRows());
+            return mergeWindow.gapMs;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: `attempt ${n}: the wake.turn_start row after the priming turn's reply.post, to measure eve's merge window` },
+        );
+        ctx.log(`attempt ${n}: ${mergeWindow.summary}`);
+        return { sinceIso, replied: reply !== undefined, primed, flight, window: mergeWindow };
       };
 
       const approvalRows = async (sinceIso: string) =>
@@ -4271,17 +4289,14 @@ export const SCENARIOS: readonly Scenario[] = [
         );
 
       let sinceIso: string | undefined;
-      let merged: Awaited<ReturnType<typeof coalescedRows>>;
       let replied = false;
-      let anyPrimed = false;
-      const flights: PrimingFlightVerdict[] = [];
-      for (const n of [1, 2]) {
+      const records: CoalescedAttemptRecord[] = [];
+      for (let n = 1; n <= COALESCE_ATTEMPTS; n++) {
         const run = await attempt(n);
         sinceIso = run.sinceIso;
         replied = replied || run.replied;
-        anyPrimed = anyPrimed || run.primed;
-        flights.push(run.flight);
-        merged = await coalescedRows(run.sinceIso);
+        const merged = await coalescedRows(run.sinceIso);
+        records.push({ attempt: n, coalesced: merged !== undefined, primed: run.primed, flight: run.flight, window: run.window });
         if (merged !== undefined) {
           ctx.log(`attempt ${n}: the turn coalesced — ${merged.length} turn.unaccounted_wakes row(s)`);
           break;
@@ -4292,20 +4307,12 @@ export const SCENARIOS: readonly Scenario[] = [
         replied,
         `the ASKING room (${a.channelId}) produced a reply in this window — the turn RAN. Without one nothing below could be scoped either way`,
       );
-      const inFlight = flights.filter((f) => f.kind === "in-flight");
-      const sawIdleSeat = flights.some((f) => f.kind === "ended-before-burst");
-      ctx.gate(
-        merged !== undefined || inFlight.length > 0,
-        `🔴 HARNESS NON-REPRODUCTION (the precondition was not reproduced — this is NOT a product red): ` +
-          `${sawIdleSeat ? "no attempt put the two-room burst behind a priming turn still proven to be RUNNING — an attempt's priming turn last spoke BEFORE the burst was admitted, so the burst may have met an idle seat and OPE-1756's conditions were not shown to exist on this run" : "the precondition could NOT BE READ on any attempt — every verdict names a missing row or field, so this says nothing about where the seat was. Fix the read before reading anything into the seat"}. ` +
-          `Per-attempt flight verdicts: ${flights.map((f, i) => `attempt ${i + 1} ${f.kind} (${f.why})`).join(" · ")}. ` +
-          `${anyPrimed ? "At least one priming turn STARTED, so the wake is not the problem: look at the WINDOW — widen the priming ask, or shorten the gap before the burst" : `NO priming turn started inside ${COALESCE_PRIME_WAIT}ms, so look at the priming wait first`}. Nothing below this line was measured about the deployment.`,
-      );
-      ctx.gate(
-        merged !== undefined,
-        `🔴 (hard, PRODUCT): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything. ` +
-          `The gate above already established the precondition: ${inFlight.map((f) => f.why).join(" · ")}. The deliveries queued behind a RUNNING priming turn and the product still did not fold them, so this red is the product's, not the harness's.`,
-      );
+      const outcome = coalescedBurstOutcome(records);
+      if (outcome.kind === "not-reproduced") {
+        ctx.skip(outcome.verdict);
+        return;
+      }
+      ctx.log(`attempt ${outcome.attempt} coalesced — OPE-1756's scope gates below are now measuring a turn that really merged the other room's wake`);
 
       const rows = await approvalRows(sinceIso!);
       ctx.gate(

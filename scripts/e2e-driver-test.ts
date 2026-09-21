@@ -7356,6 +7356,49 @@ rmSync(dir, { recursive: true, force: true });
 }
 
 {
+  const leg = SCENARIOS.find((s) => s.id === "S-APPROVAL-COALESCED")!;
+  const body = leg.run.toString().replace(/\s+/g, "");
+
+  ok(body.includes("coalescedBurstOutcome(records)"), "🔴 the leg asks the shared reader for its outcome rather than deciding the miss inline");
+  ok(body.includes("ctx.skip(outcome.verdict)"), "🔴 OPE-2038: a burst eve did not merge is reported through `ctx.skip` — the skip class, carrying `PRECONDITION NOT REPRODUCED`");
+  ok(!body.includes("(hard,PRODUCT)"), "🔴 …and the leg no longer carries a `(hard, PRODUCT)` gate on the coalesce — that word is what board #230 was wrongly told");
+  ok(!/ctx\.gate\([^;]{0,400}turn\.unaccounted_wakesrownamingtheswallowedwake/.test(body), "🔴 …and the miss is not a `ctx.gate` under any other wording either — the skip is the only verdict here");
+
+  const skipAt = body.indexOf("ctx.skip(outcome.verdict)");
+  const scopeGateAt = body.indexOf("EVERYapproval.requested.scopeKeynamestheASKINGroom");
+  const negativeControlAt = body.indexOf("noapproval.requestedrowisscopedtotheOTHERroom");
+  ok(scopeGateAt > 0 && negativeControlAt > 0, `the two OPE-1756 scope gates this scan anchors on are still in the body (scope at ${scopeGateAt}, control at ${negativeControlAt})`);
+  ok(skipAt > 0 && scopeGateAt > skipAt, `🔴 the OPE-1756 scope gate runs only BEHIND the coalesce verdict (skip at ${skipAt}, gate at ${scopeGateAt})`);
+  ok(negativeControlAt > skipAt, `🔴 …and so does its negative control (skip at ${skipAt}, control at ${negativeControlAt})`);
+  ok(body.includes("(hard,OPE-1756):"), "…and that gate is still spelled HARD — the skip class covers the precondition, never the scope rule");
+
+  ok(body.includes("primingTurnFlight("), "🔴 the leg still computes the OPE-2005 flight verdict — OPE-2038 changed what the miss is CALLED, never how the precondition is read");
+  ok(body.includes("flight:run.flight"), "…and hands it to the outcome reader, which is what makes a missed window distinguishable from an unreadable one");
+
+  ok(body.includes("burstMergeWindow("), "🔴 the leg measures eve's merge window on every attempt, so the number becomes comparable across boards");
+  ok(body.includes("window:run.window"), "…and carries it into the verdict, where a board reader sees it without the runner log");
+
+  const legSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  const attemptsMatch = /const COALESCE_ATTEMPTS = (\d+);/.exec(legSrc);
+  ok(attemptsMatch !== null, "COALESCE_ATTEMPTS is declared as a plain literal in scenarios.ts, so this scan can read it");
+  const attempts = Number(attemptsMatch![1]);
+  ok(attempts === 4, `🔴 OPE-2038 raised the interleave attempts from 2 to 4 — two draws is a thin sample to call eve's window on (got ${attempts})`);
+  ok(body.includes("n<=COALESCE_ATTEMPTS"), "…and the loop reads that constant rather than a second copy of the number");
+  const constMs = (name: string): number => {
+    const m = new RegExp(`const ${name} = ([\\d_]+);`).exec(legSrc);
+    ok(m !== null, `${name} is declared as a plain numeric literal in scenarios.ts, so this scan can read it`);
+    return Number(m![1]!.replace(/_/g, ""));
+  };
+  const perAttemptMs = constMs("COALESCE_PRIME_WAIT") + constMs("PRIMING_FLIGHT_WAIT") + constMs("UNIFIED_REPLY_WAIT") + 2 * constMs("AUDIT_ROW_WAIT");
+  const worstCaseMs = attempts * perAttemptMs + 2 * constMs("AUDIT_ROW_WAIT");
+  ok(perAttemptMs === 720_000, `SANITY: the per-attempt worst case reads 720s today (got ${perAttemptMs}ms) — a change here is a budget decision, not a typo`);
+  ok(leg.timeoutMs >= worstCaseMs, `🔴 the leg's budget covers ${attempts} attempts at their worst case (${worstCaseMs}ms) — got ${leg.timeoutMs}ms`);
+
+  const other = SCENARIOS.find((s) => s.id === "S-DELEGATED-slack")!.run.toString().replace(/\s+/g, "");
+  ok(!other.includes("coalescedBurstOutcome("), "NEGATIVE CONTROL: a sibling leg does not satisfy these scans");
+}
+
+{
   const body = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString().replace(/\s+/g, "");
   ok(body.includes("unattendedArmRoad("), "🔴 the leg calls the SHARED road rule rather than re-deriving one per arm");
   ok((body.match(/armRoad\("A",/g) ?? []).length === 1 && (body.match(/armRoad\("B",/g) ?? []).length === 1, "…once for EACH arm — arm B reading it is the whole of OPE-2021");
