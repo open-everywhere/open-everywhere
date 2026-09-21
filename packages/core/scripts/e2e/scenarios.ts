@@ -101,7 +101,7 @@ import {
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
-import { slackUnifiedPrimedCoalescingBurst } from "./coalesced-burst.js";
+import { primingTurnFlight, slackUnifiedPrimedCoalescingBurst, type PrimingFlightVerdict } from "./coalesced-burst.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
@@ -370,6 +370,7 @@ async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, labe
 }
 const UNIFIED_REPLY_WAIT = 420_000;
 const COALESCE_PRIME_WAIT = 60_000;
+const PRIMING_FLIGHT_WAIT = 120_000;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
@@ -4131,7 +4132,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackUnified"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
@@ -4152,16 +4153,17 @@ export const SCENARIOS: readonly Scenario[] = [
       type ProposeDetail = { readonly kind?: unknown; readonly scopeKey?: unknown; readonly id?: unknown };
       type UnaccountedDetail = { readonly turnId?: unknown; readonly count?: unknown; readonly unaccounted?: readonly unknown[] };
 
-      const awaitTurnStart = async (sinceIso: string): Promise<boolean> =>
-        (await pollOptional(
+      const awaitTurnStart = async (sinceIso: string): Promise<AuditWireEntry | undefined> =>
+        pollOptional(
           async () => {
             const rows = await auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION] });
-            return rows.length > 0 ? rows : undefined;
+            const ordered = rows.filter((r) => typeof r.seq === "number").sort((x, y) => (x.seq ?? 0) - (y.seq ?? 0));
+            return ordered[0] ?? rows[rows.length - 1];
           },
           { timeoutMs: COALESCE_PRIME_WAIT, what: "a wake.turn_start row for the priming post — the seat is now inside a turn" },
-        )) !== undefined;
+        );
 
-      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean }> => {
+      const attempt = async (n: number): Promise<{ readonly sinceIso: string; readonly replied: boolean; readonly primed: boolean; readonly flight: PrimingFlightVerdict }> => {
         const sinceIso = new Date(Date.now() - 30_000).toISOString();
         const marker = factToken(`coalesce${n}`);
         const askText = `${a.mention("please set up a routine")} — create a one-shot routine for 30 minutes from now that just posts the word ${marker} here, and tell me when it is armed.`;
@@ -4172,13 +4174,28 @@ export const SCENARIOS: readonly Scenario[] = [
           awaitTurnStart: () => awaitTurnStart(primeStart),
           burst: postBurst,
         });
-        const primeText = `${a.mention("a quick one first")} — reply with just the word ready, nothing else.`;
-        const { askTs, primed } = await drive(primeText, askText, asideText);
+        const primeText = `${a.mention("one quick thing first")} — read this channel's recent messages and tell me, in one line, what the last message before mine was about. Read them properly — don't answer from what's already in front of you.`;
+        const { askTs, primed, turnStart } = await drive(primeText, askText, asideText);
         ctx.log(
           primed
-            ? `attempt ${n}: the priming turn STARTED before the burst (a wake.turn_start row landed). Whether it was still running when the two deliveries queued is NOT observable here — there is no turn-END row on this road`
+            ? `attempt ${n}: the priming turn STARTED before the burst (a wake.turn_start row landed)`
             : `attempt ${n}: the priming turn did NOT start inside ${COALESCE_PRIME_WAIT}ms — the burst fired onto a possibly-idle seat`,
         );
+
+        let flight: PrimingFlightVerdict = { kind: "unobservable", why: "the flight evidence was never read" };
+        await pollOptional(
+          async () => {
+            const [ingress, replies, turnStarts] = await Promise.all([
+              auditRead({ sinceIso: primeStart, actions: [WAKE_INGRESS_ACTION] }),
+              auditRead({ sinceIso: primeStart, actions: [REPLY_POST_ACTION], platform: "slack" }),
+              auditRead({ sinceIso: primeStart, actions: [WAKE_TURN_START_ACTION] }),
+            ]);
+            flight = primingTurnFlight({ turnStart, ingress, replies, turnStarts });
+            return flight.kind === "unobservable" ? undefined : flight;
+          },
+          { timeoutMs: PRIMING_FLIGHT_WAIT, what: `attempt ${n}: the priming turn's reply.post END anchor, to order it against the burst's wake.ingress rows` },
+        );
+        ctx.log(`attempt ${n}: priming turn flight — ${flight.kind}: ${flight.why}`);
         const reply = await pollOptional(
           async () => {
             try {
@@ -4189,7 +4206,7 @@ export const SCENARIOS: readonly Scenario[] = [
           },
           { timeoutMs: UNIFIED_REPLY_WAIT, what: `any reply in the ASKING room (${a.channelId}) after attempt ${n}'s routine ask — the liveness signal, not a content match` },
         );
-        return { sinceIso, replied: reply !== undefined, primed };
+        return { sinceIso, replied: reply !== undefined, primed, flight };
       };
 
       const approvalRows = async (sinceIso: string) =>
@@ -4216,11 +4233,13 @@ export const SCENARIOS: readonly Scenario[] = [
       let merged: Awaited<ReturnType<typeof coalescedRows>>;
       let replied = false;
       let anyPrimed = false;
+      const flights: PrimingFlightVerdict[] = [];
       for (const n of [1, 2]) {
         const run = await attempt(n);
         sinceIso = run.sinceIso;
         replied = replied || run.replied;
         anyPrimed = anyPrimed || run.primed;
+        flights.push(run.flight);
         merged = await coalescedRows(run.sinceIso);
         if (merged !== undefined) {
           ctx.log(`attempt ${n}: the turn coalesced — ${merged.length} turn.unaccounted_wakes row(s)`);
@@ -4232,10 +4251,19 @@ export const SCENARIOS: readonly Scenario[] = [
         replied,
         `the ASKING room (${a.channelId}) produced a reply in this window — the turn RAN. Without one nothing below could be scoped either way`,
       );
+      const inFlight = flights.filter((f) => f.kind === "in-flight");
+      const sawIdleSeat = flights.some((f) => f.kind === "ended-before-burst");
+      ctx.gate(
+        merged !== undefined || inFlight.length > 0,
+        `🔴 HARNESS NON-REPRODUCTION (the precondition was not reproduced — this is NOT a product red): ` +
+          `${sawIdleSeat ? "no attempt put the two-room burst behind a priming turn still proven to be RUNNING — an attempt's priming turn last spoke BEFORE the burst was admitted, so the burst may have met an idle seat and OPE-1756's conditions were not shown to exist on this run" : "the precondition could NOT BE READ on any attempt — every verdict names a missing row or field, so this says nothing about where the seat was. Fix the read before reading anything into the seat"}. ` +
+          `Per-attempt flight verdicts: ${flights.map((f, i) => `attempt ${i + 1} ${f.kind} (${f.why})`).join(" · ")}. ` +
+          `${anyPrimed ? "At least one priming turn STARTED, so the wake is not the problem: look at the WINDOW — widen the priming ask, or shorten the gap before the burst" : `NO priming turn started inside ${COALESCE_PRIME_WAIT}ms, so look at the priming wait first`}. Nothing below this line was measured about the deployment.`,
+      );
       ctx.gate(
         merged !== undefined,
-        `🔴 (hard): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything. ` +
-          `Seat priming (OPE-1948): ${anyPrimed ? "at least one attempt saw its priming turn's wake.turn_start row land BEFORE the burst. That proves the turn STARTED — NOT that it was still in flight when the two deliveries queued, which is the condition that matters and which no row on this road reports (there is no turn-END anchor). The priming ask is deliberately trivial, so a turn that finished inside the gap would leave an idle seat and this same red. Read the priming turn's own length before calling this the product failing to fold" : "NO attempt observed its priming turn start, so the burst may have landed on an idle seat — the harness did not reproduce the precondition, and the priming wait is where to look"}`,
+        `🔴 (hard, PRODUCT): the two posts ran as ONE coalesced turn (a turn.unaccounted_wakes row naming the swallowed wake) in at least one of two attempts — without a coalesced turn this leg has not reproduced OPE-1756's conditions, and its scope gates below would pass on a turn that never merged anything. ` +
+          `The gate above already established the precondition: ${inFlight.map((f) => f.why).join(" · ")}. The deliveries queued behind a RUNNING priming turn and the product still did not fold them, so this red is the product's, not the harness's.`,
       );
 
       const rows = await approvalRows(sinceIso!);
@@ -4255,7 +4283,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const posts = await pollOptional(
         async () => {
-          const all = await auditRead({ sinceIso: sinceIso!, actions: ["reply.post"], platform: "slack" });
+          const all = await auditRead({ sinceIso: sinceIso!, actions: [REPLY_POST_ACTION], platform: "slack" });
           return all.length > 0 ? all : undefined;
         },
         { timeoutMs: AUDIT_ROW_WAIT, what: "this run's reply.post rows" },

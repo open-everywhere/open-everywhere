@@ -30,6 +30,7 @@ import {
   splitFenceRows,
 } from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
+import { primingTurnFlight } from "../packages/core/scripts/e2e/coalesced-burst.js";
 import type { TranscriptWireEvent } from "../packages/core/scripts/e2e/transcript-read.js";
 import type { NotionComment } from "../packages/core/scripts/e2e/notion-driver.js";
 import {
@@ -7076,6 +7077,97 @@ rmSync(dir, { recursive: true, force: true });
   ok(logs.some((l) => l.startsWith("recall answer: answer") && l.includes("stepped over 1 interim post")), "…and the run log says the wait stepped over exactly one interim post");
   ok(logs.some((l) => l.includes("recall route: DELEGATED")), "positive control: the fixture really drove the DELEGATED route, so the wait above was exercised");
   ok(replyHandouts === 2, `the leg waited for a second reply rather than grading the first (handed out ${replyHandouts})`);
+}
+
+{
+  const row = (over: Partial<AuditWireEntry> & { readonly action: string; readonly seq?: number }): AuditWireEntry => ({
+    ts: "2026-09-20T17:32:20.000Z",
+    org: "oe",
+    platform: "slack",
+    workspace: "e2e-unified",
+    ...over,
+  });
+  const turnStart = row({ seq: 41, action: "wake.turn_start", surface: "slack/T1/CASK", detail: { wakeId: "wake-prime" } });
+  const primeIngress = row({ seq: 40, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-prime" } });
+  const askIngress = row({ seq: 42, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-ask" } });
+  const asideIngress = row({ seq: 43, action: "wake.ingress", surface: "slack/T1/CASIDE", detail: { wakeId: "wake-aside" } });
+  const primeReply = (seq: number) => row({ seq, action: "reply.post", surface: "CASK", detail: { wakeId: "wake-prime" } });
+
+  const held = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(44)] });
+  ok(held.kind === "in-flight", `the priming turn's reply.post AFTER both burst ingress rows reads as in-flight (got ${held.kind}: ${held.why})`);
+  ok(held.why.includes("seq 44") && held.why.includes("seq 43"), `…and the verdict carries both locators, so a board reader can class it without the runner log (got ${held.why})`);
+
+  const ended = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(42)] });
+  ok(ended.kind === "ended-before-burst", `a priming reply.post BEFORE the last burst ingress row is a HARNESS non-reproduction, never a product red (got ${ended.kind}: ${ended.why})`);
+  ok(ended.why.includes("nothing places the turn alive"), `…and it claims only what the rows support (got ${ended.why})`);
+  ok(!ended.why.includes("ENDED first"), `…and does NOT claim the turn had finished, which a reply.post row cannot say (got ${ended.why})`);
+
+  const foreign = primingTurnFlight({
+    turnStart,
+    turnStarts: [turnStart],
+    ingress: [primeIngress, askIngress, asideIngress],
+    replies: [row({ seq: 44, action: "reply.post", surface: "CASK", detail: { wakeId: "wake-ask" } })],
+  });
+  ok(foreign.kind === "unobservable", `a reply.post belonging to ANOTHER wake is not the priming turn's end anchor (got ${foreign.kind}: ${foreign.why})`);
+  ok(foreign.why.includes("wake-prime"), `…and the refusal names the wake id it could not find (got ${foreign.why})`);
+
+  const noStart = primingTurnFlight({ turnStart: undefined, turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
+  ok(noStart.kind === "unobservable" && noStart.why.includes("wake.turn_start"), `no turn-start row yields no verdict, naming the missing row (got ${noStart.kind}: ${noStart.why})`);
+
+  const noWakeId = primingTurnFlight({ turnStart: row({ seq: 41, action: "wake.turn_start" }), turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
+  ok(noWakeId.kind === "unobservable" && noWakeId.why.includes("detail.wakeId"), `a turn-start row without a wake id yields no verdict (got ${noWakeId.kind}: ${noWakeId.why})`);
+  const noStartSeq = primingTurnFlight({ turnStart: row({ action: "wake.turn_start", detail: { wakeId: "wake-prime" } }), turnStarts: [], ingress: [askIngress, asideIngress], replies: [primeReply(44)] });
+  ok(noStartSeq.kind === "unobservable" && noStartSeq.why.includes("seq"), `a turn-start row without a seq yields no verdict (got ${noStartSeq.kind}: ${noStartSeq.why})`);
+  const noReplySeq = primingTurnFlight({
+    turnStart,
+    turnStarts: [turnStart],
+    ingress: [primeIngress, askIngress, asideIngress],
+    replies: [row({ action: "reply.post", surface: "CASK", detail: { wakeId: "wake-prime" } })],
+  });
+  ok(noReplySeq.kind === "unobservable" && noReplySeq.why.includes("seq"), `a reply.post row without a seq yields no verdict (got ${noReplySeq.kind}: ${noReplySeq.why})`);
+
+  const oneDelivery = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress], replies: [primeReply(44)] });
+  ok(oneDelivery.kind === "unobservable", `one burst ingress row is not two — the priming post's own row does not make up the pair (got ${oneDelivery.kind}: ${oneDelivery.why})`);
+  ok(oneDelivery.why.includes("only 1 of the burst's 2 deliveries"), `…and the refusal counts what it found (got ${oneDelivery.why})`);
+
+  const twoPostsNewestFirst = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(44), primeReply(42)] });
+  const twoPostsOldestFirst = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [primeReply(42), primeReply(44)] });
+  ok(twoPostsNewestFirst.kind === "in-flight", `a turn that posted twice is read at its LAST post (newest-first rows: got ${twoPostsNewestFirst.kind}: ${twoPostsNewestFirst.why})`);
+  ok(twoPostsOldestFirst.kind === "in-flight", `🔴 …and the SAME rows in the opposite order give the SAME verdict — the join does not lean on the route's sort (got ${twoPostsOldestFirst.kind}: ${twoPostsOldestFirst.why})`);
+  ok(twoPostsOldestFirst.why.includes("seq 44"), `…and the end it names is the later post, not the earlier one (got ${twoPostsOldestFirst.why})`);
+
+  const notYet = primingTurnFlight({ turnStart, turnStarts: [turnStart], ingress: [primeIngress, askIngress, asideIngress], replies: [] });
+  ok(notYet.kind === "unobservable" && notYet.why.includes("no anchor of its own"), `no reply.post yet is unobservable, not a decided verdict (got ${notYet.kind}: ${notYet.why})`);
+
+  const laterTurnStart = row({ seq: 45, action: "wake.turn_start", surface: "slack/T1/CASK", detail: { wakeId: "wake-ask" } });
+  const answeredByALaterTurn = primingTurnFlight({
+    turnStart,
+    turnStarts: [turnStart, laterTurnStart],
+    ingress: [primeIngress, askIngress, asideIngress],
+    replies: [primeReply(46)],
+  });
+  ok(
+    answeredByALaterTurn.kind === "unobservable",
+    `🔴 a reply carrying the priming wake id but written AFTER a later turn started is NOT the priming turn's anchor — the silent-priming-turn false green (got ${answeredByALaterTurn.kind}: ${answeredByALaterTurn.why})`,
+  );
+  ok(answeredByALaterTurn.why.includes("45"), `…and the refusal names the later turn's start that bounded it (got ${answeredByALaterTurn.why})`);
+  const boundedButOwn = primingTurnFlight({
+    turnStart,
+    turnStarts: [turnStart, laterTurnStart],
+    ingress: [primeIngress, askIngress, asideIngress],
+    replies: [primeReply(44)],
+  });
+  ok(boundedButOwn.kind === "in-flight", `…and a reply BEFORE that later start is still the priming turn's own (got ${boundedButOwn.kind}: ${boundedButOwn.why})`);
+
+  const foreignIngress = row({ seq: 48, action: "wake.ingress", surface: "slack/T1/CASK", detail: { wakeId: "wake-stranger" } });
+  const withAStranger = primingTurnFlight({
+    turnStart,
+    turnStarts: [turnStart],
+    ingress: [primeIngress, askIngress, asideIngress, foreignIngress],
+    replies: [primeReply(44)],
+  });
+  ok(withAStranger.kind === "in-flight", `a foreign wake admitted later in the window does not move the burst anchor (got ${withAStranger.kind}: ${withAStranger.why})`);
+  ok(withAStranger.why.includes("second at seq 43"), `…and the anchor named is the burst's SECOND delivery, not the stranger (got ${withAStranger.why})`);
 }
 
 {
