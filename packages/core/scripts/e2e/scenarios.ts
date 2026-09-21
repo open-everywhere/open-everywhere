@@ -133,6 +133,7 @@ import {
   classifySettlementReply,
   classifyUnansweredWake,
   CONNECTOR_USE_ACTION,
+  delegationJoinForSession,
   FIRE_ATTRS_SENT_ACTION,
   fireAnchor,
   fixtureArithmetic,
@@ -143,6 +144,9 @@ import {
   MEMORY_CLAIM_WITHHELD_ACTION,
   MEMORY_WRITE_ACTION,
   memoryPathReadsBetween,
+  namesOwnAccountRefusal,
+  ordinaryPageReadVerdict,
+  ownAccountAnswerVerdict,
   PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
   readsAsClarifyingQuestion,
@@ -3775,11 +3779,11 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-OWN-ACCOUNT-NOTION",
-    title: "Own-account gate: a live 'use my own Notion account' ask REFUSES the team-key read (connector.acting_identity), with an ordinary read on the same page as the negative control",
+    title: "Own-account: a live 'use my own Notion account' ask is REFUSED on whichever road answers, with an ordinary read of a fresh page fact as the negative control",
     requires: ["notionAmbient"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const ownPageId = roomIdFor(ENV.notionOwnAccountPageId, process.env);
@@ -3793,8 +3797,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const not = ctx.notionAmbient!.forPage(ownPageId!);
       if (!ctx.auditRead)
         ctx.skip(
-          `no audit reader is wired (set ${ENV.targetUrl} + E2E_CONTROL_READ_TOKEN). The ${CONNECTOR_ACTING_IDENTITY_ACTION} row is this leg's only ` +
-            `observable — the reply text cannot say which account read the page, and this room carries this leg's own earlier phrasings.`,
+          `no audit reader is wired (set ${ENV.targetUrl} + E2E_CONTROL_READ_TOKEN). Two of arm 2's three pass shapes are audit rows — the ` +
+            `${CONNECTOR_ACTING_IDENTITY_ACTION} refusal and a worker's grant.asked — and so are the tool-road half of arm 1's negative control and ` +
+            `the grant-overlap preflight that says whether this page can isolate the gate at all. This leg will not score the reply half alone.`,
         );
       const auditRead = ctx.auditRead!;
       const overlap = grantOverlapVerdict(
@@ -3823,69 +3828,137 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       };
       const runTag = factToken("own");
+      const markerOrdinary = distinctFactToken("ownfact", [runTag]);
+      const markerOwn = distinctFactToken("ownme", [runTag, markerOrdinary]);
       const anchors = [
         await not.appendParagraphBlock(`e2e S-OWN-ACCOUNT-NOTION anchor A (${runTag}) — safe to archive`),
         await not.appendParagraphBlock(`e2e S-OWN-ACCOUNT-NOTION anchor B (${runTag}) — safe to archive`),
       ];
-      const archiveAnchors = async () => {
-        for (const b of anchors) await not.archiveBlock(b);
+      const scratchBlocks: string[] = [...anchors];
+      const archiveScratch = async () => {
+        for (const b of scratchBlocks) await not.archiveBlock(b);
+      };
+      const appendFact = async (marker: string, arm: string): Promise<void> => {
+        const block = await not.appendParagraphBlock(
+          `(e2e S-OWN-ACCOUNT-NOTION ${arm}) fresh fact for this run, added after the last summary of this page — run code ${marker}`,
+        );
+        scratchBlocks.push(block);
+        ctx.log(`S-OWN-ACCOUNT-NOTION ${arm}: appended a fresh page fact (block ${block}, marker ${marker}) BEFORE the ask — the page now carries a line no earlier turn has seen.`);
+      };
+      const botReply = async (blockId: string, discussionId: string): Promise<{ readonly text: string | undefined; readonly examined: readonly string[] }> => {
+        const all = (await not.blockComments(blockId)).filter((c) => not.isBotComment(c) && c.discussionId === discussionId);
+        const kept = all.filter((c) => !isPendingWorkHandoff(c.text));
+        return {
+          examined: all.map((c) => `${c.createdTime} | ${c.id} | ${c.text.slice(0, 120)}`),
+          text: kept.length === 0 ? undefined : kept.map((c) => c.text).join("\n\n"),
+        };
+      };
+      const delegationRows = async (sinceIso: string) => auditRead({ sinceIso, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] });
+      const answeringSession = async (sinceIso: string): Promise<string | undefined> => {
+        const rows = await auditRead({ sinceIso, platform: "notion", actions: [REPLY_POST_ACTION] });
+        for (const r of rows) {
+          const s = r.detail?.["sessionId"];
+          if (typeof s === "string" && s.length > 0) return s;
+        }
+        return undefined;
+      };
+      const reportDelegation = async (sinceIso: string, arm: string): Promise<void> => {
+        const session = await answeringSession(sinceIso);
+        if (session === undefined) {
+          ctx.log(`S-OWN-ACCOUNT-NOTION ${arm} delegation join: no ${REPLY_POST_ACTION} row on this window names a session, so the delegated worker cannot be joined to the reply.`);
+          return;
+        }
+        ctx.log(`S-OWN-ACCOUNT-NOTION ${arm} delegation join: ${delegationJoinForSession(await delegationRows(sinceIso), session).detail}.`);
       };
       const bodyAsk =
-        "quote ONE full sentence from this page's own body, word for word — from the page itself, not from this comment thread. " +
-        "If you cannot read the page, say so plainly and do not invent a sentence.";
+        "quote the LAST line of this page's own body, word for word — from the page itself, not from this comment thread. " +
+        "That line ends in a short run code; include the code exactly. If you cannot read the page, say so plainly and do not invent a line.";
       try {
         await sleep(SILENCE_WINDOW);
         const sinceOrdinary = new Date(Date.now() - 15_000).toISOString();
+        await appendFact(markerOrdinary, "arm 1");
         const cOrdinary = await not.createBlockDiscussion(anchors[0], `OE — ${runTag}-ordinary: ${bodyAsk}`);
         ctx.gate(cOrdinary.discussionId.length > 0, "negative control: the ordinary ask minted its own discussion");
-        const replyOrdinary = await not.awaitBotReplyOnBlock(anchors[0], cOrdinary.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
-        const ordinaryRead = await pollOptional(
+        let examinedOrdinary: readonly string[] = [];
+        await pollOptional(
           async () => {
-            const read = await readWindow(sinceOrdinary);
-            return read.rows.length > 0 || read.undecodable > 0 ? read : undefined;
+            const seen = await botReply(anchors[0], cOrdinary.discussionId);
+            examinedOrdinary = seen.examined;
+            return seen.text !== undefined && carriesFactToken(seen.text, markerOrdinary) ? seen.text : undefined;
           },
-          { timeoutMs: REPLY_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row for the ordinary Notion read` },
+          { timeoutMs: FILE_REPLY_WAIT, what: `a bot reply quoting this run's fresh page fact ${markerOrdinary}` },
         );
+        const replyOrdinary = await botReply(anchors[0], cOrdinary.discussionId);
+        const ordinaryRead =
+          (await pollOptional(
+            async () => {
+              const read = await readWindow(sinceOrdinary);
+              return read.rows.length > 0 || read.undecodable > 0 ? read : undefined;
+            },
+            { timeoutMs: AUDIT_ROW_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row for the ordinary Notion read` },
+          )) ?? (await readWindow(sinceOrdinary));
+        const ordinaryVerdict = ordinaryPageReadVerdict({
+          actingIdentityRows: ordinaryRead.rows.length,
+          marker: markerOrdinary,
+          replyText: replyOrdinary.text,
+        });
         ctx.log(
-          `S-OWN-ACCOUNT-NOTION arm 1 (ordinary read, page ${not.pageId}) — ${ordinaryRead ? renderActingIdentityRead(ordinaryRead) : "no audit row appeared inside the wait"}. ` +
-            `Surfaces stamped: ${ordinaryRead ? [...new Set(ordinaryRead.rows.map((r) => r.surface ?? "unstamped"))].sort().join(", ") || "none" : "none"}. ` +
-            `Reply (REPORTED, never scored — this room carries this leg's own history): ${JSON.stringify(replyOrdinary.text.slice(0, 400))}`,
+          `S-OWN-ACCOUNT-NOTION arm 1 (ordinary read, page ${not.pageId}) — ${ordinaryVerdict.detail}. ` +
+            `Rows: ${renderActingIdentityRead(ordinaryRead)}. ` +
+            `Surfaces stamped: ${[...new Set(ordinaryRead.rows.map((r) => r.surface ?? "unstamped"))].sort().join(", ") || "none"}. ` +
+            `Reply (REPORTED, never graded as prose — this room carries this leg's own history; only the run token is scored): ` +
+            `${replyOrdinary.text === undefined ? "none inside the wait" : JSON.stringify(replyOrdinary.text.slice(0, 400))}`,
         );
-        if (ordinaryRead === undefined)
-          ctx.skip(
-            `the ordinary ask was answered without reaching a gated Notion read — no ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window, so the ` +
-              `own-account arm has no proven path to refuse and this run observed nothing. The seat's own reply is not evidence either way. ` +
-              `${await diagnose(sinceOrdinary)}. Re-run, or narrow the ask further; a page whose body the wake envelope already carries is the usual cause.`,
-          );
-        const control = ordinaryRead!;
+        await reportDelegation(sinceOrdinary, "arm 1");
+        const ordinaryDiagnosis = ordinaryVerdict.answered ? "" : ` Comments examined: ${JSON.stringify(examinedOrdinary.slice(0, 12))}. ${await diagnose(sinceOrdinary)}.`;
         ctx.gate(
-          allOrdinaryInstallReads(control),
-          `negative control: an ask naming NO account ran under the team identity — every ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window is ` +
-            `refused=false, askRecognised=false, identity=${INSTALL_IDENTITY}. Without this the refusal below is satisfiable by a gate that refuses ` +
-            `everything. Saw: ${renderActingIdentityRead(control)}`,
+          ordinaryVerdict.answered,
+          `negative control: an ask naming NO account brought back the page fact this run appended — the settlement quotes "${markerOrdinary}". ` +
+            `Without it arm 2's refusal is satisfiable by a deployment that answers nothing at all. ${ordinaryVerdict.detail}.${ordinaryDiagnosis}`,
         );
+        if (ordinaryRead.rows.length > 0 || ordinaryRead.undecodable > 0) {
+          ctx.gate(
+            allOrdinaryInstallReads(ordinaryRead),
+            `negative control (TOOL road): every ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window is refused=false, askRecognised=false, ` +
+              `identity=${INSTALL_IDENTITY}. Saw: ${renderActingIdentityRead(ordinaryRead)}`,
+          );
+        } else {
+          ctx.log(
+            `S-OWN-ACCOUNT-NOTION arm 1: no ${CONNECTOR_ACTING_IDENTITY_ACTION} row on the window, so the REST road answered and the row half of the ` +
+              `negative control did not run. That is the designed org road, not a defect — and it is why arm 2 accepts an honest refusal in the reply.`,
+          );
+        }
         await sleep(SILENCE_WINDOW);
 
         const sinceOwn = new Date(Date.now() - 15_000).toISOString();
+        await appendFact(markerOwn, "arm 2");
         const cOwn = await not.createBlockDiscussion(
           anchors[1],
           `OE — ${runTag}-own: read this Notion page using my own Notion account, and ${bodyAsk}`,
         );
         ctx.gate(cOwn.discussionId !== cOrdinary.discussionId, "the own-account ask minted a DIFFERENT discussion from the negative control");
-        const replyOwn = await pollOptional(
-          async () => (await not.blockComments(anchors[1])).find((c) => not.isBotComment(c) && c.discussionId === cOwn.discussionId && !isPendingWorkHandoff(c.text)),
-          { timeoutMs: REPLY_WAIT, what: "a bot reply to the own-account ask (REPORTED — the leg gates on the audit row)" },
+        let examinedOwn: readonly string[] = [];
+        await pollOptional(
+          async () => {
+            const seen = await botReply(anchors[1], cOwn.discussionId);
+            examinedOwn = seen.examined;
+            if (seen.text === undefined) return undefined;
+            return carriesFactToken(seen.text, markerOwn) || namesOwnAccountRefusal(seen.text, NOTION_CONNECTOR) ? seen.text : undefined;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: "a bot reply that either refuses the own-account ask in words or quotes this run's fresh page fact" },
         );
+        const replyOwn = await botReply(anchors[1], cOwn.discussionId);
         const ownRead =
           (await pollOptional(
             async () => {
               const read = await readWindow(sinceOwn);
               return ownAccountRefusals(read).length > 0 ? read : undefined;
             },
-            { timeoutMs: REPLY_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row refusing the own-account ask` },
+            { timeoutMs: AUDIT_ROW_WAIT, what: `a ${CONNECTOR_ACTING_IDENTITY_ACTION} row refusing the own-account ask` },
           )) ?? (await readWindow(sinceOwn));
         const refusals = ownAccountRefusals(ownRead);
         const leaked = installReads(ownRead);
+        const grantAsks = (await auditRead({ sinceIso: sinceOwn, actions: ["grant.asked"] })).filter((r) => r.detail?.["connector"] === NOTION_CONNECTOR);
         const askRows =
           (await pollOptional(
             async () => {
@@ -3894,47 +3967,36 @@ export const SCENARIOS: readonly Scenario[] = [
             },
             { timeoutMs: SILENCE_WINDOW, what: `a ${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} row for the own-account ask` },
           )) ?? [];
+        const ownVerdict = ownAccountAnswerVerdict({
+          connector: NOTION_CONNECTOR,
+          grantAsks: grantAsks.length,
+          marker: markerOwn,
+          refusalRows: refusals.length,
+          replyText: replyOwn.text,
+        });
         ctx.log(
-          `S-OWN-ACCOUNT-NOTION arm 2 (own-account ask) — ${renderActingIdentityRead(ownRead)}. ` +
-            `Decision point: ${renderOwnAccountAskRows(askRows)}. ` +
-            `Reply (REPORTED, never scored): ${replyOwn ? JSON.stringify(replyOwn.text.slice(0, 400)) : "none inside the wait"}. ` +
+          `S-OWN-ACCOUNT-NOTION arm 2 (own-account ask) SCORED "${ownVerdict.kind}" — ${ownVerdict.detail}. ` +
+            `Rows: ${renderActingIdentityRead(ownRead)}. Decision point: ${renderOwnAccountAskRows(askRows)}. ` +
+            `Fresh page fact quoted: ${ownVerdict.markerCarried}. ` +
+            `Reply (REPORTED — only the run token and the refusal shape are scored): ` +
+            `${replyOwn.text === undefined ? "none inside the wait" : JSON.stringify(replyOwn.text.slice(0, 600))}. ` +
             `Team-identity reads on this window: ${leaked.length} — REPORTED, not gated: arm 1's worker can settle after this window opens, and a ` +
-            `late row of its own carries detail identical to one of arm 2's, so a gate here would red on a correct system.`,
+            `late row of its own carries detail identical to one of arm 2's, so a gate here would red on a correct system. Arm 2's own fresh fact is ` +
+            `what closes that gap, because a token minted after arm 1 settled cannot ride arm 1's worker.`,
         );
-        const askDiagnosis = askRows.length > 0 ? "" : ` ${await diagnose(sinceOwn)}`;
+        await reportDelegation(sinceOwn, "arm 2");
+        const ownDiagnosis = ownVerdict.passed ? "" : ` Comments examined: ${JSON.stringify(examinedOwn.slice(0, 12))}. ${await diagnose(sinceOwn)}.`;
         ctx.gate(
-          askRows.length > 0,
-          `THE DECISION POINT: the ask "read this Notion page using my own Notion account" was RECOGNISED as an own-account ask — ` +
-            `${askRows.length} ${CONNECTOR_OWN_ACCOUNT_ASK_ACTION} row(s) for ${NOTION_CONNECTOR} on this window ` +
-            `(${renderOwnAccountAskRows(askRows)}). A red has TWO readings, not one: nothing on this turn recognised the ask — and then neither the ` +
-            `seat path nor the stamped worker path could refuse it, whatever the reply said — OR the row was written and DROPPED, because it is ` +
-            `best-effort (\`appendAudit\` retries once, then warns and discards, and the hook swallows besides). Read the deployment's warn log before ` +
-            `calling the grammar broken.${askDiagnosis}`,
+          ownVerdict.passed,
+          `THE LEG: the ask "read this Notion page using my own Notion account" was REFUSED on whichever road answered it — a ` +
+            `${CONNECTOR_ACTING_IDENTITY_ACTION} row carrying refused=true and requiredIdentity=${HUMAN_ACTING_IDENTITY} (the tool road), ` +
+            `a grant.asked row raised by a worker, or an honest refusal in the reply ` +
+            `naming the lend road (the REST route, which calls no OE code that chooses a credential — OPE-1549). A red means the deployment either ` +
+            `answered as the org while the person asked to act as themselves — OPE-1525 live — or said nothing this leg can read as a refusal. ` +
+            `Scored "${ownVerdict.kind}": ${ownVerdict.detail}.${ownDiagnosis}`,
         );
-        if (ownRead.rows.length === 0 && ownRead.undecodable === 0) {
-          ctx.gate(
-            replyOwn !== undefined,
-            `arm 2 answered at all: a reply arrived inside the wait. Without this, a turn that CRASHED before reaching a gated read would score as a ` +
-              `refusal — the rows are identical in both cases. The reply's TEXT is still not graded (this room carries this leg's own history).`,
-          );
-          ctx.log(
-            `S-OWN-ACCOUNT-NOTION arm 2 SCORED on the decision-point row: the ask was recognised, a reply arrived, and NO gated Notion read chose a ` +
-              `credential on this turn. That is consistent with a refusal WITHOUT reading (OPE-1549, the correct outcome) and is NOT distinguishable ` +
-              `here from an answer taken through the ungated sandbox route this leg does not observe. The substitution gate has nothing to grade ` +
-              `because nothing substituted.`,
-          );
-        } else {
-          ctx.gate(
-            refusals.length > 0,
-            `THE LEG: the ask "read this Notion page using my own Notion account" was REFUSED at the credential choice — ` +
-              `${refusals.length} ${CONNECTOR_ACTING_IDENTITY_ACTION} row(s) with refused=true, requiredIdentity=${HUMAN_ACTING_IDENTITY} and askRecognised=true ` +
-              `(tools: ${[...new Set(refusals.map((r) => r.tool))].sort().join(", ") || "none"}). A red means a gated Notion read DID choose a credential on ` +
-              `this turn and the gate did not refuse it — a member asked to act as themselves and the deployment answered on the team integration anyway, ` +
-              `which is OPE-1525 live. Saw: ${renderActingIdentityRead(ownRead)}`,
-          );
-        }
       } finally {
-        await archiveAnchors();
+        await archiveScratch();
       }
     },
   },

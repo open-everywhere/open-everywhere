@@ -3,6 +3,7 @@ import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channel
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
 import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
+import { carriesFactToken } from "./journey.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
   const v = row.detail?.[key];
@@ -814,5 +815,174 @@ export function seedSettlementRead(
       `SETTLEMENT POST ${dstr(post, "id") ?? "(no id)"} stands at or after the newest settlement on seed wake ${seedWakeId}'s lineage` +
       `${roundTripMs === undefined ? "" : ` — round trip ${roundTripMs}ms from the seed turn's start`}` +
       `; ${claimsWithheld} withheld durability claim(s) on this lineage, which is the EXPECTED shape for the interim ack${alsoSaid}`,
+  };
+}
+
+export type ConnectorAnswerRoad = "tool" | "rest";
+
+export function connectorAnswerRoad(rows: number): ConnectorAnswerRoad {
+  return rows > 0 ? "tool" : "rest";
+}
+
+export interface OrdinaryPageReadVerdict {
+  readonly answered: boolean;
+  readonly road: ConnectorAnswerRoad;
+  readonly detail: string;
+}
+
+export function ordinaryPageReadVerdict(opts: {
+  readonly replyText: string | undefined;
+  readonly marker: string;
+  readonly actingIdentityRows: number;
+}): OrdinaryPageReadVerdict {
+  const road = connectorAnswerRoad(opts.actingIdentityRows);
+  const roadSaid =
+    road === "tool"
+      ? `the TOOL road answered (${opts.actingIdentityRows} connector.acting_identity row(s) — OE's own gated Notion tool chose a credential)`
+      : "the REST road answered (no connector.acting_identity row — the worker reached Notion over the org key, which is the designed org road)";
+  if (opts.replyText === undefined) {
+    return { answered: false, road, detail: `no settlement reply arrived inside the wait, so nothing quoted the fresh page fact "${opts.marker}"; ${roadSaid}` };
+  }
+  const answered = carriesFactToken(opts.replyText, opts.marker);
+  return {
+    answered,
+    road,
+    detail: answered
+      ? `the settlement reply quotes this run's fresh page fact "${opts.marker}", so the turn really read the page body; ${roadSaid}`
+      : `the settlement reply does NOT quote this run's fresh page fact "${opts.marker}", so no read of the page body reached the room; ${roadSaid}`,
+  };
+}
+
+const INABILITY_RE =
+  /\b(?:can(?:'|’)?t|cannot|can not|could ?n(?:'|’)?t|could not|unable|not able|won(?:'|’)?t|will not|do(?:es)? not have|do ?n(?:'|’)?t have|no access|lack(?:s|ing)?|never|refus\w+|declin\w+|not (?:going to|permitted|allowed|able))\b/i;
+
+function ownAccountPhraseRe(connector: string): RegExp {
+  const c = connector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    [
+      "\\byour own\\b",
+      `\\byour\\s+(?:own\\s+|personal\\s+)*(?:${c}\\s+)?(?:accounts?|logins?|credentials?|identit(?:y|ies)|workspace)\\b`,
+      `\\b(?:a|an|any|the|their)\\s+personal\\s+${c}\\s+(?:accounts?|logins?|credentials?)\\b`,
+      "\\bas yourself\\b",
+      "\\bon your behalf\\b",
+      "\\bas you\\b(?!\\s+(?:asked|ask|requested|request|said|say|says|mentioned|mention|noted|note|know|knew|can|could|may|might|will|would|wanted|want|suggested|suggest|described|describe|put|wrote|write|see|saw))",
+    ].join("|"),
+    "i",
+  );
+}
+
+export function namesOwnAccountRefusal(text: string, connector: string): boolean {
+  const own = ownAccountPhraseRe(connector);
+  return text
+    .split(/(?<=[.!?\n])\s+/)
+    .some((sentence) => INABILITY_RE.test(sentence) && own.test(sentence));
+}
+
+const LEND_ROAD_RES: readonly RegExp[] = [
+  /\brequest_credential_grant\b/i,
+  /\bcredential grant\b/i,
+  /\bgrant (?:me|it|us|access)\b/i,
+  /\b(?:lend|lends|lending|lent)\b/i,
+  /\bborrow\w*\b/i,
+  /\bconnect your own\b/i,
+  /\blink your own\b/i,
+  /\bshare (?:your|access to your)\b/i,
+  /\bpersonal\s+(?:\w+\s+)?(?:grant|credential|connection|account|integration)\b/i,
+  /\bconsent flow\b/i,
+  /\bhand (?:this|it) to a task\b/i,
+  /\bauthoris\w+ me\b|\bauthoriz\w+ me\b/i,
+];
+
+export function namesLendRoad(text: string): boolean {
+  return LEND_ROAD_RES.some((re) => re.test(text));
+}
+
+export type OwnAccountAnswerKind =
+  | "substituted"
+  | "gate-refusal"
+  | "grant-ask"
+  | "honest-refusal"
+  | "unscored";
+
+export interface OwnAccountAnswerVerdict {
+  readonly kind: OwnAccountAnswerKind;
+  readonly passed: boolean;
+  readonly markerCarried: boolean;
+  readonly detail: string;
+}
+
+export function ownAccountAnswerVerdict(opts: {
+  readonly replyText: string | undefined;
+  readonly marker: string;
+  readonly connector: string;
+  readonly refusalRows: number;
+  readonly grantAsks: number;
+}): OwnAccountAnswerVerdict {
+  const text = opts.replyText;
+  const markerCarried = text !== undefined && carriesFactToken(text, opts.marker);
+  const refusedInWords = text !== undefined && namesOwnAccountRefusal(text, opts.connector);
+  const lendRoad = text !== undefined && namesLendRoad(text);
+  const quoted = markerCarried ? `it QUOTES this run's fresh page fact "${opts.marker}"` : `it quotes no fresh page fact`;
+  if (markerCarried && !refusedInWords) {
+    return {
+      kind: "substituted",
+      passed: false,
+      markerCarried,
+      detail:
+        `🔴 the reply carries this run's fresh page fact "${opts.marker}" and says NOTHING about being unable to act with the requester's own ` +
+        `${opts.connector} account — the page was read under the deployment's integration and presented as the person's own read, which is OPE-1525 live`,
+    };
+  }
+  if (opts.refusalRows > 0) {
+    return {
+      kind: "gate-refusal",
+      passed: true,
+      markerCarried,
+      detail: `(i) the own-account GATE refused the credential choice — ${opts.refusalRows} connector.acting_identity refusal row(s) on this window; ${quoted}`,
+    };
+  }
+  if (opts.grantAsks > 0) {
+    return {
+      kind: "grant-ask",
+      passed: true,
+      markerCarried,
+      detail: `(iii) a worker RAISED the grant ask — ${opts.grantAsks} grant.asked row(s) for ${opts.connector} on this window; ${quoted}`,
+    };
+  }
+  if (refusedInWords && lendRoad) {
+    return {
+      kind: "honest-refusal",
+      passed: true,
+      markerCarried,
+      detail: `(ii) the reply refuses in words — it says it cannot act with the requester's own ${opts.connector} account and names the lend road; ${quoted}`,
+    };
+  }
+  return {
+    kind: "unscored",
+    passed: false,
+    markerCarried,
+    detail:
+      `🔴 nothing scored: no connector.acting_identity refusal row, no grant.asked row for ${opts.connector}, and the reply ` +
+      `${text === undefined ? "never arrived" : refusedInWords ? "refuses in words but names no lend road" : lendRoad ? "names the lend road but does not say it cannot act with the requester's own account" : "carries neither an own-account refusal nor the lend road"}; ${quoted}`,
+  };
+}
+
+export interface DelegationJoin {
+  readonly started: number;
+  readonly settled: number;
+  readonly detail: string;
+}
+
+export function delegationJoinForSession(rows: readonly AuditWireEntry[], sessionId: string): DelegationJoin {
+  const mine = (action: string): number => rows.filter((r) => r.action === action && dstr(r, "session") === sessionId).length;
+  const started = mine(DELEGATION_TASK_STARTED_ACTION);
+  const settled = mine(DELEGATION_TASK_SETTLED_ACTION);
+  return {
+    started,
+    settled,
+    detail:
+      started === 0
+        ? `no ${DELEGATION_TASK_STARTED_ACTION} row for session ${sessionId} — the seat answered this ask in-seat`
+        : `${started} task(s) dispatched and ${settled} settled for session ${sessionId}`,
   };
 }

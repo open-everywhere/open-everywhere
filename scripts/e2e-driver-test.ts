@@ -6905,6 +6905,67 @@ rmSync(dir, { recursive: true, force: true });
     legBody.indexOf("grantOverlapVerdict(") > 0 && legBody.indexOf("grantOverlapVerdict(") < legBody.indexOf("appendParagraphBlock("),
     "🔴 OPE-1984: the preflight runs BEFORE the leg drives anything — a check after the first comment is a check that costs the turn it was meant to save",
   );
+
+  ok(
+    !/the ordinary ask was answered without reaching a gated Notion read/.test(legBody),
+    "🔴 OPE-2037: NEGATIVE — arm 1's SELF-SKIP is GONE. It fired on every run of this deployment (the worker holds `read_notion_page` AND `bash`, and chose `bash` with the org key), so restoring it puts the leg straight back on six boards' CANNOT RUN list",
+  );
+  ok(
+    /const markerOrdinary = distinctFactToken\(/.test(legBody) && /const markerOwn = distinctFactToken\("ownme", \[runTag, markerOrdinary\]\)/.test(legBody),
+    "🔴 OPE-2037: ONE token per arm, and both through `distinctFactToken` (OPE-2032) — `factToken` derives its run from the millisecond, so a pair minted together shares a digit run, and arm 1's answer would then satisfy arm 2's RED",
+  );
+  ok(
+    legBody.indexOf('appendFact(markerOrdinary, "arm 1")') > 0 &&
+      legBody.indexOf('appendFact(markerOrdinary, "arm 1")') < legBody.indexOf("const cOrdinary = await not.createBlockDiscussion("),
+    "🔴 OPE-2037: the fresh page fact is appended BEFORE arm 1's ask — a fact appended after it is one the turn could not have read, and the gate would be about a line the page did not hold",
+  );
+  {
+    const settle = legBody.indexOf("await sleep(SILENCE_WINDOW);\n\n        const sinceOwn = await presenceSince(");
+    const factTwo = legBody.indexOf('appendFact(markerOwn, "arm 2")');
+    ok(settle > 0 && factTwo > 0, "the arm-1/arm-2 settle and arm 2's own fact are both still in the leg body — without both, the ordering pin below compares against -1 and passes vacuously");
+    ok(
+      factTwo > settle,
+      "🔴 OPE-2037: …and arm 2's own fact is appended only AFTER arm 1 has settled. That is what stops arm 1's own worker carrying it, which is the whole reason arm 2's RED can be read off a token at all",
+    );
+  }
+  ok(
+    /ctx\.gate\(\s*ordinaryVerdict\.answered,/.test(legBody),
+    "🔴 OPE-2037: arm 1's gate is the VERDICT from gate-joins.ts §19, not a row count — the token is road-free, so the negative control passes on the REST road and on the tool road alike",
+  );
+  ok(
+    /ctx\.gate\(\s*ownVerdict\.passed,/.test(legBody),
+    "🔴 OPE-2037: arm 2's gate is §17's verdict too — a refusal row, a raised grant ask, or an honest refusal in the reply, with the fresh fact coming back undisclosed as the RED",
+  );
+  ok(
+    /if \(ordinaryRead\.rows\.length > 0 \|\| ordinaryRead\.undecodable > 0\) \{[\s\S]{0,400}allOrdinaryInstallReads\(ordinaryRead\)/.test(legBody),
+    "🔴 OPE-2037: the ROW half of the negative control survives, CONDITIONAL on the tool road having answered. Dropping it would let a gate that refuses everything satisfy arm 2; making it unconditional would red the REST road, which is the designed org road",
+  );
+  ok(
+    !/ctx\.gate\(\s*askRows\.length > 0,/.test(legBody),
+    "🔴 OPE-2037: NEGATIVE — the `connector.own_account_ask` decision-point row is REPORTED, never gated. It is not one of the three shapes arm 2 passes on, the REST-road refusal is correct whether or not it was written, and the row is best-effort (`appendAudit` retries once, then discards)",
+  );
+  ok(/renderOwnAccountAskRows\(askRows\)/.test(legBody), "…and it is still READ, so an arm-2 red says whether the grammar recognised the ask — two very different diagnoses");
+  ok(
+    /await reportDelegation\(sinceOrdinary, "arm 1"\)/.test(legBody) && /await reportDelegation\(sinceOwn, "arm 2"\)/.test(legBody),
+    "🔴 OPE-2037: both arms report the DELEGATION join, so a board can say whether the delegated worker or the seat itself answered. It is a read-out: the seat holds `read_channel`/`read_thread` and can answer in-seat, so gating on a dispatch would red a correct turn",
+  );
+  ok(
+    /actions: \[DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION\] \}\)/.test(legBody) && !/delegationRows = async \(sinceIso: string\) => auditRead\(\{ sinceIso, platform/.test(legBody),
+    "🔴 OPE-2037: the delegation rows are read UNSCOPED — they are filed on `platform: \"ingest\"`, so a read scoped to `notion` finds none of them on a deployment that delegated perfectly",
+  );
+  {
+    const askStart = legBody.indexOf("const bodyAsk =");
+    ok(askStart > 0, "the leg still builds its ask through a `bodyAsk` literal — if it stops, this pin is reading nothing");
+    const askText = legBody.slice(askStart, legBody.indexOf("try {", askStart));
+    ok(
+      !/read_notion_page|read_notion_comments|notion_search|read_channel|read_thread|\bbash\b|\bcurl\b/.test(askText),
+      "🔴 OPE-2037: the ordinary ask NAMES NO TOOL and no road. Naming one steers the model onto a road and measures the harness instead of the deployment — the road that answers is exactly what this leg reports",
+    );
+    ok(
+      /LAST line of this page's own body/.test(askText),
+      "…and it asks for the LAST line of the page body, which is where this run's own appended fact sits. The wake envelope carries the comment and not the body, so only a real read answers it",
+    );
+  }
   ok(
     /ctx\.gate\(overlap\.kind === "proceed", overlap\.reason\)/.test(legBody),
     "🔴 OPE-1984: the preflight's verdict is a hard GATE carrying its own reason — logging it would turn the named red back into the 15-minute arm-1 skip it replaces",
