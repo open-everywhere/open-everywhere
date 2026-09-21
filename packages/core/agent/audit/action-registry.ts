@@ -469,6 +469,7 @@ export const TEMPLATED_AUDIT_ACTIONS: readonly TemplatedAuditActionDeclaration[]
 
 export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "access.request.pr_opened",
+  "access_request.claim_withheld",
   "admin.approval.judge_disarm",
   "admin.approval.judge_rearm",
   "admin.connector.clear_override",

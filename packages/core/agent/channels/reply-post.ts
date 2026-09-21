@@ -14,6 +14,7 @@ import { markWakeRefusedThisTurn, REPLY_STOPPED_REFUSAL_REASON } from "./reply-s
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
+import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import { standDownSilenceLatchedDurably } from "./stand-down-silence.js";
 
 export type { ReplierLabel };
@@ -215,7 +216,8 @@ export async function recordLandedPost(input: {
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
-  const provenance = applyReplyProvenance(approvalGuard.body, audit);
+  const requestGuard = guardRequestClaims(approvalGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit);
   const clean = provenance.body;
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -244,6 +246,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
       await auditReplyProvenance(audit, realId, target.platform, provenance.reads, provenance.shown);
       await auditWithheldMemoryClaim(audit, target.platform, claimGuard.withheld);
       await auditWithheldApprovalClaim(audit, target.platform, approvalGuard.withheld, approvalGuard.cause);
+      await auditWithheldRequestClaim(audit, target.platform, requestGuard.withheld);
       await recordLandedPost({
         org: audit?.org,
         editLocus: replyEditLocus(target),
@@ -304,7 +307,8 @@ export async function postTerminalProse(target: ReplyTarget, text: string, audit
   }
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
-  const provenance = applyReplyProvenance(approvalGuard.body, audit);
+  const requestGuard = guardRequestClaims(approvalGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit);
   const clean = provenance.bare;
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -331,5 +335,6 @@ export async function postTerminalProse(target: ReplyTarget, text: string, audit
   await auditReplyProvenance(audit, firstId, target.platform, provenance.reads, provenance.shown);
   await auditWithheldMemoryClaim(audit, target.platform, claimGuard.withheld);
   await auditWithheldApprovalClaim(audit, target.platform, approvalGuard.withheld, approvalGuard.cause);
+  await auditWithheldRequestClaim(audit, target.platform, requestGuard.withheld);
 }
 

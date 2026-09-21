@@ -7,6 +7,7 @@ import { truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
+import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import type { ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
@@ -103,7 +104,8 @@ export async function editPostedMessage(
 ): Promise<void> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
-  const provenance = applyReplyProvenance(approvalGuard.body, audit);
+  const requestGuard = guardRequestClaims(approvalGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit);
   text = provenance.body;
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
@@ -119,6 +121,7 @@ export async function editPostedMessage(
     await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
     await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
     await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
+    await auditWithheldRequestClaim(audit, locus.platform, requestGuard.withheld);
     return;
   }
   try {
@@ -131,4 +134,5 @@ export async function editPostedMessage(
   await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
   await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
   await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
+  await auditWithheldRequestClaim(audit, locus.platform, requestGuard.withheld);
 }

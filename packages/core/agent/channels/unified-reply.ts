@@ -13,6 +13,7 @@ import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
+import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm, type DirectMessageAction, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
@@ -65,7 +66,8 @@ export async function postUnifiedReply(
 ): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
-  const provenance = applyReplyProvenance(approvalGuard.body, audit);
+  const requestGuard = guardRequestClaims(approvalGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit);
   const clean = provenance.body;
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -94,6 +96,7 @@ export async function postUnifiedReply(
       await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown);
       await auditWithheldMemoryClaim(audit, origin.platform, claimGuard.withheld);
       await auditWithheldApprovalClaim(audit, origin.platform, approvalGuard.withheld, approvalGuard.cause);
+      await auditWithheldRequestClaim(audit, origin.platform, requestGuard.withheld);
       await recordLandedPost({
         org: audit?.org,
         editLocus: unifiedEditLocus(origin),

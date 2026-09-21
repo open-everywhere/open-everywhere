@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, currentTurnId, type SurfaceBinding } from "../identity/binding.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
+import { ACCESS_REQUEST_KIND, noteAccessRequestProposed } from "../channels/access-request-ledger.js";
 import { buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
@@ -217,14 +218,14 @@ export function planRequestAccess(
 
 const requestAccessEntry = defineTool({
         description:
-          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have, naming in `credential` which configured identity it is reached as). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default — the channel's ENTIRE canonical domain when it belongs to one, otherwise this standalone room; must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
+          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have, naming in `credential` which configured identity it is reached as). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default — the channel's ENTIRE canonical domain when it belongs to one, otherwise this standalone room; must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). IN A DIRECT MESSAGE A CHANNEL-SCOPE ASK IS NOT ACTIONABLE AT ALL: a channel grant binds to that channel's own scope, so the request is raised IN THE CHANNEL and never from a DM. Asked for one here, do not call this tool, and never say you submitted, raised or filed anything — say that a channel-scope access request has to be asked for in the channel itself, and ask the person to repeat the ask there. From a DM you may still ask for `target=personal` (the asker's own access, and only theirs) and, as an org admin, for `target=group`; only a channel-scope ask has to move to the channel. On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
         inputSchema: z.object({
           kind: z.enum(["widen-connection", "grant-connector"]).describe("Which of the two request shapes this ask maps to."),
           target: z
             .enum(["channel", "personal", "group"])
             .optional()
             .describe(
-              'Which universe to widen: "channel" (default — the channel\'s entire canonical domain when assigned, otherwise this standalone room), "personal" (the asker\'s own DM access; DM-only and self-only), "group" (a declared person-group, every member\'s DM; org admins only).',
+              'Which universe to widen: "channel" (default — the channel\'s entire canonical domain when assigned, otherwise this standalone room; it is raised IN THAT CHANNEL and is refused from a DM), "personal" (the asker\'s own DM access; DM-only and self-only), "group" (a declared person-group, every member\'s DM; org admins only).',
             ),
           group: z.string().optional().describe("target=group: the declared person-group name to grant (as listed in this deployment's groups)."),
           connection: z.string().optional().describe("widen-connection: the id of the existing connection to widen (as listed in the target's access)."),
@@ -336,6 +337,7 @@ const requestAccessEntry = defineTool({
           );
 
           if (posted.autoApproved) {
+            noteAccessRequestProposed(currentTurnId(ctx), ACCESS_REQUEST_KIND, "auto-approved");
             return {
               requested: false,
               autoApproved: true,
@@ -343,6 +345,7 @@ const requestAccessEntry = defineTool({
               note: autoApprovedNote(grantSentence(args.delta), posted.autoApproved),
             };
           }
+          noteAccessRequestProposed(currentTurnId(ctx), ACCESS_REQUEST_KIND, posted.deduped ? "already-pending" : "card-posted");
           return {
             requested: true,
             pendingId: posted.id,
