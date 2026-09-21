@@ -80,15 +80,37 @@ function attr(over: Partial<Attribution> = {}): Attribution {
 {
   clock = Date.UTC(2026, 6, 24, 12, 0, 0);
   const i1 = inj({ wakeId: "W1" });
-  const spawn = (over: Record<string, unknown>): AuditWireEntry => ({
+  const dispatch = (over: Record<string, unknown> = {}): AuditWireEntry => ({
     ts: new Date((clock += 1000)).toISOString(), org: "acme", platform: "unified", workspace: "w",
-    action: "task.spawned", detail: { taskId: "T", oneshot: true, ...over },
+    action: "delegation.task_started", detail: { task: "T", call: "call-1", session: "SESS", ...over },
   });
-  const a = attributeOutcomes([i1], [spawn({ parentWakeId: "W1", wakeId: "child-1" }), spawn({ parentWakeId: "W1", wakeId: "child-2" })]);
-  ok((a.delegationsOf.get("W1") ?? []).length === 2, "task.spawned rows join the DELEGATING turn exactly by detail.parentWakeId");
-  ok(!a.delegationsOf.has("child-1"), "the row's own detail.wakeId is the CHILD's — it must never create a phantom parent join");
-  const none = attributeOutcomes([i1], [spawn({ wakeId: "child-1" })]);
-  ok(none.delegationsOf.size === 0, "a task.spawned with no parentWakeId is skipped, not guessed at");
+  const a = attributeOutcomes([i1], [dispatch(), dispatch({ task: "T2", call: "call-2" }), completion(NO_REPLY, { wakeId: "W1" })]);
+  ok((a.delegationsOf.get("W1") ?? []).length === 2, "delegation.task_started rows join the turn whose completion first follows them in the same session");
+  ok(a.delegationsOf.size === 1, "…and only that turn — a dispatch never mints a key of its own");
+  const foreign = attributeOutcomes([i1], [dispatch({ session: "OTHER-SESS" }), completion(NO_REPLY, { wakeId: "W1" })]);
+  ok(foreign.delegationsOf.size === 0, "a dispatch from ANOTHER session is skipped, not guessed at");
+  const late = attributeOutcomes([i1], [completion(NO_REPLY, { wakeId: "W1" }), dispatch()]);
+  ok(late.delegationsOf.size === 0, "a dispatch AFTER the last completion belongs to a turn this window does not hold — counted for none");
+  const noSession = attributeOutcomes([i1], [dispatch({ session: undefined }), completion(NO_REPLY, { wakeId: "W1" })]);
+  ok(noSession.delegationsOf.size === 0, "a dispatch row naming no caller session is skipped, not guessed at");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const bridged = inj({ wakeId: "W-BRIDGE" });
+  const bridgePost = replyPost("W-BRIDGE", { route: "bridge" });
+  const dispatchByBridged: AuditWireEntry = {
+    ts: new Date((clock += 1000)).toISOString(), org: "acme", platform: "unified", workspace: "w",
+    action: "delegation.task_started", detail: { task: "T", call: "call-1", session: "SESS" },
+  };
+  const later = inj({ wakeId: "W-LATER" });
+  const laterDone = completion(NO_REPLY, { wakeId: "W-LATER" });
+  const a = attributeOutcomes([bridged, later], [bridgePost, dispatchByBridged, laterDone]);
+  ok(
+    (a.delegationsOf.get("W-LATER") ?? []).length === 0,
+    "🔴 a dispatch made by a BRIDGE-delivered turn — which owns no completion row — is NOT hung on the next turn's completion",
+  );
+  ok(a.delegationsOf.size === 0, "…and it is counted for no turn at all, which is what failing closed means here");
 }
 
 {

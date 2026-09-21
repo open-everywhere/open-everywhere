@@ -325,8 +325,27 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
 
   {
     const verdict = checkWindowTargetAgainstConfig(REAL_DOMAIN, "slack/TCFGGRD1/CUNCLAIMED", domains);
-    eq(verdict.ok, false, "an unclaimed surfaceKey is refused");
+    eq(verdict.ok, false, "an unclaimed surfaceKey is refused when no criteria domain would seat it");
     if (!verdict.ok) ok(verdict.error.includes("no domain"), "…and says so, rather than naming a wrong owner");
+  }
+
+  {
+    const ORG_DOMAIN = "e2e-config-guard-org";
+    const UNCLAIMED = "slack/TCFGGRD1/CUNCLAIMED";
+    const seatedDomains = [...domains, defineDomain({ name: ORG_DOMAIN, match: "org", reach: [], ambientSupervisor: true, mode: "solo" })];
+    eq(
+      checkWindowTargetAgainstConfig(ORG_DOMAIN, UNCLAIMED, seatedDomains).ok,
+      true,
+      "🔴 THE FIX: a room no domain claims, targeted at the `org` criteria domain the live path seats it on, is ACCEPTED",
+    );
+    const wrongDomain = checkWindowTargetAgainstConfig(REAL_DOMAIN, UNCLAIMED, seatedDomains);
+    eq(wrongDomain.ok, false, "NEGATIVE CONTROL: the same unclaimed room targeted at ANOTHER domain is still refused");
+    if (!wrongDomain.ok) {
+      ok(wrongDomain.error.includes(ORG_DOMAIN), "…and the refusal names the domain the live path actually seats it on");
+      ok(wrongDomain.error.includes(`rotate-window.ts ${ORG_DOMAIN} --window ${UNCLAIMED}`), "…and prints the invocation that would work");
+    }
+    eq(checkWindowTargetAgainstConfig(REAL_DOMAIN, REAL_SURFACE, seatedDomains).ok, true, "a room its own domain CLAIMS is still accepted under that domain");
+    eq(checkWindowTargetAgainstConfig(ORG_DOMAIN, REAL_SURFACE, seatedDomains).ok, false, "…and the org domain may NOT rotate a room another domain claims — the explicit roster wins");
   }
 
   {

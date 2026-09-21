@@ -1,7 +1,7 @@
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { buildTail } from "../../agent/channels/session-tail.js";
 import { formatWindowToken, parseWindowToken, saltSupervisorGeneration, isDmAnchorDomain } from "../../agent/channels/window-key.js";
-import { domainForChannel } from "../../agent/memory/domain.js";
+import { standingSeatDomainFor } from "../../agent/memory/domain.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
@@ -136,15 +136,15 @@ export function checkWindowTargetAgainstConfig(domain: string, windowId: string 
 
   if (windowId !== undefined) {
     const declaredGroup = domains.find((d) => d.name === domain)?.windows?.some((g) => g.name === windowId) === true;
-    const owner = declaredGroup ? undefined : domainForChannel(windowId, domains);
+    const owner = declaredGroup ? undefined : standingSeatDomainFor(windowId, domains);
     if (!declaredGroup && owner?.name !== domain) {
       return {
         ok: false,
         error:
-          `refusing to rotate ${registryKey}: config routes "${windowId}" to ${owner ? `domain "${owner.name}"` : "no domain"}, not "${domain}".\n` +
+          `refusing to rotate ${registryKey}: the live wake path seats "${windowId}" on ${owner ? `domain "${owner.name}"` : "no domain"}, not "${domain}".\n` +
           (owner
-            ? `Re-run with the domain config actually assigns this channel to:\n  rotate-window.ts ${owner.name} --window ${windowId}\n`
-            : `"${windowId}" is neither a channel in any domain's channels/containers roster nor a window group declared by "${domain}" in agent/memory/config/domains.ts — add it there, or rotate a target that already is.\n`) +
+            ? `Re-run with the domain the live path actually seats this channel on:\n  rotate-window.ts ${owner.name} --window ${windowId}\n`
+            : `"${windowId}" is neither a channel any domain's channels/containers roster reaches nor a window group declared by "${domain}" in agent/memory/config/domains.ts, and this deployment declares no "org" criteria domain to seat an unclaimed room — so nothing seats it and no live wake reads the row this would mint. Add it there, or rotate a target that already is.\n`) +
           `Or pass --force to mint ${asked} anyway.`,
       };
     }

@@ -182,19 +182,28 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
     ({ ts, org: "o", platform: "unified", workspace: "e2e-memory", action, detail } as unknown as AuditWireEntry);
   const PROBE = "wake-PROBE";
   const rows: AuditWireEntry[] = [
-    row("task.spawned", "2026-02-20T05:30:40.000Z", { taskId: "T1", wakeId: "wake-CHILD", parentWakeId: PROBE, parentSessionId: "sess-seat" }),
+    row("wake.turn_start", "2026-02-20T05:30:30.000Z", { wakeId: PROBE, sessionId: "sess-seat" }),
+    row("delegation.task_started", "2026-02-20T05:30:40.000Z", { task: "T1", call: "call-1", session: "sess-seat" }),
+    row("worker.toolset", "2026-02-20T05:30:44.000Z", { worker: "sess-worker", parentCallId: "call-1", parentSession: "sess-seat" }),
     row("unified.no_reply", "2026-02-20T05:31:08.000Z", { wakeId: PROBE, sessionId: "sess-seat" }),
   ];
   const mid = traceDelegation(rows, PROBE);
-  ok(mid.spawned.join() === "T1" && mid.outstanding.join() === "T1", "traceDelegation: a task.spawned joined by parentWakeId is OUTSTANDING until its task.returned lands");
-  ok(mid.wakeIds.has(PROBE) && mid.wakeIds.has("wake-CHILD"), "traceDelegation: the worker's CHILD wake joins the probe's wake family");
+  ok(mid.spawned.join() === "T1" && mid.outstanding.join() === "T1", "traceDelegation: a delegation.task_started from the probe's own seat session is OUTSTANDING until its delegation.task_settled lands");
+  ok(mid.wakeIds.has(PROBE), "traceDelegation: the probe's own wake is always in the family");
+  ok(mid.workerSessionIds.join() === "sess-worker", "traceDelegation: the worker.toolset row's parentCallId join names the WORKER's session — where the greps and the memory.write actually happen");
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, mid, Date.parse("2026-02-20T05:31:20.000Z")) === null, "terminalVerdict: a no-reply while a worker is OUTSTANDING is interim — the poll must NOT stop (the false red)");
 
-  const done = [...rows, row("task.returned", "2026-02-20T05:31:45.000Z", { taskId: "T1", wakeId: "wake-DONE", sessionId: "sess-worker", delivered: true })];
+  const done = [
+    ...rows,
+    row("delegation.task_settled", "2026-02-20T05:31:45.000Z", { task: "T1", status: "completed", session: "sess-seat" }),
+    row("unified.task_wake", "2026-02-20T05:31:46.000Z", { outcome: "installed", task: "T1", wakeId: "wake-DONE", inheritedWakeId: PROBE }),
+  ];
   const tr = traceDelegation(done, PROBE);
-  ok(tr.outstanding.length === 0 && tr.returned.join() === "T1", "traceDelegation: task.returned clears the outstanding worker");
-  ok(tr.workerSessionIds.join() === "sess-worker", "traceDelegation: task.returned names the WORKER's session — where the greps and the memory.write actually happen");
+  ok(tr.outstanding.length === 0 && tr.returned.join() === "T1", "traceDelegation: delegation.task_settled clears the outstanding worker");
+  ok(tr.workerSessionIds.join() === "sess-worker", "traceDelegation: the worker session survives the settlement (the settled row itself never names it)");
   ok(tr.wakeIds.has("wake-DONE"), "traceDelegation: the COMPLETION wake (which carries the seat's answer) joins the family too");
+  const noFloor = traceDelegation(done.filter((r) => r.action !== "wake.turn_start"), PROBE);
+  ok(!noFloor.wakeIds.has("wake-DONE") && noFloor.spawned.length === 0, "traceDelegation: with no wake.turn_start row the family is exactly the probe's own wake — fails closed, never adopts");
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:31:50.000Z"), 60000) === null, "terminalVerdict: inside the grace after a return, keep waiting for the seat's post");
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:33:00.000Z"), 60000) === "delegation_no_reply", "terminalVerdict: past the grace with no post → a NAMED outcome (delegation_no_reply), not a silent miss");
   ok(terminalVerdict({ replied: true, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:33:00.000Z"), 60000) === "replied", "terminalVerdict: a delivered answer ends the probe once the workers are done and the grace is out");
@@ -204,8 +213,16 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, none, Date.now()) === "no_reply", "terminalVerdict: with NO delegation a no-reply is terminal exactly as before (an M5 refusal still scores immediately)");
   ok(terminalVerdict({ replied: false, noReply: false, other: false }, none, Date.now()) === null, "terminalVerdict: nothing observed yet → keep polling");
 
-  const foreign = traceDelegation([row("task.spawned", "2026-02-20T05:30:40.000Z", { taskId: "T9", wakeId: "wake-OTHERCHILD", parentWakeId: "wake-OTHERPROBE" })], PROBE);
-  ok(foreign.spawned.length === 0 && !foreign.wakeIds.has("wake-OTHERCHILD"), "traceDelegation: ANOTHER probe's delegation never joins this family (the cascade guard stays as strict as before)");
+  const foreign = traceDelegation(
+    [
+      row("wake.turn_start", "2026-02-20T05:30:30.000Z", { wakeId: PROBE, sessionId: "sess-seat" }),
+      row("wake.turn_start", "2026-02-20T05:30:31.000Z", { wakeId: "wake-OTHERPROBE", sessionId: "sess-other" }),
+      row("delegation.task_started", "2026-02-20T05:30:40.000Z", { task: "T9", call: "call-9", session: "sess-other" }),
+      row("unified.task_wake", "2026-02-20T05:31:46.000Z", { outcome: "installed", task: "T9", wakeId: "wake-OTHERCHILD", inheritedWakeId: "wake-OTHERPROBE" }),
+    ],
+    PROBE,
+  );
+  ok(foreign.spawned.length === 0 && !foreign.wakeIds.has("wake-OTHERCHILD"), "traceDelegation: ANOTHER seat session's delegation never joins this family (the cascade guard stays as strict as before)");
 
   const fam = new Set([PROBE, "wake-CHILD", "wake-DONE"]);
   ok(attributeRowInFamily("wake-DONE", null, fam, null) === "wakeId", "attributeRowInFamily: the completion wake carrying the ANSWER is accepted (a single-id join rejected the probe's own reply.post)");

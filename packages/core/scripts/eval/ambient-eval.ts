@@ -264,7 +264,7 @@ const A_NO_REPLY = "unified.no_reply";
 const A_BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
 const A_BRIDGE_FAILED = "turn.direct_mention_bridge_post_failed";
 const A_REDRIVE = "unified.turn.redrive";
-const A_TASK_SPAWNED = "task.spawned";
+const A_TASK_STARTED = "delegation.task_started";
 const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED, A_BRIDGE_UNRESOLVED, A_BRIDGE_FAILED]);
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
@@ -294,14 +294,8 @@ export function attributeOutcomes(injs: readonly Injection[], rows: readonly Aud
     replyPostsOf.get(w)!.push(r);
   }
 
+  const dispatchRows = asc.filter((r) => r.action === A_TASK_STARTED);
   const delegationsOf = new Map<string, AuditWireEntry[]>();
-  for (const r of asc) {
-    if (r.action !== A_TASK_SPAWNED) continue;
-    const w = dS(r, "parentWakeId");
-    if (!w) continue;
-    if (!delegationsOf.has(w)) delegationsOf.set(w, []);
-    delegationsOf.get(w)!.push(r);
-  }
 
   let completions = asc.filter((r) => r.platform === "unified" && COMPLETION_ACTIONS.has(r.action));
   const sidCounts = new Map<string, number>();
@@ -377,6 +371,22 @@ export function attributeOutcomes(injs: readonly Injection[], rows: readonly Aud
       usedI.add(icur);
       icur++;
     });
+  }
+
+  const injectedAt = new Map(injs.map((i) => [i.wakeId, i.injectedAt]));
+  const pairs = [...completionOf.entries()].map(([wake, row]) => ({ wake, row })).sort((a, b) => a.row.ts.localeCompare(b.row.ts));
+  for (const r of dispatchRows) {
+    const caller = dS(r, "session");
+    if (!caller) continue;
+    const owner = pairs.find((p) => {
+      if ((dS(p.row, "sessionId") ?? sessionId) !== caller) return false;
+      if (p.row.ts < r.ts) return false;
+      const start = injectedAt.get(p.wake);
+      return start === undefined ? false : r.ts >= start;
+    });
+    if (!owner) continue;
+    if (!delegationsOf.has(owner.wake)) delegationsOf.set(owner.wake, []);
+    delegationsOf.get(owner.wake)!.push(r);
   }
 
   return { completionOf, replyPostsOf, delegationsOf, sessionId, completions, redrivenWakeIds, notes };

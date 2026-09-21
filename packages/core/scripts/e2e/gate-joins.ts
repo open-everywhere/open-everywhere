@@ -1,5 +1,6 @@
 import type { AuditWireEntry } from "./audit-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
+import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import { DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
@@ -356,4 +357,72 @@ export function classifyUnansweredWake(rows: readonly AuditWireEntry[], wakeId: 
     };
   }
   return { kind: "unknown", detail: `no ${UNACCOUNTED_WAKES_ACTION} row names wake ${wakeId} in the rows this read returned` };
+}
+
+const ARITHMETIC_MIN = 12;
+const ARITHMETIC_MAX = 31;
+
+const ARITHMETIC_DRAWS = 64;
+
+export interface FixtureArithmetic {
+  readonly question: string;
+  readonly answer: string;
+}
+
+export function fixtureArithmetic(random: () => number = Math.random): FixtureArithmetic {
+  const span = ARITHMETIC_MAX - ARITHMETIC_MIN + 1;
+  const draw = (): number => ARITHMETIC_MIN + (Math.floor(random() * span) % span);
+  for (let i = 0; i < ARITHMETIC_DRAWS; i++) {
+    const a = draw();
+    const b = draw();
+    const question = `${a}*${b}`;
+    const answer = String(a * b);
+    if (!question.includes(answer)) return { question, answer };
+  }
+  throw new Error(`fixtureArithmetic drew ${ARITHMETIC_DRAWS} pairs and every product was spelled inside its own question — check the random source`);
+}
+
+export interface RunOverridePointer {
+  readonly scopeKey: string;
+  readonly setBy: string;
+  readonly runStart: string;
+}
+
+export interface HaltOverrideShape {
+  readonly scopeKey: string;
+  readonly setAt: string;
+  readonly setBy?: string;
+}
+
+export function haltSetByThisRun(halt: HaltOverrideShape | undefined, pointer: RunOverridePointer): halt is HaltOverrideShape {
+  if (halt === undefined) return false;
+  const setAtMs = Date.parse(halt.setAt);
+  if (Number.isNaN(setAtMs)) return false;
+  return halt.scopeKey === pointer.scopeKey && halt.setBy === pointer.setBy && setAtMs >= Date.parse(pointer.runStart);
+}
+
+export interface SpendOverrideShape {
+  readonly scopeKey: string;
+  readonly monthlyUsd?: number;
+  readonly monthlyTokens?: number;
+}
+
+export function spendCapRaisedByThisRun(spend: SpendOverrideShape | undefined, opts: { readonly scopeKey: string; readonly monthlyUsd: number }): spend is SpendOverrideShape {
+  if (spend === undefined) return false;
+  if (spend.monthlyTokens !== undefined) return false;
+  return spend.scopeKey === opts.scopeKey && spend.monthlyUsd === opts.monthlyUsd;
+}
+
+const PERSIST_OUTCOME_SET: Record<MemoryPersistOutcome, true> = {
+  completed: true,
+  failed: true,
+  settled: true,
+  edited: true,
+  "write-intent": true,
+};
+
+export const PERSIST_OUTCOMES: readonly MemoryPersistOutcome[] = Object.keys(PERSIST_OUTCOME_SET) as MemoryPersistOutcome[];
+
+export function isPersistOutcome(value: unknown): value is MemoryPersistOutcome {
+  return typeof value === "string" && Object.hasOwn(PERSIST_OUTCOME_SET, value);
 }

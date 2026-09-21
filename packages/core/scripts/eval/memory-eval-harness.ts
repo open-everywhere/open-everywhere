@@ -1,5 +1,7 @@
 import { fetchAudit, type AuditWireEntry } from "../e2e/audit-read.js";
 import { fetchTranscript, findEvents, type TranscriptWireEvent } from "../e2e/transcript-read.js";
+import { DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "../e2e/read-channel-lib.js";
+import { turnStartMs, WORKER_TOOLSET_ACTION } from "../e2e/gate-joins.js";
 
 export const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 export const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
@@ -179,38 +181,58 @@ export interface DelegationTrace {
   readonly lastReturnTs: string | null;
 }
 export function traceDelegation(rows: readonly AuditWireEntry[], rootWakeId: string): DelegationTrace {
-  const wakeIds = new Set<string>([rootWakeId]);
+  const floorMs = turnStartMs(rows, rootWakeId);
+  const wakeIds = wakeLineage(rows, rootWakeId, floorMs);
   const spawned: string[] = [];
   const returned: string[] = [];
   const workerSessionIds: string[] = [];
   let lastReturnTs: string | null = null;
   const ordered = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
+  const dispatchedHere = floorMs === undefined ? new Set<string>() : tasksDispatchedAtOrAfter(rows, floorMs);
+  const sessions = new Set<string>();
+  for (const r of ordered) {
+    const wake = dS(r, "wakeId");
+    const sid = dS(r, "sessionId") ?? dS(r, "session");
+    if (wake !== undefined && wakeIds.has(wake) && sid !== undefined && sid.length > 0) sessions.add(sid);
+  }
   for (let pass = 0; pass < 5; pass++) {
     let grew = false;
     for (const r of ordered) {
-      if (r.action !== "task.spawned") continue;
-      const parent = dS(r, "parentWakeId");
-      const taskId = dS(r, "taskId");
-      if (!parent || !wakeIds.has(parent) || !taskId || spawned.includes(taskId)) continue;
+      if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+      const caller = dS(r, "session");
+      const taskId = dS(r, "task");
+      if (!caller || !sessions.has(caller) || !taskId || !dispatchedHere.has(taskId) || spawned.includes(taskId)) continue;
       spawned.push(taskId);
-      const child = dS(r, "wakeId");
-      if (child && !wakeIds.has(child)) wakeIds.add(child);
+      const worker = workerSessionForDispatch(ordered, r);
+      if (worker && !workerSessionIds.includes(worker)) {
+        workerSessionIds.push(worker);
+        sessions.add(worker);
+      }
       grew = true;
     }
     for (const r of ordered) {
-      if (r.action !== "task.returned") continue;
-      const taskId = dS(r, "taskId");
+      if (r.action !== DELEGATION_TASK_SETTLED_ACTION) continue;
+      const taskId = dS(r, "task");
       if (!taskId || !spawned.includes(taskId)) continue;
       if (!returned.includes(taskId)) { returned.push(taskId); grew = true; }
-      const completion = dS(r, "wakeId");
-      if (completion && !wakeIds.has(completion)) { wakeIds.add(completion); grew = true; }
-      const sid = dS(r, "sessionId");
-      if (sid && !workerSessionIds.includes(sid)) { workerSessionIds.push(sid); grew = true; }
       if (lastReturnTs === null || r.ts > lastReturnTs) lastReturnTs = r.ts;
     }
     if (!grew) break;
   }
   return { wakeIds, spawned, returned, outstanding: spawned.filter((t) => !returned.includes(t)), workerSessionIds, lastReturnTs };
+}
+
+function workerSessionForDispatch(rows: readonly AuditWireEntry[], start: AuditWireEntry): string | undefined {
+  const toolsets = rows.filter((r) => r.action === WORKER_TOOLSET_ACTION && dS(r, "worker") !== undefined);
+  const callId = dS(start, "call");
+  if (callId !== undefined) {
+    const exact = toolsets.find((r) => dS(r, "parentCallId") === callId);
+    if (exact) return dS(exact, "worker");
+  }
+  const session = dS(start, "session");
+  if (session === undefined) return undefined;
+  const loose = toolsets.filter((r) => dS(r, "parentSession") === session || dS(r, "rootSession") === session);
+  return loose.length === 1 ? dS(loose[0]!, "worker") : undefined;
 }
 
 export const NO_REPLY_ACTIONS: ReadonlySet<string> = new Set(["reply.no_reply", "unified.no_reply"]);

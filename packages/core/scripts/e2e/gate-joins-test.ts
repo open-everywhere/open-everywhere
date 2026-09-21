@@ -9,14 +9,19 @@ import {
   classifySettlementReply,
   classifyUnansweredWake,
   fireAnchor,
+  fixtureArithmetic,
   fixtureSalt,
+  haltSetByThisRun,
   isMemoryHopWrite,
+  isPersistOutcome,
   memoryPathReadsBetween,
+  PERSIST_OUTCOMES,
   PROMISE_SUBJECT,
   replyPostSessionId,
   rowsAtOrAfter,
   saltedFixtureLine,
   settlementReportPairings,
+  spendCapRaisedByThisRun,
   turnStartMs,
   wakeIdForVendorInstant,
   workerRoadForOp,
@@ -415,6 +420,83 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     stale: [STALE],
   });
   ok(stale.staleCarried.includes(STALE), "control: a marker from BEFORE the seat's last wake in the envelope is still reported, whichever road the idle token took");
+}
+
+{
+  const seq = (values: readonly number[]): (() => number) => {
+    let i = 0;
+    return () => values[i++ % values.length]!;
+  };
+  const a = fixtureArithmetic(seq([0, 0]));
+  ok(a.question === "12*12" && a.answer === "144", "fixtureArithmetic: the draw composes the operand phrase and its product");
+  const b = fixtureArithmetic(seq([0.5, 0.95]));
+  ok(b.question !== a.question && b.answer !== a.answer, "fixtureArithmetic: a different draw is a different QUESTION and a different ANSWER — the prime the salt alone could not remove");
+  const MIN = 12;
+  const MAX = 31;
+  const every: { question: string; answer: string }[] = [];
+  for (let x = MIN; x <= MAX; x++) {
+    for (let y = MIN; y <= MAX; y++) {
+      const pick = (v: number): number => (v - MIN) / (MAX - MIN + 1);
+      every.push(fixtureArithmetic(seq([pick(x), pick(y)])));
+    }
+  }
+  ok(every.length === (MAX - MIN + 1) ** 2, `fixtureArithmetic: the sweep really drew every pair in [${MIN}, ${MAX}] (${every.length})`);
+  const selfSpelling = every.find((d) => d.question.includes(d.answer));
+  ok(selfSpelling === undefined, `🔴 fixtureArithmetic: NO pair in the range spells its own product inside its question (first offender: ${JSON.stringify(selfSpelling)})`);
+  const fourDigit = every.find((d) => d.answer.length > 3);
+  ok(fourDigit === undefined, `🔴 fixtureArithmetic: NO pair in the range reaches a four-digit product, which the fallback judge's plain-string needle cannot spell with its thousands comma (first offender: ${JSON.stringify(fourDigit)})`);
+  ok(new Set(every.map((d) => d.question)).size === every.length, "fixtureArithmetic: every draw in the sweep is a distinct question — the pair really tracks the draw");
+  ok(new Set(Array.from({ length: 200 }, () => fixtureArithmetic().question)).size > 1, "fixtureArithmetic: the default random source varies the pair (a constant would prime the seat exactly as the literal did)");
+}
+
+{
+  const POINTER = { scopeKey: "slack/T0EXAMPLE/C0EXCHAN011", setBy: "U0EXOWNER", runStart: "2026-01-25T01:13:00.000Z" };
+  ok(
+    haltSetByThisRun({ scopeKey: POINTER.scopeKey, setBy: POINTER.setBy, setAt: "2026-01-25T01:14:41.000Z" }, POINTER),
+    "haltSetByThisRun: this run's address, this run's driver actor, set after this run began — adopted",
+  );
+  ok(!haltSetByThisRun(undefined, POINTER), "haltSetByThisRun: no halt at all is not this run's");
+  ok(
+    !haltSetByThisRun({ scopeKey: POINTER.scopeKey, setBy: "U-OPERATOR", setAt: "2026-01-25T01:14:41.000Z" }, POINTER),
+    "🔴 haltSetByThisRun: an OPERATOR's halt on the same room in the same window is REFUSED — the actor is what tells them apart",
+  );
+  ok(
+    !haltSetByThisRun({ scopeKey: POINTER.scopeKey, setBy: POINTER.setBy, setAt: "2026-01-24T17:43:00.000Z" }, POINTER),
+    "🔴 haltSetByThisRun: the same driver's halt from BEFORE this run began is a previous run's residue, not this run's to clear",
+  );
+  ok(
+    !haltSetByThisRun({ scopeKey: "slack/T0EXAMPLE/C0EXCHAN003", setBy: POINTER.setBy, setAt: "2026-01-25T01:14:41.000Z" }, POINTER),
+    "haltSetByThisRun: another room's halt is never adopted, whoever set it",
+  );
+  ok(
+    !haltSetByThisRun({ scopeKey: POINTER.scopeKey, setBy: POINTER.setBy, setAt: "not-a-date" }, POINTER),
+    "haltSetByThisRun: an unreadable setAt cannot place the halt in this run — refused rather than assumed",
+  );
+
+  const SCOPE = "slack/T0EXAMPLE/C0EXCHAN003";
+  ok(spendCapRaisedByThisRun({ scopeKey: SCOPE, monthlyUsd: 4702 }, { scopeKey: SCOPE, monthlyUsd: 4702 }), "spendCapRaisedByThisRun: the run-unique dollar value on this run's own surface — adopted");
+  ok(!spendCapRaisedByThisRun(undefined, { scopeKey: SCOPE, monthlyUsd: 4702 }), "spendCapRaisedByThisRun: no override standing is nothing to clear");
+  ok(
+    !spendCapRaisedByThisRun({ scopeKey: SCOPE, monthlyUsd: 20 }, { scopeKey: SCOPE, monthlyUsd: 4702 }),
+    "🔴 spendCapRaisedByThisRun: ANOTHER value on the same surface is an operator's cap, not this run's — the value is the whole join",
+  );
+  ok(
+    !spendCapRaisedByThisRun({ scopeKey: "slack/T0EXAMPLE/C0EXCHAN011", monthlyUsd: 4702 }, { scopeKey: SCOPE, monthlyUsd: 4702 }),
+    "spendCapRaisedByThisRun: the same value on another surface is another room's override",
+  );
+  ok(
+    !spendCapRaisedByThisRun({ scopeKey: SCOPE, monthlyUsd: 4702, monthlyTokens: 1_000_000 }, { scopeKey: SCOPE, monthlyUsd: 4702 }),
+    "🔴 spendCapRaisedByThisRun: a TOKEN-denominated override is never adopted — the spend legs ask in dollars, so a token cap is somebody else's",
+  );
+}
+
+{
+  ok(isPersistOutcome("write-intent"), "🔴 isPersistOutcome: `write-intent` — the in-turn remember-ask flush the stale literal was missing — is a member");
+  for (const o of ["completed", "failed", "settled", "edited"]) ok(isPersistOutcome(o), `isPersistOutcome: the shipped outcome ${o} is a member`);
+  ok(PERSIST_OUTCOMES.length === 5, "PERSIST_OUTCOMES: five values, which is what `MemoryPersistOutcome` declares (a sixth reds typecheck at the record, not here)");
+  ok(!isPersistOutcome("remember"), "🔴 isPersistOutcome: `remember` — the value this gate pinned until 2026-08-16, which has never existed — is refused");
+  ok(!isPersistOutcome(undefined) && !isPersistOutcome(null) && !isPersistOutcome(7), "isPersistOutcome: a row whose outcome is absent or not a string is never a member");
+  ok(!isPersistOutcome("toString"), "isPersistOutcome: an Object.prototype key is not a member — the lookup reads own properties only");
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

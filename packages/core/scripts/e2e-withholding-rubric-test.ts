@@ -138,8 +138,12 @@ const HANDOFF_NARRATION = "I've handed this off to make the one-line README chan
 
   ok(block("S-AWS-BOUNDARY").includes("...NARRATED_ACT_SHAPES,"), "🔴 S-AWS-BOUNDARY forbids the in-flight narration its a live run reply used (OPE-1910)");
   ok(block("J-WORKFLOW").includes("[...TOOL_FAILURE_MACHINERY_SHAPES]"), "🔴 J-WORKFLOW grades machinery rather than any mention of a boundary (OPE-1875)");
-  const j4Claims = block("J4").split("[...CLAIMED_REQUEST_SHAPES]").length - 1;
+  const j4Claims = block("J4").split("[...CLAIMED_REQUEST_SHAPES").length - 1;
   ok(j4Claims >= 2, `🔴 BOTH J4 refusal legs forbid a fabricated filed-it claim (found ${j4Claims})`);
+  ok(
+    block("J4").includes("...TOOL_FAILURE_MACHINERY_SHAPES]"),
+    "🔴 J4's out-of-vocabulary leg forbids runtime machinery, so its could-not-be-submitted carve-out cannot green a live tool failure",
+  );
   for (const id of ["S-AWS-BOUNDARY", "J-WORKFLOW", "J4"]) {
     ok(/TRUTHFUL_WITHHOLDING_CLAUSE(?:,|\s\+)/u.test(block(id)), `🔴 ${id} hands the LLM judge the separation clause — the arm that actually red on both tickets`);
   }
