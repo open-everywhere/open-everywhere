@@ -36,7 +36,7 @@ import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { grantBorrowResourceLabel } from "../agent/operational/credential-grant-rows.js";
 import { connectorReadsThisTurn } from "../agent/channels/reply-provenance.js";
 import { BORROWED_READ_OP, BORROWED_RECORD_KIND } from "../agent/channels/read-reach.js";
-import type { BindableContext } from "../agent/identity/binding.js";
+import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 
 let n = 0;
@@ -54,7 +54,11 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 
 const seatCtx = (sessionId: string): unknown => ({
   channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" },
-  session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId },
+  session: {
+    auth: { current: { attributes: { oe_grain: "standing" } } },
+    id: `worker-of-${sessionId}`,
+    parent: { callId: "call-1", sessionId },
+  },
 });
 
 const ORG = resolvePartition(seatCtx("probe") as never).org;
@@ -624,9 +628,16 @@ console.log("10. a granted call records its pinned target on the turn's provenan
   const ctx = {
     channel: { kind: "channel:slack" },
     session: {
-      id: SCOPE,
+      id: `worker-of-${SCOPE}`,
+      parent: { callId: "call-1", sessionId: SCOPE },
       turn: { id: TURN, sequence: 1 },
-      auth: { current: { attributes: { oe_platform: "slack", oe_grain: "standing", channel_id: "C1", team_id: "W1", channel_type: "channel", trust_checked: "true" }, principalId: "U-req", principalType: "slack-user" } },
+      auth: {
+        current: {
+          attributes: { oe_platform: "slack", oe_grain: "standing", oe_requester: "U-req", channel_id: "C1", team_id: "W1", channel_type: "channel", trust_checked: "true" },
+          principalId: "U-req",
+          principalType: "slack-user",
+        },
+      },
     },
     agent: { name: "oe", nodeId: "__root__" },
   } as unknown as BindableContext;
@@ -685,11 +696,65 @@ console.log("10. a granted call records its pinned target on the turn's provenan
   await inSession(new FakeSession(), async () => {
     const REFUSED_TURN = "turn_71";
     recordRequesterIdentity(ctx, REFUSED_TURN, REQUESTER_ENVELOPE);
-    const refusedCtx = { ...(ctx as unknown as Record<string, unknown>), session: { ...((ctx as unknown as { session: Record<string, unknown> }).session), id: "session-not-this-grant", turn: { id: REFUSED_TURN, sequence: 1 } } } as unknown as BindableContext;
+    const refusedCtx = {
+      ...(ctx as unknown as Record<string, unknown>),
+      session: {
+        ...((ctx as unknown as { session: Record<string, unknown> }).session),
+        id: "worker-of-session-not-this-grant",
+        parent: { callId: "call-9", sessionId: "session-not-this-grant" },
+        turn: { id: REFUSED_TURN, sequence: 1 },
+      },
+    } as unknown as BindableContext;
     const refused = await entry.execute({ id: "abc123" }, refusedCtx);
-    ok(!refused.ok, "a call from a conversation the grant was not approved for is refused");
+    ok(!refused.ok, "a call from a WORKER OF ANOTHER conversation is refused — the mount withholds the tool there, and the broker's backstop refuses a replayed entry too");
+    eq(refused.refused, "out_of_scope", "🔴 …and refuses for THAT reason. Without this the leg passes on `unverified_requester` or any other gate, and says nothing about the conversation boundary");
     eq(connectorReadsThisTurn(REFUSED_TURN).length, 0, "🔴 …and records NO source — a refusal carries no vendor bytes, so the turn read nothing");
   });
+}
+
+{
+  const LENT_TO = "session-lent-room";
+  const OTHER_ROOM = "session-other-room";
+  const ask = await askForCredentialGrant(askInput(LENT_TO, "session"));
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  ok(approved.approved, "the owner approves a session grant scoped to the lent conversation");
+
+  const resolve = async (c: unknown): Promise<readonly string[]> => {
+    const out = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["turn.started"]({ type: "turn.started" }, c)) as Record<
+      string,
+      ReplayableToolEntry
+    > | null;
+    return Object.keys(out ?? {});
+  };
+
+  eq(await resolve(seatCtx(LENT_TO)), [GRANT_NAME], "🔴 a worker of the LENT conversation does not hold the lent tool — the grant is reachable by nothing at all while this holds");
+
+  const otherRoomWorker = {
+    channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" },
+    session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-of-other", parent: { callId: "call-9", sessionId: OTHER_ROOM } },
+  };
+  eq(await resolve(otherRoomWorker), [], "🔴 a worker of ANOTHER conversation holds the lent tool — a grant has crossed the conversation it was lent to, which is the breach this whole plane exists to prevent");
+
+  const seatItself = {
+    channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" },
+    session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: LENT_TO },
+  };
+  eq(windowGrainOf(seatItself as never), "standing", "fixture guard: the seat fixture really resolves a conversational root grain, so leg (c) measures the seat");
+  eq(await resolve(seatItself), [], "🔴 the conversational SEAT still mounts the lent tool — the seat is meant to delegate, and OPE-2023 moved the mount to its workers");
+
+  const fireWindow = { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { auth: { current: { attributes: { oe_grain: "task" } } }, id: LENT_TO } };
+  eq(await resolve(fireWindow), [], "🔴 a `task` session that is nobody's child mounts the lent tool — a routine fire would inherit a grant nobody in the room asked it to spend");
+
+  const unplaceableChild = { channel: { kind: "subagent" }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: LENT_TO } };
+  eq(await resolve(unplaceableChild), [], "🔴 a delegated child this host cannot place mounted a grant — it fell back to its own session id instead of failing closed");
+
+  const tokenOnlyWorker = { channel: { kind: "subagent", continuationToken: `subagent:${LENT_TO}:call-3` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-token-only" } };
+  eq(await resolve(tokenOnlyWorker), [GRANT_NAME], "🔴 a worker that can only be placed by its continuation token holds nothing — this is the shape the LIVE mount runs on, since a resolver context carries no `session.parent`");
+  const tokenOtherRoom = { channel: { kind: "subagent", continuationToken: `subagent:${OTHER_ROOM}:call-4` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-token-other" } };
+  eq(await resolve(tokenOtherRoom), [], "…and the token arm discriminates: a token naming ANOTHER conversation mounts nothing");
+
+  const unstamped = { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { id: "worker-unstamped", parent: { callId: "call-7", sessionId: LENT_TO } } };
+  eq(await resolve(unstamped), [GRANT_NAME], "🔴 a worker carrying NO grain stamp does not hold its conversation's lent tool — that is every worker an unseated deployment spawns");
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

@@ -123,7 +123,8 @@ export function ownAccountRefusal(connector: string, consentRouteAvailable: bool
     `${connector} grant. Reading under the deployment's ${connector} integration would answer as the org, not as them, ` +
     `and they would have no way to see the difference.`;
   const route = consentRouteAvailable
-    ? `Use \`request_credential_grant\` to ask them to lend their own ${connector} account, and tell the room the ask went out.`
+    ? `Hand this to a task: the task raises the ask with \`request_credential_grant\`, which lives there and nowhere else. ` +
+      `Then tell the room the ask went out.`
     : deploymentAdmitsGrant
       ? `This chat cannot raise a personal ${connector} grant — no domain here admits one — so there is no consent flow to start.`
       : `This deployment cannot lend a personal ${connector} account at all: ${connector} admits no credential grant, so ` +
@@ -146,8 +147,8 @@ export function personalRouteRefusal(connector: string): string {
   return (
     `Refused: this request asks to act with the requester's own ${connector} account, and they have already lent it to ` +
     `this chat. This tool reads under the deployment's shared ${connector} integration, so running it here would answer ` +
-    `as the org after they said "as me". Use the granted \`grant__…_${connector}__…\` tool instead — that is the one ` +
-    `that runs under their credential.`
+    `as the org after they said "as me". The granted \`grant__…_${connector}__…\` tool is the one that runs under their ` +
+    `credential, and it lives on this conversation's TASKS. Hand the read to a task.`
   );
 }
 

@@ -71,7 +71,7 @@ function installVendorMcpStub(): { readonly calls: readonly { url: string; init:
   });
 }
 
-test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, and the owner's tap mounts the grant there", async () => {
+test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's chat, and the owner's tap mounts the grant on that chat's WORKERS", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -204,10 +204,27 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT, an
   const grant = grants[0] as CredentialGrantRow;
   expect(grant.toolName, "the grant mounted under a different name than the card showed the owner").toBe(grantTool);
 
-  const followUp = disposeLater(registerScript({ parent: [{ say: "the tool is here now" }] }));
+  const followUp = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: "read the launch checklist" }, id: "ope2023-delegate" }] }, { say: "the tool is on the task" }],
+      child: [{ say: "read it" }],
+    }),
+  );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> anything back yet", messageId: "ope1343-t2" });
   const seatTurn2 = await waitFor(() => followUp.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the seat's follow-up model call");
   expect(seatTurn2.sessionId, "turn 2 landed on a different session, so the mount proves nothing about the approved scope").toBe(seatSessionId);
-  expect(seatTurn2.tools, `the seat was never offered ${grantTool} after the owner approved the WORKER's ask`).toContain(grantTool);
+  expect(seatTurn2.tools, `🔴 the SEAT was offered ${grantTool} — a lent tool belongs on the conversation's workers, and the seat is meant to delegate to reach it`).not.toContain(
+    grantTool,
+  );
+  expect(seatTurn2.tools, "the seat's turn-2 offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+
+  const armed2 = armSettlement(followUp, { parent: [{ say: "done" }] });
+  await waitForChildren(followUp, { count: 1, lastStepIndex: 0, label: "the second delegated worker to finish its own arm" });
+  const workerTurn2 = await waitFor(() => followUp.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the second worker's own first model call");
+  expect(String(workerTurn2.sessionId), "the second worker ran on the SEAT's session, so nothing here measures a worker mount").not.toBe(seatSessionId);
+  expect(workerTurn2.tools, `🔴 the conversation's own WORKER was never offered ${grantTool} — the owner approved a grant nothing in the deployment can now spend`).toContain(
+    grantTool,
+  );
+  armed2.dispose();
   expect(followUp.requests.filter((r) => r.fault !== undefined), "the turn-2 script degraded").toEqual([]);
 }, 360_000);

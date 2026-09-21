@@ -35,7 +35,7 @@ const TRIGGER_AUTHOR_ID = "it-ope-989-trigger-author";
 
 const OTHER_INTEGRATION_ID = "it-ope-989-other-integration";
 
-const RAN_TOOL = "todo";
+const RAN_TOOL = "update_status";
 
 const HOLD_MS = 90_000;
 
@@ -88,7 +88,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   const handle = open(
     registerScript({
       parent: [
-        { calls: [{ tool: RAN_TOOL, input: { todos: [{ content: "ope-989 in-flight work", priority: "high", status: "in_progress" }] }, id: "ope989-todo" }] },
+        { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-989 in-flight work" }, id: "ope989-ran" }] },
         { say: "this sentence is never posted — the turn is cancelled inside this call", delayMs: HOLD_MS },
       ],
     }),

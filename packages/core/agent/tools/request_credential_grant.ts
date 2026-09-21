@@ -1,7 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { getConfig } from "../access/config.js";
-import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { credentialGrantRefusalNote, resolveGrantOwner } from "../access/credential-grant-ask.js";
 import type { GrantAskWorkerOrigin } from "../access/credential-grant-card.js";
 import { askForCredentialGrant, auditGrant, type GrantAuditStamps } from "../access/credential-grant-flow.js";
@@ -123,7 +122,6 @@ async function auditVerbRefusal(ctx: BindableContext, gate: string, detail: Read
 }
 
 export function mayRaiseGrantAsk(ctx: BindableContext): boolean {
-  if ((CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(windowGrainOf(ctx))) return true;
   return isSubagentChildContext(ctx);
 }
 
@@ -249,7 +247,8 @@ export const requestCredentialGrantEntry = defineTool({
       return {
         asked: false,
         message:
-          "Refused: this session is not a conversation, and it is not a task delegated from one, so there is nobody here whose chat a grant could be scoped to.",
+          "Refused: only a task delegated from a conversation may raise this ask, and this session is not one. " +
+          "Hand the work to a task; it asks on the conversation's behalf, and the grant binds to the conversation rather than to the task.",
       };
     }
     const p = resolvePartition(c);

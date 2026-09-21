@@ -75,7 +75,9 @@ for (const name of ["agent", "spawn_thread_session", "complete_thread"]) {
   ok(allowedOnLeanSeat(name), `the lean roster keeps the delegation/lifecycle verb ${name} (the grain matrix still decides where it resolves)`);
 }
 for (const name of ["ask_question", "todo"]) {
-  ok(allowedOnLeanSeat(name), `the lean roster keeps eve's conversational plumbing ${name}`);
+  ok(!allowedOnLeanSeat(name), `🔴 the lean roster still keeps ${name} — a standing seat that parks a turn stops answering everybody else in the room`);
+  ok(!LEAN_SEAT_TOOLS.has(name), `…and ${name} is gone from the roster by NAME, not merely failing some other default`);
+  ok(workerOnlyTools("standing").includes(name), `…while the seat is TOLD to route ${name}: without the index line it can only refuse a job that needs it`);
 }
 ok(allowedOnLeanSeat("final_output"), "the lean roster keeps eve's structured-output sink (a lean turn must still be able to return)");
 
@@ -142,24 +144,25 @@ ok(!withheldList.includes("reply") && !withheldList.includes("agent"), "withheld
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromLeanSeat is sorted (a stable, diffable audit row)");
 ok(
   !withheldList.some((n) => n.startsWith("grant__")),
-  "withheldFromLeanSeat names no grant tool — grant names are minted at resolve time, so they are in neither the gated table nor the ungated set",
+  "withheldFromLeanSeat names no grant tool — grant names are minted at resolve time, so they are in neither the gated table nor the ungated set this list is derived from. The seat's actual withholding of them is asserted against `allowedOnLeanSeat` in §2a",
 );
 
-ok(allowedOnLeanSeat(GRANT_TOOL), `a mounted grant tool (${GRANT_TOOL}) IS held on a lean seat — no worker can hold it, so subtracting it would destroy it, not route it`);
-ok(allowedOnLeanSeat(GRANT_TOOL, true), "…on a DM seat too — a grant's grantee is the CHAT, and the arm is seat-independent (unlike DM_SEAT_CARVE_IN)");
-ok(!LEAN_SEAT_TOOLS.has(GRANT_TOOL), "…and NOT by a name row: grant names are minted per grant row, so the rule matches the SHAPE");
+ok(!allowedOnLeanSeat(GRANT_TOOL), `a mounted grant tool (${GRANT_TOOL}) is NOT held on a lean seat — the seat delegates, and the worker of this conversation holds it`);
+ok(!allowedOnLeanSeat(GRANT_TOOL, true), "…nor on a DM seat: the DM carve-in is four named verbs, and a grant is not one of them");
+ok(!LEAN_SEAT_TOOLS.has(GRANT_TOOL), "…and not by a name row either — a grant name is minted per grant row and can sit in no static roster");
 ok(
-  allowedOnLeanSeat(grantBorrowToolName("someone_else", "linear", "read_issue")),
-  "…the arm is a namespace rule, not a fixture: a different owner, connector and tool are held too",
+  !allowedOnLeanSeat(grantBorrowToolName("someone_else", "linear", "read_issue")),
+  "…the withholding is the DEFAULT-DENY rule rather than a fixture: a different owner, connector and tool are withheld too",
 );
 ok(
-  allowedOnLeanSeat(grantBorrowToolName("rowan", "notion", "create_page")),
-  "the arm is TIER-BLIND — it admits a name, and the grant row's tier plus the approval card gate the call",
+  !allowedOnLeanSeat(grantBorrowToolName("rowan", "notion", "create_page")),
+  "…and it is TIER-BLIND in the same direction — no name in the namespace is admitted, whatever verb it spells",
 );
+ok(allowedOnLeanSeat("reply") && allowedOnLeanSeat("agent"), "control — the roster's own names are still admitted, so the refusals above discriminate");
 
 ok(
   !allowedOnLeanSeat("post_message") && !allowedOnLeanSeat("dm_person"),
-  "the sibling chat WRITE verbs still SHED — a worker holds them, so the seat routes; that is why they are not the precedent for grants",
+  "the sibling chat WRITE verbs still SHED — a worker holds them, so the seat routes; a granted tool is now the same shape",
 );
 
 for (const decoy of GRANT_DECOYS) {
@@ -180,7 +183,7 @@ for (const decoy of GRANT_DECOYS.filter((d) => d.startsWith("grant__") && !d.inc
 }
 
 ok(allowedOnWorkerSeat("ask_question"), "🔴 OPE-565: a delegated WORKER holds ask_question again — the question posts AND the room's answer routes back to the child");
-ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it, as it always did");
+ok(!allowedOnLeanSeat("ask_question"), "the INTERACTIVE seat still holds ask_question — parking a standing turn on a person stops the room being answered");
 for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "describe_image", "complete_thread", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
@@ -199,7 +202,10 @@ ok(
   allowedOnWorkerSeat("request_credential_grant"),
   "🔴 OPE-1343: a delegated WORKER holds request_credential_grant again — the seat is a router, so a seat-only ask verb had no reachable caller and prod never wrote a `grant.*` row. The scope key it writes is the ROOT seat's session (tools/request_credential_grant.ts `grantScopeKey`), never the worker's own",
 );
-ok(allowedOnLeanSeat("request_credential_grant"), "…and the SEAT still holds it — the granted tool it mints is seat-side too, so a seat that could not ask would hold a capability it can never obtain");
+ok(
+  !allowedOnLeanSeat("request_credential_grant"),
+  "🔴 OPE-2023: the SEAT no longer holds the ask. It is worker work like every other doing verb — the seat hands \"use my own account\" to a task, the task asks, and the grant still binds to the conversation (tools/request_credential_grant.ts `grantScopeKey`). A seat that held it would raise an ask for a tool it could never meet, since the granted tool mounts on the worker too",
+);
 ok(
   [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,read_channel,read_thread,stand_down",
   `the withheld set is EXACTLY no_reply,read_channel,read_thread,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A), (B) or (C), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
@@ -250,11 +256,13 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const before = { ...toolset };
   const removed = restrictToolsetForLeanSeat(toolset);
   const survivors = new Set(Object.keys(toolset));
-  const expected = new Set<string>([...[...LEAN_SEAT_TOOLS].filter((k) => k in before), "final_output", GRANT_TOOL]);
+  const expected = new Set<string>([...[...LEAN_SEAT_TOOLS].filter((k) => k in before), "final_output"]);
   ok(
     survivors.size === expected.size && [...expected].every((k) => survivors.has(k)),
-    `the lean toolset is EXACTLY the conversational roster + the harness sink + this chat's mounted grant (got ${[...survivors].sort().join(",")})`,
+    `the lean toolset is EXACTLY the conversational roster + the harness sink (got ${[...survivors].sort().join(",")})`,
   );
+  ok(!survivors.has(GRANT_TOOL), `this chat's mounted grant (${GRANT_TOOL}) is REMOVED from a lean seat's toolset — the seat delegates the lent tool to a worker`);
+  ok(removed.includes(GRANT_TOOL), "…and it is REPORTED as removed, so the audit row names what the seat gave up rather than losing it silently");
   ok(GRANT_DECOYS.every((d) => !survivors.has(d)), `every grant look-alike is removed by default-deny (survivors: ${[...survivors].sort().join(",")})`);
   ok(removed.length > 0 && removed.every((k) => !survivors.has(k)), "restrictToolsetForLeanSeat reports every removed name");
   ok(removed.join(",") === [...removed].sort().join(","), "the removed list is sorted");
@@ -311,10 +319,11 @@ inSession(() => {
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("purge_memory" in toolset) && !("read_notion_page" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
-  ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset && "todo" in toolset, "projectToolSet keeps the conversational roster");
+  ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset, "projectToolSet keeps the conversational roster");
+  ok(!("todo" in toolset) && !("ask_question" in toolset), "projectToolSet still hands a lean seat eve's turn plumbing — a standing seat must neither park a turn nor keep a planning scratch pad");
   ok("read_channel" in toolset && "read_thread" in toolset, "projectToolSet KEEPS the recovery reads on a lean wake (OPE-829)");
   ok("final_output" in toolset, "the harness sink survives");
-  ok(GRANT_TOOL in toolset, `projectToolSet KEEPS this chat's mounted grant on a lean wake (${GRANT_TOOL}) — the owner approved it into THIS room and no worker may hold it`);
+  ok(!(GRANT_TOOL in toolset), `projectToolSet WITHHOLDS this chat's mounted grant on a lean wake (${GRANT_TOOL}) — the seat hands a lent tool to a worker of this same conversation`);
   ok(
     GRANT_DECOYS.every((d) => !(d in toolset)),
     "…and the seam still removes every grant look-alike — the arm reaches the seam as a structural match, not as a prefix",
@@ -423,7 +432,8 @@ inSession(() => {
       `🔴 ${label}: …it says so positively rather than by omission: the worker is told the answer may never arrive, which is what makes the report the steer`,
     );
   }
-  ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room, and never names a worker verb");
+  ok(!seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's persona names a verb it does not hold — it replies in the room instead of parking the turn");
+  ok(seatText.includes("say so in the room and wait for a person"), "…and it positively says what the seat DOES instead, so the absence above is a replacement rather than a deletion");
 }
 
 const windowSeatCtx = () => ({
@@ -466,7 +476,7 @@ try {
 } catch {
   grantThrew = true;
 }
-ok(!grantThrew, `the backstop lets this chat's mounted grant through on a lean seat (${GRANT_TOOL})`);
+ok(grantThrew, `the backstop REFUSES this chat's mounted grant on a lean seat (${GRANT_TOOL}) — the seam and the backstop read one decision function, so neither admits it`);
 
 let decoyRefusal: string | undefined;
 try {

@@ -40,11 +40,14 @@ eq(
 );
 
 for (const grain of ["standing", "native", "thread"]) {
-  ok(mayRaiseGrantAsk(seatCtx(grain)), `a ${grain} conversational seat may no longer raise a grant ask — the pre-OPE-1343 population must not lose the verb`);
+  ok(
+    !mayRaiseGrantAsk(seatCtx(grain)),
+    `🔴 a ${grain} conversational seat may still raise a grant ask — OPE-2023 moved the verb to the worker, and a seat that holds it raises an ask for a tool it can never meet`,
+  );
 }
 ok(
   mayRaiseGrantAsk(workerCtx({ id: "sess-worker", parentSessionId: "sess-seat" })),
-  "🔴 a delegated worker still may not raise a grant ask — this is the OPE-1343 defect, and the verb has no reachable caller while it holds",
+  "🔴 a delegated worker may not raise a grant ask — this is the OPE-1343 defect, and after OPE-2023 the verb has no reachable caller AT ALL while it holds",
 );
 
 const fireCtx = { session: { id: "sess-fire", auth: { current: { attributes: { oe_grain: "task" } } } } } as BindableContext;
@@ -59,7 +62,7 @@ const fireRefusal = (await requestCredentialGrantEntry.execute(
 )) as { asked: boolean; message: string };
 ok(!fireRefusal.asked, "🔴 the execute path let an unattended `task` session raise an ask — the mount is the only floor, so a replayed entry walks past it");
 ok(
-  fireRefusal.message.includes("it is not a task delegated from one"),
+  fireRefusal.message.includes("only a task delegated from a conversation may raise this ask"),
   `the refusal did not name the seat shape as the reason (got "${fireRefusal.message.slice(0, 120)}") — some earlier gate answered, so this leg measures the wrong check`,
 );
 const bagNamesNothing = { session: { id: "sess-worker", parent: { callId: "call-1" } } } as BindableContext;
@@ -114,8 +117,8 @@ for (const [grain, committed] of [
     `the worker-capability index derived for a ${grain} seat no longer matches the committed generated file — regenerate it and READ the diff`,
   );
   ok(
-    !workerOnlyTools(grain).includes("request_credential_grant"),
-    `the ${grain} seat is now told to DELEGATE the grant ask — it holds the verb directly, so routing it would name a route that does not exist`,
+    workerOnlyTools(grain).includes("request_credential_grant"),
+    `the ${grain} seat is NOT told to delegate the grant ask — it no longer holds the verb, so a seat with no route to it can only refuse a person who asked for their own account`,
   );
 }
 ok(WORKER_ONLY_TOOLS_STANDING.includes("aws"), "the committed index no longer names `aws` — this control needs a name that IS worker-only");

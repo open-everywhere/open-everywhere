@@ -17,7 +17,7 @@ import {
 const BOT_MENTION = "<@9000000000000000001>";
 const HOLD_MS = 90_000;
 const STOPPER_ID = "9000000000000000079";
-const RAN_TOOL = "todo";
+const RAN_TOOL = "update_status";
 const SETTLE_WATCH_MS = 20_000;
 
 test("a stop the ingress accepted leaves exactly one evidence row — turn.cancelled when eve settled it, turn.stop_ignored when eve dropped it", async () => {
@@ -29,7 +29,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: RAN_TOOL, input: { todos: [{ content: "ope-1190 in-flight work", priority: "high", status: "in_progress" }] }, id: "ope1190-todo" }] },
+        { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-1190 in-flight work" }, id: "ope1190-ran" }] },
         { say: "never posted — the stop lands inside this call", delayMs: HOLD_MS },
       ],
     }),

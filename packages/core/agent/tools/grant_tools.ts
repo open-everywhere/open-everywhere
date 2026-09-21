@@ -1,5 +1,4 @@
 import { defineDynamic, defineTool } from "eve/tools";
-import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { registerDynamicVariant, type ReplayableToolEntry } from "../access/window-gated.js";
 import { GRANT_REFUND_CAP_PER_TURN, runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
@@ -15,12 +14,12 @@ import {
 } from "../operational/credential-grant-rows.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase, grantPinnedTargetSentence, grantTargetIsPinned } from "../access/credential-grant-copy.js";
 import { noteBorrowedRecordRead } from "../channels/read-reach.js";
-import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
-import { grantDomainScopeKey, grantDomainScopeVerdict, type GrantDomainScopeVerdict } from "../access/credential-grant-scope.js";
+import { credentialGrantsInReach, domainScopeKeyInReach, sessionScopeKeyInReach } from "../access/credential-grant-reach.js";
+import { conversationGrainOf, grantDomainScopeVerdict, type GrantDomainScopeVerdict } from "../access/credential-grant-scope.js";
 import { auditGrant } from "../access/credential-grant-flow.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
-import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 
@@ -94,7 +93,7 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
       const c = ctx as BindableContext;
       const turnId = currentTurnId(c);
       const requester = requesterThisTurn(turnId);
-      const domainScopeKey = grantDomainScopeKey(c);
+      const domainScopeKey = domainScopeKeyInReach(c);
       let org = "unknown";
       let platform = "unknown";
       let workspace = "unknown";
@@ -113,7 +112,7 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
           org,
           platform,
           requesterPrincipalId: requesterKeyForGrantCall(platform, workspace, requester),
-          scopeKey: currentSessionId(c) ?? "",
+          scopeKey: sessionScopeKeyInReach(c) ?? "",
           ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
           ...(surface === undefined ? {} : { surface }),
           ...(turnId === undefined ? {} : { turnId }),
@@ -198,15 +197,9 @@ export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record
 
 async function resolveGrantMount(ctx: unknown): Promise<Record<string, ReplayableToolEntry> | null> {
   const c = ctx as BindableContext;
-  let grain: string;
-  try {
-    grain = windowGrainOf(c);
-  } catch {
-    return null;
-  }
-  if (!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(grain)) return null;
-  const scopeKey = currentSessionId(c);
-  if (scopeKey === undefined || scopeKey.length === 0) return null;
+  if (!isSubagentChildContext(c)) return null;
+  const scopeKey = sessionScopeKeyInReach(c);
+  if (scopeKey === undefined) return null;
   let org: string;
   try {
     org = resolvePartition(c).org;
@@ -241,7 +234,7 @@ async function noteStandingGrantsWithheld(
     const p = resolvePartition(ctx);
     let grain = "unknown";
     try {
-      grain = windowGrainOf(ctx);
+      grain = conversationGrainOf(ctx);
     } catch {
     }
     await auditGrant({ org: p.org, platform: p.platform, workspace: p.workspace, ...(p.surface === undefined ? {} : { surface: p.surface }) }, "grant.mount_withheld", undefined, {

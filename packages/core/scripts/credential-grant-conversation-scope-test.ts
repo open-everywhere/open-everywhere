@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BindableContext } from "../agent/identity/binding.js";
+import { bindFrom, windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
+import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
+import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-conv-scope-")), "ops.sqlite3");
 delete process.env.OE_TRUST;
@@ -216,6 +218,64 @@ try {
   ok(grantDomainScopeVerdict(liveCtx("standing") as never).scopeKey === KEY, "§solo: …while the armed topology's STANDING seat still answers the DOMAIN key, unchanged by this arm");
 } finally {
   resetSettingsForTest();
+}
+
+{
+  const workerOf = (seatGrain: string, room = ROOM, parent = "wrun_live"): unknown => ({
+    channel: { kind: PLATFORM },
+    session: {
+      auth: { current: { attributes: { actor: HUMAN, oe_grain: seatGrain, room, ws: WS }, principalId: HUMAN, principalType: "test-user" } },
+      id: `worker-of-${parent}`,
+      parent: { callId: "call-1", sessionId: parent },
+    },
+  });
+  ok(windowGrainOf(workerOf("standing") as never) === "task", "§worker: the worker fixture does not resolve grain `task` — the subagent-child override is what makes this section the right test");
+
+  const workerVerdict = async (seatGrain: string, room = ROOM): Promise<ReturnType<typeof grantDomainScopeVerdict>> =>
+    await inEveContext(new FakeEveContext(), async () => {
+      adoptDelegatedAuthority({ binding: bindFrom(liveCtx(seatGrain, room) as never), nonMemberWake: false, requester: { kind: "requester", principalId: HUMAN } }, undefined);
+      return grantDomainScopeVerdict(workerOf(seatGrain, room) as never);
+    });
+
+  const seatStanding = await workerVerdict("standing");
+  ok(seatStanding.scopeKey === KEY, "🔴 §worker: a worker of the domain's STANDING seat does not reach the DOMAIN key — a standing grant is then reachable by nothing, since the seat mounts none either");
+  ok(seatStanding.admitted, "§worker: …and it is ADMITTED, not merely reported as withheld");
+
+  const seatNative = await workerVerdict("native");
+  ok(seatNative.scopeKey === ROOM_KEY, "🔴 §worker: a worker of an UNSEATED room's own `native` seat does not reach that ROOM's key — this is the shipped default, so this is the common live path");
+  ok(seatNative.admitted, "§worker: …and it is ADMITTED");
+  ok(
+    seatNative.scopeKey !== KEY,
+    "🔴 §worker: an unseated room's worker reaches the DOMAIN key — that is every room of the domain instead of the one its conversation binds to, which is the widening OPE-2012 narrowed",
+  );
+  ok((await workerVerdict("native", ROOM2)).scopeKey === ROOM2_KEY, "§worker: …and a worker of a DIFFERENT unseated room reaches that room's key, so the room segment is real");
+
+  const thread = await workerVerdict("thread");
+  ok(!thread.admitted, "🔴 §worker: a worker of a THREAD seat reaches a key — the cross-room spend a live run leg 51 measured reopens through the delegation");
+  ok(!thread.admitted && thread.gate === "non_standing_grain", "§worker: …and it is refused for the GRAIN, naming the seat shape rather than attendance or a missing domain");
+  const unstampedWorker = (): unknown => ({
+    channel: { kind: PLATFORM },
+    session: { auth: { current: { attributes: { actor: HUMAN, room: ROOM, ws: WS }, principalId: HUMAN, principalType: "test-user" } }, id: "w", parent: { callId: "c", sessionId: "p" } },
+  });
+  const unstampedIn = async (): Promise<ReturnType<typeof grantDomainScopeVerdict>> =>
+    await inEveContext(new FakeEveContext(), async () => {
+      adoptDelegatedAuthority({ binding: bindFrom(liveCtx("native") as never), nonMemberWake: false, requester: { kind: "requester", principalId: HUMAN } }, undefined);
+      return grantDomainScopeVerdict(unstampedWorker() as never);
+    });
+  const unstampedUnseated = await unstampedIn();
+  ok(unstampedUnseated.admitted, "🔴 §worker: a worker carrying NO grain stamp is REFUSED on an unseated deployment — that is every worker the shipped default ever spawns, so the room arm would be reachable by nothing");
+  ok(unstampedUnseated.scopeKey === ROOM_KEY, "§worker: …and it reaches its own ROOM's key, which is what OPE-2012 bound a standing grant to there");
+
+  registerSettings({ window: { topology: true } });
+  try {
+    const unstampedSeated = await unstampedIn();
+    ok(!unstampedSeated.admitted, "🔴 §worker: an unstamped worker in a SEATED room is admitted — the `native` fallback has widened the very topology OPE-1972 narrowed");
+    ok(!unstampedSeated.admitted && unstampedSeated.gate === "non_standing_grain", "§worker: …and it is the GRAIN that refuses it, naming the seat shape rather than an unreadable binding");
+  } finally {
+    resetSettingsForTest();
+  }
+
+  ok(!grantDomainScopeVerdict(liveCtx("task") as never).admitted, "§worker: control — a `task` session that is NOBODY'S CHILD is still refused, so the stamp is read only for a real delegated worker");
 }
 
 console.log(`credential-grant-conversation-scope: ${String(n)} assertions passed`);

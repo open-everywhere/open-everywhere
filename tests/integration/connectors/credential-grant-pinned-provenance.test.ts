@@ -7,7 +7,21 @@ import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connectio
 import { grantBorrowResourceLabel, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
 import { PROVENANCE_FOOTER_PREFIX } from "@open-everywhere/core/agent/channels/reply-provenance.js";
 
-import { bootAgent, DISCORD_LISTED_CHANNEL_ID, DISCORD_USER_ID, discordMentionWake, disposeLater, registerScript, seatReply, SLACK_TEAM_ID, waitFor } from "../harness";
+import {
+  armSettlement,
+  bootAgent,
+  consumeSettlement,
+  DISCORD_LISTED_CHANNEL_ID,
+  DISCORD_USER_ID,
+  discordMentionWake,
+  disposeLater,
+  registerScript,
+  SLACK_TEAM_ID,
+  taskIdOfDelegation,
+  WAKE_FROM_ENVELOPE,
+  waitFor,
+  waitForChildren,
+} from "../harness";
 import { installDiscordWebApiStub } from "../discord-web-api";
 import { installHostFetchStub } from "../fetch-stub";
 
@@ -90,7 +104,7 @@ function pinnedGrantRow(nowMs: number): CredentialGrantRow {
   };
 }
 
-test("a pinned lent tool states its pin to the model, and the reply names the page it actually fetched", async () => {
+test("a pinned lent tool states its pin to the WORKER's model, and the seat's reply names the page it actually fetched", async () => {
   await bootAgent({ sharedSqlite: true, stubbedProviderTransport: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -107,20 +121,37 @@ test("a pinned lent tool states its pin to the model, and the reply names the pa
 
   const script = disposeLater(
     registerScript({
-      parent: [
-        { calls: [{ tool: GRANT_TOOL_NAME, input: { id: PINNED_PAGE_ID }, id: "ope2018-granted-call" }] },
-        seatReply(MISATTRIBUTED_ANSWER, "ope2018-reply"),
-        { say: "done" },
-      ],
+      parent: [{ calls: [{ tool: "agent", input: { message: `quote a sentence from page ${ASKED_ABOUT_PAGE_ID}` }, id: "ope2018-delegate" }] }, { say: "the worker has it" }],
+      child: [{ calls: [{ tool: GRANT_TOOL_NAME, input: { id: PINNED_PAGE_ID }, id: "ope2018-granted-call" }] }, { say: "read it" }],
     }),
   );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> quote one full sentence from page ${ASKED_ABOUT_PAGE_ID}`, messageId: "ope2018-ask" });
-  const first = await waitFor(() => script.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the standing seat's model call");
-  await waitFor(() => script.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's last scripted step");
-  expect(script.requests.filter((r) => r.fault !== undefined), "the seat's script degraded").toEqual([]);
+  const seatCall = await waitFor(() => script.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the standing seat's model call");
+  await waitFor(
+    () => script.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
+    "the seat's resumed step carrying the delegation receipt",
+  );
+  const taskId = taskIdOfDelegation(script, "the OPE-2018 pinned-read delegation");
+  const armed = armSettlement(script, {
+    parent: [
+      { calls: [{ tool: "reply", input: { force: true, text: MISATTRIBUTED_ANSWER, wake: WAKE_FROM_ENVELOPE }, id: "ope2018-reply" }] },
+      { say: "done" },
+    ],
+  });
+  await waitForChildren(script, { count: 1, lastStepIndex: 1, label: "the delegated worker to finish its own arm" });
+  const workerCall = await waitFor(() => script.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the delegated worker's own first model call");
+  expect(String(workerCall.sessionId), "the worker ran on the SEAT's own session, so nothing here measures a delegation").not.toBe(String(seatCall.sessionId));
+  const workerRequests = [...script.requests];
+  await consumeSettlement({ armed, dispatched: script, taskId, label: "the delegation's settlement notification" });
+  await waitFor(() => armed.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the seat's last scripted step on the settlement turn");
+  expect([...script.requests, ...armed.requests].filter((r) => r.fault !== undefined), "the seat's script degraded").toEqual([]);
 
-  const definition = first.toolDefinitions.find((d) => d.name === GRANT_TOOL_NAME);
-  expect(definition, `the standing seat was never offered ${GRANT_TOOL_NAME}, so nothing here is about a lent tool`).toBeDefined();
+  const definition = workerCall.toolDefinitions.find((d) => d.name === GRANT_TOOL_NAME);
+  expect(definition, `the delegated worker was never offered ${GRANT_TOOL_NAME}, so nothing here is about a lent tool`).toBeDefined();
+  expect(seatCall.tools, `the standing SEAT was offered ${GRANT_TOOL_NAME} — a lent tool mounts on the conversation's workers, never on the seat`).not.toContain(
+    GRANT_TOOL_NAME,
+  );
+  expect(seatCall.tools, "the standing seat's offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
   expect(
     definition?.description,
     "the lent tool's description does not name the page it is pinned to — the model reads a general Notion reader and calls it for whatever it is asked about",
@@ -132,7 +163,10 @@ test("a pinned lent tool states its pin to the model, and the reply names the pa
   const offeredProps = ((definition?.inputSchema as { properties?: unknown } | undefined)?.properties ?? {}) as Record<string, { const?: unknown }>;
   expect(offeredProps["id"]?.const, "the frozen page is no longer visible and `const`-pinned in the offered schema").toBe(PINNED_PAGE_ID);
 
-  const result = await waitFor(() => script.requests.flatMap((r) => r.toolResults).find((t) => t.id === "ope2018-granted-call"), "the granted call's result to reach the model");
+  const result = await waitFor(
+    () => workerRequests.flatMap((r) => r.toolResults).find((t) => t.id === "ope2018-granted-call"),
+    "the granted call's result to reach the worker's model",
+  );
   const rendered = JSON.stringify(result.output);
   expect(result.isError, `the granted call failed instead of sending: ${rendered}`).toBeFalsy();
   expect(rendered, `the granted call did not return the vendor's body: ${rendered}`).toContain(VENDOR_BODY_MARKER);
@@ -144,7 +178,11 @@ test("a pinned lent tool states its pin to the model, and the reply names the pa
   expect(
     reply.content,
     `the posted reply carries no fetched-source footer, so a misattribution in the prose is contradicted by nothing a reader can see (saw: ${JSON.stringify(reply.content.slice(0, 400))})`,
-  ).toContain(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`);
+  ).toContain(`${PROVENANCE_FOOTER_PREFIX} notion`);
+  expect(
+    reply.content,
+    `the delegated footer now names the pinned target — OPE-2026 has landed, so assert the full "\u0060${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})\u0060" above and delete this line`,
+  ).not.toContain(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`);
   expect(reply.content, "the host rewrote the model's answer instead of adding to it").toContain(MISATTRIBUTED_ANSWER);
-  script.dispose();
+  armed.dispose();
 });

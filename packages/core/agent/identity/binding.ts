@@ -381,13 +381,18 @@ function classifyTokenGrain(token: unknown): WindowGrain {
   return classifySessionId(token).grain;
 }
 
+export function stampedWindowGrainOf(ctx: BindableContext): WindowGrain | undefined {
+  const stamped = attr(authOf(ctx)?.attributes, ["oe_grain", "oeGrain"]);
+  return stamped === "standing" || stamped === "task" || stamped === "native" || stamped === "thread" ? stamped : undefined;
+}
+
 export function windowGrainOf(ctx: BindableContext): WindowGrain {
   if (isSubagentChildContext(ctx)) return "task";
   const rawToken = ctx.channel?.continuationToken;
-  const stamped = attr(authOf(ctx)?.attributes, ["oe_grain", "oeGrain"]);
+  const stamped = stampedWindowGrainOf(ctx);
   const tokenGrain = classifyTokenGrain(rawToken);
   const tokenPresent = typeof rawToken === "string" && rawToken.length > 0;
-  if (stamped === "standing" || stamped === "task" || stamped === "native" || stamped === "thread") {
+  if (stamped !== undefined) {
     if ((stamped === "task" || stamped === "native") && tokenGrain === "standing") return "standing";
     if (stamped === "task" && tokenGrain === "thread") return "thread";
     if (stamped === "task" && tokenGrain === "native" && tokenPresent) return "native";

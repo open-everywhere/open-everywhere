@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-worker-toolset-")), "ops.sqlite3");
 
 import { auditWorkerToolset, MAX_RECORDED_NAMES, WORKER_TOOLSET_ACTION } from "../agent/audit/worker-toolset.js";
+import { isGrantToolName } from "../agent/operational/credential-grant-rows.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { AuditEntry } from "../agent/audit/audit.js";
 import { projectToolSet, recordWorkerToolset } from "../agent/access/untrusted-projection.js";
@@ -237,9 +238,16 @@ console.log("§6 the seat, and two fail-soft cases");
   ok(after === before, `a context-less caller writes no row and does not throw — ${before} rows before, ${after} after`);
 }
 
-console.log("§7 the grant plane cannot reach a worker");
+console.log("§7 a lent tool's name is recorded like any other");
 {
-  ok(!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes("task"), "🔴 a credential-grant tool cannot mount on grain `task`, so no worker row can ever name one");
+  const lent = "grant__dana_notion__notion_fetch_launch_checklist";
+  ok(isGrantToolName(lent), "fixture guard: the fixture name really is one the grant plane could mint");
+  const org = "org-lent";
+  await auditWorkerToolset({ who: identity(org, "wrun_LENT"), reason: "mount", tools: ["reply", lent], withheld: [] });
+  const recorded = detailOf((await rowsFor(org))[0]!).tools as string[];
+  ok(recorded.includes(lent), "a lent tool's name is filtered out of the worker toolset row — the one worker capability an auditor most needs to see would be invisible");
+  ok(recorded.includes("reply"), "…fixture guard: an ordinary name is recorded too, so the assertion above is not measuring an empty row");
+  ok(!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes("task"), "the conversational-root list gained `task` — the seat/worker seam moved, which is not what OPE-2023 did");
   ok((CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes("standing"), "…fixture guard: the list really is the conversational root grains");
 }
 

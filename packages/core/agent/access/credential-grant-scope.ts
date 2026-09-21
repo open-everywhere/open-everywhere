@@ -1,4 +1,4 @@
-import { bindFrom, unattendedFrom, windowGrainOf, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, isSubagentChildContext, stampedWindowGrainOf, unattendedFrom, windowGrainOf, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { domainForChannel, windowedSupervisorEnabled } from "../memory/domain.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import type { CredentialGrantMode, CredentialGrantRow } from "../operational/credential-grant-rows.js";
@@ -27,6 +27,11 @@ export type GrantDomainScopeVerdict =
   | { readonly admitted: true; readonly scopeKey: string }
   | { readonly admitted: false; readonly gate: GrantDomainScopeGate; readonly scopeKey?: string };
 
+export function conversationGrainOf(ctx: BindableContext): WindowGrain {
+  if (!isSubagentChildContext(ctx)) return windowGrainOf(ctx);
+  return stampedWindowGrainOf(ctx) ?? GRANT_ROOM_GRAIN;
+}
+
 export function grantDomainScopeVerdict(ctx: BindableContext): GrantDomainScopeVerdict {
   try {
     const binding = bindFrom(ctx);
@@ -36,7 +41,7 @@ export function grantDomainScopeVerdict(ctx: BindableContext): GrantDomainScopeV
     const domains = getConfig().loadDomains();
     const domain = domainForChannel(roomKey, domains);
     if (domain === undefined || domain.name.length === 0) return { admitted: false, gate: "no_domain" };
-    const grain = windowGrainOf(ctx);
+    const grain = conversationGrainOf(ctx);
     const roomArm = grain === GRANT_ROOM_GRAIN && !windowedSupervisorEnabled(roomKey, domains);
     if (roomArm && domain.name.includes(GRANT_KEY_SEGMENT_SEPARATOR)) return { admitted: false, gate: "ambiguous_domain_name" };
     const scopeKey = roomArm

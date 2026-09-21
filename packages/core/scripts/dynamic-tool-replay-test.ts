@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+
+import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
+import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
+import { bindFrom } from "../agent/identity/binding.js";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -44,6 +48,7 @@ interface ToolCase {
   readonly slug: string;
   readonly entryKey: string;
   readonly ctx: unknown;
+  readonly delegatedFrom?: unknown;
   readonly env?: Readonly<Record<string, string>>;
   readonly settings?: AgentSettingsOverrides;
   readonly variantManaged?: boolean;
@@ -82,6 +87,7 @@ registerConfig({
     REPLAY_DOMAINS.filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 const slackDmCtx = { channel: { kind: "slack" }, session: { auth: { current: { principalId: "U_PARTNER", attributes: { channel_type: "im" } } } } };
+const slackWorkerCtx = { channel: { kind: "subagent", continuationToken: "subagent:slack-seat:call-1" }, session: { id: "worker-of-slack-seat", auth: { current: { attributes: {} } } } };
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const taskCtx = {
@@ -104,7 +110,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "dm_person", entryKey: "_single", ctx: slackCtx },
   { slug: "set_dm_delivery", entryKey: "_single", ctx: slackDmCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
-  { slug: "request_credential_grant", entryKey: "_single", ctx: slackCtx },
+  { slug: "request_credential_grant", entryKey: "_single", ctx: slackWorkerCtx, delegatedFrom: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "purge_memory", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
@@ -189,7 +195,14 @@ for (const c of CASES) {
   }
   if (c.settings) overrideSettingsForTest(c.settings);
   try {
-    const resolved = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
+    const resolve = async (): Promise<Record<string, unknown> | null> => (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
+    const resolved =
+      c.delegatedFrom === undefined
+        ? await resolve()
+        : await inEveContext(new FakeEveContext(), async () => {
+            adoptDelegatedAuthority({ binding: bindFrom(c.delegatedFrom as BindableContext), nonMemberWake: false, requester: { kind: "requester", principalId: "U_REQ" } }, undefined);
+            return await resolve();
+          });
     const entry =
       resolved !== null && typeof resolved.execute !== "function" && c.entryKey in resolved
         ? (resolved[c.entryKey] as Record<string, unknown>)
@@ -292,6 +305,8 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
     };
   }
 
+  const ctxFromNative = (fixture: FixtureCtx): unknown => ({ channel: fixture.channel, session: { id: "sess-unbound", auth: fixture.session?.auth } });
+
   for (const c of CASES) {
     const saved: Record<string, string | undefined> = {};
     for (const [k, v] of Object.entries(c.env ?? {})) {
@@ -304,6 +319,11 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
       const sessionId = `sess-native-heal-${c.slug}-${c.entryKey}`;
       const ctx = nativeCtxFor(c.ctx as FixtureCtx, sessionId);
       const event = { type: "session.started" };
+      if (c.delegatedFrom !== undefined) {
+        const unbound = (await resolvers.get(c.slug)!({}, ctxFromNative(c.ctx as FixtureCtx))) as unknown;
+        ok(unbound === null, `${c.slug}:${c.entryKey} arms on a delegated worker whose dispatch authority has NOT been adopted — such a worker has no surface authority and must mount nothing`);
+        continue;
+      }
 
       await nativeLifecycle.dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
       const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { name: string; entryKey: string; callbacks: { execute: Record<string, unknown> } }[];

@@ -94,7 +94,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const b = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "todo", input: { todos: [{ content: "ope-693 in-flight work", priority: "high", status: "in_progress" }] }, id: "ope693-todo" }] },
+        { calls: [{ tool: "update_status", input: { state: "working", summary: "ope-693 in-flight work" }, id: "ope693-ran" }] },
         { say: "never posted — cancelled inside this call", delayMs: HOLD_MS },
       ],
     }),

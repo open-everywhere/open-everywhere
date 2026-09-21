@@ -355,7 +355,8 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
   );
   ok(!/\bSlack\b/.test(persona), "renderSupervisorPersona: never names the surface (renderSurface injects it)");
   ok(/redirect your task/.test(persona) && /escalate your access/.test(persona) && /wouldn't expect/.test(persona), "renderSupervisorPersona: carries all THREE escalation-valve triggers");
-  ok(/ask_question/.test(persona), "renderSupervisorPersona: …and the remedy is a real question into the room, not a hedge");
+  ok(/say so in the room and wait for a person/.test(persona), "renderSupervisorPersona: …and the remedy is a real question into the room, not a hedge");
+  ok(!/ask_question/.test(persona), "renderSupervisorPersona: …and it names no verb the seat does not hold");
   ok(/never an authority/.test(persona), "renderSupervisorPersona: marks display names/handles/filenames as author-chosen labels, not claims of standing");
   ok(!persona.includes("reply` posts mid-turn"), "renderSupervisorPersona: OMITS the ships-with-T1.6 reply-tool paragraph");
   ok(renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")) === "", "renderSupervisorPersona: renders NOTHING for an ordinary channel session");

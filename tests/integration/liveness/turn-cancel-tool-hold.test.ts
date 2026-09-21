@@ -18,7 +18,7 @@ import {
 
 const STOPPER_ID = "9000000000000000078";
 
-const RAN_TOOL = "todo";
+const RAN_TOOL = "react";
 
 const HELD_TOOL = "update_status";
 
@@ -35,6 +35,7 @@ test("a stop that lands while the second tool of a step is still running still n
   afterThisTest(() => {
     released = true;
   });
+  afterThisTest(wrapToolExecute(RAN_TOOL, async () => ({ ok: true })));
   afterThisTest(
     wrapToolExecute(HELD_TOOL, async (...args: unknown[]) => {
       heldEnteredAt = Date.now();
@@ -50,7 +51,7 @@ test("a stop that lands while the second tool of a step is still running still n
       parent: [
         {
           calls: [
-            { tool: RAN_TOOL, input: { todos: [{ content: "ope-772 finished work", priority: "high", status: "in_progress" }] }, id: "ope772-ran" },
+            { tool: RAN_TOOL, input: { emoji: "eyes" }, id: "ope772-ran" },
             { tool: HELD_TOOL, input: { state: "working", summary: "ope-772 work that is still running" }, id: "ope772-held" },
           ],
         },

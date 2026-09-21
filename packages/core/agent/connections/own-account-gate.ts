@@ -1,12 +1,11 @@
 import { auditToolAction } from "../audit/tool-action.js";
 import { getConfig } from "../access/config.js";
 import { domainsAdmitCredentialGrant, isCredentialGrantConnector } from "../access/credential-grant.js";
-import { credentialGrantsInReach } from "../access/credential-grant-reach.js";
-import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
+import { credentialGrantsInReach, domainScopeKeyInReach, sessionScopeKeyInReach } from "../access/credential-grant-reach.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { requesterMessagesThisTurn } from "../access/requester-messages.js";
 import { askBodyOf } from "../hooks/own-account-ask.js";
-import { currentSessionId, currentTurnId, delegationRootSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { currentSessionId, currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -117,14 +116,6 @@ function domainsForCtx(ctx: BindableContext): readonly Domain[] {
   }
 }
 
-function grantLookupScope(ctx: BindableContext): string | undefined {
-  const root = delegationRootSessionId(ctx);
-  if (root !== undefined && root.length > 0) return root;
-  if (isSubagentChildContext(ctx)) return undefined;
-  const own = currentSessionId(ctx);
-  return own !== undefined && own.length > 0 ? own : undefined;
-}
-
 function askerKey(ctx: BindableContext): string | undefined {
   try {
     const p = resolvePartition(ctx);
@@ -146,9 +137,9 @@ function actingIdentityDepsForTurn(ctx: BindableContext, vendor: OwnAccountVendo
     consentRouteAvailable: () => domainsAdmitCredentialGrant(domainsForCtx(ctx), vendor.connector),
     deploymentAdmitsGrant: () => isCredentialGrantConnector(vendor.connector),
     grants: async () => {
-      const scope = grantLookupScope(ctx);
+      const scope = sessionScopeKeyInReach(ctx);
       if (scope === undefined) return [];
-      return await credentialGrantsInReach(resolvePartition(ctx).org, scope, grantDomainScopeKey(ctx), new Date().toISOString());
+      return await credentialGrantsInReach(resolvePartition(ctx).org, scope, domainScopeKeyInReach(ctx), new Date().toISOString());
     },
     nowIso: new Date().toISOString(),
     tool,

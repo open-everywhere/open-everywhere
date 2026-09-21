@@ -28,7 +28,7 @@ function open(handle: ScriptedHandle): ScriptedHandle {
 
 const STOPPER_ID = "9000000000000000077";
 
-const RAN_TOOL = "todo";
+const RAN_TOOL = "update_status";
 
 const HOLD_MS = 90_000;
 
@@ -41,7 +41,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   const handle = open(
     registerScript({
       parent: [
-        { calls: [{ tool: RAN_TOOL, input: { todos: [{ content: "ope-634 in-flight work", priority: "high", status: "in_progress" }] }, id: "ope634-todo" }] },
+        { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-634 in-flight work" }, id: "ope634-ran" }] },
         { say: "this sentence is never posted — the turn is cancelled inside this call", delayMs: HOLD_MS },
       ],
     }),

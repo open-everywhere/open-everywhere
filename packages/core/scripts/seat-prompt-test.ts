@@ -171,7 +171,8 @@ function ok(cond: boolean, label: string): void {
   ok(!seat.includes("call `post_file` to attach it into the"), "negative control: …and is never told it holds the file tools");
 
   ok(worker.includes("an answer might not"), "🔴 the ask-question hedge stands: a parked question may never be answered");
-  ok(seat.includes("check with the channel before continuing"), "negative control: a conversational seat asks the channel instead");
+  ok(seat.includes("say so in the room and wait for a person"), "negative control: a conversational seat says it in the room instead of parking the turn");
+  ok(!seat.includes("`ask_question`"), "🔴 …and the seat persona never names `ask_question` at all — it is a worker verb now, and a prompt that names it points the seat at an absent tool");
   ok(!seat.includes("`return_result`"), "negative control: …and is never handed a verb it does not hold");
 
   for (const gone of [

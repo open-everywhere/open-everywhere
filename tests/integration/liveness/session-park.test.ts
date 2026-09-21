@@ -41,7 +41,7 @@ if (REPORTED_INPUT_TOKENS_PER_STEP >= COMPACTION_THRESHOLD_TOKENS) {
 
 const STEPS_TO_BOUND = Math.ceil(SESSION_INPUT_TOKEN_BUDGET / REPORTED_INPUT_TOKENS_PER_STEP);
 
-const LOOP_TOOL = "todo";
+const LOOP_TOOL = "update_status";
 
 test("a seat that hits eve's session-token bound parks, and OE retires the generation", async () => {
   await bootAgent({ sharedSqlite: true });
@@ -52,7 +52,7 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   const burning = open(
     registerScript({
       parent: Array.from({ length: STEPS_TO_BOUND }, (_unused, i) => ({
-        calls: [{ tool: LOOP_TOOL, input: { todos: [{ content: `ope-634 park probe ${i}`, priority: "low", status: "in_progress" }] }, id: `ope634-park-todo-${i}` }],
+        calls: [{ tool: LOOP_TOOL, input: { state: "working", summary: `ope-634 park probe ${i}` }, id: `ope634-park-loop-${i}` }],
         usage: { inputTokens: REPORTED_INPUT_TOKENS_PER_STEP, outputTokens: 100 },
       })),
     }),

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+
+import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
+import { bindFrom } from "../agent/identity/binding.js";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,7 +49,7 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 
 const NOW = Date.now();
 
-const seatCtx = (sessionId: string, stampPlatform = true): BindableContext =>
+const workerCtx = (sessionId: string, stampPlatform = true): BindableContext =>
   ({
     channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" },
     session: {
@@ -55,6 +58,7 @@ const seatCtx = (sessionId: string, stampPlatform = true): BindableContext =>
           attributes: {
             channel_id: "C-ROOM",
             oe_grain: "standing",
+            oe_requester: "U-req",
             ...(stampPlatform ? { oe_platform: "slack" } : {}),
             team_id: "T1",
             thread_ts: "1777025145.935000",
@@ -64,9 +68,18 @@ const seatCtx = (sessionId: string, stampPlatform = true): BindableContext =>
           principalType: "slack-user",
         },
       },
-      id: sessionId,
+      id: `worker-of-${sessionId}`,
+      parent: { callId: "call-1", sessionId },
     },
   }) as unknown as BindableContext;
+
+const seatCtx = (sessionId: string, stampPlatform = true): BindableContext => {
+  const c = workerCtx(sessionId, stampPlatform) as unknown as { session: Record<string, unknown> };
+  return { ...(c as object), session: { ...c.session, id: sessionId, parent: undefined } } as unknown as BindableContext;
+};
+const adoptSeatAuthority = (sessionId: string): void => {
+  adoptDelegatedAuthority({ binding: bindFrom(seatCtx(sessionId)), nonMemberWake: false, requester: { kind: "requester", principalId: "U-req" } }, undefined);
+};
 
 const ENVELOPE = '<message trigger="true" from="human" author-id="slack/T1/U-req">read the granted page</message>';
 
@@ -148,8 +161,9 @@ const mintGrant = async (scopeKey: string, mode: "once" | "session" | "standing"
 };
 
 const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclosure?: string; refused?: string }> => {
-  const ctx = seatCtx(scopeKey);
+  const ctx = workerCtx(scopeKey);
   return inEveContext(new FakeEveContext(), async () => {
+    adoptSeatAuthority(scopeKey);
     recordRequesterIdentity(ctx, undefined, ENVELOPE);
     const mounted = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"](
       { type: "session.started" },
@@ -385,7 +399,7 @@ console.log("9. the two halves called directly:");
   eq(await postGrantRoomNotice(undefined, "acting as rowan_hale", grant, "2026-05-04T05:52:02.000Z"), false, "postGrantRoomNotice with NO context posts nothing and reports false");
   eq(await deliverGrantOwnerNotice(undefined, grant, "2026-05-04T05:52:02.000Z"), false, "deliverGrantOwnerNotice with NO context delivers nothing and reports false");
   eq(
-    await deliverGrantOwnerNotice({ ctx: seatCtx("session-standing"), ...stamps }, grant, "2026-05-04T05:52:02.000Z"),
+    await deliverGrantOwnerNotice({ ctx: workerCtx("session-standing"), ...stamps }, grant, "2026-05-04T05:52:02.000Z"),
     false,
     "…and a grant whose claim is already held delivers nothing, however it is called",
   );

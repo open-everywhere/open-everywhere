@@ -31,8 +31,6 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "stand_down",
   "halt",
   "set_dm_delivery",
-  "ask_question",
-  "todo",
 ]);
 
 export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
@@ -122,7 +120,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "identity-and-access",
-    headline: "Link somebody's other accounts, ask for access this scope lacks, stand up a new agent, explain why something is refused, review whether the access here still fits",
+    headline: "Link somebody's other accounts, ask somebody to lend their own connector account for this conversation, ask for access this scope lacks, stand up a new agent, explain why something is refused, review whether the access here still fits",
     tools: [
       "link_identity",
       "confirm_link",
@@ -140,6 +138,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
     id: "spend-and-telemetry",
     headline: "Report on and move this deployment's own spend, usage and analytics",
     tools: ["session_cost", "spend_report", "usage_report", "query_analytics", "set_spend_limit", "clear_spend_limit"],
+  },
+  {
+    id: "turn-plumbing",
+    headline: "Work through something long enough to need a plan of its own, and come back mid-way to ask you a question before carrying on",
+    tools: ["ask_question", "todo"],
   },
   {
     id: "second-opinion",

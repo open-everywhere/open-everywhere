@@ -631,14 +631,17 @@ console.log("6b. a failed tap names its reason on the audit row (OPE-1588):");
   }
 }
 
-console.log("7. the ask verb: a tainted turn may not ask, and both a seat and a delegated worker hold it:");
+console.log("7. the ask verb: a tainted turn may not ask, and a delegated WORKER holds it while the seat does not:");
 {
-  ok(allowedOnLeanSeat("request_credential_grant"), "a DELEGATING conversational seat keeps the ask verb");
+  ok(
+    !allowedOnLeanSeat("request_credential_grant"),
+    "🔴 a DELEGATING conversational seat still holds the ask verb — OPE-2023 moved it to the worker, and a seat that asks would raise an ask for a tool that mounts on its workers",
+  );
   ok(
     allowedOnWorkerSeat("request_credential_grant"),
-    "…and a delegated WORKER holds it too (OPE-1343) — the seat delegates, so a seat-only verb was unreachable; the ask it raises is scoped to the ROOT seat, never to the worker's own one-shot session",
+    "…and a delegated WORKER holds it (OPE-1343) — the seat delegates, so a seat-only verb was unreachable; the ask it raises is scoped to the ROOT seat, never to the worker's own one-shot session",
   );
-  ok(WORKER_ONLY_TOOLS_STANDING.every((t) => t !== "request_credential_grant"), "…so the worker-capability index never tells the seat to delegate it");
+  ok(WORKER_ONLY_TOOLS_STANDING.includes("request_credential_grant"), "…so the worker-capability index TELLS the seat to delegate it — without that line the seat has no route to name");
 
   const askCountBefore = (await store.credentialGrantsForScope(ORG, "sess-taint")).length;
   const ctx = new FakeEveContext();
@@ -732,7 +735,9 @@ console.log("9. an ask composes with no vendor tool name to look up:");
   ok(schema.safeParse({ ...askInput, tool: VENDOR_TOOL }).success, "…and an ask that DOES name one is unchanged");
   ok(!schema.safeParse({ ...askInput, tool: "" }).success, "…while an EMPTY tool is still refused — omitting the field and sending a blank name are different claims");
 
-  const chatCtx = { session: { auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } }, id: "sess-chat-1552" } };
+  const chatCtx = {
+    session: { auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } }, id: "worker-of-sess-chat-1552", parent: { callId: "call-1", sessionId: "sess-chat-1552" } },
+  };
   const exec = async (over: Record<string, unknown>): Promise<{ asked: boolean; message: string }> =>
     (await inEveContext(new FakeEveContext(), async () =>
       (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
@@ -764,7 +769,13 @@ console.log("9. an ask composes with no vendor tool name to look up:");
 
   {
     const grantCtx = (sessionId: string): BindableContext =>
-      ({ session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: sessionId } }) as unknown as BindableContext;
+      ({
+        session: {
+          auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } },
+          id: `worker-of-${sessionId}`,
+          parent: { callId: "call-1", sessionId },
+        },
+      }) as unknown as BindableContext;
     const FIXTURE = resolvePartition(grantCtx("sess-probe"));
     const GRANT_DOMAINS = [defineDomain({ name: "grant-ask-fixture", reach: [FIXTURE.surfaceKey], credentialGrants: ["notion"] })];
     registerConfig({
@@ -820,6 +831,10 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   const reasonsOf = (rows: readonly { readonly detail?: unknown }[]): readonly unknown[] => rows.map((r) => (r.detail as { reason?: unknown } | undefined)?.reason);
   const ctxOf = (sessionId: string, grain: string): BindableContext =>
     ({ session: { auth: { current: { attributes: { oe_grain: grain } } }, id: sessionId } }) as unknown as BindableContext;
+  const workerOf = (sessionId: string): BindableContext =>
+    ({
+      session: { auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } }, id: `worker-of-${sessionId}`, parent: { callId: "call-1", sessionId } },
+    }) as unknown as BindableContext;
   const FIXTURE_SURFACE = resolvePartition(ctxOf("sess-1916-probe", "standing")).surfaceKey;
   const useDomains = (domains: ReturnType<typeof defineDomain>[]): void => {
     registerConfig({
@@ -852,7 +867,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     useDomains([]);
     const before = (await mountRows()).length;
-    eq(requestCredentialGrantMount(ctxOf("sess-1916-nodomain", "standing")), false, "a surface in NO domain does not mount the ask verb");
+    eq(requestCredentialGrantMount(workerOf("sess-1916-nodomain")), false, "a surface in NO domain does not mount the ask verb");
     await _grantMountAuditSettled();
     const rows = await mountRows();
     eq(rows.length, before + 1, "…and writes exactly one row");
@@ -862,7 +877,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     useDomains([SILENT]);
     const before = (await mountRows()).length;
-    eq(requestCredentialGrantMount(ctxOf("sess-1916-nodecl", "standing")), false, "a domain that declares NO credential grant does not mount the ask verb");
+    eq(requestCredentialGrantMount(workerOf("sess-1916-nodecl")), false, "a domain that declares NO credential grant does not mount the ask verb");
     await _grantMountAuditSettled();
     const rows = await mountRows();
     eq(rows.length, before + 1, "…and writes exactly one row");
@@ -877,7 +892,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     useDomains([GRANTING]);
     const before = (await mountRows()).length;
-    eq(requestCredentialGrantMount(ctxOf("sess-1916-ok", "standing")), true, "control — the identical seat in a DECLARING domain DOES mount the ask verb");
+    eq(requestCredentialGrantMount(workerOf("sess-1916-ok")), true, "control — the identical WORKER in a DECLARING domain DOES mount the ask verb");
     await _grantMountAuditSettled();
     eq((await mountRows()).length, before, "🔴 control — and writes NO grant.mount_refused row");
   }
@@ -885,7 +900,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     useDomains([SILENT]);
     const before = (await mountRows()).length;
-    const ctx = ctxOf("sess-1916-dedupe", "standing");
+    const ctx = workerOf("sess-1916-dedupe");
     eq(requestCredentialGrantMount(ctx), false, "the first resolution of a refused session is refused");
     await _grantMountAuditSettled();
     eq(requestCredentialGrantMount(ctx), false, "…and so is the second");
@@ -914,9 +929,12 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
 
   {
     const before = (await refusedRows()).length;
-    const noSession = { session: { auth: { current: { attributes: { oe_grain: "standing" } } } } } as unknown as BindableContext;
+    const noSession = {
+      channel: { kind: "subagent" },
+      session: { auth: { current: { attributes: { oe_grain: "standing", oe_requester: "U-req" } } }, id: "worker-unplaceable" },
+    } as unknown as BindableContext;
     const out = await driveVerb(noSession, {});
-    eq(out.asked, false, "a conversation with NO session id is refused");
+    eq(out.asked, false, "a delegated task this host cannot place in a conversation is refused");
     ok(out.message.includes("no session id"), "…by that name");
     const rows = await refusedRows();
     eq(rows.length, before + 1, "🔴 …and the refusal now leaves a grant.refused row");
@@ -926,7 +944,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     const before = (await refusedRows()).length;
     dmed.length = 0;
-    const out = await driveVerb(ctxOf("sess-1916-badowner", "standing"), { owner: "slack/U-owner" });
+    const out = await driveVerb(workerOf("sess-1916-badowner"), { owner: "slack/U-owner" });
     eq(out.asked, false, "an owner string that names NOBODY is refused");
     eq(dmed.length, 0, "…and no card reaches anyone — a refusal here must not guess at a person");
     const rows = await refusedRows();
@@ -938,7 +956,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     const before = (await refusedRows()).length;
     dmed.length = 0;
-    const out = await driveVerb(ctxOf("sess-1916-control", "standing"), { target_label: "OPE-1916 control page" });
+    const out = await driveVerb(workerOf("sess-1916-control"), { target_label: "OPE-1916 control page" });
     eq(out.asked, true, "🔴 control — the identical ask with a session and a resolvable owner IS raised");
     eq(dmed.length, 1, "control — and one card reaches the owner's DM");
     eq((await refusedRows()).length, before, "control — and writes NO grant.refused row, so the two arms above measured their own gates");
@@ -1142,11 +1160,13 @@ console.log("12. the ask verb records whether a person's own words asked for the
           current: {
             attributes: {
               oe_grain: "standing",
+              oe_requester: "U-req",
               ...(stamped && recognised !== undefined ? { [OE_OWN_ACCOUNT_ASK_ATTR]: renderOwnAccountStamp(sessionId, undefined, recognised) } : {}),
             },
           },
         },
-        id: sessionId,
+        id: `worker-of-${sessionId}`,
+        parent: { callId: "call-1", sessionId },
       },
     }) as unknown as BindableContext;
   const FIXTURE_1978 = resolvePartition(seatCtx("sess-1978-probe", false));

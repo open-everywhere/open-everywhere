@@ -9,8 +9,10 @@ import { grantOwnerNoticeText } from "@open-everywhere/core/agent/access/credent
 import { isGrantToolName, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
 
 import {
+  armSettlement,
   auditCursor,
   bootAgent,
+  consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
@@ -20,7 +22,10 @@ import {
   setEnvForRunningAgent,
   SLACK_TEAM_ID,
   slackInteractivityPost,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
+  type RecordedRequest,
   type ScriptedStep,
 } from "../harness";
 import { installHostFetchStub } from "../fetch-stub";
@@ -134,20 +139,43 @@ function vendorRequests(
     .filter((c): c is { url: string; init: RequestInit | undefined; rpc: McpRequest } => c.rpc?.method === method);
 }
 
-async function driveTurn(input: { readonly text: string; readonly messageId: string; readonly steps: readonly ScriptedStep[] }) {
-  const handle = disposeLater(registerScript({ parent: [...input.steps] }));
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${input.text}`, messageId: input.messageId });
-  const first = await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0), `the "${input.text}" turn's model call`);
-  if (input.steps.length > 1) {
-    await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === input.steps.length - 1), `the "${input.text}" turn's last scripted step`);
-  }
-  expect(handle.requests.filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
-  const requests = [...handle.requests];
-  handle.dispose();
-  return { first, requests };
+interface DelegatedTurn {
+  readonly seat: RecordedRequest;
+  readonly worker: RecordedRequest;
+  readonly requests: readonly RecordedRequest[];
 }
 
-test("a conversational seat reaches the grant ask, an owner's tap mints the borrow, and the next turn spends the OWNER's MCP token", async () => {
+async function driveWorkerTurn(input: {
+  readonly text: string;
+  readonly messageId: string;
+  readonly callId: string;
+  readonly steps: readonly ScriptedStep[];
+}): Promise<DelegatedTurn> {
+  const dispatched = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: input.text }, id: input.callId }] }, { say: "the worker has it" }],
+      child: [...input.steps],
+    }),
+  );
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${input.text}`, messageId: input.messageId });
+  const seat = await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0), `the "${input.text}" turn's seat model call`);
+  await waitFor(
+    () => dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
+    `the "${input.text}" turn's resumed step carrying the delegation receipt`,
+  );
+  const taskId = taskIdOfDelegation(dispatched, `the "${input.text}" delegation`);
+  const armed = armSettlement(dispatched, { parent: [{ say: "acknowledged" }] });
+  await waitForChildren(dispatched, { count: 1, lastStepIndex: input.steps.length - 1, label: `the "${input.text}" worker to finish its own arm` });
+  const worker = await waitFor(() => dispatched.requests.find((r) => r.role === "child" && r.stepIndex === 0), `the "${input.text}" worker's own first model call`);
+  const requests = [...dispatched.requests];
+  await consumeSettlement({ armed, dispatched, taskId, label: `the "${input.text}" delegation's settlement notification` });
+  expect([...dispatched.requests, ...armed.requests].filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
+  armed.dispose();
+  expect(String(worker.sessionId), `the "${input.text}" worker ran on the SEAT's own session, so nothing here measures a delegation`).not.toBe(String(seat.sessionId));
+  return { requests, seat, worker };
+}
+
+test("a delegated worker reaches the grant ask, an owner's tap mints the borrow, and the chat's next worker spends the OWNER's MCP token", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -177,9 +205,10 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
     JSON.stringify({ accessToken: OWNER_ACCESS_TOKEN, obtainedAt: Date.now() }),
   );
 
-  const turn1 = await driveTurn({
+  const turn1 = await driveWorkerTurn({
     text: "ope1136 turn one",
     messageId: "ope1136-t1",
+    callId: "ope1136-t1-delegate",
     steps: [
       {
         calls: [
@@ -201,11 +230,15 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
       { say: "the ask went out" },
     ],
   });
-  const scopeKey = turn1.first.sessionId;
+  const scopeKey = turn1.seat.sessionId;
   expect(typeof scopeKey, "the seat's model call reported no session id, so the grant scope cannot be named").toBe("string");
-  expect(turn1.first.tools, "the conversational seat was never offered request_credential_grant, so no room can raise an ask at all").toContain(
+  expect(turn1.worker.tools, "the delegated worker was never offered request_credential_grant, so no room can raise an ask at all").toContain(
     "request_credential_grant",
   );
+  expect(turn1.seat.tools, "the conversational SEAT was offered request_credential_grant — the ask verb belongs to the workers alone").not.toContain(
+    "request_credential_grant",
+  );
+  expect(turn1.seat.tools, "the seat's offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
 
   const asked = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
@@ -217,7 +250,8 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(ask?.status, "the ask did not land pending").toBe("pending");
   expect(ask?.mcpTool, "the ask row did not record the vendor tool in the vendor's own bytes").toBe(VENDOR_TOOL);
   expect(ask?.frozenArgs, "the ask row did not freeze the page the requester named").toEqual({ id: GRANTED_PAGE_ID });
-  expect(ask?.scopeKey, "the ask was scoped to a different chat than the seat that raised it").toBe(scopeKey);
+  expect(ask?.scopeKey, "the ask was scoped to a different chat than the seat that delegated it").toBe(scopeKey);
+  expect(ask?.scopeKey, "the ask was scoped to the WORKER's own one-shot session").not.toBe(String(turn1.worker.sessionId));
   expect(ask?.ownerPrincipalId).toBe(OWNER_PRINCIPAL);
   expect(ask?.requesterPrincipalId, "the ask recorded no verified requester, or recorded a bare native id").toBe(REQUESTER_PRINCIPAL);
   const grantTool = ask?.toolName ?? "";
@@ -271,18 +305,21 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
     "it-ope1136-dep-a",
   );
   const beforeSpend = vendorRequests(vendor, "tools/call").length;
-  const turn2 = await driveTurn({
+  const turn2 = await driveWorkerTurn({
     text: "ope1136 turn two",
     messageId: "ope1136-t2",
+    callId: "ope1136-t2-delegate",
     steps: [
       { calls: [{ tool: grantTool, input: { id: GRANTED_PAGE_ID, page_size: 7 }, id: "ope1136-granted-call" }] },
       { say: "read the page that was lent" },
     ],
   });
-  expect(turn2.first.sessionId, "turn 2 landed on a DIFFERENT session, so the mount proves nothing about the approved scope").toBe(scopeKey);
+  expect(turn2.seat.sessionId, "turn 2 landed on a DIFFERENT session, so the mount proves nothing about the approved scope").toBe(scopeKey);
 
-  expect(turn2.first.tools, `the seat was never offered ${grantTool} on the turn after the owner approved`).toContain(grantTool);
-  const definition = turn2.first.toolDefinitions.find((d) => d.name === grantTool);
+  expect(turn2.worker.tools, `the conversation's own WORKER was never offered ${grantTool} on the turn after the owner approved`).toContain(grantTool);
+  expect(turn2.seat.tools, `🔴 the SEAT was offered ${grantTool} — a lent tool belongs on the conversation's workers`).not.toContain(grantTool);
+  expect(turn2.seat.tools, "the seat's turn-2 offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+  const definition = turn2.worker.toolDefinitions.find((d) => d.name === grantTool);
   expect(definition?.description, "the mounted description does not name the owner whose credential pays").toContain(grant.ownerSlug);
   const offeredProps = ((definition?.inputSchema as { properties?: unknown } | undefined)?.properties ?? {}) as Record<string, { const?: unknown }>;
   expect(offeredProps["id"]?.const, "the frozen page is not visible and `const`-pinned in the schema the model was offered").toBe(GRANTED_PAGE_ID);
@@ -340,9 +377,10 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
   expect(vendorGets, "the borrow's standalone SSE stream reached the vendor — the fence is not in the SDK's request path").toEqual([]);
 
   const beforeFenced = vendorRequests(vendor, "tools/call").length;
-  const turn3 = await driveTurn({
+  const turn3 = await driveWorkerTurn({
     text: "ope1136 turn three",
     messageId: "ope1136-t3",
+    callId: "ope1136-t3-delegate",
     steps: [{ calls: [{ tool: grantTool, input: { id: OTHER_PAGE_ID }, id: "ope1136-off-grant-call" }] }, { say: "that was refused" }],
   });
   const offGrant = await waitFor(
@@ -361,13 +399,15 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
 
   setEnvForRunningAgent("VERCEL_DEPLOYMENT_ID", "it-ope1136-dep-b");
   const beforeRedeploy = vendorRequests(vendor, "tools/call").length;
-  const turn4 = await driveTurn({
+  const turn4 = await driveWorkerTurn({
     text: "ope1136 turn four",
     messageId: "ope1136-t4",
+    callId: "ope1136-t4-delegate",
     steps: [{ calls: [{ tool: grantTool, input: { id: GRANTED_PAGE_ID }, id: "ope1136-post-deploy-call" }] }, { say: "a deploy landed and the grant still works" }],
   });
-  expect(turn4.first.sessionId, "turn 4 landed on a DIFFERENT session, so it says nothing about this seat's roster").toBe(scopeKey);
-  expect(turn4.first.tools, `${grantTool} vanished when the runtime revision changed — a deploy must not unmount a live grant`).toContain(grantTool);
+  expect(turn4.seat.sessionId, "turn 4 landed on a DIFFERENT session, so it says nothing about this conversation's roster").toBe(scopeKey);
+  expect(turn4.worker.tools, `${grantTool} vanished when the runtime revision changed — a deploy must not unmount a live grant`).toContain(grantTool);
+  expect(turn4.seat.tools, `the SEAT picked up ${grantTool} after the revision change — a deploy must not move a lent tool back onto the seat`).not.toContain(grantTool);
   const postDeploy = await waitFor(
     () => turn4.requests.flatMap((r) => r.toolResults).find((t) => t.id === "ope1136-post-deploy-call"),
     "the post-deploy granted call's result to reach the model",
@@ -391,9 +431,10 @@ test("a conversational seat reaches the grant ask, an owner's tap mints the borr
 
   const beforeRateLimited = vendorRequests(vendor, "tools/call").length;
   vendor.refuseNextCalls(1, "1");
-  const turn5 = await driveTurn({
+  const turn5 = await driveWorkerTurn({
     text: "ope1136 turn five",
     messageId: "ope1136-t5",
+    callId: "ope1136-t5-delegate",
     steps: [{ calls: [{ tool: grantTool, input: { id: GRANTED_PAGE_ID }, id: "ope1338-rate-limited-call" }] }, { say: "the rate limit was waited out" }],
   });
   const rateLimited = await waitFor(

@@ -119,6 +119,7 @@ ok(noGrant.identity === undefined && noGrant.refusal !== undefined, "an own-acco
 ok(noGrant.requiredIdentity === "human-acting", "…while still recording what the request required");
 ok(noGrant.reason === "own-account-ask-no-grant", "…with the reason that says it was the ask, not an error");
 ok(noGrant.refusal?.includes("request_credential_grant") === true, "…and the refusal names the consent route when one exists here");
+ok(noGrant.refusal?.includes("Hand this to a task") === true, "🔴 …and it tells the seat to hand the ask to a TASK — the seat holds no `request_credential_grant`, so naming the verb alone routes it nowhere");
 
 const noRoute = decideActingIdentity({ ask, callerCanSpendPersonal: false, connector: "notion", consentRouteAvailable: false, deploymentAdmitsGrant: true, personalGrantHeld: false });
 ok(noRoute.refusal !== undefined && !noRoute.refusal.includes("request_credential_grant"), "no consent route ⇒ the refusal does NOT offer a tool that is not mounted");
@@ -167,6 +168,8 @@ ok(fieldMismatch === 0, "🔴 `identity` is absent EXACTLY when `refusal` is pre
 const routeSentences = new Set([ownAccountRefusal("notion", true, true), ownAccountRefusal("notion", false, true), ownAccountRefusal("notion", false, false)]);
 ok(routeSentences.size === 3, "the three refusal sentences differ — both route halves are real");
 ok(personalRouteRefusal("notion").includes("notion"), "the granted-tool refusal names the connector");
+ok(personalRouteRefusal("notion").includes("Hand the read to a task"), "🔴 the granted-tool refusal does not say WHERE the lent tool lives — it mounts on this conversation's tasks, never on the seat reading this sentence");
+ok(personalRouteRefusal("notion").includes("grant__"), "…while still naming the tool family, so the task knows what it is looking for");
 ok(ambiguousAccountRefusal("notion").includes("notion"), "the ambiguity refusal names the connector");
 
 const detail = actingIdentityAuditDetail(noGrant, "notion", "read_notion_page");
