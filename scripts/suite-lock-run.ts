@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { withoutDacOverride, writeBitsBite } from "./dac-fence.js";
-import { isVitestCommand, itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
+import { HOST_MEMORY_PROBE } from "./ci-max-workers.js";
+import { IT_SKIP_BUILD_ENV, countTierFiles, isVitestCommand, itShardCount, planShards, shardReusesBuild, tierProofLine, worstExit } from "./it-shards.js";
 import { fmtBytes, samplePeakRss } from "./proc-rss.js";
 
 const DEFAULT_LOCK_DIR = "/tmp/oe-suite-locks/full-suite.lock";
@@ -189,9 +190,15 @@ export function classifyExit(code: number | null, signal: NodeJS.Signals | null,
   return code ?? (signal ? 1 : 0);
 }
 
-function spawnMeasured(cmd: string, args: readonly string[], label: string): Promise<{ exit: number; peakRssBytes: number }> {
+function spawnMeasured(
+  cmd: string,
+  args: readonly string[],
+  label: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<{ exit: number; peakRssBytes: number; wallMs: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, [...args], { stdio: "inherit", shell: process.platform === "win32" });
+    const startedAt = Date.now();
+    const child = spawn(cmd, [...args], { stdio: "inherit", shell: process.platform === "win32", ...(env ? { env } : {}) });
     const sampler = child.pid === undefined ? undefined : samplePeakRss(child.pid);
     child.on("error", (err) => {
       sampler?.stop();
@@ -199,7 +206,7 @@ function spawnMeasured(cmd: string, args: readonly string[], label: string): Pro
     });
     child.on("exit", (code, signal) => {
       const peakRssBytes = sampler?.stop() ?? 0;
-      resolve({ exit: classifyExit(code, signal, label), peakRssBytes });
+      resolve({ exit: classifyExit(code, signal, label), peakRssBytes, wallMs: Date.now() - startedAt });
     });
   });
 }
@@ -228,7 +235,17 @@ export async function runLocked(
   args: string[],
   options: { manual: boolean; lockDir: string; maxWaitMs: number; env?: NodeJS.ProcessEnv; emitProof?: boolean },
 ): Promise<number> {
-  const plan = planShards(cmd, args, itShardCount(options.env ?? process.env));
+  let tierFiles: number | undefined;
+  let counted = false;
+  const plan = planShards(
+    cmd,
+    args,
+    itShardCount(options.env ?? process.env, HOST_MEMORY_PROBE, () => {
+      counted = true;
+      tierFiles = countTierFiles();
+      return tierFiles;
+    }),
+  );
   let acquired = false;
   if (!options.manual) {
     await acquireLock(options.lockDir, options.maxWaitMs, { command: [cmd, ...args].join(" ") });
@@ -236,20 +253,41 @@ export async function runLocked(
   }
   try {
     if (plan.runs.length > 1) {
+      const sizing = !counted
+        ? ""
+        : tierFiles === undefined
+          ? " 🔴 The tier's file count could NOT be read, so the plan fell back to its floor. Check the working directory."
+          : ` The tier holds ${tierFiles} test file(s).`;
       console.error(
         `suite-lock-run: sharding the integration tier into ${plan.runs.length} sequential one-process passes (OE_IT_SHARDS). ` +
-          "A single process runs the whole tier past a cloud sandbox's memory cgroup even at one worker (OPE-1814).",
+          "A single process runs the whole tier past a cloud sandbox's memory cgroup even at one worker (OPE-1814). " +
+          `Shard 1 builds the target; shards 2-${plan.runs.length} reuse it with ${IT_SKIP_BUILD_ENV}=1 (OPE-2050).${sizing}`,
       );
     } else if (plan.reason !== undefined) {
       console.error(`suite-lock-run: not sharding — ${plan.reason}.`);
     }
     const exits: number[] = [];
-    for (const run of plan.runs) {
+    let staleTreeWarned = false;
+    for (const [index, run] of plan.runs.entries()) {
       const label = [cmd, ...run.args].join(" ");
+      const reuseBuild = shardReusesBuild(plan, index);
+      const childEnv = reuseBuild ? { ...process.env, [IT_SKIP_BUILD_ENV]: "1" } : undefined;
+      if (reuseBuild && !staleTreeWarned && exits.some((code) => code !== 0)) {
+        staleTreeWarned = true;
+        console.error(
+          `suite-lock-run: ⚠️ a shard before this one exited non-zero, and this shard reuses its tree (${IT_SKIP_BUILD_ENV}=1). ` +
+            "If that red was the BUILD itself, the artifacts here are whatever was already on this tree, not this run's — " +
+            "so read the later shards' results as the older build's until shard 1 is green (OPE-2050).",
+        );
+      }
+      const builds = !reuseBuild && process.env[IT_SKIP_BUILD_ENV] !== "1";
       const spawnPair = fencedSpawn(cmd, run.args);
-      const { exit, peakRssBytes } = await spawnMeasured(spawnPair.cmd, spawnPair.args, label);
+      const { exit, peakRssBytes, wallMs } = await spawnMeasured(spawnPair.cmd, spawnPair.args, label, childEnv);
       exits.push(exit);
-      console.error(`suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)}`);
+      console.error(
+        `suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)} ` +
+          `wall=${(wallMs / 1000).toFixed(1)}s build=${builds ? "1" : "reused"}`,
+      );
     }
     const exit = worstExit(exits);
     if (options.emitProof === true && plan.wholeTier) {

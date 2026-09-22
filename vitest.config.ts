@@ -1,10 +1,11 @@
 import { defineConfig } from "vitest/config";
 
 import { integrationMaxWorkers } from "./scripts/ci-max-workers.js";
+import { INTEGRATION_INCLUDE_GLOBS } from "./scripts/it-shards.js";
 
 export default defineConfig({
   test: {
-    include: ["tests/integration/**/*.test.ts"],
+    include: [...INTEGRATION_INCLUDE_GLOBS],
     pool: "forks",
     fileParallelism: true,
     isolate: true,
