@@ -32,6 +32,7 @@ import {
   rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
+  seedAckLatchDetail,
   seedMemoryWrites,
   seedSettlementRead,
   settlementReportPairings,
@@ -960,6 +961,104 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     ok(seedMemoryWrites([purge, turnStart, late], { seedTurnStartMs: TURN_START_MS }).writes.length === 1, "…and without a ceiling that same row counts, so the exclusion is the ceiling's and not a mute reader");
     const unplaceable = seedMemoryWrites([row("memory.write", "not-a-time", { road: "session-persist" })], { settlementPost });
     ok(unplaceable.writes.length === 0 && unplaceable.unplaceable === 1, "a write this reader cannot place against the ceiling is excluded and counted, never guessed at");
+  }
+
+  {
+    const SEED_WAKE_Re = "7a96610c";
+    const MINTED_WAKE_Re = "b6a55ebd";
+    const TASK_Re = "task_97f964968f606158574f4797";
+    const SEAT_Re = "wrun_example39";
+    const INTERIM_Re = "1769897345.296000";
+    const SETTLEMENT_Re = "1769897495.621000";
+    const TURN_START_Re = Date.parse("2026-01-31T22:08:57.618Z");
+    const INTERIM_TEXT =
+      "I've handed off the memory update for the new current OPE121 canary code to a worker. I'll report the recorded fact when the update returns.";
+    const SETTLEMENT_TEXT = "Recorded and verified the new current code: `obsidian-34269`, superseding `obsidian-410`.";
+
+    const turnStartRe = row("wake.turn_start", "2026-01-31T22:08:57.618Z", { wakeId: SEED_WAKE_Re }, 21);
+    const dispatchRe = row("delegation.task_started", "2026-01-31T22:09:01.654Z", { task: TASK_Re, session: SEAT_Re, call: "call_0" }, 22, "ingest");
+    const interimRe = row("reply.post", "2026-01-31T22:09:05.363Z", { id: INTERIM_Re, sessionId: SEAT_Re, wakeId: SEED_WAKE_Re }, 23);
+    const taskWakeRe = row(
+      "unified.task_wake",
+      "2026-01-31T22:11:29.926Z",
+      { task: TASK_Re, wakeId: MINTED_WAKE_Re, inheritedWakeId: SEED_WAKE_Re, outcome: "installed" },
+      24,
+      "ingest",
+    );
+    const settledRe = row("delegation.task_settled", "2026-01-31T22:11:29.966Z", { task: TASK_Re, session: SEAT_Re, status: "completed" }, 25, "ingest");
+    const persistRe = row("memory.write", "2026-01-31T22:11:35.553Z", { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain", version: 385 }, 26);
+    const settlementPostRe = row("reply.post", "2026-01-31T22:11:35.665Z", { id: SETTLEMENT_Re, sessionId: SEAT_Re, wakeId: SEED_WAKE_Re }, 27);
+    const runRe = [turnStartRe, dispatchRe, interimRe, taskWakeRe, settledRe, persistRe, settlementPostRe];
+    const keysRe = { seedWakeId: SEED_WAKE_Re, seedTurnStartMs: TURN_START_Re };
+
+    process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
+    const { isFillerAck: fillerAck } = await import("./scenarios.js");
+    ok(fillerAck(INTERIM_TEXT), "🔴 OPE-2044 PREMISE: a live run's interim ack DOES read as filler — which is why the latch stepped over it and took the next reply");
+    ok(!fillerAck(SETTLEMENT_TEXT), "🔴 OPE-2044 PREMISE CONTROL: the settlement report does NOT read as filler, so the latch stops there — it is the reply the leg ends up holding as its 'ack'");
+
+    const latchedReport = seedSettlementRead(runRe, { ...keysRe, ackId: SETTLEMENT_Re });
+    ok(
+      latchedReport.kind === "settled",
+      `🔴 OPE-2044: a latched ack that stands AT OR AFTER the settlement is a settlement-post candidate, not an exclusion (got ${latchedReport.kind}: ${latchedReport.detail})`,
+    );
+    ok(latchedReport.post === settlementPostRe, "…and the ceiling is that very post — the row a live run's join excluded by name and then reported missing");
+    ok(latchedReport.dispatched.join(",") === TASK_Re, `…with the seed turn's own task named (got ${latchedReport.dispatched.join(",")})`);
+    ok(
+      latchedReport.detail.includes("that post IS the reply the caller latched as the ack"),
+      `…and the route line SAYS the latch stepped over the hand-off, so the next red of this family names itself (got ${latchedReport.detail})`,
+    );
+    const gatedRe = seedMemoryWrites(runRe, { seedTurnStartMs: TURN_START_Re, settlementPost: latchedReport.post });
+    ok(
+      gatedRe.writes.length === 1 && gatedRe.writes[0] === persistRe && gatedRe.afterSettlement === 0,
+      `🔴 OPE-2044: under that ceiling the gate counts the worker's version-385 persist and nothing above it — the row Phase B polled 180 s without ever reaching (writes ${gatedRe.writes.length}, after ${gatedRe.afterSettlement})`,
+    );
+
+    const laterReplyRe = row("reply.post", "2026-01-31T22:12:00.000Z", { id: "1769897520.000000", sessionId: SEAT_Re, wakeId: MINTED_WAKE_Re }, 28);
+    const twoAfter = seedSettlementRead([...runRe, laterReplyRe], { ...keysRe, ackId: SETTLEMENT_Re });
+    ok(
+      twoAfter.kind === "settled" && twoAfter.post === settlementPostRe,
+      `🔴 OPE-2044: with two replies standing after the settlement the ceiling is the OLDEST — the latched ack itself, never the seat's later post (got ${twoAfter.kind}, post at ${twoAfter.post?.ts ?? "none"})`,
+    );
+    ok(
+      twoAfter.post !== laterReplyRe,
+      "🔴 OPE-2044 NEGATIVE CONTROL: the later reply is NOT the ceiling — taking it would let a following turn's own write satisfy the seed gate (OPE-1915)",
+    );
+
+    const latchedInterim = seedSettlementRead(runRe, { ...keysRe, ackId: INTERIM_Re });
+    ok(
+      latchedInterim.kind === "settled" && latchedInterim.post === settlementPostRe,
+      `🔴 OPE-2044 NEGATIVE CONTROL: a live run's latch — the INTERIM ack as \`ackId\` — reads the SAME settlement post (got ${latchedInterim.kind}, post at ${latchedInterim.post?.ts ?? "none"})`,
+    );
+    ok(
+      latchedInterim.post !== interimRe && latchedReport.post !== interimRe,
+      "🔴 OPE-2044 NEGATIVE CONTROL: the INTERIM ack is never the settlement post — under EITHER latch. It stands 150 s before the worker's write, and taking it is the OPE-2036 defect",
+    );
+    ok(
+      !latchedInterim.detail.includes("that post IS the reply the caller latched as the ack"),
+      `…and the live-run shape does NOT claim the latch held the report, so the new clause is a naming and not decoration (got ${latchedInterim.detail})`,
+    );
+    ok(
+      latchedReport.roundTripMs === Date.parse("2026-01-31T22:11:35.665Z") - TURN_START_Re && latchedReport.roundTripMs === latchedInterim.roundTripMs,
+      `…and both latches report the SAME round trip, because it is the POST that ends the turn (got ${String(latchedReport.roundTripMs)} / ${String(latchedInterim.roundTripMs)}ms)`,
+    );
+
+    const unplaceableAck = row("reply.post", "not-a-time", { id: "1769897380.000000", sessionId: SEAT_Re, wakeId: SEED_WAKE_Re });
+    const withUnplaceable = seedSettlementRead([...runRe, unplaceableAck], { ...keysRe, ackId: "1769897380.000000" });
+    ok(
+      withUnplaceable.kind === "settled" && withUnplaceable.post === settlementPostRe,
+      `🔴 OPE-2044: an ack row this reader cannot place never becomes the ceiling — the POSITION check excludes it, with or without the name (got ${withUnplaceable.kind})`,
+    );
+
+    const withSkip = seedAckLatchDetail({ ts: SETTLEMENT_Re, text: SETTLEMENT_TEXT }, [{ ts: INTERIM_Re, text: INTERIM_TEXT }]);
+    ok(withSkip.includes(`latched reply ${SETTLEMENT_Re} as the seed ack`), `🔴 OPE-2044: the log NAMES the reply the latch took (got ${withSkip})`);
+    ok(withSkip.includes(INTERIM_Re), `…and the ts of the reply the filler skip stepped over (got ${withSkip})`);
+    ok(withSkip.includes(INTERIM_TEXT.slice(0, 80)) && !withSkip.includes(INTERIM_TEXT), `…with that reply's FIRST 80 CHARACTERS and no more of it (got ${withSkip})`);
+    ok(withSkip.includes("stepped over 1 earlier bot reply"), `…and it counts them, so two skipped replies read as two (got ${withSkip})`);
+    const noSkip = seedAckLatchDetail({ ts: INTERIM_Re, text: INTERIM_TEXT }, []);
+    ok(noSkip.includes("stepped over NO earlier bot reply"), `🔴 OPE-2044 NEGATIVE CONTROL: with nothing skipped the log SAYS so (got ${noSkip})`);
+    ok(!noSkip.includes("stepped over 1") && !noSkip.includes(SETTLEMENT_Re), `…and names no reply it did not step over (got ${noSkip})`);
+    const flattened = seedAckLatchDetail({ ts: SETTLEMENT_Re, text: "Recorded.\n\n  And verified:\n  obsidian-34269" }, []);
+    ok(flattened.includes("Recorded. And verified: obsidian-34269"), `…and a multi-line reply is flattened onto one line (got ${flattened})`);
   }
 
   {

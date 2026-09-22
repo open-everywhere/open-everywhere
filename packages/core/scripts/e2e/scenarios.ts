@@ -153,6 +153,7 @@ import {
   rowForReplyChunkSet,
   rowsAtOrAfter,
   saltedFixtureLine,
+  seedAckLatchDetail,
   seedMemoryWrites,
   seedSettlementRead,
   type SeedSettlementRead,
@@ -1470,6 +1471,16 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       const ackText = seedAck.text.replace(/\s+/g, " ").trim();
+      try {
+        const steppedOver = (await a.replies(seedTs))
+          .filter((m) => a.isBotReply(m) && tsAfter(m.ts, seedTs) && tsAfter(seedAck.ts, m.ts))
+          .map((m) => ({ ts: m.ts, text: m.text }));
+        ctx.log(`seed ack latch: ${seedAckLatchDetail({ ts: seedAck.ts, text: seedAck.text }, steppedOver)}`);
+      } catch (err) {
+        ctx.log(
+          `seed ack latch: latched reply ${seedAck.ts} as the seed ack; the thread could not be re-read to name what the filler skip stepped over (${String(err instanceof Error ? err.message : err)})`,
+        );
+      }
       const SEED_WRITE_ACTIONS = [
         MEMORY_WRITE_ACTION,
         WAKE_INGRESS_ACTION,

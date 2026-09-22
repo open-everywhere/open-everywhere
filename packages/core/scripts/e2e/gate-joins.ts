@@ -695,7 +695,8 @@ export function seedSettlementRead(
     return wake !== undefined && lineage.has(wake);
   }).length;
   const ackId = opts.ackId;
-  if (ackId !== undefined && !rows.some((r) => r.action === REPLY_POST_ACTION && dstr(r, "id") === ackId)) {
+  const ackRow = ackId === undefined ? undefined : rows.find((r) => r.action === REPLY_POST_ACTION && dstr(r, "id") === ackId);
+  if (ackId !== undefined && ackRow === undefined) {
     return {
       ...base,
       claimsWithheld,
@@ -766,6 +767,8 @@ export function seedSettlementRead(
     };
   }
 
+  const ackCmp = ackRow === undefined ? undefined : positionCompare(ackRow, settlement);
+  const ackBeforeSettlement = ackCmp !== undefined && ackCmp < 0;
   let post: AuditWireEntry | undefined;
   let outsideLineage = 0;
   for (const r of rows) {
@@ -773,7 +776,7 @@ export function seedSettlementRead(
     const id = dstr(r, "id");
     const wake = dstr(r, "wakeId");
     if (id === undefined || wake === undefined) continue;
-    if (ackId !== undefined && id === ackId) continue;
+    if (ackBeforeSettlement && id === ackId) continue;
     if (!lineage.has(wake)) {
       outsideLineage += 1;
       continue;
@@ -813,9 +816,32 @@ export function seedSettlementRead(
     detail:
       `the seed turn DELEGATED the remember to ${dispatched.length} worker(s) (${dispatched.join(", ")}), every one settled, and the ` +
       `SETTLEMENT POST ${dstr(post, "id") ?? "(no id)"} stands at or after the newest settlement on seed wake ${seedWakeId}'s lineage` +
+      `${dstr(post, "id") === ackId ? " — and that post IS the reply the caller latched as the ack (OPE-2044), so any earlier reply the filler skip stepped over is named on the leg's own ack-latch line" : ""}` +
       `${roundTripMs === undefined ? "" : ` — round trip ${roundTripMs}ms from the seed turn's start`}` +
       `; ${claimsWithheld} withheld durability claim(s) on this lineage, which is the EXPECTED shape for the interim ack${alsoSaid}`,
   };
+}
+
+export interface LatchedReply {
+  readonly ts: string;
+  readonly text: string;
+}
+
+function firstChars(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : flat.slice(0, max);
+}
+
+export function seedAckLatchDetail(latched: LatchedReply, steppedOver: readonly LatchedReply[]): string {
+  const took = `latched reply ${latched.ts} as the seed ack ("${firstChars(latched.text, 80)}")`;
+  if (steppedOver.length === 0) {
+    return `${took}; the filler skip stepped over NO earlier bot reply, so the latch took the seat's FIRST reply`;
+  }
+  const skipped = steppedOver.map((m) => `${m.ts} ("${firstChars(m.text, 80)}")`).join("; ");
+  return (
+    `${took}; the filler skip stepped over ${steppedOver.length} earlier bot reply(ies): ${skipped}` +
+    " — so the latched ack may itself be the SETTLEMENT post (OPE-2044), and §18 places it rather than excluding it by name"
+  );
 }
 
 export type ConnectorAnswerRoad = "tool" | "rest";
