@@ -50,6 +50,7 @@ import {
   exactDiscordOwnedAsks,
   grantIdsOf,
   currentDomainScopeKey,
+  isSessionGrantRow,
   grantReentryScope,
   grantsForExactAsk,
   noticesForGrant,
@@ -7839,6 +7840,13 @@ export const SCENARIOS: readonly Scenario[] = [
         readonly scopeKey?: unknown;
         readonly domainScopeKey?: unknown;
       };
+      const sessionGrantRowSeen = await pollOptional(
+        async () => {
+          const rows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
+          return rows.some((e) => isSessionGrantRow(e, currentSessionId)) ? true : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: "S-DISCORD-GRANT: a grant.asked or grant.refused row for this run's session" },
+      );
       const grantRows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
       const refused = grantRows.filter((e) => e.action === "grant.refused");
       const askedRows = grantRows.filter((e) => e.action === "grant.asked");
@@ -7854,7 +7862,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const reentryScope = reentry.kind === "record" ? grantReentryScope(reentry, currentSessionId, runDomainScopeKey) : undefined;
       if (tapped && reentry.kind === "record" && reentryScope === undefined) {
         ctx.skip(
-          `the saved grant is reachable from neither this run's Eve session nor this run's room domain (saved session ${reentry.scopeKey}, saved domain ${reentry.domainScopeKey ?? "none recorded"}; this run: session ${currentSessionId}, domain ${runDomainScopeKey ?? "unreadable"}). A once- or session-mode grant dies with the session that asked, and a standing one re-enters only through the domain key it was bound to — consent is never migrated across scopes either way. No granted call was posted. Raise a new ask and obtain a human tap only if this candidate's board still requires the grant leg.`,
+          `the saved grant is reachable from neither this run's Eve session nor this run's room domain (saved session ${reentry.scopeKey}, saved domain ${reentry.domainScopeKey ?? "none recorded"}; this run: session ${currentSessionId}, domain ${runDomainScopeKey ?? "unreadable"}). A once- or session-mode grant dies with the session that asked, and a standing one re-enters only through the domain key it was bound to — consent is never migrated across scopes either way. No granted call was posted. Raise a new ask and obtain a human tap only if this candidate's board still requires the grant leg.${sessionGrantRowSeen === true ? "" : ` No grant.asked or grant.refused row for session ${currentSessionId} arrived within the ${AUDIT_ROW_WAIT}ms wait, so the domain key had no row to read.`}`,
         );
       }
       if (tapped && reentryScope === "domain") {

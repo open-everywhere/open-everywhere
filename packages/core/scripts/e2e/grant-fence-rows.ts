@@ -189,6 +189,12 @@ export function currentDomainScopeKey(rows: readonly AuditWireEntry[], sessionSc
   return keys.size === 1 ? [...keys][0] : undefined;
 }
 
+export function isSessionGrantRow(e: AuditWireEntry, sessionScopeKey: string): boolean {
+  if (sessionScopeKey.length === 0) return false;
+  if (e.action !== "grant.asked" && e.action !== "grant.refused") return false;
+  return detailOf(e).scopeKey === sessionScopeKey;
+}
+
 export function grantReentryScope(
   saved: { readonly scopeKey: string; readonly domainScopeKey?: string },
   currentSessionId: string,
