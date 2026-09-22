@@ -99,13 +99,11 @@ test("a background delegation ends the parent's turn, comes back as a message, a
   }
 
   const parentSurfaceKey = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
+  const parentOwnCalls = [...firstRequests, ...second.requests].filter((r) => r.role === "parent").length;
   const usage = await waitFor(async () => {
     const got = await readUsageWindow({ sinceIso, workspaceKeys: [`discord/${DISCORD_GUILD_ID}`] });
-    return got.rows.length > 0 ? got : undefined;
-  }, "the usage window to carry this arc's rows");
+    return got.rows.reduce((sum, r) => sum + r.calls, 0) > parentOwnCalls ? got : undefined;
+  }, `the usage window to account for MORE than the parent's own ${parentOwnCalls} call(s) — the surplus is the child's`);
 
   expect([...new Set(usage.rows.map((r) => r.surfaceKey))]).toEqual([parentSurfaceKey]);
-  const parentOwnCalls = [...firstRequests, ...second.requests].filter((r) => r.role === "parent").length;
-  const totalCalls = usage.rows.reduce((sum, r) => sum + r.calls, 0);
-  expect(totalCalls).toBeGreaterThan(parentOwnCalls);
 });

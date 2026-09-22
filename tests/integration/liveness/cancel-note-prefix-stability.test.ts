@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 import { CONTROL_WRITE_TOOL_NAMES, registerControlWriteTools } from "@open-everywhere/core/agent/control/writes.js";
 import {
@@ -12,6 +13,7 @@ import {
   disposeLater,
   registerScript,
   rowsSinceCursor,
+  seatReply,
   waitFor,
   type RecordedRequest,
 } from "../harness";
@@ -68,10 +70,11 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
   const cursor = await auditCursor();
 
-  const a = disposeLater(registerScript({ parent: [{ say: "ack ope693a" }] }));
+  const a = disposeLater(registerScript({ parent: [seatReply("ack ope693a", "ope693-a-reply"), { say: NO_REPLY_SENTINEL }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693a`, messageId: "ope693-a" });
   const requestA = await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn A's model call");
   expect(requestA.fault).toBeUndefined();
+  await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn A's closing step");
   a.dispose();
 
   const controlDescriptions = controlWriteDescriptions();
@@ -95,7 +98,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
     registerScript({
       parent: [
         { calls: [{ tool: "update_status", input: { state: "working", summary: "ope-693 in-flight work" }, id: "ope693-ran" }] },
-        { say: "never posted — cancelled inside this call", delayMs: HOLD_MS },
+        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS },
       ],
     }),
   );
@@ -128,22 +131,25 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
     }
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — the cancel arm has run and the reconstruction is pending");
-  expect(await resolveTurnAnchor(org, { channelKey })).toBeNull();
+  const anchorAfterCancel = await resolveTurnAnchor(org, { channelKey });
+  expect(anchorAfterCancel?.turnId, `the cancelled turn's anchor row is still live: ${JSON.stringify(anchorAfterCancel)}`).not.toBe(cancelledTurnId);
   expect(b.holdsCutShort()).toBe(1);
 
-  const c = disposeLater(registerScript({ parent: [{ say: "ack ope693c" }] }));
+  const c = disposeLater(registerScript({ parent: [seatReply("ack ope693c", "ope693-c-reply"), { say: NO_REPLY_SENTINEL }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693c`, messageId: "ope693-c" });
   const requestC = await waitFor(
     () => c.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes("was CANCELLED"))),
     "turn C's model call, carrying the cancel reminder",
   );
   expect(requestC.fault).toBeUndefined();
+  await waitFor(() => c.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn C's closing step");
   c.dispose();
 
-  const d = disposeLater(registerScript({ parent: [{ say: "ack ope693d" }] }));
+  const d = disposeLater(registerScript({ parent: [seatReply("ack ope693d", "ope693-d-reply"), { say: NO_REPLY_SENTINEL }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693d`, messageId: "ope693-d" });
   const requestD = await waitFor(() => d.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn D's model call");
   expect(requestD.fault).toBeUndefined();
+  await waitFor(() => d.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn D's closing step");
   d.dispose();
 
   expect(new Set([requestA.sessionId, requestC.sessionId, requestD.sessionId]).size).toBe(1);

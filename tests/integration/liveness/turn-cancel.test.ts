@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "vitest";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 
 import {
@@ -12,6 +13,7 @@ import {
   discordOeStopInteraction,
   registerScript,
   rowsSinceCursor,
+  seatReply,
   waitFor,
   type ScriptedHandle,
 } from "../harness";
@@ -42,7 +44,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
     registerScript({
       parent: [
         { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-634 in-flight work" }, id: "ope634-ran" }] },
-        { say: "this sentence is never posted — the turn is cancelled inside this call", delayMs: HOLD_MS },
+        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS },
       ],
     }),
   );
@@ -113,7 +115,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
 
   handle.dispose();
   live.delete(handle);
-  const after = open(registerScript({ parent: [{ say: "understood — I will not redo that" }] }));
+  const after = open(registerScript({ parent: [seatReply("understood — I will not redo that", "ope634-followup-reply"), { say: NO_REPLY_SENTINEL }] }));
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> what happened?",
@@ -128,5 +130,6 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(prompt).not.toContain("was CANCELLED by a person");
   expect(prompt).toContain(`\`${RAN_TOOL}\``);
 
+  await waitFor(() => after.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the follow-up turn's closing step");
   expect(after.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
