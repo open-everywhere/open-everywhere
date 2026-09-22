@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AuditWireEntry } from "./audit-read.js";
 import type { HaltLiveEvidenceKey } from "./scenarios.js";
 import {
+  APPROVAL_JUDGE_VERDICT_ACTION,
   AUDIT_SINCE_SKEW_MS,
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
@@ -16,6 +17,7 @@ import {
   delegationJoinForSession,
   fireAnchor,
   fixtureArithmetic,
+  judgeDeniedRoutineCreation,
   fixtureSalt,
   haltSetByThisRun,
   isMemoryHopWrite,
@@ -1308,6 +1310,51 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     !noSkipLine.includes("filler skip"),
     `…and it no longer credits a FILLER SKIP the seed latch does not carry — a line that named one would send the next board reader to \`FILLER_ACK_RE\` (got ${noSkipLine})`,
   );
+}
+
+{
+  const DENY_Rg = {
+    tool: "create_routine",
+    action: "routine.create",
+    mode: "enforce",
+    verdict: "deny",
+    enforcedVerdict: "deny",
+    resolvedBy: "judge",
+    registryVerdict: "ask",
+    source: "pass2",
+    passes: 2,
+    pass1: "yes",
+    reasoning: "This routine would autonomously attempt to raise a channel's monthly spending cap, a prohibited unattended permission change.",
+    cacheKey: "create_routine",
+    cacheHit: false,
+    unattended: false,
+  };
+  const deny = row(APPROVAL_JUDGE_VERDICT_ACTION, "2026-01-28T12:35:23.000Z", DENY_Rg);
+  ok(judgeDeniedRoutineCreation([deny]) === deny, "🔴 OPE-2060: a live run's judge deny of create_routine, with the unattended cap reasoning, is PATH B's row");
+  ok(
+    judgeDeniedRoutineCreation([row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { ...DENY_Rg, verdict: "ask", enforcedVerdict: "deny" })]) !== undefined,
+    "…and an ENFORCED deny counts when the raw verdict differs",
+  );
+  ok(judgeDeniedRoutineCreation([]) === undefined, "no rows ⇒ no PATH B, so the leg runs PATH A");
+  ok(
+    judgeDeniedRoutineCreation([row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { ...DENY_Rg, verdict: "allow", enforcedVerdict: "allow" })]) === undefined,
+    "an ALLOW verdict (a live run) is not PATH B — the leg keeps every gate of the fire path",
+  );
+  ok(
+    judgeDeniedRoutineCreation([row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { ...DENY_Rg, tool: "set_spend_limit" })]) === undefined,
+    "a deny for ANOTHER tool is not PATH B — only the routine creation's refusal skips the fire wait",
+  );
+  ok(
+    judgeDeniedRoutineCreation([row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { ...DENY_Rg, reasoning: "The request lacks a clear business purpose." })]) === undefined,
+    "a deny whose reasoning does not name the unattended cap change is not PATH B",
+  );
+  ok(judgeDeniedRoutineCreation([row("approval.chain", deny.ts, DENY_Rg)]) === undefined, "a row of another action with the same detail is not PATH B");
+
+  const scenarioSource = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legStart = scenarioSource.indexOf('id: "S-TAINT-UNATTENDED-DENY"');
+  const pathB = scenarioSource.indexOf("judgeDeniedRoutineCreation(", legStart);
+  const fireWait = scenarioSource.indexOf("const FIRE_WAIT =", legStart);
+  ok(legStart > 0 && pathB > legStart && fireWait > pathB, "🔴 OPE-2060: S-TAINT-UNATTENDED-DENY reads the judge's deny row BEFORE its fire wait");
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

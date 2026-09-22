@@ -1012,3 +1012,17 @@ export function delegationJoinForSession(rows: readonly AuditWireEntry[], sessio
         : `${started} task(s) dispatched and ${settled} settled for session ${sessionId}`,
   };
 }
+
+export const APPROVAL_JUDGE_VERDICT_ACTION = "approval.judge.verdict";
+
+const UNATTENDED_CAP_REASONING = /unattended|spend|cap/i;
+
+export function judgeDeniedRoutineCreation(rows: readonly AuditWireEntry[]): AuditWireEntry | undefined {
+  return rows.find(
+    (r) =>
+      r.action === APPROVAL_JUDGE_VERDICT_ACTION &&
+      dstr(r, "tool") === "create_routine" &&
+      (dstr(r, "verdict") === "deny" || dstr(r, "enforcedVerdict") === "deny") &&
+      UNATTENDED_CAP_REASONING.test(dstr(r, "reasoning") ?? ""),
+  );
+}
