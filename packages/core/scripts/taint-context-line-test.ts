@@ -194,4 +194,39 @@ const suppliedFalse = "context: unattended: false · tainted: false — supplied
   ok(noneRan.cannotRun === undefined && noneRan.logged.length === 0, "OPE-2031: no arm RAN at all ⇒ no cannot-run from this helper — an undrivable fixture is its own skip, not an unmeasured route");
 }
 
+{
+  const renderedSupplied =
+    "context: unattended: false · tainted: true — supplied by the caller, not this turn's own signal (this turn: true (web))";
+
+  const mentionThenLine =
+    "The worker fetched `<https://raw.githubusercontent.com/octocat/Hello-World/master/README>` successfully, then called `explain_permission` as requested. Exact `context:` line:\n`" +
+    renderedSupplied +
+    "`";
+  const picked = taintContextLine(mentionThenLine);
+  ok(
+    picked.startsWith(renderedSupplied),
+    `OPE-2059 (a): a prose mention before the quoted line returns the RENDERED line, not the mention — got ${JSON.stringify(picked)}`,
+  );
+  ok(liveTaintGateDecision(picked).hard === false, "OPE-2059 (a): the rendered supplied line dispatches SOFT (hard === false), so the board #233 false red cannot recur");
+
+  const liveAlone = "context: unattended: false · tainted: true (web)";
+  ok(taintContextLine(liveAlone) === liveAlone, "OPE-2059 (b): a rendered live line alone is returned unchanged");
+  const liveDecision = liveTaintGateDecision(taintContextLine(liveAlone));
+  ok(liveDecision.hard === true && liveDecision.line === liveAlone, "OPE-2059 (b) NEGATIVE CONTROL: the rendered live line still dispatches HARD (hard === true)");
+
+  const sameLine = "Exact `context:` line: `" + liveAlone + "` — done.";
+  const pickedSame = taintContextLine(sameLine);
+  ok(
+    pickedSame.startsWith(liveAlone),
+    `OPE-2059 (c): a same-line prose mention yields the rendered part, starting at its own \`context:\` — got ${JSON.stringify(pickedSame)}`,
+  );
+
+  ok(taintContextLine("The worker fetched the page and called explain_permission.") === "", "OPE-2059 (d): no `context:` occurrence ⇒ empty string");
+
+  ok(
+    taintContextLine("see context: first mention\nand context: second mention") === "context: first mention",
+    "OPE-2059: with no rendered shape anywhere, the first `context:` occurrence is still the answer",
+  );
+}
+
 console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm, OPE-844's ARM B direction gate is proven to catch both a private-repo over-mark and a public-repo under-mark, and OPE-2031's liveMeasurementVerdict reports CANNOT RUN only when NO arm measured while naming every silent arm either way`);

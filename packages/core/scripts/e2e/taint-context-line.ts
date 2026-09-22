@@ -1,4 +1,12 @@
-export const taintContextLine = (text: string): string => /context:[^\n]*/i.exec(text)?.[0] ?? "";
+export const taintContextLine = (text: string): string => {
+  const occurrences: string[] = [];
+  for (const match of text.matchAll(/context:/gi)) {
+    const end = text.indexOf("\n", match.index);
+    occurrences.push(text.slice(match.index, end === -1 ? undefined : end));
+  }
+  const rendered = occurrences.filter((line) => /unattended:\s*(true|false)/i.test(line) && /tainted:\s*(true|false)/i.test(line));
+  return rendered.at(-1) ?? occurrences[0] ?? "";
+};
 
 export const isLiveTaintLine = (line: string): boolean => line.length > 0 && !/supplied by the caller/i.test(line);
 
