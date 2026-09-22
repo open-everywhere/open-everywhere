@@ -20,11 +20,11 @@ export const STACKS = {
   },
 
   "american-closed": {
-    primary: { id: "openai/gpt-5.6-luna", tier: "high", contextWindowTokens: 1_050_000 },
-    utility: { id: "openai/gpt-5.6-luna", tier: "low", contextWindowTokens: 1_050_000 },
+    primary: { id: "openai/gpt-6-luna", tier: "high", contextWindowTokens: 1_050_000 },
+    utility: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
     vision: { id: "google/gemini-3.7-flash", tier: "low", contextWindowTokens: 1_000_000 },
-    supervisor: { id: "openai/gpt-5.6-luna", tier: "low", contextWindowTokens: 1_050_000 },
-    judge: { id: "openai/gpt-5.6-luna", tier: "low", contextWindowTokens: 1_050_000 },
+    supervisor: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
+    judge: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
   },
 } as const satisfies Record<string, ModelStack>;
 

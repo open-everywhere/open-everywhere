@@ -9,7 +9,7 @@ import { defaultAgentModelId } from "../model/default-model.js";
 export type ModelPricingTable = Readonly<Record<string, ModelPricing>>;
 
 const BUILT_IN: ModelPricingTable = {
-  "openai/gpt-5.6-luna": { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 },
+  "openai/gpt-6-luna": { inPerMtok: 0.125, outPerMtok: 0.5, cachedInPerMtok: 0.01 },
 };
 
 let deployerTable: ModelPricingTable = {};

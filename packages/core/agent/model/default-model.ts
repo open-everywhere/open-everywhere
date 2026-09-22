@@ -13,6 +13,6 @@ export function defaultAgentModelId(): string {
     process.env.OE_FORCE_MODEL?.trim() ||
     process.env.OE_PRIMARY_MODEL?.trim() ||
     registeredDefault ||
-    "openai/gpt-5.6-luna"
+    "openai/gpt-6-luna"
   );
 }

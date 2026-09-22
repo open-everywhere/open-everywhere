@@ -8,7 +8,7 @@ const DEFAULT_SCENARIOS = ["S20", "J1", "F-ART"] as const;
 
 const REQUIRED_ROLES: readonly ModelRole[] = ["primary", "vision"];
 
-const PINNED_JUDGE_MODEL = "openai/gpt-5.6-luna";
+const PINNED_JUDGE_MODEL = "openai/gpt-6-luna";
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");

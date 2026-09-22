@@ -13,7 +13,7 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { caching: "auto" } };
+const DEFAULTS = { id: "openai/gpt-6-luna", gateway: { caching: "auto" } };
 
 {
   const s = approvalJudgeCallSettings("verdict", DEFAULTS);
@@ -37,7 +37,7 @@ const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { caching: "auto" } };
 }
 
 {
-  const s = approvalJudgeCallSettings("verdict", { id: "openai/gpt-5.6-luna" });
+  const s = approvalJudgeCallSettings("verdict", { id: "openai/gpt-6-luna" });
   ok(s.providerOptions === undefined, "bare: no gateway defaults ⇒ no providerOptions fabricated");
 }
 

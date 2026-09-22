@@ -26,7 +26,7 @@ const flag = (name: string): string | undefined => {
 const has = (name: string): boolean => argv.includes(name);
 
 const N = Math.max(1, Number.parseInt(flag("--n") ?? "10", 10));
-const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
+const MODEL = flag("--model") ?? "openai/gpt-6-luna";
 const EFFORT = flag("--effort") ?? "high";
 
 const CONDITIONS = ["member", "member-fenced", "stranger", "relay-injected"] as const;

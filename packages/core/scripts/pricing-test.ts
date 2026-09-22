@@ -29,15 +29,15 @@ function close(a: number | undefined, b: number): boolean {
 _resetModelPricingForTest();
 const BUILT_IN_ID = builtInModelIds()[0];
 const priced = modelPricing(BUILT_IN_ID);
-ok(priced?.inPerMtok === 0.25 && priced?.outPerMtok === 1.2 && priced?.cachedInPerMtok === 0.02, `built-in: ${BUILT_IN_ID} matches the gateway-billing-MEASURED rate ($0.25/$1.20, cache read $0.02)`);
+ok(priced?.inPerMtok === 0.125 && priced?.outPerMtok === 0.5 && priced?.cachedInPerMtok === 0.01, `built-in: ${BUILT_IN_ID} matches the gateway-billing-MEASURED rate ($0.125/$0.50, cache read $0.01)`);
 ok(modelPricing("some/unknown-model") === undefined, "built-in: an unpriced model returns undefined, never a guess");
 for (const junk of ["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"]) {
   ok(modelPricing(junk) === undefined, `built-in: "${junk}" resolves UNPRICED, never an Object.prototype member`);
 }
 
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, priced), 0.25 + 1.2), "estimateCostUsd: 1M in + 1M out at the built-in rate");
-ok(close(estimateCostUsd({ inputTokens: 500_000 }, priced), 0.25 / 2), "estimateCostUsd: partial input-only usage scales linearly");
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priced), 0.02), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, priced), 0.125 + 0.5), "estimateCostUsd: 1M in + 1M out at the built-in rate");
+ok(close(estimateCostUsd({ inputTokens: 500_000 }, priced), 0.125 / 2), "estimateCostUsd: partial input-only usage scales linearly");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priced), 0.01), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
 ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 800_000, outputTokens: 100_000 }, priced), 0.2 * priced!.inPerMtok + 0.8 * priced!.cachedInPerMtok! + 0.1 * priced!.outPerMtok), "estimateCostUsd: only the NON-cached remainder of input is billed at the input rate (partial-cache, no double-count)");
 ok(estimateCostUsd({ inputTokens: 1_000_000 }, undefined) === undefined, "estimateCostUsd: no pricing -> undefined (tokens-only upstream), never fabricated");
 const noCacheRate = { inPerMtok: 2, outPerMtok: 6 };
@@ -46,7 +46,7 @@ ok(estimateCostUsd({}, priced) === 0, "estimateCostUsd: no usage at all -> $0, n
 
 _resetModelPricingForTest();
 ok(modelPricing("acme/deployer-only") === undefined, "no deployer table: an id BUILT_IN doesn't name is undefined, never a guess");
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "no deployer table: BUILT_IN lookup behaves exactly as before this seam existed");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.125, "no deployer table: BUILT_IN lookup behaves exactly as before this seam existed");
 ok(deployerPricedModelIds().length === 0, "no deployer table: deployerPricedModelIds is empty");
 
 registerModelPricing({
@@ -60,7 +60,7 @@ ok(deployerPricedModelIds().join() === [BUILT_IN_ID, "acme/deployer-only"].join(
 
 registerModelPricing({ "acme/other": { inPerMtok: 4, outPerMtok: 5 } });
 ok(modelPricing("acme/deployer-only") === undefined, "deployer table: a later register REPLACES the previous table, never merges into it");
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "deployer table: dropping an override restores the BUILT_IN rate for that id");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.125, "deployer table: dropping an override restores the BUILT_IN rate for that id");
 
 registerModelPricing({ "acme/one": { inPerMtok: 1, outPerMtok: 1 }, "acme/two": { inPerMtok: 1, outPerMtok: 1 } });
 ok(builtInModelIds().length === 1 && builtInModelIds()[0] === BUILT_IN_ID, "builtInModelIds: the deployer table's extra ids are NOT folded in");

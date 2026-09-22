@@ -37,7 +37,7 @@ const flag = (name: string): string | undefined => {
 const has = (name: string): boolean => argv.includes(name);
 
 const N = Math.max(1, Number.parseInt(flag("--n") ?? "5", 10));
-const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
+const MODEL = flag("--model") ?? "openai/gpt-6-luna";
 const EFFORT = flag("--effort") ?? "high";
 const MODE = flag("--mode") ?? "coalesced";
 const MODES = ["coalesced", "ambient-only", "warranted-ambient", "addressed-only"] as const;
@@ -80,7 +80,7 @@ const PRIOR_WARM = PRIOR === "warm";
 if (PRIOR_MOVED && MODE !== "warranted-ambient") throw new Error(`--prior ${PRIOR} needs --mode warranted-ambient: no other mode renders the agent's own earlier post, so the flag would change nothing`);
 if (PRIOR_MOVED && BACKSCROLL_OUT) throw new Error(`--prior ${PRIOR} cannot combine with --backscroll ${BACKSCROLL}: the OUT arms hide the referenced post, and this axis compares two forms of a post the agent CAN see`);
 
-const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-5.6-luna";
+const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-6-luna";
 const NO_JUDGE = has("--no-judge");
 const FLOOR_REPEATS = Math.max(1, Number.parseInt(flag("--floor-repeats") ?? "1", 10));
 

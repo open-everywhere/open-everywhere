@@ -36,7 +36,7 @@ if (JUDGE_KIND !== "fabrication" && JUDGE_KIND !== "binding") {
   throw new Error(`--judge must be 'fabrication' or 'binding', got "${JUDGE_KIND}"`);
 }
 const REPEATS = Math.max(1, Number.parseInt(flag("--repeats") ?? "5", 10));
-const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-5.6-luna";
+const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-6-luna";
 const TEMPERATURE_FLAG = flag("--temperature") ?? (JUDGE_KIND === "binding" ? "none" : "0");
 const TEMPERATURE: number | null = TEMPERATURE_FLAG === "none" ? null : Number.parseFloat(TEMPERATURE_FLAG);
 const SYSTEM_FILE = flag("--system-file");

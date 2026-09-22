@@ -371,8 +371,8 @@ async function main(): Promise<void> {
   const SYSTEM_KIND = flag("--system") ?? preset?.system ?? "neutral";
   const RENDER = flag("--render") ?? preset?.render ?? "envelope";
   const TOOLS = flag("--tools") ?? preset?.tools ?? "none";
-  const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
-  const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-5.6-luna";
+  const MODEL = flag("--model") ?? "openai/gpt-6-luna";
+  const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-6-luna";
   const EFFORT = flag("--effort") ?? "high";
   const N = Math.max(1, Number.parseInt(flag("--n") ?? "6", 10));
   const NO_JUDGE = has("--no-judge");
