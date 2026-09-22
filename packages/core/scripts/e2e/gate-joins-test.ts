@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuditWireEntry } from "./audit-read.js";
 import type { HaltLiveEvidenceKey } from "./scenarios.js";
@@ -1051,7 +1052,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
     const withSkip = seedAckLatchDetail({ ts: SETTLEMENT_Re, text: SETTLEMENT_TEXT }, [{ ts: INTERIM_Re, text: INTERIM_TEXT }]);
     ok(withSkip.includes(`latched reply ${SETTLEMENT_Re} as the seed ack`), `🔴 OPE-2044: the log NAMES the reply the latch took (got ${withSkip})`);
-    ok(withSkip.includes(INTERIM_Re), `…and the ts of the reply the filler skip stepped over (got ${withSkip})`);
+    ok(withSkip.includes(INTERIM_Re), `…and the ts of the reply the latch stood over (got ${withSkip})`);
     ok(withSkip.includes(INTERIM_TEXT.slice(0, 80)) && !withSkip.includes(INTERIM_TEXT), `…with that reply's FIRST 80 CHARACTERS and no more of it (got ${withSkip})`);
     ok(withSkip.includes("stepped over 1 earlier bot reply"), `…and it counts them, so two skipped replies read as two (got ${withSkip})`);
     const noSkip = seedAckLatchDetail({ ts: INTERIM_Re, text: INTERIM_TEXT }, []);
@@ -1219,6 +1220,94 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     const inSeat = delegationJoinForSession([started, settled], "sess-2");
     ok(inSeat.started === 0 && inSeat.detail.includes("in-seat"), "🔴 NEGATIVE: another session's rows are not this one's, and a turn with no dispatch reads as the seat answering in-seat — which this leg REPORTS and never fails on");
   }
+}
+
+{
+  const scenarioSource = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+
+  const replyWaitLine = /^const REPLY_WAIT = ([\d_]+);/m.exec(scenarioSource);
+  ok(replyWaitLine !== null, "🔴 OPE-2047: `REPLY_WAIT` is readable from scenarios.ts, so the arithmetic below is the leg's own bound");
+  const REPLY_WAIT_MS = Number(String(replyWaitLine?.[1]).replace(/_/g, ""));
+  ok(Number.isFinite(REPLY_WAIT_MS) && REPLY_WAIT_MS > 0, `…and it parses to a positive number of milliseconds (got ${REPLY_WAIT_MS})`);
+
+  const INTERIM_Rf_HANDOFF = "I've handed off the memory update for the new current OPE121 code";
+  const INTERIM_Rf_PROMISE = "I'll report the verified sto";
+  const SETTLEMENT_Rf = "Recorded and verified the new current team fact: the OPE121 canary code is exactly obsidian-64988";
+
+  process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
+  const { isFillerAck: fillerAckRf } = await import("./scenarios.js");
+  ok(fillerAckRf(INTERIM_Rf_HANDOFF), "🔴 OPE-2047 PREMISE: a live run's interim ack reads as FILLER, so the old `skip` stepped over it and the latch went on waiting");
+  ok(fillerAckRf(INTERIM_Rf_PROMISE), "…on its second branch too — the promise to report back, which is the shape a delegating seat posts");
+  ok(
+    !fillerAckRf(SETTLEMENT_Rf),
+    "🔴 OPE-2047 PREMISE CONTROL: the SETTLEMENT does not read as filler — so under the old skip the latch could stop at nothing earlier than the settlement post itself",
+  );
+
+  const SEED_POST_MS = Date.parse("2026-02-02T15:11:13.943Z");
+  const INTERIM_MS = Date.parse("2026-02-02T15:11:38.473Z");
+  const SETTLEMENT_MS = Date.parse("2026-02-02T15:14:19.826Z");
+  const PERSIST_MS = Date.parse("2026-02-02T15:14:19.702Z");
+  ok(PERSIST_MS < SETTLEMENT_MS, "the worker persists BEFORE it posts (OPE-1915) — the order the seed gate's ceiling depends on");
+  ok(
+    SETTLEMENT_MS - SEED_POST_MS > REPLY_WAIT_MS,
+    `🔴 OPE-2047: seed post → settlement is ${SETTLEMENT_MS - SEED_POST_MS}ms, MORE than REPLY_WAIT's ${REPLY_WAIT_MS}ms — the measured red, and the reason no reply latch may carry the delegation's wait (§18: 19.9 s to 733.0 s inside one day)`,
+  );
+  ok(
+    INTERIM_MS - SEED_POST_MS < REPLY_WAIT_MS,
+    `🔴 OPE-2047: the seat's FIRST reply lands ${INTERIM_MS - SEED_POST_MS}ms after the seed post, inside REPLY_WAIT — so a latch with no skip returns instead of expiring`,
+  );
+  ok(
+    SETTLEMENT_MS - INTERIM_MS < REPLY_WAIT_MS,
+    `🔴 OPE-2047: measured from that first reply the settlement is ${SETTLEMENT_MS - INTERIM_MS}ms away, inside REPLY_WAIT's ${REPLY_WAIT_MS}ms — the seed phase does NOT fail at +180 s on the shape that red a live run`,
+  );
+  const WORST_CASE_MS = 733_000;
+  ok(
+    WORST_CASE_MS > REPLY_WAIT_MS,
+    `🔴 OPE-2047 RESIDUAL: the slowest delegation §18 measured (${WORST_CASE_MS}ms) is still outside REPLY_WAIT — this pin asserts the MEASURED shape passes, never that every shape does`,
+  );
+
+  const seedLatch = /const seedAck = await a\.awaitThreadReply\(seedTs, \{([^}]*)\}\);/.exec(scenarioSource);
+  ok(seedLatch !== null, "🔴 OPE-2047: S-MEM-READ's seed latch is findable in scenarios.ts — a rename must red here rather than leave this section pinning nothing");
+  const seedLatchOpts = String(seedLatch?.[1]);
+  ok(
+    !/\bskip\s*:/.test(seedLatchOpts),
+    `🔴 OPE-2047: the SEED latch carries NO skip, so it returns the seat's FIRST reply and never waits out the delegation (got \`${seedLatchOpts.trim()}\`)`,
+  );
+  ok(/\btimeoutMs:\s*REPLY_WAIT\b/.test(seedLatchOpts), `…and it still bounds the FIRST reply by REPLY_WAIT, which is the wait it does own (got \`${seedLatchOpts.trim()}\`)`);
+  const recallLatch = /const firstReply = await a\.awaitThreadReply\(askTs, \{([^}]*)\}\);/.exec(scenarioSource);
+  ok(recallLatch !== null, "🔴 OPE-2047 NEGATIVE CONTROL: leg 2's recall latch is findable too");
+  ok(
+    /\bskip\s*:/.test(String(recallLatch?.[1])),
+    `🔴 OPE-2047 NEGATIVE CONTROL: the RECALL latch KEEPS its filler skip — the seed latch is the only one that changed, and this is what proves the test can see a skip when there is one (got \`${String(recallLatch?.[1]).trim()}\`)`,
+  );
+
+  ok(
+    !readsAsClarifyingQuestion(`${INTERIM_Rf_HANDOFF}. ${INTERIM_Rf_PROMISE}`),
+    "🔴 OPE-2047: an interim hand-off never reads as a clarifying question — so grading the LATCHED reply on a delegated turn would silently lose the OPE-2028 diagnosis",
+  );
+  const ASKED_Rd =
+    "This conflicts with your immediately previous instruction to permanently erase every stored OPE121 canary-code fact. Should I keep the erasure in force, or explicitly supersede it and store this new fact?";
+  ok(readsAsClarifyingQuestion(ASKED_Rd), "…while the seat's real clarifying question still reads as one, wherever in the thread it stands");
+  ok(
+    /const asked = readsAsClarifyingQuestion\(answerText\);/.test(scenarioSource),
+    "🔴 OPE-2047: the leg grades `answerText` — the reply the seat ANSWERED with — never the latched reply unconditionally",
+  );
+  ok(fillerAckRf("On it."), "🔴 OPE-2047: a bare opening ack IS filler — the shape the old skip carried the latch past on an INLINE turn too");
+  ok(
+    !readsAsClarifyingQuestion("On it."),
+    "…and it never reads as a clarifying question, so grading the FIRST reply would lose the OPE-2028 diagnosis on exactly that turn",
+  );
+  ok(
+    /botReplies\[botReplies\.length - 1\]/.test(scenarioSource),
+    "🔴 OPE-2047: off the settled delegated path the leg takes the NEWEST bot reply as the seat's answer, never the latched first one",
+  );
+
+  const noSkipLine = seedAckLatchDetail({ ts: "1770045098.426000", text: INTERIM_Rf_HANDOFF }, []);
+  ok(noSkipLine.includes("stepped over NO earlier bot reply"), `🔴 OPE-2047: the ack-latch line is KEPT and says nothing was stepped over (got ${noSkipLine})`);
+  ok(
+    !noSkipLine.includes("filler skip"),
+    `…and it no longer credits a FILLER SKIP the seed latch does not carry — a line that named one would send the next board reader to \`FILLER_ACK_RE\` (got ${noSkipLine})`,
+  );
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

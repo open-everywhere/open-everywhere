@@ -1469,7 +1469,7 @@ export const SCENARIOS: readonly Scenario[] = [
             `that erasure covered the codes stored before it, and this new code is the current one. Store it.`,
         ),
       );
-      const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT });
       const ackText = seedAck.text.replace(/\s+/g, " ").trim();
       try {
         const steppedOver = (await a.replies(seedTs))
@@ -1478,7 +1478,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log(`seed ack latch: ${seedAckLatchDetail({ ts: seedAck.ts, text: seedAck.text }, steppedOver)}`);
       } catch (err) {
         ctx.log(
-          `seed ack latch: latched reply ${seedAck.ts} as the seed ack; the thread could not be re-read to name what the filler skip stepped over (${String(err instanceof Error ? err.message : err)})`,
+          `seed ack latch: latched reply ${seedAck.ts} as the seed ack; the thread could not be re-read to name any earlier bot reply the latch stood over (${String(err instanceof Error ? err.message : err)})`,
         );
       }
       const SEED_WRITE_ACTIONS = [
@@ -1575,16 +1575,33 @@ export const SCENARIOS: readonly Scenario[] = [
         seedRead?.detail ?? (seedDelegation === undefined ? "no audit read completed" : `the write gate never ran — ${seedDelegation.detail}`);
       ctx.log(`seed evidence: ${seedEvidence}`);
       const noSettlement = seedDelegation !== undefined && (seedDelegation.kind === "unsettled" || seedDelegation.kind === "unposted");
-      const asked = readsAsClarifyingQuestion(ackText);
+      const settlementPostId = seedDelegation?.kind === "settled" ? seedDelegation.post?.detail?.["id"] : undefined;
+      let answerText = ackText;
+      try {
+        const botReplies = (await a.replies(seedTs)).filter((m) => a.isBotReply(m) && tsAfter(m.ts, seedTs));
+        const answerMsg = typeof settlementPostId === "string" ? botReplies.find((m) => m.ts === settlementPostId) : botReplies[botReplies.length - 1];
+        if (answerMsg === undefined) {
+          ctx.log(
+            `seed: ${
+              typeof settlementPostId === "string" ? `the settlement post ${settlementPostId} is not on the thread's own page` : "the thread's page carries no bot reply at all"
+            }, so the clarifying-question read stays on the latched ack (OPE-2047)`,
+          );
+        } else {
+          answerText = answerMsg.text.replace(/\s+/g, " ").trim();
+        }
+      } catch (err) {
+        ctx.log(`seed: the thread could not be re-read for the seat's answer, so the clarifying-question read stays on the latched ack (${String(err instanceof Error ? err.message : err)})`);
+      }
+      const asked = readsAsClarifyingQuestion(answerText);
       if (seedWrite !== undefined && asked) {
-        ctx.log(`seed: the canary WAS stored and the ack still reads as a clarifying question — the fixture wording is not yet unambiguous (OPE-2028): "${ackText.slice(0, 200)}"`);
+        ctx.log(`seed: the canary WAS stored and the seat's answer still reads as a clarifying question — the fixture wording is not yet unambiguous (OPE-2028): "${answerText.slice(0, 200)}"`);
       }
       ctx.gate(
         seedWrite !== undefined,
         noSettlement
           ? `seed: the seat DELEGATED the remember and this leg saw NO SETTLEMENT within ${REPLY_WAIT / 1000}s — ${seedEvidence}. The interim ack is not the seed's ack on a delegated turn (OPE-2036), so this red says the WORKER did not report, never that the canary was not stored — ack was: "${ackText.slice(0, 160)}"`
           : asked
-            ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedEvidence} — it asked: "${ackText.slice(0, 240)}"`
+            ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedEvidence} — it asked: "${answerText.slice(0, 240)}"`
             : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028), and on a DELEGATED turn the row standing before the worker's settlement post (OPE-2036). ${seedEvidence} — ack was: "${ackText.slice(0, 160)}"`,
       );
 

@@ -816,7 +816,7 @@ export function seedSettlementRead(
     detail:
       `the seed turn DELEGATED the remember to ${dispatched.length} worker(s) (${dispatched.join(", ")}), every one settled, and the ` +
       `SETTLEMENT POST ${dstr(post, "id") ?? "(no id)"} stands at or after the newest settlement on seed wake ${seedWakeId}'s lineage` +
-      `${dstr(post, "id") === ackId ? " — and that post IS the reply the caller latched as the ack (OPE-2044), so any earlier reply the filler skip stepped over is named on the leg's own ack-latch line" : ""}` +
+      `${dstr(post, "id") === ackId ? " — and that post IS the reply the caller latched as the ack (OPE-2044), so any earlier reply the latch stood over is named on the leg's own ack-latch line" : ""}` +
       `${roundTripMs === undefined ? "" : ` — round trip ${roundTripMs}ms from the seed turn's start`}` +
       `; ${claimsWithheld} withheld durability claim(s) on this lineage, which is the EXPECTED shape for the interim ack${alsoSaid}`,
   };
@@ -835,11 +835,11 @@ function firstChars(text: string, max: number): string {
 export function seedAckLatchDetail(latched: LatchedReply, steppedOver: readonly LatchedReply[]): string {
   const took = `latched reply ${latched.ts} as the seed ack ("${firstChars(latched.text, 80)}")`;
   if (steppedOver.length === 0) {
-    return `${took}; the filler skip stepped over NO earlier bot reply, so the latch took the seat's FIRST reply`;
+    return `${took}; the latch stepped over NO earlier bot reply, so it took the seat's FIRST reply`;
   }
   const skipped = steppedOver.map((m) => `${m.ts} ("${firstChars(m.text, 80)}")`).join("; ");
   return (
-    `${took}; the filler skip stepped over ${steppedOver.length} earlier bot reply(ies): ${skipped}` +
+    `${took}; the latch stepped over ${steppedOver.length} earlier bot reply(ies): ${skipped}` +
     " — so the latched ack may itself be the SETTLEMENT post (OPE-2044), and §18 places it rather than excluding it by name"
   );
 }
