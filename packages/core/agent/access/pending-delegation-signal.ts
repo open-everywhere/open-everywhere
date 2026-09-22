@@ -31,8 +31,6 @@ const MAX_PENDING = 16;
 
 export const DELEGATION_PENDING_REFUSAL_REASON = "delegation-pending";
 
-export const BRIDGE_WAKE_HELD_AUDIT_ACTION = "turn.direct_mention_bridge_wake_held";
-
 export const SETTLEMENT_REPORT_POSTED_ACTION = "delegation.settlement_report_posted";
 
 export const SETTLEMENT_REPORT_SKIPPED_ACTION = "delegation.settlement_report_skipped";

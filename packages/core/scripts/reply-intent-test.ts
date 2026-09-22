@@ -266,7 +266,6 @@ async function ambientWake(): Promise<string> {
 }
 
 {
-  const { notePendingDelegation } = await import("../agent/access/pending-delegation-signal.js");
   const { replyCarriesSubstance } = await import("../agent/channels/reply-post.js");
 
   ok(replyCarriesSubstance("144") === true, "§4/PREDICATE: `144` carries substance — a right answer is routinely three characters");
@@ -283,103 +282,6 @@ async function ambientWake(): Promise<string> {
     "🔴 §4/PREDICATE: a POINTER reads as substantive — the host cannot grade whether prose answers the question. The intent below is what separates a pointer from the answer",
   );
 
-  function newAddressedSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
-    const c = new ContextContainer();
-    c.set(SessionKey, {
-      sessionId: "reply-intent-test",
-      auth: {
-        current: {
-          attributes: { oe_platform: "linear", oe_addressing: "direct-mention", oe_wake_id: turnWake, oe_window_token: TOKEN, issue_id: ISSUE },
-          principalId: "U1",
-          principalType: "linear-user",
-        },
-        initiator: null,
-      },
-      turn: { id: turnId },
-      parent: undefined,
-    });
-    return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
-  }
-
-  const completeWithProse = (text: string): Promise<void> =>
-    unifiedChannel.adapter["message.completed"]!(
-      { finishReason: "stop", message: text },
-      { session: { continuation: { token: `unified:${TOKEN}` } }, state: {} },
-    );
-
-  {
-    const w = await mentionWake();
-    const before = dispatched.length;
-    await newAddressedSession(w, "turn_1911a")(() => completeWithProse("The answer is 144."));
-    ok(dispatched.length === before + 1, `§4a REACHABILITY: the bridge really delivered the terminal prose to the arm — expected ${before + 1}, got ${dispatched.length}`);
-    ok(dispatched[before]!.text.includes("144"), "§4a: …and it delivered the model's own text");
-    ok(
-      dispatched[before]!.intent?.terminal === true,
-      "🔴 §4a: a bridge post with nothing owed is TERMINAL — it IS the answer, so the Linear arm may end the session on it. Pre-fix this was `undefined`, which read as terminal by accident rather than by decision",
-    );
-  }
-
-  {
-    const w = await mentionWake();
-    const before = dispatched.length;
-    await newAddressedSession(w, "turn_1911b")(async () => {
-      notePendingDelegation("turn_1911b", "task_1911b", w);
-      await completeWithProse("I've asked a worker for the figure — answered in the comments shortly.");
-    });
-    ok(dispatched.length === before + 1, "§4b precondition: the hand-off prose still POSTS — the fix must never delete the model's text");
-    ok(
-      dispatched[before]!.intent?.terminal === false,
-      "🔴 §4b THE FIX: the bridge hands the arm a NON-TERMINAL intent while a dispatched worker still owes this wake, so the Linear agent session stays OPEN for the answer. Pre-fix the intent was absent, `activityTypeFor` read that as `response`, and the worker's real answer hit `Entity not found: AgentSession`",
-    );
-    ok(
-      dispatched[before]!.intent?.terminal !== dispatched[before - 1]!.intent?.terminal,
-      "🔴 §4b NEGATIVE CONTROL: the owing and the not-owing bridge posts must NOT carry the same intent. Without this the fix could be a hard-coded `terminal: false` on every bridge post, which would stop every real bridged answer from ever completing a session",
-    );
-  }
-
-  {
-    const w = await mentionWake();
-    const before = dispatched.length;
-    await newAddressedSession(w, "turn_1911c")(() => completeWithProse("..."));
-    ok(
-      dispatched.length === before,
-      `🔴 §4c THE FIX: a substance-free stub is NOT bridged — it reaches no arm. Pre-fix it posted and then marked the wake answered, spending the room's one answer on a post that answers nothing (ship #216 J-ENGAGED-slack, route=bridge chars=3). Expected ${before} dispatches, got ${dispatched.length}`,
-    );
-    ok(
-      (await store.getUnifiedWakeRecord(ORG, w))?.answeredAt === undefined,
-      "🔴 §4c: …and the wake stays ANSWERABLE, which is what lets the auto-redrive's corrective turn deliver a real answer into the same conversation",
-    );
-  }
-
-  {
-    const { noteRoutineRunPermissionRefusal } = await import("../agent/approvals/card-signal.js");
-    const w = await mentionWake();
-    const before = dispatched.length;
-    await newAddressedSession(w, "turn_1911e")(async () => {
-      noteRoutineRunPermissionRefusal({ permission: "read the billing connector", card: null, cardPosted: false, cardCapped: false, cardKnown: true });
-      await completeWithProse("...");
-    });
-    ok(
-      dispatched.length === before + 1,
-      `🔴 §4e: a stub turn that HOLDS a run-refusal block still bridges — the floor reads the body that would post, not the prose alone. Without this the host's "could not do X" line is swallowed with the stub and the fire's owner never hears it (expected ${before + 1}, got ${dispatched.length})`,
-    );
-    ok(
-      dispatched[before]!.text.includes("read the billing connector"),
-      "🔴 §4e: …and the refusal the gate PEEKED at is really in the posted body, so the peek left the turn-scoped ledger for the post to consume",
-    );
-  }
-
-  {
-    const w = await mentionWake();
-    const before = dispatched.length;
-    await newAddressedSession(w, "turn_1911d")(() => completeWithProse("144"));
-    ok(dispatched.length === before + 1, "🔴 §4d NEGATIVE CONTROL: a THREE-CHARACTER real answer still bridges. The floor is substance, never length — a length bar would strike this");
-    ok(dispatched[before]!.text === "144", "§4d: …byte-for-byte the model's own answer");
-    ok(
-      typeof (await store.getUnifiedWakeRecord(ORG, w))?.answeredAt === "string",
-      "🔴 §4d NEGATIVE CONTROL: …and it MARKS the wake answered exactly as before. The floor is one condition on the bridge, not the removal of it",
-    );
-  }
 }
 
 console.log(`✓ reply-intent-test: ${passed} assertions passed`);

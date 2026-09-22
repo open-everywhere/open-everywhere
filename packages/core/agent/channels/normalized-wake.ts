@@ -16,6 +16,8 @@ export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 
+export const REDRIVE_TRIGGER_ID_PREFIX = "redrive-";
+
 export const END_TURN_WITH_SENTINEL_INSTRUCTION = `Now end the turn: output exactly ${NO_REPLY_SENTINEL} and nothing else.`;
 
 export const PREFER_NO_REPLY_TOOL =

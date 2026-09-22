@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -33,9 +33,8 @@ import {
   resolveAnswerableReplyTarget,
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
-  shouldBridgeAddressedProse,
-  bridgeBlockingRefusal,
-  BRIDGE_BLOCKING_REFUSALS,
+  proseBlockingRefusal,
+  PROSE_BLOCKING_REFUSALS,
   singleWindowMentionPolicy,
   WAKE_TARGET_TTL_MS,
   OE_PLATFORM_ATTR,
@@ -54,6 +53,7 @@ import { DELEGATION_PENDING_REFUSAL_REASON } from "@open-everywhere/core/agent/a
 import unifiedChannel, { divertToUnifiedWindow, dispatchApprovalDecisionWake, answeredSameContainerThisTurn, answeredContainerVia, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { markWakeRepliedThisTurn } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
+import type { ReplyAudit } from "@open-everywhere/core/agent/channels/reply-post.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { claimRuntimeRotation } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import {
@@ -1443,12 +1443,10 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
     const row = rows.find((r) => r.detail?.wakeId === received[0].target.wakeId && r.detail?.sessionId === "sess-choke");
     ok(!!row, "choke point: postUnifiedReply(audit) writes a reply.post row joined by wakeId + sessionId");
     ok(row?.detail?.route === "tool" && row?.detail?.platform === "slack" && row?.detail?.id === "ts-1" && row?.detail?.chars === 14, "choke point: reply.post detail carries route/platform/id/chars (taint-clean)");
-    await postUnifiedReply(slackOrigin!, "bridged prose", deps, {
-      org: "default", platform: "unified", workspace: "dom-win", surface: "oe-dom:dom-win",
-      sessionId: "sess-bridge", wakeId: received[0].target.wakeId, route: "bridge",
-    });
-    const bridgeRow = (await store.readAudit({ org: "default", action: "reply.post" })).find((r) => r.detail?.sessionId === "sess-bridge");
-    ok(bridgeRow?.detail?.route === "bridge", "choke point: the addressed-mention bridge writes reply.post with route:\"bridge\" (no separate prose_delivered row)");
+    const retiredRoute: ReplyAudit["route"] = "bridge";
+    void retiredRoute;
+    const liveRoutes: ReplyAudit["route"][] = ["tool", "terminal"];
+    ok(liveRoutes.length === 2, "OPE-1982: the reply route vocabulary is exactly `tool` + `terminal`");
   }
 
   ok((await resolveUnifiedWakeTarget(store, "default", "no-such-wake")) === null, "an unknown wakeId resolves null (never guessed)");
@@ -1575,27 +1573,49 @@ overrideSettingsForTest({ window: { topology: false } });
   ok(bAnchor.threadTs === "1768504411.235000", "bindSlack threadTs falls back to oe_reply_anchor on a top-level-mention divert (approval cards thread under the mention)");
   const bThreaded = bindFrom(mk("channel:unified", { oe_platform: "slack", team_id: "T_WIN", channel_id: "C_WINA", channel_type: "channel", is_private: "false", is_ext_shared: "false", trust_checked: "true", thread_ts: "111.222", oe_reply_anchor: "999.888" }));
   ok(bThreaded.threadTs === "111.222", "bindSlack threadTs prefers a REAL thread_ts over the anchor (a threaded trigger keeps its own thread)");
-  ok(shouldBridgeAddressedProse("direct-mention", false, undefined) === true, "bridge gate: an addressed direct-mention that did NOT call reply IS bridged");
-  ok(shouldBridgeAddressedProse("direct-mention", true, undefined) === false, "bridge gate: a direct-mention that ALREADY replied is NOT bridged (no double-post)");
-  ok(shouldBridgeAddressedProse("channel-watch", false, undefined) === false, "bridge gate: an ambient channel-watch turn is NEVER bridged — prose stays hard-dropped (message-tool-only preserved)");
-  ok(shouldBridgeAddressedProse(undefined, false, undefined) === false, "bridge gate: an unstamped (non-single-window / non-addressed) turn is NEVER bridged");
-  ok(shouldBridgeAddressedProse("direct-mention", false, "stale-conversation") === false, "🔴 bridge gate: an addressed direct-mention whose reply the host REFUSED is NOT bridged — the bridge must not post what the refusal refused");
-  ok(shouldBridgeAddressedProse("direct-mention", false, "should-be-edit") === false, "🔴 bridge gate: …and the same for a should-be-edit refusal, where a bridge post is the second message the policy refused");
-  ok(shouldBridgeAddressedProse.length === 3, "OPE-842: the bridge gate takes exactly THREE parameters, none optional — addressing, already-replied, and the blocking refusal");
-  ok(bridgeBlockingRefusal([]) === undefined, "bridge refusals: a turn that drew NO refusal blocks nothing — the ordinary bridge path is untouched");
-  ok(bridgeBlockingRefusal([REPLY_STALE_REFUSAL_REASON]) === REPLY_STALE_REFUSAL_REASON, "bridge refusals: `stale-conversation` BLOCKS — the host said the room moved on");
-  ok(bridgeBlockingRefusal([REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "bridge refusals: `should-be-edit` BLOCKS — the host said fold, not post a second message");
-  ok(bridgeBlockingRefusal([WAKE_DECLINED_REFUSAL_REASON]) === WAKE_DECLINED_REFUSAL_REASON, "bridge refusals: `declined-this-turn` BLOCKS — the turn already chose silence for this wake");
-  ok(bridgeBlockingRefusal([WAKE_DONE_REFUSAL_REASON]) === WAKE_DONE_REFUSAL_REASON, "bridge refusals: `answered-this-turn` BLOCKS — a bridge post would be the duplicate that guard exists to stop");
-  ok(bridgeBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON]) === undefined, "🔴 bridge refusals: `delegation-pending` does NOT block — OPE-701 decided that case the other way (the prose posts, only the wake MARK is held)");
-  ok(bridgeBlockingRefusal([TASK_WAKE_UNREAD_REFUSAL_REASON]) === undefined, "bridge refusals: `task-wake-unread` does NOT block — it objects to the address the model authored, and the bridge authors none");
-  ok(bridgeBlockingRefusal(["mismatch"]) === undefined && bridgeBlockingRefusal(["expired"]) === undefined && bridgeBlockingRefusal(["answered"]) === undefined, "bridge refusals: the wake-fence verdicts do NOT block — same reason, the bridge posts to the host-resolved target of its own wake");
-  ok(bridgeBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON, REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "bridge refusals: a mixed turn reports the BLOCKING reason, not the first one it drew");
-  ok(BRIDGE_BLOCKING_REFUSALS.includes(REPLY_STALE_REFUSAL_REASON), "🔴 reason pin: the freshness gate's constant is in the blocking list — a rename must not silently unblock the bridge");
-  ok(BRIDGE_BLOCKING_REFUSALS.includes(REPLY_FOLD_REFUSAL_REASON), "🔴 reason pin: the should-be-edit constant is in the blocking list");
-  ok(BRIDGE_BLOCKING_REFUSALS.includes(WAKE_DECLINED_REFUSAL_REASON), "🔴 reason pin: the no_reply-declined constant is in the blocking list");
-  ok(BRIDGE_BLOCKING_REFUSALS.includes(WAKE_DONE_REFUSAL_REASON), "🔴 reason pin: the answered-this-turn constant is in the blocking list");
-  ok(!BRIDGE_BLOCKING_REFUSALS.includes(DELEGATION_PENDING_REFUSAL_REASON), "🔴 reason pin: the delegation-pending constant is NOT in the blocking list — OPE-701's ruling stands");
+  {
+    const productRoots = ["packages/core/agent", "packages/adapters/agent", "packages/providers", "agent"];
+    const offenders: string[] = [];
+    const scanned: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = `${dir}/${e.name}`;
+        if (e.isDirectory()) {
+          if (e.name === "node_modules" || e.name === "generated" || e.name === "dist") continue;
+          walk(full);
+        } else if (e.name.endsWith(".ts")) {
+          const body = readFileSync(full, "utf8");
+          scanned.push(full);
+          if (/route:\s*"bridge"/.test(body)) offenders.push(full);
+        }
+      }
+    };
+    for (const root of productRoots) {
+      try {
+        walk(root);
+      } catch {
+      }
+    }
+    ok(scanned.length > 0, `🔴 OPE-1982/REACH: the route scan read files at all (saw ${scanned.length}). A zero-reach scan makes the assertion below vacuous`);
+    ok(scanned.includes("packages/core/agent/channels/reply-post.ts"), "🔴 OPE-1982/REACH: …and it reached the module that DECLARES the route union, so the roots really cover the product tree");
+    ok(scanned.some((f) => f.startsWith("packages/providers/")), "🔴 OPE-1982/REACH: …and the provider bundles too");
+    ok(offenders.length === 0, `🔴 OPE-1982: no product module writes \`route: "bridge"\` — the addressed-prose bridge is deleted. Saw ${JSON.stringify(offenders)}`);
+    ok(/route:\s*"bridge"/.test('route: "bridge"'), "NEGATIVE CONTROL: the scan's own pattern matches the retired literal");
+  }
+  ok(proseBlockingRefusal([]) === undefined, "prose refusals: a turn that drew NO refusal blocks nothing — an ordinary drop reads as an ordinary drop");
+  ok(proseBlockingRefusal([REPLY_STALE_REFUSAL_REASON]) === REPLY_STALE_REFUSAL_REASON, "prose refusals: `stale-conversation` BLOCKS — the host said the room moved on");
+  ok(proseBlockingRefusal([REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "prose refusals: `should-be-edit` BLOCKS — the host said fold, not post a second message");
+  ok(proseBlockingRefusal([WAKE_DECLINED_REFUSAL_REASON]) === WAKE_DECLINED_REFUSAL_REASON, "prose refusals: `declined-this-turn` BLOCKS — the turn already chose silence for this wake");
+  ok(proseBlockingRefusal([WAKE_DONE_REFUSAL_REASON]) === WAKE_DONE_REFUSAL_REASON, "prose refusals: `answered-this-turn` BLOCKS — a further post is the duplicate that guard exists to stop");
+  ok(proseBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON]) === undefined, "🔴 prose refusals: `delegation-pending` does NOT block — the turn owes its own worker's report, so a nudge back to the tool is right rather than contradictory");
+  ok(proseBlockingRefusal([TASK_WAKE_UNREAD_REFUSAL_REASON]) === undefined, "prose refusals: `task-wake-unread` does NOT block — it objects to the address the model authored, and a dropped turn authored none");
+  ok(proseBlockingRefusal(["mismatch"]) === undefined && proseBlockingRefusal(["expired"]) === undefined && proseBlockingRefusal(["answered"]) === undefined, "prose refusals: the wake-fence verdicts do NOT block — same reason, they object to an address a drop never made");
+  ok(proseBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON, REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "prose refusals: a mixed turn reports the BLOCKING reason, not the first one it drew");
+  ok(PROSE_BLOCKING_REFUSALS.includes(REPLY_STALE_REFUSAL_REASON), "🔴 reason pin: the freshness gate's constant is in the blocking list — a rename must not silently re-arm the redrive");
+  ok(PROSE_BLOCKING_REFUSALS.includes(REPLY_FOLD_REFUSAL_REASON), "🔴 reason pin: the should-be-edit constant is in the blocking list");
+  ok(PROSE_BLOCKING_REFUSALS.includes(WAKE_DECLINED_REFUSAL_REASON), "🔴 reason pin: the no_reply-declined constant is in the blocking list");
+  ok(PROSE_BLOCKING_REFUSALS.includes(WAKE_DONE_REFUSAL_REASON), "🔴 reason pin: the answered-this-turn constant is in the blocking list");
+  ok(!PROSE_BLOCKING_REFUSALS.includes(DELEGATION_PENDING_REFUSAL_REASON), "🔴 reason pin: the delegation-pending constant is NOT in the blocking list — OPE-701's ruling stands");
   const pol = (sw: boolean, m: boolean, priv: boolean) => singleWindowMentionPolicy(sw, m, priv);
   ok(pol(true, true, true).suppressNative === true && pol(true, true, true).addressing === "direct-mention", "mention seam (sw=1,m=1,priv=1): native SUPPRESSED and the wake is addressed 'direct-mention' — the unified window owns the mention");
   ok(pol(true, true, false).suppressNative === false && pol(true, true, false).addressing === undefined, "mention seam (sw=1,m=1,priv=0): public/unknown-privacy repo — native KEPT, no addressed stamp (fail-closed on privacy)");

@@ -9,6 +9,7 @@ import {
   discordMentionWake,
   disposeLater,
   registerScript,
+  seatReply,
   rowsSinceCursor,
   sleep,
   waitFor,
@@ -48,7 +49,7 @@ test("a standing seat's own reply reaches its generation's tail ring", async () 
   const marker = randomBytes(4).toString("hex");
   const question = `tail probe ${marker}`;
   const answer = `answered ${marker}`;
-  disposeLater(registerScript({ parent: [{ say: answer }] }));
+  disposeLater(registerScript({ parent: [seatReply(answer, `it-tail-${marker}`), { say: "NO_REPLY" }] }));
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: question, messageId: `it-tail-${marker}` });
 

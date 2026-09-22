@@ -277,11 +277,9 @@ const A_REPLY_POST = "reply.post";
 const A_PROSE_DELIVERED = "turn.direct_mention_prose_delivered";
 const A_PROSE_DROPPED = "turn.supervisor_prose_dropped";
 const A_NO_REPLY = "unified.no_reply";
-const A_BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
-const A_BRIDGE_FAILED = "turn.direct_mention_bridge_post_failed";
 const A_REDRIVE = "unified.turn.redrive";
 const A_TASK_STARTED = "delegation.task_started";
-const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED, A_BRIDGE_UNRESOLVED, A_BRIDGE_FAILED]);
+const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED]);
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
 const dB = (e: AuditWireEntry, k: string): boolean | undefined => (typeof e.detail?.[k] === "boolean" ? (e.detail![k] as boolean) : undefined);
@@ -353,8 +351,7 @@ export function attributeOutcomes(injs: readonly Injection[], rows: readonly Aud
   const fifoInjs = sortedInjs.filter((inj) => !bridgeWakeIds.has(inj.wakeId));
   const completionOf = new Map<string, AuditWireEntry>();
 
-  const isBridgeRow = (c: AuditWireEntry): boolean =>
-    c.action === A_PROSE_DELIVERED || c.action === A_BRIDGE_UNRESOLVED || c.action === A_BRIDGE_FAILED;
+  const isBridgeRow = (c: AuditWireEntry): boolean => c.action === A_PROSE_DELIVERED;
 
   const fifoValid =
     completions.length === fifoInjs.length &&
@@ -450,9 +447,6 @@ export function outcomeFor(
       }
       return { outcome: "DROP", latencyMs: null, notes: `prose dropped (${dN(c, "chars")}c, replied=${replied})${replied ? " — after a real reply (harmless wrap-up?)" : ""}`, matched };
     }
-    case A_BRIDGE_UNRESOLVED:
-    case A_BRIDGE_FAILED:
-      return { outcome: "DROP", latencyMs: null, notes: `${c.action} — answer owed and lost (delivery failure, not model judgment)`, matched };
     case A_NO_REPLY: {
       const reason = dS(c, "reason") ?? "";
       return expected === "SILENT_OK"

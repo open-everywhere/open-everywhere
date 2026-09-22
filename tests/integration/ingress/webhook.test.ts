@@ -9,6 +9,7 @@ import {
   rowsSinceCursor,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
+  seatReply,
   waitFor,
   webhookDeliveryPost,
 } from "../harness";
@@ -18,7 +19,7 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
   const nonce = randomBytes(6).toString("hex");
   const deliveryId = `it-fire-${nonce}`;
   const replyText = `oe-webhook-it-ok ${nonce}`;
-  const handle = disposeLater(registerScript({ parent: [{ say: replyText }] }));
+  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, `webhook-it-${nonce}`), { say: "NO_REPLY" }] }));
 
   const cursor = await auditCursor();
   const res = await webhookDeliveryPost({ note: nonce }, { deliveryId });
@@ -43,7 +44,7 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
   expect(reply.detail?.platform).toBe("slack");
   expect(reply.detail?.chars).toBe(replyText.length);
 
-  expect(reply.detail?.route).toBe("bridge");
+  expect(reply.detail?.route).toBe("tool");
   expect(reply.detail).not.toHaveProperty("creatorId");
 });
 

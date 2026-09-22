@@ -119,7 +119,7 @@ function unifiedAuditFor(turnId: string, answeredWake: string, deliveryWake: str
 }
 
 function bridgeAuditFor(turnId: string, answeredWake: string): ReplyAudit {
-  return { org: ORG, platform: "unified", workspace: "eng", surface: "win:eng:slack", sessionId: "reply-provenance-test", wakeId: answeredWake, turnId, route: "bridge" };
+  return { org: ORG, platform: "unified", workspace: "eng", surface: "win:eng:slack", sessionId: "reply-provenance-test", wakeId: answeredWake, turnId, route: "tool" };
 }
 
 function ctxFor(turnId: string, channelId: string, extraAttributes: Record<string, string> = {}): BindableContext {

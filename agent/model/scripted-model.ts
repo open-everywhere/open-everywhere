@@ -99,6 +99,7 @@ export interface RecordedRequest {
   readonly toolResults: readonly RecordedToolResult[];
   readonly messages: readonly { readonly role: string; readonly text: string }[];
   readonly fault?: string;
+  readonly redriveSilence?: boolean;
 }
 
 export function nextScriptedRequestSequence(): number {
@@ -127,6 +128,7 @@ export interface ScriptedEntry {
   readonly resolves: ResolveObservation[];
   readonly baselines: Record<string, number>;
   readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
+  readonly firstCallWakeByRole: Partial<Record<ScriptedRole, string>>;
   readonly registeredAt: string;
   readonly epoch: number;
   readonly seq: number;
@@ -298,6 +300,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     resolves: [],
     baselines: {},
     firstCallTurnByRole: {},
+    firstCallWakeByRole: {},
     registeredAt: callerFrame(),
     epoch: scriptedEpoch(),
     seq: nextRegistrationSeq(),

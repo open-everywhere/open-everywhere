@@ -10,7 +10,9 @@ import {
   discordMentionWake,
   registerScript,
   rowsSinceCursor,
+  seatReply,
   taskIdOfDelegation,
+  WAKE_FROM_ENVELOPE,
   waitFor,
   waitForChildren,
   type AuditRow,
@@ -45,7 +47,20 @@ test("a delegated remember-ask's settlement report posts AFTER its own memory wr
     registerScript({
       parent: [
         { calls: [{ tool: "agent", input: { message: `write the release decision ${marker} into memory` }, id: "wi-relay-delegate" }] },
-        { say: "I'm recording the release decision and will confirm once the memory write is complete." },
+        {
+          calls: [
+            {
+              tool: "reply",
+              input: {
+                text: "I'm recording the release decision and will confirm once the memory write is complete.",
+                wake: WAKE_FROM_ENVELOPE,
+                done: false,
+              },
+              id: "wi-relay-interim",
+            },
+          ],
+        },
+        { say: "NO_REPLY" },
       ],
       child: [
         { calls: [{ tool: "write_file", input: { filePath: `/workspace/memory/${SILO}/decisions.md`, content: noteBody }, id: "wi-relay-write" }] },
@@ -76,7 +91,7 @@ test("a delegated remember-ask's settlement report posts AFTER its own memory wr
   const settlement = await awaitTaskSettlement({
     dispatched,
     taskId,
-    script: { parent: [{ say: `The decision ${marker} is recorded. ${CLAIM}` }] },
+    script: { parent: [seatReply(`The decision ${marker} is recorded. ${CLAIM}`, "wi-relay-report"), { say: "NO_REPLY" }] },
     label: "the worker's completion, delivered as a new message naming the task id",
   });
   disposeLater(settlement.handle);
@@ -92,12 +107,12 @@ test("a delegated remember-ask's settlement report posts AFTER its own memory wr
   const reportTurnId = (taskWake.detail as { turnId?: string }).turnId;
   expect(typeof reportTurnId).toBe("string");
 
-  const bridgePost = await waitFor(async () => {
+  const reportPost = await waitFor(async () => {
     const posts = (await rowsSinceCursor(cursor, ["reply.post"])).filter(
-      (r) => (r.detail as { route?: string }).route === "bridge" && r.seq > taskWake.seq,
+      (r) => (r.detail as { route?: string }).route === "tool" && r.seq > taskWake.seq,
     );
     return posts.length > 0 ? posts[posts.length - 1] : undefined;
-  }, "the settlement report's own reply.post row, posted through the addressed-mention bridge");
+  }, "the settlement report's own reply.post row, posted through the reply tool");
 
   const notePath = siloFilePath(SILO, "decisions.md");
   await waitFor(() => (existsSync(notePath) ? true : undefined), "the delegated worker's write to land on the DURABLE store");
@@ -110,7 +125,7 @@ test("a delegated remember-ask's settlement report posts AFTER its own memory wr
   expect(writes.length).toBeGreaterThan(0);
   const earliest = writes.reduce((a: AuditRow, b: AuditRow) => (a.seq <= b.seq ? a : b));
   expect(earliest.seq).toBeGreaterThan(taskWake.seq);
-  expect(earliest.seq).toBeLessThan(bridgePost.seq);
+  expect(earliest.seq).toBeLessThan(reportPost.seq);
   expect((earliest.detail as { kind?: string }).kind).toBe("memory");
 
   const delivered = discord.messages.filter((m) => m.channelId === IT_MEMORY_RELAY_CHANNEL_ID);

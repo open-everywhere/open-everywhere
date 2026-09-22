@@ -12,6 +12,7 @@ import {
   waitForAuditRows,
   type AuditCursor,
   type ScriptedHandle,
+  WAKE_FROM_ENVELOPE,
 } from "../harness";
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
 
@@ -42,7 +43,10 @@ test("① 🔴 NEGATIVE CONTROL: a turn that does not halt puts NO confirmation 
   delete process.env.OE_EGRESS_SPOOF;
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
-  const cursor = await driveTurn("hc-clear", [{ say: "Nothing to stop — the changelog task is the only one running." }]);
+  const cursor = await driveTurn("hc-clear", [
+    { calls: [{ tool: "reply", input: { text: "Nothing to stop — the changelog task is the only one running.", wake: WAKE_FROM_ENVELOPE }, id: "hc-clear-reply" }] },
+    { say: "NO_REPLY" },
+  ]);
 
   await waitFor(() => discord.messages.find((m) => m.content.includes("changelog task")), "the turn's ordinary reply to reach the room");
   expect(confirmationsInRoom(await confirmationFor("surface"))).toEqual([]);
@@ -55,7 +59,11 @@ test("② a real `halt` call posts the host's confirmation into the room, and th
   delete process.env.OE_EGRESS_SPOOF;
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
-  const cursor = await driveTurn("hc-halt", [{ calls: [{ tool: "halt", input: { scope: "surface" }, id: "hc-halt-call" }] }, { say: "Stopped everything here." }]);
+  const cursor = await driveTurn("hc-halt", [
+    { calls: [{ tool: "halt", input: { scope: "surface" }, id: "hc-halt-call" }] },
+    { calls: [{ tool: "reply", input: { text: "Stopped everything here.", wake: WAKE_FROM_ENVELOPE }, id: "hc-halt-reply" }] },
+    { say: "NO_REPLY" },
+  ]);
 
   const confirmation = await confirmationFor("surface");
   const posted = await waitFor(() => confirmationsInRoom(confirmation)[0], "the halt confirmation to reach the Discord room");

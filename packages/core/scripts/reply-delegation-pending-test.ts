@@ -24,7 +24,7 @@ const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixture
   await import("./_slack-test-stubs.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
-const { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, mintWakeId, shouldBridgeAddressedProse } = await import("../agent/channels/unified-window.js");
+const { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
 const { unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -32,9 +32,8 @@ const { taskWakeId, TASK_WAKE_RETARGET_ACTION } = await import("../agent/channel
 const { addressedWakeThisTurn, recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
 const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
 const { consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
-const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
-  "../agent/access/pending-delegation-signal.js"
-);
+const { maybeRedrive } = await import("../agent/channels/unified-redrive.js");
+const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage } = await import("../agent/access/pending-delegation-signal.js");
 const turnDelivery = await import("../agent/channels/turn-delivery.js");
 const { withReplierPrefix } = turnDelivery;
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
@@ -398,13 +397,13 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
 const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
   adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
 }).adapter;
-ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the bridge lives inside it");
+ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the drop branch lives inside it");
 
 const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
-const bridgeComplete = (text: string): Promise<void> =>
+const completeWithProse = (text: string): Promise<void> =>
   unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
 
-function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
+function proseSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
   const c = new ContextContainer();
   c.set(SessionKey, {
     sessionId: "reply-delegation-pending-test",
@@ -429,15 +428,32 @@ function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<
   return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
 }
 
+function standingSession(): { setTurn: (turnWake: string, turnId: string) => void; inSession: <T>(fn: () => Promise<T>) => Promise<T> } {
+  const c = new ContextContainer();
+  const setTurn = (turnWake: string, turnId: string): void => {
+    c.set(SessionKey, {
+      sessionId: "reply-delegation-pending-test",
+      auth: {
+        current: {
+          attributes: { oe_platform: "slack", oe_grain: "standing", oe_addressing: "direct-mention", oe_wake_id: turnWake, oe_window_token: TOKEN, channel_id: CHAN, team_id: "T1" },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+      turn: { id: turnId, sequence: 1 },
+      parent: undefined,
+    });
+  };
+  return { setTurn, inSession: <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn) };
+}
+
 const answeredAt = async (wakeId: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord(ORG, wakeId))?.answeredAt;
-const heldRows = async (): Promise<Record<string, unknown>[]> =>
-  (await readAudit({ org: ORG, action: BRIDGE_WAKE_HELD_AUDIT_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
 {
   {
     const wBridge = await wake("C_BRIDGE", "901.1");
     const before = posted.length;
-    const inTurn = bridgeSession(wBridge, "turn_701");
+    const inTurn = proseSession(wBridge, "turn_701");
 
     await inTurn(async () => {
       await dispatchReceipt(wBridge, "turn_701", "call_701a", receiptResult("call_701a", "task_701a"), ctxFor(wBridge, "turn_701"));
@@ -446,46 +462,49 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       ok(typeof refused.error === "string", "§9a precondition: the reply tool refuses the fabricated `done:true`");
       ok(posted.length === before, "§9a precondition: nothing posted through the tool");
 
-      await bridgeComplete(FABRICATION);
+      await completeWithProse(FABRICATION);
     });
 
     ok(
-      posted.length === before + 1,
-      "🔴 §9a/ROOM: the bridge still POSTS the model's terminal prose. The guard must never delete the model's text — a swallowed bridge leaves the room with silence, which is a worse failure than a bad answer that can still be corrected",
+      posted.length === before,
+      `🔴 §9a/ROOM: THE SECOND DOOR IS CLOSED (OPE-1982). The refused text reaches the room by NO route — the addressed-prose bridge that used to post it is deleted, so the count is unchanged (expected ${before}, saw ${posted.length})`,
     );
     ok(
       (await answeredAt(wBridge)) === undefined,
       "🔴 §9a THE FIX: the wake is NOT marked answered while the dispatched worker still owes it. This is the assertion OPE-701 exists for — pre-fix the bridge closed the wake the reply tool had just been stopped from closing",
     );
 
-    const held = await heldRows();
-    ok(held.length === 1, `🔴 §9a/AUDIT: the held wake is a ROW, not an absence (expected 1, saw ${held.length})`);
-    ok(held[0]?.["wakeId"] === wBridge, "§9a/AUDIT: the row names the wake it held open");
-    ok(!JSON.stringify(held).includes("RECURRING.md"), "🔴 §9a/AUDIT: the prose never reaches the audit detail — the row records the decision, not the text");
+    const dropped9a = (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+    const mine9a = dropped9a.filter((d) => d["wakeId"] === wBridge);
+    ok(mine9a.length === 1, `🔴 §9a/AUDIT: the withheld answer is a ROW (expected 1 for this wake, saw ${mine9a.length})`);
+    ok(mine9a[0]?.["addressing"] === "direct-mention", "🔴 §9a/AUDIT: …and it names the addressing, so an OWED answer that nobody received stays countable apart from an ambient drop");
+    ok(!JSON.stringify(mine9a).includes("RECURRING.md"), "🔴 §9a/AUDIT: the prose never reaches the audit detail — the row records the decision, not the text");
 
     const wLater = await wake("C_LATER", "902.2");
-    const landed = await bridgeSession(wLater, "turn_701_later")(() => callReply(wLater, "turn_701_later", wBridge, REAL_REFUSAL, true));
+    const landed = await proseSession(wLater, "turn_701_later")(() => callReply(wLater, "turn_701_later", wBridge, REAL_REFUSAL, true));
     ok(
       landed.posted === true,
       "🔴 §9a THE POINT: on a later turn the worker's real answer LANDS on the held wake through the fence's pending arm — the arm that refuses an answered wake. Without the fix this reply is refused as `answered` and the fabrication stands as the final word",
     );
-    ok(posted.length === before + 2, "§9a/ROOM: the correction reached the room");
+    ok(posted.length === before + 1, "§9a/ROOM: the correction reached the room, and it is the ONLY thing this conversation heard");
     ok(typeof (await answeredAt(wBridge)) === "string", "§9a: …and THAT reply closes the wake normally, so the hold is a wait and not a leak");
   }
 
   {
-    const wPlain = await wake("C_BRIDGE_PLAIN", "903.3");
+    const wPlain = await wake("C_PROSE_PLAIN", "903.3");
     const before = posted.length;
-    const heldBefore = (await heldRows()).length;
 
-    await bridgeSession(wPlain, "turn_701_plain")(() => bridgeComplete("Here is the answer, retrieved and checked."));
+    await proseSession(wPlain, "turn_701_plain")(() => completeWithProse("Here is the answer, retrieved and checked."));
 
-    ok(posted.length === before + 1, "§9b/ROOM: the ordinary bridged prose reached the room");
+    ok(posted.length === before, `🔴 §9b: an ORDINARY addressed turn's closing prose reaches the room by no route either (expected ${before}, saw ${posted.length})`);
     ok(
-      typeof (await answeredAt(wPlain)) === "string",
-      "🔴 §9b NEGATIVE CONTROL: with no pending dispatch the bridge marks the wake ANSWERED exactly as before. The guard is one condition on the mark, not the removal of it",
+      (await answeredAt(wPlain)) === undefined,
+      "🔴 §9b: …and the wake is NOT marked answered, so the one corrective redrive — or any later turn — can still put the answer in the room",
     );
-    ok((await heldRows()).length === heldBefore, "§9b/AUDIT: …and it writes no held-wake row, so the row counts only the turns the guard acted on");
+    const closed = await proseSession(wPlain, "turn_701_plain_reply")(() => callReply(wPlain, "turn_701_plain_reply", wPlain, "The answer, this time through the tool.", true));
+    ok(closed.posted === true, "§9b/CONTROL: the same wake accepts a `reply` tool call, so the drop above withheld a deliverable answer rather than naming a dead wake");
+    ok(posted.length === before + 1, "§9b/CONTROL: …and THAT is what reaches the room — one post, through the tool");
+    ok(typeof (await answeredAt(wPlain)) === "string", "§9b/CONTROL: …and the tool route closes the wake normally");
   }
 
   {
@@ -497,7 +516,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
     const dropsBefore = (await dropRows()).length;
 
-    await bridgeSession(wStub, "turn_1911_stub")(() => bridgeComplete("..."));
+    await proseSession(wStub, "turn_1911_stub")(() => completeWithProse("..."));
 
     ok(
       posted.length === before,
@@ -509,14 +528,72 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     );
     const drops = await dropRows();
     ok(drops.length === dropsBefore + 1, `🔴 §9c/AUDIT REACHABILITY: the stub is a ROW, not an absence (expected ${dropsBefore + 1}, saw ${drops.length})`);
+    const stubDrop = drops.filter((d) => d["wakeId"] === wStub);
+    ok(stubDrop.length === 1, `🔴 §9c/AUDIT: exactly one row names the stub's wake (saw ${stubDrop.length})`);
     ok(
-      drops[drops.length - 1]?.["reason"] === NO_SUBSTANCE_DROP_REASON,
+      stubDrop[0]?.["reason"] === NO_SUBSTANCE_DROP_REASON,
       "🔴 §9c/AUDIT: the row reads `no-substance` — the turn produced no answer to deliver, which is a different finding from `no-reply-call`, where the answer is in the dropped text",
     );
     ok(
-      drops[drops.length - 1]?.["addressing"] === "direct-mention",
+      stubDrop[0]?.["addressing"] === "direct-mention",
       "§9c/AUDIT: …and the addressing still reads direct-mention, so a stub on an OWED answer stays countable apart from an ambient drop",
     );
+  }
+
+  {
+    const { noteRoutineRunPermissionRefusal, carryRunRefusalsToRedrive } = await import("../agent/approvals/card-signal.js");
+    const { RUN_REFUSAL_HEADING } = await import("../agent/routines/report.js");
+    const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
+
+    const wFire = await wake("C_FIRE_REPORT", "905.5");
+    const before = posted.length;
+    const fireSeat = standingSession();
+
+    fireSeat.setTurn(wFire, "turn_1982_fire");
+    await fireSeat.inSession(async () => {
+      resetTurnClock("turn_1982_fire", Date.now(), "reply-delegation-pending-test");
+      noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+      carryRunRefusalsToRedrive(wFire);
+    });
+    ok(posted.length === before, "§9d precondition: nothing has been posted on this wake yet");
+
+    fireSeat.setTurn(wFire, "turn_1982_fire_corrected");
+    const corrected = await fireSeat.inSession(() => {
+      resetTurnClock("turn_1982_fire_corrected", Date.now(), "reply-delegation-pending-test");
+      return callReply(wFire, "turn_1982_fire_corrected", wFire, "The digest is ready.", true);
+    });
+    ok(corrected.posted === true, "§9d: the corrective turn's reply posts");
+    ok(posted.length === before + 1, "§9d/ROOM: …and it is the one thing this conversation heard");
+    ok(
+      posted[posted.length - 1]!.text.includes(RUN_REFUSAL_HEADING),
+      `🔴 §9d THE GUARANTEE: the host's "could not do X" line rides the CORRECTIVE turn's post. Pre-carry the ledger was turn-keyed, the correction was a new turn, and the room never heard it (saw: ${JSON.stringify(posted[posted.length - 1]?.text.slice(0, 160))})`,
+    );
+    ok(posted[posted.length - 1]!.text.includes("use Notion"), "§9d: …naming the permission the run actually lost");
+
+    const wPlain2 = await wake("C_FIRE_PLAIN", "906.6");
+    const plainSeat = standingSession();
+    plainSeat.setTurn(wPlain2, "turn_1982_plain");
+    await plainSeat.inSession(async () => {
+      resetTurnClock("turn_1982_plain", Date.now(), "reply-delegation-pending-test");
+      carryRunRefusalsToRedrive(wPlain2);
+    });
+    plainSeat.setTurn(wPlain2, "turn_1982_plain_corrected");
+    const plain = await plainSeat.inSession(() => {
+      resetTurnClock("turn_1982_plain_corrected", Date.now(), "reply-delegation-pending-test");
+      return callReply(wPlain2, "turn_1982_plain_corrected", wPlain2, "An ordinary answer.", true);
+    });
+    ok(plain.posted === true, "§9d/CONTROL precondition: the plain corrective reply posts");
+    ok(!posted[posted.length - 1]!.text.includes(RUN_REFUSAL_HEADING), "🔴 §9d/NEGATIVE CONTROL: a corrective turn with nothing refused carries NO block — the heading is a finding, not boilerplate");
+    ok(plainSeat !== fireSeat, "§9d/CONTROL: …on its own session container, so the control is not reading the fire's drained ledger");
+  }
+
+  {
+    const { readFileSync } = await import("node:fs");
+    const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
+    ok(/carryRunRefusalsToRedrive\(wakeId\)/.test(unifiedSrc), "🔴 §9e: the drop branch HANDS the ledger to the correction");
+    ok(/dropCarriedRunRefusals\(wakeId\)/.test(unifiedSrc), "🔴 §9e: …and DROPS it on every other outcome, so a correction that was never injected leaves nothing behind");
+    ok(/carryRunRefusalsToRedrive\(wakeId\);[\s\S]{0,200}?await maybeRedrive\(/.test(unifiedSrc), "🔴 §9e: …and it carries BEFORE awaiting the re-injection, so the corrective turn can never consume ahead of the carry");
+    ok(/route:\s*"bridge"/.test(unifiedSrc) === false, "§9e: …and the module still writes no retired bridge route");
   }
 }
 
@@ -634,40 +711,6 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
   }
 
   {
-    const wB = await wake("C_FRAME_BRIDGE", "1004.4");
-    const before = posted.length;
-
-    await bridgeSession(wB, "turn_699d")(async () => {
-      await dispatchReceipt(wB, "turn_699d", "call_699d", receiptResult("call_699d", "task_699d"), ctxFor(wB, "turn_699d"));
-      const refused = await callReply(wB, "turn_699d", wB, FABRICATION, true);
-      ok(typeof refused.error === "string", "§10d precondition: the reply tool refuses the fabricated `done:true`");
-      await bridgeComplete(FABRICATION);
-    });
-
-    ok(posted.length === before + 1, "§10d/ROOM: the bridge posted the model's prose, as OPE-701 requires");
-    ok(
-      lastPosted() === FABRICATION,
-      `🔴 §10d: the BRIDGED prose is delivered BYTE-IDENTICAL too. This is the path the refusal itself opens, and the host adds nothing on it either — the two write paths must agree about the host's silence, or one of them starts speaking in the room (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
-    );
-    ok((await answeredAt(wB)) === undefined, "🔴 §10d: …and OPE-701's hold is INTACT — this is the guarantee that survived OPE-1516. The conversation stays open for the worker's real answer, which is the mechanism that outlived the frame");
-  }
-
-  {
-    const wP = await wake("C_FRAME_BRIDGE_PLAIN", "1005.5");
-    const before = posted.length;
-    const TEXT = "Here is the bridged answer, retrieved and checked.";
-
-    await bridgeSession(wP, "turn_699e")(() => bridgeComplete(TEXT));
-
-    ok(posted.length === before + 1, "§10e/ROOM: the ordinary bridged prose reached the room");
-    ok(
-      lastPosted() === TEXT,
-      `🔴 §10e NEGATIVE CONTROL: with no pending dispatch the bridge delivers the prose BYTE-IDENTICAL. Both enforcing paths need their own negative control, because each reads the ledger at its own call site (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
-    );
-    ok(typeof (await answeredAt(wP)) === "string", "§10e: …and it still marks the wake answered, so this leg also re-pins that OPE-699 changed nothing about the mark");
-  }
-
-  {
     ok(!("PENDING_WORK_FRAME" in turnDelivery), "🔴 §10f: `turn-delivery` exports NO pending-work frame constant. OPE-1516 removed the host's line from the room; an export named here is that line coming back");
     ok(!("withPendingWorkFrame" in turnDelivery), "🔴 §10f: …and no `withPendingWorkFrame` helper either — the composition that applied it is gone, not merely unused");
     const labelled = withReplierPrefix("body", { taskLabel: "audit the ledger" });
@@ -683,7 +726,6 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const origin = await resolveUnifiedWakeTarget(store, ORG, w);
     return origin === null ? undefined : (origin as { channelId?: string }).channelId;
   };
-  const lastChannel = (): string => posted[posted.length - 1]?.channel ?? "";
 
   {
     const wTurn = await wake("C_706_TURN", "1101.1");
@@ -691,12 +733,12 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const before = posted.length;
     const addressedAtBridge: (string | undefined)[] = [];
 
-    await bridgeSession(wTurn, "turn_706a")(async () => {
+    await proseSession(wTurn, "turn_706a")(async () => {
       await dispatchReceipt(wTurn, "turn_706a", "call_706a", receiptResult("call_706a", "task_706a"), ctxFor(wTurn, "turn_706a"));
       const refused = await callReply(wTurn, "turn_706a", wTurn, FABRICATION, true);
       ok(typeof refused.error === "string", "§11a precondition: the reply tool refuses the fabricated `done:true` — the refusal is what leaves `replied` false and opens the bridge");
       addressedAtBridge.push(addressedWakeThisTurn("turn_706a"));
-      await bridgeComplete(FABRICATION);
+      await completeWithProse(FABRICATION);
     });
 
     ok(addressedAtBridge.length === 1, "§11a: the turn body ran and took its reading");
@@ -704,15 +746,16 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       addressedAtBridge[0] === undefined,
       `🔴 §11a THE STRUCTURAL PRECONDITION: a turn that reaches the bridge has addressed NOTHING, so the dispatch edge read \`currentWakeId\` and not an addressed wake (saw: ${JSON.stringify(addressedAtBridge[0])})`,
     );
-    ok(posted.length === before + 1, "§11a/ROOM: the bridge posted the prose, as OPE-701 requires");
+    ok(posted.length === before, `§11a/ROOM: nothing posted — the closing prose is dropped on every addressing (OPE-1982), so the handoff below is read off the WAKE MAP and not off a post (expected ${before}, saw ${posted.length})`);
     ok(
       (await resolveUnifiedWakeTarget(store, ORG, wSib)) !== null,
       "§11a: the sibling wake is a LIVE registered wake on this same window — the task could have been pointed there, so the check below is not a strawman",
     );
     const reportsInto = await taskChannel("task_706a");
+    const turnChannel = ((await resolveUnifiedWakeTarget(store, ORG, wTurn)) as { channelId?: string } | null)?.channelId;
     ok(
-      reportsInto === lastChannel(),
-      `🔴 §11a THE HANDOFF: the worker will report into the SAME conversation the bridge just answered. There is no sibling to re-point, which is why the bridge needs no \`retargetTaskWakes\` call. If a change ever lets a bridge turn answer a different wake, this assertion is what goes red (task reports into ${JSON.stringify(reportsInto)}, bridge answered ${JSON.stringify(lastChannel())})`,
+      reportsInto === turnChannel,
+      `🔴 §11a THE HANDOFF: the worker will report into the SAME conversation this turn was woken for. There is no sibling to re-point, which is why the drop path needs no \`retargetTaskWakes\` call. If a change ever lets such a turn address a different wake, this assertion is what goes red (task reports into ${JSON.stringify(reportsInto)}, the turn's wake resolves to ${JSON.stringify(turnChannel)})`,
     );
     ok(reportsInto === "C_706_TURN", "§11a: …and that conversation is the turn's own, never the sibling");
     ok((await answeredAt(wTurn)) === undefined, "§11a: …and OPE-701's hold is intact — the wake stays answerable for the worker's real report");
@@ -720,10 +763,13 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
   {
     ok(
-      shouldBridgeAddressedProse("direct-mention", true, undefined) === false,
-      "🔴 §11b: a turn whose reply tool POSTED can never reach the bridge — the gate reads `replied`",
+      (await maybeRedrive({ org: ORG, workspace: "w", wakeId: "any-wake", chars: 12, replied: true }, { store: store as never, reinject: null })).status === "skip-replied",
+      "🔴 §11b: a turn whose reply tool POSTED is never corrected — the redrive reads `replied` and skips before it reads anything else",
     );
-    ok(shouldBridgeAddressedProse("direct-mention", false, undefined) === true, "§11b: …and a turn whose reply tool posted nothing can, which is the state §11a runs in");
+    ok(
+      (await maybeRedrive({ org: ORG, workspace: "w", wakeId: "no-such-wake-11b", chars: 12, replied: false }, { store: store as never, reinject: null })).status !== "skip-replied",
+      "§11b: …and a turn whose reply tool posted nothing gets past that gate, which is the state §11a runs in",
+    );
 
     const w = await wake("C_706_ADDRESSED", "1103.3");
     const before = posted.length;
@@ -741,8 +787,8 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(addressed[0] === w, "🔴 §11b: a successful reply RECORDS the wake it addressed…");
     ok(replied[0] === true, "🔴 §11b: …and the SAME post marks `replied`, so the two signals can never disagree…");
     ok(
-      shouldBridgeAddressedProse("direct-mention", replied[0] ?? false, undefined) === false,
-      "🔴 §11b: …so the bridge cannot fire on a turn that has addressed a wake. §11a's `undefined` is therefore structural, not a property of its fixture",
+      (await maybeRedrive({ org: ORG, workspace: "w", wakeId: w, chars: 12, replied: replied[0] ?? false }, { store: store as never, reinject: null })).status === "skip-replied",
+      "🔴 §11b: …so no correction fires on a turn that has addressed a wake. §11a's `undefined` is therefore structural, not a property of its fixture",
     );
   }
 

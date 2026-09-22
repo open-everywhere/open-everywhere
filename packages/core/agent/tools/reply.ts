@@ -273,7 +273,7 @@ export const unifiedReplyEntry = defineTool({
         settlementReport: isSettlementReport,
       });
 
-      const framed = withRunRefusalBlock(input.text, consumeRoutineRunPermissionRefusals());
+      const framed = withRunRefusalBlock(input.text, consumeRoutineRunPermissionRefusals(input.wake));
 
       await flushWriteIntentMemory(ctx as MemoryPersistContext);
 

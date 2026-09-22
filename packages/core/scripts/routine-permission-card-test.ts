@@ -25,7 +25,8 @@ registerSlackFixtureMapper();
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { registerCardPoster, reapSupersededRoutineCards, requestApproval, resolveApprovalClick, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
 const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
-const { consumeRoutineRunPermissionRefusals, noteRoutineRunPermissionRefusal } = await import("../agent/approvals/card-signal.js");
+const { consumeRoutineRunPermissionRefusals, noteRoutineRunPermissionRefusal, carryRunRefusalsToRedrive, dropCarriedRunRefusals } = await import("../agent/approvals/card-signal.js");
+const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
 const { RUN_REFUSAL_HEADING, withRunRefusalBlock } = await import("../agent/routines/report.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -552,6 +553,72 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(withRunRefusalBlock("body", blind).includes("could not be read"), "🔴 §runreport: and renders that, never the 'no card is waiting' line that would send its owner to an edit");
   ok(!withRunRefusalBlock("body", blind).includes("no card is waiting"), "🔴 §runreport: …explicitly not that line");
   ok(declinedRun[0]?.cardKnown === true, "§runreport: while a DECLINE knows there is no card, so it says so — the negative control for the arm above");
+
+  const W_CARRY = "wake-carry-1982";
+  const carried = await inSession(async () => {
+    resetTurnClock("turn_fire_1", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    carryRunRefusalsToRedrive(W_CARRY);
+    resetTurnClock("turn_fire_1_corrected", Date.now(), "sess-carry");
+    return consumeRoutineRunPermissionRefusals(W_CARRY);
+  });
+  ok(carried.length === 1 && carried[0]?.permission === "use Notion", "🔴 §runreport/CARRY: a ledger handed to a wake's corrective re-drive is readable by the turn that answers THAT wake");
+
+  const wrongWake = await inSession(async () => {
+    resetTurnClock("turn_ww_1", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    carryRunRefusalsToRedrive(W_CARRY);
+    resetTurnClock("turn_ww_2", Date.now(), "sess-carry");
+    const other = consumeRoutineRunPermissionRefusals("some-other-wake");
+    return [other.length, consumeRoutineRunPermissionRefusals(W_CARRY).length] as const;
+  });
+  ok(wrongWake[0] === 0, "🔴 §runreport/CARRY: …and a turn answering a DIFFERENT wake reads nothing — one fire's losses never reach another's report");
+  ok(wrongWake[1] === 1, "🔴 §runreport/CARRY: …and that unclaimed read did NOT consume it — the wake it was carried for still gets its block");
+  const noWake = await inSession(async () => {
+    resetTurnClock("turn_nw_1", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    carryRunRefusalsToRedrive(W_CARRY);
+    resetTurnClock("turn_nw_2", Date.now(), "sess-carry");
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(noWake.length === 0, "§runreport/CARRY: …nor does a caller that names no wake, so the old turn-only reading is unchanged where it applies");
+
+  const stranded = await inSession(async () => {
+    resetTurnClock("turn_fireA", Date.now(), "sess-job");
+    noteRoutineRunPermissionRefusal({ permission: "open pull requests", card: PERMALINK, cardKnown: true, cardPosted: true, cardCapped: false });
+    resetTurnClock("turn_fireB", Date.now(), "sess-job");
+    carryRunRefusalsToRedrive("wake-fire-B");
+    return consumeRoutineRunPermissionRefusals("wake-fire-B");
+  });
+  ok(stranded.length === 0, "🔴 §runreport/CARRY: a ledger STRANDED by an earlier fire is NOT carried onto a later fire's wake — the carry honours the turn key rather than stepping around it");
+
+  const twiceCarried = await inSession(async () => {
+    resetTurnClock("turn_tc_1", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    carryRunRefusalsToRedrive(W_CARRY);
+    resetTurnClock("turn_tc_2", Date.now(), "sess-carry");
+    const one = consumeRoutineRunPermissionRefusals(W_CARRY);
+    return [one.length, consumeRoutineRunPermissionRefusals(W_CARRY).length] as const;
+  });
+  ok(twiceCarried[0] === 1 && twiceCarried[1] === 0, "§runreport/CARRY: read-and-reset holds on the carried read too — the block rides ONE message");
+
+  const exhausted = await inSession(async () => {
+    resetTurnClock("turn_ex_1", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    carryRunRefusalsToRedrive(W_CARRY);
+    dropCarriedRunRefusals(W_CARRY);
+    resetTurnClock("turn_ex_2", Date.now(), "sess-carry");
+    return consumeRoutineRunPermissionRefusals(W_CARRY);
+  });
+  ok(exhausted.length === 0, "🔴 §runreport/CARRY: an EXHAUSTED correction drops the carried ledger — it never surfaces on a later turn that happens to name the same wake");
+
+  const liveKept = await inSession(async () => {
+    resetTurnClock("turn_live", Date.now(), "sess-carry");
+    noteRoutineRunPermissionRefusal({ permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
+    dropCarriedRunRefusals(W_CARRY);
+    return consumeRoutineRunPermissionRefusals();
+  });
+  ok(liveKept.length === 1, "🔴 §runreport/CARRY/NEGATIVE CONTROL: dropping a CARRIED ledger leaves a live current-turn one untouched");
 
   noteRoutineRunPermissionRefusal({ permission: "open pull requests", card: null, cardKnown: true, cardPosted: false, cardCapped: false });
   ok(consumeRoutineRunPermissionRefusals().length === 0, "§runreport: fail-soft outside a session — the ledger never blocks or changes a refusal");

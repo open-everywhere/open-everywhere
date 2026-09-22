@@ -76,11 +76,11 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
       parent: [
         { calls: [{ tool: READER, input: { limit: 10 }, id: `${input.ids}-read` }] },
         { calls: [{ tool: "agent", input: { message: "set up the routine we just discussed" }, id: `${input.ids}-delegate` }] },
-        { say: "the worker reported back" },
+        { say: "NO_REPLY" },
       ],
       child: [
         { calls: [{ tool: "create_routine", input: { prompt: input.prompt, trigger: TRIGGER }, id: `${input.ids}-routine` }] },
-        { say: "proposed" },
+        { say: "NO_REPLY" },
       ],
     }),
   );

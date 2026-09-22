@@ -380,14 +380,17 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     });
     ok(posted.length === beforePosted + 1, "OPE-805a precondition: only turn 0's tool-posted reply has reached the room so far");
 
+    const beforeDroppedA = (await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" })).length;
     await inSession(async () => {
       setTurn(w1, "turn_805a_1", "direct-mention");
       await completed805("The weather is clear and mild.");
     });
-    ok(
-      posted.some((m) => m.text.includes("The weather is clear and mild.")),
-      "OPE-805a: when turn 0's own message.completed runs, turn 1 correctly reads replied:false and the bridge delivers",
-    );
+    const dropsA = await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" });
+    ok(dropsA.length === beforeDroppedA + 1, `OPE-805a: turn 1's dropped prose is a ROW (expected ${beforeDroppedA + 1}, saw ${dropsA.length})`);
+    const rowA = dropsA.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === w1)?.detail as { replied?: boolean; reason?: string } | undefined;
+    ok(rowA?.replied === false, "OPE-805a: when turn 0's own message.completed runs, turn 1 correctly reads replied:false");
+    ok(rowA?.reason === "no-reply-call", "OPE-805a: …so the row reads `no-reply-call` — an answer this turn wrote and nobody received, never a leaked narration-after-reply");
+    ok(!posted.some((m) => m.text.includes("The weather is clear and mild.")), "🔴 OPE-805a: …and the prose reaches NO room — the addressed-prose bridge is deleted (OPE-1982)");
   }
 
   {
@@ -409,14 +412,18 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
       await completed805("The weather is clear and mild.");
     });
 
+    const dropsB = await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" });
+    ok(dropsB.length === beforeDropped + 1, `OPE-805b: turn 1's dropped prose is a ROW (expected ${beforeDropped + 1}, saw ${dropsB.length})`);
+    const rowB = dropsB.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === w1)?.detail as { replied?: boolean; reason?: string } | undefined;
     ok(
-      posted.some((m) => m.text.includes("The weather is clear and mild.")),
-      "🔴 OPE-805b THE FIX: turn 1's owed prose reaches the room via the addressed-mention bridge even though turn 0 never consumed its own mark — `replied` reads false because turn 1's id differs from the mark's, not because something happened to reset it",
+      rowB?.replied === false,
+      "🔴 OPE-805b THE FIX: turn 1 reads `replied:false` even though turn 0 never consumed its own mark — because turn 1's id differs from the mark's, not because something happened to reset it",
     );
     ok(
-      (await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" })).length === beforeDropped,
-      "🔴 OPE-805b: turn 1 writes NO turn.supervisor_prose_dropped row — a leaked `replied:true` would have routed it to the hard-drop branch instead of the bridge (deploy #90's exact observed row)",
+      rowB?.reason === "no-reply-call",
+      "🔴 OPE-805b: …so the row names an answer this turn WROTE and nobody received. A leaked `replied:true` would have written `narration-after-reply` instead, which is a live run's exact observed row and the finding this test exists to keep separable",
     );
+    ok(posted.length === beforePosted + 1, "🔴 OPE-805b: and nothing new reached the room — since OPE-1982 no route delivers a turn's closing prose on this channel");
   }
 
   {
@@ -431,7 +438,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     });
     const dropRows = await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" });
     ok(dropRows.length === droppedBefore + 1, "OPE-805c negative control: same-turn narration after a real reply IS dropped and audited");
-    const lastDrop = dropRows[dropRows.length - 1]!.detail as { replied?: boolean; reason?: string } | undefined;
+    const lastDrop = dropRows.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === w2)!.detail as { replied?: boolean; reason?: string } | undefined;
     ok(lastDrop?.replied === true, "🔴 OPE-805c NEGATIVE CONTROL: a genuine same-turn narration-after-reply still writes replied:true — the fix must not blind this legitimate case");
     ok(lastDrop?.reason === "narration-after-reply", "OPE-805c negative control: …with the narration-after-reply reason, unchanged");
   }

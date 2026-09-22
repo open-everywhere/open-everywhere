@@ -213,7 +213,7 @@ const ackRows = async (): Promise<number> => (await ackRowsAll()).length;
     ok(ackRow?.detail?.["anchor"] === THREAD, "🔴 §2/AUDIT: …carrying the ENGAGEMENT ANCHOR, which is what joins it to `engagement.stood_down` and to the post beside it");
     ok(ackRow?.detail?.["sessionId"] === "stand-down-trailing-prose", "§2/AUDIT: …and the session, so the row reaches its own transcript");
     ok(ackRow?.detail?.["arm"] === "per-surface", "§2/AUDIT: …and names the arm under `arm`, not `route`");
-    ok(ackRow?.detail?.["route"] === undefined, "🔴 §2/AUDIT: …and writes NO `route` key — that name belongs to the tool/terminal/bridge vocabulary");
+    ok(ackRow?.detail?.["route"] === undefined, "🔴 §2/AUDIT: …and writes NO `route` key — that name belongs to the tool/terminal vocabulary");
 
     const trailing = finalMessageActionForTurn("stop", "ok", "turn_187");
     ok(trailing.kind === "silent", "🔴 §2: THE DEFECT — the turn's trailing final text is now DROPPED, not posted");

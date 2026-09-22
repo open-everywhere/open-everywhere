@@ -25,6 +25,7 @@ import {
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  awaitWindowQuiet,
 } from "../harness";
 
 async function resolveApprovalClickDynamic(input: {
@@ -375,7 +376,7 @@ test("OPE-727 — a dispatch handle left registered past its own turn FAULTS a s
   await bootAgent({ sharedSqlite: true });
 
   const handle = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "stale-delegate" }] }, { say: "dispatched" }],
+    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "stale-delegate" }] }, { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "stale-silence" }] }, { say: "NO_REPLY" }],
     child: [{ say: "done" }],
   });
 
@@ -422,7 +423,7 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   await bootAgent({ sharedSqlite: true });
 
   const dispatched = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "proper-delegate" }] }, { say: "dispatched" }],
+    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "proper-delegate" }] }, { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "proper-silence" }] }, { say: "NO_REPLY" }],
     child: [{ say: "done" }],
   });
 
@@ -512,6 +513,7 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
     await consumeSettlement({ armed, dispatched: handle, taskId, label: `the ${input.ids} worker's completion notification` });
     expect(armed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
     armed.dispose();
+    await awaitWindowQuiet();
     return handle;
   }
 

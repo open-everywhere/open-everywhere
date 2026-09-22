@@ -1,5 +1,5 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
-import { renderWake, mkMessageTrigger, type NormalizedWake } from "./normalized-wake.js";
+import { renderWake, mkMessageTrigger, REDRIVE_TRIGGER_ID_PREFIX, type NormalizedWake } from "./normalized-wake.js";
 import {
   resolveUnifiedWakeTarget,
   WAKE_TARGET_TTL_MS,
@@ -34,17 +34,21 @@ function originContainerId(origin: UnifiedWakeOrigin): string {
   return arm.redriveContainerId(origin);
 }
 
-export function redriveCorrectiveText(chars: number, originalWakeId: string, origin: UnifiedWakeOrigin): string {
+export function redriveCorrectiveText(chars: number, originalWakeId: string, origin: UnifiedWakeOrigin, owesWorkerReport = false): string {
   return (
     `Your previous turn's final prose (${chars} chars) was DISCARDED by the message-tool-only gate — ` +
     `it reached no one. If it should reach someone, call the \`reply\` tool NOW with \`wake\` set to ` +
     `"${originalWakeId}" (target: ${describeRedriveTarget(origin)}) and \`text\` set to your message. ` +
+    (owesWorkerReport
+      ? `Pass \`done: false\` on that call: a worker you started still owes this conversation its answer, ` +
+        `and a call that closes the wake is refused. `
+      : "") +
     `If it should NOT reach anyone after all, call \`no_reply\` (or end with NO_REPLY) — staying silent ` +
     `is still a valid outcome. This is a one-time correction: there is no second retry.`
   );
 }
 
-export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrigin, chars: number, nowIso: string): NormalizedWake {
+export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrigin, chars: number, nowIso: string, owesWorkerReport = false): NormalizedWake {
   return {
     platform: origin.platform,
     reason: "channel-activity",
@@ -54,10 +58,10 @@ export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrig
     trigger: mkMessageTrigger({
       from: "system",
       author: "open-everywhere",
-      id: `redrive-${originalWakeId}`,
+      id: `${REDRIVE_TRIGGER_ID_PREFIX}${originalWakeId}`,
       sentAt: nowIso,
       trust: "relay",
-      body: redriveCorrectiveText(chars, originalWakeId, origin),
+      body: redriveCorrectiveText(chars, originalWakeId, origin, owesWorkerReport),
     }),
   };
 }
@@ -76,6 +80,7 @@ export interface RedriveInput {
   readonly wakeId: string | undefined;
   readonly chars: number;
   readonly replied: boolean;
+  readonly owesWorkerReport?: boolean;
 }
 
 export interface RedriveDeps {
@@ -119,7 +124,7 @@ export async function maybeRedrive(input: RedriveInput, deps: RedriveDeps): Prom
   }
   if (!firstDrop) return { status: "skip-loop-guard", originalWakeId: wakeId };
 
-  const rendered = renderWake(buildRedriveWake(wakeId, origin, input.chars, now()));
+  const rendered = renderWake(buildRedriveWake(wakeId, origin, input.chars, now(), input.owesWorkerReport === true));
   try {
     await deps.reinject(origin, rendered.message, wakeId);
   } catch {

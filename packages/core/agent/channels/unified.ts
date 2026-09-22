@@ -2,12 +2,12 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, authPrincipalId, attestedFireCreatorId, bindFrom, carriesPlatformIdentity, windowGrainOf, windowTaskLabelOf, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, wakeBindingMatchesSurfaceKey, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, proseBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, wakeBindingMatchesSurfaceKey, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import {
   WAKE_INGRESS_ACTION,
   wakeIngressDetail,
@@ -35,7 +35,6 @@ import {
 } from "./question-bridge.js";
 import { admitInputResponse } from "../approvals/input-response-floor.js";
 import { resolvePartition } from "../memory/partition.js";
-import { flushWriteIntentMemory, type MemoryPersistContext } from "../hooks/memory.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
@@ -53,12 +52,10 @@ import {
   type RequesterVerdict,
 } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
-import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
-import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
+import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
+import { DELEGATION_PENDING_REFUSAL_REASON } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
-import { finalMessageActionForTurn, isBareStop, replierLabelFor, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
-import { withRunRefusalBlock } from "../routines/report.js";
-import { consumeRoutineRunPermissionRefusals, peekRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
+import { finalMessageActionForTurn, isBareStop, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { replyCarriesSubstance } from "./reply-post.js";
@@ -531,88 +528,13 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         return;
       }
       const bind = { session: ctx.session } as unknown as BindableContext;
-      const bridgeRefusal = bridgeBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
+      const blockingRefusal = proseBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
       const proseCarriesSubstance = replyCarriesSubstance(action.text);
-      const bridgeCarriesSubstance = proseCarriesSubstance || peekRoutineRunPermissionRefusals().length > 0;
-      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied, bridgeRefusal) && bridgeCarriesSubstance) {
-        const wakeId = currentWakeId(bind);
-        const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
-        if (!origin) {
-          ulog(`addressed-mention bridge: UNRESOLVED wake target (wakeId=${currentWakeId(bind) ?? "none"}) — dropping owed prose (audited)`);
-          await appendAudit({
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            action: "turn.direct_mention_bridge_unresolved",
-            detail: { wakeId: currentWakeId(bind) ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-          }).catch(() => undefined);
-          return;
-        }
-        try {
-          const replier = replierLabelFor(windowGrainOf(bind), windowTaskLabelOf(bind));
-          const principalId = authPrincipalId(bind);
-          const creatorId = attestedFireCreatorId(bind);
-          const turnId = currentTurnId(bind);
-          const owingTask = wakeId ? pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId)) : undefined;
-          await flushWriteIntentMemory(ctx as unknown as MemoryPersistContext);
-          const id = await postUnifiedReply(
-            origin,
-            withRunRefusalBlock(action.text, consumeRoutineRunPermissionRefusals()),
-            {},
-            {
-              org,
-              platform: "unified",
-              workspace,
-              surface,
-              ...(principalId ? { principalId } : {}),
-              ...(creatorId ? { creatorId } : {}),
-              ...(sessionId ? { sessionId } : {}),
-              ...(wakeId ? { wakeId } : {}),
-              ...(turnId ? { turnId } : {}),
-              route: "bridge",
-            },
-            replier,
-            { terminal: owingTask === undefined },
-          );
-          ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
-          if (wakeId) {
-            if (owingTask === undefined) {
-              await getOperationalStore()
-                .markUnifiedWakeAnswered(org, wakeId, new Date().toISOString(), turnId)
-                .catch(() => undefined);
-            } else {
-              ulog(`addressed-mention bridge: wake ${wakeId} left ANSWERABLE — a background task this turn dispatched still owes it (OPE-701)`);
-              await appendAudit({
-                org,
-                platform: "unified",
-                workspace,
-                surface,
-                action: BRIDGE_WAKE_HELD_AUDIT_ACTION,
-                detail: { wakeId, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-              }).catch(() => undefined);
-            }
-          }
-          return;
-        } catch (err) {
-          const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
-          ulog(`addressed-mention bridge: POST FAILED to ${origin.platform} — dropping owed prose (audited): ${errMsg}`);
-          await appendAudit({
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            action: "turn.direct_mention_bridge_post_failed",
-            detail: { platform: origin.platform, chars: action.text.length, error: errMsg, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
-          }).catch(() => undefined);
-          return;
-        }
-      }
       const { addressing: addressingKind, reason: dropReason } = ambientProseDropDetail(
         currentTurnAddressing(bind),
         currentTurnAddressed(bind),
         replied,
-        bridgeRefusal,
+        blockingRefusal,
         proseCarriesSubstance,
       );
       ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}; reason=${dropReason}) — replies must come from the reply tool`);
@@ -632,20 +554,23 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         },
       }).catch(() => undefined);
 
-      if (!replied && bridgeRefusal === undefined && channel.continuation?.token !== undefined) {
+      if (!replied && blockingRefusal === undefined && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
         const rawToken = channel.continuation.token;
         const domain = unifiedDomainFromToken(rawToken);
         const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
         delete baseAttrs[OE_ADDRESSING_ATTR];
         const reinject: RedriveReinject = buildRedriveReinject(domain, rawToken, baseAttrs);
+        const owesWorkerReport = refusalsForWakeThisTurn(currentTurnId(bind), wakeId).includes(DELEGATION_PENDING_REFUSAL_REASON);
+        if (wakeId) carryRunRefusalsToRedrive(wakeId);
         const outcome = await maybeRedrive(
-          { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied },
+          { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied, owesWorkerReport },
           { store: getOperationalStore(), reinject },
         );
         if (outcome.status === "redriven") {
           ulog(`auto-redrive: re-injected a corrective wake for wake ${outcome.originalWakeId} (dropped ${action.text.length} chars) — one more turn to reply`);
         } else if (outcome.status !== "skip-replied") {
+          if (wakeId) dropCarriedRunRefusals(wakeId);
           ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
         }
       }

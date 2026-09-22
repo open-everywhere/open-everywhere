@@ -533,7 +533,7 @@ const gitStdout = (args: readonly string[]): string => {
   const dispatched = row("delegation.task_started", DISPATCH, { task: TASK, call: "call_1", agent: "", session: "s1", continuation: false });
   const taskWake = (over: Record<string, unknown> = {}): AuditWireEntry =>
     row("unified.task_wake", "2026-05-16T08:54:22.000Z", { task: TASK, status: "completed", outcome: "installed", wakeId: W_TASK, inheritedWakeId: W_ASK, turnId: "turn_1", ...over });
-  const settledRow = row("reply.post", SETTLED, { wakeId: W_TASK, id: slackTs(SETTLED), route: "bridge", chars: 243 });
+  const settledRow = row("reply.post", SETTLED, { wakeId: W_TASK, id: slackTs(SETTLED), route: "tool", chars: 243 });
 
   const post = { vendorMs: ms(ASK), surfaceKey: SURFACE } as const;
 

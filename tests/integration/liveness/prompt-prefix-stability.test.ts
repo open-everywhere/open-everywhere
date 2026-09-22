@@ -20,7 +20,7 @@ async function driveTurn(marker: string): Promise<RecordedRequest> {
     messageId: `ope690-${marker}`,
   });
   const request = await waitFor(
-    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0),
+    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0 && r.messages.some((m) => m.text.includes(marker))),
     `the "${marker}" turn's model call`,
   );
   expect(request.fault).toBeUndefined();

@@ -21,6 +21,7 @@ import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard 
 import { installHostFetchStub } from "./fetch-stub";
 import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { createStateDir } from "./state-dir";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 
 import {
   ANY_SESSION,
@@ -51,6 +52,65 @@ export function seatReply(text: string, id: string): ScriptedStep {
 }
 
 const oePerTestCleanups: (() => void)[] = [];
+
+const BARRIER_QUIET_MS = 1_500;
+const BARRIER_CEILING_MS = 20_000;
+const BARRIER_ACTIONS = ["unified.task_wake", "reply.no_reply", "reply.post"] as const;
+
+export async function awaitWindowQuiet(): Promise<void> {
+  await drainOutstandingSettlements();
+}
+
+async function drainOutstandingSettlements(): Promise<void> {
+  if (booted === undefined) return;
+  let cursor: AuditCursor;
+  try {
+    cursor = await auditCursor();
+  } catch {
+    return;
+  }
+  const store = scriptedStore();
+  const hadWildcard = store.has(ANY_SESSION);
+  let drain: ScriptedHandle | undefined;
+  if (!hadWildcard) {
+    try {
+      drain = registerScript(SETTLEMENT_DRAIN_CLOSING_SCRIPT);
+    } catch {
+      return;
+    }
+  }
+  const deadline = Date.now() + BARRIER_CEILING_MS;
+  let lastSeen = 0;
+  let quietFrom = Date.now();
+  try {
+    while (Date.now() < deadline) {
+      let seen = 0;
+      try {
+        seen = (await rowsSinceCursor(cursor, [...BARRIER_ACTIONS], { limit: 50 })).length;
+      } catch {
+        break;
+      }
+      if (seen > lastSeen) {
+        lastSeen = seen;
+        quietFrom = Date.now();
+      } else if (Date.now() - quietFrom >= BARRIER_QUIET_MS) {
+        return;
+      }
+      await sleep(250);
+    }
+    console.warn(
+      `[oe-barrier] ${BARRIER_CEILING_MS}ms expired with settlement rows still arriving (${lastSeen} since the barrier opened). ` +
+        "The next test may inherit a straggler — see harness.ts drainOutstandingSettlements.",
+    );
+  } finally {
+    drain?.dispose();
+  }
+}
+
+afterEach(async () => {
+  await drainOutstandingSettlements();
+});
+
 afterEach(() => {
   for (const cleanup of oePerTestCleanups.splice(0)) cleanup();
   beginScriptedEpoch();
@@ -392,7 +452,15 @@ export async function awaitTaskSettlement(input: {
   return { handle, notification };
 }
 
-export const SETTLEMENT_DRAIN_SCRIPT: SeatScript = { parent: [{ say: "acknowledged" }] };
+export const SETTLEMENT_DRAIN_SCRIPT: SeatScript = { parent: [{ say: NO_REPLY_SENTINEL }] };
+
+export const SETTLEMENT_DRAIN_CLOSING_SCRIPT: SeatScript = {
+  parent: [
+    { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" } }] },
+    { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" } }] },
+    { say: NO_REPLY_SENTINEL },
+  ],
+};
 
 type ToolsetTool = { execute?: (...args: unknown[]) => unknown };
 

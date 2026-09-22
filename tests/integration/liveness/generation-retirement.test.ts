@@ -15,6 +15,7 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   registerScript,
+  seatReply,
   rowsSinceCursor,
   waitFor,
 } from "../harness";
@@ -25,7 +26,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   const store = getOperationalStore();
   const cursor = await auditCursor();
 
-  const first = registerScript({ parent: [{ say: "generation one, answering" }] });
+  const first = registerScript({ parent: [seatReply("generation one, answering", "ope627-gen1"), { say: "NO_REPLY" }] });
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> open the window",
@@ -59,7 +60,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   }, "generation one's turn anchor to clear");
 
   first.dispose();
-  const second = registerScript({ parent: [{ say: "generation two, answering" }] });
+  const second = registerScript({ parent: [{ say: "NO_REPLY" }] });
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> and again",
@@ -99,7 +100,7 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
   const cursor = await auditCursor();
 
   const dispatch = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "look this up and report back" }, id: "ope1620-delegate" }] }, { say: "on it — I have started a worker" }],
+    parent: [{ calls: [{ tool: "agent", input: { message: "look this up and report back" }, id: "ope1620-delegate" }] }, { say: "NO_REPLY" }],
     child: [{ delayMs: 45_000, say: "the worker's answer" }],
   });
   await discordMentionWake({
@@ -128,7 +129,7 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
   }, "the outgoing generation's turn anchor to clear");
 
   dispatch.dispose();
-  const rotating = registerScript({ parent: [{ say: "generation two, answering" }], child: [{ say: "the worker's answer" }] });
+  const rotating = registerScript({ parent: [{ say: "NO_REPLY" }], child: [{ say: "the worker's answer" }] });
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> and again",

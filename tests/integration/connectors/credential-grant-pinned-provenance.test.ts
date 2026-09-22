@@ -121,7 +121,7 @@ test("a pinned lent tool states its pin to the WORKER's model, and the seat's re
 
   const script = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: `quote a sentence from page ${ASKED_ABOUT_PAGE_ID}` }, id: "ope2018-delegate" }] }, { say: "the worker has it" }],
+      parent: [{ calls: [{ tool: "agent", input: { message: `quote a sentence from page ${ASKED_ABOUT_PAGE_ID}` }, id: "ope2018-delegate" }] }, { say: "NO_REPLY" }],
       child: [{ calls: [{ tool: GRANT_TOOL_NAME, input: { id: PINNED_PAGE_ID }, id: "ope2018-granted-call" }] }, { say: "read it" }],
     }),
   );

@@ -14,11 +14,12 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
   registerScript,
-  SETTLEMENT_DRAIN_SCRIPT,
+  SETTLEMENT_DRAIN_CLOSING_SCRIPT,
   taskIdOfDelegation,
   waitForChildren,
   type RecordedRequest,
   type ScriptedHandle,
+  awaitWindowQuiet,
 } from "../harness";
 
 const ADMIN_DISCORD_ID = "300000000000000104";
@@ -72,12 +73,13 @@ async function askThroughAWorker(
   await injectWake(base, wake);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
   const taskId = taskIdOfDelegation(dispatched, `the ${leg} delegation`);
-  const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: `${leg}: the settled worker's completion wake` });
+  const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_CLOSING_SCRIPT, label: `${leg}: the settled worker's completion wake` });
   disposeLater(drain);
   expect(drain.requests.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
   drain.dispose();
   const result = workerGateResult(dispatched, tool);
   expect(result, `${leg}: the worker really called ${tool}`).toBeDefined();
+  await awaitWindowQuiet();
   return result!;
 }
 

@@ -23,7 +23,6 @@ const REPLY_POST = "reply.post";
 const PROSE_DELIVERED = "turn.direct_mention_prose_delivered";
 const PROSE_DROPPED = "turn.supervisor_prose_dropped";
 const NO_REPLY = "unified.no_reply";
-const BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
 const REDRIVE = "unified.turn.redrive";
 
 let clock = Date.UTC(2026, 6, 24, 12, 0, 0);
@@ -203,8 +202,6 @@ const SILENT: Expected = "SILENT_OK";
   ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(PROSE_DROPPED, { chars: 50, replied: false })]]) })).outcome === "DROP", "prose_dropped + LANDED → DROP (the prose-drop failure axis)");
 
   ok(outcomeFor(i, SILENT, attr({ completionOf: new Map([["P1", completion(PROSE_DROPPED, { chars: 50, replied: false })]]) })).outcome === "SILENT_OK", "prose_dropped + SILENT_OK → SILENT_OK (gated drop, silence held)");
-
-  ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(BRIDGE_UNRESOLVED, { chars: 20 })]]) })).outcome === "DROP", "bridge_unresolved + LANDED → DROP (owed and lost)");
 
   ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(PROSE_DELIVERED, { chars: 20, platform: "slack" })]]) })).outcome === "LANDED_VIA_BRIDGE", "legacy prose_delivered + LANDED → LANDED_VIA_BRIDGE");
 }

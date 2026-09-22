@@ -21,7 +21,7 @@ function dispatchScript(tag: string): SeatScript {
   return {
     parent: [
       { calls: [{ tool: "agent", input: { message: `write ${tag}.txt and post it here` }, id: `${tag}-delegate` }] },
-      { say: "handing this off" },
+      { say: "NO_REPLY" },
     ],
     child: [
       {

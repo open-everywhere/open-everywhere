@@ -580,18 +580,10 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
   };
 }
 
-export function shouldBridgeAddressedProse(
-  addressing: string | undefined,
-  alreadyReplied: boolean,
-  blockingRefusal: string | undefined,
-): boolean {
-  return addressing === "direct-mention" && !alreadyReplied && blockingRefusal === undefined;
-}
+export const PROSE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn", "stopped"];
 
-export const BRIDGE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn", "stopped"];
-
-export function bridgeBlockingRefusal(reasons: readonly string[]): string | undefined {
-  return reasons.find((r) => BRIDGE_BLOCKING_REFUSALS.includes(r));
+export function proseBlockingRefusal(reasons: readonly string[]): string | undefined {
+  return reasons.find((r) => PROSE_BLOCKING_REFUSALS.includes(r));
 }
 
 export interface SingleWindowMentionPolicy {

@@ -216,7 +216,7 @@ await check("RED 2e — a reply carrying NO wake id does not satisfy the exact j
 await check("the exact join survives a window FULL of other replies — it picks ours out", async () => {
   const decoys = [
     row("reply.post", { detail: { route: "terminal", chars: 9, wakeId: "wake-another-turn" } }),
-    row("reply.post", { detail: { route: "bridge", chars: 3 } }),
+    row("reply.post", { detail: { route: "tool", chars: 3 } }),
   ];
   const result = await smoke({ decoys });
   assert.equal(result.ok, true, `expected ok; gates: ${JSON.stringify(result.gates)}`);

@@ -433,7 +433,7 @@ export async function seedTypedCorpus(topology: TypedTopology, dbUrl: string | u
 
 const COMPLETION_ACTIONS = new Set([
   "reply.post", "reply.no_reply", "unified.no_reply", "turn.supervisor_prose_dropped",
-  "turn.direct_mention_prose_delivered", "turn.direct_mention_bridge_unresolved", "memory.write",
+  "turn.direct_mention_prose_delivered", "memory.write",
 ]);
 
 interface ProbeRun { readonly probe: RetrievalProbe; readonly obs: RetrievalObservation; readonly sessionIds: readonly string[]; readonly skip?: string }

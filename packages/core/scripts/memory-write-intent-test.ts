@@ -308,13 +308,9 @@ for (const [i, at] of postAts.entries()) {
 }
 
 const unifiedSrc = readFileSync(join(agentDir, "channels", "unified.ts"), "utf-8");
-const bridgeAt = unifiedSrc.indexOf("shouldBridgeAddressedProse(");
-ok(bridgeAt > -1, "the scan finds the addressed-mention bridge — a scan that missed it would pass vacuously");
-const bridgePostAt = unifiedSrc.indexOf("await postUnifiedReply(", bridgeAt);
-ok(bridgePostAt > -1, "…and the post it makes");
-const bridgeFlushAt = unifiedSrc.indexOf("flushWriteIntentMemory(", bridgeAt);
-ok(bridgeFlushAt > -1, "the relay door calls the in-turn persist — without it a delegated ask's report has no write in front of it");
-ok(bridgeFlushAt < bridgePostAt, "…and it runs BEFORE the post, which is the only position the claim guard can read");
+ok(unifiedSrc.length > 1000, "the scan read channels/unified.ts — an empty read would pass vacuously");
+ok(!unifiedSrc.includes("shouldBridgeAddressedProse("), "the addressed-mention prose bridge is deleted (OPE-1982)");
+ok(!unifiedSrc.includes("flushWriteIntentMemory("), "…so unified.ts runs no in-turn persist of its own: the reply tool's doors are the only ones left");
 
 const flushAt = hookSrc.indexOf("export async function flushWriteIntentMemory");
 ok(flushAt > -1, "the flush is exported from the module that owns the persist road");
@@ -333,8 +329,8 @@ const flushingAdapters = readdirSync(chanDir)
   .filter((n) => n.endsWith(".ts"))
   .filter((n) => readFileSync(join(chanDir, n), "utf-8").includes("flushWriteIntentMemory("));
 ok(
-  flushingAdapters.length === 1 && flushingAdapters[0] === "unified.ts",
-  `PARITY: the in-turn persist reaches the channels directory at unified.ts ALONE — found: ${flushingAdapters.join(", ")}`,
+  flushingAdapters.length === 0,
+  `PARITY: the in-turn persist reaches NO channel file — the reply tool is its only door. Naming it: ${flushingAdapters.join(", ")}`,
 );
 
 const providersDir = join(fileURLToPath(new URL("../../", import.meta.url)), "providers");

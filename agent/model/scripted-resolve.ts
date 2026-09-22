@@ -2,6 +2,7 @@ import { mockModel, type MockModelRequest } from "eve/evals";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
+import { NO_REPLY_SENTINEL, REDRIVE_TRIGGER_ID_PREFIX } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { boundaryStopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
@@ -165,14 +166,30 @@ function stepIndexFor(arm: readonly ScriptedStep[], answered: number): number | 
   return `unmappable tool-result count ${answered} (script emits ${before} call(s) in total)`;
 }
 
+function promptIsRedriveCorrection(messages: readonly { readonly text: string }[]): boolean {
+  const prompt = messages.map((m) => m.text).join("\n");
+  const lastEnvelope = prompt.lastIndexOf("<wake ");
+  if (lastEnvelope === -1) return false;
+  for (const tag of prompt.slice(lastEnvelope).matchAll(/<message\b[^>]*>/g)) {
+    if (tag[0].includes('trigger="true"') && tag[0].includes(`id="${REDRIVE_TRIGGER_ID_PREFIX}`)) return true;
+  }
+  return false;
+}
+
+interface PromptFacts {
+  readonly redriveCorrection: boolean;
+  readonly wakeId: string | undefined;
+}
+
 interface StepVerdict {
   readonly fault?: string;
   readonly served: number;
   readonly step: ScriptedStep;
   readonly stale: boolean;
+  readonly redriveSilence?: boolean;
 }
 
-function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount: number): StepVerdict {
+function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount: number, prompt: PromptFacts): StepVerdict {
   const arm = at.role === "child" ? entry.script.child : entry.script.parent;
   const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
   const baseline = (entry.baselines[baselineKey] ??= toolResultCount);
@@ -186,6 +203,10 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
   const turnKey = at.turnId ?? "?";
   const firstCallTurn = entry.firstCallTurnByRole[at.role];
   if (candidate.calls !== undefined && firstCallTurn !== undefined && firstCallTurn !== turnKey) {
+    const firstCallWake = entry.firstCallWakeByRole[at.role];
+    if (prompt.redriveCorrection && firstCallWake !== undefined && prompt.wakeId === firstCallWake) {
+      return { served: -1, step: { say: NO_REPLY_SENTINEL }, stale: false, redriveSilence: true };
+    }
     return {
       fault:
         `stale script: role "${at.role}" already served a call-bearing step for turn "${firstCallTurn}"; ` +
@@ -196,7 +217,10 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
       stale: true,
     };
   }
-  if (candidate.calls !== undefined && firstCallTurn === undefined) entry.firstCallTurnByRole[at.role] = turnKey;
+  if (candidate.calls !== undefined && firstCallTurn === undefined) {
+    entry.firstCallTurnByRole[at.role] = turnKey;
+    if (prompt.wakeId !== undefined) entry.firstCallWakeByRole[at.role] = prompt.wakeId;
+  }
   return { served: index, step: candidate, stale: false };
 }
 
@@ -230,7 +254,9 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
     respond: async (request) => {
       let target = entry;
       let observation = at;
-      let verdict = serveStep(target, observation, request.toolResults.length);
+      const promptWakeId = wakeIdFromPrompt(request.messages);
+      const promptFacts: PromptFacts = { redriveCorrection: promptIsRedriveCorrection(request.messages), wakeId: promptWakeId };
+      let verdict = serveStep(target, observation, request.toolResults.length, promptFacts);
 
       if (verdict.stale) {
         const swap = await awaitScriptSwap(target, observation.sessionId, seqAtResolve);
@@ -250,12 +276,11 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
           observation = { ...observation };
           next.resolves.push(observation);
           target = next;
-          verdict = serveStep(target, observation, request.toolResults.length);
+          verdict = serveStep(target, observation, request.toolResults.length, promptFacts);
         }
       }
-      const { fault: stepFault, served, step } = verdict;
+      const { fault: stepFault, served, step, redriveSilence } = verdict;
 
-      const promptWakeId = wakeIdFromPrompt(request.messages);
       const filled = (step.calls ?? []).map((c) => ({ call: c, ...fillWakePlaceholder(c.input, promptWakeId) }));
       const unresolvedCall = filled.find((f) => f.unresolved);
       const wakeFault = unresolvedCall ? unresolvedWakePlaceholderFault(unresolvedCall.call.tool) : undefined;
@@ -272,6 +297,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
         pid: process.pid,
         ...promptShapeFields(request),
         ...(fault !== undefined ? { fault } : {}),
+        ...(redriveSilence === true ? { redriveSilence: true } : {}),
       });
 
       if (typeof step.delayMs === "number" && step.delayMs > 0) {

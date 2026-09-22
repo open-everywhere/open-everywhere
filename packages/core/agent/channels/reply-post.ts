@@ -1,4 +1,4 @@
-import { bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, authPrincipalId, bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomPost } from "./egress-spoof.js";
@@ -56,19 +56,21 @@ export interface ReplyAudit {
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly turnId?: string;
-  readonly route: "tool" | "terminal" | "bridge";
+  readonly route: "tool" | "terminal";
 }
 
 export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
   const p = resolvePartition(ctx);
   const sessionId = (ctx as { session?: { id?: string } }).session?.id;
   const turnId = currentTurnId(ctx);
+  const creatorId = attestedFireCreatorId(ctx);
   return {
     org: p.org,
     platform: p.platform,
     workspace: p.workspace,
     surface: p.surface,
-    principalId: bindFrom(ctx).principalId,
+    principalId: creatorId !== undefined ? (authPrincipalId(ctx) ?? bindFrom(ctx).principalId) : bindFrom(ctx).principalId,
+    ...(creatorId ? { creatorId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),
     ...(turnId ? { turnId } : {}),

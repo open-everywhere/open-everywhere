@@ -44,7 +44,10 @@ async function pinVendorHostIsCredentialed(): Promise<void> {
 function armDelegation(tag: string): ScriptedHandle {
   return disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: `read ${PAGE_URL} and quote it` }, id: `ope1947-${tag}-delegate` }] }, { say: "handed off" }],
+      parent: [
+        { calls: [{ tool: "agent", input: { message: `read ${PAGE_URL} and quote it` }, id: `ope1947-${tag}-delegate` }] },
+        { say: "NO_REPLY" },
+      ],
       child: [{ say: "reported" }],
     }),
   );

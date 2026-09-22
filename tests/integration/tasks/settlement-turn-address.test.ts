@@ -8,6 +8,7 @@ import {
   discordMentionWake,
   disposeLater,
   registerScript,
+  WAKE_FROM_ENVELOPE,
   rowsSinceCursor,
   sleep,
   taskIdOfDelegation,
@@ -42,7 +43,8 @@ test("a settlement turn holds the task's own address from the notification, befo
       parent: [
         { calls: [{ tool: "agent", input: { message: "do the long job" }, id: "t597-delegate" }] },
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "control" }, id: "t597-reply-ingressed" }] },
-        { say: "handing this off" },
+        { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: "handing this off", done: false }, id: "t597-dispatch-post" }] },
+        { say: "NO_REPLY" },
       ],
       child: [{ say: CHILD_ANSWER }],
     }),
@@ -73,6 +75,11 @@ test("a settlement turn holds the task's own address from the notification, befo
   const dispatchWake = disclosedTurnWake(ingressedReply.text);
   expect(dispatchWake).toBeDefined();
 
+  await waitFor(
+    () => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 3),
+    "the dispatch turn's own terminal step",
+  );
+
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated child's last step" });
   const taskId = taskIdOfDelegation(dispatched, "t597-delegate");
   const dispatchedRequests: readonly RecordedRequest[] = [...dispatched.requests];
@@ -85,7 +92,7 @@ test("a settlement turn holds the task's own address from the notification, befo
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too early" }, id: "t597-reply-unread" }] },
         { calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "t597-view" }] },
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too late" }, id: "t597-reply-recovered" }] },
-        { say: "the worker is done" },
+        { say: "NO_REPLY" },
       ],
     },
     label: "the settled worker's completion, delivered as a new message naming the task id",
@@ -129,7 +136,9 @@ test("a settlement turn holds the task's own address from the notification, befo
 
   const posts = await rowsSinceCursor(cursor, ["reply.post"]);
   const postWakes = [...new Set(posts.map((r) => String(r.detail?.wakeId)))].sort();
-  expect(postWakes).toEqual([dispatchWake!, earlyWake!].sort());
+  expect(postWakes).toEqual([dispatchWake!]);
+  expect(posts).toHaveLength(1);
+  expect(earlyWake).not.toBe(dispatchWake);
   expect(posts.map((r) => String(r.detail?.id)).filter((id) => !id.startsWith("spoof-unified-"))).toEqual([]);
 
   const wakeRows = await rowsSinceCursor(cursor, ["unified.task_wake"]);

@@ -28,7 +28,7 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
   expect(settings.getSettings().taint.mode).toBe("on");
 
   const handle = (live = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "count to three" }, id: "b1-delegate" }] }, { say: "dispatched" }],
+    parent: [{ calls: [{ tool: "agent", input: { message: "count to three" }, id: "b1-delegate" }] }, { say: "NO_REPLY" }],
     child: [{ say: CHILD_ANSWER }],
   }));
 
@@ -54,7 +54,7 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
   expect(JSON.stringify(result.output)).not.toContain(CHILD_ANSWER);
 
   handle.dispose();
-  live = registerScript({ parent: [{ say: "noted" }], child: [{ say: "noted" }] });
+  live = registerScript({ parent: [{ say: "NO_REPLY" }], child: [{ say: "NO_REPLY" }] });
   await sleep(8_000);
 
   const mine = await rowsSinceCursor(cursor, ["taint.forward", "delegation.task_started", "delegation.task_settled"]);

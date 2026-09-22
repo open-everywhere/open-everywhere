@@ -22,7 +22,7 @@ test("a settlement turn that arrives before the script swap is held, then served
     registerScript({
       parent: [
         { calls: [{ tool: "agent", input: { message: "write race-probe.txt and post it here" }, id: "ope750-delegate" }] },
-        { say: "handing this off" },
+        { say: "NO_REPLY" },
       ],
       child: [
         {

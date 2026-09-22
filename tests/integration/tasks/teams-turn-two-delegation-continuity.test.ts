@@ -16,6 +16,7 @@ import {
   type RecordedRequest,
   type ScriptedHandle,
   type ScriptedStep,
+  awaitWindowQuiet,
 } from "../harness";
 
 const TEAMS_TENANT_ID = "it1064-teams-tenant";
@@ -102,6 +103,7 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   const seatOne = one.requests.filter((r) => r.role === "parent");
   const seatOneFirst = seatOne[0];
   one.dispose();
+  await awaitWindowQuiet();
 
   const cursor = await auditCursor();
   const two = await driveTeamsTurn({

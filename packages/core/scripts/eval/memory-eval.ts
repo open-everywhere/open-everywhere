@@ -191,7 +191,7 @@ export function buildBattery(topology: Topology): BatteryProbe[] {
 
 const COMPLETION_ACTIONS = new Set([
   "reply.post", "reply.no_reply", "unified.no_reply", "turn.supervisor_prose_dropped",
-  "turn.direct_mention_prose_delivered", "turn.direct_mention_bridge_unresolved",
+  "turn.direct_mention_prose_delivered",
   "memory.write",
 ]);
 

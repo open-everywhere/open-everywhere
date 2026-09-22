@@ -27,6 +27,8 @@ import {
   waitForChildren,
   type RecordedRequest,
   type ScriptedStep,
+  awaitWindowQuiet,
+  SETTLEMENT_DRAIN_SCRIPT,
 } from "../harness";
 import { installHostFetchStub } from "../fetch-stub";
 
@@ -153,7 +155,7 @@ async function driveWorkerTurn(input: {
 }): Promise<DelegatedTurn> {
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: input.text }, id: input.callId }] }, { say: "the worker has it" }],
+      parent: [{ calls: [{ tool: "agent", input: { message: input.text }, id: input.callId }] }, { say: "NO_REPLY" }],
       child: [...input.steps],
     }),
   );
@@ -164,7 +166,7 @@ async function driveWorkerTurn(input: {
     `the "${input.text}" turn's resumed step carrying the delegation receipt`,
   );
   const taskId = taskIdOfDelegation(dispatched, `the "${input.text}" delegation`);
-  const armed = armSettlement(dispatched, { parent: [{ say: "acknowledged" }] });
+  const armed = armSettlement(dispatched, SETTLEMENT_DRAIN_SCRIPT);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: input.steps.length - 1, label: `the "${input.text}" worker to finish its own arm` });
   const worker = await waitFor(() => dispatched.requests.find((r) => r.role === "child" && r.stepIndex === 0), `the "${input.text}" worker's own first model call`);
   const requests = [...dispatched.requests];
@@ -172,6 +174,7 @@ async function driveWorkerTurn(input: {
   expect([...dispatched.requests, ...armed.requests].filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
   armed.dispose();
   expect(String(worker.sessionId), `the "${input.text}" worker ran on the SEAT's own session, so nothing here measures a delegation`).not.toBe(String(seat.sessionId));
+  await awaitWindowQuiet();
   return { requests, seat, worker };
 }
 

@@ -41,7 +41,7 @@ const { markThreadEngaged, markThreadStopped, getThreadEngagement, isThreadStopp
 const { standDownSilenceLatchedDurably } = await import("../agent/channels/stand-down-silence.js");
 const { durableTurnKey, writeTurnState, noteStoppedAck, stoppedAckSpent } = await import("../agent/model/turn-state.js");
 const { postTerminalProse } = await import("../agent/channels/reply-post.js");
-const { bridgeBlockingRefusal, BRIDGE_BLOCKING_REFUSALS } = await import("../agent/channels/unified-window.js");
+const { proseBlockingRefusal, PROSE_BLOCKING_REFUSALS } = await import("../agent/channels/unified-window.js");
 const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } = await import("../agent/channels/reply-signal.js");
 const { REPLY_STALE_REFUSAL_REASON } = await import("../agent/channels/reply-freshness.js");
 const { REPLY_FOLD_REFUSAL_REASON } = await import("../agent/channels/reply-fold.js");
@@ -168,10 +168,10 @@ const AT = "2026-02-25T04:40:00Z";
 }
 
 {
-  ok(bridgeBlockingRefusal([REPLY_STOPPED_REFUSAL_REASON]) === REPLY_STOPPED_REFUSAL_REASON, "🔴 §6: THE FIX — a `stopped` refusal STOPS the addressed-prose bridge");
-  ok(bridgeBlockingRefusal([]) === undefined, "§6/CONTROL: no refusal leaves the bridge armed — the gate is not a constant block");
-  ok(bridgeBlockingRefusal(["delegation-pending"]) === undefined, "§6/CONTROL: `delegation-pending` is deliberately NOT blocking — the prose posts and only the wake mark is skipped");
-  ok(bridgeBlockingRefusal(["mismatch", "expired"]) === undefined, "§6/CONTROL: the wake-fence ADDRESS reasons do not block — the bridge authors no address");
+  ok(proseBlockingRefusal([REPLY_STOPPED_REFUSAL_REASON]) === REPLY_STOPPED_REFUSAL_REASON, "🔴 §6: THE FIX — a `stopped` refusal is a WITHHOLDING, so the drop names it and no redrive follows");
+  ok(proseBlockingRefusal([]) === undefined, "§6/CONTROL: no refusal blocks anything — the finder is not a constant block");
+  ok(proseBlockingRefusal(["delegation-pending"]) === undefined, "§6/CONTROL: `delegation-pending` is deliberately NOT blocking — the turn owes its own worker's report, so the redrive still fires");
+  ok(proseBlockingRefusal(["mismatch", "expired"]) === undefined, "§6/CONTROL: the wake-fence ADDRESS reasons do not block — a dropped turn authored no address");
 
   const pinned: readonly [string, string][] = [
     [REPLY_STALE_REFUSAL_REASON, "reply-freshness.ts REPLY_STALE_REFUSAL_REASON"],
@@ -181,10 +181,10 @@ const AT = "2026-02-25T04:40:00Z";
     [REPLY_STOPPED_REFUSAL_REASON, "reply-signal.ts REPLY_STOPPED_REFUSAL_REASON"],
   ];
   for (const [value, where] of pinned) {
-    ok(BRIDGE_BLOCKING_REFUSALS.includes(value), `§6/PIN: the bridge blocks on ${where} — a rename of that constant fails HERE rather than unblocking the bridge`);
-    ok(bridgeBlockingRefusal([value]) === value, `§6/PIN: …and the gate returns it, so the list and the finder cannot drift`);
+    ok(PROSE_BLOCKING_REFUSALS.includes(value), `§6/PIN: a drop is withheld by ${where} — a rename of that constant fails HERE rather than silently re-arming the redrive`);
+    ok(proseBlockingRefusal([value]) === value, `§6/PIN: …and the finder returns it, so the list and the finder cannot drift`);
   }
-  ok(BRIDGE_BLOCKING_REFUSALS.length === pinned.length, `§6/PIN: the list holds exactly the ${pinned.length} pinned reasons — a NEW entry must be pinned here rather than added unreviewed`);
+  ok(PROSE_BLOCKING_REFUSALS.length === pinned.length, `§6/PIN: the list holds exactly the ${pinned.length} pinned reasons — a NEW entry must be pinned here rather than added unreviewed`);
 }
 
 {

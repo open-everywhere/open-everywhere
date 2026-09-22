@@ -11,6 +11,7 @@ import {
   waitFor,
   type ScriptedHandle,
   type SlackWebApiStub,
+  awaitWindowQuiet,
 } from "../harness";
 
 const SLACK_WINDOW_CHANNEL_ID = "C0EXCHAN003";
@@ -83,7 +84,9 @@ async function armSeams(): Promise<void> {
   }
 
   if (standingSessionId.length > 0) return;
-  const opener = registerScript({ parent: [{ say: "hello, I am this window's standing seat" }] });
+  const opener = registerScript({
+    parent: [{ calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "ope738-opener-silence" }] }, { say: "NO_REPLY" }],
+  });
   const ts = slackTs(Date.now(), (tsCounter += 1));
   const res = await slackMentionWake({
     channelId: SLACK_WINDOW_CHANNEL_ID,
@@ -96,6 +99,7 @@ async function armSeams(): Promise<void> {
   const first = await waitFor(() => opener.requests[0], "the opener mention to reach the standing window seat");
   expect(typeof first.sessionId, "the opener revealed the standing seat's own eve session id").toBe("string");
   standingSessionId = first.sessionId as string;
+  await awaitWindowQuiet();
   await waitFor(() => opener.requests.find((r) => r.stepIndex === 0), "the opener's own served step");
   opener.dispose();
 }

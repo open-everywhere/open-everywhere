@@ -487,9 +487,11 @@ let foldedMessageId = "";
 
     await inTurn(async () => endTurnWithProse("An ordinary answer, narrated instead of posted."));
 
-    ok(posted.length === before + 1, "🔴 §14b/ROOM: with no refusal the bridge STILL POSTS — the fix suppresses a refused turn, it does not delete the bridge");
-    ok(posted[posted.length - 1]!.text.includes("An ordinary answer"), "§14b/ROOM: …and what it posted is the model's own text");
-    ok((await dropRows(w)).length === 0, "§14b/AUDIT: a delivered bridge writes no drop row");
+    ok(posted.length === before, "§14b/ROOM: nothing reached the room — a turn's closing prose has no delivery route on any addressing (OPE-1982)");
+    const control = await dropRows(w);
+    ok(control.length === 1, "§14b/AUDIT: the withheld answer is still RECORDED");
+    ok(control[0]!["reason"] === "no-reply-call", "🔴 §14b/AUDIT: …under the GENERIC reason, because no host verdict withheld it. This is what makes §14a's `refused:` reading a finding rather than a constant");
+    ok(control[0]!["reason"] !== `refused:${REPLY_FOLD_REFUSAL_REASON}`, "🔴 §14b/AUDIT/NEGATIVE CONTROL: …and explicitly not §14a's reason");
   }
 
   {
@@ -509,7 +511,7 @@ let foldedMessageId = "";
       await endTurnWithProse("And that is what I did.");
     });
 
-    ok(posted.length === before + 1, "🔴 §14c/ROOM: exactly ONE message reached the room — the forced reply, and no bridged duplicate behind it");
+    ok(posted.length === before + 1, "🔴 §14c/ROOM: exactly ONE message reached the room — the forced reply, and no duplicate behind it");
     const rows = await dropRows(w);
     ok(rows.length === 1 && rows[0]!["reason"] === "narration-after-reply", "🔴 §14c/AUDIT: the trailing prose drops as ordinary narration — a turn that DID post is not reported as one the host withheld");
   }

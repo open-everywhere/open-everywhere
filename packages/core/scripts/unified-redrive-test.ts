@@ -64,8 +64,8 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   const W = "wake-original-1";
   const msg = renderWake(buildRedriveWake(W, SLACK_ORIGIN, 137, "2026-07-13T00:00:00Z")).message;
   ok(msg.startsWith("<wake "), "wake: the corrective delivery is the envelope alone (OPE-753 — nothing renders above it)");
-  ok(msg.includes('addressing="channel-watch"'), "wake: AMBIENT channel-watch addressing (its own prose is hard-dropped, never bridged)");
-  ok(!msg.includes('addressing="direct-mention"') && !msg.includes('mention="true"'), "wake: NOT an addressed direct-mention (so the bridge can never fire on the corrective turn)");
+  ok(msg.includes('addressing="channel-watch"'), "wake: AMBIENT channel-watch addressing — a machine notice about the model's own output");
+  ok(!msg.includes('addressing="direct-mention"') && !msg.includes('mention="true"'), "wake: NOT an addressed direct-mention — the correction must not claim an address no person made");
   ok(msg.includes(`wake-id="${W}"`), "wake: the envelope RE-STAMPS the ORIGINAL wake-id (the reply fence + reply tool target it)");
   ok(msg.includes('from="system"'), "wake: sender is system (a machine-authored notice, not a fake human)");
   ok(msg.includes('trust="relay"'), "wake: trust tier is relay (machine/self echo — the tier for the agent's own output)");
@@ -74,6 +74,15 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("DISCARDED by the message-tool-only gate"), "corrective text: states the drop plainly");
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("no_reply"), "corrective text: offers the no_reply escape (silence stays valid — never coerces a reply)");
   ok(describeRedriveTarget(SLACK_ORIGIN) === "slack channel C_PAY", "target description: slack channel");
+
+  const owing = redriveCorrectiveText(10, "W9", SLACK_ORIGIN, true);
+  ok(owing.includes("`done: false`"), "🔴 corrective text: on a turn whose worker still owes the wake, the nudge NAMES `done: false` — the one call that is not refused");
+  ok(owing.includes("still owes this conversation"), "corrective text: …and says why, so the model is not following an unexplained flag");
+  ok(!redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("done"), "🔴 corrective text/NEGATIVE CONTROL: an ordinary correction names no `done` at all");
+  ok(!redriveCorrectiveText(10, "W9", SLACK_ORIGIN, false).includes("done"), "corrective text/NEGATIVE CONTROL: …and the explicit false is the same text as the default");
+  const owingWake = renderWake(buildRedriveWake("W9", SLACK_ORIGIN, 10, new Date().toISOString(), true)).message;
+  ok(owingWake.includes("`done: false`"), "🔴 corrective wake: the flag survives the render, so the model really reads it");
+  ok(!renderWake(buildRedriveWake("W9", SLACK_ORIGIN, 10, new Date().toISOString())).message.includes("done"), "corrective wake/NEGATIVE CONTROL: …and the ordinary one carries none");
 }
 
 {
@@ -140,6 +149,30 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   const injected: Captured[] = [];
   const again = await maybeRedrive({ org: ORG, workspace: "p", wakeId: W, chars: 40, replied: false }, { store, reinject: makeReinject(injected) });
   ok(again.status === "skip-loop-guard" && injected.length === 0, "throw: the guard WAS burned by the failed attempt — no infinite re-injection loop");
+}
+
+{
+  const injected: Captured[] = [];
+  const audits: Record<string, unknown>[] = [];
+  const W_DM = "wake-direct-mention-1982";
+  await registerUnifiedWakeTarget(store, ORG, W_DM, SLACK_ORIGIN, new Date().toISOString());
+
+  const first = await maybeRedrive(
+    { org: ORG, workspace: "p", sessionId: "sess-dm", wakeId: W_DM, chars: 3, replied: false },
+    { store, reinject: makeReinject(injected), audit: makeAudit(audits) },
+  );
+  ok(first.status === "redriven", "🔴 OPE-1982: a DIRECT-MENTION turn's dropped prose is re-driven — the same correction an unaddressed drop gets, because this module reads no addressing at all");
+  ok(injected.length === 1 && injected[0].wakeId === W_DM, "OPE-1982: …the corrective wake carries the ORIGINAL wake id, so the seat's `reply` resolves the conversation the mention came from");
+  ok(injected[0] !== undefined && !injected[0].message.includes('addressing="direct-mention"'), "🔴 OPE-1982: …and the correction itself is AMBIENT — a machine notice must not claim an address no person made");
+  ok(audits.filter((e) => e.action === REDRIVE_ACTION).length === 1, "OPE-1982: exactly ONE unified.turn.redrive row — the count an operator reads to see how often the tool was missed");
+
+  const second = await maybeRedrive(
+    { org: ORG, workspace: "p", sessionId: "sess-dm", wakeId: W_DM, chars: 3, replied: false },
+    { store, reinject: makeReinject(injected), audit: makeAudit(audits) },
+  );
+  ok(second.status === "skip-loop-guard", "🔴 OPE-1982: a SECOND prose-only ending on the same wake is NOT re-driven — the cap is one, and the drop is final");
+  ok(injected.length === 1, "OPE-1982: …so nothing further is injected");
+  ok(audits.filter((e) => e.action === REDRIVE_ACTION).length === 1, "🔴 OPE-1982/NEGATIVE CONTROL: …and the row count did not move, so `skip-loop-guard` really is silence and not a second correction under another name");
 }
 
 {

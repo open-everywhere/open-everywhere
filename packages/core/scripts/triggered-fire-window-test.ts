@@ -510,7 +510,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 
 {
   const { registerSlackFixturePostArm } = await import("./_slack-test-stubs.js");
-  const { OE_WAKE_ID_ATTR, shouldBridgeAddressedProse } = await import("../agent/channels/unified-window.js");
+  const { OE_WAKE_ID_ATTR } = await import("../agent/channels/unified-window.js");
   const { wakeIdsFromEnvelope } = await import("../agent/channels/wake-envelope.js");
   const { replayStepNames } = await import("../agent/access/window-gated.js");
 
@@ -563,7 +563,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   ok(posted.length === 1, "speak/ROOM: the fire's output actually LANDED — one post reached the surface (the regression: nothing landed at all)");
   ok(posted[0].channel === CHAN && posted[0].text === "Deploy 42 is green.", "speak/ROOM: it landed in the routine's own room, verbatim");
 
-  ok(shouldBridgeAddressedProse(d.attrs[OE_ADDRESSING_ATTR] as string | undefined, false, undefined), "speak/BACKSTOP: the fire's delivery is still `direct-mention`, so terminal prose bridges to its origin");
+  ok(d.attrs[OE_ADDRESSING_ATTR] === "direct-mention", "speak/OWED: the fire's delivery is still stamped `direct-mention`, so the seat is told it owes an answer");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-speak");
 }
 
