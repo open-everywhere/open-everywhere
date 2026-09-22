@@ -53,6 +53,7 @@ export interface NormalizedWake {
   };
   readonly memoryDelta?: string;
   readonly catchUpUnavailable?: string;
+  readonly redriveCorrection?: string;
   readonly trigger: NormalizedWakeTrigger;
 }
 
@@ -91,6 +92,7 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             thread: nw.locus.thread,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
             catchUpUnavailable: nw.catchUpUnavailable,
+            redriveCorrection: nw.redriveCorrection,
         });
       }
       break;

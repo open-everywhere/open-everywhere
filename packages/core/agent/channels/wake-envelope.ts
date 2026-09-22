@@ -89,6 +89,7 @@ export interface WakeEnvelopeInput {
   readonly thread?: WakeThreadMeta;
   readonly messages: readonly WakeMessageInput[];
   readonly catchUpUnavailable?: string;
+  readonly redriveCorrection?: string;
 }
 
 function escapeXml(s: string): string {
@@ -254,6 +255,11 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
       ? [indent(`<system-note>${escapeXml(input.catchUpUnavailable)}</system-note>`, 2)]
       : [];
 
+  const redriveNote =
+    input.redriveCorrection !== undefined && input.redriveCorrection.length > 0
+      ? [indent(`<system-note>${escapeXml(input.redriveCorrection)}</system-note>`, 2)]
+      : [];
+
   const lines = [
     `<wake${attr("reason", tagReason(input.reason))}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
@@ -261,6 +267,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     indent("</channel>", 2),
     ...unauthNote,
     ...catchUpNote,
+    ...redriveNote,
     `</wake>`,
   ];
   return lines.join("\n");

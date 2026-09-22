@@ -19,7 +19,8 @@ delete process.env.OE_SPAWN_DISPATCH_SECRET;
 
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { renderWake } = await import("../agent/channels/normalized-wake.js");
+const { renderWake, mkMessageTrigger } = await import("../agent/channels/normalized-wake.js");
+const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
 const {
   redriveGuardKey,
   buildRedriveWake,
@@ -74,6 +75,31 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("DISCARDED by the message-tool-only gate"), "corrective text: states the drop plainly");
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("no_reply"), "corrective text: offers the no_reply escape (silence stays valid — never coerces a reply)");
   ok(describeRedriveTarget(SLACK_ORIGIN) === "slack channel C_PAY", "target description: slack channel");
+
+  const fenceOpen = msg.indexOf(UNTRUSTED_OPEN);
+  const fenceClose = msg.indexOf(UNTRUSTED_CLOSE, fenceOpen);
+  ok(fenceOpen !== -1 && fenceClose > fenceOpen, "wake: the machine trigger body is STILL fenced (no unfenced machine body)");
+  const fenced = msg.slice(fenceOpen, fenceClose);
+  ok(!fenced.includes("DISCARDED") && !fenced.includes("no_reply"), "🔴 wake: the corrective instruction is NOT inside the untrusted fence");
+  ok(fenced.includes(`Corrective re-drive of wake ${W}.`), "wake: the fenced body is the one-line marker only");
+  const note = msg.indexOf("<system-note>");
+  ok(note > msg.lastIndexOf("</channel>") && note < msg.lastIndexOf("</wake>"), "🔴 wake: the correction renders as a trusted <system-note> after </channel>, inside <wake>");
+  const noteText = msg.slice(note, msg.indexOf("</system-note>", note));
+  ok(noteText.includes("DISCARDED by the message-tool-only gate") && noteText.includes("137 chars") && noteText.includes(W) && noteText.includes("no_reply"), "wake: the system-note carries the whole instruction (drop, chars, wake id, no_reply escape)");
+  ok(msg.indexOf("DISCARDED") > msg.lastIndexOf("</channel>"), "wake: no copy of the instruction renders anywhere inside <channel>");
+
+  const plain = renderWake({
+    platform: "slack",
+    reason: "channel-activity",
+    addressing: "channel-watch",
+    wakeId: W,
+    locus: { channel: { id: "C_PAY" } },
+    trigger: mkMessageTrigger({ from: "bot", author: "relay-bot", id: "9.9", sentAt: "2026-07-13T00:00:00Z", trust: "relay", body: redriveCorrectiveText(137, W, SLACK_ORIGIN) }),
+  }).message;
+  const pOpen = plain.indexOf(UNTRUSTED_OPEN);
+  const pClose = plain.indexOf(UNTRUSTED_CLOSE, pOpen);
+  ok(pOpen !== -1 && plain.slice(pOpen, pClose).includes("DISCARDED by the message-tool-only gate"), "🔴 NEGATIVE CONTROL: the corrective text in a plain relay BODY renders INSIDE the fence");
+  ok(!plain.includes("<system-note>"), "🔴 NEGATIVE CONTROL: …and a body carrying the text appends NO system-note");
 
   const owing = redriveCorrectiveText(10, "W9", SLACK_ORIGIN, true);
   ok(owing.includes("`done: false`"), "🔴 corrective text: on a turn whose worker still owes the wake, the nudge NAMES `done: false` — the one call that is not refused");

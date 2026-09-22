@@ -61,8 +61,9 @@ export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrig
       id: `${REDRIVE_TRIGGER_ID_PREFIX}${originalWakeId}`,
       sentAt: nowIso,
       trust: "relay",
-      body: redriveCorrectiveText(chars, originalWakeId, origin, owesWorkerReport),
+      body: `Corrective re-drive of wake ${originalWakeId}.`,
     }),
+    redriveCorrection: redriveCorrectiveText(chars, originalWakeId, origin, owesWorkerReport),
   };
 }
 
