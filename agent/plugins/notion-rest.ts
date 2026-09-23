@@ -11,7 +11,7 @@ const NOTION_SCRIPT = `#!/usr/bin/env node
 //
 //   node scripts/notion.mjs api <METHOD> <path> [--json <body>|-] [--all]
 //   node scripts/notion.mjs search [query...] [--filter page|database] [--sort ...] [--all]
-//   node scripts/notion.mjs page get|markdown|create|update|archive ...
+//   node scripts/notion.mjs page current|get|markdown|create|update|archive ...
 //   node scripts/notion.mjs blocks list|append|update|delete ...
 //   node scripts/notion.mjs db get|query|create ...
 //   node scripts/notion.mjs comments list|create ...
@@ -79,7 +79,30 @@ export function errorReport(err) {
     if (hint) report.error.hint = hint;
     return report;
   }
+  if (err && err.name === "NotOnANotionPage") return { error: { status: null, code: "not_on_a_notion_page", message: err.message } };
   return { error: { status: null, code: "script_error", message: String((err && err.message) || err) } };
+}
+
+// --- The page this conversation is on ------------------------------------------------
+
+/** The file the host writes beside this skill for every session: {"pageId": "<id>"} when the
+ *  conversation is on a Notion page, {"pageId": null} when it is not. */
+const CURRENT_PAGE_FILE = new URL("../current-page.json", import.meta.url);
+export const NOT_ON_A_PAGE = 'This conversation is not on a Notion page; pass a page id instead of "current".';
+
+/** The id of the page this conversation is on. \`opts.currentPageFile\` is the seam a test replaces. */
+export function currentPageId(opts) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync((opts && opts.currentPageFile) || CURRENT_PAGE_FILE, "utf8"));
+  } catch {
+    parsed = null;
+  }
+  const id = parsed && typeof parsed.pageId === "string" ? parsed.pageId.trim() : "";
+  if (id) return id;
+  const err = new Error(NOT_ON_A_PAGE);
+  err.name = "NotOnANotionPage";
+  throw err;
 }
 
 // --- Transport ---------------------------------------------------------------------
@@ -794,7 +817,7 @@ export function propertiesFromSets(schema, sets) {
  * touches argv, so one test covers the argument handling of the whole surface without a
  * single network call.
  */
-export function planCommand(argv) {
+export function planCommand(argv, opts) {
   const { positional, flags } = parseArgs(argv);
   const [verb, ...rest] = positional;
   const all = flags.all === true;
@@ -828,6 +851,10 @@ export function planCommand(argv) {
 
   if (verb === "page") {
     const sub = rest[0];
+    if (sub === "current") {
+      onlyFlags(flags, "page current", []);
+      return Object.assign({ op: "page.current", method: "GET", path: "/v1/pages/" + currentPageId(opts) }, base);
+    }
     if (sub === "get") {
       onlyFlags(flags, "page get", []);
       const id = requireArg(rest[1], "page get <page-id>");
@@ -835,7 +862,8 @@ export function planCommand(argv) {
     }
     if (sub === "markdown") {
       onlyFlags(flags, "page markdown", ["depth"]);
-      const id = requireArg(rest[1], "page markdown <page-id>");
+      const arg = requireArg(rest[1], "page markdown <page-id>|current");
+      const id = arg === "current" ? currentPageId(opts) : arg;
       return Object.assign({ op: "page.markdown", method: "GET", path: "/v1/pages/" + id, depth: numberFlag(flags.depth, "depth", 3) }, base);
     }
     if (sub === "create") {
@@ -872,7 +900,7 @@ export function planCommand(argv) {
       const id = requireArg(rest[1], "page archive <page-id>");
       return Object.assign({ op: "page.archive", method: "PATCH", path: "/v1/pages/" + id, body: { archived: true } }, base);
     }
-    throw new Error('unknown page op "' + (sub || "") + '" — expected get | create | update | archive | markdown');
+    throw new Error('unknown page op "' + (sub || "") + '" — expected current | get | markdown | create | update | archive');
   }
 
   if (verb === "blocks") {
@@ -1019,6 +1047,11 @@ export async function runPlan(plan, opts) {
     print(plan, json, formatSearchResults(json));
     return;
   }
+  if (plan.op === "page.current") {
+    const json = await call(plan.method, plan.path, undefined, opts);
+    print(plan, json, JSON.stringify({ id: json.id, title: titleOf(json), url: json.url || null }));
+    return;
+  }
   if (plan.op === "page.get") {
     const json = await call(plan.method, plan.path, undefined, opts);
     print(plan, json, "# " + titleOf(json) + "\\n(page " + json.id + ", last edited " + json.last_edited_time + ")");
@@ -1127,7 +1160,7 @@ export async function runPlan(plan, opts) {
 }
 
 export async function main(argv, opts) {
-  await runPlan(planCommand(argv), opts);
+  await runPlan(planCommand(argv, opts), opts);
 }
 
 // Only run the CLI when this file is the process entry point — importing it (as the
@@ -1136,7 +1169,7 @@ export async function main(argv, opts) {
 const isMain = typeof process !== "undefined" && process.argv[1] && import.meta.url === "file://" + process.argv[1];
 if (isMain) {
   main(process.argv.slice(2)).catch((err) => {
-    console.error(JSON.stringify(errorReport(err)));
+    console.error(err && err.name === "NotOnANotionPage" ? err.message : JSON.stringify(errorReport(err)));
     process.exit(1);
   });
 }
@@ -1235,6 +1268,8 @@ sorts on \`last_edited_time\`. Search only sees what is shared with the integrat
 ### page
 
 \`\`\`
+node scripts/notion.mjs page current
+node scripts/notion.mjs page markdown current
 node scripts/notion.mjs page get <page-id>
 node scripts/notion.mjs page markdown <page-id> --depth 3
 node scripts/notion.mjs page create --parent <page-id> --title "Runbook" --markdown notes.md
@@ -1242,6 +1277,12 @@ node scripts/notion.mjs page create --parent <db-id> --parent-type database --ti
 node scripts/notion.mjs page update <page-id> --title "Runbook (v2)"
 node scripts/notion.mjs page archive <page-id>
 \`\`\`
+
+\`page current\` and \`page markdown current\` read **the page this conversation is on**.
+\`page current\` prints \`{"id", "title", "url"}\` from one \`GET\`. The host writes the id to
+\`current-page.json\` beside this skill for every session, and sets it only when the
+conversation is on a Notion page. Everywhere else the verb prints "This conversation is not
+on a Notion page" and exits non-zero; pass a page id instead.
 
 \`page markdown\` is the read counterpart of the markdown writer: it renders the page's
 blocks back to markdown, following children to \`--depth\` levels (3 by default).
@@ -1432,6 +1473,8 @@ The composite verbs are thin compositions of it, for the flows that take several
 | Verb | What it does |
 | --- | --- |
 | \`search [query...] [--filter page\\|database] [--sort ascending\\|descending]\` | free-text search |
+| \`page current\` | the page this conversation is on: \`{"id", "title", "url"}\` |
+| \`page markdown current\` | the content of the page this conversation is on |
 | \`page get <id>\` | title and last-edited time |
 | \`page markdown <id> [--depth N]\` | the page's content rendered back to markdown |
 | \`page create --parent <id> [--parent-type page\\|database] --title <t> [--markdown <file>\\|-] [--set 'Col=value']\` | a new page or database row |
@@ -1456,8 +1499,11 @@ paginated verb takes \`--all\` to fold the pages into one answer.
    \`- title  (object id)\` per result. Search only sees what is shared with the
    integration, so an empty answer usually means "nobody shared it", not "it does not
    exist".
-2. **Read it.** \`page markdown <id>\` for the content, \`db query <id> --all\` for a
-   database's rows, \`page get <id>\` for properties alone.
+2. **Read it.** For "this page" — the page this conversation is on — run
+   \`page markdown current\` (or \`page current\` for its id, title and url); never guess the
+   page from memory or from a page's text. For any other page: \`page markdown <id>\` for
+   the content, \`db query <id> --all\` for a database's rows, \`page get <id>\` for
+   properties alone.
 3. **Write.** \`blocks append <id> --markdown -\` writes markdown from stdin as real Notion
    blocks — headings, lists, to-dos, code fences, quotes, dividers, links and inline
    formatting. Append never rewrites what is already there.
@@ -1490,3 +1536,10 @@ export const NOTION_REST_SKILL: SkillPackageDefinition = {
 export const NOTION_SCRIPT_SOURCE = NOTION_SCRIPT;
 
 export const NOTION_REFERENCE_SOURCE = NOTION_REFERENCE;
+
+const NOTION_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+export function notionRestSessionFiles(where: { readonly platform: string; readonly surface: string }): Record<string, string> {
+  const pageId = where.platform === "notion" && NOTION_ID.test(where.surface) ? where.surface : null;
+  return { "current-page.json": `${JSON.stringify({ pageId })}\n` };
+}

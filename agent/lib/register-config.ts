@@ -21,6 +21,7 @@ import { loadConnectorCredentials } from "../access/connector-credentials.js";
 import { loadAccessRequests } from "../access/access-requests.js";
 import { PLUGIN_REGISTRY } from "../plugins/registry.js";
 import { SKILL_CONTENT } from "../plugins/skill-content.js";
+import { notionRestSessionFiles } from "../plugins/notion-rest.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../memory/config/domains.js";
 import { loadRoles } from "../roles/roles.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
@@ -50,6 +51,7 @@ registerConfig({
   loadConnectorCredentials,
   pluginRegistry: PLUGIN_REGISTRY,
   skillContent: SKILL_CONTENT,
+  skillSessionFiles: { "notion-rest": notionRestSessionFiles },
   loadDomains,
   loadSilos,
   loadRoles,

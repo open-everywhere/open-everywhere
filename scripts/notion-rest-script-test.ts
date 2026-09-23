@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { SKILL_CONTENT } from "../agent/plugins/skill-content.js";
-import { NOTION_SCRIPT_SOURCE, NOTION_REFERENCE_SOURCE } from "../agent/plugins/notion-rest.js";
+import { NOTION_SCRIPT_SOURCE, NOTION_REFERENCE_SOURCE, notionRestSessionFiles } from "../agent/plugins/notion-rest.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -42,7 +43,9 @@ interface NotionScript {
   propertiesFromSets(schema: unknown, sets: { name: string; raw: string }[]): Record<string, unknown>;
   parseSets(values: unknown): { name: string; raw: string }[];
   parseArgs(argv: string[]): { positional: string[]; flags: Record<string, unknown> };
-  planCommand(argv: string[]): Plan;
+  planCommand(argv: string[], opts?: { currentPageFile?: string }): Plan;
+  currentPageId(opts?: { currentPageFile?: string }): string;
+  NOT_ON_A_PAGE: string;
   retryAfterMs(header: string | null, attempt: number): number;
   withCursor(method: string, path: string, body: unknown, cursor: string | null): { path: string; body: unknown };
   call(method: string, path: string, body?: unknown, opts?: unknown): Promise<Record<string, unknown>>;
@@ -583,5 +586,73 @@ eq(sentHeaders["Notion-Version"], "2022-06-28", "call: the pinned Notion-Version
 ok(!/Authorization\s*:/.test(NOTION_SCRIPT_SOURCE), "no code in the script sets an Authorization header, in any spelling, so it can never carry a token");
 ok(!/["'][Bb]earer/.test(NOTION_SCRIPT_SOURCE), "no code in the script writes a bearer value");
 ok(!/process\.env/.test(NOTION_SCRIPT_SOURCE), "the script never reads an environment variable, so it can never read a secret");
+
+const PAGE = "40000000-0000-4000-8000-000000000105";
+await import("../agent/lib/register-config.js");
+const { getConfig } = await import("@open-everywhere/core/agent/access/config.js");
+ok(getConfig().skillSessionFiles?.["notion-rest"] === notionRestSessionFiles, "the registered config wires notion-rest's session file to notionRestSessionFiles");
+eq(notionRestSessionFiles({ platform: "notion", surface: PAGE }), { "current-page.json": `{"pageId":"${PAGE}"}\n` }, "session file: a Notion page surface writes its page id");
+eq(notionRestSessionFiles({ platform: "notion", surface: PAGE.replace(/-/g, "") }), { "current-page.json": `{"pageId":"${PAGE.replace(/-/g, "")}"}\n` }, "session file: an undashed Notion id is a page id too");
+eq(notionRestSessionFiles({ platform: "slack", surface: "C0123" }), { "current-page.json": '{"pageId":null}\n' }, "session file: a Slack surface never sets a page id");
+eq(notionRestSessionFiles({ platform: "slack", surface: PAGE }), { "current-page.json": '{"pageId":null}\n' }, "session file: an id-shaped surface on another platform never sets a page id");
+eq(notionRestSessionFiles({ platform: "notion", surface: "notion" }), { "current-page.json": '{"pageId":null}\n' }, "session file: a Notion surface that is not a page id never sets one");
+eq(notionRestSessionFiles({ platform: "subagent", surface: "unresolved" }), { "current-page.json": '{"pageId":null}\n' }, "session file: an unresolved worker binding never sets a page id");
+
+const pageDir = mkdtempSync(join(tmpdir(), "open-everywhere-notion-current-"));
+try {
+  const onPage = join(pageDir, "on-page.json");
+  const offPage = join(pageDir, "off-page.json");
+  writeFileSync(onPage, notionRestSessionFiles({ platform: "notion", surface: PAGE })["current-page.json"]);
+  writeFileSync(offPage, notionRestSessionFiles({ platform: "slack", surface: "C0123" })["current-page.json"]);
+
+  eq(notion.currentPageId({ currentPageFile: onPage }), PAGE, "currentPageId: reads the id the host wrote");
+  eq(notion.planCommand(["page", "current"], { currentPageFile: onPage }).path, `/v1/pages/${PAGE}`, "planCommand page current: one GET on the page this conversation is on");
+  const md = notion.planCommand(["page", "markdown", "current"], { currentPageFile: onPage });
+  eq([md.op, md.path], ["page.markdown", `/v1/pages/${PAGE}`], "planCommand page markdown current: the markdown read on the resolved id");
+  eq(notion.planCommand(["page", "markdown", "p1"], { currentPageFile: onPage }).path, "/v1/pages/p1", "planCommand page markdown <id>: an explicit id still wins over the current page");
+
+  const refusedWith = (argv: string[], file: string): string => {
+    try {
+      notion.planCommand(argv, { currentPageFile: file });
+      return "(no error)";
+    } catch (err) {
+      return String((err as Error).message);
+    }
+  };
+  eq(refusedWith(["page", "current"], offPage), notion.NOT_ON_A_PAGE, "page current off a Notion page: the one plain sentence");
+  eq(refusedWith(["page", "markdown", "current"], offPage), notion.NOT_ON_A_PAGE, "page markdown current off a Notion page: the same sentence");
+  eq(refusedWith(["page", "current"], join(pageDir, "absent.json")), notion.NOT_ON_A_PAGE, "page current with no host file: the same sentence, never a guess");
+  ok(notion.NOT_ON_A_PAGE.includes("not on a Notion page"), "the sentence says the conversation is not on a Notion page");
+  try {
+    notion.currentPageId({ currentPageFile: offPage });
+  } catch (err) {
+    eq(notion.errorReport(err).error.code, "not_on_a_notion_page", "errorReport: the refusal has its own code, never script_error");
+  }
+
+  const currentSeen: { method: string; url: string; body: string | undefined }[] = [];
+  const currentPrinted: string[] = [];
+  const logBefore = console.log;
+  console.log = (...parts: unknown[]) => void currentPrinted.push(parts.map(String).join(" "));
+  try {
+    await withPatchedFetch(
+      stubFetch([{ body: { object: "page", id: PAGE, url: `https://www.notion.so/${PAGE.replace(/-/g, "")}`, properties: { title: { type: "title", title: [{ plain_text: "Fixture page" }] } } } }], currentSeen),
+      () => notion.runPlan(notion.planCommand(["page", "current"], { currentPageFile: onPage }), {}),
+    );
+  } finally {
+    console.log = logBefore;
+  }
+  eq(currentSeen.map((r) => `${r.method} ${r.url}`), [`GET https://api.notion.com/v1/pages/${PAGE}`], "runPlan page current: exactly one GET");
+  eq(JSON.parse(currentPrinted[0] ?? "{}"), { id: PAGE, title: "Fixture page", url: `https://www.notion.so/${PAGE.replace(/-/g, "")}` }, "runPlan page current: prints the id, title and url");
+
+  const skillRoot = join(pageDir, "notion-rest");
+  mkdirSync(join(skillRoot, "scripts"), { recursive: true });
+  writeFileSync(join(skillRoot, "scripts", "notion.mjs"), NOTION_SCRIPT_SOURCE);
+  writeFileSync(join(skillRoot, "current-page.json"), notionRestSessionFiles({ platform: "slack", surface: "C0123" })["current-page.json"]);
+  const cli = spawnSync(process.execPath, ["scripts/notion.mjs", "page", "markdown", "current"], { cwd: skillRoot, encoding: "utf-8" });
+  ok(cli.status !== 0, `the CLI exits non-zero off a Notion page (status ${cli.status})`);
+  eq(cli.stderr.trim(), notion.NOT_ON_A_PAGE, "the CLI prints the one plain sentence, read from the default file beside the skill");
+} finally {
+  rmSync(pageDir, { recursive: true, force: true });
+}
 
 console.log(`✓ notion-rest-script: ${passed} assertions passed (markdown<->block round trip, pagination fold, 429 retry, structured errors, the argument grammar of every verb, the shipped package)`);

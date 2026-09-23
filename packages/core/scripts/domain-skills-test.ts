@@ -47,7 +47,8 @@ registerConfig({
   loadBundles: () => [defineBundle({ name: "org-tools", plugins: ["acme-plugin"] })],
   loadBindings: () => [defineBinding({ bundle: "org-tools", scope: { level: "org" } })],
   pluginRegistry: { "acme-plugin": { skills: ["granted-one"] } },
-  skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing." } },
+  skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing.", files: { "where.json": "shipped" } } },
+  skillSessionFiles: { "granted-one": (where) => ({ "where.json": `${where.platform}/${where.surface}` }) },
   loadDomains: () => [
     defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),
     defineDomain({ name: "org", match: "org" }),
@@ -218,6 +219,10 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(byName.get("safe-one")?.tier === "domain", "resolveSkillEntries: domain-authored skill is present with tier \"domain\"");
   ok(byName.get("safe-one")?.updatedBy === "U1", "resolveSkillEntries: domain tier carries updatedBy provenance");
   ok(!byName.has("bad:name"), "resolveSkillEntries: the unsafe-named row never reaches the merge");
+  ok(byName.get("granted-one")?.pkg.files?.["where.json"] === "slack/C_ENG", "resolveSkillEntries: a granted skill's session file carries this session's platform and surface");
+  ok(byName.get("safe-one")?.pkg.files?.["where.json"] === undefined, "resolveSkillEntries: a skill with no declared session file gets none");
+  const unassignedGranted = (await resolveSkillEntries(ctxUnassigned)).find((e) => e.name === "granted-one");
+  ok(unassignedGranted?.pkg.files?.["where.json"] === "slack/C_RANDOM", "resolveSkillEntries: the session file follows the session's surface, never a cached value");
 
   const dmEntries = await resolveSkillEntries(ctxDm);
   ok(!dmEntries.some((e) => e.tier === "domain"), "resolveSkillEntries: dm session never gets a domain tier");

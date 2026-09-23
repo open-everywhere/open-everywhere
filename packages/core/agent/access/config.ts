@@ -45,6 +45,7 @@ export interface AppConfig {
   loadNetworkAccess?(): readonly NetworkAccessBinding[];
   readonly pluginRegistry: PluginRegistry;
   readonly skillContent: Record<string, SkillPackageDefinition>;
+  readonly skillSessionFiles?: Readonly<Record<string, (where: { readonly platform: string; readonly surface: string }) => Record<string, string>>>;
   loadDomains(): readonly Domain[];
   loadSilos(): readonly MemorySilo[];
   loadRoles?(): readonly Role[];

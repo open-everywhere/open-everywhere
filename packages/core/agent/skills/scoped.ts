@@ -6,6 +6,7 @@ import { resolveDomainSkillRows, skillPackageFromRow } from "./domain-skills.js"
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { resolvePartition } from "../memory/partition.js";
 import type { SkillPackageDefinition } from "eve/skills";
 
 function seatMayLoadSkills(ctx: BindableContext): boolean {
@@ -27,6 +28,16 @@ export interface ResolvedSkillEntry {
   readonly updatedAt?: string;
 }
 
+function withSessionFiles(
+  pkg: SkillPackageDefinition,
+  files: ((where: { readonly platform: string; readonly surface: string }) => Record<string, string>) | undefined,
+  ctx: BindableContext,
+): SkillPackageDefinition {
+  if (!files) return pkg;
+  const { platform, surface } = resolvePartition(ctx);
+  return { ...pkg, files: { ...pkg.files, ...files({ platform, surface }) } };
+}
+
 export async function resolveSkillEntries(ctx: BindableContext): Promise<ResolvedSkillEntry[]> {
   if (!seatMayLoadSkills(ctx)) return [];
   const access = resolveAccessFor(ctx);
@@ -35,10 +46,11 @@ export async function resolveSkillEntries(ctx: BindableContext): Promise<Resolve
   const entries: ResolvedSkillEntry[] = [];
   const claimed = new Set<string>();
 
+  const sessionFiles = getConfig().skillSessionFiles ?? {};
   for (const name of access.skills) {
     const content = skillContent[name];
     if (!content) continue;
-    entries.push({ name, tier: "granted", pkg: content });
+    entries.push({ name, tier: "granted", pkg: withSessionFiles(content, sessionFiles[name], ctx) });
     claimed.add(name);
   }
 
