@@ -148,6 +148,7 @@ const {
 } = await import("../packages/core/scripts/e2e/judge.js");
 const {
   SCENARIOS, skipCategory, skipReason, ScenarioSkip, FixtureMissing, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
+  handoffReplyWaitMs,
   seedWriteWaitMs,
   DELEGATED_TURN_SURFACE_ACTIONS,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
@@ -2928,6 +2929,24 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(
     !isPendingWorkHandoff("I couldn't find any recorded team mascot for `sprint-22088` in durable memory, so I don't know it."),
     "isPendingWorkHandoff: the live-run S11 clean decline is NOT a hand-off — it is exactly what the gate asks for",
+  );
+}
+
+{
+  const uniXHandoff = "I'm updating the decision record to `unix-97518` and will confirm once it's saved.";
+  const uniXAnswer = "Noted: the release deploy window is `unix-97518`. I saved it to the decision record for the write-up.";
+  const MEASURED_ASK_TO_ANSWER_MS = 182_192;
+  const afterHandoff = handoffReplyWaitMs(uniXHandoff);
+  ok(afterHandoff === 420_000, `🔴 OPE-2105: a hand-off first reply waits the delegated budget, FILE_REPLY_WAIT (got ${String(afterHandoff)})`);
+  ok((afterHandoff ?? 0) > MEASURED_ASK_TO_ANSWER_MS, `🔴 OPE-2105: the delegated wait covers a live run's measured ask→answer of ${MEASURED_ASK_TO_ANSWER_MS}ms`);
+  ok(handoffReplyWaitMs(uniXAnswer) === undefined, "OPE-2105 NEGATIVE CONTROL: a substantive first reply yields undefined — the leg accepts it");
+  const uniX = SCENARIOS.find((s) => s.id === "J-UNI-X")!;
+  const uniXSrc = uniX.run.toString().replace(/\s+/g, "");
+  ok(uniXSrc.includes("handoffReplyWaitMs(firstAck.text)"), "🔴 OPE-2105: J-UNI-X leg 1 chooses its second wait from the first Slack reply");
+  ok(uniXSrc.includes("handoffReplyWaitMs(firstReply.body)"), "🔴 OPE-2105: J-UNI-X leg 2 chooses its second wait from the first GitHub comment");
+  ok(
+    (uniX.timeoutMs ?? 0) > 2 * (180_000 + 420_000),
+    `🔴 OPE-2105: the J-UNI-X budget exceeds both legs' two-phase waits, so a poll's own bound reds first (got ${String(uniX.timeoutMs)})`,
   );
 }
 

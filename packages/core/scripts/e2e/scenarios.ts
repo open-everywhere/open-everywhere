@@ -417,6 +417,9 @@ const LINK_VENUE_PROOF_WINDOW = 20_000;
 
 export const isPendingWorkHandoff = (text: string): boolean => isFillerAck(text);
 
+export const handoffReplyWaitMs = (firstReplyText: string): number | undefined =>
+  isPendingWorkHandoff(firstReplyText) ? FILE_REPLY_WAIT : undefined;
+
 const RUN_FIXTURE_SALT = fixtureSalt();
 
 const fixtureLine = (text: string): string => saltedFixtureLine(text, RUN_FIXTURE_SALT);
@@ -5184,7 +5187,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "slackUnified", "github"],
     surface: "cross",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_380_000,
     judged: true,
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
@@ -5235,12 +5238,16 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window for this release is named ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
-      const ack = await a.awaitAnyReply(decideTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const firstAck = await a.awaitAnyReply(decideTs, { timeoutMs: REPLY_WAIT });
+      const ackWait = handoffReplyWaitMs(firstAck.text);
+      const ack = ackWait === undefined ? firstAck : await a.awaitAnyReply(decideTs, { timeoutMs: ackWait, skip: (m) => isFillerAck(m.text) });
       ctx.gate(ack.text.trim().length > 0, "slack: the unified supervisor acknowledged the decision in-channel");
 
       const uniXAsk = `Before I write this up — what was the deploy window name the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.`;
       const askId = await gh.comment(gh.fixtureIssue, uniXAsk);
-      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
+      const firstReply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT });
+      const replyWait = handoffReplyWaitMs(firstReply.body);
+      const reply = replyWait === undefined ? firstReply : await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: replyWait, skip: (c) => isPendingWorkHandoff(c.body) });
       ctx.gate(
         reply.body.includes(marker),
         `MONEY SHOT: the <slug>[bot] issue reply quotes the token "${marker}" stated ONLY in Slack (one mind across SURFACES, zero context re-entry — hard gate)`,
