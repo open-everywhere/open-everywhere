@@ -132,6 +132,16 @@ export function mergeBotMessagesAfter(
   return [...byTs.values()].sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
 }
 
+export function findExactBotPost(
+  threadMsgs: readonly SlackMessage[],
+  historyMsgs: readonly SlackMessage[],
+  afterTs: string,
+  text: string,
+  isBot: (m: SlackMessage) => boolean,
+): SlackMessage | undefined {
+  return mergeBotMessagesAfter(threadMsgs, historyMsgs, afterTs, isBot).find((m) => m.text.trim() === text);
+}
+
 export interface SeatFenceState {
   readonly newestTs: string | undefined;
   readonly settles: boolean;
@@ -373,6 +383,16 @@ export class SlackDriver {
   async collectBotMessagesAfter(rootTs: string, afterTs: string): Promise<readonly SlackMessage[]> {
     const [threadMsgs, historyMsgs] = await Promise.all([this.replies(rootTs), this.history(afterTs)]);
     return mergeBotMessagesAfter(threadMsgs, historyMsgs, afterTs, (m) => this.isBotReply(m));
+  }
+
+  async awaitExactBotPost(anchorTs: string, text: string, opts: { timeoutMs: number; what: string }): Promise<SlackMessage> {
+    return pollUntil(
+      async () => {
+        const [threadMsgs, historyMsgs] = await Promise.all([this.replies(anchorTs), this.history(anchorTs)]);
+        return findExactBotPost(threadMsgs, historyMsgs, anchorTs, text, (m) => this.isBotReply(m));
+      },
+      { timeoutMs: opts.timeoutMs, what: opts.what },
+    );
   }
 
   async reactions(ts: string): Promise<readonly string[]> {

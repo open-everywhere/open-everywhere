@@ -3074,7 +3074,6 @@ export const SCENARIOS: readonly Scenario[] = [
         ack.text,
         "one-shot routine creation ack",
       );
-      let confirmationTs: string | undefined;
       if (cardTs !== undefined) {
         const noticeTs = (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && isDecisionNotice(m))?.ts;
         const latest = (a: string, b: string | undefined): string => (b !== undefined && tsAfter(b, a) ? b : a);
@@ -3087,7 +3086,6 @@ export const SCENARIOS: readonly Scenario[] = [
               skip: (m) => isFillerAck(m.text) || m.ts === cardTs || isDecisionNotice(m) || m.text.trim() === note,
             });
         ctx.log(`S23 confirmation reply ${confirmation.ts}${ackIsPostDecision ? " (the ack itself: it came after the decision notice)" : ""}`);
-        confirmationTs = confirmation.ts;
         const confirmCheck = s23ConfirmationCheck();
         await ctx.judgePass(
           closedQA(confirmCheck.question, { mustMatch: confirmCheck.mustMatch, mustNotMatch: confirmCheck.mustNotMatch }),
@@ -3095,12 +3093,11 @@ export const SCENARIOS: readonly Scenario[] = [
           "one-shot routine confirmation after the approve",
         );
       }
-      const fired = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: 720_000, what: `the one-shot routine's fired post quoting "${note}" in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== ack.ts && m.ts !== confirmationTs && m.text.includes(note)),
-      );
-      ctx.gate(fired.text.includes(note), `the one-shot routine actually fired and posted "${note}" (hard gate)`);
+      const fired = await slack.awaitExactBotPost(askTs, note, {
+        timeoutMs: 720_000,
+        what: `the one-shot routine's fired post "${note}" (thread ${askTs} or top-level after it)`,
+      });
+      ctx.gate(fired.text.trim() === note, `the one-shot routine actually fired and posted "${note}" (hard gate)`);
     },
   },
   {
