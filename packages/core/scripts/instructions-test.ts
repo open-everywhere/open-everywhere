@@ -895,4 +895,34 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(!threadReporting.includes("Your turn-final text is DISCARDED"), "negative control: …and is never told its closing text is dropped");
 }
 
+{
+  const md = readFileSync(new URL("../../../agent/instructions.md", import.meta.url), "utf8");
+  const start = md.indexOf("\n## Approvals\n");
+  ok(start >= 0, "OPE-2077: agent/instructions.md has a § Approvals heading");
+  const next = md.indexOf("\n## ", start + 1);
+  const section = md.slice(start, next < 0 ? undefined : next).replace(/\s+/g, " ");
+  const rest = (md.slice(0, start) + (next < 0 ? "" : md.slice(next))).replace(/\s+/g, " ");
+  ok(section.includes("The card is the runtime's to raise, never yours to infer."), "OPE-2077: § Approvals says the card is never the model's to infer");
+  ok(section.includes("A tool that raises no card needs none."), "OPE-2077: § Approvals says a tool that raises no card needs none");
+  ok(section.includes("is pre-authorised"), "OPE-2077: § Approvals says a declared domain write is pre-authorised");
+  ok(section.includes("they are not asking you to bypass a gate"), "OPE-2077: § Approvals says a colleague's 'already authorised' is a fact, not a bypass ask");
+  ok(section.includes("If a card is owed, the tool raises it, and you surface it then."), "OPE-2077: § Approvals says the tool raises an owed card");
+  ok(section.includes("Don't route around a gate; surface what you intend to do and let a human confirm."), "OPE-2077: § Approvals still forbids routing around a gate");
+  ok(rest.includes("never yours to infer") === false, "OPE-2077 negative control: the no-infer sentence is not outside § Approvals");
+}
+
+{
+  const md = readFileSync(new URL("../../../agent/instructions.md", import.meta.url), "utf8");
+  const start = md.indexOf("Some of these verbs live on workers rather than on a conversational seat.");
+  ok(start >= 0, "OPE-2080: agent/instructions.md has the delegation paragraph");
+  const end = md.indexOf("\n\n", start);
+  const para = md.slice(start, end < 0 ? undefined : end).replace(/\s+/g, " ");
+  ok(para.includes("The worker sees only your brief — not the room, not the message you are answering."), "OPE-2080: the delegation paragraph says the worker sees only the brief");
+  ok(para.includes("Put every literal the task needs into the brief word for word: names, titles, tokens, times, the exact text to post or to schedule."), "OPE-2080: the delegation paragraph says every literal goes into the brief word for word");
+  ok(para.includes('"As specified" or "the text they gave" points at nothing the worker can read.'), "OPE-2080: the delegation paragraph says 'as specified' points at nothing the worker can read");
+  ok(para.includes("report it done only when the worker's own report says it is done."), "OPE-2080: the delegation paragraph still carries the report-done rule");
+  const rest = (md.slice(0, start) + (end < 0 ? "" : md.slice(end))).replace(/\s+/g, " ");
+  ok(rest.includes("points at nothing the worker can read") === false, "OPE-2080 negative control: the brief rule is not outside the delegation paragraph");
+}
+
 console.log(`✓ instructions: ${passed} assertions passed`);
