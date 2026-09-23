@@ -66,6 +66,10 @@ for (const heading of ["## Pagination", "## Rate limits", "## Composite verbs", 
 for (const verb of ["### search", "### page", "### blocks", "### db", "### comments", "### users"]) {
   ok(NOTION_REFERENCE_SOURCE.includes(verb), `reference.md documents ${verb.replace("### ", "")} with its own example`);
 }
+const BRIEF_ID_RULE = "Use `current` for the page this conversation is on even when the caller's brief names an id: the caller cannot see the page id, and an id that looks like a message id is not a page. Use an explicit id only for a DIFFERENT page the person named.";
+const flat = (text: string) => text.replace(/\s+/g, " ");
+ok(flat(NOTION_REFERENCE_SOURCE).includes(BRIEF_ID_RULE), "OPE-2087: reference.md says to use current even when the caller's brief names an id");
+ok(flat(shipped.markdown ?? "").includes(BRIEF_ID_RULE), "OPE-2087: SKILL.md says to use current even when the caller's brief names an id");
 ok(NOTION_REFERENCE_SOURCE.includes("nobody shared it with the integration"), "reference.md names the 404 failure mode (the object is not shared with the integration)");
 ok(NOTION_REFERENCE_SOURCE.includes("`401`"), "reference.md names the 401 failure mode (the credential is not stamped)");
 

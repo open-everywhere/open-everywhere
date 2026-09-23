@@ -925,4 +925,17 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(rest.includes("points at nothing the worker can read") === false, "OPE-2080 negative control: the brief rule is not outside the delegation paragraph");
 }
 
+{
+  const md = readFileSync(new URL("../../../agent/instructions.md", import.meta.url), "utf8");
+  const start = md.indexOf("Some of these verbs live on workers rather than on a conversational seat.");
+  ok(start >= 0, "OPE-2087: agent/instructions.md has the delegation paragraph");
+  const end = md.indexOf("\n\n", start);
+  const para = md.slice(start, end < 0 ? undefined : end).replace(/\s+/g, " ");
+  ok(para.includes("You never know the id of the page or channel you are on: the channel id is opaque, and a message id is not a page id."), "OPE-2087: the delegation paragraph says the seat never knows the page id");
+  ok(para.includes('For a task about "this page", tell the worker to read the current page (`page markdown current` on the notion-rest skill); never put an id you inferred into the brief.'), "OPE-2087: the delegation paragraph sends 'this page' to page markdown current and forbids an inferred id");
+  ok(para.includes("Name an id only when the person named it."), "OPE-2087: the delegation paragraph allows an id only when the person named it");
+  const rest = (md.slice(0, start) + (end < 0 ? "" : md.slice(end))).replace(/\s+/g, " ");
+  ok(rest.includes("never put an id you inferred into the brief") === false, "OPE-2087 negative control: the inferred-id rule is not outside the delegation paragraph");
+}
+
 console.log(`✓ instructions: ${passed} assertions passed`);

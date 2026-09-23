@@ -1282,7 +1282,10 @@ node scripts/notion.mjs page archive <page-id>
 \`page current\` prints \`{"id", "title", "url"}\` from one \`GET\`. The host writes the id to
 \`current-page.json\` beside this skill for every session, and sets it only when the
 conversation is on a Notion page. Everywhere else the verb prints "This conversation is not
-on a Notion page" and exits non-zero; pass a page id instead.
+on a Notion page" and exits non-zero; pass a page id instead. Use \`current\` for the page
+this conversation is on even when the caller's brief names an id: the caller cannot see the
+page id, and an id that looks like a message id is not a page. Use an explicit id only for a
+DIFFERENT page the person named.
 
 \`page markdown\` is the read counterpart of the markdown writer: it renders the page's
 blocks back to markdown, following children to \`--depth\` levels (3 by default).
@@ -1501,7 +1504,10 @@ paginated verb takes \`--all\` to fold the pages into one answer.
    exist".
 2. **Read it.** For "this page" — the page this conversation is on — run
    \`page markdown current\` (or \`page current\` for its id, title and url); never guess the
-   page from memory or from a page's text. For any other page: \`page markdown <id>\` for
+   page from memory or from a page's text. Use \`current\` for the page this conversation is
+   on even when the caller's brief names an id: the caller cannot see the page id, and an id
+   that looks like a message id is not a page. Use an explicit id only for a DIFFERENT page
+   the person named. For any other page: \`page markdown <id>\` for
    the content, \`db query <id> --all\` for a database's rows, \`page get <id>\` for
    properties alone.
 3. **Write.** \`blocks append <id> --markdown -\` writes markdown from stdin as real Notion
