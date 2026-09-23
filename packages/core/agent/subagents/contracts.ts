@@ -1,4 +1,44 @@
 import { z } from "zod";
+import { nullableOptionalJsonSchema, stripAddedNulls } from "../access/nullable-optional-fields.js";
+
+type JsonObject = Record<string, unknown>;
+type StandardResult<T> = { readonly value: T; readonly issues?: undefined } | { readonly issues: readonly { readonly message: string }[] };
+
+export interface ModelFacingOutputSchema<T> {
+  readonly "~standard": {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly validate: (value: unknown) => StandardResult<T> | Promise<StandardResult<T>>;
+    readonly jsonSchema: {
+      readonly input: (options: { readonly target: string }) => JsonObject;
+      readonly output: (options: { readonly target: string }) => JsonObject;
+    };
+    readonly types?: { readonly input: unknown; readonly output: T } | undefined;
+  };
+}
+
+interface ZodStandard {
+  validate(value: unknown): StandardResult<unknown> | Promise<StandardResult<unknown>>;
+  jsonSchema: { input(options: { target: string }): JsonObject; output(options: { target: string }): JsonObject };
+}
+
+export function modelFacingOutputSchema<T extends z.ZodType>(contract: T): ModelFacingOutputSchema<z.output<T>> {
+  const std = contract["~standard"] as unknown as ZodStandard;
+  let lowered: JsonObject | undefined;
+  const emit = (io: "input" | "output") => (options: { readonly target: string }): JsonObject =>
+    nullableOptionalJsonSchema(std.jsonSchema[io]({ target: options.target })) as JsonObject;
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "open-everywhere",
+      validate: (value) => {
+        lowered ??= std.jsonSchema.output({ target: "draft-07" });
+        return std.validate(stripAddedNulls(lowered, value)) as StandardResult<z.output<T>>;
+      },
+      jsonSchema: { input: emit("input"), output: emit("output") },
+    },
+  };
+}
 
 export const REVIEW_SEVERITY = ["critical", "high", "medium", "low", "nit"] as const;
 

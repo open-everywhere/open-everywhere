@@ -113,7 +113,7 @@ const DISABLED = "import { disableTool } from \"eve/tools\";\nexport default dis
 function goodSubagent(overrides: Partial<DeclaredSubagentSource> = {}): DeclaredSubagentSource {
   return {
     name: "fresh_eyes_review",
-    agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: S });",
+    agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: modelFacingOutputSchema(S) });",
     hasInstructions: true,
     toolFiles: new Map(FRAMEWORK.map((t) => [t, DISABLED])),
     hookFiles: new Set(["spend"]),
@@ -192,6 +192,7 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
   expectProblem(goodSubagent({ agentSource: undefined }), "agent.ts is missing", "a missing config module is caught");
   expectProblem(goodSubagent({ agentSource: "export default defineAgent({ model: m(), outputSchema: S });" }), "no `description`", "a missing description is caught (eve fails the build on it too)");
   expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m() });" }), "no `outputSchema`", "an UNTYPED subagent is caught — a prose result is not actionable by the caller or the audit trail");
+  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: S });" }), "without `modelFacingOutputSchema(...)`", "OPE-2070: a contract bound RAW is caught — eve's final_output tool would show its optional fields as non-nullable");
   expectProblem(goodSubagent({ hasInstructions: false }), "instructions.md is missing", "missing instructions are caught — a subagent inherits none from the root");
 
   expectProblem(goodSubagent({ hookFiles: new Set() }), "hooks/spend.ts is missing", "a missing spend hook is caught — hooks are NOT inherited, so the child would burn tokens off the ledger");

@@ -286,6 +286,10 @@ function claimMountedName(mountedName: string, entry: ReplayableToolEntry, varia
   if (variantManaged) held.variantManaged = true;
 }
 
+export function registeredMountedEntries(): ReadonlyMap<string, ReadonlySet<ReplayableToolEntry>> {
+  return new Map([...MOUNTED_ENTRIES].map(([name, held]) => [name, held.entries]));
+}
+
 export interface MountedEntryCollision {
   readonly name: string;
   readonly entryCount: number;

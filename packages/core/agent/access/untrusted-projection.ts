@@ -12,6 +12,7 @@ import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 import { refuseAgentContinuation } from "./worker-continuation.js";
+import { nullableOptionalToolSet } from "./nullable-optional-fields.js";
 import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
 import { auditWorkerToolset } from "../audit/worker-toolset.js";
 
@@ -103,6 +104,8 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   }
 
   refuseAgentContinuation(toolset);
+
+  nullableOptionalToolSet(toolset);
 
   if (workerWake) recordWorkerToolset(Object.keys(toolset), workerWithheld);
 

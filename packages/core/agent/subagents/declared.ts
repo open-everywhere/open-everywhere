@@ -58,6 +58,10 @@ export function checkDeclaredSubagents(
         problems.push(
           `${at}/agent.ts has no \`outputSchema\` — a declared subagent must return a TYPED result (eve applies the authored schema in task mode when the caller passes none); declare it in packages/core/agent/subagents/contracts.ts and bind it here`,
         );
+      } else if (!/\boutputSchema\s*:\s*modelFacingOutputSchema\(/u.test(s.agentSource)) {
+        problems.push(
+          `${at}/agent.ts binds \`outputSchema\` without \`modelFacingOutputSchema(...)\` — eve builds the final_output tool after OE's tool-set hook, so an optional field stays non-nullable and the model fills it with an invented value (OPE-2070); bind \`outputSchema: modelFacingOutputSchema(<contract>)\``,
+        );
       }
     }
 
