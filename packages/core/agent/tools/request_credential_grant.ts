@@ -16,7 +16,7 @@ import { resolveReplyTarget } from "../channels/reply-post.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { grantActionPhrase } from "../access/credential-grant-copy.js";
 import { configuredAgentName } from "../identity/bot-name.js";
-import { currentSessionId, currentTurnId, delegationRootSessionId, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { currentSessionId, currentTurnId, delegatedBindingUnresolved, delegationRootSessionId, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { Domain } from "../memory/domain.js";
@@ -59,7 +59,9 @@ export function requestCredentialGrantMount(ctx: BindableContext): boolean {
   }
   const domains = domainsForCtx(ctx);
   if (domains.length === 0) {
-    noteMountRefused(ctx, "no-domain");
+    const unresolved = delegatedBindingUnresolved(ctx);
+    if (unresolved !== undefined) noteMountRefused(ctx, "binding-unresolved", { slot: unresolved });
+    else noteMountRefused(ctx, "no-domain");
     return false;
   }
   for (const connector of credentialGrantConnectors()) if (domainsAdmitCredentialGrant(domains, connector)) return true;
@@ -67,7 +69,7 @@ export function requestCredentialGrantMount(ctx: BindableContext): boolean {
   return false;
 }
 
-type GrantMountRefusal = "grain" | "no-domain" | "no-declaration";
+type GrantMountRefusal = "grain" | "binding-unresolved" | "no-domain" | "no-declaration";
 
 const auditedMountRefusals = new Set<string>();
 
@@ -81,7 +83,7 @@ export function _grantMountAuditSettled(): Promise<void> {
   return lastMountAudit;
 }
 
-function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal): void {
+function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal, extra: Readonly<Record<string, string>> = {}): void {
   try {
     const p = safePartitionOf(ctx);
     if (p === undefined) return;
@@ -94,7 +96,7 @@ function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal): void
       grain = windowGrainOf(ctx);
     } catch {
     }
-    lastMountAudit = auditGrant(stampsOf(p), "grant.mount_refused", undefined, { grain, reason, surfaceKey: p.surfaceKey }).catch(() => {
+    lastMountAudit = auditGrant(stampsOf(p), "grant.mount_refused", undefined, { grain, reason, surfaceKey: p.surfaceKey, ...extra }).catch(() => {
     });
   } catch {
   }

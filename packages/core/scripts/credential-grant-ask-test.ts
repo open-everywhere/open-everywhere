@@ -51,6 +51,7 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { domainKeyOf, resolvePartition } from "../agent/memory/partition.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
+import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -892,11 +893,35 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   {
     useDomains([]);
     const before = (await mountRows()).length;
-    eq(requestCredentialGrantMount(workerOf("sess-1916-nodomain")), false, "a surface in NO domain does not mount the ask verb");
+    eq(requestCredentialGrantMount(workerOf("sess-2106-nocontext")), false, "a worker outside eve's context does not mount the ask verb");
+    await _grantMountAuditSettled();
+    let rows = await mountRows();
+    eq(rows.length, before + 1, "…and writes exactly one row");
+    eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "binding-unresolved", "🔴 …naming BINDING-UNRESOLVED, not the no-domain config gap");
+    eq((rows[0]?.detail as { slot?: unknown } | undefined)?.slot, "no-context", "🔴 …with slot=no-context: the caller ran outside eve's context scope");
+    eq((rows[0]?.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey, "subagent/dev/unresolved", "…on the sentinel surface key the measured row carried");
+    await inEveContext(new FakeEveContext(), async () => {
+      eq(requestCredentialGrantMount(workerOf("sess-2106-empty")), false, "a worker with an EMPTY slot does not mount the ask verb");
+    });
+    await _grantMountAuditSettled();
+    rows = await mountRows();
+    eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "binding-unresolved", "an empty slot is binding-unresolved too");
+    eq((rows[0]?.detail as { slot?: unknown } | undefined)?.slot, "empty", "🔴 …but with slot=empty, so a reader can tell the two apart");
+  }
+
+  {
+    useDomains([]);
+    const before = (await mountRows()).length;
+    await inEveContext(new FakeEveContext(), async () => {
+      const binding = bindFrom(ctxOf("sess-1916-nodomain-bind", "standing"));
+      ok(adoptDelegatedAuthority({ binding, requester: { kind: "none" }, nonMemberWake: false }, undefined), "the worker adopts its dispatch binding");
+      eq(requestCredentialGrantMount(workerOf("sess-1916-nodomain")), false, "a surface in NO domain does not mount the ask verb");
+    });
     await _grantMountAuditSettled();
     const rows = await mountRows();
     eq(rows.length, before + 1, "…and writes exactly one row");
     eq((rows[0]?.detail as { reason?: unknown } | undefined)?.reason, "no-domain", "🔴 …naming the NO-DOMAIN floor, which is a config gap rather than a seat shape");
+    eq((rows[0]?.detail as { slot?: unknown } | undefined)?.slot, undefined, "…and carrying no slot field, because the binding was readable");
   }
 
   {
@@ -910,8 +935,8 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
   }
 
   {
-    const last3 = (await mountRows()).slice(0, 3);
-    eq([...new Set(reasonsOf(last3))].sort(), ["grain", "no-declaration", "no-domain"], "🔴 the three causes write three DIFFERENT reasons");
+    const last5 = (await mountRows()).slice(0, 5);
+    eq([...new Set(reasonsOf(last5))].sort(), ["binding-unresolved", "grain", "no-declaration", "no-domain"], "🔴 the four causes write four DIFFERENT reasons");
   }
 
   {

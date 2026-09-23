@@ -39,6 +39,14 @@ export function delegatedBindingAdopted(): boolean {
   }
 }
 
+export function delegatedSlotState(): "adopted" | "empty" | "no-context" {
+  try {
+    return slot.get() !== null ? "adopted" : "empty";
+  } catch {
+    return "no-context";
+  }
+}
+
 export function delegatedBindingThisTurn(_turnId: string | undefined): SurfaceBinding | undefined {
   try {
     const current = slot.get();

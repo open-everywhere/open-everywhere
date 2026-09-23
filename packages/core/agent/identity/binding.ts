@@ -12,7 +12,7 @@ import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
-import { delegatedBindingAdopted, delegatedBindingThisTurn } from "./delegated-binding.js";
+import { delegatedBindingAdopted, delegatedBindingThisTurn, delegatedSlotState } from "./delegated-binding.js";
 import { frozenSurfaceBindingFrom } from "./frozen-surface-binding.internal.js";
 
 export type Visibility = "public" | "private";
@@ -493,6 +493,17 @@ export function subagentBindingLost(ctx: BindableContext): boolean {
     return bridged === null || !namesASurface(bindBridged(bridged).raw);
   } catch {
     return false;
+  }
+}
+
+export function delegatedBindingUnresolved(ctx: BindableContext): "empty" | "no-context" | undefined {
+  try {
+    if (!isSubagentChildContext(ctx)) return undefined;
+    if (delegatedBindingThisTurn(currentTurnId(ctx)) !== undefined) return undefined;
+    const state = delegatedSlotState();
+    return state === "adopted" ? undefined : state;
+  } catch {
+    return undefined;
   }
 }
 

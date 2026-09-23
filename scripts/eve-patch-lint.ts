@@ -112,6 +112,23 @@ try {
   reds.push(`MISSING: ${EVE_TASK_INDEX} is not installed — run \`npm install\`.`);
 }
 
+const EVE_DYNAMIC_TOOL_LIFECYCLE = "node_modules/eve/dist/src/context/dynamic-tool-lifecycle.js";
+const SESSION_RERUN_IN_SCOPE =
+  "{metadata:o}=a.length===0?{metadata:[]}:await contextStorage.run(e.ctx,async()=>await resolveToolsFromEvent(e.ctx,a,e.event,e.messages));e.ctx.set(SessionDynamicToolMetadataKey";
+try {
+  const bytes = readFileSync(EVE_DYNAMIC_TOOL_LIFECYCLE, "utf8");
+  if (!bytes.includes(SESSION_RERUN_IN_SCOPE)) {
+    reds.push(
+      `SESSION RE-RUN OUTSIDE THE CONTEXT SCOPE: ${EVE_DYNAMIC_TOOL_LIFECYCLE} does not contain "${SESSION_RERUN_IN_SCOPE}". ` +
+        `refreshDynamicSessionToolsForRuntimeRevision must run its resolvers inside contextStorage.run(e.ctx, …), or a ` +
+        `delegated worker whose turn continues in a new process loses its dispatch binding and its gated tools (OPE-2106). ` +
+        `Re-derive the dynamic-tool-lifecycle hunk of patches/ against the installed eve and re-run this lint.`,
+    );
+  }
+} catch {
+  reds.push(`MISSING: ${EVE_DYNAMIC_TOOL_LIFECYCLE} is not installed — run \`npm install\`.`);
+}
+
 function packageJsonPaths(): string[] {
   const out = ["package.json"];
   for (const group of ["packages", join("packages", "providers")]) {

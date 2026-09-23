@@ -115,6 +115,7 @@ ok(
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 const COMPACTION = join("dist", "src", "harness", "compaction.js");
 const SESSION_TASK_INDEX = join("dist", "src", "tasks", "session-index.js");
+const DYNAMIC_TOOL_LIFECYCLE = join("dist", "src", "context", "dynamic-tool-lifecycle.js");
 
 const RETIRED = [
   { symbol: "__oeCfg", why: "OPE-172" },
@@ -235,6 +236,16 @@ for (const eveDir of copies) {
   ok(
     taskIndexSrc.includes("function __oeTaskCohortJoin(") && /else\{let [A-Za-z_$][A-Za-z_$0-9]*=__oeTaskCohortJoin\(/.test(taskIndexSrc),
     `cohort: ${where} carries patch part 8 (OPE-1856, __oeTaskCohortJoin AND its call site in recordSessionTask) — an unpatched copy gives a new task the cohort of the first task with no terminal view WHATEVER TURN IT CAME FROM, so one worker parked on an unanswered question starves every later delegation settlement on that seat for the life of the session (measured on deploy #212: two workers completed, neither ever settled, no completing reply)`,
+  );
+  const lifecycleFile = join(eveDir, DYNAMIC_TOOL_LIFECYCLE);
+  ok(
+    existsSync(lifecycleFile),
+    `scope: ${where}/${DYNAMIC_TOOL_LIFECYCLE} exists (if eve moved the dynamic-tool lifecycle, patch part 9 and packages/core/scripts/delegated-binding-refresh-test.ts are both stale)`,
+  );
+  const lifecycleSrc = existsSync(lifecycleFile) ? readFileSync(lifecycleFile, "utf8") : "";
+  ok(
+    /async function refreshDynamicSessionToolsForRuntimeRevision\(e\)\{[^]*?await contextStorage\.run\(e\.ctx,async\(\)=>await resolveToolsFromEvent\(e\.ctx,a,e\.event,e\.messages\)\);e\.ctx\.set\(SessionDynamicToolMetadataKey/.test(lifecycleSrc),
+    `scope: ${where} carries patch part 9 (OPE-2106, the session-scoped resolver re-run inside contextStorage.run) — an unpatched copy re-runs every session.started resolver outside eve's context in a fresh process, so a delegated worker binds to subagent/…/unresolved, its gated tools do not re-register, and its next gated call fails "not registered in this process" (measured on board #238, S-PR-SESSION)`,
   );
   const compactionFile = join(eveDir, COMPACTION);
   ok(
