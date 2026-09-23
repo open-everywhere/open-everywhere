@@ -253,8 +253,17 @@ const approvalPolicy: Approval<PostFileInput> = async (approvalCtx) => {
   return "user-approval";
 };
 
-export default windowGated("post_file", defineTool({
-  description:
+function htmlPagesSentence(hostingEnabled: boolean): string {
+  return hostingEnabled
+    ? "HTML pages: this org has opted in to Blob hosting, so an HTML page is published to a public URL. " +
+        "Each publish needs user approval."
+    : "HTML pages: this org has not opted in to Blob hosting. An HTML page is attached as a downloadable " +
+        "file, exactly like any other file. Nothing is ever published or made public. Keep the real " +
+        "filename and extension (`page.html`, `text/html`). Do not rename it to `.txt`.";
+}
+
+export function postFileDescription(hostingEnabled: boolean): string {
+  return (
     "Post one or more FILES/artifacts (screenshots, images, docs, data) to the current conversation " +
     "on this surface — the delivery channel for things a text reply can't carry. Give each file a " +
     "`source: { path }` — a file in THIS session's workspace/sandbox (e.g. a bash-written artifact, " +
@@ -262,9 +271,13 @@ export default windowGated("post_file", defineTool({
     "if omitted. Each file is capped at 10 MB. Add an optional `comment` to post alongside the files, " +
     "and a per-file `caption`. Works on Slack, Discord and Notion today (Notion accepts at most 3 " +
     "files per post — a comment's own vendor cap); on other surfaces it returns a clear " +
-    "'not supported here' error so you can fall back to a text reply. HTML pages: if this org has " +
-    "opted in to Blob hosting they're published to a public URL (approval-gated); otherwise the raw " +
-    "`.html` is attached as a downloadable file.",
+    "'not supported here' error so you can fall back to a text reply. " +
+    htmlPagesSentence(hostingEnabled)
+  );
+}
+
+export default windowGated("post_file", defineTool({
+  description: postFileDescription(resolveBlobHosting().enabled),
   inputSchema,
   outputSchema: z.object({ posted: z.boolean(), count: z.number(), platform: z.string(), urls: z.array(z.string()).optional() }),
   approval: { request: withDuplicateApprovalGuard(approvalPolicy), response: initiatorBoundResponsePolicy<PostFileInput>() },

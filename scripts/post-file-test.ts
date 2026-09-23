@@ -40,7 +40,7 @@ const postFile = (await resolveWindowGated((await import("@open-everywhere/core/
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean } };
   readonly execute: (input: unknown, ctx: unknown) => Promise<{ posted: boolean; count: number; platform: string }>;
 };
-const { inferContentType } = await import("@open-everywhere/core/agent/tools/post_file.js");
+const { inferContentType, postFileDescription } = await import("@open-everywhere/core/agent/tools/post_file.js");
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
@@ -467,6 +467,18 @@ await inSession(async () => {
 }
 setBlobPutter(undefined);
 registerBlobConfig(false);
+
+{
+  const off = postFileDescription(false);
+  const on = postFileDescription(true);
+  ok(off.includes("attached") && off.includes("not opted in"), "description (hosting OFF) says the HTML page is attached and the org has not opted in");
+  ok(!off.includes("public URL"), "description (hosting OFF) never mentions a public URL");
+  ok(off.includes("Do not rename it to `.txt`"), "description (hosting OFF) tells the model to keep the .html extension");
+  ok(on.includes("public URL") && on.includes("approval"), "description (hosting ON) says the page is published to a public URL behind approval");
+  ok(!on.includes("not opted in"), "description (hosting ON) never claims the org has not opted in");
+  ok((postFile as unknown as { description?: unknown }).description === off, "the mounted post_file tool carries the OFF description (fail-closed hosting state)");
+  ok(off.startsWith("Post one or more FILES/artifacts") && on.startsWith("Post one or more FILES/artifacts"), "both descriptions keep the shared lead text");
+}
 
 const { loadBlobHosting: shippedBlobHosting } = await import("../agent/blob/hosting.js");
 ok(
