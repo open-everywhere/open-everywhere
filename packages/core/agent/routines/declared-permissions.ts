@@ -148,6 +148,23 @@ export function bundleRaisedDeclarations(declared: readonly string[]): string[] 
   return out;
 }
 
+export function declaredStandingConnectorWrites(declared: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const d of declared) {
+    const trimmed = d.trim();
+    if (trimmed === PR_OPEN_DECLARATION || routinePermissionKind(trimmed) === null) continue;
+    const tool = declaredToolName(trimmed);
+    let write: boolean;
+    try {
+      write = classifyConnectorOpTier(tool) !== "read" || connectorOpTierParts(tool).tier !== "read";
+    } catch {
+      write = true;
+    }
+    if (write && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
 async function livePermissionKinds(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
   const rows = await getOperationalStore()
     .listSessionApprovals(org, routinePermissionKey(routine), nowIso)

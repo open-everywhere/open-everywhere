@@ -7747,7 +7747,7 @@ export const SCENARIOS: readonly Scenario[] = [
         if (declared) {
           ctx.gate(
             cardTs !== undefined,
-            "🔴 (hard) arm B: the declaring routine's creation card posted and was approved — the click is the ONLY thing that writes the connector.tool grant row, so without it arm B's lift gate would fail on a correct tree",
+            "🔴 (hard) arm B: the declaring routine's creation card posted and was approved — a declared connector write is armed by a person's click only (the judge never lifts it, OPE-2101), so without the click no connector.tool grant row exists and arm B's lift gate would fail on a correct tree",
           );
           if (!(card?.text ?? "").includes(OP)) {
             ctx.skip(

@@ -1,3 +1,4 @@
+import { declaredStandingConnectorWrites } from "../routines/declared-permissions.js";
 import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
@@ -266,6 +267,20 @@ export interface ResolveChainOptions {
   readonly rules?: readonly ResolvedPreApprovalRule[];
 }
 
+export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "action" | "args">): string | undefined {
+  if (req.action !== ROUTINE_CREATE_ACTION) return undefined;
+  const raw = (req.args as { permissions?: unknown } | null | undefined)?.permissions;
+  const declared = Array.isArray(raw) ? raw.filter((d): d is string => typeof d === "string") : [];
+  const writes = declaredStandingConnectorWrites(declared);
+  if (writes.length === 0) return undefined;
+  return (
+    `human-only: this routine declares a standing unattended connector write (${writes.join(", ")}), ` +
+    "and only a person's click on the creation card may arm one — the judge is not consulted (OPE-2101)"
+  );
+}
+
+const ROUTINE_CREATE_ACTION = "routine.create";
+
 export async function resolveApproverChain(
   req: ApprovalChainRequest,
   opts: ResolveChainOptions = {},
@@ -343,7 +358,17 @@ export async function resolveApproverChain(
     judgeDeferredTool(req.tool) &&
     approvalJudgeMode() === "enforce"
   ) {
-    if (await approvalJudgeAdminDisarmed(req.domain, req.org)) {
+    const humanOnly = judgeHumanOnlyReason(req);
+    if (humanOnly !== undefined) {
+      judgeRun = {
+        verdict: "defer",
+        source: "human-only",
+        reasoning: humanOnly,
+        cacheKey: judgeVerdictCacheKey(req.tool),
+        cacheHit: false,
+        passes: 0,
+      };
+    } else if (await approvalJudgeAdminDisarmed(req.domain, req.org)) {
       judgeRun = {
         verdict: "defer",
         source: "admin-disarm",

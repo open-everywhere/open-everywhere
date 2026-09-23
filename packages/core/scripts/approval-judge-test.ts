@@ -952,6 +952,70 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok((await contradictionRowsFor("org-a")).filter((r) => r.detail?.id === "wedge-cross-org").length === 1, "dedupe scope: and org A still holds exactly its own one row — the repeat click wrote nothing");
 }
 
+{
+  overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
+  const { classifyConnectorOpTier } = await import("../agent/access/consequence.js");
+  const { judgeHumanOnlyReason } = await import("../agent/access/approver-chain.js");
+  const READ = "tool:notion__search";
+  const WRITE = "tool:notion__create_pages";
+  ok(classifyConnectorOpTier("notion__search") === "read", "human-only premise: the read declaration's tool classifies read");
+  ok(classifyConnectorOpTier("notion__create_pages") === "write", "human-only premise: the write declaration's tool classifies write");
+
+  ok(String(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [WRITE] } })).includes(WRITE), "🔴 human-only: a declared connector WRITE names the class and the declaration");
+  ok(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [READ] } }) === undefined, "human-only negative control: a read-only declaration keeps the judge path");
+  ok(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: ["pr.open"] } }) === undefined, "human-only negative control: `pr.open` is not a connector tool");
+  ok(judgeHumanOnlyReason({ action: "routine.create", args: {} }) === undefined, "human-only negative control: a routine that declares nothing keeps the judge path");
+  ok(judgeHumanOnlyReason({ action: "spend.set", args: { permissions: [WRITE] } }) === undefined, "human-only negative control: the class is routine.create's declaration shape, not any `permissions` field");
+
+  const routineInput = (permissions: readonly string[], n: number) => ({
+    org: "test-org",
+    kind: "routine.create",
+    channelId: "C_ROUT",
+    requestedBy: "U_HUMAN",
+    threadTs: null,
+    scopeKey: "slack/T1/C_ROUT",
+    domain: "routinedomain",
+    args: {
+      org: "test-org",
+      partition: { org: "test-org", platform: "slack", workspace: "T1", surface: "C_ROUT", surfaceKey: "slack/T1/C_ROUT" },
+      surfaceKey: "slack/T1/C_ROUT",
+      target: { channelId: "C_ROUT" },
+      trigger: { kind: "interval", everyMinutes: 60 },
+      prompt: `Post the morning digest (${n}).`,
+      createdBy: "U_HUMAN",
+      permissions,
+    },
+    chain: { unattended: false },
+  });
+  const grantRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: "test-org" })).filter((r) => r.action === "routine.grant").map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  clearApprovalJudgeVerdictCache();
+  const readRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: a read-only digest, attended, clean turn" });
+  const lifted = await requestApproval(routineInput([READ], 1), { postCard });
+  ok(lifted.autoApproved?.resolvedBy === "judge", "human-only premise: a READ-only declaration is judge-lifted through the real propose plane");
+  ok(readRun.calls.length === 2, "human-only premise: the consult really ran both passes");
+  const judgeGrants = (await grantRows()).filter((d) => d.grantedBy === JUDGE_LIFT_DECIDED_BY);
+  ok(judgeGrants.length === 1, "human-only premise: the judge lift wrote ONE routine.grant row as chain:judge — the row the class must never get");
+  resetApprovalJudgeCompletion();
+
+  clearApprovalJudgeVerdictCache();
+  const grantsBefore = (await grantRows()).length;
+  const writeRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
+  const carded = await requestApproval(routineInput([READ, WRITE], 2), { postCard });
+  ok(carded.autoApproved === undefined, "🔴 human-only: a declared connector WRITE CARDS — the judge cannot lift it");
+  ok(writeRun.calls.length === 0, "🔴 human-only: the judge transport was never called");
+  const pending = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === carded.id);
+  ok(pending !== undefined && pending.status === "pending", "human-only: the creation card awaits a person's click");
+  ok((await grantRows()).length === grantsBefore, "🔴 human-only: no routine.grant row was written — nothing armed without the click");
+  ok((await grantRows()).filter((d) => d.grantedBy === JUDGE_LIFT_DECIDED_BY).length === 1, "🔴 human-only: the only chain:judge routine.grant row is still the read-only premise's");
+  const humanOnly = await judgeDetailWhere((d) => d.source === "human-only", "human-only");
+  ok(humanOnly.verdict === "defer" && humanOnly.enforcedVerdict === "ask" && humanOnly.passes === 0, "human-only: the consult row records a defer that stayed an ask, with no model pass");
+  ok(String(humanOnly.reasoning ?? "").includes(WRITE), "human-only: the consult row's reasoning names the write declaration, so the audit says why");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(

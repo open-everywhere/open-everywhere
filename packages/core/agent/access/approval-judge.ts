@@ -264,7 +264,7 @@ function rulesSigOf(ctx: ApprovalJudgeContext): string {
 
 export interface ApprovalJudgeRun {
   readonly verdict: "allow" | "deny" | "ask" | "defer";
-  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "admin-disarm";
+  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "admin-disarm" | "human-only";
   readonly reasoning: string;
   readonly cacheKey: string;
   readonly cacheHit: boolean;

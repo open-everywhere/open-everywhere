@@ -492,6 +492,11 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     JSON.stringify(declaredPermissionKinds([`tool:${OP}`])) === JSON.stringify([pinnedConnectorToolPermissionKind(OP)]),
     "arm B's declaration `tool:<OP>` validates and maps onto the per-tool grant kind the fence's lift reads",
   );
+  const { judgeHumanOnlyReason } = await import("../packages/core/agent/access/approver-chain.js");
+  ok(
+    judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [`tool:${OP}`] } }) !== undefined,
+    "🔴 arm B's declaration `tool:<OP>` is in the human-only class — the judge is never consulted for it, so the click is the only lift the leg's gate names",
+  );
   ok(body.includes("ROUTINE_CONNECTOR_WRITE_OP"), "🔴 the leg reads OP from the one constant");
   ok(!body.includes("notion__create_page") && !body.includes("notion-create-pages"), "🔴 …and carries NO second literal of a Notion create tool — asks, permissions and messages all read the constant");
 
