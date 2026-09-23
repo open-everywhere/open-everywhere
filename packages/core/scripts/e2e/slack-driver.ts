@@ -54,6 +54,11 @@ function buttonLabel(b: SlackApiButton): string | undefined {
   return undefined;
 }
 
+export function cardJudgeSurface(message: Pick<SlackMessage, "text" | "actions">): string {
+  const labels = (message.actions ?? []).map((a) => a.text?.trim()).filter((t): t is string => !!t);
+  return labels.length > 0 ? `${message.text}\nOptions: ${labels.join(" | ")}` : message.text;
+}
+
 function toMessage(m: SlackApiMessage): SlackMessage {
   const actions = (m.blocks ?? [])
     .flatMap((b) =>

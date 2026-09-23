@@ -15,7 +15,7 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { endsOwnWakeWait, tsAfter } from "./slack-driver.js";
+import { cardJudgeSurface, endsOwnWakeWait, tsAfter } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
@@ -6636,7 +6636,7 @@ export const SCENARIOS: readonly Scenario[] = [
             "Does the reply present ways to connect Notion (an option to set/paste an API key, or connect options), rather than an error, an exception, or a refusal to help connect?",
             { mustNotMatch: [/error|exception|traceback/i] },
           ),
-          offerCard.text,
+          cardJudgeSurface(offerCard),
           "offer: the connect card reply reads as a sane connect-options response (no error)",
         );
       }

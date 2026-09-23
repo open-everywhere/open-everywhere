@@ -4517,6 +4517,29 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { cardJudgeSurface } = await import("../packages/core/scripts/e2e/slack-driver.js");
+  const header = "Connect notion — choose how to authorize.";
+  const card = {
+    text: header,
+    actions: [
+      { actionId: "oe_connect:notion:api-key", text: "Set API key" },
+      { actionId: "oe_connect:notion:service-oauth", text: "Connect org account" },
+    ],
+  };
+  const surface = cardJudgeSurface(card);
+  ok(
+    surface === `${header}\nOptions: Set API key | Connect org account`,
+    `cardJudgeSurface: the judged string is the header plus every button label; got ${JSON.stringify(surface)}`,
+  );
+  ok(cardJudgeSurface({ text: header, actions: [] }) === header, "cardJudgeSurface: a message with no buttons judges its text alone");
+  ok(cardJudgeSurface({ text: header }) === header, "cardJudgeSurface: a message with no actions field judges its text alone");
+  ok(
+    cardJudgeSurface({ text: header, actions: [{ actionId: "x" }, { actionId: "y", text: "  " }] }) === header,
+    "cardJudgeSurface: unlabelled buttons add no Options line",
+  );
+}
+
+{
   const { seatFenceStep } = await import("../packages/core/scripts/e2e/slack-driver.js");
   const QUIET = 20_000;
   const GRACE = 420_000;
