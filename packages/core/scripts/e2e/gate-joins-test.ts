@@ -1082,6 +1082,32 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     ok(seedSettlementRead([purge, turnStart, ackPost], seedOpts).kind === "inline", "…and the moment the ack's row lands, the same window answers INLINE — the fence opens rather than holding for ever");
     ok(seedSettlementRead([purge, turnStart], { seedWakeId: SEED_WAKE, seedTurnStartMs: TURN_START_MS }).kind === "inline", "a caller that hands in no ack id is never held by the fence");
   }
+
+  {
+    const WRj = "c3f3fc09";
+    const PURGE_TASK = "task_ce043908";
+    const SEED_TASK = "task_109eb4dd4c4b7b9e80fe5f3d";
+    const SEATRj = "wrun_example53";
+    const ACKRj = "1770056084.427000";
+    const STARTRj = Date.parse("2026-02-02T18:14:03.833Z");
+    const purgeDispatch = row("delegation.task_started", "2026-02-02T18:12:17.000Z", { task: PURGE_TASK, session: SEATRj }, 100, "ingest");
+    const purgeWrite = row("memory.write", "2026-02-02T18:13:48.000Z", { road: MEMORY_PURGE_ROAD, kind: "memory", silo: "e2e-ambient-brain" }, 101);
+    const seedTurn = row("wake.turn_start", "2026-02-02T18:14:03.833Z", { wakeId: WRj, sessionId: SEATRj }, 102);
+    const purgeCancelled = row("delegation.task_settled", "2026-02-02T18:14:25.000Z", { task: PURGE_TASK, session: SEATRj, outcome: "cancelled" }, 103, "ingest");
+    const seedDispatch = row("delegation.task_started", "2026-02-02T18:14:41.000Z", { task: SEED_TASK, session: SEATRj }, 104, "ingest");
+    const ack238 = row("reply.post", "2026-02-02T18:14:44.505Z", { id: ACKRj, sessionId: SEATRj, wakeId: WRj }, 105);
+    const rowsRj = [purgeDispatch, purgeWrite, seedTurn, purgeCancelled, seedDispatch, ack238];
+    const optsRj = { seedWakeId: WRj, seedTurnStartMs: STARTRj, ackId: ACKRj };
+    const atBound = seedSettlementRead(rowsRj, optsRj);
+    ok(atBound.kind === "unsettled", `OPE-2100: at the board's bound the seed turn's task has not settled (got ${atBound.kind}: ${atBound.detail})`);
+    ok(atBound.dispatched.join(",") === SEED_TASK, `🔴 OPE-2100: the join names ONLY the task the seed turn dispatched (got ${atBound.dispatched.join(",")})`);
+    ok(!atBound.dispatched.includes(PURGE_TASK) && !atBound.detail.includes(PURGE_TASK), "🔴 OPE-2100 NEGATIVE CONTROL: leg 0's cancelled PURGE task is never joined as the seed's remember");
+    const seedSettled = row("delegation.task_settled", "2026-02-02T18:17:49.000Z", { task: SEED_TASK, session: SEATRj, outcome: "completed" }, 106, "ingest");
+    const seedPersist = row("memory.write", "2026-02-02T18:17:49.200Z", { road: "session-persist", kind: "memory", silo: "e2e-ambient-brain" }, 107);
+    const reportRj = row("reply.post", "2026-02-02T18:17:49.400Z", { id: "1770056269.400000", sessionId: SEATRj, wakeId: WRj }, 108);
+    const late = seedSettlementRead([...rowsRj, seedSettled, seedPersist, reportRj], optsRj);
+    ok(late.kind === "settled" && late.settlement === seedSettled && late.post === reportRj, `OPE-2100: with the delegated budget the same join reaches the seed task's own settlement (got ${late.kind})`);
+  }
 }
 
 {

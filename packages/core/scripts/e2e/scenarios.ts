@@ -335,6 +335,8 @@ export interface Scenario {
 
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
+export const seedWriteWaitMs = (delegated: { readonly kind: string } | undefined): number =>
+  delegated === undefined || delegated.kind === "inline" ? AUDIT_ROW_WAIT : FILE_REPLY_WAIT;
 const EDIT_SETTLE_WAIT = 45_000;
 const AUDIT_ROW_WAIT = 60_000;
 
@@ -1460,7 +1462,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 2_280_000,
+    timeoutMs: 2_520_000,
     judged: false,
     run: async (ctx) => {
       const a = ctx.slack!;
@@ -1578,7 +1580,7 @@ export const SCENARIOS: readonly Scenario[] = [
                 seedRead = read;
                 return read.writes.length > 0 ? read : undefined;
               },
-              { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the canary's own memory.write audit row" },
+              { timeoutMs: seedWriteWaitMs(delegated), initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the canary's own memory.write audit row" },
             )
           :
             await pollOptional(
@@ -1593,7 +1595,7 @@ export const SCENARIOS: readonly Scenario[] = [
                 seedRead = read;
                 return read.writes.length > 0 ? read : undefined;
               },
-              { timeoutMs: REPLY_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the worker's settlement post, then the persist row standing right before it" },
+              { timeoutMs: seedWriteWaitMs(delegated), initialDelayMs: 1_000, maxDelayMs: 3_000, what: "seed: the worker's settlement post, then the persist row standing right before it" },
             );
       if (seedDelegation?.roundTripMs !== undefined) {
         ctx.log(`seed round-trip: ${seedDelegation.roundTripMs}ms from the seed turn's start to the settlement post — RECORDED, never gated`);
@@ -1631,7 +1633,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(
         seedWrite !== undefined,
         noSettlement
-          ? `seed: the seat DELEGATED the remember and this leg saw NO SETTLEMENT within ${REPLY_WAIT / 1000}s — ${seedEvidence}. The interim ack is not the seed's ack on a delegated turn (OPE-2036), so this red says the WORKER did not report, never that the canary was not stored — ack was: "${ackText.slice(0, 160)}"`
+          ? `seed: the seat DELEGATED the remember and this leg saw NO SETTLEMENT within ${seedWriteWaitMs(delegated) / 1000}s — ${seedEvidence}. The interim ack is not the seed's ack on a delegated turn (OPE-2036), so this red says the WORKER did not report, never that the canary was not stored — ack was: "${ackText.slice(0, 160)}"`
           : asked
             ? `seed: the seat answered the seed with a CLARIFYING QUESTION and stored nothing — leg 0's erase and this seed still read to it as a contradiction, which is a FIXTURE defect and not a memory failure (OPE-2028). ${seedEvidence} — it asked: "${answerText.slice(0, 240)}"`
             : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028), and on a DELEGATED turn the row standing before the worker's settlement post (OPE-2036). ${seedEvidence} — ack was: "${ackText.slice(0, 160)}"`,

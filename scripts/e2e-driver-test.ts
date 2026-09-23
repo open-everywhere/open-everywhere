@@ -148,6 +148,7 @@ const {
 } = await import("../packages/core/scripts/e2e/judge.js");
 const {
   SCENARIOS, skipCategory, skipReason, ScenarioSkip, FixtureMissing, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
+  seedWriteWaitMs,
   DELEGATED_TURN_SURFACE_ACTIONS,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
@@ -6590,6 +6591,26 @@ rmSync(dir, { recursive: true, force: true });
     }
 
     {
+      const MEASURED_ACK_TO_SETTLE_MS = 184_495;
+      const delegatedWait = seedWriteWaitMs({ kind: "unsettled" });
+      ok(delegatedWait === 420_000, `🔴 OPE-2100: a DELEGATED seed turn waits the delegated budget, FILE_REPLY_WAIT (got ${delegatedWait}ms)`);
+      ok(delegatedWait > MEASURED_ACK_TO_SETTLE_MS, `🔴 OPE-2100: the delegated wait covers a live run's measured ack→settle of ${MEASURED_ACK_TO_SETTLE_MS}ms`);
+      ok(seedWriteWaitMs({ kind: "settled" }) === delegatedWait && seedWriteWaitMs({ kind: "unposted" }) === delegatedWait, "…and every delegated kind takes the same budget");
+      ok(seedWriteWaitMs({ kind: "inline" }) === 60_000, `OPE-2100 NEGATIVE CONTROL: an INLINE seed turn keeps AUDIT_ROW_WAIT (got ${seedWriteWaitMs({ kind: "inline" })}ms)`);
+      ok(seedWriteWaitMs(undefined) === 60_000, "OPE-2100 NEGATIVE CONTROL: an UNJOINED seed route keeps AUDIT_ROW_WAIT too");
+      const memReadSrc = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
+      ok(
+        memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1e3}s") || memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1000}s"),
+        "🔴 OPE-2100: the no-settlement red names the bound the poll actually used",
+      );
+      const memReadLeg = SCENARIOS.find((s) => s.id === "S-MEM-READ")!;
+      ok(
+        (memReadLeg.timeoutMs ?? 0) >= 2_280_000 - 180_000 + delegatedWait,
+        `🔴 OPE-2100: the leg budget carries the raised settlement wait, so the poll's own bound reds first and the runner never kills the leg anonymously (got ${String(memReadLeg.timeoutMs)})`,
+      );
+    }
+
+    {
       const memRead = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
       const purgeAt = memRead.indexOf('leg:"canary-purge"');
       const seedAt = memRead.indexOf("rememberthisfortheteam:theOPE121canarycodeis");
@@ -6646,12 +6667,12 @@ rmSync(dir, { recursive: true, force: true });
       const writeWaitAt = memRead.indexOf("thecanary'sownmemory.writeauditrow");
       ok(settleWaitAt >= 0 && writeWaitAt >= 0, `🔴 OPE-2036: BOTH seed waits are present — the inline one and the delegated one (settle at ${settleWaitAt}, write at ${writeWaitAt})`);
       ok(
-        /timeoutMs:REPLY_WAIT,[^}]{0,80}what:"seed:theworker'ssettlementpost/.test(memRead),
-        "🔴 OPE-2036: the DELEGATED seed wait is bounded by REPLY_WAIT — the same settlement wait the S-DELEGATED-* legs use, never AUDIT_ROW_WAIT measured from the interim ack",
+        /timeoutMs:seedWriteWaitMs\(delegated\),[^}]{0,80}what:"seed:theworker'ssettlementpost/.test(memRead),
+        "🔴 OPE-2036/OPE-2100: the DELEGATED seed wait takes the delegated budget from seedWriteWaitMs, never AUDIT_ROW_WAIT measured from the interim ack and never the direct-reply REPLY_WAIT",
       );
       ok(
-        /timeoutMs:AUDIT_ROW_WAIT,[^}]{0,80}what:"seed:thecanary'sownmemory\.writeauditrow/.test(memRead),
-        "…and the INLINE seed wait keeps its own AUDIT_ROW_WAIT bound, unchanged — OPE-2036 build item 4",
+        /timeoutMs:seedWriteWaitMs\(delegated\),[^}]{0,80}what:"seed:thecanary'sownmemory\.writeauditrow/.test(memRead),
+        "…and the INLINE seed wait takes its bound from the same selector, which keeps AUDIT_ROW_WAIT there — OPE-2036 build item 4",
       );
       ok(
         memRead.includes("settlementPost:settle.post"),
