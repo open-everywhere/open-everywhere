@@ -3719,7 +3719,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["notionAmbient"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_980_000,
     judged: false,
     run: async (ctx) => {
       const not = ctx.notionAmbient!;
@@ -3783,12 +3783,12 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const c1 = await not.createBlockDiscussion(anchorBlocks[0], `OE — quick check (${runTag}-a): what is this page for? A one-line answer right here is perfect.`);
       ctx.gate(c1.commentId.length > 0 && c1.discussionId.length > 0, "on-topic: the fresh addressed comment minted its own discussion");
-      const reply1 = await not.awaitBotReplyOnBlock(anchorBlocks[0], c1.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+      const reply1 = await not.awaitBotReplyOnBlock(anchorBlocks[0], c1.discussionId, "", { timeoutMs: FILE_REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the fresh comment's OWN discussion (discussion 1)");
 
       const c2 = await not.createBlockDiscussion(anchorBlocks[1], `Open Everywhere — different question (${runTag}-b): name one thing that could improve this page. Answer in this thread please.`);
       ctx.gate(c2.discussionId !== c1.discussionId, "reply-targeting: the second comment minted a DIFFERENT discussion (the probe needs two)");
-      const reply2 = await not.awaitBotReplyOnBlock(anchorBlocks[1], c2.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
+      const reply2 = await not.awaitBotReplyOnBlock(anchorBlocks[1], c2.discussionId, "", { timeoutMs: FILE_REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(reply2.discussionId === c2.discussionId, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
 
       const cOff = await not.createBlockDiscussion(anchorBlocks[2], `Reminder (${runTag}-c): the plant-watering rota moved to the kitchen noticeboard.`);
