@@ -148,6 +148,10 @@ console.log("4 — the since-last-wake catch-up:");
   const capped = fetchedBackscroll([msg("1", "human", "the person's message"), msg("2", "bot", "the bot's message")], oneMessageCap, trustFor, admissionFunction("wide"));
   eq(capped.map((m) => m.id), ["1"], "the cap keeps the PERSON's message — the refused bot never competed for the budget");
   eq(capped[0]?.trust, "peer", "the tier the policy judged is the tier that renders — resolved once");
+
+  const labelled = fetchedBackscroll([msg("1", "self", "144"), { ...msg("2", "human", "and what's that plus 6?"), authorId: "U1" }], 10_000, trustFor);
+  eq(labelled.map((m) => [m.from, m.author]), [["self", "self"], ["human", "U1"]], "OPE-2090: an own post renders author=self; a person keeps the raw id");
+  eq(fetchedBackscroll([msg("1", "human", "no id")], 10_000, trustFor)[0]?.author, "unknown", "OPE-2090 negative control: an unidentified person is not labelled self");
 }
 
 console.log("5 — the ambient_skipped fix text:");

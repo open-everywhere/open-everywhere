@@ -926,6 +926,22 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 }
 
 {
+  const raw = renderReadingAWake();
+  const start = raw.indexOf("**Your posture.**");
+  ok(start >= 0, "OPE-2090: the 'Reading a wake' block has the posture section");
+  const end = raw.indexOf("An `edited=\"true\"` message", start);
+  ok(end > start, "OPE-2090: the posture section ends before the edit paragraph");
+  const posture = raw.slice(start, end).replace(/\s+/g, " ");
+  ok(posture.includes('On a `follow-up="thread-engaged"` wake you are a participant in that thread, not a watcher.'), "OPE-2090: the posture section says a thread-engaged wake makes the seat a participant, not a watcher");
+  ok(posture.includes('A question there is addressed to you unless it names someone else, even under `addressing="channel-watch"`.'), "OPE-2090: the posture section says a question in that thread is addressed to the seat, even under channel-watch");
+  ok(posture.includes("`thread-engaged` means you are already enrolled and `stand_down` is how you leave"), "OPE-2090: the posture section still says stand_down is how the seat leaves");
+  const rest = (raw.slice(0, start) + raw.slice(end)).replace(/\s+/g, " ");
+  ok(rest.includes("not a watcher") === false, "OPE-2090 negative control: the participant sentence is not outside the posture section");
+  const md = readFileSync(new URL("../../../agent/instructions.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  ok(md.includes("in that thread, not a watcher") === false, "OPE-2090 negative control: agent/instructions.md does not carry a second copy");
+}
+
+{
   const md = readFileSync(new URL("../../../agent/instructions.md", import.meta.url), "utf8");
   const start = md.indexOf("Some of these verbs live on workers rather than on a conversational seat.");
   ok(start >= 0, "OPE-2087: agent/instructions.md has the delegation paragraph");

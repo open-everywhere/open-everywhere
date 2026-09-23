@@ -30,7 +30,7 @@ export type BackscrollTrustFor = (m: NormalizedMessage) => WakeTrust;
 function toWakeMessage(m: NormalizedMessage, trustFor?: BackscrollTrustFor): WakeMessageInput {
   return {
     from: m.sender,
-    author: m.authorId ?? "unknown",
+    author: m.sender === "self" ? "self" : m.authorId ?? "unknown",
     ...(m.authorId ? { authorId: m.authorId } : {}),
     id: m.id,
     sentAt: new Date(m.ms).toISOString(),

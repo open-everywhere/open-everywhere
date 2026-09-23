@@ -219,7 +219,7 @@ const routing = (
     "the fetched bootstrap backscroll is FLAT — no message carries a cluster sessionId, because there is no clustering left to produce one",
   );
   const self = out.find((m) => m.body === "my own spine post");
-  ok(self?.from === "self" && self?.author === "unknown" && self?.authorId === undefined, "own post → from=self, no foreign author id");
+  ok(self?.from === "self" && self?.author === "self" && self?.authorId === undefined, "own post → from=self, author=self (the session-tail label), no foreign author id");
   const human = out.find((m) => m.body === "older-burst-1");
   ok(human?.from === "human" && human?.author === "UB" && human?.authorId === "UB", "a human message → from=human with the raw id in author/author-id (name resolved later by the route)");
   ok(out.every((m) => m.trigger === undefined), "no backscroll entry carries the trigger flag");
