@@ -191,7 +191,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 }
 
 {
-  const ASK = "what was the deploy window token the team decided on earlier today";
+  const ASK = "what was the deploy window name the team decided on earlier today";
   const MARKER = "shipwin-41822";
   const ev = (index: number, type: string, data: unknown) => ({ index, type, data });
   const extract = (evs: readonly { readonly index: number; readonly type: string; readonly data: unknown }[]): readonly string[] =>
@@ -203,7 +203,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const clean = [
     ev(10, "message.received", { text: `Before I write this up — ${ASK}?` }),
     ev(11, "step.started", {}),
-    ev(12, "message.appended", { text: `The deploy window token is ${MARKER}.` }),
+    ev(12, "message.appended", { text: `The deploy window is named ${MARKER}.` }),
   ];
   const cleanSlice = memoryPathReadsBetween(clean, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(cleanSlice.bounded && cleanSlice.fromIndex === 10 && cleanSlice.toIndex === 12, "the slice is bounded by the ask and by the reply that quotes the marker");

@@ -5095,13 +5095,13 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const marker = factToken("uni");
       const { ts: decideTs } = await a.post(
-        `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
+        `Team decision to log: the deploy window for this release is named ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
       const ackA = await a.awaitAnyReply(decideTs, { timeoutMs: UNIFIED_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(ackA.text.trim().length > 0, "container A: the channel-watch judge replied in-channel (ambient wake under the unified grain)");
 
       const { ts: askTs } = await b.post(
-        "Quick check before I write this up — what was the deploy window token we decided on earlier? It was mentioned in the team's other channel.",
+        "Quick check before I write this up — what was the deploy window name we decided on earlier? It was mentioned in the team's other channel.",
       );
       const replyB = await b.awaitAnyReply(askTs, { timeoutMs: UNIFIED_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(replyB.text.trim().length > 0, "container B: got an in-channel reply to the cross-container question");
@@ -5110,7 +5110,7 @@ export const SCENARIOS: readonly Scenario[] = [
         `one-mind: container B's reply quotes the token "${marker}" stated ONLY in container A (hard gate — one domain session spanning the containers)`,
       );
       await ctx.judgePass(
-        factuality(marker, `Does the reply give the deploy window token ${marker} (recalled from the other channel's conversation)?`, { mustMatch: [marker] }),
+        factuality(marker, `Does the reply give the deploy window name ${marker} (recalled from the other channel's conversation)?`, { mustMatch: [marker] }),
         replyB.text,
         "one-mind: cross-container recall quality",
       );
@@ -5213,12 +5213,12 @@ export const SCENARIOS: readonly Scenario[] = [
       const decideAt = new Date(Date.now() - 5_000).toISOString();
       const marker = factToken("unix");
       const { ts: decideTs } = await a.post(
-        `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
+        `Team decision to log: the deploy window for this release is named ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
       const ack = await a.awaitAnyReply(decideTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(ack.text.trim().length > 0, "slack: the unified supervisor acknowledged the decision in-channel");
 
-      const uniXAsk = `Before I write this up — what was the deploy window token the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.`;
+      const uniXAsk = `Before I write this up — what was the deploy window name the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.`;
       const askId = await gh.comment(gh.fixtureIssue, uniXAsk);
       const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
       ctx.gate(
@@ -5226,7 +5226,7 @@ export const SCENARIOS: readonly Scenario[] = [
         `MONEY SHOT: the <slug>[bot] issue reply quotes the token "${marker}" stated ONLY in Slack (one mind across SURFACES, zero context re-entry — hard gate)`,
       );
       await ctx.judgePass(
-        factuality(marker, `Does the reply give the deploy window token ${marker} (recalled from the team's Slack conversation)?`, { mustMatch: [marker] }),
+        factuality(marker, `Does the reply give the deploy window name ${marker} (recalled from the team's Slack conversation)?`, { mustMatch: [marker] }),
         reply.body,
         "money-shot: cross-surface recall quality",
       );
