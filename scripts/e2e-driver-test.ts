@@ -6491,6 +6491,16 @@ rmSync(dir, { recursive: true, force: true });
     engagedSlackBody.includes("container:slack.channelId"),
     "🔴 OPE-1748: the two-wake gate is joined to the room the leg drove — an unjoined read counts every wake the deployment admitted in the window, on any surface",
   );
+  const bareTopLevelPost = /\.post\((["`])(?:(?!\1).)*\1\)/g;
+  for (const id of ["J-ENGAGED-slack", "S9"]) {
+    const body = SCENARIOS.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    const bare = body.match(bareTopLevelPost) ?? [];
+    ok(bare.length === 0, `🔴 OPE-2111: ${id} posts no unsalted top-level fixture line (found ${bare.join(" ")})`);
+    ok((body.match(/\.post\(fixtureLine\(/g) ?? []).length >= 2, `OPE-2111: ${id} salts its negative control AND its name-drop with fixtureLine (the scan above is not vacuous)`);
+  }
+  ok('slack.post("hasanyoneseenthereleasechecklist?")'.match(bareTopLevelPost)?.length === 1, "negative control: the scan matches a bare top-level string post");
+  ok("slack.post(`hasanyoneasked${ENGAGED_NAME}aboutit?`)".match(bareTopLevelPost)?.length === 1, "negative control: the scan matches a bare top-level template post");
+  ok('slack.post("andwhat\'sthatplus6?",rootTs)'.match(bareTopLevelPost) === null, "negative control: a threaded post (second argument) is not a top-level line");
   const catchUpLegs = SCENARIOS.filter((s) => s.run.toString().includes("gateSeatCatchUp(")).map((s) => s.id).sort();
   ok(
     catchUpLegs.join(",") === "J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-slack,J-ENGAGED-teams",

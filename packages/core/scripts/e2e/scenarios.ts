@@ -2105,8 +2105,8 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slackPrivate!;
       const sinceIso = new Date(Date.now() - 5_000).toISOString();
-      const { ts: controlTs } = await slack.post("has anyone seen the release checklist?");
-      const { ts: dropTs } = await slack.post("has anyone asked Open Everywhere about the release?");
+      const { ts: controlTs } = await slack.post(fixtureLine("has anyone seen the release checklist?"));
+      const { ts: dropTs } = await slack.post(fixtureLine("has anyone asked Open Everywhere about the release?"));
       await sleep(SILENCE_WINDOW);
       const afterControl = (await slack.replies(controlTs)).filter((m) => slack.isBotReply(m));
       ctx.gate(afterControl.length === 0, "control message (no name) produced NO reply — hard gate");
@@ -8351,17 +8351,17 @@ export const SCENARIOS: readonly Scenario[] = [
       await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "slack", trigger: triggerMarker, caughtUp: idleMarker, stale: [batch], ...(caughtUp ? { replyText: caughtUp.text } : {}) });
 
       const controlFrom = new Date().toISOString();
-      const { ts: controlTs } = await slack.post("has anyone seen the release checklist?");
+      const { ts: controlTs } = await slack.post(fixtureLine("has anyone seen the release checklist?"));
       const controlReplies = await slack.collectRepliesDuring(controlTs, controlTs, SILENCE_WINDOW);
       ctx.gate(controlReplies.length === 0, "name-drop NEGATIVE CONTROL: a top-level message naming nobody draws no reply");
       const dropFrom = new Date().toISOString();
-      const { ts: dropTs } = await slack.post(`has anyone asked ${ENGAGED_NAME} about the release checklist?`);
+      const { ts: dropTs } = await slack.post(fixtureLine(`has anyone asked ${ENGAGED_NAME} about the release checklist?`));
       const dropReply = await slack.awaitThreadReply(dropTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) || !substantive(m.text) });
       ctx.gate(substantive(dropReply.text), "name-drop: it drew a SUBSTANTIVE reply in the thread the name-drop opened, not a stub");
       await gateEngagedWake(ctx, { sinceIso: dropFrom, platform: "slack", surface, leg: "name-drop", expect: "name-drop" });
 
       const secondFrom = new Date().toISOString();
-      const { ts: secondTs } = await slack.post(`separately — does ${ENGAGED_NAME} know who owns the deploy runbook?`);
+      const { ts: secondTs } = await slack.post(fixtureLine(`separately — does ${ENGAGED_NAME} know who owns the deploy runbook?`));
       const secondReply = await slack.awaitThreadReply(secondTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(secondReply.text.trim().length > 0, "second name-drop: it drew its own reply, with substance, in the thread the second message opened");
       await gateEngagedWake(ctx, { sinceIso: secondFrom, platform: "slack", surface, leg: "second name-drop", expect: "name-drop" });
