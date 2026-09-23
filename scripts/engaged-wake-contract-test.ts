@@ -21,6 +21,7 @@ const { registerGithubProvider } = await import("@open-everywhere/provider-githu
 registerGithubProvider();
 const { githubOnComment } = await import("@open-everywhere/provider-github/agent/channels/github.js");
 const { buildGitHubAuth } = await import("@open-everywhere/provider-github/agent/channels/github-identity.js");
+const { buildGitHubSupervisorWake } = await import("@open-everywhere/provider-github/agent/channels/github-supervisor.js");
 const { slackThreadFollowWake, slackChannelWatchWake } = await import(
   "@open-everywhere/provider-slack/agent/channels/slack-events.js"
 );
@@ -129,6 +130,18 @@ const FOLLOW_UP = "and what's that plus 6?";
   ok(
     !wakeOf({ addressing: "direct", threadEngaged: true }).includes("follow-up="),
     "notion: NEGATIVE CONTROL — a `direct` wake renders no envelope, so it states nothing",
+  );
+}
+
+{
+  const trigger = { id: "c1", authorLogin: "dev", sentAt: NOW(), text: FOLLOW_UP, trust: "peer" as const };
+  const wakeOf = (extra: Record<string, unknown>): string =>
+    renderWake(buildGitHubSupervisorWake({ owner: "o", repo: "r", issueNumber: 7, trigger, ...extra } as never), NOW).message;
+  ok(wakeOf({ threadEngaged: true }).includes(ATTR), "🔴 github ambient: the engaged issue's plain follow-up states the enrolment");
+  ok(!wakeOf({}).includes("follow-up="), "github ambient: NEGATIVE CONTROL — an un-enrolled judged wake states nothing");
+  ok(
+    !wakeOf({ threadEngaged: true, directMention: true }).includes("follow-up="),
+    "github ambient: NEGATIVE CONTROL — an ADDRESSED @mention states nothing",
   );
 }
 

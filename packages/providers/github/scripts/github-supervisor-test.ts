@@ -182,6 +182,21 @@ const TITLE = "Flaky retries on cold start";
 }
 
 {
+  const engaged = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved", threadEngaged: true }), NOW).message;
+  ok(engaged.includes('follow-up="thread-engaged"'), "🔴 an engaged follow-up renders follow-up=\"thread-engaged\" on the GitHub wake");
+  ok(engaged.includes('addressing="channel-watch"'), "…and keeps the channel-watch addressing (enrolment is a different fact from the silence bar)");
+
+  const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved" }), NOW).message;
+  ok(plain.includes("follow-up=") === false, "negative control: a plain ambient comment carries NO follow-up attribute");
+  const notEngaged = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved", threadEngaged: false }), NOW).message;
+  ok(normalizeFenceNonce(notEngaged) === normalizeFenceNonce(plain), "negative control: threadEngaged:false renders byte-identical to the unset ambient wake");
+
+  const mentioned = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, directMention: true, threadEngaged: true }), NOW).message;
+  ok(mentioned.includes('addressing="direct-mention"'), "an @mention in an engaged issue stays addressed (direct-mention)");
+  ok(mentioned.includes("follow-up=") === false, "🔴 …and carries NO follow-up attribute — a mention is owed an answer whatever the enrolment says");
+}
+
+{
   const payload = {
     action: "created",
     issue: { number: 42, title: "Flaky retries on cold start" },
@@ -238,11 +253,17 @@ interface WakeCapture { token: string; message: string; context: readonly string
   await handleGitHubSupervisorDispatch(dispatch({ admit: admissionFunction("wide"), issueTitle: TITLE }), deps);
   const admittedWake = wakes[wakes.length - 1]!;
   ok(admittedWake.context.length === 1 && admittedWake.context[0]!.includes(TITLE), "negative control: the SAME dispatch under `wide` delivers the title");
+
+  await handleGitHubSupervisorDispatch(dispatch({ threadEngaged: true }), deps);
+  ok(wakes[wakes.length - 1]!.message.includes('follow-up="thread-engaged"'), "🔴 a dispatch with threadEngaged delivers follow-up=\"thread-engaged\"");
+  await handleGitHubSupervisorDispatch(dispatch({ threadEngaged: false }), deps);
+  ok(wakes[wakes.length - 1]!.message.includes("follow-up=") === false, "negative control: threadEngaged:false delivers no follow-up attribute");
 }
 
 {
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/github.ts", import.meta.url)), "utf8");
   ok(src.includes("admit: seatAdmissionFor(surfaceKey)"), "🔴 the live ambient leg passes the domain's admission policy into the supervisor dispatch");
+  ok(src.includes("threadEngaged: admission.engagedFollowUp,") && src.includes("addressing: githubWakeAddressing(cls.addressing, admission.engagedFollowUp)"), "🔴 the live ambient leg passes admission.engagedFollowUp to both the wake and the audit row");
   ok(src.includes("catchUp: (req) => seatCatchUp(\"github\", req),"), "🔴 …and the catch-up read passes NO `admit`, so the policy is the shared road's own and the two reads cannot disagree");
   ok(!/seatCatchUp\("github", req, \{[^}]*admit:/u.test(src), "NEGATIVE CONTROL: this leg does not smuggle its own admission policy back in past the shared road");
   ok(src.includes("const wakeId = singleWindow && vouched ? mintWakeId() : undefined"), "the live ambient leg mints the unified wake id once");

@@ -405,6 +405,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
       engagementTier: githubEngagementTier(surfaceKey),
       unified: githubGrainFor(surfaceKey).unified,
       directMention,
+      threadEngaged: admission.engagedFollowUp,
       window: wakeId
         ? ({
             wakeId,

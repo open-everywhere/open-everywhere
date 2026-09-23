@@ -6,6 +6,7 @@ import {
   stampNonMemberChatAuth,
   seatCatchUpSinceMs,
   admitContextLines,
+  engagedFollowUpContract,
   type SeatAdmissionFn,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
@@ -87,6 +88,7 @@ export interface GitHubSupervisorWakeInput {
   readonly catchUpUnavailable?: string;
   readonly wakeId?: string;
   readonly directMention?: boolean;
+  readonly threadEngaged?: boolean;
 }
 
 export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): NormalizedWake {
@@ -103,6 +105,10 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "repo",
     engagementTier: directMention ? undefined : input.engagementTier,
+    followUp: engagedFollowUpContract({
+      addressing: directMention ? "direct-mention" : "channel-watch",
+      threadEngaged: input.threadEngaged,
+    }),
     wakeId: input.wakeId,
     locus: {
       channel: { id: `${input.owner}/${input.repo}` },
@@ -245,6 +251,7 @@ export interface GitHubSupervisorDispatch {
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
   readonly directMention?: boolean;
+  readonly threadEngaged?: boolean;
 }
 
 export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch, deps: GitHubSupervisorDeps): Promise<void> {
@@ -262,6 +269,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       engagementTier: d.engagementTier,
       wakeId: d.window?.wakeId,
       directMention: d.directMention,
+      threadEngaged: d.threadEngaged,
       tail,
       catchUpUnavailable,
     });
