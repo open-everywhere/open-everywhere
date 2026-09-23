@@ -3250,7 +3250,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const nonMentionFrom = new Date(Date.now() - 15_000).toISOString();
-      await teams.postReply(driven.id, "(just a note for the humans in this thread — no bot needed)");
+      await teams.postReply(driven.id, "(just a note for the humans in this thread: the fixture cage got new bedding this morning.)");
       await sleep(SILENCE_WINDOW);
       if (!ctx.auditRead) {
         ctx.log(
@@ -3558,7 +3558,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
 
-      const noteId = await gh.comment(gh.fixtureIssue, "just a note for the humans — no bot needed here");
+      const noteId = await gh.comment(gh.fixtureIssue, "just a note for the humans: the fixture cage got new bedding this morning.");
       await sleep(SILENCE_WINDOW);
       const afterNote = (await gh.comments(gh.fixtureIssue)).filter((c) => gh.isBotComment(c) && c.id > noteId);
       ctx.gate(afterNote.length === 0, "mention-gate: a non-mention comment gets NO bot reply (silence window)");
@@ -3697,7 +3697,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
         const beforeOffTopic = new Set((await lin.comments(issueA.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
         const offTopicAt = new Date().toISOString();
-        await lin.comment(issueA.id, "just a note for the humans — no agent needed here, thanks");
+        await lin.comment(issueA.id, "just a note for the humans: the fixture cage got new bedding this morning.");
         if (ctx.auditRead) {
           await assertAuditedSilence({
             auditRead: ctx.auditRead,
