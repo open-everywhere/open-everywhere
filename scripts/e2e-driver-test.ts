@@ -38,6 +38,7 @@ import {
   notionTaintAnchorProblem,
   notionTaintFixtureRemedy,
   notionTaintGrantRoad,
+  notionTaintNoRowReason,
   notionTaintReplayEvidence,
   transcriptHasNotionPageRead,
 } from "../packages/core/scripts/e2e/notion-taint-replay.js";
@@ -5303,6 +5304,81 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
       "NEGATIVE CONTROL: the witness needs a `bash` call — the verb text in another tool's input is not a run",
     );
     ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs page markdown p1")), "NEGATIVE CONTROL: the same call fails the ORG road's witness, so the witness follows the road");
+  }
+
+  {
+    const seat = "wrun_example49";
+    const worker = "wrun_41M37G0000WORKER0000000001";
+    const delivery = { deliveryId: "238-delivery", commentId: "comment-238", discussionId: "discussion-238" };
+    const baseRows = [
+      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-238" }),
+      row("wake.turn_start", { wakeId: "wake-238", sessionId: seat, turnId: "turn_2" }),
+      row("notion.no_reply", { sessionId: seat, discussionId: "discussion-238" }),
+    ];
+    const call = (turnId: string, callId: string, toolName: string, input: unknown = {}): TranscriptWireEvent => ({
+      index: 0, at: null, type: "actions.requested", data: { turnId, actions: [{ callId, toolName, input }] },
+    });
+    const turn238 = [
+      { index: 0, at: null, type: "turn.started", data: { turnId: "turn_2" } },
+      call("turn_2", "c1", "reply"),
+      call("turn_2", "c1", "reply"),
+      call("turn_2", "c2", "no_reply"),
+    ] as const satisfies readonly TranscriptWireEvent[];
+    const noWorkers = new Map<string, readonly TranscriptWireEvent[] | undefined>();
+
+    const join = notionTaintReplayEvidence(baseRows, delivery);
+    ok(!join.ok, "🔴 the ship #238 shape is still a hard red at the join — no row is never a pass");
+    const noRow = !join.ok ? join.noRow : undefined;
+    ok(noRow?.sessionId === seat && noRow.turnId === "turn_2" && noRow.workerSessionIds.length === 0, "the no-row rung carries the seat, its turn and an empty worker list");
+    const joinReason = !join.ok ? join.reason : "";
+
+    const noRead = notionTaintNoRowReason(joinReason, noRow!, { seat: turn238, workers: noWorkers }, "notion");
+    ok(
+      noRead.startsWith("NO READ ATTEMPTED: the replay turn made no Notion read on any road (seat calls: reply, no_reply)"),
+      `🔴 THE SHIP #238 SHAPE: no read on any road names NO READ ATTEMPTED with the seat's calls in order — got: ${noRead.slice(0, 160)}`,
+    );
+
+    for (const [road, extra] of [
+      ["org read_notion_page", call("turn_2", "c3", "read_notion_page", { pageId: "p1" })],
+      ["org notion_search", call("turn_2", "c3", "notion_search", { query: "runbook" })],
+      ["org read_notion_comments", call("turn_2", "c3", "read_notion_comments", { pageId: "p1" })],
+      ["lent grant tool", call("turn_2", "c3", "grant__rowan_notion__notion_fetch_p1")],
+      ["REST bash", call("turn_2", "c3", "bash", { command: "node scripts/notion.mjs page markdown p1" })],
+    ] as const) {
+      const text = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, extra], workers: noWorkers }, "notion");
+      ok(text.startsWith(joinReason) && !text.includes("NO READ ATTEMPTED") && text.includes("WAS requested"), `🔴 a ${road} read with no row keeps the existing no-row text and names the read`);
+    }
+    const linearGrant = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, call("turn_2", "c3", "grant__rowan_linear__linear_read_issue")] , workers: noWorkers }, "notion");
+    ok(linearGrant.startsWith("NO READ ATTEMPTED"), "NEGATIVE CONTROL: a grant tool on ANOTHER connector is not a Notion read");
+    const restHandle = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, call("turn_2", "c3", "bash", { command: "node scripts/notion.mjs page current" })], workers: noWorkers }, "notion");
+    ok(restHandle.startsWith("NO READ ATTEMPTED"), "NEGATIVE CONTROL: `page current` is not a wrapped read verb");
+
+    const earlier = notionTaintNoRowReason(joinReason, noRow!, { seat: [call("turn_1", "c0", "read_notion_page"), ...turn238], workers: noWorkers }, "notion");
+    ok(earlier.startsWith("NO READ ATTEMPTED") && earlier.includes("(seat calls: reply, no_reply)"), "🔴 a read in another turn of the same session neither counts nor lists");
+
+    const unreadable = notionTaintNoRowReason(joinReason, noRow!, { seat: undefined, workers: noWorkers }, "notion");
+    ok(unreadable.startsWith(joinReason) && !unreadable.includes("NO READ ATTEMPTED") && unreadable.includes("unreadable"), "🔴 an unreadable seat transcript never claims NO READ ATTEMPTED");
+    const otherTurn = notionTaintNoRowReason(joinReason, noRow!, { seat: [call("turn_1", "c0", "reply")], workers: noWorkers }, "notion");
+    ok(otherTurn.startsWith(joinReason) && !otherTurn.includes("NO READ ATTEMPTED"), "🔴 a transcript that does not hold the replay turn never claims NO READ ATTEMPTED");
+
+    const delegated = notionTaintReplayEvidence(
+      [...baseRows, row("worker.toolset", { worker, parentSession: seat, tools: ["bash"] }), row("worker.toolset", { worker: "wrun_other", parentSession: "another-seat" })],
+      delivery,
+    );
+    const dRow = !delegated.ok ? delegated.noRow : undefined;
+    ok(dRow?.workerSessionIds.length === 1 && dRow.workerSessionIds[0] === worker, "the join lists this seat's worker and NOT another seat's");
+    const seatDelegates = [...turn238.slice(0, 2), call("turn_2", "c4", "delegate")];
+    const workerRest = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, [call("turn_1", "w1", "bash", { command: "node scripts/notion.mjs comments list p1" })]]]) }, "notion");
+    ok(!workerRest.includes("NO READ ATTEMPTED") && workerRest.includes(`worker ${worker}`), "🔴 a worker's REST read with no row keeps the existing text and names the worker");
+    const workerIdle = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, [call("turn_1", "w1", "read_file")]]]) }, "notion");
+    ok(workerIdle.startsWith("NO READ ATTEMPTED") && workerIdle.includes(worker), "a delegated turn whose worker made no Notion read is NO READ ATTEMPTED, and names the worker");
+    const workerUnread = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, undefined]]) }, "notion");
+    ok(!workerUnread.includes("NO READ ATTEMPTED") && workerUnread.includes("unreadable"), "🔴 an unreadable worker transcript never claims NO READ ATTEMPTED");
+
+    const withRow = notionTaintReplayEvidence([...baseRows, row("taint.verdict", { kind: "notion", sessionId: seat })], delivery);
+    ok(withRow.ok, "read-with-row still passes the join");
+    const noDispatch = notionTaintReplayEvidence(baseRows.slice(1), delivery);
+    ok(!noDispatch.ok && noDispatch.noRow === undefined, "NEGATIVE CONTROL: only the turn-ran-no-row rung carries no-row keys");
   }
 }
 

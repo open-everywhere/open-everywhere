@@ -171,7 +171,13 @@ export interface NotionTaintReplayEvidence {
 
 export type NotionTaintReplayResult =
   | { readonly ok: true; readonly evidence: NotionTaintReplayEvidence }
-  | { readonly ok: false; readonly reason: string; readonly fixture?: true };
+  | { readonly ok: false; readonly reason: string; readonly fixture?: true; readonly noRow?: NotionTaintReplayNoRow };
+
+export interface NotionTaintReplayNoRow {
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly workerSessionIds: readonly string[];
+}
 
 export interface NotionTaintReplayInput {
   readonly deliveryId: string;
@@ -245,8 +251,18 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
         ? ` ${lentCandidates.length} \`connector\` verdict row(s) labelled [${[...new Set(lentCandidates.map((row) => str(detail(row).label) ?? "unlabelled"))].join(", ")}] ARE attributed to this turn — ` +
           `${input.grantRoad ? input.grantRoad.reason : "this join was given no lent-road admission to judge them against"}`
         : "";
+    const workerSessionIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.action === "worker.toolset" && str(detail(row).parentSession) === sessionId)
+          .map((row) => str(detail(row).worker))
+          .filter((id): id is string => id !== undefined),
+      ),
+    ];
+    const turnId = str(detail(turnStart).turnId);
     return {
       ok: false,
+      noRow: { sessionId, ...(turnId ? { turnId } : {}), workerSessionIds },
       reason:
         `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it, no admitted lent-tool row, and no ` +
         `\`skill-declared\` row labelled \`${NOTION_REST_ENVELOPE_SOURCE}\` (the REST skill road) — nothing in that turn, or in a worker it delegated to, ` +
@@ -300,5 +316,82 @@ export function transcriptHasNotionPageRead(events: readonly TranscriptWireEvent
   if (road?.road === "rest") return transcriptHasRestRead(events);
   return events.some(
     (event) => (event.type === "actions.requested" || event.type === "action.result") && JSON.stringify(event.data ?? null).includes('"read_notion_page"'),
+  );
+}
+
+const NOTION_ORG_READ_TOOLS: ReadonlySet<string> = new Set(["read_notion_page", "notion_search", "read_notion_comments"]);
+
+export interface TranscriptToolCall {
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly turnId?: string;
+}
+
+export function transcriptToolCalls(events: readonly TranscriptWireEvent[]): readonly TranscriptToolCall[] {
+  const calls: TranscriptToolCall[] = [];
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (event.type !== "actions.requested") continue;
+    const data = event.data as { actions?: unknown; turnId?: unknown } | null;
+    if (!Array.isArray(data?.actions)) continue;
+    const turnId = typeof data.turnId === "string" ? data.turnId : undefined;
+    for (const action of data.actions as { toolName?: unknown; input?: unknown; callId?: unknown }[]) {
+      if (typeof action?.toolName !== "string") continue;
+      if (typeof action.callId === "string") {
+        if (seen.has(action.callId)) continue;
+        seen.add(action.callId);
+      }
+      calls.push({ toolName: action.toolName, input: action.input, ...(turnId ? { turnId } : {}) });
+    }
+  }
+  return calls;
+}
+
+export function isNotionReadCall(call: TranscriptToolCall, connector: string): boolean {
+  if (NOTION_ORG_READ_TOOLS.has(call.toolName)) return true;
+  if (isGrantToolName(call.toolName) && (call.toolName.split("__")[1] ?? "").endsWith(`_${connector}`)) return true;
+  return call.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(call.input ?? null));
+}
+
+export interface NotionTaintNoRowTranscripts {
+  readonly seat: readonly TranscriptWireEvent[] | undefined;
+  readonly workers: ReadonlyMap<string, readonly TranscriptWireEvent[] | undefined>;
+}
+
+export function notionTaintNoRowReason(
+  joinReason: string,
+  noRow: NotionTaintReplayNoRow,
+  transcripts: NotionTaintNoRowTranscripts,
+  connector: string,
+): string {
+  if (!transcripts.seat) return `${joinReason} (the seat transcript is unreadable, so this run cannot say whether a Notion read was attempted)`;
+  const seatAll = transcriptToolCalls(transcripts.seat);
+  const turnHeld = noRow.turnId === undefined || transcripts.seat.some((event) => (event.data as { turnId?: unknown } | null)?.turnId === noRow.turnId);
+  if (!turnHeld) {
+    return `${joinReason} (the seat transcript carries no event for ${noRow.turnId}, so this run cannot say whether a Notion read was attempted)`;
+  }
+  const seatCalls = noRow.turnId === undefined ? seatAll : seatAll.filter((call) => call.turnId === noRow.turnId);
+  const seatRead = seatCalls.find((call) => isNotionReadCall(call, connector));
+  if (seatRead) return `${joinReason} A Notion read WAS requested (\`${seatRead.toolName}\` in session ${noRow.sessionId}), so the read went over a road that wrote no row.`;
+  const unread: string[] = [];
+  for (const worker of noRow.workerSessionIds) {
+    const events = transcripts.workers.get(worker);
+    if (!events) {
+      unread.push(worker);
+      continue;
+    }
+    const read = transcriptToolCalls(events).find((call) => isNotionReadCall(call, connector));
+    if (read) return `${joinReason} A Notion read WAS requested (\`${read.toolName}\` in worker ${worker}), so the read went over a road that wrote no row.`;
+  }
+  if (unread.length > 0) {
+    return `${joinReason} (the seat made no Notion read, but worker transcript(s) ${unread.join(", ")} are unreadable, so this run cannot say whether a read was attempted)`;
+  }
+  const names = seatCalls.map((call) => call.toolName);
+  return (
+    `NO READ ATTEMPTED: the replay turn made no Notion read on any road (seat calls: ${names.length > 0 ? names.join(", ") : "none"}). ` +
+    (noRow.workerSessionIds.length > 0
+      ? `The transcripts of its ${noRow.workerSessionIds.length} worker(s) (${noRow.workerSessionIds.join(", ")}) hold no Notion read either. `
+      : "The seat delegated to no worker. ") +
+    `Session ${noRow.sessionId}${noRow.turnId ? `, ${noRow.turnId}` : ""}.`
   );
 }

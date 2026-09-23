@@ -103,7 +103,7 @@ import {
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
-import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
+import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintNoRowReason, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
   auditSessionIds,
@@ -6707,7 +6707,7 @@ export const SCENARIOS: readonly Scenario[] = [
           );
           const discussionId = chosen.discussionId;
           const replayFrom = new Date(Date.now() - 5_000).toISOString();
-          const replayActions = ["notion.dispatched", "wake.turn_start", "notion.replied", "notion.no_reply", "taint.verdict"];
+          const replayActions = ["notion.dispatched", "wake.turn_start", "notion.replied", "notion.no_reply", "taint.verdict", "worker.toolset"];
           const grantRoad = notionTaintGrantRoad(
             await auditRead({ sinceIso: lookbackIso(GRANT_OVERLAP_LOOKBACK_DAYS), limit: GRANT_LIFECYCLE_ROW_LIMIT, actions: GRANT_LIFECYCLE_ACTIONS }),
             {
@@ -6739,10 +6739,17 @@ export const SCENARIOS: readonly Scenario[] = [
           if (why && !why.ok && why.fixture) {
             ctx.fixtureMissing(`S-TAINT-DRYRUN ARM B cannot attribute its replay: ${why.reason}`);
           }
+          let missReason = why && !why.ok ? why.reason : undefined;
+          if (why && !why.ok && why.noRow) {
+            const read = async (id: string) => (ctx.transcriptRead ? await ctx.transcriptRead(id).catch(() => undefined) : undefined);
+            const workers = new Map<string, readonly TranscriptWireEvent[] | undefined>();
+            for (const worker of why.noRow.workerSessionIds) workers.set(worker, await read(worker));
+            missReason = notionTaintNoRowReason(why.reason, why.noRow, { seat: await read(why.noRow.sessionId), workers }, NOTION_CONNECTOR);
+          }
           ctx.gate(
             replay !== undefined,
             `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road), or a \`skill-declared\` row labelled \`notion-rest\` (the REST road: the notion-rest skill's page markdown, blocks list or comments list) — joined to the delivery by id rather than by time` +
-              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : replay.road === "grant" ? "LENT" : "REST"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
+              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : replay.road === "grant" ? "LENT" : "REST"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : missReason}`),
           );
           if (replay) {
             const nd = replay.verdict.detail as { applied?: unknown; assumed?: unknown; divergence?: unknown; label?: unknown; mode?: unknown };
