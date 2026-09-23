@@ -43,6 +43,19 @@ for (const r of NO_REPLY_REASONS) {
 ok(!noReply.inputSchema.safeParse({ reason: "because" }).success, "no_reply: an out-of-enum reason is rejected");
 ok(!noReply.inputSchema.safeParse({}).success, "no_reply: reason is required");
 
+ok(
+  noReply.description.includes("`duplicate` — the room already has the ANSWER"),
+  "no_reply: the duplicate reason says the room already has the ANSWER",
+);
+ok(
+  noReply.description.includes("A question asked again that nobody answered is not covered; answer it"),
+  "no_reply: the duplicate reason says an unanswered repeat is not covered",
+);
+ok(
+  noReply.description.includes("already covered by an earlier reply") === false,
+  "no_reply: the old 'already covered by an earlier reply' wording is gone",
+);
+
 ok(!noReply.inputSchema.safeParse({ reason: "other" }).success, 'no_reply: bare "other" is rejected — an explanation is required');
 ok(!noReply.inputSchema.safeParse({ reason: "other", explanation: "short" }).success, 'no_reply: a sub-10-char "other" explanation is rejected');
 ok(

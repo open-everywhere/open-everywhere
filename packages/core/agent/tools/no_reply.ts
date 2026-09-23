@@ -54,7 +54,8 @@ export default defineTool({
     "a message that addressed you, which is owed one short reply as well as the react; " +
     "`nothing_to_add` — would just be agreeing/restating, no new information; " +
     "`not_relevant` — auto-respond/firehose message doesn't warrant a response; " +
-    "`duplicate` — already covered by an earlier reply or another participant; " +
+    "`duplicate` — the room already has the ANSWER: an earlier reply of yours, or another " +
+    "participant, answered this. A question asked again that nobody answered is not covered; answer it; " +
     "`user_requested_silence` — user asked you to stop / stay quiet; " +
     "`awaiting_context` — passively observing the thread, will weigh in once humans add more; " +
     "`other` — none of the above (say why in `explanation`).",
