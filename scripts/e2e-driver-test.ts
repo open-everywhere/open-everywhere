@@ -5151,6 +5151,66 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     );
     ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }], { road: "grant", connector: "notion" }), "a no_reply-only transcript fails the lent witness too");
   }
+
+  {
+    const seat = "wrun_example40";
+    const worker = "wrun_example41";
+    const delivery = { deliveryId: "00000000-0000-4000-8000-000000000042", commentId: "comment-233", discussionId: "discussion-233" };
+    const restVerdict = row("taint.verdict", {
+      applied: true,
+      kind: "skill-declared",
+      label: "notion-rest",
+      mode: "enforced",
+      parentSessionId: seat,
+      sessionId: worker,
+      turnId: "turn_1",
+    });
+    const restRows = [
+      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-233" }),
+      row("wake.turn_start", { wakeId: "wake-233", sessionId: seat, turnId: "turn_2" }),
+      row("notion.replied", { sessionId: seat, discussionId: "discussion-233" }),
+      restVerdict,
+    ];
+    const restJoin = notionTaintReplayEvidence(restRows, delivery);
+    ok(restJoin.ok, "🔴 THE BOARD #233 SHAPE JOINS: a delegated worker's notion-rest page read, marked by the skill envelope, satisfies arm B");
+    ok(restJoin.ok && restJoin.evidence.road === "rest", "…and the evidence names the REST road, not the org or the lent one");
+    ok(restJoin.ok && restJoin.evidence.verdictSessionId === worker, "…and it is attributed to the worker that wrote the verdict, through parentSessionId");
+
+    const noRestRow = notionTaintReplayEvidence(restRows.filter((r) => r !== restVerdict), delivery);
+    ok(!noRestRow.ok, "🔴 NEGATIVE CONTROL: with no verdict row the REST road is still RED — no row is never a pass");
+    ok(!noRestRow.ok && noRestRow.reason.includes("skill-declared") && noRestRow.reason.includes("notion-rest"), "…and the red names the REST road it looked for");
+
+    const otherSkill = notionTaintReplayEvidence(
+      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), label: "support-desk" } } : r)),
+      delivery,
+    );
+    ok(!otherSkill.ok, "🔴 NEGATIVE CONTROL: another skill's `skill-declared` row is not a Notion page read");
+    const wrongKind = notionTaintReplayEvidence(
+      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), kind: "web" } } : r)),
+      delivery,
+    );
+    ok(!wrongKind.ok, "NEGATIVE CONTROL: a `notion-rest` label on a non-skill kind does not count — both the kind and the label are matched");
+    const foreignRest = notionTaintReplayEvidence(
+      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), parentSessionId: "another-seat" } } : r)),
+      delivery,
+    );
+    ok(!foreignRest.ok, "🔴 NEGATIVE CONTROL: a notion-rest row from a worker of ANOTHER seat does not satisfy this replay — the id join is unchanged");
+    const orgAndRest = notionTaintReplayEvidence([...restRows, row("taint.verdict", { kind: "notion", sessionId: seat })], delivery);
+    ok(orgAndRest.ok && orgAndRest.evidence.road === "notion", "when the org road also wrote a row, the org road is reported — the REST road is a fallback");
+
+    const restCall = (command: string): readonly TranscriptWireEvent[] => [
+      { index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "bash", callId: "c1", input: { command } }] } },
+    ];
+    ok(transcriptHasNotionPageRead(restCall("cd skills/notion-rest && node scripts/notion.mjs page markdown 40000000-0101 --depth 10"), { road: "rest", connector: "notion" }), "🔴 the REST road's witness reads the worker's bash call to page markdown");
+    ok(transcriptHasNotionPageRead(restCall("node scripts/notion.mjs comments list p1 --all"), { road: "rest", connector: "notion" }), "the REST witness accepts comments list, the other wrapped read");
+    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs page current"), { road: "rest", connector: "notion" }), "🔴 NEGATIVE CONTROL: page current prints a handle and writes no verdict, so it does not witness the REST road");
+    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs search runbook"), { road: "rest", connector: "notion" }), "NEGATIVE CONTROL: search does not witness a page read");
+    ok(
+      !transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "read_file", input: { path: "scripts/notion.mjs page markdown" } }] } }], { road: "rest", connector: "notion" }),
+      "NEGATIVE CONTROL: the witness needs a `bash` call — the verb text in another tool's input is not a run",
+    );
+    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs page markdown p1")), "NEGATIVE CONTROL: the same call fails the ORG road's witness, so the witness follows the road");
+  }
 }
 
 {

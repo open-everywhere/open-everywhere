@@ -6739,15 +6739,15 @@ export const SCENARIOS: readonly Scenario[] = [
           }
           ctx.gate(
             replay !== undefined,
-            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road) — joined to the delivery by id rather than by time` +
-              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : "LENT"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
+            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road), or a \`skill-declared\` row labelled \`notion-rest\` (the REST road: the notion-rest skill's page markdown, blocks list or comments list) — joined to the delivery by id rather than by time` +
+              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : replay.road === "grant" ? "LENT" : "REST"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : why!.reason}`),
           );
           if (replay) {
             const nd = replay.verdict.detail as { applied?: unknown; assumed?: unknown; divergence?: unknown; label?: unknown; mode?: unknown };
             ctx.log(
               `arm B: wake ${replay.wakeId} → session ${replay.sessionId}` +
                 (replay.verdictSessionId === replay.sessionId ? " (the seat read the page itself)" : ` → worker ${replay.verdictSessionId} (the seat delegated the read)`) +
-                `; the ${replay.road === "notion" ? "ORG road served it (kind `notion`, over the deployment's own connector)" : "LENT road served it (kind `connector`, the tool a live standing grant mounts)"}, label \`${String(nd.label ?? "unlabelled")}\`` +
+                `; the ${replay.road === "notion" ? "ORG road served it (kind `notion`, over the deployment's own connector)" : replay.road === "grant" ? "LENT road served it (kind `connector`, the tool a live standing grant mounts)" : "REST road served it (kind `skill-declared`, the notion-rest skill's envelope)"}, label \`${String(nd.label ?? "unlabelled")}\`` +
                 `; row mode=${String(nd.mode)} applied=${String(nd.applied)} divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
                 (nd.assumed === true
                   ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
@@ -6757,7 +6757,7 @@ export const SCENARIOS: readonly Scenario[] = [
             if (events) {
               ctx.gate(
                 transcriptHasNotionPageRead(events, { road: replay.road, connector: NOTION_CONNECTOR }),
-                `ARM B: the verdict session's own transcript requested ${replay.road === "notion" ? "read_notion_page" : `the \`${NOTION_CONNECTOR}\` tool the standing grant mounted`} — the audit row and the transcript agree about what the turn did (session ${replay.verdictSessionId})`,
+                `ARM B: the verdict session's own transcript requested ${replay.road === "notion" ? "read_notion_page" : replay.road === "grant" ? `the \`${NOTION_CONNECTOR}\` tool the standing grant mounted` : "a `bash` call to the notion-rest script's page markdown, blocks list or comments list"} — the audit row and the transcript agree about what the turn did (session ${replay.verdictSessionId})`,
               );
             } else {
               ctx.log(`arm B: the transcript for ${replay.verdictSessionId} is unreadable on this deployment, so the verdict row is the only witness for this run.`);

@@ -154,6 +154,10 @@ export function notionTaintGrantRoad(rows: readonly AuditWireEntry[], input: Not
   };
 }
 
+export type NotionReadRoad = "notion" | "grant" | "rest";
+
+export const NOTION_REST_ENVELOPE_SOURCE = "notion-rest";
+
 export interface NotionTaintReplayEvidence {
   readonly dispatch: AuditWireEntry;
   readonly turnStart: AuditWireEntry;
@@ -162,7 +166,7 @@ export interface NotionTaintReplayEvidence {
   readonly wakeId: string;
   readonly sessionId: string;
   readonly verdictSessionId: string;
-  readonly road: "notion" | "grant";
+  readonly road: NotionReadRoad;
 }
 
 export type NotionTaintReplayResult =
@@ -228,7 +232,12 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
     return d.kind === "connector" && label !== undefined && (input.grantRoad === undefined ? label.startsWith("grant:") : label.startsWith(input.grantRoad.labelPrefix));
   });
   const lentRoad = input.grantRoad?.admitted === true ? lentCandidates[0] : undefined;
-  const verdict = orgRoad ?? lentRoad;
+  const restRoad = verdicts.find((row) => {
+    const d = detail(row);
+    const label = str(d.label);
+    return d.kind === "skill-declared" && label !== undefined && label.startsWith(NOTION_REST_ENVELOPE_SOURCE);
+  });
+  const verdict = orgRoad ?? lentRoad ?? restRoad;
   if (!verdict) {
     const decided = lifecycle ? ` The seat's own terminal row for this session is \`${lifecycle.action}\`.` : "";
     const lentSeen =
@@ -239,8 +248,9 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
     return {
       ok: false,
       reason:
-        `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it, and no admitted lent-tool row either — nothing in ` +
-        `that turn, or in a worker it delegated to, declared a Notion page read.${decided}${lentSeen}`,
+        `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it, no admitted lent-tool row, and no ` +
+        `\`skill-declared\` row labelled \`${NOTION_REST_ENVELOPE_SOURCE}\` (the REST skill road) — nothing in that turn, or in a worker it delegated to, ` +
+        `declared a Notion page read.${decided}${lentSeen}`,
     };
   }
   const vd = detail(verdict);
@@ -254,9 +264,23 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
       wakeId,
       sessionId,
       verdictSessionId: str(vd.sessionId) ?? sessionId,
-      road: verdict === orgRoad ? "notion" : "grant",
+      road: verdict === orgRoad ? "notion" : verdict === lentRoad ? "grant" : "rest",
     },
   };
+}
+
+const NOTION_REST_WRAPPED_VERB = /notion\.mjs\s+(?:page\s+markdown|blocks\s+list|comments\s+list)\b/;
+
+function transcriptHasRestRead(events: readonly TranscriptWireEvent[]): boolean {
+  for (const event of events) {
+    if (event.type !== "actions.requested") continue;
+    const actions = (event.data as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions)) continue;
+    for (const action of actions as { toolName?: unknown; input?: unknown }[]) {
+      if (action?.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(action.input ?? null))) return true;
+    }
+  }
+  return false;
 }
 
 const GRANT_TOOL_IN_JSON = /"(grant__[A-Za-z0-9_]+__[A-Za-z0-9_]+)"/g;
@@ -271,8 +295,9 @@ function transcriptHasGrantedRead(events: readonly TranscriptWireEvent[], connec
   return false;
 }
 
-export function transcriptHasNotionPageRead(events: readonly TranscriptWireEvent[], road?: { readonly road: "notion" | "grant"; readonly connector: string }): boolean {
+export function transcriptHasNotionPageRead(events: readonly TranscriptWireEvent[], road?: { readonly road: NotionReadRoad; readonly connector: string }): boolean {
   if (road?.road === "grant") return transcriptHasGrantedRead(events, road.connector);
+  if (road?.road === "rest") return transcriptHasRestRead(events);
   return events.some(
     (event) => (event.type === "actions.requested" || event.type === "action.result") && JSON.stringify(event.data ?? null).includes('"read_notion_page"'),
   );
