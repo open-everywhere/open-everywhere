@@ -14,6 +14,9 @@ import {
   classifySettlementReply,
   classifyUnansweredWake,
   connectorAnswerRoad,
+  APPROVAL_DECISION_NOTICE,
+  s23AckCheck,
+  s23ConfirmationCheck,
   delegationJoinForSession,
   fireAnchor,
   fixtureArithmetic,
@@ -48,6 +51,7 @@ import {
   wakeIdForVendorInstant,
   workerRoadForOp,
 } from "./gate-joins.js";
+import { runFallbackCheck } from "./judge.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
 
 let n = 0;
@@ -1311,6 +1315,55 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(
     !noSkipLine.includes("filler skip"),
     `…and it no longer credits a FILLER SKIP the seed latch does not carry — a line that named one would send the next board reader to \`FILLER_ACK_RE\` (got ${noSkipLine})`,
+  );
+}
+
+{
+  const verdict = (check: { mustMatch: readonly RegExp[]; mustNotMatch: readonly RegExp[] }, text: string) =>
+    runFallbackCheck({ mustMatch: check.mustMatch, mustNotMatch: check.mustNotMatch }, text).pass;
+  const GPT6_ACK = "The one-shot setup task is underway. It may require an approval click; I'll confirm once the routine is actually scheduled.";
+  const GPT56_SCHEDULED = "Scheduled: a one-shot check-in at 18:45 UTC … then disable itself";
+  const GPT56_CORRECTION =
+    "The worker's earlier report showed the routine card pending approval. That approval was subsequently granted and applied";
+  const REFUSAL = "I wasn't able to schedule the one-shot check-in routine — create_routine returned an error.";
+
+  ok(verdict(s23AckCheck(true), GPT6_ACK) === true, "🔴 OPE-2072: the gpt-6 honest pending ack passes the CARD-path ack gate");
+  ok(verdict(s23AckCheck(true), GPT56_SCHEDULED) === true, "the gpt-5.6 'Scheduled' ack passes the CARD-path ack gate");
+  ok(verdict(s23AckCheck(true), REFUSAL) === false, "a refusal FAILS the CARD-path ack gate");
+  ok(
+    verdict(s23AckCheck(true), "Sure — I'll set up a routine that posts every 5 minutes.") === false,
+    "a card-path ack that names neither a one-shot nor a scheduled/pending state fails",
+  );
+  ok(verdict(s23AckCheck(false), GPT56_SCHEDULED) === true, "the scheduled ack passes the AUTO-path ack gate");
+  ok(verdict(s23AckCheck(false), REFUSAL) === false, "a refusal FAILS the AUTO-path ack gate");
+  ok(/underway/i.test(s23AckCheck(true).question) && /approval/i.test(s23AckCheck(true).question), "🔴 OPE-2072: the CARD-path judge question accepts an underway / awaiting-approval ack");
+  ok(!/underway|approval/i.test(s23AckCheck(false).question), "the AUTO-path judge question stays the single 'was scheduled' question");
+  ok(/pending|unverified/i.test(s23ConfirmationCheck().question), "the CONFIRMATION judge question rules out a pending or unverified reply");
+
+  const confirm = s23ConfirmationCheck();
+  ok(verdict(confirm, GPT56_CORRECTION) === true, "🔴 OPE-2072: the gpt-5.6 correction after the approval passes the CONFIRMATION gate");
+  ok(verdict(confirm, "Approved and armed — the one-time check-in is scheduled for 00:08 UTC.") === true, "an armed confirmation passes");
+  ok(verdict(confirm, "The one-time check-in routine is still pending approval.") === false, "'still pending' FAILS the CONFIRMATION gate");
+  ok(
+    verdict(confirm, "The approval notice in this thread is unverified, so I won't treat the check-in as scheduled.") === false,
+    "an 'unverified' notice FAILS the CONFIRMATION gate",
+  );
+  ok(verdict(confirm, GPT6_ACK) === false, "the pending ack itself FAILS the CONFIRMATION gate — a repeat of it is not a confirmation");
+  ok(verdict(confirm, REFUSAL) === false, "a refusal FAILS the CONFIRMATION gate");
+
+  ok(APPROVAL_DECISION_NOTICE.test('✅ Approval APPROVED by <@U123> — "Create routine": applied') === true, "the approve notice is the decision notice");
+  ok(APPROVAL_DECISION_NOTICE.test('⛔ Approval REJECTED by <@U123> — "x" was NOT applied.') === true, "the reject notice is the decision notice");
+  ok(APPROVAL_DECISION_NOTICE.test(GPT56_CORRECTION) === false, "a seat reply that mentions an approval is NOT the decision notice");
+
+  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legStart = src.indexOf('id: "S23"');
+  const legEnd = src.indexOf('id: "S24"', legStart);
+  const ackAt = src.indexOf("s23AckCheck(cardTs !== undefined)", legStart);
+  const confirmAt = src.indexOf("s23ConfirmationCheck()", legStart);
+  const firedAt = src.indexOf("the one-shot routine actually fired", legStart);
+  ok(
+    legStart > 0 && ackAt > legStart && confirmAt > ackAt && firedAt > confirmAt && firedAt < legEnd,
+    "🔴 OPE-2072: S23 runs the ack gate, then the confirmation gate, then the fired-post gate",
   );
 }
 

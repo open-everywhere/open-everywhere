@@ -1013,6 +1013,37 @@ export function delegationJoinForSession(rows: readonly AuditWireEntry[], sessio
   };
 }
 
+export const S23_ACK_TOPIC = /schedul|check.?in|check back|remind|routine/i;
+export const S23_REFUSAL = /unable|couldn'?t|can'?t|wasn'?t able|not able|fail(?:ed|ure)?|error|sorry/i;
+export const S23_ONE_SHOT = /one.?shot|one.?time|\bonce\b|single|check.?in/i;
+export const S23_SCHEDULED_OR_PENDING = /schedul|underway|under way|pending|approv/i;
+export const S23_CONFIRMED = /schedul|\barmed\b|granted|applied|\bset (?:up|for)\b|created|\bactive\b/i;
+export const S23_UNSETTLED =
+  /\b(?:still|is|remains|currently|now)\s+(?:\w+\s+)?pending|awaiting (?:an? )?approval|unverified|untrusted|can'?t confirm|cannot confirm|not (?:yet )?(?:been )?(?:confirmed|scheduled)|confirm once|may require an? approval/i;
+export const APPROVAL_DECISION_NOTICE = /^\s*(?:✅|⛔|⌛)\s*Approval (?:APPROVED|REJECTED|EXPIRED)\b/;
+
+export const S23_ACK_QUESTION = "Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?";
+export const S23_CARD_ACK_QUESTION =
+  "Does the reply EITHER confirm a ONE-TIME check-in was scheduled, OR honestly say the one-time check-in's setup is underway or waits on an approval (not a recurring/cron schedule, not a refusal)?";
+export const S23_CONFIRMATION_QUESTION =
+  "After the approval, does the reply confirm the ONE-TIME check-in is now scheduled or armed, without calling it still pending, unverified or unconfirmed?";
+
+export interface S23Check {
+  readonly question: string;
+  readonly mustMatch: readonly RegExp[];
+  readonly mustNotMatch: readonly RegExp[];
+}
+
+export function s23AckCheck(cardPath: boolean): S23Check {
+  return cardPath
+    ? { question: S23_CARD_ACK_QUESTION, mustMatch: [S23_ACK_TOPIC, S23_ONE_SHOT, S23_SCHEDULED_OR_PENDING], mustNotMatch: [S23_REFUSAL] }
+    : { question: S23_ACK_QUESTION, mustMatch: [S23_ACK_TOPIC], mustNotMatch: [S23_REFUSAL] };
+}
+
+export function s23ConfirmationCheck(): S23Check {
+  return { question: S23_CONFIRMATION_QUESTION, mustMatch: [S23_CONFIRMED], mustNotMatch: [S23_UNSETTLED, S23_REFUSAL] };
+}
+
 export const APPROVAL_JUDGE_VERDICT_ACTION = "approval.judge.verdict";
 
 const UNATTENDED_CAP_REASONING = /unattended|spend|cap/i;

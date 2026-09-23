@@ -171,6 +171,9 @@ import {
   unifiedTurnSessionId,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
+  APPROVAL_DECISION_NOTICE,
+  s23AckCheck,
+  s23ConfirmationCheck,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
@@ -3055,22 +3058,42 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(clicked.status === 200, "S23: forged admin approve on the routine.create card acked 200");
         cardTs = card.ts;
       }
+      const isDecisionNotice = (m: SlackMessage): boolean => APPROVAL_DECISION_NOTICE.test(m.text);
       const ack = await slack.awaitThreadReply(askTs, {
         timeoutMs: FILE_REPLY_WAIT,
-        skip: (m) => isFillerAck(m.text) || m.ts === cardTs,
+        skip: (m) => isFillerAck(m.text) || m.ts === cardTs || isDecisionNotice(m),
       });
+      const ackCheck = s23AckCheck(cardTs !== undefined);
       await ctx.judgePass(
-        closedQA("Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?", {
-          mustMatch: [/schedul|check.?in|check back|remind|routine/i],
-          mustNotMatch: [/unable|couldn'?t|can'?t|wasn'?t able|not able|fail(?:ed|ure)?|error|sorry/i],
-        }),
+        closedQA(ackCheck.question, { mustMatch: ackCheck.mustMatch, mustNotMatch: ackCheck.mustNotMatch }),
         ack.text,
         "one-shot routine creation ack",
       );
+      let confirmationTs: string | undefined;
+      if (cardTs !== undefined) {
+        const noticeTs = (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && isDecisionNotice(m))?.ts;
+        const latest = (a: string, b: string | undefined): string => (b !== undefined && tsAfter(b, a) ? b : a);
+        const ackIsPostDecision = noticeTs !== undefined && tsAfter(ack.ts, noticeTs);
+        const confirmation = ackIsPostDecision
+          ? ack
+          : await slack.awaitThreadReply(askTs, {
+              afterTs: latest(latest(ack.ts, cardTs), noticeTs),
+              timeoutMs: FILE_REPLY_WAIT,
+              skip: (m) => isFillerAck(m.text) || m.ts === cardTs || isDecisionNotice(m) || m.text.trim() === note,
+            });
+        ctx.log(`S23 confirmation reply ${confirmation.ts}${ackIsPostDecision ? " (the ack itself: it came after the decision notice)" : ""}`);
+        confirmationTs = confirmation.ts;
+        const confirmCheck = s23ConfirmationCheck();
+        await ctx.judgePass(
+          closedQA(confirmCheck.question, { mustMatch: confirmCheck.mustMatch, mustNotMatch: confirmCheck.mustNotMatch }),
+          confirmation.text,
+          "one-shot routine confirmation after the approve",
+        );
+      }
       const fired = await slack.awaitThreadMessage(
         askTs,
         { timeoutMs: 720_000, what: `the one-shot routine's fired post quoting "${note}" in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== ack.ts && m.text.includes(note)),
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== ack.ts && m.ts !== confirmationTs && m.text.includes(note)),
       );
       ctx.gate(fired.text.includes(note), `the one-shot routine actually fired and posted "${note}" (hard gate)`);
     },
