@@ -107,3 +107,10 @@ export function deployedRoutineConnectorFixture(input: { readonly surfaceKey: st
     credentials: loadConnectorCredentials(),
   });
 }
+
+export function routineConnectorWriteSteps(op: string, note: string): string {
+  return (
+    `Call \`connection_search\` for the Notion page-creation operation, then call \`${op}\` with a new page titled "OE e2e ${note}" whose one-line body contains the exact token ${note}. ` +
+    "Do not load any skill and do not use the notion-rest scripts for this task."
+  );
+}

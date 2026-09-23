@@ -560,7 +560,45 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
 
   const flat = body.replace(/\s+/g, "");
-  ok(flat.includes("fireSessions:") && flat.includes("fireSessionIds("), "🔴 WIRING: the leg's armRoad passes the fire's session ids, read from the fire's own rows");
+  ok(flat.includes("constfireSessions=fireSessionIds(") && flat.includes("fireSessions,op:OP,fireEvents"), "🔴 WIRING: the leg's armRoad passes the fire's session ids, read from the fire's own rows");
+
+  const { routineConnectorWriteSteps } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const steps = routineConnectorWriteSteps(OP, "rcwa-1");
+  ok(
+    steps.includes(`Call \`connection_search\` for the Notion page-creation operation, then call \`${OP}\` with `),
+    `🔴 OPE-2097: the instruction names connection_search and then the op, as a fact (got: ${steps})`,
+  );
+  ok(steps.includes("Do not load any skill and do not use the notion-rest scripts for this task."), "🔴 OPE-2097: the instruction forbids the skill road in one sentence");
+  ok(steps.includes('titled "OE e2e rcwa-1"') && steps.includes("exact token rcwa-1"), "the page token rides the instruction unchanged");
+  ok(!/not available|say so and stop/iu.test(steps), "🔴 NEGATIVE CONTROL: the instruction carries no escape hatch");
+  ok(flat.includes("routineConnectorWriteSteps(OP,note)"), "🔴 WIRING: both arms' ask builds its instruction from routineConnectorWriteSteps");
+  ok(!/notavailable|saysoandstop/iu.test(flat), "🔴 WIRING: the leg body carries no escape-hatch sentence of its own");
+  ok(flat.includes("op:OP,fireEvents") && flat.includes("ctx.transcriptRead(id)"), "🔴 WIRING: armRoad reads each fire session's transcript and passes it to unattendedArmRoad");
+
+  const { fireOpCalls } = await import("../packages/core/scripts/e2e/gate-joins.js");
+  const tev = (index: number, type: string, data: unknown) => ({ index, at: null, type, data });
+  const search = tev(1, "actions.requested", { actions: [{ toolName: "connection_search", callId: "c1", input: { query: "notion create page" } }] });
+  const found = tev(2, "action.result", { result: { callId: "c1", kind: "tool-result", toolName: "connection_search", output: { tools: [{ name: OP, inputSchema: {} }] } } });
+  const skill = tev(3, "actions.requested", { actions: [{ toolName: "load_skill", callId: "c2", input: { name: "notion-rest" } }] });
+  const failed = tev(4, "actions.requested", { actions: [{ toolName: "report_run_failed", callId: "c3", input: { reason: `the required one-shot ${OP} call was not made` } }] });
+  const nRj = [search, found, skill, failed];
+  ok(fireOpCalls(nRj, OP).discovered === true && fireOpCalls(nRj, OP).called === false, "the measured shape reads discovered=true, called=false");
+  const skillText = tev(6, "action.result", { result: { callId: "c2", kind: "tool-result", toolName: "load_skill", output: `a 'notion' MCP connector (${OP}) is a PERSON's road` } });
+  ok(
+    fireOpCalls([search, skillText, failed], OP).discovered === false,
+    "NEGATIVE CONTROL: a tool RESULT that names the op but is not connection_search's (the skill text) is not a discovery",
+  );
+  const disc = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: n238 });
+  ok(
+    disc.note === `the fire discovered the op (connection_search returned ${OP}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (fire session(s) ${JSON.stringify([FIRE])})`,
+    `🔴 OPE-2097: the evidence line names "discovered, not called" (got: ${disc.note})`,
+  );
+  ok(disc.verdict === "unexplained", "🔴 …and it stays a HARD red");
+  const noRoad = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: [skill, failed] });
+  ok(noRoad.note.startsWith("the fire called no connector tool and delegated to no worker") && noRoad.verdict === "unexplained", "NEGATIVE CONTROL: no discovery ⇒ the \"no road\" line, still HARD");
+  const calledOp = tev(5, "actions.requested", { actions: [{ toolName: OP, callId: "c4", input: {} }] });
+  const called = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: [search, found, calledOp] });
+  ok(called.note.startsWith(`the fire CALLED ${OP} and the connector plane carries no row`) && called.verdict === "unexplained", "an op call with no plane row names the fence recording nothing, HARD");
 }
 
 {

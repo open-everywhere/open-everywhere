@@ -1,4 +1,5 @@
 import type { AuditWireEntry } from "./audit-read.js";
+import type { TranscriptWireEvent } from "./transcript-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
@@ -353,20 +354,50 @@ export function workerRowsOfFire(rows: readonly AuditWireEntry[], fireSessions: 
   });
 }
 
+export const CONNECTION_SEARCH_TOOL = "connection_search";
+
+export interface FireOpCalls {
+  readonly discovered: boolean;
+  readonly called: boolean;
+}
+
+export function fireOpCalls(events: readonly TranscriptWireEvent[], op: string): FireOpCalls {
+  let discovered = false;
+  let called = false;
+  for (const e of events) {
+    if (e.type === "actions.requested") {
+      const actions = (e.data as { actions?: unknown } | null)?.actions;
+      if (!Array.isArray(actions)) continue;
+      if (actions.some((a) => (a as { toolName?: unknown } | null)?.toolName === op)) called = true;
+    } else if (e.type === "action.result") {
+      const result = (e.data as { result?: { toolName?: unknown; output?: unknown } } | null)?.result;
+      if (result?.toolName !== CONNECTION_SEARCH_TOOL) continue;
+      if (JSON.stringify(result.output ?? null).includes(op)) discovered = true;
+    }
+  }
+  return { discovered, called };
+}
+
 export function unattendedArmRoad(args: {
   readonly planeRows: number;
   readonly workerRows: readonly AuditWireEntry[];
   readonly fireSessions: readonly string[];
   readonly op: string;
+  readonly fireEvents?: readonly TranscriptWireEvent[];
 }): UnattendedArmRoad {
   const road = workerRoadForOp(workerRowsOfFire(args.workerRows, args.fireSessions), args.op);
   const fires = `fire session(s) ${JSON.stringify(args.fireSessions)}`;
+  const calls = fireOpCalls(args.fireEvents ?? [], args.op);
   const note =
     args.fireSessions.length === 0
       ? `no ${FIRE_ATTRS_SEEN_ACTION} row in this window names the fire's session, so no worker roster can be attributed to the fire`
       : road.workers === 0
         ? args.planeRows === 0
-          ? `the fire called no connector tool and delegated to no worker (${fires})`
+          ? calls.called
+            ? `the fire CALLED ${args.op} and the connector plane carries no row for it — the fence was on the road and recorded nothing (${fires})`
+            : calls.discovered
+              ? `the fire discovered the op (${CONNECTION_SEARCH_TOOL} returned ${args.op}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (${fires})`
+              : `the fire called no connector tool and delegated to no worker (${fires})`
           : `the fire delegated to no worker (${fires})`
         : road.mounted
           ? `${road.workers} worker(s) of the fire ran and at least one MOUNTED ${args.op}, so the connector road was open to the work (${fires})`
