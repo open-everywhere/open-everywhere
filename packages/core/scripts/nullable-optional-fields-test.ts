@@ -105,7 +105,7 @@ const binding: SurfaceBinding = {
 } as SurfaceBinding;
 assert.throws(
   () => planSetSpendLimit(binding, bothNull.received as never, { tokens: null, usd: null }, null),
-  /needs monthlyTokens and\/or monthlyUsd/,
+  /set_spend_limit needs monthlyTokens or monthlyUsd\b/,
   "🔴 §3 the tool's own planner refuses the stripped input with its at-least-one-cap error",
 );
 n++;
