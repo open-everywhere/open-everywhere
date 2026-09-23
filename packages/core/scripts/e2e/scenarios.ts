@@ -335,6 +335,11 @@ const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const EDIT_SETTLE_WAIT = 45_000;
 const AUDIT_ROW_WAIT = 60_000;
+
+export const GRANTED_CALL_WAIT_MS = 300_000;
+export const GRANT_NOTICE_WAIT_MS = AUDIT_ROW_WAIT;
+export const grantedCallReplySkip = (m: { readonly content: string }): boolean =>
+  isPendingWorkHandoff(m.content) || isFillerAck(m.content);
 export function oeStatusCompactionThresholdTokens(contextWindowTokens: number): number {
   return Math.max(1, Math.floor(contextWindowTokens * SETTINGS.agent.compactionThresholdPercent.shipped));
 }
@@ -7847,7 +7852,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["discord"],
     surface: "discord",
     suite: "core",
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_680_000,
     judged: false,
     run: async (ctx) => {
       if (!ctx.auditRead) {
@@ -8024,20 +8029,38 @@ export const SCENARIOS: readonly Scenario[] = [
         discord.mention(`Now use the Notion tool that was lent to this conversation to read that page, and tell me what you got. Reference ${useToken} in your answer.`),
         grantThreadId,
       );
-      const useReply = await discord.awaitReply(grantThreadId, useAsk.id, { timeoutMs: 300_000 });
+      const useReply = await discord.awaitReply(grantThreadId, useAsk.id, {
+        timeoutMs: GRANTED_CALL_WAIT_MS,
+        skip: grantedCallReplySkip,
+      });
       ctx.gate(useReply.content.trim().length > 0, "S-DISCORD-GRANT: the granted-call ask drew a bot reply");
       const grantIds = grantIdsOf(liveGranted);
       ctx.gate(
         grantIds.length > 0,
         "🔴 (hard): the grant.granted row names its grantId — every gate below is keyed on it, and without one this leg cannot tell its own grant's rows from any other grant's",
       );
-      const used = usesOfGrants(await auditRead({ sinceIso, actions: ["grant.used"] }), grantIds);
+      const used =
+        (await pollOptional(
+          async () => {
+            const rows = usesOfGrants(await auditRead({ sinceIso, actions: ["grant.used"] }), grantIds);
+            return rows.length > 0 ? rows : undefined;
+          },
+          { timeoutMs: GRANTED_CALL_WAIT_MS, what: `a grant.used row naming grant ${grantIds.join(", ")}` },
+        )) ?? [];
       ctx.gate(
         used.length > 0,
         `🔴 (hard): the granted tool was actually CALLED — a grant.used row in THIS run's window naming grant ${grantIds.join(", ")} (found ${used.length}). Without one the notice gate below would be asserting over a call that never happened.`,
       );
-      const noticeRows = await auditRead({ sinceIso: lookback, actions: ["grant.notified"] });
-      const notified = grantIds.flatMap((id) => noticesForGrant(noticeRows, id));
+      let noticeRows: Awaited<ReturnType<typeof auditRead>> = [];
+      const notified =
+        (await pollOptional(
+          async () => {
+            noticeRows = await auditRead({ sinceIso: lookback, actions: ["grant.notified"] });
+            const rows = grantIds.flatMap((id) => noticesForGrant(noticeRows, id));
+            return rows.length > 0 ? rows : undefined;
+          },
+          { timeoutMs: GRANT_NOTICE_WAIT_MS, what: `a grant.notified row naming grant ${grantIds.join(", ")}` },
+        )) ?? [];
       ctx.gate(
         notified.length > 0,
         `🔴 (hard): the OWNER WAS TOLD their credential was spent — a grant.notified row for grant ${grantIds.join(", ")} since the exact saved raise (found ${notified.length} of ${noticeRows.length} notice row(s) read). This closes a live run's standing "grant.notified UNPROVEN" gap: the row is claimed once per grant forever, so a grant.used with no grant.notified for the same grant is an owner who was never told.`,

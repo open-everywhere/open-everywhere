@@ -1471,4 +1471,58 @@ console.log("22. the Discord grant ask names the owner's full key:");
   ok(legStart > 0 && call > legStart, "🔴 OPE-2063: S-DISCORD-GRANT passes `discord/<id>` to grantAskText");
 }
 
+console.log("23. S-DISCORD-GRANT phase 2 skips the hand-off ack and polls its audit rows:");
+{
+  const { grantedCallReplySkip, GRANTED_CALL_WAIT_MS } = await import("./scenarios.js");
+  const { DiscordDriver } = await import("./discord-driver.js");
+  const { PollTimeout } = await import("./poll.js");
+  const ACK =
+    "I'm checking whether that specific page-read grant has landed; if it has, I'll use only that borrowed tool for the named page and report back with `dgrantuse-61101`.";
+  const ANSWER = "I read the page with the lent Notion tool. It is titled Test and holds the e2e context section. dgrantuse-61101";
+  ok(grantedCallReplySkip({ content: ACK }) === true, "🔴 OPE-2084: the measured hand-off ack is skipped");
+  ok(grantedCallReplySkip({ content: ANSWER }) === false, "…and the settled answer is not skipped");
+  ok(GRANTED_CALL_WAIT_MS >= 300_000, "…and the wait keeps the 300s budget the ship measured inside");
+
+  const BOT = "900000000000000001";
+  const ASK_ID = "1000";
+  const api = (msgs: readonly { id: string; content: string }[]) =>
+    msgs.map((m) => ({ id: m.id, channel_id: "t1", author: { id: BOT, bot: true }, content: m.content }));
+  const realFetch = globalThis.fetch;
+  let served: readonly { id: string; content: string }[] = [];
+  globalThis.fetch = (async () => new Response(JSON.stringify(api(served)), { status: 200 })) as typeof fetch;
+  try {
+    const discord = new DiscordDriver({ token: "x", channel: "c1", botUserId: BOT });
+    served = [{ id: "1001", content: ACK }, { id: "1002", content: ANSWER }];
+    const skipped = await discord.awaitReply("t1", ASK_ID, { timeoutMs: 1_000, skip: grantedCallReplySkip });
+    ok(skipped.id === "1002", `🔴 OPE-2084: awaitReply with the skip returns the answer, not the ack (got ${skipped.id})`);
+    const latched = await discord.awaitReply("t1", ASK_ID, { timeoutMs: 1_000 });
+    ok(latched.id === "1001", `…and without it the ack is taken as the reply (got ${latched.id})`);
+    served = [{ id: "1001", content: ACK }];
+    let timedOut = false;
+    try {
+      await discord.awaitReply("t1", ASK_ID, { timeoutMs: 1, skip: grantedCallReplySkip });
+    } catch (err) {
+      timedOut = err instanceof PollTimeout;
+    }
+    ok(timedOut === true, "…and a thread holding only the ack times the wait out");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legStart = src.indexOf('id: "S-DISCORD-GRANT"');
+  const legEnd = src.indexOf('id: "S-DM-STOP-GRANT"', legStart);
+  const leg = src.slice(legStart, legEnd);
+  ok(legStart > 0 && legEnd > legStart, "the S-DISCORD-GRANT body is found");
+  ok(
+    /discord\.awaitReply\(grantThreadId, useAsk\.id, \{\s*timeoutMs: GRANTED_CALL_WAIT_MS,\s*skip: grantedCallReplySkip,/.test(leg),
+    "🔴 OPE-2084: phase 2's reply wait passes grantedCallReplySkip",
+  );
+  ok(
+    /pollOptional\(\s*async \(\) => \{\s*const rows = usesOfGrants\(await auditRead\(\{ sinceIso, actions: \["grant\.used"\] \}\)/.test(leg),
+    "🔴 OPE-2084: phase 2 POLLS grant.used",
+  );
+  ok(/pollOptional\([\s\S]{0,200}actions: \["grant\.notified"\]/.test(leg), "🔴 OPE-2084: phase 2 POLLS grant.notified");
+}
+
 console.log(`✓ ${n} gate-joins assertions passed`);

@@ -104,10 +104,17 @@ export class DiscordDriver {
     );
   }
 
-  async awaitReply(channelId: string, afterId: string, opts: { timeoutMs: number }): Promise<DiscordMessage> {
+  async awaitReply(
+    channelId: string,
+    afterId: string,
+    opts: { timeoutMs: number; skip?: (m: DiscordMessage) => boolean },
+  ): Promise<DiscordMessage> {
     return pollUntil(
-      async () => (await this.messagesAfter(afterId, channelId)).find((m) => this.isBotReply(m) && idAfter(m.id, afterId)),
-      { timeoutMs: opts.timeoutMs, what: `a bot reply in channel ${channelId}` },
+      async () =>
+        (await this.messagesAfter(afterId, channelId)).find(
+          (m) => this.isBotReply(m) && idAfter(m.id, afterId) && !(opts.skip?.(m) ?? false),
+        ),
+      { timeoutMs: opts.timeoutMs, what: `a bot reply in channel ${channelId}${opts.skip ? " (hand-off acks skipped)" : ""}` },
     );
   }
 
