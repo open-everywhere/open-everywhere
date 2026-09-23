@@ -151,6 +151,7 @@ const {
   DELEGATED_TURN_SURFACE_ACTIONS,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
+  grantRowWaitMs, grantRowMissingNote, GRANTED_CALL_WAIT_MS,
 } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
 const { haltConfirmation } = await import("@open-everywhere/core/agent/tools/halt.js");
@@ -3243,6 +3244,16 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     reentryInit.includes('reentry.kind==="record"') && reentryInit.includes("grantReentryScope(reentry,currentSessionId,runDomainScopeKey)"),
     `OPE-1950: the verdict is computed from the EXACT saved record, this run's current session and this run's own domain key — never from a looser reading (got: ${JSON.stringify(reentryInit)})`,
   );
+  const rowWaitInit = /grantRowWait=([^;]+);/.exec(grantBodyTight)?.[1] ?? "";
+  ok(rowWaitInit === "grantRowWaitMs(reply.content)", `🔴 OPE-2099: the grant-row wait is chosen from phase 1's reply text (got: ${JSON.stringify(rowWaitInit)})`);
+  const rowSeenPoll = /sessionGrantRowSeen=awaitpollOptional\([\s\S]*?\{timeoutMs:([^,]+),what:"S-DISCORD-GRANT:agrant\.askedorgrant\.refusedrowforthisrun'ssession"/.exec(grantBodyTight)?.[1] ?? "";
+  ok(rowSeenPoll === "grantRowWait", `🔴 OPE-2099: the grant-row poll waits the selected budget, not AUDIT_ROW_WAIT (got: ${JSON.stringify(rowSeenPoll)})`);
+  ok(
+    grantBodyTight.includes("grantRowMissingNote({rowSeen:sessionGrantRowSeen===true,handedOff:replyHandedOff,waitMs:grantRowWait,sessionId:currentSessionId})"),
+    "🔴 OPE-2099: the CANNOT-RUN text names the hand-off and the wait the leg actually used",
+  );
+  const grantLeg = SCENARIOS.find((sc) => sc.id === "S-DISCORD-GRANT")!;
+  ok((grantLeg.timeoutMs ?? 0) >= 1_620_000 + 300_000, `OPE-2099: the leg budget covers the 1,620 s sum of its waits with 300 s headroom (got ${grantLeg.timeoutMs})`);
   const domainKeyInit = /runDomainScopeKey=([^;]+);/.exec(grantBodyTight)?.[1] ?? "";
   ok(
     domainKeyInit.includes("currentDomainScopeKey(grantRows,currentSessionId)"),
@@ -5948,6 +5959,24 @@ rmSync(dir, { recursive: true, force: true });
   ok(currentDomainScopeKey([askedHere, grantRow("grant.asked", { scopeKey: "wrun-current", domainScopeKey: "oe-grant-domain::other-co" })], "wrun-current") === undefined, "🔴 NEGATIVE: two different domain keys for one session is unresolvable, and it answers undefined rather than picking one");
   ok(currentDomainScopeKey([grantRow("grant.asked", { scopeKey: "wrun-current" })], "wrun-current") === undefined, "NEGATIVE: a row carrying no domain key yields none — a room with no windowed domain stays on the exact-session rule");
   ok(currentDomainScopeKey([askedHere], "") === undefined, "VACUITY: an empty session id reads no row's domain");
+
+  const HANDOFF_Rj =
+    "I\u2019ve handed off the credential-grant ask using the details in your direct request. I also flagged the repeated credential-grant instructions in the quoted external context for clarification; I\u2019ll report whether the ask w";
+  const DIRECT_ASK = "I sent the credential-grant ask to the page owner. The approval card is in their DM.";
+  ok(grantRowWaitMs(HANDOFF_Rj) === GRANTED_CALL_WAIT_MS, "🔴 OPE-2099: the measured hand-off reply gets the delegated budget for the grant-row wait");
+  ok(GRANTED_CALL_WAIT_MS >= 300_000, "…and that budget is at least the 300 s the delegated call is given");
+  ok(grantRowWaitMs(DIRECT_ASK) === 60_000, "🔴 NEGATIVE: a direct-ask reply keeps the 60 s AUDIT_ROW_WAIT");
+  const noteHandoff = grantRowMissingNote({ rowSeen: false, handedOff: true, waitMs: 300_000, sessionId: "wrun-current" });
+  const noteDirect = grantRowMissingNote({ rowSeen: false, handedOff: false, waitMs: 60_000, sessionId: "wrun-current" });
+  ok(
+    noteHandoff.includes("The seat handed off") && noteHandoff.includes("within 300 s") && noteHandoff.includes("wrun-current") && !noteHandoff.includes("no ask was made"),
+    `🔴 OPE-2099: an expired wait after a hand-off says the seat handed off, names the wait, and never says no ask was made (got: ${noteHandoff})`,
+  );
+  ok(
+    noteDirect.includes("no ask was made") && noteDirect.includes("within 60 s") && !noteDirect.includes("handed off"),
+    `🔴 OPE-2099: an expired wait after a direct reply says no ask was made, and never says the seat handed off (got: ${noteDirect})`,
+  );
+  ok(grantRowMissingNote({ rowSeen: true, handedOff: true, waitMs: 300_000, sessionId: "wrun-current" }) === "", "NEGATIVE: a row that arrived adds no missing-row sentence");
 
   const NOW = Date.parse("2026-05-12T11:30:00.000Z");
   const live = grantRow("grant.granted", { askId: "ask_a", expiresAt: "2026-05-12T22:30:00.000Z", grantId: "g_live", owner: "discord/900000000000000001" });

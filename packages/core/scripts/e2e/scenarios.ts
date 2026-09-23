@@ -342,6 +342,16 @@ export const GRANTED_CALL_WAIT_MS = 300_000;
 export const GRANT_NOTICE_WAIT_MS = AUDIT_ROW_WAIT;
 export const grantedCallReplySkip = (m: { readonly content: string }): boolean =>
   isPendingWorkHandoff(m.content) || isFillerAck(m.content);
+
+export const grantRowWaitMs = (replyText: string): number =>
+  isPendingWorkHandoff(replyText) ? GRANTED_CALL_WAIT_MS : AUDIT_ROW_WAIT;
+export const grantRowMissingNote = (o: { readonly rowSeen: boolean; readonly handedOff: boolean; readonly waitMs: number; readonly sessionId: string }): string => {
+  if (o.rowSeen) return "";
+  const secs = Math.round(o.waitMs / 1000);
+  return o.handedOff
+    ? ` The seat handed off and no grant.asked or grant.refused row for session ${o.sessionId} arrived within ${secs} s, so the delegated ask left no row for the domain key to be read from.`
+    : ` The seat replied without a hand-off and no grant.asked or grant.refused row for session ${o.sessionId} arrived within ${secs} s: no ask was made, so the domain key had no row to read.`;
+};
 export function oeStatusCompactionThresholdTokens(contextWindowTokens: number): number {
   return Math.max(1, Math.floor(contextWindowTokens * SETTINGS.agent.compactionThresholdPercent.shipped));
 }
@@ -7887,7 +7897,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["discord"],
     surface: "discord",
     suite: "core",
-    timeoutMs: 1_680_000,
+    timeoutMs: 1_920_000,
     judged: false,
     run: async (ctx) => {
       if (!ctx.auditRead) {
@@ -7941,12 +7951,14 @@ export const SCENARIOS: readonly Scenario[] = [
         readonly scopeKey?: unknown;
         readonly domainScopeKey?: unknown;
       };
+      const replyHandedOff = isPendingWorkHandoff(reply.content);
+      const grantRowWait = grantRowWaitMs(reply.content);
       const sessionGrantRowSeen = await pollOptional(
         async () => {
           const rows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
           return rows.some((e) => isSessionGrantRow(e, currentSessionId)) ? true : undefined;
         },
-        { timeoutMs: AUDIT_ROW_WAIT, what: "S-DISCORD-GRANT: a grant.asked or grant.refused row for this run's session" },
+        { timeoutMs: grantRowWait, what: "S-DISCORD-GRANT: a grant.asked or grant.refused row for this run's session" },
       );
       const grantRows = await auditRead({ sinceIso, actions: ["grant.asked", "grant.refused"] });
       const refused = grantRows.filter((e) => e.action === "grant.refused");
@@ -7963,7 +7975,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const reentryScope = reentry.kind === "record" ? grantReentryScope(reentry, currentSessionId, runDomainScopeKey) : undefined;
       if (tapped && reentry.kind === "record" && reentryScope === undefined) {
         ctx.skip(
-          `the saved grant is reachable from neither this run's Eve session nor this run's room domain (saved session ${reentry.scopeKey}, saved domain ${reentry.domainScopeKey ?? "none recorded"}; this run: session ${currentSessionId}, domain ${runDomainScopeKey ?? "unreadable"}). A once- or session-mode grant dies with the session that asked, and a standing one re-enters only through the domain key it was bound to — consent is never migrated across scopes either way. No granted call was posted. Raise a new ask and obtain a human tap only if this candidate's board still requires the grant leg.${sessionGrantRowSeen === true ? "" : ` No grant.asked or grant.refused row for session ${currentSessionId} arrived within the ${AUDIT_ROW_WAIT}ms wait, so the domain key had no row to read.`}`,
+          `the saved grant is reachable from neither this run's Eve session nor this run's room domain (saved session ${reentry.scopeKey}, saved domain ${reentry.domainScopeKey ?? "none recorded"}; this run: session ${currentSessionId}, domain ${runDomainScopeKey ?? "unreadable"}). A once- or session-mode grant dies with the session that asked, and a standing one re-enters only through the domain key it was bound to — consent is never migrated across scopes either way. No granted call was posted. Raise a new ask and obtain a human tap only if this candidate's board still requires the grant leg.${grantRowMissingNote({ rowSeen: sessionGrantRowSeen === true, handedOff: replyHandedOff, waitMs: grantRowWait, sessionId: currentSessionId })}`,
         );
       }
       if (tapped && reentryScope === "domain") {
