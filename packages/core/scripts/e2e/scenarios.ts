@@ -31,7 +31,7 @@ import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type Not
 import { GITHUB_NOTION_REST_ACTIONS, githubNotionOriginLifecycle, githubNotionReplyRow } from "./github-notion-rest.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
-import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, deriveConnectorArming, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
+import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, CREDENTIAL_BOUND_ACTION, deriveConnectorArming, deriveOrgConsent, orgConsentMissingReason, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
 import {
   approvedSuspendedReply,
   slackVendorTimestamp,
@@ -7657,6 +7657,15 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       if (!fixture.ok) return ctx.fixtureMissing(`S-ROUTINE-CONNECTOR-WRITE: ${fixture.reason}`);
       ctx.log(`S-ROUTINE-CONNECTOR-WRITE: ${OP} is reachable in domain "${fixture.domain}" — bundle "${fixture.bundle}" grants it as credential "${fixture.credential}"`);
+
+      if (fixture.oauthHome !== undefined) {
+        const orgConsent = await deriveOrgConsent(ctx.auditRead, { oauthHome: fixture.oauthHome });
+        if (orgConsent.state === "absent") return ctx.fixtureMissing(`S-ROUTINE-CONNECTOR-WRITE: ${orgConsentMissingReason(NOTION_CONNECTOR, fixture.oauthHome)}`);
+        ctx.log(
+          `S-ROUTINE-CONNECTOR-WRITE: org consent for ${fixture.oauthHome} — ` +
+            (orgConsent.state === "bound" ? `bound (newest subject=app ${CREDENTIAL_BOUND_ACTION} at ${orgConsent.at})` : `UNKNOWN (${orgConsent.reason}) — driving anyway`),
+        );
+      }
 
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
 

@@ -112,3 +112,45 @@ export async function watchConnectorArming(probe: ArmingProbe, connector: string
   );
   return { since, recheck: () => requireConnectorArmed(probe, { connector, sinceIso: since }) };
 }
+
+export const CREDENTIAL_BOUND_ACTION = "connector.credential_bound";
+
+export const CREDENTIAL_BOUND_ROWS_SINCE = "2026-09-18T00:00:00.000Z";
+
+export type OrgConsent =
+  | { readonly state: "bound"; readonly at: string }
+  | { readonly state: "absent" }
+  | { readonly state: "unknown"; readonly reason: string };
+
+export function classifyOrgConsentRows(rows: readonly AuditWireEntry[], oauthHome: string): OrgConsent {
+  let newest: AuditWireEntry | undefined;
+  for (const e of rows) {
+    if (e.action !== CREDENTIAL_BOUND_ACTION) continue;
+    const d = (e.detail ?? {}) as Record<string, unknown>;
+    if (d.connector !== oauthHome || d.subject !== "app") continue;
+    if (newest === undefined || tsKey(e) > tsKey(newest)) newest = e;
+  }
+  return newest === undefined ? { state: "absent" } : { state: "bound", at: newest.ts };
+}
+
+export async function deriveOrgConsent(
+  auditRead: AuditReader | undefined,
+  opts: { readonly oauthHome: string; readonly sinceIso?: string },
+): Promise<OrgConsent> {
+  if (!auditRead) return { state: "unknown", reason: "no audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)" };
+  try {
+    const rows = await auditRead({ sinceIso: opts.sinceIso ?? CREDENTIAL_BOUND_ROWS_SINCE, actions: [CREDENTIAL_BOUND_ACTION], limit: ARMING_QUERY_LIMIT });
+    return classifyOrgConsentRows(rows, opts.oauthHome);
+  } catch (e) {
+    return { state: "unknown", reason: `audit read failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+export function orgConsentMissingReason(connector: string, oauthHome: string): string {
+  return (
+    `RED-until-fixture: no ORG (subject=app) ${connector} token exists for ${oauthHome} — the deployment holds no ${CREDENTIAL_BOUND_ACTION} ` +
+    `row with subject=app for it, so every unattended fire fails with OeOauthNeedsConsentError before any connector op runs. ` +
+    `The one action: an org admin asks the bot "connect ${connector} here" in the fixture channel and completes the ${connector === "notion" ? "Notion" : connector} consent. ` +
+    `(A consent completed before ${CREDENTIAL_BOUND_ROWS_SINCE.slice(0, 10)} left no row — consent again; a rebind is harmless.)`
+  );
+}

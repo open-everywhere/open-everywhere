@@ -376,6 +376,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 
 {
   const { routineConnectorFixture, NOTION_MCP_HOST } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const { vercelConnectorHome } = await import("../packages/core/agent/access/connector-credentials.js");
   const { readFileSync: readSource } = await import("node:fs");
   const { fileURLToPath: toPath } = await import("node:url");
 
@@ -393,6 +394,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       credentials: [
         { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db", endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } },
         { id: "user-oauth", type: "user-oauth" },
+        { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: [NOTION_MCP_HOST] } },
       ],
     },
   ] as const;
@@ -431,6 +433,13 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     [{ bundle: "surface-fixture", scope: { level: "surface", surface: SURFACE } }],
   );
   ok(surfaceScoped.ok, "a SURFACE-scoped binding on the exact driven room counts too");
+
+  const orgOauth = call(
+    [{ name: "notion-org-fixture", connectors: [{ name: "notion", credential: "workspace-oauth" }] }],
+    [{ bundle: "notion-org-fixture", scope: { level: "domain", domain: "e2e-connector" } }],
+  );
+  ok(orgOauth.ok && orgOauth.oauthHome === "mcp.notion.com/notion-mcp", "a service-oauth grant carries its OAuth home — the key the org-consent preflight reads bind rows by");
+  ok(armed.ok && armed.oauthHome === undefined && !("oauthHome" in armed), "NEGATIVE CONTROL: a user-oauth grant carries NO OAuth home — the org-consent preflight never runs for it");
 
   const personal = call(
     [{ name: "notion-personal", connectors: [{ name: "notion", credential: "user-oauth" }] }],
@@ -3748,6 +3757,54 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       "🔴 OPE-1722 — the verdict names the two hard gates that DID run and pass, so it is not read as a leg that checked nothing",
     );
   }
+}
+
+{
+  const { classifyOrgConsentRows, deriveOrgConsent, orgConsentMissingReason, CREDENTIAL_BOUND_ACTION, CREDENTIAL_BOUND_ROWS_SINCE, CONNECTOR_MINT_ACTION } =
+    await import("../packages/core/scripts/e2e/connector-arming.js");
+  const HOME = "mcp.notion.com/notion-mcp";
+  const bindRow = (ts: string, subject: string, connector = HOME, action = CREDENTIAL_BOUND_ACTION) =>
+    ({ ts, org: "o", platform: "oauth", workspace: "callback", action, detail: { connector, subject, rebound: false } }) as const;
+  const userMint = { ts: "2026-05-27T09:30:00.000Z", org: "o", platform: "connector", workspace: "connector", action: CONNECTOR_MINT_ACTION, detail: { connector: "notion", subject: "user", outcome: "ok" } } as const;
+
+  const callbackSrc = readFileSync(fileURLToPath(new URL("../packages/core/agent/connections/oe-oauth-callback.ts", import.meta.url)), "utf8");
+  ok(callbackSrc.includes(`action: "${CREDENTIAL_BOUND_ACTION}"`) && /subject: subject\.type/.test(callbackSrc), "OPE-2089: the org-consent read keys on the action + subject the OAuth callback route writes");
+
+  const table: ReadonlyArray<{ name: string; rows: readonly unknown[]; want: "bound" | "absent" }> = [
+    { name: "🔴 only a PERSONAL mint row (the live-run state) ⇒ absent", rows: [userMint], want: "absent" },
+    { name: "only a PERSONAL bind row (subject=user) ⇒ absent", rows: [bindRow("2026-05-27T09:30:00.000Z", "user")], want: "absent" },
+    { name: "no rows ⇒ absent", rows: [], want: "absent" },
+    { name: "an app bind row for ANOTHER OAuth home ⇒ absent", rows: [bindRow("2026-05-27T09:30:00.000Z", "app", "mcp.linear.app/mcp")], want: "absent" },
+    { name: "an app-subject row under another action ⇒ absent", rows: [bindRow("2026-05-27T09:30:00.000Z", "app", HOME, "connector.oauth_url_issued")], want: "absent" },
+    { name: "an app bind row for this OAuth home ⇒ bound", rows: [bindRow("2026-05-27T09:30:00.000Z", "app")], want: "bound" },
+    { name: "an app bind row beside a user one ⇒ bound", rows: [userMint, bindRow("2026-06-03T09:32:00.000Z", "user"), bindRow("2026-05-27T06:32:00.000Z", "app")], want: "bound" },
+  ];
+  for (const t of table) {
+    const got = classifyOrgConsentRows(t.rows as never, HOME);
+    ok(got.state === t.want, `OPE-2089 classifyOrgConsentRows: ${t.name} (got ${got.state})`);
+  }
+  const newest = classifyOrgConsentRows([bindRow("2026-05-26T06:32:00.000Z", "app"), bindRow("2026-06-03T09:32:00.000Z", "app"), bindRow("2026-05-27T06:32:00.000Z", "app")] as never, HOME);
+  ok(newest.state === "bound" && newest.at === "2026-06-03T09:32:00.000Z", "OPE-2089: a bound answer names the NEWEST app bind, whatever the row order");
+
+  ok((await deriveOrgConsent(undefined, { oauthHome: HOME })).state === "unknown", "OPE-2089: no audit reader ⇒ UNKNOWN, never absent");
+  ok((await deriveOrgConsent(async () => { throw new Error("503"); }, { oauthHome: HOME })).state === "unknown", "🔴 OPE-2089: a FAILING audit read ⇒ UNKNOWN, never absent — a route blip must not red the leg");
+  let asked: { sinceIso?: string; actions?: readonly string[]; limit?: number } | undefined;
+  const absent = await deriveOrgConsent(async (o) => { asked = o; return [userMint] as never; }, { oauthHome: HOME });
+  ok(absent.state === "absent", "OPE-2089: a successful read holding only a personal mint ⇒ absent (the leg reds)");
+  ok(asked?.sinceIso === CREDENTIAL_BOUND_ROWS_SINCE && asked?.actions?.length === 1 && asked.actions[0] === CREDENTIAL_BOUND_ACTION && asked.limit === 1000, "OPE-2089: the read asks for bind rows only, from the day the row shipped, at the route's ceiling");
+  ok((await deriveOrgConsent(async () => [bindRow("2026-05-27T09:30:00.000Z", "app")] as never, { oauthHome: HOME })).state === "bound", "OPE-2089: a successful read holding an app bind ⇒ bound (the leg drives as before)");
+
+  const reason = orgConsentMissingReason("notion", HOME);
+  ok(reason.includes('an org admin asks the bot "connect notion here" in the fixture channel and completes the Notion consent'), "OPE-2089: the red names the ONE action, verbatim");
+  ok(reason.startsWith("RED-until-fixture:") && reason.includes(HOME), "OPE-2089: the red is a fixture red naming the OAuth home");
+
+  const scenariosSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf8");
+  const legAt = scenariosSrc.indexOf('id: "S-ROUTINE-CONNECTOR-WRITE"');
+  const leg = legAt < 0 ? "" : scenariosSrc.slice(legAt, legAt + 60_000);
+  const preflightAt = leg.indexOf("deriveOrgConsent(ctx.auditRead, { oauthHome: fixture.oauthHome })");
+  const redAt = leg.indexOf('if (orgConsent.state === "absent") return ctx.fixtureMissing(');
+  const watchAt = leg.indexOf("watchConnectorArming(");
+  ok(legAt >= 0 && preflightAt > 0 && redAt > preflightAt && watchAt > redAt, "🔴 OPE-2089: S-ROUTINE-CONNECTOR-WRITE runs the org-consent preflight and its fixture red BEFORE the arming watch and every dispatcher wait");
 }
 
 {

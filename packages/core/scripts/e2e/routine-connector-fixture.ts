@@ -1,5 +1,5 @@
 import { connectorGrantCredential, connectorGrantName, type Binding, type Bundle } from "../../agent/access/bundle.js";
-import type { ConnectorCredentials } from "../../agent/access/connector-credentials.js";
+import { vercelConnectorOf, type ConnectorCredentials } from "../../agent/access/connector-credentials.js";
 import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
 import { loadDomains } from "../../../../agent/memory/config/domains.js";
 import { loadBundles, loadBindings } from "../../../../agent/access/bundles.js";
@@ -8,7 +8,13 @@ import { loadConnectorCredentials } from "../../../../agent/access/connector-cre
 export const NOTION_MCP_HOST = "mcp.notion.com";
 
 export type RoutineConnectorFixture =
-  | { readonly ok: true; readonly domain: string; readonly bundle: string; readonly credential: string }
+  | {
+      readonly ok: true;
+      readonly domain: string;
+      readonly bundle: string;
+      readonly credential: string;
+      readonly oauthHome?: string;
+    }
   | { readonly ok: false; readonly reason: string };
 
 function bindingCovers(binding: Binding, input: { readonly surfaceKey: string; readonly domain: string | undefined }): boolean {
@@ -58,7 +64,8 @@ export function routineConnectorFixture(input: {
       );
       continue;
     }
-    return { ok: true, domain: domain ?? "(no explicit domain)", bundle: bundle.name, credential: credentialId };
+    const oauthHome = credential.type === "service-oauth" ? vercelConnectorOf(credential) : undefined;
+    return { ok: true, domain: domain ?? "(no explicit domain)", bundle: bundle.name, credential: credentialId, ...(oauthHome ? { oauthHome } : {}) };
   }
 
   const where = domain === undefined ? `surface ${input.surfaceKey} (in no explicit domain)` : `domain "${domain}" (surface ${input.surfaceKey})`;
