@@ -586,7 +586,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const failed = tev(4, "actions.requested", { actions: [{ toolName: "report_run_failed", callId: "c3", input: { reason: `the required one-shot ${OP} call was not made` } }] });
   const nRj = [search, found, skill, failed];
   ok(fireOpCalls(nRj, OP).discovered === true && fireOpCalls(nRj, OP).called === false, "the measured shape reads discovered=true, called=false");
-  const skillText = tev(6, "action.result", { result: { callId: "c2", kind: "tool-result", toolName: "load_skill", output: `a 'notion' MCP connector (${OP}) is a PERSON's road` } });
+  const skillText = tev(6, "action.result", { result: { callId: "c2", kind: "tool-result", toolName: "load_skill", output: `a 'notion' MCP connector (${OP}) acts as the subject on its grant` } });
   ok(
     fireOpCalls([search, skillText, failed], OP).discovered === false,
     "NEGATIVE CONTROL: a tool RESULT that names the op but is not connection_search's (the skill text) is not a discovery",

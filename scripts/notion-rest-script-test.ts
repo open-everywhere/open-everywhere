@@ -83,7 +83,11 @@ for (const gone of ["no\n\"notion\" MCP connector granted", "rather than the not
 }
 ok(!/only when[^.]*connector/i.test(markdown), "the skill markdown carries no 'use this only when … connector' precondition");
 ok(markdown.includes("DOMAIN's road"), "the skill markdown states that this skill is the domain's road");
-ok(/PERSON's road/.test(markdown) && /OAuth/.test(markdown), "the skill markdown states that an MCP connector is a person's own account");
+ok(!/PERSON's road/i.test(markdown), "OPE-2102: the skill markdown no longer says every MCP connector is a person's road");
+ok(markdown.includes("acts as the subject on its grant"), "OPE-2102: the skill markdown says a connector acts as the subject on its grant");
+ok(markdown.includes("`user-oauth` grant") && /person's own Notion account/.test(markdown), "OPE-2102: a user-oauth grant is named as one person's own account");
+ok(markdown.includes("`workspace-oauth` grant") && /second organisation road/.test(markdown), "OPE-2102: a workspace-oauth grant is named as a second organisation road");
+ok(/primary road/.test(markdown), "OPE-2102: the skill stays the domain's primary road");
 ok(markdown.includes("Never fabricate a token"), "the skill markdown forbids fabricating or asking for a token");
 ok(markdown.includes("declared egress"), "the skill markdown states that the declared egress decides which verbs work");
 ok(markdown.includes("reference.md"), "the skill markdown points at reference.md");

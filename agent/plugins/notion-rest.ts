@@ -1476,13 +1476,15 @@ rows, comments.
 
 - **This skill is the DOMAIN's road.** One organisation integration, shared by every
   member of the domain, reached over REST. It is the road for shared workspace content.
-- **A "notion" MCP connector is a PERSON's road.** That grant carries one person's own
-  Notion account through their own OAuth. It reaches what that person can see, as that
-  person.
+- **A "notion" MCP connector acts as the subject on its grant.** A \`user-oauth\` grant
+  carries one person's own Notion account through their own OAuth. It reaches what that
+  person can see, as that person. A \`workspace-oauth\` grant carries the organisation's
+  account through the org consent. It is a second organisation road.
 
-The two coexist. Having one is not a reason to avoid the other: pick the road by whose
-account the work belongs to. Work the domain owns goes over this skill even in a session
-that also holds a \`notion\` connector.
+The roads coexist. Having one is not a reason to avoid another: pick the road by whose
+account the work belongs to. This skill stays the domain's primary road. Work the domain
+owns goes over this skill or over a bound \`workspace-oauth\` connector. It never goes
+over a \`user-oauth\` connector, because that connector acts as the person.
 
 **You never see or handle a token.** \`fetch()\` calls in \`scripts/notion.mjs\` go straight
 to \`api.notion.com\`; the sandbox's egress firewall stamps
