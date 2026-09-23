@@ -860,7 +860,11 @@ async function gateOneSeatAcrossNameDrops(
   });
   const posts = evidence?.posts ?? [];
   const wakes = evidence?.wakeIds ?? [];
-  const seat = seatContinuity(posts, { surface: opts.surface });
+  const workerRows = await ctx.auditRead({ sinceIso: opts.sinceIso, actions: [WORKER_TOOLSET_ACTION], limit: 1000 }).catch(() => {
+    ctx.log(`one-seat: the ${WORKER_TOOLSET_ACTION} read failed — judging raw session ids, so a delegated worker's reply reads as a second seat`);
+    return [];
+  });
+  const seat = seatContinuity(posts, { surface: opts.surface, workerRows });
   ctx.gate(
     seat.replies >= 2,
     `second name-drop: two scoped replies landed before continuity was evaluated — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first ask. Fewer than two and the continuity gate below has nothing to be about`,
@@ -870,8 +874,8 @@ async function gateOneSeatAcrossNameDrops(
     `second name-drop: every ${REPLY_POST_ACTION} row NAMES its session (${seat.unattributed} unattributed) — a row with no \`detail.sessionId\` cannot support the one-seat claim, and counting it as agreement would report continuity nothing evidenced`,
   );
   ctx.gate(
-    seat.sessionIds.length === 1,
-    `🔴 second name-drop: ONE SEAT answered both — a single eve session id across the two replies (saw ${JSON.stringify(seat.sessionIds)}). Two ids is the older shape this journey exists to refuse: a name-drop opening its own per-thread session, so the room's second name-drop reached an agent with none of the first exchange`,
+    seat.seatIds.length === 1,
+    `🔴 second name-drop: ONE SEAT answered both — a single eve session id across the two replies (saw ${JSON.stringify(seat.sessionIds)}; resolved to seat(s) ${JSON.stringify(seat.seatIds)} through ${workerRows.length} ${WORKER_TOOLSET_ACTION} row(s)). Two seats is the older shape this journey exists to refuse: a name-drop opening its own per-thread session, so the room's second name-drop reached an agent with none of the first exchange`,
   );
   const answered = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakes });
   ctx.gate(

@@ -174,6 +174,7 @@ const {
   reportedSeatedChannelWatch,
   reportedThreadFollow,
   seatContinuity,
+  seatOfSession,
   standDownAttemptedButUnmarked,
   standDownMarked,
   standDownReachedRegistry,
@@ -6266,6 +6267,31 @@ rmSync(dir, { recursive: true, force: true });
   );
   ok(seatContinuity([row(STOOD_DOWN_ACTION, { sessionId: SEAT })]).replies === 0, "NEGATIVE: another action carrying a sessionId is not a reply");
   ok(seatContinuity([]).replies === 0 && seatContinuity([]).sessionIds.length === 0, "VACUITY: an empty window evidences no seat — a caller gating on `sessionIds.length === 1` must gate on `replies` too");
+
+  const WORKER = "wrun_example50";
+  const SEATRj = "wrun_example51";
+  const toolset = (worker: string, parentSession?: string, rootSession?: string) =>
+    row("worker.toolset", { worker, grain: "task", tools: ["reply"], toolCount: 1, ...(parentSession ? { parentSession } : {}), ...(rootSession ? { rootSession } : {}) });
+  const viaWorker = seatContinuity([seatPost(WORKER), seatPost(SEATRj)], { workerRows: [toolset(WORKER, SEATRj, SEATRj)] });
+  ok(
+    viaWorker.sessionIds.length === 2 && viaWorker.seatIds.join(",") === SEATRj,
+    "🔴 GREEN ARM — the live-run shape: a WORKER's reply and its seat's reply are two session ids and ONE seat",
+  );
+  const noRows = seatContinuity([seatPost(WORKER), seatPost(SEATRj)]);
+  ok(noRows.seatIds.length === 2 && noRows.seatIds.join(",") === `${WORKER},${SEATRj}`, "NEGATIVE CONTROL: with no worker.toolset row the same two ids stay TWO seats — the resolution comes from the row, never from the id's shape");
+  const realSeats = seatContinuity([seatPost(SEAT), seatPost(OTHER_SEAT)], { workerRows: [toolset(WORKER, SEATRj, SEATRj)] });
+  ok(realSeats.seatIds.length === 2, "🔴 RED ARM — two genuine seats stay two when the window's worker rows name neither of them");
+  const foreignWorker = seatContinuity([seatPost(WORKER), seatPost(SEAT)], { workerRows: [toolset(WORKER, OTHER_SEAT, OTHER_SEAT)] });
+  ok(
+    foreignWorker.seatIds.length === 2 && foreignWorker.seatIds.join(",") === `${OTHER_SEAT},${SEAT}`,
+    "🔴 RED ARM — a worker whose parent is a DIFFERENT seat resolves to THAT seat, so the pair is still two seats",
+  );
+  ok(seatOfSession(WORKER, [toolset(WORKER, SEATRj)]) === SEATRj, "seatOfSession: a row with parentSession and no rootSession still resolves the worker to its parent");
+  ok(seatOfSession("wrun_example52", [toolset("wrun_example52", WORKER), toolset(WORKER, SEATRj)]) === SEATRj, "seatOfSession: a worker of a worker walks TRANSITIVELY to the seat");
+  ok(seatOfSession("wrun_example52", [toolset("wrun_example52", WORKER, SEATRj)]) === SEATRj, "seatOfSession: rootSession names the seat in one step, even when the parent's own row is outside the window");
+  ok(seatOfSession(SEATRj, [toolset(WORKER, SEATRj)]) === SEATRj, "NEGATIVE: a session no row names as a worker IS its own seat");
+  ok(seatOfSession("wrun_a", [toolset("wrun_a", "wrun_b"), toolset("wrun_b", "wrun_a")]) === "wrun_b", "a cycle in the rows stops the walk instead of looping");
+  ok(seatOfSession(WORKER, [row(STOOD_DOWN_ACTION, { worker: WORKER, parentSession: SEATRj })]) === WORKER, "NEGATIVE: only worker.toolset rows resolve a session — another action carrying the same keys does not");
 
   ok(WAKE_INGRESS_ACTION === PRODUCT_WAKE_INGRESS_ACTION, "the pack's ingress action name IS the product's own WAKE_INGRESS_ACTION — no second spelling of one row");
   const KEYED = "slack/T1/C1";

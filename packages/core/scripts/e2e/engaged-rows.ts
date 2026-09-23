@@ -1,5 +1,6 @@
 import { pollOptional, type PollOpts } from "./poll.js";
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
+import { WORKER_TOOLSET_ACTION } from "./gate-joins.js";
 
 export const STOOD_DOWN_ACTION = "engagement.stood_down";
 
@@ -108,9 +109,30 @@ export interface SeatContinuity {
   readonly answeredWakeIds: readonly string[];
   readonly sessionIds: readonly string[];
   readonly unattributed: number;
+  readonly seatIds: readonly string[];
 }
 
-export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly surface?: string; readonly admittedWakeIds?: readonly string[] } = {}): SeatContinuity {
+export function seatOfSession(sessionId: string, workerRows: readonly AuditWireEntry[]): string {
+  const parentOf = new Map<string, string>();
+  for (const r of workerRows) {
+    if (r.action !== WORKER_TOOLSET_ACTION) continue;
+    const worker = detailString(r, "worker");
+    const up = detailString(r, "rootSession") || detailString(r, "parentSession");
+    if (worker !== undefined && worker.length > 0 && up !== undefined && up.length > 0 && up !== worker) parentOf.set(worker, up);
+  }
+  const seen = new Set<string>([sessionId]);
+  let current = sessionId;
+  for (let next = parentOf.get(current); next !== undefined && !seen.has(next); next = parentOf.get(current)) {
+    seen.add(next);
+    current = next;
+  }
+  return current;
+}
+
+export function seatContinuity(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly surface?: string; readonly admittedWakeIds?: readonly string[]; readonly workerRows?: readonly AuditWireEntry[] } = {},
+): SeatContinuity {
   const posts = rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface));
   const sessionIds: string[] = [];
   let unattributed = 0;
@@ -125,7 +147,8 @@ export function seatContinuity(rows: readonly AuditWireEntry[], opts: { readonly
   const answeredWakeIds = [...new Set(posts.map((r) => detailString(r, "wakeId")).filter(
     (id): id is string => id !== undefined && id.length > 0 && (opts.admittedWakeIds === undefined || opts.admittedWakeIds.includes(id)),
   ))];
-  return { replies: posts.length, sessionIds, unattributed, answeredWakeIds };
+  const seatIds = [...new Set(sessionIds.map((id) => seatOfSession(id, opts.workerRows ?? [])))];
+  return { replies: posts.length, sessionIds, unattributed, answeredWakeIds, seatIds };
 }
 
 export function wakeIngressIds(rows: readonly AuditWireEntry[], opts: { readonly container?: string } = {}): readonly string[] {
