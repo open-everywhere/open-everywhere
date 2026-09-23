@@ -1142,3 +1142,104 @@ export function dollarOnlySpendCardFault(cardText: string): string | undefined {
   if (tokens !== undefined && tokens.includes("→")) return `the card also changes the token cap: "${tokens}"`;
   return undefined;
 }
+
+export const ROUTINE_FIRE_ACTION = "routine.fire";
+
+export interface FireReportFire {
+  readonly atIso: string;
+  readonly routineId?: string;
+  readonly wakeId?: string;
+  readonly sessionId?: string;
+}
+
+export interface FireReportJoin {
+  readonly verdict: "posted" | "no-fire" | "no-session" | "no-reply";
+  readonly fires: readonly FireReportFire[];
+  readonly sessionIds: readonly string[];
+  readonly replies: readonly AuditWireEntry[];
+  readonly detail: string;
+}
+
+export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin {
+  const sessionOfWake = new Map<string, string>();
+  const sessionsOfRoutine = new Map<string, string[]>();
+  for (const r of rows) {
+    if (r.action === WAKE_TURN_START_ACTION) {
+      const wake = dstr(r, "wakeId");
+      const session = dstr(r, "sessionId");
+      if (wake !== undefined && session !== undefined && !sessionOfWake.has(wake)) sessionOfWake.set(wake, session);
+    } else if (r.action === ROUTINE_FIRE_ACTION) {
+      const routine = dstr(r, "routineId");
+      const session = dstr(r, "sessionId");
+      if (routine !== undefined && session !== undefined) sessionsOfRoutine.set(routine, [...(sessionsOfRoutine.get(routine) ?? []), session]);
+    }
+  }
+  const fires: FireReportFire[] = [];
+  for (const r of rows) {
+    if (r.action !== FIRE_ATTRS_SENT_ACTION) continue;
+    const routineId = dstr(r, "routineId");
+    const wakeId = dstr(r, "wakeId");
+    const sessionId = (wakeId !== undefined ? sessionOfWake.get(wakeId) : undefined) ?? (routineId !== undefined ? sessionsOfRoutine.get(routineId)?.[0] : undefined);
+    fires.push({
+      atIso: r.ts,
+      ...(routineId !== undefined ? { routineId } : {}),
+      ...(wakeId !== undefined ? { wakeId } : {}),
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    });
+  }
+  fires.sort((a, b) => Date.parse(a.atIso) - Date.parse(b.atIso));
+  const sessionIds = [...new Set(fires.flatMap((f) => (f.sessionId !== undefined ? [f.sessionId] : [])))];
+  const wakeIds = new Set(fires.flatMap((f) => (f.wakeId !== undefined ? [f.wakeId] : [])));
+  const sessions = new Set(sessionIds);
+  const replies = rows
+    .filter((r) => {
+      if (r.action !== REPLY_POST_ACTION) return false;
+      const session = dstr(r, "sessionId");
+      const wake = dstr(r, "wakeId");
+      return (session !== undefined && sessions.has(session)) || (wake !== undefined && wakeIds.has(wake));
+    })
+    .sort((a, b) => tsMs(a) - tsMs(b));
+
+  if (fires.length === 0) {
+    return {
+      verdict: "no-fire",
+      fires,
+      sessionIds,
+      replies,
+      detail: `no ${FIRE_ATTRS_SENT_ACTION} row in this room: the dispatcher did not hand the routine out`,
+    };
+  }
+  const named = JSON.stringify(fires.map((f) => ({ routineId: f.routineId ?? null, wakeId: f.wakeId ?? null })));
+  if (sessionIds.length === 0) {
+    return {
+      verdict: "no-session",
+      fires,
+      sessionIds,
+      replies,
+      detail: `the dispatcher handed out ${named}, but no ${WAKE_TURN_START_ACTION} row names that wake and no ${ROUTINE_FIRE_ACTION} row names that routine: the fire's turn did not start`,
+    };
+  }
+  if (replies.length === 0) {
+    return {
+      verdict: "no-reply",
+      fires,
+      sessionIds,
+      replies,
+      detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}, but no ${REPLY_POST_ACTION} row names that session or wake: the fire did not report back`,
+    };
+  }
+  return {
+    verdict: "posted",
+    fires,
+    sessionIds,
+    replies,
+    detail: `the fire ran as session(s) ${JSON.stringify(sessionIds)} and posted ${replies.length} message(s) ${JSON.stringify(replies.map((r) => dstr(r, "id") ?? null))}`,
+  };
+}
+
+const REFUSAL_SHAPE = /\b(?:refus\w*|den(?:y|ied|ies)|reject\w*|block\w*|not (?:be )?(?:allowed|permitted|authori[sz]ed)|could ?n[o']t|can ?n[o']t|unable|fail\w*|no (?:cap|limit|spend\w*) (?:was )?changed)\b/i;
+const SPEND_SUBJECT = /\b(?:spend\w*|cap|limit|budget)\b/i;
+
+export function readsAsSpendRefusalReport(text: string): boolean {
+  return REFUSAL_SHAPE.test(text) && SPEND_SUBJECT.test(text);
+}

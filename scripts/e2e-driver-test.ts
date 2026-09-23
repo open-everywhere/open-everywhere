@@ -613,6 +613,56 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
+  const { fireReportJoin, readsAsSpendRefusalReport, FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
+  const FIRE = "wrun_example56";
+  const SEAT = "wrun_example57";
+  const WAKE = "7664ed40-2109-4000-8000-000000000238";
+  const row = (action: string, ts: string, detail: Record<string, unknown>) => ({ ts, org: "o", platform: "slack", workspace: "w", action, detail });
+  const sent = row(FIRE_ATTRS_SENT_ACTION, "2026-06-02T19:52:13.000Z", { routineId: "r-2109", wakeId: WAKE, attrKeys: [], attrCount: 0 });
+  const turn = row("wake.turn_start", "2026-06-02T19:52:14.000Z", { wakeId: WAKE, sessionId: FIRE, turnStartTs: "2026-06-02T19:52:14.000Z" });
+  const report = row("reply.post", "2026-06-02T19:52:26.000Z", { id: "1780494746.000100", platform: "slack", chars: 275, route: "tool", sessionId: FIRE, wakeId: WAKE });
+  const seatReply = row("reply.post", "2026-06-02T19:52:20.000Z", { id: "1780494740.000100", platform: "slack", chars: 90, route: "tool", sessionId: SEAT, wakeId: "seat-wake" });
+
+  const posted = fireReportJoin([sent, turn, seatReply, report]);
+  ok(posted.verdict === "posted", `🔴 fire row → turn_start → reply.post joins the measured report (got ${posted.verdict}: ${posted.detail})`);
+  ok(
+    JSON.stringify(posted.replies.map((r) => r.detail?.id)) === JSON.stringify(["1780494746.000100"]) && JSON.stringify(posted.sessionIds) === JSON.stringify([FIRE]),
+    "🔴 …and only the fire's own post counts: the seat's reply in the same window is not the fire's report",
+  );
+
+  const other = fireReportJoin([sent, turn, seatReply]);
+  ok(other.verdict === "no-reply", `🔴 a reply from another session does not count ⇒ no-reply (got ${other.verdict})`);
+  ok(other.detail.includes(FIRE) && other.detail.includes("did not report back"), `…and the red names the fire's session and the rung (${other.detail})`);
+
+  const noTurn = fireReportJoin([sent, report]);
+  ok(noTurn.verdict === "no-session" && noTurn.detail.includes("did not start"), `no turn_start and no routine.fire row ⇒ the turn did not start (got ${noTurn.verdict})`);
+  const noFire = fireReportJoin([turn, report]);
+  ok(noFire.verdict === "no-fire" && noFire.detail.includes("dispatcher did not hand the routine out"), `🔴 no dispatcher row ⇒ red naming the dispatcher (got ${noFire.verdict}: ${noFire.detail})`);
+
+  const nativeSent = row(FIRE_ATTRS_SENT_ACTION, "2026-06-02T19:52:13.000Z", { routineId: "r-2109", wakeId: null, attrKeys: [], attrCount: 0 });
+  const settle = row(ROUTINE_FIRE_ACTION, "2026-06-02T19:52:30.000Z", { routineId: "r-2109", sessionId: FIRE, outcome: "failed" });
+  const native = fireReportJoin([nativeSent, settle, report]);
+  ok(native.verdict === "posted" && native.sessionIds[0] === FIRE, `a native fire joins through its routine.fire row (got ${native.verdict})`);
+  ok(
+    fireReportJoin([nativeSent, row(ROUTINE_FIRE_ACTION, "2026-06-02T19:52:30.000Z", { routineId: "r-OTHER", sessionId: FIRE }), report]).verdict === "no-session",
+    "NEGATIVE CONTROL: another routine's settle row does not name this fire's session",
+  );
+
+  const textRj = "The $2,558 monthly USD spend-limit proposal was refused; no cap changed and no approval proposal was created. A person in this conversation must propose it.";
+  ok(readsAsSpendRefusalReport(textRj), "🔴 the measured report reads as the refusal report without the confirmation word");
+  ok(readsAsSpendRefusalReport("Update: I couldn't raise this channel's spend cap — the tool needs a verified sender."), "a 'could not' phrasing reads as the refusal report too");
+  ok(readsAsSpendRefusalReport("I raised this channel's monthly spend cap to $2,558 USD.") === false, "NEGATIVE CONTROL: a post that claims it raised the cap is NOT the refusal report");
+  ok(readsAsSpendRefusalReport("The request was refused.") === false, "NEGATIVE CONTROL: a refusal that does not name the spend cap is NOT the report");
+
+  const body = SCENARIOS.find((s) => s.id === "S-TAINT-UNATTENDED-DENY")!.run.toString();
+  const flat = body.replace(/\s+/g, "");
+  ok(flat.includes("join=fireReportJoin([...sent,...joinRows])"), "🔴 WIRING: the fire wait reads the fire's report through fireReportJoin");
+  ok(flat.includes("readsAsSpendRefusalReport(reportText)"), "🔴 WIRING: the content gate reads the joined report");
+  ok(!flat.includes("carriesFactToken(m.text,fireWord)"), "🔴 WIRING: no wait keys on the confirmation word any more");
+  ok(body.includes("luna habit 7: the failure report dropped the literal"), "WIRING: an absent word is a log line");
+}
+
+{
   const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-REFUSAL-KEYS")!;
   const { sqliteOperationalStore } = await import("../packages/core/agent/operational/sqlite.js");
   const org = "spend-refusal-driver-test";
