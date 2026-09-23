@@ -159,8 +159,11 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
       askId: ask.id,
       connector: ask.connector,
       gate: "owner_unreachable",
+      owner: ask.ownerPrincipalId,
       reason: delivery.reason,
       resource: grantAuditResource(ask),
+      scopeKey: ask.scopeKey,
+      ...(ask.domainScopeKey === undefined ? {} : { domainScopeKey: ask.domainScopeKey }),
       verb: ask.verb,
     });
     return { reason: "owner_unreachable", sent: false };

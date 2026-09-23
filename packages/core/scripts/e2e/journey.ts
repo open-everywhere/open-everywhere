@@ -198,6 +198,7 @@ export async function driveDecide(args: {
   leg: string;
   decision?: "approve" | "reject";
   timeoutMs: number;
+  precheck?: (card: SlackMessage) => string | undefined;
 }): Promise<SlackMessage> {
   const { slack, synthetic, ask, leg, timeoutMs } = args;
   const gate = legGate(args.gate, leg);
@@ -208,6 +209,13 @@ export async function driveDecide(args: {
   gate(btn.pendingId.length > 0, "card button carries a real pending id in its action_id");
   gate(btn.org.length > 0, "card button carries the org in its value (flow.ts needs it pre-lookup)");
   const { teamId } = await slack.identity();
+  const fault = args.precheck?.(card);
+  if (fault !== undefined) {
+    const refused = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card.ts, channelId: slack.channelId, teamId });
+    args.log(`${refused.label}: precheck fault, reject ${btn.pendingId} (org "${btn.org}") → ${refused.status}`);
+    await awaitDecided(slack, askTs, card.ts, timeoutMs).catch(() => undefined);
+    gate(false, `card precheck: ${fault}`);
+  }
   const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision, messageTs: card.ts, channelId: slack.channelId, teamId });
   args.log(`${clicked.label}: ${decision} ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
   gate(clicked.status === 200, `forged ${decision} click acked 200`);

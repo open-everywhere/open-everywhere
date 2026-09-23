@@ -163,6 +163,7 @@ import {
   type SeedWriteRead,
   SETTLEMENT_REPORT_POSTED_ACTION,
   spendCapRaisedByThisRun,
+  dollarOnlySpendCardFault,
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
@@ -237,9 +238,13 @@ function grantAskPageId(): string | undefined {
   return roomIdFor(ENV.notionAmbientPageId, process.env);
 }
 
-function grantAskText(ownerMention: string, pageId: string, purpose: string): string {
+export function grantAskText(ownerMention: string, pageId: string, purpose: string, ownerKey?: string): string {
+  const who =
+    ownerKey === undefined
+      ? `Please ask ${ownerMention}`
+      : `Please ask the person ${ownerMention} in this room, whose owner key is ${ownerKey} (pass exactly ${ownerKey} as the owner, and no id from an earlier message),`;
   return (
-    `This is an authorized test of our own credential-grant flow, run by the platform admin (me). Please ask ${ownerMention} to lend this ` +
+    `This is an authorized test of our own credential-grant flow, run by the platform admin (me). ${who} to lend this ` +
     `conversation ONE Notion tool — a page-read of the Notion page with id ${pageId} — so we can check the borrow path end to end. ` +
     `Fix that page id as the grant's argument; do not ask me which page, it is named here. Use the credential-grant ask for it. ` +
     `The purpose is: "${purpose}". Tell me plainly whether the ask went out or was refused, and quote the reason if it was refused.`
@@ -1755,6 +1760,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const card1 = await awaitCard(slack, ask1Ts, FILE_REPLY_WAIT);
       const btn1 = approveButton(card1)!;
       ctx.gate(btn1.pendingId.length > 0 && btn1.org.length > 0, "S15: card1 button carries a real pending id + org");
+      const card1Fault = dollarOnlySpendCardFault(card1.text);
       const denied = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "approve", messageTs: card1.ts, channelId: slack.channelId, userId: user2, teamId });
       ctx.log(`${denied.label}: NON-admin approve ${btn1.pendingId} as ${user2} → ${denied.status}`);
       ctx.gate(denied.status === 200, "S15: non-admin forged approve acked 200 (route contract, not consent)");
@@ -1775,6 +1781,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(rejected.status === 200, "S15: admin forged reject acked 200");
       await awaitDecided(slack, ask1Ts, card1.ts, REPLY_WAIT);
       ctx.log("S15: admin reject DECIDES card1 (buttons removed) — reject-path coverage");
+      ctx.gate(card1Fault === undefined, `OPE-2069: card1 for a dollar-only ask leaves the token cap unchanged — ${card1Fault ?? "ok"}`);
       await sleep(15_000);
 
       let capRaised = false;
@@ -1784,6 +1791,7 @@ export const SCENARIOS: readonly Scenario[] = [
           slack, synthetic, gate: ctx.gate, log: ctx.log,
           ask: capAsk,
           leg: "S5-approve", decision: "approve", timeoutMs: FILE_REPLY_WAIT,
+          precheck: (card) => dollarOnlySpendCardFault(card.text),
         });
         const btn2 = approveButton(card2)!;
         ctx.gate(
@@ -2002,6 +2010,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/month`), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
+      const discordCardFault = dollarOnlySpendCardFault(cardReply.content);
+      ctx.gate(discordCardFault === undefined, `OPE-2069: the Discord card for a dollar-only ask leaves the token cap unchanged — ${discordCardFault ?? "ok"}`);
     },
   },
   {
@@ -6973,6 +6983,8 @@ export const SCENARIOS: readonly Scenario[] = [
         const cardN = await awaitCard(slack, askNTs, FILE_REPLY_WAIT);
         const btnN = approveButton(cardN)!;
         pendingCleanup.push({ pendingId: btnN.pendingId, org: btnN.org, where: `NEGATIVE CONTROL card ${cardN.ts}` });
+        const cardNFault = dollarOnlySpendCardFault(cardN.text);
+        ctx.gate(cardNFault === undefined, `OPE-2069: the clean-control card for a dollar-only ask leaves the token cap unchanged — ${cardNFault ?? "ok"}`);
         const rowN = await awaitChainRow(sinceN, "an approval.chain row for set_spend_limit after the clean (no-ingestion) ask");
         ctx.gate(rowN !== undefined, "NEGATIVE CONTROL (hard): the clean propose also produced an approval.chain row");
         const dN = rowN!.detail as ChainDetail;
@@ -7836,7 +7848,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const token = factToken("dgrant");
       const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
-      const asked = await discord.post(discord.mention(grantAskText(`<@${ownerId}>`, grantPageId!, `e2e grant-tap fixture, ref ${token}`)));
+      const asked = await discord.post(discord.mention(grantAskText(`<@${ownerId}>`, grantPageId!, `e2e grant-tap fixture, ref ${token}`, `discord/${ownerId}`)));
       const threadId = await discord.awaitThread(asked.id, { timeoutMs: 300_000 });
       const reply = await discord.awaitReply(threadId, asked.id, { timeoutMs: 300_000 });
       ctx.gate(reply.content.trim().length > 0, "S-DISCORD-GRANT: the grant ask drew a bot reply (the turn ran end-to-end)");

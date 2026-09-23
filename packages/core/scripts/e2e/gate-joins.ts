@@ -1026,3 +1026,29 @@ export function judgeDeniedRoutineCreation(rows: readonly AuditWireEntry[]): Aud
       UNATTENDED_CAP_REASONING.test(dstr(r, "reasoning") ?? ""),
   );
 }
+
+export interface SpendCardComponents {
+  readonly tokens: string | undefined;
+  readonly usd: string | undefined;
+}
+
+function spendCardSegment(cardText: string, label: string): string | undefined {
+  for (const line of cardText.split("\n")) {
+    for (const segment of line.split(" · ")) {
+      const trimmed = segment.trim();
+      if (trimmed.startsWith(`${label} `)) return trimmed;
+    }
+  }
+  return undefined;
+}
+
+export function spendCardComponents(cardText: string): SpendCardComponents {
+  return { tokens: spendCardSegment(cardText, "tokens:"), usd: spendCardSegment(cardText, "$:") };
+}
+
+export function dollarOnlySpendCardFault(cardText: string): string | undefined {
+  const { tokens, usd } = spendCardComponents(cardText);
+  if (usd === undefined || !usd.includes("→")) return `the card has no "$: … → …" segment (got ${JSON.stringify(usd)})`;
+  if (tokens !== undefined && tokens.includes("→")) return `the card also changes the token cap: "${tokens}"`;
+  return undefined;
+}

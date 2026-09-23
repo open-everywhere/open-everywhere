@@ -176,7 +176,21 @@ console.log("1. Bob stops, then Ada asks to borrow Bob's credential:");
   ok((await readDmAudience(ORG, BOB)).stopped, "Bob's stop is recorded on his own person address");
 
   const before = dmed.length;
-  const ask = await askForCredentialGrant(askInput("session-stopped", "session"));
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args.map(String).join(" "));
+  let ask: Awaited<ReturnType<typeof askForCredentialGrant>>;
+  try {
+    ask = await askForCredentialGrant({ ...askInput("session-stopped", "session"), domainScopeKey: "oe-grant-domain::stop-test" });
+  } finally {
+    console.warn = realWarn;
+  }
+  const cardWarns = warned.filter((l) => l.includes("grant card DM to"));
+  ok(cardWarns.length === 1, `🔴 OPE-2063: the undelivered card logs exactly one warn line (got ${String(cardWarns.length)})`);
+  ok(
+    cardWarns[0]?.includes("slack/T1/U-owner") === true && cardWarns[0]?.includes("(owner_stopped_dms)") === true,
+    `…naming the owner key and the refusal reason (got ${String(cardWarns[0])})`,
+  );
   ok(!ask.sent, "the ask is REFUSED — no grant card was sent to a person who asked the agent to stop");
   ok(ask.sent === false && ask.reason === "owner_unreachable", `the refusal reason is owner_unreachable (got ${JSON.stringify(ask)})`);
   ok(dmed.length === before, `NOTHING reached Bob's DM (the arm was called ${String(dmed.length - before)} time(s))`);
@@ -194,6 +208,10 @@ console.log("1. Bob stops, then Ada asks to borrow Bob's credential:");
     ((grantRefusals[0]!.detail ?? {}) as Record<string, unknown>).reason === "owner_stopped_dms",
     `that row carries the STOP as the reason, so an operator can tell it from a missing DM arm (got ${String(((grantRefusals[0]!.detail ?? {}) as Record<string, unknown>).reason)})`,
   );
+  const unreachable = (grantRefusals[0]?.detail ?? {}) as Record<string, unknown>;
+  ok(unreachable.scopeKey === "session-stopped", `🔴 OPE-2063: the owner_unreachable row carries the session's scopeKey (got ${String(unreachable.scopeKey)})`);
+  ok(unreachable.domainScopeKey === "oe-grant-domain::stop-test", `…and the domainScopeKey (got ${String(unreachable.domainScopeKey)})`);
+  ok(unreachable.owner === "slack/T1/U-owner", `…and the owner key that was asked (got ${String(unreachable.owner)})`);
 }
 
 console.log("2. the requester's answer:");

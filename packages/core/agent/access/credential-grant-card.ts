@@ -302,7 +302,11 @@ export async function deliverGrantCard(
     });
     return { delivered: true, messageId: landed.messageId, surfaceId: landed.surfaceId };
   } catch (err) {
-    return { delivered: false, reason: grantDmRefusal(err) };
+    const reason = grantDmRefusal(err);
+    const status = typeof (err as { status?: unknown })?.status === "number" ? ` status=${String((err as { status: number }).status)}` : "";
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[open-everywhere:grant] grant card DM to ${ask.ownerPrincipalId} not delivered (${reason})${status}: ${message.slice(0, 200)}`);
+    return { delivered: false, reason };
   }
 }
 

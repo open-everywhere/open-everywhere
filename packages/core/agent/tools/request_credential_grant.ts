@@ -267,7 +267,12 @@ export const requestCredentialGrantEntry = defineTool({
 
     const owner = await resolveGrantOwner(input.owner, p.platform, p.workspace);
     if ("refusal" in owner) {
-      await auditVerbRefusal(c, "owner_unresolved", { connector: input.connector }, requesterPrincipalId);
+      await auditVerbRefusal(
+        c,
+        "owner_unresolved",
+        { connector: input.connector, scopeKey, ...(domainScopeKey === undefined ? {} : { domainScopeKey }) },
+        requesterPrincipalId,
+      );
       return { asked: false, message: owner.refusal };
     }
 

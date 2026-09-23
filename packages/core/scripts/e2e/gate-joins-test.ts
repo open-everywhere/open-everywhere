@@ -40,6 +40,8 @@ import {
   seedSettlementRead,
   settlementReportPairings,
   spendCapRaisedByThisRun,
+  dollarOnlySpendCardFault,
+  spendCardComponents,
   turnStartMs,
   unattendedArmRoad,
   unifiedTurnSessionId,
@@ -1355,6 +1357,65 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const pathB = scenarioSource.indexOf("judgeDeniedRoutineCreation(", legStart);
   const fireWait = scenarioSource.indexOf("const FIRE_WAIT =", legStart);
   ok(legStart > 0 && pathB > legStart && fireWait > pathB, "🔴 OPE-2060: S-TAINT-UNATTENDED-DENY reads the judge's deny row BEFORE its fire wait");
+}
+
+{
+  const head = "Approval requested: spend.set\nSet spend limit — #watercooler3 (surface)";
+  const tail = "\nRequested by <@U1> · expires 2026-01-28T17:16:00Z";
+  const card2_Rg = `${head} · tokens: none (uncapped) → 1 tokens/mo · $: $50.00/mo → $382.00/mo${tail}`;
+  const card1_Rg = `${head} · tokens: none (uncapped) → 9,007,199,254,740,991 tokens/mo · $: $50.00/mo → $382.00/mo${tail}`;
+  const dollarsOnly = `${head} · $: $50.00/mo → $382.00/mo · Reason: e2e${tail}`;
+
+  const c2 = spendCardComponents(card2_Rg);
+  ok(c2.tokens === "tokens: none (uncapped) → 1 tokens/mo", `the token segment reads verbatim (got ${JSON.stringify(c2.tokens)})`);
+  ok(c2.usd === "$: $50.00/mo → $382.00/mo", `the $ segment reads verbatim (got ${JSON.stringify(c2.usd)})`);
+
+  ok(dollarOnlySpendCardFault(card2_Rg)?.includes("1 tokens/mo") === true, "🔴 OPE-2069: card2 of a live run (a 1-token cap) is a fault");
+  ok(dollarOnlySpendCardFault(card1_Rg)?.includes("9,007,199,254,740,991") === true, "🔴 OPE-2069: card1 of a live run (a MAX_SAFE_INTEGER token cap) is a fault");
+  ok(dollarOnlySpendCardFault(dollarsOnly) === undefined, "a card that changes only the $ cap is not a fault");
+  ok(spendCardComponents(dollarsOnly).tokens === undefined, "a card with no token line reads tokens === undefined");
+  ok(dollarOnlySpendCardFault(`${head} · tokens: none (uncapped) · $: $50.00/mo → $382.00/mo`) === undefined, "a token segment with no arrow is not a fault");
+  ok(dollarOnlySpendCardFault("") !== undefined, "an empty text is a fault (the gate cannot pass on nothing)");
+  ok(dollarOnlySpendCardFault(`${head} · tokens: none (uncapped) → 5 tokens/mo${tail}`) !== undefined, "a tokens-only card is a fault for a dollar ask");
+  ok(dollarOnlySpendCardFault(`${head} · $: $50.00/mo → $382.00/mo · Reason: keep tokens: none → x${tail}`) === undefined, "a Reason that mentions tokens is not the token segment");
+  const discordBad = "**Approval requested: spend.set**\nSet spend limit — #general (surface)\ntokens: none (uncapped) → 1 tokens/mo\n$: $50.00/mo → $382.00/mo\n-# Requested by <@1>";
+  ok(dollarOnlySpendCardFault(discordBad) !== undefined, "the Discord body shape with a token change is a fault");
+  ok(dollarOnlySpendCardFault(discordBad.replace("tokens: none (uncapped) → 1 tokens/mo\n", "")) === undefined, "the Discord body shape with only a $ change is not a fault");
+
+  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const j3 = src.indexOf('title: "Slack governance journey');
+  const j3End = src.indexOf("await sleep(15_000);", src.indexOf('leg: "S5-teardown"', j3));
+  const j3Body = src.slice(j3, j3End);
+  ok(j3 > 0 && j3Body.includes("dollarOnlySpendCardFault(card1.text)"), "🔴 OPE-2069: J3 reads card1 through the reader");
+  ok(j3Body.includes("ctx.gate(card1Fault === undefined"), "🔴 OPE-2069: J3 gates card1's verdict");
+  ok(/leg: "S5-approve"[\s\S]{0,400}precheck: \(card\) => dollarOnlySpendCardFault\(card\.text\)/.test(j3Body), "🔴 OPE-2069: J3 checks card2 BEFORE the approve click");
+  const taint = src.indexOf('id: "S-TAINT-ROUTE-LIVE"');
+  ok(taint > 0 && src.indexOf("dollarOnlySpendCardFault(cardN.text)", taint) > taint, "🔴 OPE-2069: S-TAINT-ROUTE-LIVE gates its clean-control card");
+  const jDisc = src.indexOf('id: "J-DISC"');
+  const jDiscFault = src.indexOf("dollarOnlySpendCardFault(cardReply.content)", jDisc);
+  ok(jDisc > 0 && jDiscFault > jDisc && jDiscFault < src.indexOf("\n  {\n    id: ", jDisc + 10), "🔴 OPE-2069: J-DISC gates its card body");
+  const journey = readFileSync(new URL("./journey.ts", import.meta.url), "utf8");
+  const pre = journey.indexOf("const fault = args.precheck?.(card);");
+  const click = journey.indexOf("const clicked = await synthetic.click(", pre);
+  ok(pre > 0 && click > pre && journey.slice(pre, click).includes('decision: "reject"'), "🔴 OPE-2069: driveDecide's precheck rejects BEFORE the requested click");
+}
+
+console.log("22. the Discord grant ask names the owner's full key:");
+{
+  process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
+  const { grantAskText } = await import("./scenarios.js");
+  const OWNER_ID = "300000000000000104";
+  const discordAsk = grantAskText(`<@${OWNER_ID}>`, "page-1", "e2e grant-tap fixture, ref dgrant-x", `discord/${OWNER_ID}`);
+  const slackAsk = grantAskText("<@U0EXOWNER>", "page-1", "e2e stop-then-grant fixture, ref sgrant-x");
+  ok(discordAsk.includes(`discord/${OWNER_ID}`), "🔴 OPE-2063: the Discord ask text carries the full owner key");
+  ok(discordAsk.includes(`<@${OWNER_ID}>`) && discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1"), "…and keeps the mention, the ref and the page the leg joins on");
+  ok(!slackAsk.includes("owner key"), "the Slack leg's ask names no owner key");
+  const opening = (t: string): string => t.slice(0, t.indexOf(" to lend this"));
+  ok(opening(discordAsk) !== opening(slackAsk.replace("<@U0EXOWNER>", `<@${OWNER_ID}>`)), "…and the owner clause reads differently from the Slack leg's, whatever the mention");
+  const scenarioSource = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legStart = scenarioSource.indexOf('id: "S-DISCORD-GRANT"');
+  const call = scenarioSource.indexOf("grantAskText(`<@${ownerId}>`, grantPageId!, `e2e grant-tap fixture, ref ${token}`, `discord/${ownerId}`)", legStart);
+  ok(legStart > 0 && call > legStart, "🔴 OPE-2063: S-DISCORD-GRANT passes `discord/<id>` to grantAskText");
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

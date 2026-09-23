@@ -564,6 +564,7 @@ const REFUSALS: readonly GrantMintRefusal[] = [
   "unverified_requester",
   "illegal_owner_handle",
   "unresolvable_owner",
+  "owner_unresolved",
   "grant_already_live",
   "ask_already_pending",
   "write_verb_out_of_slice",
@@ -600,6 +601,10 @@ const rendered: readonly { readonly what: string; readonly text: string }[] = [
   })),
   ...REFUSALS.map((reason) => ({ text: grantMintRefusalMessage("notion", reason), what: `the bare mint refusal "${reason}"` })),
   { text: credentialGrantRefusalNote("notion", "owner_unreachable"), what: "the unreachable-owner refusal" },
+  {
+    text: credentialGrantRefusalNote("notion", "owner_unresolved", undefined, { named: SENTINELS.snowflake, platform: "slack" }),
+    what: "the owner-id-shape refusal (OPE-2063), naming a snowflake",
+  },
   ...(["once", "session", "standing"] as const).map((mode) => ({
     text: grantResolutionText(leaky, { askedMode: "once", grant: { ...leakyRow, mode }, kind: "approved" }, NOW),
     what: `the room's resolution notice (approved, ${mode})`,

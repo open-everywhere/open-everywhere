@@ -73,6 +73,7 @@ export type GrantMintRefusal =
   | "unverified_requester"
   | "illegal_owner_handle"
   | "unresolvable_owner"
+  | "owner_unresolved"
   | "grant_already_live"
   | "ask_already_pending"
   | "write_verb_out_of_slice"
@@ -156,6 +157,8 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
       return "That owner's handle carries no characters a tool name can hold, so the grant could not be named. Link the account to a readable handle first.";
     case "unresolvable_owner":
       return "That owner is not named in a form this deployment can resolve a credential for, so nothing could ever be spent under the grant. Ask again naming the owner by their linked account.";
+    case "owner_unresolved":
+      return "That owner id is not a user id on this conversation's platform, so it names nobody here. Name the owner as they appear in this room, or give their full principal key.";
     case "grant_already_live":
       return grantDuplicateRefusalText(duplicate?.audience ?? "seat", {
         connector,

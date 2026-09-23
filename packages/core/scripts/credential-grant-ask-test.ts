@@ -168,18 +168,43 @@ console.log("1. the owner is NAMED, never searched:");
     eq(byKey.handle, "Rowan Hale (@rowan)", "…with the display handle resolved through the account-display-name plane");
   }
 
-  const byBare = await resolveGrantOwner("U-owner", "slack", WS);
-  ok(!("refusal" in byBare) && byBare.principalId === OWNER, "a BARE id on the caller's own surface composes the same key — one composer, two spellings");
+  const byBare = await resolveGrantOwner("U0OWNER01", "slack", WS);
+  ok(!("refusal" in byBare) && byBare.principalId === `slack/${WS}/U0OWNER01`, "a BARE id on the caller's own surface composes the same key — one composer, two spellings");
 
-  const byMention = await resolveGrantOwner("<@U-owner>", "slack", WS);
-  ok(!("refusal" in byMention) && byMention.principalId === OWNER, "a surface's MENTION rendering is peeled — it is what a person literally types");
+  const byMention = await resolveGrantOwner("<@U0OWNER01>", "slack", WS);
+  ok(!("refusal" in byMention) && byMention.principalId === `slack/${WS}/U0OWNER01`, "a surface's MENTION rendering is peeled — it is what a person literally types");
+
+  const slackIdInDiscord = await resolveGrantOwner("U0EXOWNER", "discord", "");
+  ok("refusal" in slackIdInDiscord, "🔴 OPE-2063: a Slack member id named bare in a DISCORD room refuses");
+  if ("refusal" in slackIdInDiscord) {
+    ok(slackIdInDiscord.refusal.includes('"U0EXOWNER" is not a Discord user id'), `…and the note names the id and the platform (got: ${slackIdInDiscord.refusal})`);
+    ok(slackIdInDiscord.refusal.includes("name the owner as they appear in this room"), "…and tells the seat what to do instead");
+  }
+  const mentionedSlackIdInDiscord = await resolveGrantOwner("<@U0EXOWNER>", "discord", "");
+  ok("refusal" in mentionedSlackIdInDiscord, "…and so does the same id in a mention rendering");
+  const snowflakeInSlack = await resolveGrantOwner("300000000000000104", "slack", WS);
+  ok("refusal" in snowflakeInSlack, "…and a Discord snowflake named bare in a SLACK room refuses too");
+  if ("refusal" in snowflakeInSlack) {
+    ok(!snowflakeInSlack.refusal.includes("300000000000000104"), "…without printing the snowflake — refusal copy never carries a bare 17-20 digit id");
+  }
+  const snowflakeInDiscord = await resolveGrantOwner("300000000000000104", "discord", "");
+  ok(
+    !("refusal" in snowflakeInDiscord) && snowflakeInDiscord.principalId === "discord/300000000000000104",
+    "a snowflake named bare in a Discord room resolves to its discord key",
+  );
+  const fullKeyInDiscord = await resolveGrantOwner(OWNER, "discord", "");
+  ok(!("refusal" in fullKeyInDiscord) && fullKeyInDiscord.principalId === OWNER, "a FULL key passes through unchanged, whatever room it is named in");
+  const discordKeyInDiscord = await resolveGrantOwner("discord/300000000000000104", "discord", "");
+  ok(!("refusal" in discordKeyInDiscord) && discordKeyInDiscord.principalId === "discord/300000000000000104", "…and so does a full discord key");
+  const unshapedPlatform = await resolveGrantOwner("octocat", "github", "");
+  ok(!("refusal" in unshapedPlatform), "a platform with no defined id shape keeps today's behaviour");
 
   const bad = await resolveGrantOwner("slack/U-owner", "slack", WS);
   ok("refusal" in bad, "a MALFORMED key refuses — a fuzzy match on whose credential gets spent must never be one character away");
   const empty = await resolveGrantOwner("   ", "slack", WS);
   ok("refusal" in empty, "…and so does an empty name");
 
-  const noTenant = await resolveGrantOwner("U-owner", "slack", "");
+  const noTenant = await resolveGrantOwner("U0OWNER01", "slack", "");
   ok("refusal" in noTenant, "a bare id with no nameable workspace refuses rather than composing an unmatched key");
 }
 
@@ -951,6 +976,7 @@ console.log("10. a refused grant road leaves a row naming the floor that refused
     eq(rows.length, before + 1, "🔴 …and the refusal leaves a grant.refused row");
     eq(gateOf(rows), "owner_unresolved", "🔴 …naming its own gate");
     eq((rows[0]?.detail as { owner?: unknown } | undefined)?.owner, undefined, "🔴 …and NOT the unresolved owner string, which is model-authored and names nobody");
+    eq((rows[0]?.detail as { scopeKey?: unknown } | undefined)?.scopeKey, "sess-1916-badowner", "🔴 OPE-2063: …and it carries the root seat's scopeKey, so a session wait can find it");
   }
 
   {
