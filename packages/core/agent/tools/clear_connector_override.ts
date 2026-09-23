@@ -6,7 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -101,7 +101,7 @@ const clearConnectorOverrideEntry = defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + cardPostedTail(venue, "approve it", posted),
     };
   },
 });

@@ -89,7 +89,7 @@ export interface WakeEnvelopeInput {
   readonly thread?: WakeThreadMeta;
   readonly messages: readonly WakeMessageInput[];
   readonly catchUpUnavailable?: string;
-  readonly redriveCorrection?: string;
+  readonly systemNote?: string;
 }
 
 function escapeXml(s: string): string {
@@ -228,11 +228,13 @@ function tagTrust(messages: readonly WakeMessageInput[], addressing: WakeAddress
 }
 
 export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
-  if (input.messages.length === 0) {
-    throw new Error("renderWakeEnvelope: at least one message is required");
+  const hasSystemNote = input.systemNote !== undefined && input.systemNote.length > 0;
+  const notice = input.messages.length === 0;
+  if (notice && !hasSystemNote) {
+    throw new Error("renderWakeEnvelope: at least one message is required (or a non-empty systemNote for a notice wake)");
   }
   const triggerCount = input.messages.filter((m) => m.trigger).length;
-  if (triggerCount !== 1) {
+  if (!notice && triggerCount !== 1) {
     throw new Error(`renderWakeEnvelope: exactly one message must carry trigger=true (got ${triggerCount})`);
   }
   if (input.messages.length > 1 && !input.messages[input.messages.length - 1].trigger) {
@@ -244,9 +246,12 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
 
   const participantsXml =
     input.participants && input.participants.length > 0 ? indent(renderParticipants(input.participants), 2) + "\n" : "";
+  const threadMessages = notice ? "" : `${indent(messagesXml, 4)}\n`;
   const channelBody = input.thread
-    ? `${participantsXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
-    : `${participantsXml}${indent(messagesXml, 2)}`;
+    ? `${participantsXml}${indent(renderThreadOpen(input.thread), 2)}\n${threadMessages}${indent("</thread>", 2)}`
+    : notice
+      ? participantsXml.replace(/\n$/, "")
+      : `${participantsXml}${indent(messagesXml, 2)}`;
 
   const unauthNote = input.messages.some((m) => m.trust === "unauth") ? [indent(UNAUTH_SYSTEM_NOTE, 2)] : [];
 
@@ -255,22 +260,35 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
       ? [indent(`<system-note>${escapeXml(input.catchUpUnavailable)}</system-note>`, 2)]
       : [];
 
-  const redriveNote =
-    input.redriveCorrection !== undefined && input.redriveCorrection.length > 0
-      ? [indent(`<system-note>${escapeXml(input.redriveCorrection)}</system-note>`, 2)]
-      : [];
+  const systemNote = hasSystemNote ? [indent(`<system-note>${escapeXml(input.systemNote as string)}</system-note>`, 2)] : [];
 
   const lines = [
     `<wake${attr("reason", tagReason(input.reason))}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
-    channelBody,
+    ...(channelBody.length > 0 ? [channelBody] : []),
     indent("</channel>", 2),
     ...unauthNote,
     ...catchUpNote,
-    ...redriveNote,
+    ...systemNote,
     `</wake>`,
   ];
   return lines.join("\n");
+}
+
+export interface TriggerFireEnvelopeInput {
+  readonly currentTime: string;
+  readonly channel: WakeChannelMeta;
+  readonly note: string;
+}
+
+export function renderTriggerFireEnvelope(input: TriggerFireEnvelopeInput): string {
+  return [
+    `<wake${attr("reason", "spawn")}${attr("current-time", input.currentTime)}>`,
+    indent(renderChannelOpen(input.channel), 2),
+    indent("</channel>", 2),
+    ...(input.note.length > 0 ? [indent(`<system-note>${escapeXml(input.note)}</system-note>`, 2)] : []),
+    `</wake>`,
+  ].join("\n");
 }
 
 const MESSAGE_ELEMENT_RE = /<message(\s[^>]*)>([\s\S]*?)<\/message>/g;

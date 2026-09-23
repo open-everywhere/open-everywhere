@@ -96,11 +96,13 @@ const hook: FusedWebhookHook = defineWebhook({
   instruction: "A deploy just finished. Summarise it.",
 });
 
+const FIRE_NOW = new Date("2026-06-04T18:01:00.000Z");
+
 async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "throws"): Promise<{ fired: boolean; reason?: string; calls: Captured[] }> {
   arm(facts);
   const { calls, to } = captureReceive();
   const internal = typeof facts === "string" ? false : internalFrom(facts);
-  const result = await fireWebhook(h, PAYLOAD, { to, confirmInternal: async () => internal });
+  const result = await fireWebhook(h, PAYLOAD, { to, confirmInternal: async () => internal, now: FIRE_NOW });
   return { ...result, calls };
 }
 
@@ -114,7 +116,7 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
 }
 
 {
-  const expected = renderWebhookMessage(hook, PAYLOAD);
+  const expected = renderWebhookMessage(hook, PAYLOAD, {}, FIRE_NOW);
   for (const [label, facts] of [
     ["an internal public channel", INTERNAL],
     ["an internal private channel", INTERNAL_PRIVATE],

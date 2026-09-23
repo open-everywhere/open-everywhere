@@ -11,7 +11,7 @@ import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketCreateArgs } from "../approvals/ticket-create.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -124,7 +124,7 @@ export const createTicketEntry = defineTool({
       pendingId: posted.id,
       platform,
       target,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the filing")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${cardPostedTail(venue, "confirm the filing", posted)}`,
     };
   },
 });

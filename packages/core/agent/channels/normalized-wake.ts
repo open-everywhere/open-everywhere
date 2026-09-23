@@ -24,10 +24,12 @@ export const PREFER_NO_REPLY_TOOL =
   `If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare ` +
   `${NO_REPLY_SENTINEL} text — it's audited and unambiguous; the text sentinel still works if you don't.`;
 
-export type NormalizedWakeTrigger = {
-  readonly kind: "message";
-  readonly message: WakeMessageInput;
-};
+export type NormalizedWakeTrigger =
+  | {
+      readonly kind: "message";
+      readonly message: WakeMessageInput;
+    }
+  | { readonly kind: "notice" };
 
 export interface WakeLocus {
   readonly channel: WakeChannelMeta;
@@ -53,7 +55,7 @@ export interface NormalizedWake {
   };
   readonly memoryDelta?: string;
   readonly catchUpUnavailable?: string;
-  readonly redriveCorrection?: string;
+  readonly systemNote?: string;
   readonly trigger: NormalizedWakeTrigger;
 }
 
@@ -92,14 +94,38 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             thread: nw.locus.thread,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
             catchUpUnavailable: nw.catchUpUnavailable,
-            redriveCorrection: nw.redriveCorrection,
+            systemNote: nw.systemNote,
         });
       }
       break;
     }
+    case "notice": {
+      if (nw.addressing === "direct") throw new Error("renderWake: a notice wake cannot be direct");
+      if (nw.backscroll && nw.backscroll.length > 0) throw new Error("renderWake: a notice wake carries no backscroll");
+      if (nw.systemNote === undefined || nw.systemNote.length === 0) throw new Error("renderWake: a notice wake needs a non-empty systemNote");
+      message = renderWakeEnvelope({
+        reason: nw.reason,
+        currentTime: now(),
+        wakeId: nw.wakeId,
+        addressing: nw.addressing,
+        engagement: nw.engagementTier,
+        followUp: nw.nameDrop?.followUp ?? nw.followUp,
+        channel: {
+          ...nw.locus.channel,
+          id: encodeChannelKey(nw.platform, nw.locus.channel.id),
+          container: nw.locus.channel.container ?? nw.containerNoun ?? "channel",
+        },
+        participants: nw.participants,
+        thread: nw.locus.thread,
+        messages: [],
+        catchUpUnavailable: nw.catchUpUnavailable,
+        systemNote: nw.systemNote,
+      });
+      break;
+    }
     default: {
-      const _exhaustive: never = nw.trigger.kind;
-      throw new Error(`renderWake: unknown trigger kind ${String(_exhaustive)}`);
+      const _exhaustive: never = nw.trigger;
+      throw new Error(`renderWake: unknown trigger kind ${String((_exhaustive as { kind?: unknown }).kind)}`);
     }
   }
 

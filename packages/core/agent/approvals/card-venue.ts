@@ -1,7 +1,7 @@
 import { domainForChannel, domainRoster, type Domain } from "../memory/domain.js";
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SurfaceBinding } from "../identity/binding.js";
-import { postedToSurfaceKey } from "./flow.js";
+import { postedToSurfaceKey, type PriorRejection } from "./flow.js";
 import { checkCardDisclosure, type CardDisclosureDeps } from "./card-disclosure.js";
 import { hasApprovalCardPath } from "../tools/set_spend_limit.js";
 
@@ -103,4 +103,23 @@ export function cardPostedPrefix(venue: ApprovalVenue): string {
 export function describeVenueRedirect(venue: ApprovalVenue, whatNext: string): string {
   if (venue.sameRoom) return "";
   return ` This surface can't host an approval card, so it went to the card-capable channel in this domain — tell the user where it is, by name, and that someone there has to ${whatNext}.`;
+}
+
+export const PROPOSER_DECISION_NOTE =
+  " The card is with the approvers. Their decision goes to the owning conversation session, not to this call. " +
+  "Do not call again for the same change: a repeat while the card is undecided returns this same pending id. Report the pending id and finish.";
+
+export function describePriorRejection(prior: PriorRejection): string {
+  return (
+    ` The same proposal was REJECTED by ${prior.decidedBy} at ${prior.decidedAt}. This card stands only if a person asked again. ` +
+    `If you are retrying on your own, stop and report the rejection.`
+  );
+}
+
+export function proposerTail(posted: { readonly priorRejection?: PriorRejection }): string {
+  return PROPOSER_DECISION_NOTE + (posted.priorRejection !== undefined ? describePriorRejection(posted.priorRejection) : "");
+}
+
+export function cardPostedTail(venue: ApprovalVenue, whatNext: string, posted: { readonly priorRejection?: PriorRejection }): string {
+  return describeVenueRedirect(venue, whatNext) + proposerTail(posted);
 }

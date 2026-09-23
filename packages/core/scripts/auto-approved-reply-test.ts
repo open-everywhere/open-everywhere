@@ -11,6 +11,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const { autoApprovedNote } = await import("../agent/approvals/flow.js");
+const { PROPOSER_DECISION_NOTE } = await import("../agent/approvals/card-venue.js");
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 registerSlackTestBridge();
@@ -109,7 +110,7 @@ try {
   ok(res.autoApproved === undefined, "create_skill/ask: no autoApproved key on the ordinary card path");
   ok(res.pending === true && typeof res.pendingId === "string", "create_skill/ask: still returns a pending");
   const msg = String(res.message);
-  ok(msg === `card posted — skill "eng-runbook" (created) awaiting a human to arm it (pending ${res.pendingId}).`, `create_skill/ask: the card-path text is unchanged ("${msg}")`);
+  ok(msg === `card posted — skill "eng-runbook" (created) awaiting a human to arm it (pending ${res.pendingId}).` + PROPOSER_DECISION_NOTE, `create_skill/ask: the card-path text is unchanged apart from the OPE-2071 decision note ("${msg}")`);
   ok(cardPosts === 1, `create_skill/ask: exactly one card was posted (${cardPosts})`);
   ok((await getOperationalStore().listDomainSkills("default", "eng")).length === 0, "create_skill/ask: NOTHING was written — a card is a proposal, not an act");
 }

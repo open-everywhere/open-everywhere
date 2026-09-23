@@ -221,4 +221,6 @@ test("a guild-context click wakes the proposing window session with the decision
   const prompt = served.messages.map((m) => m.text).join("\n");
   expect(prompt).toContain(wakeId as string);
   expect(prompt).toContain(id);
+  expect(prompt).toContain(`<system-note>A pending approval you were waiting on (id ${id})`);
+  expect(prompt).not.toContain(`approval-decision-${id}`);
 });

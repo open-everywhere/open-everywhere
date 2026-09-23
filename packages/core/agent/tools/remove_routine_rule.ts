@@ -10,7 +10,7 @@ import { describeTrigger, routineMarker } from "../routines/routine.js";
 import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -116,7 +116,7 @@ export default defineTool({
       pendingId: posted.id,
       routineId,
       ruleId: target.id,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.${describeVenueRedirect(venue, "confirm the removal")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.${cardPostedTail(venue, "confirm the removal", posted)}`,
     };
   },
 });

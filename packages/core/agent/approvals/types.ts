@@ -26,6 +26,7 @@ export interface ActionKind<A = unknown> {
   readonly policy: ApproverPolicy;
   readonly beneficiaryClicker?: true;
   readonly volatileArgs?: readonly string[];
+  readonly proseArgs?: readonly string[];
   summarize(args: A): string[];
   execute(args: A, decidedBy: string): Promise<string>;
   declined?(args: A, decidedBy: string): Promise<string>;

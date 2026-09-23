@@ -10,7 +10,7 @@ import { describeTrigger } from "../routines/routine.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -114,7 +114,7 @@ export default defineTool({
       pendingId: posted.id,
       id,
       trigger: description,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Its id, history and run state are kept.${describeVenueRedirect(venue, "confirm the re-arm")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Its id, history and run state are kept.${cardPostedTail(venue, "confirm the re-arm", posted)}`,
     };
   },
 });

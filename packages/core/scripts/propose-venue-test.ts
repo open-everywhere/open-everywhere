@@ -125,6 +125,8 @@ registerConfig({
   }),
 });
 
+const { PROPOSER_DECISION_NOTE } = await import("../agent/approvals/card-venue.js");
+const withoutDecisionNote = (s: string): string => (s.endsWith(PROPOSER_DECISION_NOTE) ? s.slice(0, -PROPOSER_DECISION_NOTE.length) : "<no decision note>");
 const purgeTool = (await import("../agent/tools/purge_memory.js")).default;
 const requestAccessTool = (await import("../agent/tools/request_access.js")).default;
 const revokeTool = (await import("../agent/tools/revoke_connector.js")).default;
@@ -411,7 +413,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     !out.note.includes("This surface can't host an approval card"),
     "unchanged: 🔴 …and NO redirect sentence is appended — the relay instruction exists for a card the user cannot see, and telling them to go elsewhere for one that is right there is worse than saying nothing",
   );
-  ok(/^card posted — purge [0-9a-f]{12}… \(pending [0-9a-f-]{36}\)\.$/.test(out.note), "unchanged: …byte-for-byte the pre-OPE-303 note shape, digest-only (the fact never enters the durable transcript)");
+  ok(/^card posted — purge [0-9a-f]{12}… \(pending [0-9a-f-]{36}\)\.$/.test(withoutDecisionNote(out.note)), "unchanged: …byte-for-byte the pre-OPE-303 note shape, digest-only (the fact never enters the durable transcript)");
 
   const spend = (await (await armed(setSpendTool, slackCtx("C1"), "set_spend_limit")).execute({ monthlyUsd: 12, reason: "headroom" }, slackCtx("C1"))) as {
     pendingId: string;
@@ -420,7 +422,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const spendRow = await rowOf(spend.pendingId);
   ok(spendRow["channelId"] === "C1" && spendRow["postedTo"] === "slack/T1/C1", "unchanged: `set_spend_limit` in a card-capable own room hosts its own card, with the asking room's key frozen");
   ok(
-    /^card posted — surface limit \$12\.00\/month \(current: uncapped\) on "slack\/T1\/C1" \(pending [0-9a-f-]{36}\)\.$/.test(spend.note),
+    /^card posted — surface limit \$12\.00\/month \(current: uncapped\) on "slack\/T1\/C1" \(pending [0-9a-f-]{36}\)\.$/.test(withoutDecisionNote(spend.note)),
     "unchanged: 🔴 …and the note is byte-for-byte the pre-OPE-312 sentence — no venue named, NO redirect instruction appended, because telling someone to go elsewhere for a card that is right there is worse than saying nothing",
   );
 }
@@ -655,7 +657,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const ssRow = await rowOf(ss.pendingId);
   ok(ssRow["channelId"] === "C1" && ssRow["postedTo"] === "slack/T1/C1", "326-unchanged: set_state in a card-capable own room hosts its own card");
   ok(
-    /^card posted — set venue-ticket VT-2 state to "Done" awaiting a human to confirm \(pending [0-9a-f-]{36}\)\.$/.test(ss.message),
+    /^card posted — set venue-ticket VT-2 state to "Done" awaiting a human to confirm \(pending [0-9a-f-]{36}\)\.$/.test(withoutDecisionNote(ss.message)),
     "326-unchanged: 🔴 …byte-for-byte the pre-OPE-326 sentence — no venue named, NO redirect instruction appended",
   );
 

@@ -11,7 +11,7 @@ import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatfor
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketSetStateArgs } from "../approvals/ticket-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -116,7 +116,7 @@ export const setStateEntry = defineTool({
       pendingId: posted.id,
       platform: ref.platform,
       id: ref.id,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the state change")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${cardPostedTail(venue, "confirm the state change", posted)}`,
     };
   },
 });

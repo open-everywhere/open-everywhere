@@ -17,7 +17,7 @@ import {
 } from "../routines/policy.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -168,7 +168,7 @@ export default defineTool({
       pendingId: posted.id,
       routineId,
       ruleId,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.${describeVenueRedirect(venue, "confirm the rule")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.${cardPostedTail(venue, "confirm the rule", posted)}`,
     };
   },
 });

@@ -9,7 +9,7 @@ import { getConfig } from "../access/config.js";
 import { assertChatWriteAllowed, chatWriteMount, CONTAINER_RESOURCE_TYPE } from "../access/chat-write-grant.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { ChatPostArgs } from "../approvals/chat-post.js";
@@ -108,7 +108,7 @@ const postMessageEntry = defineTool({
       pendingId: posted.id,
       platform: target.platform,
       container: target.container,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the post")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${cardPostedTail(venue, "confirm the post", posted)}`,
     };
   },
 });

@@ -6,6 +6,7 @@ import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
+import { proposerTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
@@ -108,7 +109,7 @@ export default defineTool({
       pending: true,
       pendingId: posted.id,
       source: declared.id,
-      message: `card posted — ${subject}, awaiting a human to approve it (pending ${posted.id}). On approval YOU get a private one-time link with it, because you asked — whoever approves sees only the decision. Nothing needs redeploying.`,
+      message: `card posted — ${subject}, awaiting a human to approve it (pending ${posted.id}). On approval YOU get a private one-time link with it, because you asked — whoever approves sees only the decision. Nothing needs redeploying.` + proposerTail(posted),
     };
   },
 });

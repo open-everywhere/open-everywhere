@@ -111,6 +111,11 @@ ok(!/BLOCKS this turn/.test(standingBlock), "🔴 OPE-1440: the blocking claim i
 ok(/does NOT block/.test(standingBlock), "…and the block says so in as many words, rather than leaving the old claim merely unstated");
 ok(/task receipt/.test(standingBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
 ok(/`done: false`/.test(standingBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
+ok(!/Acknowledge the hand-off in the same turn/.test(standingBlock), "🔴 OPE-2073: the UNCONDITIONAL acknowledgement is gone — it forced a post on a wake nobody asked anything on");
+ok(/If this wake owes an answer — it addressed you, or you promised one — acknowledge the hand-off in the same turn with `done: false`/.test(standingBlock), "🔴 OPE-2073: the acknowledgement is scoped to a wake that owes an answer");
+ok(/a channel-watch wake you are only listening to\), delegate silently and call `no_reply`/.test(standingBlock), "🔴 OPE-2073: the silent route is named — a channel-watch wake delegates silently and ends with `no_reply`");
+ok(/settlement then ends in silence too/.test(standingBlock), "…and the seat is told the settlement stays silent too, because no hand-off note armed a report");
+ok(/delegate silently and call `no_reply`/.test(threadBlock) && !/Acknowledge the hand-off in the same turn/.test(threadBlock), "OPE-2073: a thread seat carries the same scoped rule");
 ok(/arrives as a NEW message on a later turn/.test(standingBlock), "the seat is told WHERE the result appears — a later turn, not this one");
 ok(!standingBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
 ok(/that message tells you how to read its output/.test(standingBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");

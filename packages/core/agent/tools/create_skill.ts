@@ -9,7 +9,7 @@ import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import {
@@ -125,7 +125,7 @@ export default windowGated("create_skill", defineTool({
       action,
       pending: true,
       pendingId: posted.id,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to arm it (pending ${posted.id}).${describeVenueRedirect(venue, "arm it")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to arm it (pending ${posted.id}).${cardPostedTail(venue, "arm it", posted)}`,
     };
   },
 }));

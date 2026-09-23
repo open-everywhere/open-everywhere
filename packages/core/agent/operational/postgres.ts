@@ -3635,6 +3635,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as PendingActionPgRow[]).map((r) => pendingActionFromPgRow(org, r));
     },
 
+    async listRejectedActionsSince(org, sinceIso) {
+      const { rows } = await client.query(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = $1 AND status = 'rejected' AND decided_at >= $2 ORDER BY decided_at DESC`,
+        [org, sinceIso],
+      );
+      return (rows as PendingActionPgRow[]).map((r) => pendingActionFromPgRow(org, r));
+    },
+
     async setPendingActionMessage(org, id, messageTs) {
       await client.query("UPDATE pending_actions SET message_ts = $1 WHERE org_id = $2 AND id = $3", [messageTs, org, id]);
     },

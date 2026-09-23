@@ -1632,6 +1632,24 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.decidePendingAction("default", "pa-frozen", "approved", "U_REQ", "2026-07-20T02:00:01Z")) === false, "pending: a second decide on the terminal row loses the CAS");
   ok((await store.getPendingAction("default", "pa-frozen"))?.status === "expired", "pending: the losing CAS left the row untouched");
 
+  {
+    const rej = { ...base, postedTo: null, status: "pending" as const };
+    await store.addPendingAction({ ...rej, id: "pa-rej-old" });
+    await store.addPendingAction({ ...rej, id: "pa-rej-new" });
+    await store.addPendingAction({ ...rej, id: "pa-rej-stale" });
+    await store.addPendingAction({ ...rej, id: "pa-appr" });
+    await store.decidePendingAction("default", "pa-rej-old", "rejected", "U_A", "2026-07-21T10:00:00Z");
+    await store.decidePendingAction("default", "pa-rej-new", "rejected", "U_B", "2026-07-21T11:00:00Z");
+    await store.decidePendingAction("default", "pa-rej-stale", "rejected", "U_C", "2026-07-21T08:59:59Z");
+    await store.decidePendingAction("default", "pa-appr", "approved", "U_D", "2026-07-21T10:30:00Z");
+    const since = await store.listRejectedActionsSince("default", "2026-07-21T09:00:00Z");
+    const ids = since.map((r) => r.id);
+    ok(ids.join(",") === "pa-rej-new,pa-rej-old", `pending: listRejectedActionsSince returns only rejected rows decided since the stamp, newest first (${ids.join(",")})`);
+    ok(since[0]?.decidedBy === "U_B" && since[0]?.decidedAt === "2026-07-21T11:00:00Z", "pending: listRejectedActionsSince carries decidedBy + decidedAt");
+    ok(!ids.includes("pa-appr") && !ids.includes("pa-rej-stale"), "pending: an APPROVED row and a reject before the stamp are excluded (negative control)");
+    ok((await store.listRejectedActionsSince("acme", "2026-07-21T09:00:00Z")).length === 0, "pending: another org sees none of these rejects");
+  }
+
   const wedge = { ...base, id: "pa-wedge", status: "approved" as const, decidedBy: "chain:custom:x", decidedAt: "2026-07-20T01:00:00Z", postedTo: null };
   ok((await store.addPendingActionIfAbsent(wedge)) === true, "pending: addPendingActionIfAbsent reports TRUE when it really inserts");
   ok((await store.getPendingAction("default", "pa-wedge"))?.decidedBy === "chain:custom:x", "pending: and the row is there");

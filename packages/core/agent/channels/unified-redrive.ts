@@ -63,7 +63,7 @@ export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrig
       trust: "relay",
       body: `Corrective re-drive of wake ${originalWakeId}.`,
     }),
-    redriveCorrection: redriveCorrectiveText(chars, originalWakeId, origin, owesWorkerReport),
+    systemNote: redriveCorrectiveText(chars, originalWakeId, origin, owesWorkerReport),
   };
 }
 

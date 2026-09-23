@@ -9,7 +9,7 @@ import { getConfig } from "../access/config.js";
 import { defaultScopeKey, assertScopableFromHere, assertScopeKeyShapeForLevel, approvalPostDeps, currentCapsFor, type CurrentCaps } from "./set_spend_limit.js";
 import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -134,7 +134,7 @@ const clearSpendLimitEntry = defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + cardPostedTail(venue, "approve it", posted),
     };
   },
 });

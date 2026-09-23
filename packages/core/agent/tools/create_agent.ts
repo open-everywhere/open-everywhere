@@ -19,7 +19,7 @@ import type { MemorySilo } from "../memory/silo.js";
 import type { AgentCreateArgs } from "../approvals/agent-create.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -232,7 +232,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}). Nothing is provisioned until an admin merges the PR.${describeVenueRedirect(venue, "approve it")}`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}). Nothing is provisioned until an admin merges the PR.${cardPostedTail(venue, "approve it", posted)}`,
     };
   },
 });

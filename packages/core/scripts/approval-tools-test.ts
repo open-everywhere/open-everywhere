@@ -6,6 +6,7 @@ import { planClearConnectorOverride } from "../agent/tools/clear_connector_overr
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import { registerConfig } from "../agent/access/config.js";
 import { registerCardPoster, cardPosterFor } from "../agent/approvals/flow.js";
+import { PROPOSER_DECISION_NOTE, cardPostedTail, proposerTail } from "../agent/approvals/card-venue.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { execTool } from "./_tool-exec.js";
 
@@ -104,7 +105,7 @@ throwsWith(
 );
 throwsWith(
   () => planSetSpendLimit(slackBinding(), { reason: "x" }, uncapped, null),
-  "monthlyTokens and/or monthlyUsd",
+  "needs monthlyTokens or monthlyUsd",
   "planSetSpendLimit refuses a proposal with no cap component at all",
 );
 
@@ -445,6 +446,9 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     ok(JSON.stringify(reported) === JSON.stringify(["test/no-rate-model"]), `🔴 OPE-1193: a USD proposal names EXACTLY the scope's unpriced models under unpricedModels (got ${JSON.stringify(reported)})`);
     ok(/Pricing coverage/.test(setOut.note) && setOut.note.includes("test/no-rate-model"), "OPE-1193: …and the note carries the sentence the model must relay, naming the model");
     ok(setOut.requested === true, "🔴 OPE-1193: the proposal still POSTS — pricing coverage is a report, never a refusal");
+    ok(setOut.note.includes(PROPOSER_DECISION_NOTE.trim()), `🔴 OPE-2071: a requested:true set_spend_limit result carries the fixed decision note (${setOut.note})`);
+    ok(setOut.note.includes("owning conversation session") && setOut.note.includes("Report the pending id and finish."), "OPE-2071: …naming the OWNING session and the finish instruction");
+    ok(!setOut.note.includes("REJECTED by"), "OPE-2071 NEGATIVE CONTROL: no prior reject ⇒ no rejection line");
     const coverFrozen = await frozenOf(setOut.pendingId);
     ok(coverFrozen["monthlyUsd"] === 50 && coverFrozen["scopeKey"] === "slack/T123/C_COVER", "🔴 OPE-1193: …and the pending row is frozen with the proposed cap, unchanged by the report");
     ok(
@@ -589,6 +593,34 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   const setSrc = readFileSync(new URL("../agent/tools/set_spend_limit.ts", import.meta.url), "utf8");
   const clearSrc = readFileSync(new URL("../agent/tools/clear_spend_limit.ts", import.meta.url), "utf8");
   ok(/level === "user" \? null :/.test(setSrc) && /level === "user" \? null :/.test(clearSrc), "🔴 OPE-274: both propose tools freeze `domain: null` for a user-level proposal — a person's allowance is never a domain's business");
+}
+
+{
+  const venue = { platform: "slack", channelId: "C1", surfaceKey: "slack/T1/C1", sameRoom: true } as const;
+  const plain = cardPostedTail(venue, "approve it", {});
+  ok(plain === PROPOSER_DECISION_NOTE, "OPE-2071: a same-room card with no prior reject gets exactly the fixed decision note");
+  ok(!plain.includes("REJECTED"), "OPE-2071 NEGATIVE CONTROL: no prior reject ⇒ no rejection line");
+  const withReject = proposerTail({ priorRejection: { decidedBy: "U_ADMIN", decidedAt: "2026-04-19T06:40:13Z" } });
+  ok(withReject.startsWith(PROPOSER_DECISION_NOTE), "OPE-2071: the rejection line follows the fixed note");
+  ok(withReject.includes("REJECTED by U_ADMIN at 2026-04-19T06:40:13Z"), `🔴 OPE-2071: the rejection line names who and when (${withReject})`);
+  ok(withReject.includes("stop and report the rejection"), "OPE-2071: the rejection line tells a self-retrying proposer to stop");
+  const redirected = cardPostedTail({ ...venue, surfaceKey: "slack/T1/C2", sameRoom: false }, "approve it", {});
+  ok(redirected.includes("tell the user where it is") && redirected.endsWith(PROPOSER_DECISION_NOTE), "OPE-2071: a redirected card keeps its redirect instruction AND gets the note");
+
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
+  let scanned = 0;
+  for (const f of readdirSync(toolsDir).filter((f) => f.endsWith(".ts"))) {
+    const src = readFileSync(join(toolsDir, f), "utf8");
+    if (!/\brequestApproval\(/.test(src)) continue;
+    scanned++;
+    const tails = (src.match(/\b(cardPostedTail|proposerTail)\([^)]*\bposted\)/g) ?? []).length;
+    ok(tails >= 1, `🔴 OPE-2071: tool ${f} calls requestApproval, so its card-path result must pass through cardPostedTail/proposerTail with \`posted\``);
+    ok(!/\bdescribeVenueRedirect\(/.test(src), `OPE-2071: tool ${f} must not build a card tail with the bare redirect (it skips the decision note)`);
+  }
+  ok(scanned >= 20, `OPE-2071: the source scan covered the approval-raising tools (saw ${scanned})`);
 }
 
 console.log(`✓ ${passed} approval-tools assertions passed`);

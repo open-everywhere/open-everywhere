@@ -12,7 +12,7 @@ import { workDestinationPlatforms } from "../channels/work-destinations.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import type { TicketAssignArgs } from "../approvals/ticket-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
@@ -121,7 +121,7 @@ export const assignEntry = defineTool({
       pendingId: posted.id,
       platform: ref.platform,
       id: ref.id,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the assignment")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${cardPostedTail(venue, "confirm the assignment", posted)}`,
     };
   },
 });

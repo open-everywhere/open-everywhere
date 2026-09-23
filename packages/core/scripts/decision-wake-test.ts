@@ -73,13 +73,51 @@ const baseInput: ApprovalDecisionWakeInput = {
 }
 
 {
-  const wake = buildApprovalDecisionWake(baseInput, "2026-08-21T12:00:00.000Z");
+  const wake = buildApprovalDecisionWake(baseInput);
   ok(wake.addressing === "channel-watch", "still AMBIENT — the humans were already told in-thread");
   ok(wake.wakeId === baseInput.wakeId, "host-minted wake id rides the envelope");
   const rendered = renderApprovalDecisionMessage(baseInput, "2026-08-21T12:00:00.000Z");
   ok(rendered.includes("continue that work now"), "the rendered turn message (what the model actually reads) carries the fix");
   const renderedRan = renderApprovalDecisionMessage({ ...baseInput, execution: { ran: "ok", line: "sent a direct message to teams person 29-1oW" } }, "2026-08-21T12:00:00.000Z");
   ok(renderedRan.includes("ALREADY RUN") && renderedRan.includes("29-1oW"), "the rendered turn message carries the OPE-1097 observable, not just the builder's return");
+}
+
+{
+  const now = "2026-08-21T12:00:00.000Z";
+  const wake = buildApprovalDecisionWake(baseInput);
+  ok(wake.trigger.kind === "notice", "OPE-2065: the decision wake is a NOTICE trigger — no message behind it");
+  ok(wake.reason === "dispatch", "OPE-2065: reason stays dispatch");
+  ok(wake.systemNote === approvalDecisionBody(baseInput), "OPE-2065: the notice body rides the typed systemNote field");
+  const rejected = renderApprovalDecisionMessage({ ...baseInput, outcome: "rejected", clickerId: "U999" }, now);
+  const note = /<system-note>([\s\S]*?)<\/system-note>/.exec(rejected);
+  ok(note !== null, "OPE-2065: the rendered decision message carries a <system-note>");
+  ok((note?.[1] ?? "").includes("was REJECTED by &lt;@U999&gt; and NOT applied"), "OPE-2065: the note carries the outcome, escaped");
+  ok((note?.[1] ?? "").includes("Staying silent is the right, common outcome here"), "OPE-2065: the silence instruction is INSIDE the trusted note");
+  ok((note?.[1] ?? "").includes('Set linear SOAK-9 state → &quot;In Progress&quot;'), "OPE-2065: the pending's own OE-rendered summary line still appears");
+  ok(!rejected.includes("untrusted_external_data"), "OPE-2065: the notice renders NO untrusted fence");
+  ok(!rejected.includes('trust="relay"'), "OPE-2065: the notice renders NO relay message");
+  ok(!rejected.includes("<message"), "OPE-2065: the notice renders NO message element at all");
+  ok(!rejected.includes("slack-message"), "OPE-2065: the notice makes NO slack-message provenance claim");
+  ok(rejected.includes('wake-id="wk_test123"'), "OPE-2065: the envelope keeps the wake id a reply names");
+  ok(rejected.includes('reason="dispatch"') && rejected.includes('addressing="channel-watch"'), "OPE-2065: the envelope keeps reason + addressing");
+  ok(rejected.indexOf("</channel>") < rejected.indexOf("<system-note>"), "OPE-2065: the note renders after </channel>, in the skeleton");
+}
+
+{
+  const cancel = "If a worker of yours is still running toward this act, cancel it (`task_cancel`) — the decision is final for that proposal.";
+  const arms: ReadonlyArray<[string, ApprovalDecisionWakeInput]> = [
+    ["approved, no execution fact", baseInput],
+    ["approved, ran", { ...baseInput, execution: { ran: "ok", line: "done" } }],
+    ["approved, failed", { ...baseInput, execution: { ran: "failed", line: "FAILED: x" } }],
+    ["rejected", { ...baseInput, outcome: "rejected" }],
+    ["expired", { ...baseInput, outcome: "expired", clickerId: undefined }],
+  ];
+  for (const [label, input] of arms) {
+    const body = approvalDecisionBody(input);
+    ok(body.split(cancel).length - 1 === 1, `OPE-2071: the ${label} closing carries the cancel-worker sentence exactly once (${body})`);
+  }
+  const rendered = renderApprovalDecisionMessage({ ...baseInput, outcome: "rejected" }, "2026-08-21T12:00:00.000Z");
+  ok(/<system-note>[\s\S]*task_cancel[\s\S]*<\/system-note>/.test(rendered), "OPE-2071: the cancel sentence reaches the rendered, trusted note");
 }
 
 console.log(`✓ ${n} decision-wake assertions passed`);

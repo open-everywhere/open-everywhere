@@ -10,7 +10,7 @@ import { getConfig } from "../access/config.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
 import {
@@ -265,7 +265,7 @@ export default defineTool({
       message:
         `${cardPostedPrefix(venue)} — approving it opens a PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}" (pending ${posted.id}). ` +
         tail +
-        describeVenueRedirect(venue, "approve it"),
+        cardPostedTail(venue, "approve it", posted),
     };
   },
 });

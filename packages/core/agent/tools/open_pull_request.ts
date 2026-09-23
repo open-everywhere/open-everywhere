@@ -22,7 +22,7 @@ import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
@@ -229,7 +229,7 @@ export default windowGated("open_pull_request", defineTool({
       head: input.head,
       pending: true,
       pendingId: posted.id,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to approve the publish (pending ${posted.id}).${describeVenueRedirect(venue, "approve the publish")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to approve the publish (pending ${posted.id}).${cardPostedTail(venue, "approve the publish", posted)}`,
     };
   },
 }), githubWorkMount);

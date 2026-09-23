@@ -25,7 +25,7 @@ import { validateRoutineCollectors } from "../routines/collector.js";
 import { validateRoutineGate } from "../routines/gate.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { domainKeyOf } from "../memory/partition.js";
@@ -375,7 +375,7 @@ export default defineTool({
       preview,
       message:
         `${cardPostedPrefix(venue)} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).` +
-        describeVenueRedirect(venue, "arm it"),
+        cardPostedTail(venue, "arm it", posted),
     };
   },
 });

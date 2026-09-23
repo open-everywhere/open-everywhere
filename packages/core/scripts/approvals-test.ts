@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { overrideSettingsForTest, getSettings } from "../agent/settings/settings.js";
 import { registerSlackFixtureCodec } from "./_slack-test-stubs.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -703,6 +703,115 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const different = await requestApproval({ ...args, args: { ...args.args, monthlyTokens: 5678 } }, { post });
   ok(different.deduped !== true && different.id !== first.id, "requestApproval dedup: a different proposed value is NOT deduped — it mints a fresh card");
+}
+
+{
+  const store = getOperationalStore();
+  const calls: { method: string; body: string }[] = [];
+  let ts = 1700;
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true, ts: `${ts++}.0` };
+  };
+  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").includes("REJECTED")).length;
+  const scope = "slack/T2066/C2066";
+  const propose = (reason: string, extra: Record<string, unknown> = {}) =>
+    requestApproval(
+      {
+        org: "default",
+        kind: "spend.set",
+        args: { org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, tainted: false, ...extra },
+        scopeKey: scope,
+        requestedBy: "U_REQUESTER",
+        channelId: "C2066",
+        chain: { unattended: false },
+      },
+      { post },
+    );
+
+  ok(actionKind("spend.set")?.proseArgs?.includes("reason") === true, "OPE-2066 fixture: `spend.set` declares `reason` as a prose arg");
+
+  const first = await propose("Rowan asked to raise this channel's monthly USD cap to $1,609.");
+  ok(first.deduped !== true, "OPE-2066: the first proposal is a real mint");
+  const cardsAfterFirst = cards();
+  const second = await propose("Raise only the USD cap to $1,609; leave tokens unchanged.");
+  ok(second.deduped === true, "🔴 OPE-2066: the same level, scope and figures with a REWORDED reason is deduped");
+  ok(second.id === first.id, "🔴 OPE-2066: the reworded repeat returns the SAME live pendingId");
+  ok(cards() === cardsAfterFirst, "🔴 OPE-2066: the reworded repeat posts NO second card");
+  ok((await store.listPendingActions("default")).filter((r) => r.scopeKey === scope).length === 1, "OPE-2066: exactly ONE pending row exists for the repeated ask");
+  ok(JSON.parse((await store.getPendingAction("default", first.id))!.argsJson).reason === "Rowan asked to raise this channel's monthly USD cap to $1,609.", "OPE-2066: the live card keeps the FIRST proposal's reason — the prose leaves the identity, never the row");
+
+  const otherFigure = await propose("Raise it to $1,700 instead.", { monthlyUsd: 1700 });
+  ok(otherFigure.deduped !== true && otherFigure.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: a DIFFERENT $ figure is a new proposal with its own card");
+  const addedTokens = await propose("Also cap tokens.", { monthlyTokens: 1 });
+  ok(addedTokens.deduped !== true && addedTokens.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: adding a token component is a new proposal with its own card");
+  const tainted = await propose("Same ask, tainted turn.", { tainted: true });
+  ok(tainted.deduped !== true && tainted.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: a TAINTED repeat never folds onto an untainted card — the approver must see the ⚠");
+
+  await handleApprovalPayload(payloadFor(`oe_approval:reject:${first.id}`, { user: "U_ORG_ADMIN", channel: "C2066", ts: "1700.0" }), { post });
+  ok((await store.getPendingAction("default", first.id))?.status === "rejected", "OPE-2066 fixture: the reject decides the first card to rejected");
+  const cardsBeforeAgain = cards();
+  const again = await propose("Second ask after the reject.");
+  ok(again.deduped !== true && again.id !== first.id, "🔴 OPE-2066: a proposal after a REJECT mints a NEW pendingId");
+  ok(cards() === cardsBeforeAgain + 1, "🔴 OPE-2066: a proposal after a REJECT posts a new card");
+}
+
+{
+  const store = getOperationalStore();
+  const calls: { method: string; body: string }[] = [];
+  let ts = 2071;
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true, ts: `${ts++}.0` };
+  };
+  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").includes("REJECTED")).length;
+  const scope = "slack/T2071/C2071";
+  const argsFor = (reason: string, extra: Record<string, unknown> = {}) => ({ org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, tainted: false, ...extra });
+  const propose = (reason: string, extra: Record<string, unknown> = {}, over: { scopeKey?: string; channelId?: string } = {}) =>
+    requestApproval(
+      {
+        org: "default",
+        kind: "spend.set",
+        args: { ...argsFor(reason, extra), ...(over.scopeKey !== undefined ? { scopeKey: over.scopeKey } : {}) },
+        scopeKey: over.scopeKey ?? scope,
+        requestedBy: "U_REQUESTER",
+        channelId: over.channelId ?? "C2071",
+        chain: { unattended: false },
+      },
+      { post },
+    );
+
+  const first = await propose("Raise the USD cap to $1,609.");
+  ok(first.priorRejection === undefined, "OPE-2071 NEGATIVE CONTROL: a first-ever proposal carries NO prior rejection");
+  await handleApprovalPayload(payloadFor(`oe_approval:reject:${first.id}`, { user: "U_ORG_ADMIN", channel: "C2071", ts: "2071.0" }), { post });
+  const decided = await store.getPendingAction("default", first.id);
+  ok(decided?.status === "rejected" && decided.decidedAt !== null, "OPE-2071 fixture: the admin rejects the first card");
+
+  const cardsBefore = cards();
+  const again = await propose("Worker retry, reworded: raise only the USD cap to $1,609.");
+  ok(again.deduped !== true && again.id !== first.id, "🔴 OPE-2071: a re-proposal after a REJECT is NOT blocked — it mints a NEW pending id");
+  ok(cards() === cardsBefore + 1, "🔴 OPE-2071: a re-proposal after a REJECT still posts its card");
+  ok(again.priorRejection?.decidedBy === "U_ORG_ADMIN", `🔴 OPE-2071: the result names WHO rejected the same proposal (${JSON.stringify(again.priorRejection)})`);
+  ok(again.priorRejection?.decidedAt === decided?.decidedAt, "🔴 OPE-2071: the result names WHEN it was rejected — the row's own decidedAt");
+
+  const otherFigure = await propose("A different figure.", { monthlyUsd: 1700 });
+  ok(otherFigure.priorRejection === undefined, "🔴 OPE-2071 NEGATIVE CONTROL: a DIFFERENT figure is a different proposal — no prior rejection reported");
+  const otherRoom = await propose("Same ask, other room.", {}, { channelId: "C2071B" });
+  ok(otherRoom.priorRejection === undefined, "🔴 OPE-2071 NEGATIVE CONTROL: the same args in ANOTHER channel carry no prior rejection");
+
+  const ttlMs = getSettings().approvals.ttlHours * 3_600_000;
+  const seedRejected = async (id: string, scopeKey: string, channelId: string, decidedAt: string) => {
+    await store.addPendingAction(
+      row({ id, scopeKey, channelId, argsJson: JSON.stringify({ ...argsFor("seeded"), scopeKey }), status: "rejected", decidedBy: "U_OLD_ADMIN", decidedAt, expiresAt: decidedAt }),
+    );
+  };
+  await seedRejected("p-2071-stale", "slack/T2071/CSTALE", "CSTALE", new Date(Date.now() - ttlMs - 60_000).toISOString());
+  const past = await propose("After the TTL.", {}, { scopeKey: "slack/T2071/CSTALE", channelId: "CSTALE" });
+  ok(past.priorRejection === undefined, "🔴 OPE-2071: a matching reject OLDER than the approval TTL is ignored");
+  const freshAt = new Date(Date.now() - ttlMs + 60_000).toISOString();
+  await seedRejected("p-2071-fresh", "slack/T2071/CFRESH", "CFRESH", freshAt);
+  const inside = await propose("Inside the TTL.", {}, { scopeKey: "slack/T2071/CFRESH", channelId: "CFRESH" });
+  ok(inside.priorRejection?.decidedBy === "U_OLD_ADMIN" && inside.priorRejection.decidedAt === freshAt, "OPE-2071 CONTROL: the same seeded reject just INSIDE the TTL is reported");
 }
 
 {

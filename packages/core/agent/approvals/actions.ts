@@ -159,6 +159,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
   kind: "spend.set",
   policy: "admin",
   volatileArgs: ["coverage"],
+  proseArgs: ["reason"],
   summarize(args) {
     return [
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,

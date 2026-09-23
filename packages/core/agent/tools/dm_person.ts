@@ -10,7 +10,7 @@ import { assertChatDmAllowed, chatDmMount, PERSON_RESOURCE_TYPE } from "../acces
 import { deliverProactiveDm, dmDeliveryFooter } from "../channels/dm-audience.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { ChatDmArgs } from "../approvals/chat-dm.js";
@@ -137,7 +137,7 @@ const dmPersonEntry = defineTool({
       pendingId: posted.id,
       platform: target.platform,
       person: target.principalId,
-      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the message")}`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${cardPostedTail(venue, "confirm the message", posted)}`,
     };
   },
 });

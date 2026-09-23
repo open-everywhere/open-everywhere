@@ -245,6 +245,12 @@ export interface RequestApprovalResult {
   readonly expiresAt: string;
   readonly deduped?: boolean;
   readonly autoApproved?: AutoApprovedOutcome;
+  readonly priorRejection?: PriorRejection;
+}
+
+export interface PriorRejection {
+  readonly decidedBy: string;
+  readonly decidedAt: string;
 }
 
 interface WedgeIdentity {
@@ -269,6 +275,18 @@ const HALT_LIFT_ACTION_KIND: string | undefined = (() => {
   const via = TOOL_CONSEQUENCE[RESUME_TOOL]?.via;
   return via !== undefined && via.kind === "action-kind" ? via.action : undefined;
 })();
+
+function dedupIdentity(argsJson: string, proseArgs: readonly string[] | undefined): string {
+  if (proseArgs === undefined || proseArgs.length === 0) return argsJson;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argsJson);
+  } catch {
+    return argsJson;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return argsJson;
+  return JSON.stringify(Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([k]) => !proseArgs.includes(k))));
+}
 
 function uuidFromDigest(hex: string): string {
   const variant = ((parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
@@ -550,13 +568,22 @@ export async function requestApproval(
   const argsJson = JSON.stringify(input.args ?? null);
 
   const nowIso = now.toISOString();
+  const identity = dedupIdentity(argsJson, kindDef.proseArgs);
   const dup = (await store.listPendingActions(input.org)).find(
-    (r) => r.kind === input.kind && r.scopeKey === input.scopeKey && r.channelId === input.channelId && r.argsJson === argsJson && r.expiresAt > nowIso,
+    (r) =>
+      r.kind === input.kind &&
+      r.scopeKey === input.scopeKey &&
+      r.channelId === input.channelId &&
+      dedupIdentity(r.argsJson, kindDef.proseArgs) === identity &&
+      r.expiresAt > nowIso,
   );
   if (dup) {
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "deduped" });
     return { id: dup.id, expiresAt: dup.expiresAt, deduped: true };
   }
+
+  const rejectedSince = new Date(now.getTime() - approvalTtlHours() * 3_600_000).toISOString();
+  const priorRejection = await findPriorRejection(store, input, kindDef, identity, rejectedSince);
 
   const decisionAuthority = deps.authorityContext === undefined ? undefined : await captureApprovalDecisionAuthority(deps.authorityContext);
 
@@ -662,7 +689,30 @@ export async function requestApproval(
   });
   emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "ok" });
 
-  return { id: row.id, expiresAt };
+  return { id: row.id, expiresAt, ...(priorRejection !== undefined ? { priorRejection } : {}) };
+}
+
+async function findPriorRejection(
+  store: ReturnType<typeof getOperationalStore>,
+  input: RequestApprovalInput,
+  kindDef: Pick<ActionKind, "proseArgs">,
+  identity: string,
+  sinceIso: string,
+): Promise<PriorRejection | undefined> {
+  const rows = await Promise.resolve()
+    .then(() => store.listRejectedActionsSince(input.org, sinceIso))
+    .catch(() => [] as readonly PendingActionRow[]);
+  const match = rows.find(
+    (r) =>
+      r.kind === input.kind &&
+      r.scopeKey === input.scopeKey &&
+      r.channelId === input.channelId &&
+      r.decidedBy !== null &&
+      r.decidedAt !== null &&
+      r.decidedAt >= sinceIso &&
+      dedupIdentity(r.argsJson, kindDef.proseArgs) === identity,
+  );
+  return match === undefined ? undefined : { decidedBy: match.decidedBy as string, decidedAt: match.decidedAt as string };
 }
 
 async function offerRoutinePermissionCardForProposal(

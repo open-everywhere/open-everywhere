@@ -108,7 +108,9 @@ test("a content-bearing hook's raw body reaches the model FENCED inside the untr
 
   expect(text.slice(0, open)).not.toContain(marker);
 
-  const instructionIdx = text.indexOf("e2e driver-bot pack's own smoke-test webhook");
+  const instructionIdx = text.indexOf("own smoke-test webhook");
   expect(instructionIdx).toBeGreaterThanOrEqual(0);
   expect(instructionIdx).toBeLessThan(open);
+  expect(text.lastIndexOf("<system-note>", instructionIdx)).toBeGreaterThanOrEqual(0);
+  expect(text.indexOf("</system-note>", instructionIdx)).toBeLessThan(open);
 });

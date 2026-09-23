@@ -14,7 +14,7 @@ import { UNKNOWN_MODEL } from "../spend/spend.js";
 import { userScopeKey, parseScopeKey } from "../access/scope-key.js";
 import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import type { SpendCoverage } from "../approvals/actions.js";
 
@@ -233,7 +233,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
     throw new Error("set_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose a spend-limit change in that person's name. Ask a person in this conversation to propose it.");
   }
   if (input.monthlyTokens == null && input.monthlyUsd == null) {
-    throw new Error("set_spend_limit needs monthlyTokens and/or monthlyUsd — a proposal must set at least one cap component.");
+    throw new Error("set_spend_limit needs monthlyTokens or monthlyUsd — set the one the person asked for (either alone is a complete proposal), or both only if they named both.");
   }
   const level = input.level ?? "surface";
   assertScopableFromHere("set_spend_limit", binding, level, input.scopeKey);
@@ -262,10 +262,10 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; with level:"domain", every surface in this channel\'s memory domain; or with level:"user", ONE PERSON\'s own allowance) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL or USER-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget, and a per-person allowance is a change about somebody who is not in the room the card lands in). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). level:"user" defaults to the person who just spoke ("my own allowance"); to change somebody ELSE\'s, pass their key explicitly as "user:<platform>/<id>". A person\'s allowance is checked INDEPENDENTLY of the room\'s cap — raising it never switches off the cap on the channel they are in. An over-budget decline message names the exact cap that stopped the turn and its key. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT in two cases, where the `note` carries something the channel cannot see and you MUST relay it: when this surface can\'t host a card (it then goes to a card-capable channel in the same domain, and the `note` names it), and whenever the `note` carries a "Pricing coverage" sentence (the USD cap you proposed does not count some of this scope\'s traffic, or its coverage could not be measured at all — the proposal still stands either way, this is a report, not a refusal). The approval card carries the same coverage line for the approver to read; relay the note anyway, because the person who asked is the one who can go and commit the missing rate.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; with level:"domain", every surface in this channel\'s memory domain; or with level:"user", ONE PERSON\'s own allowance) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL or USER-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget, and a per-person allowance is a change about somebody who is not in the room the card lands in). Propose ONLY the component(s) the person named: monthlyUsd alone is a complete proposal, and so is monthlyTokens alone. A dollar-only request is a dollar-only proposal — never add a token cap (or a $ cap) nobody asked for; a component you leave out stays exactly as it is. A repeat of the same proposal (same level, scope and figures) while its card is still undecided posts no second card: you get the open card\'s pendingId back, so do not call again to "retry". DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). level:"user" defaults to the person who just spoke ("my own allowance"); to change somebody ELSE\'s, pass their key explicitly as "user:<platform>/<id>". A person\'s allowance is checked INDEPENDENTLY of the room\'s cap — raising it never switches off the cap on the channel they are in. An over-budget decline message names the exact cap that stopped the turn and its key. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT in two cases, where the `note` carries something the channel cannot see and you MUST relay it: when this surface can\'t host a card (it then goes to a card-capable channel in the same domain, and the `note` names it), and whenever the `note` carries a "Pricing coverage" sentence (the USD cap you proposed does not count some of this scope\'s traffic, or its coverage could not be measured at all — the proposal still stands either way, this is a report, not a refusal). The approval card carries the same coverage line for the approver to read; relay the note anyway, because the person who asked is the one who can go and commit the missing rate.',
   inputSchema: z.object({
-    monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
-    monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
+    monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. Set it ONLY when the person asked for a token cap — omit it for a dollar-only request, and the token cap stays unchanged."),
+    monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). Set it ONLY when the person asked for a $ cap — omit it for a token-only request, and the $ cap stays unchanged."),
     reason: z.string().min(1).describe("Why you're proposing this — shown on the approval card."),
     level: z
       .enum(LEVELS)
@@ -347,7 +347,7 @@ export default defineTool({
         expiresAt: posted.expiresAt,
         ...coverageFields,
         note:
-          `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
+          `Already pending — the same ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
           `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
           (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here.") +
           coverageNote,
@@ -368,7 +368,7 @@ export default defineTool({
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
       ...coverageFields,
-      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it") + coverageNote,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + cardPostedTail(venue, "approve it", posted) + coverageNote,
     };
   },
 });

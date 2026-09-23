@@ -17,7 +17,7 @@ import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -350,7 +350,7 @@ const requestAccessEntry = defineTool({
             requested: true,
             pendingId: posted.id,
             expiresAt: posted.expiresAt,
-            note: `${cardPostedPrefix(venue)} — ${grantSentence(args.delta)} (pending ${posted.id}).` + describeVenueRedirect(venue, "tap it to send the request"),
+            note: `${cardPostedPrefix(venue)} — ${grantSentence(args.delta)} (pending ${posted.id}).` + cardPostedTail(venue, "tap it to send the request", posted),
           };
         },
 });
